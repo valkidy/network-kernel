@@ -200,7 +200,8 @@ void run_frame(
     // the frame take its own.
     network_example::game_server::PerceptionFrame frame;
     frame.refresh(kernel);
-    controller.tick(kernel, frame, enemies, 1.0f / 30.0f);
+    controller.tick(
+        kernel, frame, network_example::game_server::whole_batch(enemies), 1.0f / 30.0f);
     Kernel_Update(kernel, 1.0f / 30.0f);
 }
 

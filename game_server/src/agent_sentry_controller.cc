@@ -15,13 +15,14 @@ namespace network_example::game_server {
 void AgentSentryController::tick(
     KernelHandle* kernel,
     const PerceptionFrame& frame,
-    std::vector<AgentRuntimeState>* agents,
+    const AgentBatch& agents,
     float) const {
-    if (kernel == nullptr || agents == nullptr) {
+    if (kernel == nullptr) {
         return;
     }
 
-    for (AgentRuntimeState& agent : *agents) {
+    for (AgentRuntimeState* agent_pointer : agents) {
+        AgentRuntimeState& agent = *agent_pointer;
         // Per agent, not per controller: the weapon and the ballistic profile
         // belong to this agent's own actor template, so the executor is built
         // inside the loop.

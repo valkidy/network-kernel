@@ -84,7 +84,7 @@ public:
     void tick(
         KernelHandle* kernel,
         const PerceptionFrame& frame,
-        std::vector<AgentRuntimeState>* agents,
+        const AgentBatch& agents,
         float delta_seconds) const;
 
 private:

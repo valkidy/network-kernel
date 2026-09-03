@@ -18,6 +18,19 @@ void require_impl(bool condition, int line, const char* text) {
 
 #define require(expr) require_impl(static_cast<bool>(expr), __LINE__, #expr)
 
+// AgentRuntimeManager keeps this index beside its agent list and rebuilds it
+// wherever that list changes; a test ticking the runtime directly builds one
+// here. The list does not change across any of these loops, so once is enough.
+void tick_groups(
+    network_example::game_server::PatrolGroupRuntime* groups,
+    std::vector<network_example::game_server::AgentRuntimeState>* agents,
+    float delta_seconds) {
+    network_example::game_server::AgentIndex index;
+    index.rebuild(*agents);
+    groups->tick(agents, index, delta_seconds);
+}
+
+
 constexpr float kFixedDelta = 1.0f / 30.0f;
 
 bool almost_equal(float lhs, float rhs, float tolerance = 0.01f) {
@@ -88,7 +101,7 @@ int main() {
 
     // One second of walking, along +X.
     for (int tick = 0; tick < 30; ++tick) {
-        runtime.tick(&agents, kFixedDelta);
+        tick_groups(&runtime, &agents, kFixedDelta);
     }
     const PatrolGroup* group = runtime.find_group(group_id);
     require(group != nullptr);
@@ -114,7 +127,7 @@ int main() {
     agents[1].sentry.state = AgentSentryState::kAlert;
     const KernelVec3 held_at = group->cursor;
     for (int tick = 0; tick < 30; ++tick) {
-        runtime.tick(&agents, kFixedDelta);
+        tick_groups(&runtime, &agents, kFixedDelta);
     }
     require(group->holding);
     require(almost_equal(group->cursor.x, held_at.x));
@@ -125,7 +138,7 @@ int main() {
     // target rather than the spot the member left.
     agents[1].sentry.state = AgentSentryState::kReturn;
     for (int tick = 0; tick < 15; ++tick) {
-        runtime.tick(&agents, kFixedDelta);
+        tick_groups(&runtime, &agents, kFixedDelta);
     }
     require(!group->holding);
     require(group->cursor.x > held_at.x + 1.0f);
@@ -135,7 +148,7 @@ int main() {
     // heading swings to +Z the member authored behind-and-left must be behind
     // and left of the new heading, not still sitting at a world-axis offset.
     for (int tick = 0; tick < 120; ++tick) {
-        runtime.tick(&agents, kFixedDelta);
+        tick_groups(&runtime, &agents, kFixedDelta);
     }
     require(group->next_waypoint == 1);
     require(almost_equal(group->cursor.x, 10.0f, 0.6f));
@@ -161,12 +174,12 @@ int main() {
 
     // Walking the route out finishes it, once, and stops the cursor.
     for (int tick = 0; tick < 200; ++tick) {
-        runtime.tick(&agents, kFixedDelta);
+        tick_groups(&runtime, &agents, kFixedDelta);
     }
     require(group->route_complete);
     const KernelVec3 finished_at = group->cursor;
     for (int tick = 0; tick < 30; ++tick) {
-        runtime.tick(&agents, kFixedDelta);
+        tick_groups(&runtime, &agents, kFixedDelta);
     }
     require(almost_equal(group->cursor.x, finished_at.x));
     require(almost_equal(group->cursor.z, finished_at.z));
@@ -175,7 +188,7 @@ int main() {
     // kept, and worse, a dead member stuck in kAlert would hold the squad in
     // place for good.
     agents.erase(agents.begin() + 1);
-    runtime.tick(&agents, kFixedDelta);
+    tick_groups(&runtime, &agents, kFixedDelta);
     require(group->member_net_ids.size() == 2u);
     require(group->member_net_ids[0] == 1u);
     require(group->member_net_ids[1] == 3u);

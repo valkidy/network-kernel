@@ -37,14 +37,10 @@ bool is_engaged(AgentSentryState state) {
 
 AgentRuntimeState* find_agent(
     std::vector<AgentRuntimeState>* agents,
+    const AgentIndex& index,
     std::uint32_t net_id) {
-    const auto found = std::find_if(
-        agents->begin(),
-        agents->end(),
-        [net_id](const AgentRuntimeState& agent) {
-            return agent.net_id == net_id;
-        });
-    return found == agents->end() ? nullptr : &*found;
+    const std::size_t position = index.find(net_id);
+    return position == AgentIndex::kNotFound ? nullptr : &(*agents)[position];
 }
 
 }  // namespace
@@ -74,6 +70,7 @@ std::uint32_t PatrolGroupRuntime::create_group(
 
 void PatrolGroupRuntime::tick(
     std::vector<AgentRuntimeState>* agents,
+    const AgentIndex& index,
     float delta_seconds) {
     if (agents == nullptr || delta_seconds <= 0.0f) {
         return;
@@ -85,12 +82,12 @@ void PatrolGroupRuntime::tick(
         std::remove_if(
             groups_.begin(),
             groups_.end(),
-            [&agents](const PatrolGroup& group) {
+            [&agents, &index](const PatrolGroup& group) {
                 return std::none_of(
                     group.member_net_ids.begin(),
                     group.member_net_ids.end(),
-                    [&agents](std::uint32_t net_id) {
-                        return find_agent(agents, net_id) != nullptr;
+                    [&agents, &index](std::uint32_t net_id) {
+                        return find_agent(agents, index, net_id) != nullptr;
                     });
             }),
         groups_.end());
@@ -98,9 +95,11 @@ void PatrolGroupRuntime::tick(
     for (PatrolGroup& group : groups_) {
         // Casualties first, so a dead member neither holds the squad in place
         // nor keeps a slot nobody is standing in.
-        for (std::size_t index = group.member_net_ids.size(); index > 0; --index) {
-            const std::size_t member = index - 1;
-            if (find_agent(agents, group.member_net_ids[member]) != nullptr) {
+        for (std::size_t remaining = group.member_net_ids.size(); remaining > 0;
+             --remaining) {
+            const std::size_t member = remaining - 1;
+            if (find_agent(agents, index, group.member_net_ids[member]) !=
+                nullptr) {
                 continue;
             }
             group.member_net_ids.erase(group.member_net_ids.begin() + member);
@@ -113,7 +112,7 @@ void PatrolGroupRuntime::tick(
         // run away as fast as the pursuit dragged the member off it.
         group.holding = false;
         for (const std::uint32_t net_id : group.member_net_ids) {
-            const AgentRuntimeState* member = find_agent(agents, net_id);
+            const AgentRuntimeState* member = find_agent(agents, index, net_id);
             if (member != nullptr && is_engaged(member->sentry.state)) {
                 group.holding = true;
                 break;
@@ -161,7 +160,7 @@ void PatrolGroupRuntime::tick(
         for (std::size_t member = 0; member < group.member_net_ids.size();
              ++member) {
             AgentRuntimeState* agent =
-                find_agent(agents, group.member_net_ids[member]);
+                find_agent(agents, index, group.member_net_ids[member]);
             if (agent == nullptr) {
                 continue;
             }

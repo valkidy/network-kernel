@@ -56,7 +56,9 @@ private:
         std::uint32_t ai_controller_type = KernelAiControllerType_None;
         AgentSentryController sentry;
         AgentChaserController chaser;
-        std::vector<AgentRuntimeState> batch;
+        // Pointers into agents_, so a controller writes straight through to the
+        // entry it was given. Rebuilt every tick; never outlives one.
+        AgentBatch batch;
     };
 
     void sync_agents_from_kernel(const ActorStateView& actors);
@@ -90,6 +92,10 @@ private:
     GameServerGameplayConfig config_;
     std::vector<AgentControllerBinding> controllers_;
     std::vector<AgentRuntimeState> agents_;
+    // Always describes agents_. Rebuilt wherever that list is replaced,
+    // shortened or cleared -- the resync, a destroy event, and despawn_all --
+    // rather than by whoever is about to read it.
+    AgentIndex agent_index_;
     PatrolGroupRuntime patrol_groups_;
     PatrolDirector patrol_director_;
     PatrolNavigation patrol_navigation_;

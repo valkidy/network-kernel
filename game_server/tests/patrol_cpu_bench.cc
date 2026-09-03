@@ -210,7 +210,8 @@ void tick_manager(
     const double sync_us = micros_since(sync_start);
 
     const auto groups_start = std::chrono::steady_clock::now();
-    manager->patrol_groups_.tick(&manager->agents_, kTickSeconds);
+    manager->patrol_groups_.tick(
+        &manager->agents_, manager->agent_index_, kTickSeconds);
     const double groups_us = micros_since(groups_start);
 
     const auto controllers_start = std::chrono::steady_clock::now();

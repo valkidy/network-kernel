@@ -32,6 +32,18 @@ void require_impl(bool condition, int line, const char* text) {
 // director; a test driving the director directly has to stand in for that.
 // 256 is well past anything these fixtures put in the world, so the truncation
 // the manager's own query loop guards against cannot happen here.
+// AgentRuntimeManager keeps this index beside its agent list and rebuilds it
+// wherever that list changes; a test ticking the runtime directly builds one
+// here. The list does not change across any of these loops, so once is enough.
+void tick_groups(
+    network_example::game_server::PatrolGroupRuntime* groups,
+    std::vector<network_example::game_server::AgentRuntimeState>* agents,
+    float delta_seconds) {
+    network_example::game_server::AgentIndex index;
+    index.rebuild(*agents);
+    groups->tick(agents, index, delta_seconds);
+}
+
 void tick_director(
     network_example::game_server::PatrolDirector* director,
     KernelHandle* kernel,
@@ -558,7 +570,7 @@ void walk_until_route_complete(
         if (!groups->groups().empty() && groups->groups()[0].route_complete) {
             return;
         }
-        groups->tick(agents, 1.0f / 30.0f);
+        tick_groups(groups, agents, 1.0f / 30.0f);
     }
 }
 
@@ -569,7 +581,7 @@ void walk_route_out(
     std::vector<network_example::game_server::AgentRuntimeState>* agents,
     int ticks) {
     for (int tick = 0; tick < ticks; ++tick) {
-        groups->tick(agents, 1.0f / 30.0f);
+        tick_groups(groups, agents, 1.0f / 30.0f);
     }
 }
 
@@ -686,7 +698,7 @@ void a_squad_in_a_fight_is_never_retired() {
 
     // Retirement is due, and then one of them picks a fight.
     agents[0].sentry.state = AgentSentryState::kAlert;
-    groups.tick(&agents, 1.0f / 30.0f);
+    tick_groups(&groups, &agents, 1.0f / 30.0f);
     require(groups.groups()[0].holding);
     for (int tick = 0; tick < 10; ++tick) {
         tick_director(&director, kernel, &groups, nullptr);
@@ -696,7 +708,7 @@ void a_squad_in_a_fight_is_never_retired() {
 
     // The fight ends, and now it goes.
     agents[0].sentry.state = AgentSentryState::kIdle;
-    groups.tick(&agents, 1.0f / 30.0f);
+    tick_groups(&groups, &agents, 1.0f / 30.0f);
     tick_director(&director, kernel, &groups, nullptr);
     require(director.retired_group_count() == 1u);
 

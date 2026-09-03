@@ -256,7 +256,11 @@ Row measure(
                 break;
             case Drive::kController:
                 frame.refresh(kernel);
-                controller.tick(kernel, frame, &agents, kTickSeconds);
+                controller.tick(
+                    kernel,
+                    frame,
+                    network_example::game_server::whole_batch(&agents),
+                    kTickSeconds);
                 break;
             case Drive::kManager:
                 manager.tick(kTickSeconds);

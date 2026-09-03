@@ -83,7 +83,14 @@ public:
     // Advances each squad and writes its members' slots. Members that no longer
     // appear in `agents` are dropped, which is how a squad shrinks as it takes
     // casualties, and a squad that loses its last member is dropped with them.
-    void tick(std::vector<AgentRuntimeState>* agents, float delta_seconds);
+    //
+    // `index` has to describe `agents`. Every member lookup below goes through
+    // it, and there are three or four per member per tick, so walking the list
+    // instead made a squad cost members times population.
+    void tick(
+        std::vector<AgentRuntimeState>* agents,
+        const AgentIndex& index,
+        float delta_seconds);
 
     const std::vector<PatrolGroup>& groups() const;
     const PatrolGroup* find_group(std::uint32_t group_id) const;

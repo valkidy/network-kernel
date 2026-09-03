@@ -76,9 +76,9 @@ AgentChaserController::AgentChaserController(AgentChaserConfig config)
 void AgentChaserController::tick(
     KernelHandle* kernel,
     const PerceptionFrame& frame,
-    std::vector<AgentRuntimeState>* agents,
+    const AgentBatch& agents,
     float) const {
-    if (kernel == nullptr || agents == nullptr) {
+    if (kernel == nullptr) {
         return;
     }
 
@@ -89,7 +89,8 @@ void AgentChaserController::tick(
     executor_config.ballistic_aim = sentry_config.ballistic_aim;
     const ActorIntentExecutor actor_executor(executor_config);
 
-    for (AgentRuntimeState& agent : *agents) {
+    for (AgentRuntimeState* agent_pointer : agents) {
+        AgentRuntimeState& agent = *agent_pointer;
         const SentryPerceptionSnapshot perception =
             AiPerceptionAdapter::build_sentry_snapshot(
                 kernel, frame, agent.net_id);

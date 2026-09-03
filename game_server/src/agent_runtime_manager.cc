@@ -164,12 +164,12 @@ void AgentRuntimeManager::dispatch_controllers(
     for (AgentControllerBinding& binding : controllers_) {
         binding.batch.clear();
     }
-    for (const AgentRuntimeState& agent : agents_) {
+    for (AgentRuntimeState& agent : agents_) {
         AgentControllerBinding* binding = binding_for(agent.actor_template_id);
         if (binding == nullptr) {
             continue;
         }
-        binding->batch.push_back(agent);
+        binding->batch.push_back(&agent);
     }
     for (AgentControllerBinding& binding : controllers_) {
         if (binding.batch.empty()) {
@@ -177,27 +177,15 @@ void AgentRuntimeManager::dispatch_controllers(
         }
         if (binding.ai_controller_type == KernelAiControllerType_Chaser) {
             binding.chaser.tick(
-                kernel_, perception_frame_, &binding.batch, delta_seconds);
+                kernel_, perception_frame_, binding.batch, delta_seconds);
         } else {
             binding.sentry.tick(
-                kernel_, perception_frame_, &binding.batch, delta_seconds);
+                kernel_, perception_frame_, binding.batch, delta_seconds);
         }
     }
-    // Controllers never add or drop agents, so the batches only carry updates
-    // back to the entries they were copied from.
-    for (const AgentControllerBinding& binding : controllers_) {
-        for (const AgentRuntimeState& updated : binding.batch) {
-            const auto existing = std::find_if(
-                agents_.begin(),
-                agents_.end(),
-                [&updated](const AgentRuntimeState& agent) {
-                    return agent.net_id == updated.net_id;
-                });
-            if (existing != agents_.end()) {
-                *existing = updated;
-            }
-        }
-    }
+    // No write-back pass. Controllers never add or drop agents, and a batch now
+    // points at the entries rather than holding copies of them, so what a
+    // controller wrote is already in agents_.
 }
 
 void AgentRuntimeManager::handle_event(const KernelEvent& event) {
@@ -212,6 +200,10 @@ void AgentRuntimeManager::handle_event(const KernelEvent& event) {
                 return agent.net_id == event.net_id;
             }),
         agents_.end());
+    // Every entry after the removed one has shifted, so the index describes the
+    // wrong agents until it is rebuilt. This runs between ticks, not inside
+    // one, so the next resync would otherwise read it stale.
+    agent_index_.rebuild(agents_);
 }
 
 void AgentRuntimeManager::tick(float delta_seconds) {
@@ -256,7 +248,7 @@ void AgentRuntimeManager::tick(float delta_seconds) {
     sync_agents_from_kernel(actors);
     // Ahead of the controllers, so a member reads the slot its squad wants it
     // in this tick rather than the one from last tick.
-    patrol_groups_.tick(&agents_, delta_seconds);
+    patrol_groups_.tick(&agents_, agent_index_, delta_seconds);
     // Still on the post-director snapshot: nothing between it and here creates,
     // destroys or moves an entity, so it is what a per-agent query would return.
     dispatch_controllers(actors, delta_seconds);
@@ -265,6 +257,7 @@ void AgentRuntimeManager::tick(float delta_seconds) {
 void AgentRuntimeManager::despawn_all(std::uint32_t reason) {
     if (kernel_ == nullptr) {
         agents_.clear();
+        agent_index_.rebuild(agents_);
         return;
     }
 
@@ -280,6 +273,7 @@ void AgentRuntimeManager::despawn_all(std::uint32_t reason) {
             &command);
     }
     agents_.clear();
+    agent_index_.rebuild(agents_);
     despawn_pending_ = true;
 }
 
@@ -358,15 +352,12 @@ void AgentRuntimeManager::sync_agents_from_kernel(const ActorStateView& actors) 
         if (state.valid == 0u || state.actor_type != kActorTypeAgent) {
             continue;
         }
-        const auto existing = std::find_if(
-            agents_.begin(),
-            agents_.end(),
-            [&](const AgentRuntimeState& agent) {
-                return agent.net_id == state.net_id;
-            });
+        // The index still describes the pre-resync list, which is exactly what
+        // this lookup wants: "did I already know about this net_id".
+        const std::size_t existing = agent_index_.find(state.net_id);
+        const bool discovered_agent = existing == AgentIndex::kNotFound;
         AgentRuntimeState agent =
-            existing == agents_.end() ? AgentRuntimeState{} : *existing;
-        const bool discovered_agent = existing == agents_.end();
+            discovered_agent ? AgentRuntimeState{} : agents_[existing];
         agent.net_id = state.net_id;
         agent.actor_template_id = state.actor_template_id;
         agent.position = state.position;
@@ -387,6 +378,7 @@ void AgentRuntimeManager::sync_agents_from_kernel(const ActorStateView& actors) 
         next_agents.push_back(agent);
     }
     agents_ = std::move(next_agents);
+    agent_index_.rebuild(agents_);
 }
 
 bool AgentRuntimeManager::apply_weapon_mechanics(

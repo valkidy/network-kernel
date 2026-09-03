@@ -202,7 +202,11 @@ struct SentryFixture {
             // controller directly has the frame take its own.
             network_example::game_server::PerceptionFrame frame;
             frame.refresh(kernel);
-            controller.tick(kernel, frame, &agents, kTickSeconds);
+            controller.tick(
+                kernel,
+                frame,
+                network_example::game_server::whole_batch(&agents),
+                kTickSeconds);
             Kernel_Update(kernel, kTickSeconds);
         }
     }

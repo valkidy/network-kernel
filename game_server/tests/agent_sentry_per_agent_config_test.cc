@@ -113,7 +113,11 @@ void one_controller_drives_a_mixed_population() {
     // the frame take its own.
     network_example::game_server::PerceptionFrame frame;
     frame.refresh(kernel);
-    controller.tick(kernel, frame, &agents, 1.0f / 30.0f);
+    controller.tick(
+        kernel,
+        frame,
+        network_example::game_server::whole_batch(&agents),
+        1.0f / 30.0f);
 
     // The walker patrols: it submits a move input and carries patrol velocity.
     require(agents[0].patrol_direction == 1);
@@ -155,7 +159,11 @@ void patrol_turns_around_at_its_own_extent() {
     // the frame take its own.
     network_example::game_server::PerceptionFrame frame;
     frame.refresh(kernel);
-    controller.tick(kernel, frame, &agents, 1.0f / 30.0f);
+    controller.tick(
+        kernel,
+        frame,
+        network_example::game_server::whole_batch(&agents),
+        1.0f / 30.0f);
 
     require(agents[0].patrol_direction == -1);
     require(agents[0].velocity.x < 0.0f);

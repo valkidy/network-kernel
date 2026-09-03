@@ -1,7 +1,10 @@
 #ifndef GAME_SERVER_AGENT_RUNTIME_H_
 #define GAME_SERVER_AGENT_RUNTIME_H_
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <vector>
 
 #include "game_server/src/ballistic_aim.h"
 #include "kernel/public/kernel_types.h"
@@ -114,6 +117,87 @@ struct AgentRuntimeState {
     bool chase_holding = false;
     AgentPatrolRuntimeState patrol{};
 };
+
+// Where each agent sits in the manager's list.
+//
+// Every phase after the resync used to find an agent by walking that list:
+// the squad runtime does it three or four times per member, and the resync
+// itself did it once per actor the kernel reported. All of them were quadratic
+// in the population for a lookup that is a hash.
+//
+// It describes exactly one list and goes stale the moment that list is
+// reordered or shortened, so whoever owns the list rebuilds it at every
+// mutation rather than at every read.
+class AgentIndex {
+public:
+    static constexpr std::size_t kNotFound = static_cast<std::size_t>(-1);
+
+    void rebuild(const std::vector<AgentRuntimeState>& agents) {
+        // Sorted pairs rather than a hash map, because this is rebuilt every
+        // tick and thrown away: an unordered_map allocates a node per entry on
+        // every rebuild, which measured slower than the linear scan it was
+        // replacing at the population this server actually runs. Clearing a
+        // vector keeps its buffer, so after the first tick nothing allocates.
+        entries_.clear();
+        entries_.reserve(agents.size());
+        for (std::size_t position = 0; position < agents.size(); ++position) {
+            entries_.push_back(Entry{
+                agents[position].net_id,
+                static_cast<std::uint32_t>(position)});
+        }
+        std::sort(
+            entries_.begin(),
+            entries_.end(),
+            [](const Entry& lhs, const Entry& rhs) {
+                return lhs.net_id < rhs.net_id;
+            });
+    }
+
+    std::size_t find(std::uint32_t net_id) const {
+        const auto found = std::lower_bound(
+            entries_.begin(),
+            entries_.end(),
+            net_id,
+            [](const Entry& entry, std::uint32_t value) {
+                return entry.net_id < value;
+            });
+        if (found == entries_.end() || found->net_id != net_id) {
+            return kNotFound;
+        }
+        return found->position;
+    }
+
+private:
+    struct Entry {
+        std::uint32_t net_id = 0;
+        std::uint32_t position = 0;
+    };
+
+    std::vector<Entry> entries_;
+};
+
+// The agents one controller drives this tick.
+//
+// Pointers into the manager's own list rather than copies of it. A controller
+// mutates the entry it was handed, so a batch of copies had to be walked
+// afterwards and matched back by net_id -- another quadratic loop, on top of
+// copying a 200-byte struct per agent in each direction.
+using AgentBatch = std::vector<AgentRuntimeState*>;
+
+// Every agent in `agents`, as one batch. The manager splits its list by actor
+// template and never uses this; it is for callers driving a single controller
+// over a single list, which is what the tests and benches do.
+inline AgentBatch whole_batch(std::vector<AgentRuntimeState>* agents) {
+    AgentBatch batch;
+    if (agents == nullptr) {
+        return batch;
+    }
+    batch.reserve(agents->size());
+    for (AgentRuntimeState& agent : *agents) {
+        batch.push_back(&agent);
+    }
+    return batch;
+}
 
 }  // namespace network_example::game_server
 

@@ -325,7 +325,8 @@ void run_frame(
     // the frame take its own.
     network_example::game_server::PerceptionFrame frame;
     frame.refresh(kernel);
-    controller.tick(kernel, frame, agents, kFixedDelta);
+    controller.tick(
+        kernel, frame, network_example::game_server::whole_batch(agents), kFixedDelta);
     Kernel_Update(kernel, kFixedDelta);
 }
 
