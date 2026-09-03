@@ -18,7 +18,7 @@ filegroup(
         "shipping_catalog/weapon_templates/*.yaml",
     ]) + [
         "shipping_catalog/gameplay_catalog.yaml",
-        "test_catalogs/legged_locomotion/gameplay_catalog.yaml",
+        "tests/test_catalogs/legged_locomotion/gameplay_catalog.yaml",
         "//game_server/shipping_catalog/skeleton_assets:simplified_biped_assets",
         "//game_server/shipping_catalog/skeleton_assets:simplified_quadruped_assets",
         "//game_server/shipping_catalog/skeleton_assets:simplified_tripod_assets",
@@ -178,7 +178,7 @@ cc_test(
     srcs = ["tests/patrol_nav_bench.cc"],
     data = [
         "//game_server/gameplay_catalog_bundle:bundle",
-        "//game_server/test_mesh_assets:cooked_test_mesh_assets",
+        "//game_server/tests/test_mesh_assets:cooked_test_mesh_assets",
     ],
     tags = ["manual"],
     deps = [
@@ -283,7 +283,7 @@ cc_test(
     name = "patrol_director_test",
     srcs = ["tests/patrol_director_test.cc"],
     data = [
-        "//game_server/test_mesh_assets:cooked_test_mesh_assets",
+        "//game_server/tests/test_mesh_assets:cooked_test_mesh_assets",
     ],
     deps = [
         ":game_server",
@@ -322,7 +322,7 @@ cc_test(
     name = "patrol_navigation_test",
     srcs = ["tests/patrol_navigation_test.cc"],
     data = [
-        "//game_server/test_mesh_assets:cooked_test_mesh_assets",
+        "//game_server/tests/test_mesh_assets:cooked_test_mesh_assets",
     ],
     deps = [
         ":game_server",

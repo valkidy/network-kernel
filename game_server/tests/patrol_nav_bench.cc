@@ -559,8 +559,9 @@ void measure_bundled(const std::vector<std::uint8_t>& bundle, const std::string&
 // runfiles, so that nothing built to be measured ends up in a client download.
 void measure_test_asset(const std::string& name) {
     measure(
-        read_binary_file((runfiles_root() / "game_server" / "test_mesh_assets" /
-                          "recast" / (name + ".navmesh"))
+        read_binary_file((runfiles_root() / "game_server" / "tests" /
+                          "test_mesh_assets" / "recast" /
+                          (name + ".navmesh"))
                              .string()),
         name);
 }
