@@ -287,7 +287,7 @@ cc_binary(
 cc_test(
     name = "movement_collision_mask_test",
     srcs = ["movement_collision_mask_test.cc"],
-    data = ["//game_server/mesh_assets:cooked_mesh_assets"],
+    data = ["//game_server/shipping_catalog/mesh_assets:cooked_mesh_assets"],
     deps = ["//engine/src/kernel:kernel"],
 )
 

@@ -260,7 +260,7 @@ cc_test(
 cc_test(
     name = "agent_sentry_gravity_test",
     srcs = ["tests/agent_sentry_gravity_test.cc"],
-    data = ["//game_server/mesh_assets:cooked_mesh_assets"],
+    data = ["//game_server/shipping_catalog/mesh_assets:cooked_mesh_assets"],
     deps = [
         ":game_server",
         "//engine/src/kernel:kernel",
