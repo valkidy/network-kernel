@@ -28,6 +28,32 @@ void require_impl(bool condition, int line, const char* text) {
 
 #define require(expr) require_impl(static_cast<bool>(expr), __LINE__, #expr)
 
+// AgentRuntimeManager takes one actor snapshot per tick and hands it to the
+// director; a test driving the director directly has to stand in for that.
+// 256 is well past anything these fixtures put in the world, so the truncation
+// the manager's own query loop guards against cannot happen here.
+void tick_director(
+    network_example::game_server::PatrolDirector* director,
+    KernelHandle* kernel,
+    network_example::game_server::PatrolGroupRuntime* groups,
+    const network_example::game_server::PatrolNavigation* navigation) {
+    std::vector<KernelServerEntityState> actors(256);
+    for (KernelServerEntityState& state : actors) {
+        state.struct_size = sizeof(KernelServerEntityState);
+    }
+    const std::uint32_t count = Kernel_ServerQueryEntities(
+        kernel,
+        network_example::game_server::kEntityTypeActor,
+        actors.data(),
+        static_cast<std::uint32_t>(actors.size()));
+    require(count < actors.size());
+    director->tick(
+        kernel,
+        groups,
+        navigation,
+        network_example::game_server::ActorStateView{actors.data(), count});
+}
+
 std::filesystem::path runfiles_root() {
     const char* test_srcdir = std::getenv("TEST_SRCDIR");
     const char* test_workspace = std::getenv("TEST_WORKSPACE");
@@ -427,10 +453,10 @@ void a_patrol_spawns_on_its_interval() {
 
     // Staggered by one interval rather than firing on tick zero.
     for (std::uint32_t tick = 0; tick < definition.interval_ticks; ++tick) {
-        director.tick(kernel, &groups, nullptr);
+        tick_director(&director, kernel, &groups, nullptr);
         require(groups.groups().empty());
     }
-    director.tick(kernel, &groups, nullptr);
+    tick_director(&director, kernel, &groups, nullptr);
     require(groups.groups().size() == 1u);
     require(director.spawned_group_count() == 1u);
 
@@ -467,7 +493,7 @@ void a_patrol_spawns_on_its_interval() {
     // The ceiling holds: the interval passes again and no second squad appears
     // while the first is still alive.
     for (std::uint32_t tick = 0; tick < definition.interval_ticks * 3u; ++tick) {
-        director.tick(kernel, &groups, nullptr);
+        tick_director(&director, kernel, &groups, nullptr);
     }
     require(groups.groups().size() == 1u);
     require(director.spawned_group_count() == 1u);
@@ -498,7 +524,7 @@ void the_same_seed_spawns_the_same_squad() {
         PatrolDirector director({definition});
         PatrolGroupRuntime groups;
         for (int tick = 0; tick < 8; ++tick) {
-            director.tick(kernel, &groups, nullptr);
+            tick_director(&director, kernel, &groups, nullptr);
         }
         require(groups.groups().size() == 4u);
         for (const network_example::game_server::PatrolGroup& group :
@@ -582,8 +608,8 @@ void a_finished_patrol_retires_after_its_linger() {
     PatrolDirector director({definition});
     PatrolGroupRuntime groups;
 
-    director.tick(kernel, &groups, nullptr);
-    director.tick(kernel, &groups, nullptr);
+    tick_director(&director, kernel, &groups, nullptr);
+    tick_director(&director, kernel, &groups, nullptr);
     require(groups.groups().size() == 1u);
     const std::vector<std::uint32_t> members = groups.groups()[0].member_net_ids;
     std::vector<network_example::game_server::AgentRuntimeState> agents =
@@ -595,12 +621,12 @@ void a_finished_patrol_retires_after_its_linger() {
     require(
         groups.groups()[0].ticks_since_route_complete <
         definition.despawn_linger_ticks);
-    director.tick(kernel, &groups, nullptr);
+    tick_director(&director, kernel, &groups, nullptr);
     require(groups.groups().size() == 1u);
     require(director.retired_group_count() == 0u);
 
     walk_route_out(&groups, &agents, 20);
-    director.tick(kernel, &groups, nullptr);
+    tick_director(&director, kernel, &groups, nullptr);
     Kernel_Update(kernel, 1.0f / 30.0f);
     require(director.retired_group_count() == 1u);
 
@@ -613,7 +639,7 @@ void a_finished_patrol_retires_after_its_linger() {
     }
 
     // And the freed place is taken, which is the whole point of retiring.
-    director.tick(kernel, &groups, nullptr);
+    tick_director(&director, kernel, &groups, nullptr);
     require(groups.groups().size() == 1u);
     require(director.spawned_group_count() == 2u);
 
@@ -646,8 +672,8 @@ void a_squad_in_a_fight_is_never_retired() {
     PatrolDirector director({definition});
     PatrolGroupRuntime groups;
 
-    director.tick(kernel, &groups, nullptr);
-    director.tick(kernel, &groups, nullptr);
+    tick_director(&director, kernel, &groups, nullptr);
+    tick_director(&director, kernel, &groups, nullptr);
     require(groups.groups().size() == 1u);
     std::vector<network_example::game_server::AgentRuntimeState> agents =
         members_of(groups.groups()[0]);
@@ -663,7 +689,7 @@ void a_squad_in_a_fight_is_never_retired() {
     groups.tick(&agents, 1.0f / 30.0f);
     require(groups.groups()[0].holding);
     for (int tick = 0; tick < 10; ++tick) {
-        director.tick(kernel, &groups, nullptr);
+        tick_director(&director, kernel, &groups, nullptr);
     }
     require(director.retired_group_count() == 0u);
     require(groups.groups().size() == 1u);
@@ -671,7 +697,7 @@ void a_squad_in_a_fight_is_never_retired() {
     // The fight ends, and now it goes.
     agents[0].sentry.state = AgentSentryState::kIdle;
     groups.tick(&agents, 1.0f / 30.0f);
-    director.tick(kernel, &groups, nullptr);
+    tick_director(&director, kernel, &groups, nullptr);
     require(director.retired_group_count() == 1u);
 
     Kernel_Destroy(kernel);
@@ -715,11 +741,11 @@ void a_patrol_nobody_is_near_retires_early() {
     create_player(kernel, KernelVec3{0.0f, 0.0f, 0.0f});
     PatrolDirector near_director({definition});
     PatrolGroupRuntime near_groups;
-    near_director.tick(kernel, &near_groups, nullptr);
-    near_director.tick(kernel, &near_groups, nullptr);
+    tick_director(&near_director, kernel, &near_groups, nullptr);
+    tick_director(&near_director, kernel, &near_groups, nullptr);
     require(near_groups.groups().size() == 1u);
     for (int tick = 0; tick < 10; ++tick) {
-        near_director.tick(kernel, &near_groups, nullptr);
+        tick_director(&near_director, kernel, &near_groups, nullptr);
     }
     require(near_director.retired_group_count() == 0u);
 
@@ -729,8 +755,8 @@ void a_patrol_nobody_is_near_retires_early() {
     state.struct_size = sizeof(state);
     PatrolDirector far_director({definition});
     PatrolGroupRuntime far_groups;
-    far_director.tick(kernel, &far_groups, nullptr);
-    far_director.tick(kernel, &far_groups, nullptr);
+    tick_director(&far_director, kernel, &far_groups, nullptr);
+    tick_director(&far_director, kernel, &far_groups, nullptr);
     require(far_groups.groups().size() == 1u);
     // The near player has to go first, or the nearest one is still on the area.
     KernelEntityLifecycleCommand destroy{};
@@ -741,7 +767,7 @@ void a_patrol_nobody_is_near_retires_early() {
     Kernel_ServerEnqueueEntityLifecycle(
         kernel, KernelCommandSource_Internal, &destroy);
     Kernel_Update(kernel, 1.0f / 30.0f);
-    far_director.tick(kernel, &far_groups, nullptr);
+    tick_director(&far_director, kernel, &far_groups, nullptr);
     require(far_director.retired_group_count() == 1u);
 
     Kernel_Destroy(kernel);
@@ -768,11 +794,11 @@ void an_empty_server_does_not_sweep_its_patrols_away() {
     PatrolDirector director({definition});
     PatrolGroupRuntime groups;
 
-    director.tick(kernel, &groups, nullptr);
-    director.tick(kernel, &groups, nullptr);
+    tick_director(&director, kernel, &groups, nullptr);
+    tick_director(&director, kernel, &groups, nullptr);
     require(groups.groups().size() == 1u);
     for (int tick = 0; tick < 20; ++tick) {
-        director.tick(kernel, &groups, nullptr);
+        tick_director(&director, kernel, &groups, nullptr);
     }
     require(director.retired_group_count() == 0u);
     require(groups.groups().size() == 1u);
@@ -810,7 +836,7 @@ void the_budget_caps_agents_across_definitions() {
     PatrolGroupRuntime groups;
 
     for (int tick = 0; tick < 40; ++tick) {
-        director.tick(kernel, &groups, nullptr);
+        tick_director(&director, kernel, &groups, nullptr);
         std::uint32_t live = 0;
         for (const network_example::game_server::PatrolGroup& group :
              groups.groups()) {
@@ -861,7 +887,7 @@ void a_navigable_patrol_routes_around_obstacles() {
     PatrolGroupRuntime groups;
 
     for (int tick = 0; tick < 40; ++tick) {
-        director.tick(kernel, &groups, &navigation);
+        tick_director(&director, kernel, &groups, &navigation);
     }
     require(groups.groups().size() == 16u);
 
@@ -913,7 +939,7 @@ void an_unwalkable_area_spawns_nothing() {
     PatrolGroupRuntime groups;
 
     for (int tick = 0; tick < 20; ++tick) {
-        director.tick(kernel, &groups, &navigation);
+        tick_director(&director, kernel, &groups, &navigation);
     }
     require(groups.groups().empty());
     require(director.route_failure_count() > 0u);

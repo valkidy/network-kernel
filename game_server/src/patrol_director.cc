@@ -93,11 +93,12 @@ PatrolDirector::PatrolDirector(
 void PatrolDirector::tick(
     KernelHandle* kernel,
     PatrolGroupRuntime* groups,
-    const PatrolNavigation* navigation) {
+    const PatrolNavigation* navigation,
+    const ActorStateView& actors) {
     if (kernel == nullptr || groups == nullptr) {
         return;
     }
-    retire_finished_patrols(kernel, groups);
+    retire_finished_patrols(kernel, groups, actors);
 
     std::uint32_t live_agents = 0;
     for (const PatrolGroup& group : groups->groups()) {
@@ -151,52 +152,34 @@ float horizontal_distance_squared(const KernelVec3& from, const KernelVec3& to) 
 // purposes: an empty server should not sweep its patrols away, because the
 // distance rule is about a squad nobody can see rather than about a squad
 // nobody owns.
-float nearest_player_distance(
-    KernelHandle* kernel,
-    const KernelVec3& from,
-    std::vector<KernelServerEntityState>* buffer) {
-    if (buffer->size() < 64) {
-        buffer->resize(64);
-    }
-    while (true) {
-        for (KernelServerEntityState& state : *buffer) {
-            state.struct_size = sizeof(KernelServerEntityState);
-        }
-        const std::uint32_t count = Kernel_ServerQueryEntities(
-            kernel,
-            kEntityTypeActor,
-            buffer->data(),
-            static_cast<std::uint32_t>(buffer->size()));
-        // Same truncation trap AgentRuntimeManager::query_actor_states
-        // documents: the query reports what it wrote, never what it had, so a
-        // full buffer is indistinguishable from a truncated one.
-        if (count >= buffer->size() && buffer->size() < 4096) {
-            buffer->resize(buffer->size() * 2);
+//
+// Reads the caller's snapshot rather than querying. Nothing between the
+// snapshot and here creates or moves a player, so this sees exactly what a
+// query at this point would have -- and one squad no longer pays for the walk
+// the next squad is about to repeat.
+float nearest_player_distance(const ActorStateView& actors, const KernelVec3& from) {
+    float nearest = -1.0f;
+    for (std::uint32_t index = 0; index < actors.count; ++index) {
+        const KernelServerEntityState& state = actors.states[index];
+        if (state.valid == 0u || state.actor_type != kActorTypePlayer) {
             continue;
         }
-        float nearest = -1.0f;
-        for (std::uint32_t index = 0; index < count; ++index) {
-            const KernelServerEntityState& state = (*buffer)[index];
-            if (state.valid == 0u || state.actor_type != kActorTypePlayer) {
-                continue;
-            }
-            const float distance = std::sqrt(
-                horizontal_distance_squared(from, state.position));
-            if (nearest < 0.0f || distance < nearest) {
-                nearest = distance;
-            }
+        const float distance =
+            std::sqrt(horizontal_distance_squared(from, state.position));
+        if (nearest < 0.0f || distance < nearest) {
+            nearest = distance;
         }
-        return nearest;
     }
+    return nearest;
 }
 
 }  // namespace
 
 void PatrolDirector::retire_finished_patrols(
     KernelHandle* kernel,
-    PatrolGroupRuntime* groups) {
+    PatrolGroupRuntime* groups,
+    const ActorStateView& actors) {
     std::vector<std::uint32_t> retiring;
-    std::vector<KernelServerEntityState> actor_states;
     for (const PatrolGroup& group : groups->groups()) {
         const auto definition = std::find_if(
             definitions_.begin(),
@@ -216,8 +199,7 @@ void PatrolDirector::retire_finished_patrols(
         bool retire = group.route_complete &&
             group.ticks_since_route_complete >= definition->despawn_linger_ticks;
         if (!retire && definition->despawn_distance_meters > 0.0f) {
-            const float nearest =
-                nearest_player_distance(kernel, group.cursor, &actor_states);
+            const float nearest = nearest_player_distance(actors, group.cursor);
             retire = nearest >= 0.0f &&
                 nearest > definition->despawn_distance_meters;
         }

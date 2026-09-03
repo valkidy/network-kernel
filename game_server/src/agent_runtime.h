@@ -12,6 +12,18 @@ inline constexpr std::uint16_t kEntityTypeActor = 1;
 inline constexpr std::uint16_t kActorTypePlayer = KernelActorType_Player;
 inline constexpr std::uint16_t kActorTypeAgent = KernelActorType_Agent;
 
+// One tick's worth of actor states, taken once and handed to every phase that
+// needs it. The phases used to each run their own Kernel_ServerQueryEntities --
+// four of them per tick, one of which ran once per patrol squad -- and every one
+// of those walks the whole world and builds a full state per entity.
+//
+// It is a view, not a copy: the buffer belongs to whoever took the snapshot, and
+// it is only valid until the next thing creates or destroys an entity.
+struct ActorStateView {
+    const KernelServerEntityState* states = nullptr;
+    std::uint32_t count = 0;
+};
+
 inline constexpr std::uint16_t kAgentInitialHp = 240;
 inline constexpr std::uint8_t kAgentSpammerWeaponId = 2;
 

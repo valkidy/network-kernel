@@ -221,15 +221,34 @@ void AgentRuntimeManager::tick(float delta_seconds) {
         }
     }
 
+    // One snapshot for the whole retirement pass, taken before any director has
+    // run -- which is exactly what the per-squad queries used to see, because
+    // retirement happens before this tick creates anything.
+    ActorStateView actors = refresh_actor_states();
+
     // Ahead of the resync on purpose: the director creates entities, and the
     // group runtime drops members it cannot find in the agent list. Ticking it
     // after the resync would drop every member of a squad on the tick it was
     // spawned.
-    patrol_director_.tick(kernel_, &patrol_groups_, &patrol_navigation_);
-    world_rule_director_.tick(kernel_, live_agent_count());
+    const std::uint32_t spawned_groups_before =
+        patrol_director_.spawned_group_count();
+    patrol_director_.tick(kernel_, &patrol_groups_, &patrol_navigation_, actors);
+    // Only on a tick a squad actually appeared, which is once per definition
+    // per interval_ticks. The world rule counts every agent alive including the
+    // ones just spawned -- counting the pre-spawn list would have it top up
+    // against a population that already exists.
+    if (patrol_director_.spawned_group_count() != spawned_groups_before) {
+        actors = refresh_actor_states();
+    }
+    world_rule_director_.tick(kernel_, live_agent_count(actors));
+
     game_rule_director_.tick(kernel_);
     spawner_director_.tick(kernel_);
-    sync_agents_from_kernel();
+    // Re-taken because the three directors above all create, and the resync
+    // exists to discover what they made -- that is the whole reason it runs
+    // after them.
+    actors = refresh_actor_states();
+    sync_agents_from_kernel(actors);
     // Ahead of the controllers, so a member reads the slot its squad wants it
     // in this tick rather than the one from last tick.
     patrol_groups_.tick(&agents_, delta_seconds);
@@ -324,14 +343,11 @@ bool AgentRuntimeManager::preload_directors() {
     return true;
 }
 
-void AgentRuntimeManager::sync_agents_from_kernel() {
-    const std::uint32_t state_count = query_actor_states(&actor_query_buffer_);
-    const std::vector<KernelServerEntityState>& states = actor_query_buffer_;
-
+void AgentRuntimeManager::sync_agents_from_kernel(const ActorStateView& actors) {
     std::vector<AgentRuntimeState> next_agents;
-    next_agents.reserve(state_count);
-    for (std::uint32_t index = 0; index < state_count; ++index) {
-        const KernelServerEntityState& state = states[index];
+    next_agents.reserve(actors.count);
+    for (std::uint32_t index = 0; index < actors.count; ++index) {
+        const KernelServerEntityState& state = actors.states[index];
         if (state.valid == 0u || state.actor_type != kActorTypeAgent) {
             continue;
         }
@@ -384,16 +400,20 @@ bool AgentRuntimeManager::apply_weapon_mechanics(
     return true;
 }
 
-std::uint32_t AgentRuntimeManager::live_agent_count() const {
-    const std::uint32_t state_count = query_actor_states(&actor_query_buffer_);
+std::uint32_t AgentRuntimeManager::live_agent_count(const ActorStateView& actors) {
     std::uint32_t agents = 0;
-    for (std::uint32_t index = 0; index < state_count; ++index) {
+    for (std::uint32_t index = 0; index < actors.count; ++index) {
         // No `valid` check on purpose; see the declaration.
-        if (actor_query_buffer_[index].actor_type == kActorTypeAgent) {
+        if (actors.states[index].actor_type == kActorTypeAgent) {
             ++agents;
         }
     }
     return agents;
+}
+
+ActorStateView AgentRuntimeManager::refresh_actor_states() const {
+    const std::uint32_t count = query_actor_states(&actor_query_buffer_);
+    return ActorStateView{actor_query_buffer_.data(), count};
 }
 
 bool AgentRuntimeManager::has_live_agent() const {

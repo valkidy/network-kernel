@@ -119,10 +119,15 @@ public:
     // navmesh, in which case a route is the straight chord between two points
     // in the area -- exactly a pathed route on flat ground, and wrong anywhere
     // else. See //game_server:patrol_nav_bench.
+    // `actors` is this tick's actor snapshot, taken once by the caller. The
+    // retirement pass reads player positions out of it; it used to run its own
+    // full actor query once per live squad, so the cost of retiring scaled with
+    // squads times entities for a rule that only ever needs the nearest player.
     void tick(
         KernelHandle* kernel,
         PatrolGroupRuntime* groups,
-        const PatrolNavigation* navigation);
+        const PatrolNavigation* navigation,
+        const ActorStateView& actors);
 
     const std::vector<PatrolDefinitionConfig>& definitions() const;
     // Squads spawned since the server started, across all definitions. The
@@ -142,7 +147,8 @@ private:
 
     void retire_finished_patrols(
         KernelHandle* kernel,
-        PatrolGroupRuntime* groups);
+        PatrolGroupRuntime* groups,
+        const ActorStateView& actors);
 
     bool spawn_patrol(
         KernelHandle* kernel,

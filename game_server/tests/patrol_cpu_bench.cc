@@ -6,11 +6,13 @@
 // chaser controllers, with the tick split into the phases
 // AgentRuntimeManager::tick runs in order.
 //
-//   director us     -- PatrolDirector::tick, which is retirement every tick and
-//                      a spawn only when a definition's countdown fires
-//   world rule us   -- WorldRuleDirector::tick, plus the live_agent_count()
-//                      actor query it is handed whether or not a rule exists
-//   sync us         -- sync_agents_from_kernel, one full actor query
+//   director us     -- the tick's first actor snapshot plus PatrolDirector::tick,
+//                      which is retirement every tick and a spawn only when a
+//                      definition's countdown fires
+//   world rule us   -- WorldRuleDirector::tick over that same snapshot, plus the
+//                      game rule and spawner directors
+//   sync us         -- the post-director actor snapshot and
+//                      sync_agents_from_kernel over it
 //   groups us       -- PatrolGroupRuntime::tick, slots and casualties
 //   controllers us  -- dispatch_controllers, which is per-agent perception
 //   kernel us       -- Kernel_Update: movement, vision, actions, snapshot build
@@ -184,18 +186,26 @@ void tick_manager(
     KernelHandle* kernel,
     Phases* out) {
     const auto director_start = std::chrono::steady_clock::now();
+    gs::ActorStateView actors = manager->refresh_actor_states();
+    const std::uint32_t spawned_groups_before =
+        manager->patrol_director_.spawned_group_count();
     manager->patrol_director_.tick(
-        kernel, &manager->patrol_groups_, &manager->patrol_navigation_);
+        kernel, &manager->patrol_groups_, &manager->patrol_navigation_, actors);
+    if (manager->patrol_director_.spawned_group_count() != spawned_groups_before) {
+        actors = manager->refresh_actor_states();
+    }
     const double director_us = micros_since(director_start);
 
     const auto world_rule_start = std::chrono::steady_clock::now();
-    manager->world_rule_director_.tick(kernel, manager->live_agent_count());
+    manager->world_rule_director_.tick(
+        kernel, gs::AgentRuntimeManager::live_agent_count(actors));
     manager->game_rule_director_.tick(kernel);
     manager->spawner_director_.tick(kernel);
     const double world_rule_us = micros_since(world_rule_start);
 
     const auto sync_start = std::chrono::steady_clock::now();
-    manager->sync_agents_from_kernel();
+    actors = manager->refresh_actor_states();
+    manager->sync_agents_from_kernel(actors);
     const double sync_us = micros_since(sync_start);
 
     const auto groups_start = std::chrono::steady_clock::now();

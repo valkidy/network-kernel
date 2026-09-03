@@ -58,17 +58,22 @@ private:
         std::vector<AgentRuntimeState> batch;
     };
 
-    void sync_agents_from_kernel();
+    void sync_agents_from_kernel(const ActorStateView& actors);
     bool apply_weapon_mechanics(
         std::uint32_t net_id,
         std::uint32_t actor_template_id) const;
     bool has_live_agent() const;
-    // Every agent entity the kernel holds, counted the way the kernel's own
+    // Every agent entity in `actors`, counted the way the kernel's own
     // world-rule director counted: off the entity list, with no validity
     // filter. An agent created this tick is not valid until physics finalises,
     // so a count that skipped those would have the rule spawn a replacement for
     // the agent it just made.
-    std::uint32_t live_agent_count() const;
+    static std::uint32_t live_agent_count(const ActorStateView& actors);
+    // Re-takes this tick's actor snapshot into actor_query_buffer_ and returns a
+    // view of it. Called at the top of the tick and again after the directors
+    // have created whatever they are going to; every phase in between reads the
+    // view instead of asking the kernel again.
+    ActorStateView refresh_actor_states() const;
     // Fills `buffer` with every actor state the kernel holds, growing it as
     // needed, and returns how many it wrote.
     std::uint32_t query_actor_states(
