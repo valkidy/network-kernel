@@ -138,6 +138,21 @@ int RunHostServer(
             gameplay_config =
                 network_example::game_server::load_gameplay_config_from_catalog_file(
                     gameplay_catalog_path);
+            // The same two entries the bundle branch pulls, named the same way
+            // -- relative to the catalog -- which on disk means relative to the
+            // file rather than to the archive root.
+            if (!gameplay_config.static_collision_scene.entry_path.empty()) {
+                collision_scene_bytes =
+                    network_example::game_server::load_gameplay_catalog_file_entry_bytes(
+                        gameplay_catalog_path,
+                        gameplay_config.static_collision_scene.entry_path);
+            }
+            if (!gameplay_config.navigation_mesh.entry_path.empty()) {
+                gameplay_config.navigation_mesh.artifact =
+                    network_example::game_server::load_gameplay_catalog_file_entry_bytes(
+                        gameplay_catalog_path,
+                        gameplay_config.navigation_mesh.entry_path);
+            }
         }
     } catch (const network_example::game_server::DataLoadError& error) {
         spdlog::error(

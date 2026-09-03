@@ -7739,6 +7739,26 @@ GameServerGameplayConfig load_gameplay_config_from_bundle_memory(
     return load_gameplay_config_from_catalog_source(source, entry_path);
 }
 
+// The file counterpart of load_gameplay_bundle_entry_bytes. A catalog names
+// its scene and its navmesh relative to itself, which inside the bundle means
+// relative to the archive root; on disk it means relative to the catalog file.
+// The two agree because the bake writes mesh_assets/jolt and mesh_assets/recast
+// and the bundle genrule copies them to the same place.
+std::vector<std::uint8_t> load_gameplay_catalog_file_entry_bytes(
+    const std::string& catalog_path,
+    const std::string& entry_path) {
+    if (catalog_path.empty() || entry_path.empty()) {
+        throw std::runtime_error("gameplay catalog entry request is empty");
+    }
+    const FilesystemGameplayConfigSource source;
+    std::filesystem::path resolved = entry_path;
+    if (resolved.is_relative()) {
+        resolved =
+            std::filesystem::path(source.parent_path(catalog_path)) / resolved;
+    }
+    return source.load_bytes(resolved.lexically_normal().string());
+}
+
 std::vector<std::uint8_t> load_gameplay_bundle_entry_bytes(
     const std::uint8_t* bundle_bytes,
     std::uint32_t bundle_size,

@@ -474,6 +474,9 @@ std::vector<std::uint8_t> load_gameplay_bundle_entry_bytes(
     const std::uint8_t* bundle_bytes,
     std::uint32_t bundle_size,
     const std::string& entry_path);
+std::vector<std::uint8_t> load_gameplay_catalog_file_entry_bytes(
+    const std::string& catalog_path,
+    const std::string& entry_path);
 KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
     const GameServerGameplayConfig& config);
 bool load_kernel_gameplay_catalog(

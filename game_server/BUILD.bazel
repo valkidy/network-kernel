@@ -96,6 +96,9 @@ cc_test(
         "//game_server/shipping_catalog/skeleton_assets:simplified_biped_assets",
         "//game_server/shipping_catalog/skeleton_assets:simplified_quadruped_assets",
         "//game_server/shipping_catalog/skeleton_assets:simplified_tripod_assets",
+        # The scene and the navmesh the catalog names, so the file branch can
+        # be checked against the bundle branch.
+        "//game_server/shipping_catalog/mesh_assets:cooked_mesh_assets",
     ],
     deps = [
         ":game_server",

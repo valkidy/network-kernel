@@ -2947,6 +2947,40 @@ int main() {
         generated_bundle_config.projectile_templates.size() ==
         config.projectile_templates.size());
 
+    // The scene and the navmesh the shipping catalog names, pulled once from
+    // the bundle and once from disk. A catalog resolves both relative to
+    // itself, so this passes only while the bake writes them to the same path
+    // the bundle genrule copies them to -- put the `generated/` segment back
+    // into mesh_asset_bakes and the file side stops resolving.
+    for (const std::string& entry :
+         {generated_bundle_config.static_collision_scene.entry_path,
+          generated_bundle_config.navigation_mesh.entry_path}) {
+        require(!entry.empty());
+        const std::vector<std::uint8_t> from_bundle =
+            network_example::game_server::load_gameplay_bundle_entry_bytes(
+                generated_bundle.data(),
+                static_cast<std::uint32_t>(generated_bundle.size()),
+                entry);
+        const std::vector<std::uint8_t> from_file =
+            network_example::game_server::load_gameplay_catalog_file_entry_bytes(
+                "game_server/shipping_catalog/gameplay_catalog.yaml",
+                entry);
+        require(!from_bundle.empty());
+        require(from_file == from_bundle);
+    }
+
+    // And an entry the catalog could name but the tree does not hold reports
+    // it, rather than leaving the server running with no collision.
+    bool missing_entry_rejected = false;
+    try {
+        network_example::game_server::load_gameplay_catalog_file_entry_bytes(
+            "game_server/shipping_catalog/gameplay_catalog.yaml",
+            "mesh_assets/jolt/absent.joltmesh");
+    } catch (const std::exception&) {
+        missing_entry_rejected = true;
+    }
+    require(missing_entry_rejected);
+
     // A second entry inside the same bundle, spawning one legged actor instead
     // of the production enemy. It is the end-to-end locomotion subject for the
     // listen-server run further down, which is why it ships in the bundle
