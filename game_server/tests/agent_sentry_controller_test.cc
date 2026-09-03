@@ -195,8 +195,22 @@ void run_frame(
     KernelHandle* kernel,
     const network_example::game_server::AgentSentryController& controller,
     std::vector<network_example::game_server::AgentRuntimeState>* enemies) {
-    controller.tick(kernel, enemies, 1.0f / 30.0f);
+    // AgentRuntimeManager takes the perception frame once per tick off the
+    // actor snapshot it already has; a test driving the controller directly has
+    // the frame take its own.
+    network_example::game_server::PerceptionFrame frame;
+    frame.refresh(kernel);
+    controller.tick(kernel, frame, enemies, 1.0f / 30.0f);
     Kernel_Update(kernel, 1.0f / 30.0f);
+}
+
+network_example::game_server::SentryPerceptionSnapshot perception_for(
+    KernelHandle* kernel,
+    std::uint32_t net_id) {
+    network_example::game_server::PerceptionFrame frame;
+    frame.refresh(kernel);
+    return network_example::game_server::AiPerceptionAdapter::build_sentry_snapshot(
+        kernel, frame, net_id);
 }
 
 KernelQuat query_rotation(KernelHandle* kernel, std::uint32_t net_id) {
@@ -309,10 +323,7 @@ int main() {
     Kernel_Update(kernel, 1.0f / 30.0f);
     run_frame(kernel, controller, &enemies);
     assert(enemies[0].sentry.state == network_example::game_server::AgentSentryState::kAlert);
-    const auto perception =
-        network_example::game_server::AiPerceptionAdapter::build_sentry_snapshot(
-            kernel,
-            enemy_net_id);
+    const auto perception = perception_for(kernel, enemy_net_id);
     assert(perception.has_target_position);
     assert(almost_equal(perception.target_position.x, player_position.x));
     assert(almost_equal(perception.target_position.y, player_position.y + 0.8f));

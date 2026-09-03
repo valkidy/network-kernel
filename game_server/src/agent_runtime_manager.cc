@@ -157,7 +157,10 @@ AgentRuntimeManager::AgentControllerBinding* AgentRuntimeManager::binding_for(
     return nullptr;
 }
 
-void AgentRuntimeManager::dispatch_controllers(float delta_seconds) {
+void AgentRuntimeManager::dispatch_controllers(
+    const ActorStateView& actors,
+    float delta_seconds) {
+    perception_frame_.refresh(kernel_, actors);
     for (AgentControllerBinding& binding : controllers_) {
         binding.batch.clear();
     }
@@ -173,9 +176,11 @@ void AgentRuntimeManager::dispatch_controllers(float delta_seconds) {
             continue;
         }
         if (binding.ai_controller_type == KernelAiControllerType_Chaser) {
-            binding.chaser.tick(kernel_, &binding.batch, delta_seconds);
+            binding.chaser.tick(
+                kernel_, perception_frame_, &binding.batch, delta_seconds);
         } else {
-            binding.sentry.tick(kernel_, &binding.batch, delta_seconds);
+            binding.sentry.tick(
+                kernel_, perception_frame_, &binding.batch, delta_seconds);
         }
     }
     // Controllers never add or drop agents, so the batches only carry updates
@@ -252,7 +257,9 @@ void AgentRuntimeManager::tick(float delta_seconds) {
     // Ahead of the controllers, so a member reads the slot its squad wants it
     // in this tick rather than the one from last tick.
     patrol_groups_.tick(&agents_, delta_seconds);
-    dispatch_controllers(delta_seconds);
+    // Still on the post-director snapshot: nothing between it and here creates,
+    // destroys or moves an entity, so it is what a per-agent query would return.
+    dispatch_controllers(actors, delta_seconds);
 }
 
 void AgentRuntimeManager::despawn_all(std::uint32_t reason) {

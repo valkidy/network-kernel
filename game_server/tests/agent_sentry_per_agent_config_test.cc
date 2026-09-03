@@ -108,7 +108,12 @@ void one_controller_drives_a_mixed_population() {
     agents[1].sentry_config = stationary_config();
 
     const network_example::game_server::AgentSentryController controller;
-    controller.tick(kernel, &agents, 1.0f / 30.0f);
+    // AgentRuntimeManager takes the perception frame once per tick off the
+    // actor snapshot it already has; a test driving the controller directly has
+    // the frame take its own.
+    network_example::game_server::PerceptionFrame frame;
+    frame.refresh(kernel);
+    controller.tick(kernel, frame, &agents, 1.0f / 30.0f);
 
     // The walker patrols: it submits a move input and carries patrol velocity.
     require(agents[0].patrol_direction == 1);
@@ -145,7 +150,12 @@ void patrol_turns_around_at_its_own_extent() {
     agents[0].patrol_anchor = KernelVec3{0.0f, 0.0f, 0.0f};
 
     const network_example::game_server::AgentSentryController controller;
-    controller.tick(kernel, &agents, 1.0f / 30.0f);
+    // AgentRuntimeManager takes the perception frame once per tick off the
+    // actor snapshot it already has; a test driving the controller directly has
+    // the frame take its own.
+    network_example::game_server::PerceptionFrame frame;
+    frame.refresh(kernel);
+    controller.tick(kernel, frame, &agents, 1.0f / 30.0f);
 
     require(agents[0].patrol_direction == -1);
     require(agents[0].velocity.x < 0.0f);

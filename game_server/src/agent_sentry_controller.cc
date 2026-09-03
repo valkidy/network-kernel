@@ -14,6 +14,7 @@ namespace network_example::game_server {
 
 void AgentSentryController::tick(
     KernelHandle* kernel,
+    const PerceptionFrame& frame,
     std::vector<AgentRuntimeState>* agents,
     float) const {
     if (kernel == nullptr || agents == nullptr) {
@@ -31,7 +32,8 @@ void AgentSentryController::tick(
         const ActorIntentExecutor actor_executor(executor_config);
 
         const SentryPerceptionSnapshot perception =
-            AiPerceptionAdapter::build_sentry_snapshot(kernel, agent.net_id);
+            AiPerceptionAdapter::build_sentry_snapshot(
+                kernel, frame, agent.net_id);
         if (!perception.has_self_state) {
             continue;
         }

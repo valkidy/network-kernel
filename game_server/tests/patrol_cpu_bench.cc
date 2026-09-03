@@ -14,7 +14,8 @@
 //   sync us         -- the post-director actor snapshot and
 //                      sync_agents_from_kernel over it
 //   groups us       -- PatrolGroupRuntime::tick, slots and casualties
-//   controllers us  -- dispatch_controllers, which is per-agent perception
+//   controllers us  -- dispatch_controllers, which is the tick's one bulk
+//                      vision query plus the per-agent controller work
 //   kernel us       -- Kernel_Update: movement, vision, actions, snapshot build
 //
 // Table A runs the catalog unmodified, so its population is whatever
@@ -213,7 +214,7 @@ void tick_manager(
     const double groups_us = micros_since(groups_start);
 
     const auto controllers_start = std::chrono::steady_clock::now();
-    manager->dispatch_controllers(kTickSeconds);
+    manager->dispatch_controllers(actors, kTickSeconds);
     const double controllers_us = micros_since(controllers_start);
 
     const auto kernel_start = std::chrono::steady_clock::now();
@@ -411,10 +412,15 @@ int main() {
         authored.interval_ticks,
         catalog.config.patrol_budget.max_live_agents,
         catalog.config.navigation_mesh.artifact.empty() ? "absent" : "loaded");
+    // The vision view's size is what the tick's one bulk vision query copies
+    // per agent -- the cost the per-agent query traded away along with its
+    // quadratic scan.
     std::printf(
-        "sizeof(AgentRuntimeState)=%zu sizeof(KernelServerEntityState)=%zu\n\n",
+        "sizeof(AgentRuntimeState)=%zu sizeof(KernelServerEntityState)=%zu "
+        "sizeof(KernelVisionStateView)=%zu\n\n",
         sizeof(gs::AgentRuntimeState),
-        sizeof(KernelServerEntityState));
+        sizeof(KernelServerEntityState),
+        sizeof(KernelVisionStateView));
 
     std::printf(
         "A. shipping catalog, unmodified -- %u sample ticks at %u Hz\n",

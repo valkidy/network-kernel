@@ -320,7 +320,12 @@ void run_frame(
     KernelHandle* kernel,
     const network_example::game_server::AgentChaserController& controller,
     std::vector<network_example::game_server::AgentRuntimeState>* agents) {
-    controller.tick(kernel, agents, kFixedDelta);
+    // AgentRuntimeManager takes the perception frame once per tick off the
+    // actor snapshot it already has; a test driving the controller directly has
+    // the frame take its own.
+    network_example::game_server::PerceptionFrame frame;
+    frame.refresh(kernel);
+    controller.tick(kernel, frame, agents, kFixedDelta);
     Kernel_Update(kernel, kFixedDelta);
 }
 

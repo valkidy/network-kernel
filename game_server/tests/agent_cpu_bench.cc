@@ -246,13 +246,17 @@ Row measure(
     network_example::game_server::AgentRuntimeManager manager(
         kernel,
         catalog.config);
+    // The manager takes this once per tick off the actor snapshot it already
+    // has; the bare-controller table has no manager, so it takes its own.
+    network_example::game_server::PerceptionFrame frame;
 
     const auto drive_ai = [&]() {
         switch (drive) {
             case Drive::kNone:
                 break;
             case Drive::kController:
-                controller.tick(kernel, &agents, kTickSeconds);
+                frame.refresh(kernel);
+                controller.tick(kernel, frame, &agents, kTickSeconds);
                 break;
             case Drive::kManager:
                 manager.tick(kTickSeconds);

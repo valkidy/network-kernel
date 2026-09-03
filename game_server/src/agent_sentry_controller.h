@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "game_server/src/agent_runtime.h"
+#include "game_server/src/ai_perception_adapter.h"
 #include "game_server/src/ballistic_aim.h"
 #include "kernel/public/kernel_api.h"
 
@@ -15,8 +16,11 @@ namespace network_example::game_server {
 // of actor templates. AgentSentryConfig itself lives in agent_runtime.h.
 class AgentSentryController {
 public:
+    // `frame` is the tick's perception snapshot, taken once for the whole
+    // population by the caller.
     void tick(
         KernelHandle* kernel,
+        const PerceptionFrame& frame,
         std::vector<AgentRuntimeState>* agents,
         float delta_seconds) const;
 };

@@ -7,6 +7,7 @@
 
 #include "game_server/src/agent_chaser_controller.h"
 #include "game_server/src/agent_sentry_controller.h"
+#include "game_server/src/ai_perception_adapter.h"
 #include "game_server/src/agent_runtime.h"
 #include "game_server/src/game_rule_director.h"
 #include "game_server/src/gameplay_config.h"
@@ -79,7 +80,10 @@ private:
     std::uint32_t query_actor_states(
         std::vector<KernelServerEntityState>* buffer) const;
     void build_controllers();
-    void dispatch_controllers(float delta_seconds);
+    // Takes the tick's perception frame off `actors` first: the controllers used
+    // to ask the kernel per agent for the vision state and for the entity state
+    // this snapshot already holds.
+    void dispatch_controllers(const ActorStateView& actors, float delta_seconds);
     AgentControllerBinding* binding_for(std::uint32_t actor_template_id);
 
     KernelHandle* kernel_ = nullptr;
@@ -95,6 +99,9 @@ private:
     // Kept across ticks so that a population which has already been sized for
     // does not reallocate every tick.
     mutable std::vector<KernelServerEntityState> actor_query_buffer_;
+    // Kept across ticks for the same reason the buffer above is: its vision
+    // buffer and net_id indices are re-filled every tick, not re-allocated.
+    PerceptionFrame perception_frame_;
     bool director_preload_attempted_ = false;
     bool director_preload_succeeded_ = false;
     bool despawn_pending_ = false;

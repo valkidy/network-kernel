@@ -197,7 +197,12 @@ struct SentryFixture {
 
     void tick(std::uint32_t count = 1u) {
         for (std::uint32_t index = 0; index < count; ++index) {
-            controller.tick(kernel, &agents, kTickSeconds);
+            // AgentRuntimeManager takes the perception frame once per tick off
+            // the actor snapshot it already has; a fixture driving the
+            // controller directly has the frame take its own.
+            network_example::game_server::PerceptionFrame frame;
+            frame.refresh(kernel);
+            controller.tick(kernel, frame, &agents, kTickSeconds);
             Kernel_Update(kernel, kTickSeconds);
         }
     }

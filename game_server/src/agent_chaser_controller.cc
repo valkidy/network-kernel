@@ -75,6 +75,7 @@ AgentChaserController::AgentChaserController(AgentChaserConfig config)
 
 void AgentChaserController::tick(
     KernelHandle* kernel,
+    const PerceptionFrame& frame,
     std::vector<AgentRuntimeState>* agents,
     float) const {
     if (kernel == nullptr || agents == nullptr) {
@@ -90,7 +91,8 @@ void AgentChaserController::tick(
 
     for (AgentRuntimeState& agent : *agents) {
         const SentryPerceptionSnapshot perception =
-            AiPerceptionAdapter::build_sentry_snapshot(kernel, agent.net_id);
+            AiPerceptionAdapter::build_sentry_snapshot(
+                kernel, frame, agent.net_id);
         if (!perception.has_self_state) {
             continue;
         }
