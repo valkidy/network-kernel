@@ -6968,11 +6968,11 @@ void apply_catalog_director_preload_config(
 }
 
 
-PatrolAreaConfig patrol_area_from_yaml(
+SpawnAreaConfig patrol_area_from_yaml(
     const YAML::Node& node,
     const std::string& path,
     std::uint32_t source_kind) {
-    PatrolAreaConfig area;
+    SpawnAreaConfig area;
     if (!node) {
         throw std::runtime_error("patrol requires an area");
     }
@@ -6985,9 +6985,9 @@ PatrolAreaConfig patrol_area_from_yaml(
     const std::string shape =
         node["shape"] ? node["shape"].as<std::string>() : "circle";
     if (shape == "rect") {
-        area.shape = PatrolAreaShape::kRect;
+        area.shape = SpawnAreaShape::kRect;
     } else if (shape == "circle") {
-        area.shape = PatrolAreaShape::kCircle;
+        area.shape = SpawnAreaShape::kCircle;
     } else {
         throw std::runtime_error("patrol area shape must be circle or rect");
     }
@@ -6997,7 +6997,7 @@ PatrolAreaConfig patrol_area_from_yaml(
     // A circle says radius and a rect says half_extents. Accepting either key
     // for either shape would let a rect be authored with one number and quietly
     // come out with no depth.
-    if (area.shape == PatrolAreaShape::kCircle) {
+    if (area.shape == SpawnAreaShape::kCircle) {
         if (!node["radius"]) {
             throw std::runtime_error("patrol circle area requires radius");
         }
@@ -7205,7 +7205,7 @@ void apply_catalog_patrol_config(
                     "patrol composition entry requires entity_template, min "
                     "and max");
             }
-            PatrolCompositionEntry entry;
+            SpawnCompositionEntry entry;
             entry.entity_template_ref =
                 entry_node["entity_template"].as<std::string>();
             entry.entity_template_id = entity_template_ref_from_yaml(
@@ -7425,7 +7425,7 @@ std::uint64_t compute_gameplay_catalog_hash(
         hash_float(&hash, patrol.despawn_distance_meters);
         hash_float(&hash, patrol.max_detour_ratio);
         hash_scalar(&hash, patrol.route_attempts);
-        for (const PatrolCompositionEntry& entry : patrol.composition) {
+        for (const SpawnCompositionEntry& entry : patrol.composition) {
             hash_string(&hash, entry.entity_template_ref);
             hash_scalar(&hash, entry.entity_template_id);
             hash_scalar(&hash, entry.min_count);

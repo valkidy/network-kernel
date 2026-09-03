@@ -1,5 +1,7 @@
 #include "game_server/patrol_director.h"
 
+#include "game_server/spawn_sampling.h"
+
 #include <algorithm>
 #include <cmath>
 #include <string>
@@ -12,7 +14,6 @@
 namespace network_example::game_server {
 namespace {
 
-constexpr float kPi = 3.14159265358979323846f;
 constexpr KernelQuat kIdentityRotation{0.0f, 0.0f, 0.0f, 1.0f};
 // The lifecycle command's `reason` is an opaque caller-chosen tag -- the kernel
 // stores and reports it without attaching any meaning -- so this only has to be
@@ -26,50 +27,6 @@ constexpr std::uint32_t kPatrolRetiredReason = 2;
 // is a flat plane, so this is exactly a pathed route today and badly wrong the
 // day the map is not. The waypoint list is a list rather than a pair of
 // endpoints so that swapping in Detour corners is a change to this function.
-
-std::uint64_t next_random(std::uint64_t* state) {
-    *state += 0x9e3779b97f4a7c15ull;
-    std::uint64_t value = *state;
-    value = (value ^ (value >> 30)) * 0xbf58476d1ce4e5b9ull;
-    value = (value ^ (value >> 27)) * 0x94d049bb133111ebull;
-    return value ^ (value >> 31);
-}
-
-float next_unit(std::uint64_t* state) {
-    return static_cast<float>(
-        static_cast<double>(next_random(state) >> 40) * (1.0 / 16777216.0));
-}
-
-std::uint32_t next_in_range(
-    std::uint64_t* state,
-    std::uint32_t low,
-    std::uint32_t high) {
-    if (high <= low) {
-        return low;
-    }
-    return low +
-        static_cast<std::uint32_t>(next_random(state) % (high - low + 1u));
-}
-
-KernelVec3 sample_area(const PatrolAreaConfig& area, std::uint64_t* state) {
-    if (area.shape == PatrolAreaShape::kRect) {
-        return KernelVec3{
-            area.center.x + (next_unit(state) * 2.0f - 1.0f) * area.half_extents.x,
-            area.center.y,
-            area.center.z + (next_unit(state) * 2.0f - 1.0f) * area.half_extents.z,
-        };
-    }
-    // Uniform over the disc rather than over (radius, angle): sampling the
-    // radius directly would crowd the middle, which is the opposite of the
-    // ring-only placement this shape is here to replace.
-    const float angle = next_unit(state) * 2.0f * kPi;
-    const float radius = area.half_extents.x * std::sqrt(next_unit(state));
-    return KernelVec3{
-        area.center.x + std::cos(angle) * radius,
-        area.center.y,
-        area.center.z + std::sin(angle) * radius,
-    };
-}
 
 KernelVec3 rotate_into_heading(
     const KernelVec3& offset,
@@ -93,79 +50,16 @@ KernelVec3 rotate_into_heading(
 }  // namespace
 
 std::string validate_patrol_definition(const PatrolDefinitionConfig& definition) {
-    if (definition.composition.empty()) {
-        return "patrol has no composition";
+    const std::string composition_error = validate_spawn_composition(
+        definition.composition, definition.count_min, definition.count_max);
+    if (!composition_error.empty()) {
+        return "patrol " + composition_error;
     }
-    if (definition.count_min == 0 || definition.count_max < definition.count_min) {
-        return "patrol count range is empty";
-    }
-    std::uint32_t floor_total = 0;
-    std::uint32_t ceiling_total = 0;
-    for (const PatrolCompositionEntry& entry : definition.composition) {
-        if (entry.max_count < entry.min_count) {
-            return "patrol composition range is empty for " +
-                entry.entity_template_ref;
-        }
-        floor_total += entry.min_count;
-        ceiling_total += entry.max_count;
-    }
-    // The floors have to fit inside the smallest squad the count can draw, and
-    // the ceilings have to reach the largest. Anything else is a definition
-    // that draws a total it cannot then fill.
-    if (floor_total > definition.count_min) {
-        return "patrol composition minimums exceed the smallest squad size";
-    }
-    if (ceiling_total < definition.count_max) {
-        return "patrol composition maximums cannot fill the largest squad size";
-    }
-    if (definition.area.shape == PatrolAreaShape::kRect &&
-        (definition.area.half_extents.x <= 0.0f ||
-         definition.area.half_extents.z <= 0.0f)) {
-        return "patrol rect area has no extent";
-    }
-    if (definition.area.shape == PatrolAreaShape::kCircle &&
-        definition.area.half_extents.x <= 0.0f) {
-        return "patrol circle area has no radius";
+    const std::string area_error = validate_spawn_area(definition.area);
+    if (!area_error.empty()) {
+        return "patrol " + area_error;
     }
     return {};
-}
-
-std::vector<std::uint32_t> draw_composition(
-    const PatrolDefinitionConfig& definition,
-    std::uint32_t count,
-    std::uint64_t* random_state) {
-    std::vector<std::uint32_t> drawn(definition.composition.size(), 0u);
-    std::uint32_t assigned = 0;
-    for (std::size_t index = 0; index < definition.composition.size(); ++index) {
-        drawn[index] = definition.composition[index].min_count;
-        assigned += drawn[index];
-    }
-    // Weighted by the room each entry has left, which is the same thing as
-    // dealing the remainder into the spare slots uniformly. Choosing uniformly
-    // among the entries that have any room instead would let a narrow band
-    // beside a wide one fill up almost every time -- see the header.
-    while (assigned < count) {
-        std::uint32_t capacity_total = 0;
-        for (std::size_t index = 0; index < drawn.size(); ++index) {
-            capacity_total += definition.composition[index].max_count - drawn[index];
-        }
-        if (capacity_total == 0) {
-            break;
-        }
-        auto pick = static_cast<std::uint32_t>(
-            next_random(random_state) % capacity_total);
-        for (std::size_t index = 0; index < drawn.size(); ++index) {
-            const std::uint32_t capacity =
-                definition.composition[index].max_count - drawn[index];
-            if (pick < capacity) {
-                ++drawn[index];
-                break;
-            }
-            pick -= capacity;
-        }
-        ++assigned;
-    }
-    return drawn;
 }
 
 std::vector<KernelVec3> formation_offsets(std::uint32_t count, float spacing) {
@@ -369,8 +263,8 @@ bool draw_route(
     const std::uint32_t attempts =
         navigable ? std::max<std::uint32_t>(1u, definition.route_attempts) : 1u;
     for (std::uint32_t attempt = 0; attempt < attempts; ++attempt) {
-        KernelVec3 start = sample_area(definition.area, random_state);
-        const KernelVec3 end = sample_area(definition.area, random_state);
+        KernelVec3 start = sample_area(definition.area, KernelVec3{0.0f, 0.0f, 0.0f}, random_state);
+        const KernelVec3 end = sample_area(definition.area, KernelVec3{0.0f, 0.0f, 0.0f}, random_state);
         if (!navigable) {
             *origin = start;
             // One waypoint, not two: the cursor starts at the origin, so the
@@ -411,7 +305,7 @@ bool PatrolDirector::spawn_patrol(
     const std::uint32_t count = next_in_range(
         &random_state, definition.count_min, definition.count_max);
     const std::vector<std::uint32_t> drawn =
-        draw_composition(definition, count, &random_state);
+        draw_spawn_composition(definition.composition, count, &random_state);
 
     KernelVec3 route_start{0.0f, 0.0f, 0.0f};
     std::vector<KernelVec3> waypoints;

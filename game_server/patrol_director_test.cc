@@ -51,8 +51,8 @@ constexpr std::uint8_t kSpammerWeaponId =
 constexpr std::uint32_t kGruntEntityTemplateId = 102;
 constexpr std::uint32_t kBruteEntityTemplateId = 103;
 
-using network_example::game_server::PatrolAreaShape;
-using network_example::game_server::PatrolCompositionEntry;
+using network_example::game_server::SpawnAreaShape;
+using network_example::game_server::SpawnCompositionEntry;
 using network_example::game_server::PatrolDefinitionConfig;
 
 // The example from the original design note: a squad of 8 to 10 out of a mix
@@ -63,14 +63,14 @@ PatrolDefinitionConfig mixed_definition() {
     PatrolDefinitionConfig definition;
     definition.id = 1;
     definition.name = "mixed";
-    definition.area.shape = PatrolAreaShape::kRect;
+    definition.area.shape = SpawnAreaShape::kRect;
     definition.area.half_extents = KernelVec3{20.0f, 0.0f, 20.0f};
     definition.seed = 4242;
     definition.count_min = 8;
     definition.count_max = 10;
     definition.composition = {
-        PatrolCompositionEntry{"grunt", kGruntEntityTemplateId, 2, 8},
-        PatrolCompositionEntry{"brute", kBruteEntityTemplateId, 4, 20},
+        SpawnCompositionEntry{"grunt", kGruntEntityTemplateId, 2, 8},
+        SpawnCompositionEntry{"brute", kBruteEntityTemplateId, 4, 20},
     };
     return definition;
 }
@@ -89,8 +89,8 @@ void composition_is_floors_plus_capacity() {
         for (std::uint32_t draw = 0; draw < 32; ++draw) {
             std::uint64_t state = draw * 0x9e3779b97f4a7c15ull + count;
             const std::vector<std::uint32_t> drawn =
-                network_example::game_server::draw_composition(
-                    definition, count, &state);
+                network_example::game_server::draw_spawn_composition(
+                    definition.composition, count, &state);
             require(drawn.size() == definition.composition.size());
             std::uint32_t total = 0;
             for (std::size_t entry = 0; entry < drawn.size(); ++entry) {
@@ -109,7 +109,7 @@ void composition_is_floors_plus_capacity() {
     for (std::uint32_t draw = 0; draw < 64; ++draw) {
         std::uint64_t state = draw * 0x9e3779b97f4a7c15ull;
         const std::vector<std::uint32_t> drawn =
-            network_example::game_server::draw_composition(definition, 10, &state);
+            network_example::game_server::draw_spawn_composition(definition.composition, 10, &state);
         saw_more_grunts = saw_more_grunts || drawn[0] > 4;
         saw_more_brutes = saw_more_brutes || drawn[1] > 6;
     }
@@ -132,8 +132,8 @@ void a_narrow_band_does_not_saturate_beside_a_wide_one() {
     definition.count_min = 20;
     definition.count_max = 24;
     definition.composition = {
-        PatrolCompositionEntry{"warrior", kBruteEntityTemplateId, 1, 5},
-        PatrolCompositionEntry{"rank_and_file", kGruntEntityTemplateId, 6, 24},
+        SpawnCompositionEntry{"warrior", kBruteEntityTemplateId, 1, 5},
+        SpawnCompositionEntry{"rank_and_file", kGruntEntityTemplateId, 6, 24},
     };
     require(network_example::game_server::validate_patrol_definition(definition)
                 .empty());
@@ -147,8 +147,8 @@ void a_narrow_band_does_not_saturate_beside_a_wide_one() {
         // The same uniform total the director draws.
         const std::uint32_t count = 20u + static_cast<std::uint32_t>(draw % 5);
         const std::vector<std::uint32_t> drawn =
-            network_example::game_server::draw_composition(
-                definition, count, &state);
+            network_example::game_server::draw_spawn_composition(
+                definition.composition, count, &state);
         require(drawn[0] >= 1u && drawn[0] <= 5u);
         require(drawn[0] + drawn[1] == count);
         ++warriors_seen[drawn[0]];
@@ -192,7 +192,7 @@ void an_unsatisfiable_definition_is_rejected() {
     require(!validate_patrol_definition(flat_rect).empty());
 
     PatrolDefinitionConfig no_radius = mixed_definition();
-    no_radius.area.shape = PatrolAreaShape::kCircle;
+    no_radius.area.shape = SpawnAreaShape::kCircle;
     no_radius.area.half_extents.x = 0.0f;
     require(!validate_patrol_definition(no_radius).empty());
 }

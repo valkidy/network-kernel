@@ -41,6 +41,7 @@ cc_library(
         "patrol_director.cc",
         "patrol_group_runtime.cc",
         "patrol_navigation.cc",
+        "spawn_sampling.cc",
         "world_rule_director.cc",
     ],
     hdrs = [
@@ -58,6 +59,7 @@ cc_library(
         "patrol_director.h",
         "patrol_group_runtime.h",
         "patrol_navigation.h",
+        "spawn_sampling.h",
         "world_rule_director.h",
         "public/game_server_types.h",
     ],
