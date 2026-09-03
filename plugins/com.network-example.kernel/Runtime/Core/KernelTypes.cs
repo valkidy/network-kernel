@@ -1702,14 +1702,6 @@ namespace NetworkExample.Kernel
         public uint skeleton_asset_count;
         public IntPtr status_effects;
         public uint status_effect_count;
-        public IntPtr game_rules;
-        public uint game_rule_count;
-        public IntPtr game_rule_nodes;
-        public uint game_rule_node_count;
-        public IntPtr game_rule_edges;
-        public uint game_rule_edge_count;
-        public IntPtr game_rule_effects;
-        public uint game_rule_effect_count;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelGameplayCatalogDefinition>();
     }
