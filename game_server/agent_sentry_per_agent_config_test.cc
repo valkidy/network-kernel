@@ -183,10 +183,15 @@ void manager_resolves_config_from_the_spawned_template() {
     // are never overridden.
     gameplay_config.agent.override_director_spawn = false;
     gameplay_config.preload_director_template_ids.clear();
+    // The rules the catalog extracted go too. Directors are game_server config
+    // now, so editing the entity templates below no longer reaches them --
+    // this test states the rule it wants directly.
+    gameplay_config.world_rule_spawns.clear();
+    gameplay_config.game_rules.clear();
     for (network_example::game_server::EntityTemplateConfig& entity_template :
          gameplay_config.entity_templates) {
         if (entity_template.entity_type != KernelEntityType_Director ||
-            entity_template.director_kind != KernelDirectorKind_WorldRule) {
+            entity_template.director_kind != network_example::game_server::AuthoredDirectorKind::kWorldRule) {
             continue;
         }
         entity_template.director_spawn_target_count = 1;
@@ -196,8 +201,22 @@ void manager_resolves_config_from_the_spawned_template() {
         entity_template.director_spawn_entity_template_ref = "tripod_actor";
         gameplay_config.preload_director_template_ids.push_back(
             entity_template.actor_template_id);
+        // A world rule is game_server's own now rather than a director entity,
+        // so a config assembled in code has to carry the rule as well as the
+        // template it came from. The catalog path does this in
+        // apply_catalog_world_rule_config.
+        network_example::game_server::WorldRuleSpawnConfig rule;
+        rule.director_template_id = entity_template.actor_template_id;
+        rule.name = entity_template.name;
+        rule.target_count = entity_template.director_spawn_target_count;
+        rule.spawn_entity_template_id =
+            entity_template.director_spawn_entity_template_id;
+        rule.position = entity_template.director_spawn_position;
+        rule.radius = entity_template.director_spawn_radius;
+        gameplay_config.world_rule_spawns.push_back(rule);
     }
     require(!gameplay_config.preload_director_template_ids.empty());
+    require(!gameplay_config.world_rule_spawns.empty());
 
     KernelConfig config = listen_server_config();
     KernelHandle* kernel = Kernel_Create(&config);

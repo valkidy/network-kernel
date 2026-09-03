@@ -69,6 +69,47 @@ AgentRuntimeManager::AgentRuntimeManager(
     GameServerGameplayConfig config)
     : kernel_(kernel), config_(std::move(config)) {
     build_controllers();
+    patrol_director_ = PatrolDirector(config_.patrols, config_.patrol_budget);
+    // The preload list is what makes a director active; the config carries
+    // every authored one so that the list stays the live decision.
+    const auto preloaded = [this](std::uint32_t template_id) {
+        return std::find(
+                   config_.preload_director_template_ids.begin(),
+                   config_.preload_director_template_ids.end(),
+                   template_id) !=
+            config_.preload_director_template_ids.end();
+    };
+    std::vector<WorldRuleSpawnConfig> world_rules;
+    for (const WorldRuleSpawnConfig& rule : config_.world_rule_spawns) {
+        if (preloaded(rule.director_template_id)) {
+            world_rules.push_back(rule);
+        }
+    }
+    std::vector<GameRuleConfig> game_rules;
+    for (const GameRuleConfig& rule : config_.game_rules) {
+        if (preloaded(rule.director_template_id)) {
+            game_rules.push_back(rule);
+        }
+    }
+    world_rule_director_ = WorldRuleDirector(std::move(world_rules));
+    game_rule_director_ = GameRuleDirector(std::move(game_rules));
+    if (!config_.navigation_mesh.artifact.empty()) {
+        std::string error;
+        if (patrol_navigation_.load(config_.navigation_mesh.artifact, &error)) {
+            spdlog::info(
+                "patrol navigation loaded entry={} bytes={}",
+                config_.navigation_mesh.entry_path,
+                config_.navigation_mesh.artifact.size());
+        } else {
+            // Not fatal: patrol routes fall back to a straight chord, which is
+            // what they were before a navmesh was loaded at all. Fatal would
+            // take the whole server down over a feature that degrades.
+            spdlog::error(
+                "patrol navigation failed entry={} reason={}",
+                config_.navigation_mesh.entry_path,
+                error);
+        }
+    }
 }
 
 void AgentRuntimeManager::build_controllers() {
@@ -89,6 +130,7 @@ void AgentRuntimeManager::build_controllers() {
             chaser.sentry =
                 agent_sentry_config(config_, actor_template.actor_template_id);
             chaser.chase = actor_template.chaser;
+            chaser.patrol = actor_template.patrol;
             binding.chaser = AgentChaserController(chaser);
         }
         controllers_.push_back(std::move(binding));
@@ -158,10 +200,6 @@ void AgentRuntimeManager::handle_event(const KernelEvent& event) {
     if (event.type != KernelEventType_EntityDestroyed) {
         return;
     }
-    director_net_ids_.erase(
-        std::remove(
-            director_net_ids_.begin(), director_net_ids_.end(), event.net_id),
-        director_net_ids_.end());
     agents_.erase(
         std::remove_if(
             agents_.begin(),
@@ -177,14 +215,24 @@ void AgentRuntimeManager::tick(float delta_seconds) {
         return;
     }
     if (despawn_pending_) {
-        if (!has_live_agent_or_director()) {
+        if (!has_live_agent()) {
             despawn_pending_ = false;
         } else {
             return;
         }
     }
 
+    // Ahead of the resync on purpose: the director creates entities, and the
+    // group runtime drops members it cannot find in the agent list. Ticking it
+    // after the resync would drop every member of a squad on the tick it was
+    // spawned.
+    patrol_director_.tick(kernel_, &patrol_groups_, &patrol_navigation_);
+    world_rule_director_.tick(kernel_, live_agent_count());
+    game_rule_director_.tick(kernel_);
     sync_agents_from_kernel();
+    // Ahead of the controllers, so a member reads the slot its squad wants it
+    // in this tick rather than the one from last tick.
+    patrol_groups_.tick(&agents_, delta_seconds);
     dispatch_controllers(delta_seconds);
 }
 
@@ -205,18 +253,6 @@ void AgentRuntimeManager::despawn_all(std::uint32_t reason) {
             KernelCommandSource_Internal,
             &command);
     }
-    for (const std::uint32_t director_net_id : director_net_ids_) {
-        KernelEntityLifecycleCommand command{};
-        command.struct_size = sizeof(command);
-        command.command_type = KernelEntityLifecycleCommandType_Destroy;
-        command.net_id = director_net_id;
-        command.reason = reason;
-        Kernel_ServerEnqueueEntityLifecycle(
-            kernel_,
-            KernelCommandSource_Internal,
-            &command);
-    }
-    director_net_ids_.clear();
     agents_.clear();
     despawn_pending_ = true;
 }
@@ -227,6 +263,30 @@ std::size_t AgentRuntimeManager::agent_count() const {
 
 const std::vector<AgentRuntimeState>& AgentRuntimeManager::agents() const {
     return agents_;
+}
+
+PatrolGroupRuntime& AgentRuntimeManager::patrol_groups() {
+    return patrol_groups_;
+}
+
+const PatrolGroupRuntime& AgentRuntimeManager::patrol_groups() const {
+    return patrol_groups_;
+}
+
+const PatrolDirector& AgentRuntimeManager::patrol_director() const {
+    return patrol_director_;
+}
+
+const PatrolNavigation& AgentRuntimeManager::patrol_navigation() const {
+    return patrol_navigation_;
+}
+
+const WorldRuleDirector& AgentRuntimeManager::world_rule_director() const {
+    return world_rule_director_;
+}
+
+const GameRuleDirector& AgentRuntimeManager::game_rule_director() const {
+    return game_rule_director_;
 }
 
 bool AgentRuntimeManager::preload_directors() {
@@ -250,61 +310,17 @@ bool AgentRuntimeManager::preload_directors() {
                 template_id);
             return false;
         }
-        if (!spawn_director(*entity_template)) {
-            return false;
-        }
     }
 
     director_preload_succeeded_ = true;
     spdlog::info(
-        "director preload complete count={}",
-        director_net_ids_.size());
-    return true;
-}
-
-bool AgentRuntimeManager::spawn_director(
-    const EntityTemplateConfig& director_template) {
-    KernelServerEntityCreateInfo create_info{};
-    create_info.struct_size = sizeof(KernelServerEntityCreateInfo);
-    create_info.entity_type = KernelEntityType_Director;
-    create_info.owner_peer = 0;
-    create_info.position = director_template.transform_position;
-    create_info.rotation = kIdentityRotation;
-    create_info.entity_template_id = director_template.actor_template_id;
-
-    std::uint32_t net_id = 0;
-    if (!Kernel_ServerCreateEntity(kernel_, &create_info, &net_id) || net_id == 0) {
-        spdlog::error(
-            "director preload failed name={} template_id={} reason=create_entity",
-            director_template.name,
-            director_template.actor_template_id);
-        return false;
-    }
-    director_net_ids_.push_back(net_id);
-    spdlog::info(
-        "director preloaded name={} template_id={} net_id={} position=({}, {}, {})",
-        director_template.name,
-        director_template.actor_template_id,
-        net_id,
-        director_template.transform_position.x,
-        director_template.transform_position.y,
-        director_template.transform_position.z);
+        "directors ready world_rules={} game_rules={}",
+        world_rule_director_.rules().size(),
+        game_rule_director_.rules().size());
     return true;
 }
 
 void AgentRuntimeManager::sync_agents_from_kernel() {
-    director_net_ids_.erase(
-        std::remove_if(
-            director_net_ids_.begin(),
-            director_net_ids_.end(),
-            [this](std::uint32_t net_id) {
-                KernelServerEntityState state{};
-                state.struct_size = sizeof(KernelServerEntityState);
-                return !Kernel_ServerGetEntityState(kernel_, net_id, &state) ||
-                    state.valid == 0u;
-            }),
-        director_net_ids_.end());
-
     const std::uint32_t state_count = query_actor_states(&actor_query_buffer_);
     const std::vector<KernelServerEntityState>& states = actor_query_buffer_;
 
@@ -364,19 +380,24 @@ bool AgentRuntimeManager::apply_weapon_mechanics(
     return true;
 }
 
-bool AgentRuntimeManager::has_live_agent_or_director() const {
-    for (const std::uint32_t director_net_id : director_net_ids_) {
-        KernelServerEntityState state{};
-        state.struct_size = sizeof(KernelServerEntityState);
-        if (Kernel_ServerGetEntityState(kernel_, director_net_id, &state) &&
-            state.valid != 0u) {
-            return true;
+std::uint32_t AgentRuntimeManager::live_agent_count() const {
+    const std::uint32_t state_count = query_actor_states(&actor_query_buffer_);
+    std::uint32_t agents = 0;
+    for (std::uint32_t index = 0; index < state_count; ++index) {
+        // No `valid` check on purpose; see the declaration.
+        if (actor_query_buffer_[index].actor_type == kActorTypeAgent) {
+            ++agents;
         }
     }
+    return agents;
+}
+
+bool AgentRuntimeManager::has_live_agent() const {
     std::vector<KernelServerEntityState> states;
     const std::uint32_t state_count = query_actor_states(&states);
     for (std::uint32_t index = 0; index < state_count; ++index) {
-        if (states[index].valid != 0u && states[index].actor_type == kActorTypeAgent) {
+        if (states[index].valid != 0u &&
+            states[index].actor_type == kActorTypeAgent) {
             return true;
         }
     }

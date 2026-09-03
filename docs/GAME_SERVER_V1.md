@@ -76,6 +76,59 @@ only through the public server-side C API:
 - `Kernel_ServerSubmitEntityInput`
 - `Kernel_ServerQueryEntities`
 
+That list is enforced, not just documented. `//tools:check_layering_boundaries`
+reads `game_server/BUILD.bazel` and `engine/components/ai/BUILD.bazel` and fails
+on a dependency outside an allowlist. The compiler already stops gameplay code
+including kernel headers -- `world/public/components.h` is not on game_server's
+include path -- so what the check is for is the edit that would make those
+includes start working. Adding a dependency there is a decision, and it should
+look like one.
+
+### The direction the check cannot see
+
+A dependency edge is not the only way a boundary is crossed. The other way is a
+gameplay concept added to `engine/src/world/public/components.h` or to the kernel
+ABI, which no dependency check will ever notice, because there is no new edge.
+
+That is how the director machinery ended up in the kernel: `DirectorRuntime`,
+`GameRuleRuntime`, `GameRuleGroupRuntime`, `GameplayGroupMembership` and the
+`KernelGameRule*` ABI structs described waves, elimination conditions and spawn
+shapes, none of which the kernel's own responsibilities need. Every one of them
+arrived as a type added to a header, which is why no dependency check would have
+caught any of it.
+
+They have since been moved to `game_server` and deleted from the kernel
+(`docs/AI_PATROL_SYSTEM.md` records the migration). The reason to move them was
+not that a feature needed it. It was that the repository had come to hold two
+contradictory answers to "how do I build a system that spawns things", and the
+older, larger one was the one a newcomer would copy. A wrong design left in
+place is not inert; it is a worked example, and it teaches.
+
+There is no automated check for it, on purpose. Any such check is a word
+blocklist plus a baseline of existing exceptions, and the baseline gets edited by
+exactly the person who is about to add the next exception. So it is a review
+criterion instead. Before adding a type to a kernel or world header, ask:
+
+- **Would the kernel still need this if the game were a different game?**
+  `Transform`, `Velocity`, `Health`, `WeaponState`, `ProjectileState`, colliders
+  and the action system all survive that question: they are validated mutation
+  and replication. "This wave is cleared", "this squad is eight strong", "spawn
+  on a circle of radius R" do not.
+- **Does the kernel have to interpret it, or only store it?** Something the
+  kernel only stores and hands back belongs to whoever reads it. If nothing in
+  the kernel reads it, it should not be there at all -- `World`'s tombstone set
+  was written by the kernel and read by nothing for exactly as long as it
+  existed.
+- **Is this a rule or a mechanism?** A ceiling on how many of something may
+  exist is a rule. A query that answers how many exist is a mechanism. The first
+  belongs in `game_server`; the second belongs in the kernel and should be
+  generic enough that the kernel does not know what it is counting.
+
+The worked example is the patrol system: its grouping, budget, cadence,
+composition and routing are all `game_server`, its configuration goes through the
+catalog and the catalog hash, and it needed no kernel ABI change at all -- not
+even for navigation.
+
 `Kernel_ServerSubmitEntityInput` is an in-process native server hook for
 server-owned gameplay entities. It is not exposed through the Unity managed
 binding and does not require a `KERNEL_ABI_VERSION` bump.

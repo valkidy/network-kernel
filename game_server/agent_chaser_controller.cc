@@ -13,6 +13,37 @@ bool is_zero_move(const KernelVec2& move) {
     return move.x == 0.0f && move.y == 0.0f;
 }
 
+// A slot to stand in, which is what being in a squad amounts to from here.
+bool has_slot(const AgentRuntimeState& agent) {
+    return agent.patrol.has_slot;
+}
+
+// Distance from where the agent broke formation, which is what the leash
+// bounds. A leash of zero means no leash: a chaser without a squad is never
+// dragged away from anything.
+bool leash_exceeded(
+    const AgentPatrolTuning& patrol,
+    const AgentRuntimeState& agent) {
+    return patrol.leash_meters > 0.0f &&
+        agent_steering::horizontal_distance(
+            agent.position, agent.patrol.leash_anchor) > patrol.leash_meters;
+}
+
+bool inside_leash_resume(
+    const AgentPatrolTuning& patrol,
+    const AgentRuntimeState& agent) {
+    return agent_steering::horizontal_distance(
+               agent.position, agent.patrol.leash_anchor) <=
+        patrol.leash_resume_meters;
+}
+
+bool standing_in_slot(
+    const AgentPatrolTuning& patrol,
+    const AgentRuntimeState& agent) {
+    return agent_steering::horizontal_distance(
+               agent.position, agent.patrol.slot) <= patrol.slot_radius_meters;
+}
+
 // Hysteresis around the stop distance. Without the separate resume threshold an
 // agent parked exactly on the boundary would start and stop every tick.
 KernelVec2 chase_move(
@@ -91,9 +122,75 @@ void AgentChaserController::tick(
             agent.chase_holding = false;
         }
 
+        // Breaking off is a decision about the squad, not about the target, so
+        // it is made before the pursuit states get to look at what they can
+        // see. Without it the leash could only be enforced on a tick where
+        // vision happened to break.
+        if (has_slot(agent) && leash_exceeded(config_.patrol, agent) &&
+            (agent.sentry.state == AgentSentryState::kAlert ||
+             agent.sentry.state == AgentSentryState::kAttack)) {
+            agent.sentry.target = 0;
+            agent.chase_holding = false;
+            agent_steering::transition_to(&agent, AgentSentryState::kReturn);
+        }
+
+        // Ordered ahead of kIdle so that an agent which arrives back on its
+        // route resumes walking it on the same tick, the way kIdle -> kAlert
+        // already reaches the alert branch in the tick it transitions.
+        if (agent.sentry.state == AgentSentryState::kReturn) {
+            if (!has_slot(agent)) {
+                agent_steering::transition_to(&agent, AgentSentryState::kIdle);
+            } else if (
+                standing_in_slot(config_.patrol, agent) ||
+                inside_leash_resume(config_.patrol, agent)) {
+                // Two ways to be back: standing in the slot, or having returned
+                // to where it broke formation. The second is what ends a short
+                // chase, where the squad may have moved on and waiting to reach
+                // the slot would leave the agent refusing to engage for the
+                // rest of the leg.
+                //
+                // Any re-engagement happens in the kIdle branch below on this
+                // same tick, which is also what re-anchors the leash to where
+                // the next chase starts.
+                agent_steering::transition_to(&agent, AgentSentryState::kIdle);
+            } else {
+                // Walked back at patrol pace: hurrying back is a tuning
+                // opinion, and this way a returning agent reads the same as a
+                // patrolling one to anything watching velocity.
+                move = agent_steering::horizontal_move_toward(
+                    agent.position,
+                    agent.patrol.slot,
+                    config_.patrol.input_magnitude);
+                should_update_rotation =
+                    agent_steering::facing_rotation_from_vision_toward(
+                        agent.position,
+                        agent.patrol.slot,
+                        perception.vision_forward,
+                        entity_state.rotation,
+                        &desired_rotation) ||
+                    should_update_rotation;
+            }
+        }
+
         if (agent.sentry.state == AgentSentryState::kIdle) {
             if (has_visible_target) {
+                // Recorded before the chase starts, so the leash measures the
+                // pursuit rather than the ground the squad has since covered.
+                agent.patrol.leash_anchor = agent.position;
                 agent_steering::transition_to(&agent, AgentSentryState::kAlert);
+            } else if (has_slot(agent) && !standing_in_slot(config_.patrol, agent)) {
+                move = agent_steering::horizontal_move_toward(
+                    agent.position,
+                    agent.patrol.slot,
+                    config_.patrol.input_magnitude);
+                should_update_rotation =
+                    agent_steering::facing_rotation_from_vision_toward(
+                        agent.position,
+                        agent.patrol.slot,
+                        perception.vision_forward,
+                        entity_state.rotation,
+                        &desired_rotation) ||
+                    should_update_rotation;
             } else {
                 should_update_rotation = agent_steering::update_patrol_facing(
                     sentry_config.patrol_rotation_interval_ticks,
@@ -125,7 +222,13 @@ void AgentChaserController::tick(
             } else if (agent.sentry.lost_target_ticks >=
                        sentry_config.forget_ticks) {
                 agent.sentry.target = 0;
-                agent_steering::transition_to(&agent, AgentSentryState::kIdle);
+                // A squad member goes back to its formation rather than idling
+                // wherever the chase ended. kIdle would let it re-acquire from
+                // there, which is the runaway the leash exists to prevent.
+                agent_steering::transition_to(
+                    &agent,
+                    has_slot(agent) ? AgentSentryState::kReturn
+                                    : AgentSentryState::kIdle);
             }
         }
 

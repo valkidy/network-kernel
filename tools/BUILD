@@ -19,9 +19,18 @@ py_test(
     python_version = "PY3",
 )
 
-sh_test(
-    name = "check_cross_platform_boundaries",
-    srcs = ["check_cross_platform_boundaries.sh"],
+# Reads the BUILD files it checks, so they have to be data. The compiler
+# already stops gameplay code including kernel headers; this stops the edit
+# that would make those includes start working.
+py_test(
+    name = "check_layering_boundaries",
+    srcs = ["check_layering_boundaries.py"],
+    data = [
+        "//engine/components/ai:BUILD.bazel",
+        "//game_server:BUILD.bazel",
+    ],
+    main = "check_layering_boundaries.py",
+    python_version = "PY3",
 )
 
 cc_binary(

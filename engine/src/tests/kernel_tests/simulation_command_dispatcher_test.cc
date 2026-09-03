@@ -1,4 +1,5 @@
-#include <cassert>
+#include <cstdio>
+#include <cstdlib>
 #include <cstdint>
 
 #include <entt/entt.hpp>
@@ -9,6 +10,24 @@
 #define private public
 #include "kernel/src/kernel.h"
 #include "simulation/src/command_dispatcher.h"
+
+namespace {
+
+// assert() is compiled out under -c opt, which is the configuration this suite
+// runs in, so every check in this file was previously not being run at all.
+// This is the fourth file in this area found that way.
+void require_impl(bool condition, int line, const char* text) {
+    if (condition) {
+        return;
+    }
+    std::fprintf(stderr, "require failed at line %d: %s\n", line, text);
+    std::abort();
+}
+
+#define require(expr) require_impl(static_cast<bool>(expr), __LINE__, #expr)
+
+}  // namespace
+
 #undef private
 
 namespace {
@@ -48,9 +67,9 @@ void dispatcher_routes_create_and_destroy_to_lifecycle_system() {
 
     const network_example::simulation::CommandResult create_result =
         dispatcher.dispatch(engine, create);
-    assert(create_result.ok);
-    assert(create_result.net_id != 0);
-    assert(engine.world_.find_entity(create_result.net_id).has_value());
+    require(create_result.ok);
+    require(create_result.net_id != 0);
+    require(engine.world_.find_entity(create_result.net_id).has_value());
 
     network_example::simulation::Command destroy{};
     destroy.id = network_example::simulation::CommandId::kDestroyEntity;
@@ -60,15 +79,15 @@ void dispatcher_routes_create_and_destroy_to_lifecycle_system() {
 
     const network_example::simulation::CommandResult destroy_result =
         dispatcher.dispatch(engine, destroy);
-    assert(destroy_result.ok);
-    assert(!engine.world_.find_entity(create_result.net_id).has_value());
+    require(destroy_result.ok);
+    require(!engine.world_.find_entity(create_result.net_id).has_value());
 }
 
 void dispatcher_routes_submit_player_input_to_movement_system() {
     network_example::KernelEngine engine(server_config());
     reset_running_server(&engine);
     std::uint32_t net_id = 0;
-    assert(engine.server_create_entity(player_create_info(), &net_id));
+    require(engine.server_create_entity(player_create_info(), &net_id));
 
     KernelPlayerInput input{};
     input.input_seq = 3;
@@ -83,10 +102,10 @@ void dispatcher_routes_submit_player_input_to_movement_system() {
     network_example::simulation::Dispatcher dispatcher;
     const network_example::simulation::CommandResult result =
         dispatcher.dispatch(engine, command);
-    assert(result.ok);
-    assert(engine.pending_inputs_.size() == 1);
-    assert(engine.pending_inputs_[0].controlled_net_id == net_id);
-    assert(engine.pending_inputs_[0].input.input_seq == 3);
+    require(result.ok);
+    require(engine.pending_inputs_.size() == 1);
+    require(engine.pending_inputs_[0].controlled_net_id == net_id);
+    require(engine.pending_inputs_[0].input.input_seq == 3);
 }
 
 }  // namespace

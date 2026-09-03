@@ -2,6 +2,9 @@ licenses(["notice"])
 
 package(default_visibility = ["//visibility:public"])
 
+# Read by //tools:check_layering_boundaries.
+exports_files(["BUILD.bazel"])
+
 filegroup(
     name = "gameplay_catalog_bundle_sources",
     srcs = glob([
@@ -32,8 +35,13 @@ cc_library(
         "agent_steering.cc",
         "agent_runtime_manager.cc",
         "ballistic_aim.cc",
+        "game_rule_director.cc",
         "gameplay_config.cc",
         "game_server.cc",
+        "patrol_director.cc",
+        "patrol_group_runtime.cc",
+        "patrol_navigation.cc",
+        "world_rule_director.cc",
     ],
     hdrs = [
         "actor_intent_executor.h",
@@ -44,14 +52,20 @@ cc_library(
         "agent_sentry_controller.h",
         "agent_steering.h",
         "ballistic_aim.h",
+        "game_rule_director.h",
         "gameplay_config.h",
         "game_server.h",
+        "patrol_director.h",
+        "patrol_group_runtime.h",
+        "patrol_navigation.h",
+        "world_rule_director.h",
         "public/game_server_types.h",
     ],
     deps = [
         "//engine/components/ai:ai",
         "//engine/src/kernel:kernel_api",
         "//engine/src/kernel:kernel_api_internal",
+        "@recastnavigation//:detour",
         "@spdlog//:spdlog",
         "@zip_archive//:zip",
         "@yaml-cpp//:yaml-cpp",
@@ -148,6 +162,24 @@ cc_test(
     ],
 )
 
+# Measures whether a patrol route can be a straight line, on the navmesh the
+# mesh bake already ships in the catalog bundle. Reports numbers rather than
+# asserting them -- the acceptable rate is a design decision and the answer is a
+# property of the authored terrain -- so it is manual, like the other benches.
+cc_test(
+    name = "patrol_nav_bench",
+    srcs = ["patrol_nav_bench.cc"],
+    data = [
+        "//game_server/gameplay_catalog_bundle:bundle",
+        "//game_server/test_mesh_assets:cooked_test_mesh_assets",
+    ],
+    tags = ["manual"],
+    deps = [
+        ":game_server",
+        "@recastnavigation//:detour",
+    ],
+)
+
 cc_test(
     name = "activation_gameplay_config_test",
     srcs = ["activation_gameplay_config_test.cc"],
@@ -237,6 +269,55 @@ cc_test(
     deps = [
         ":game_server",
         "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
+    name = "patrol_director_test",
+    srcs = ["patrol_director_test.cc"],
+    data = [
+        "//game_server/test_mesh_assets:cooked_test_mesh_assets",
+    ],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
+    name = "game_rule_director_test",
+    srcs = ["game_rule_director_test.cc"],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
+    name = "world_rule_director_test",
+    srcs = ["world_rule_director_test.cc"],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
+    name = "patrol_navigation_test",
+    srcs = ["patrol_navigation_test.cc"],
+    data = [
+        "//game_server/test_mesh_assets:cooked_test_mesh_assets",
+    ],
+    deps = [
+        ":game_server",
+    ],
+)
+
+cc_test(
+    name = "patrol_group_runtime_test",
+    srcs = ["patrol_group_runtime_test.cc"],
+    deps = [
+        ":game_server",
     ],
 )
 

@@ -288,6 +288,10 @@ void hash_actor_template(
     hash_float(hash, actor_template.chaser.resume_distance_meters);
     hash_float(hash, actor_template.chaser.input_magnitude);
     hash_float(hash, actor_template.chaser.attack_range_meters);
+    hash_float(hash, actor_template.patrol.slot_radius_meters);
+    hash_float(hash, actor_template.patrol.input_magnitude);
+    hash_float(hash, actor_template.patrol.leash_meters);
+    hash_float(hash, actor_template.patrol.leash_resume_meters);
     hash_scalar(hash, actor_template.vision.camp);
     hash_scalar(hash, actor_template.vision.vision_collider_template_id);
     hash_scalar(hash, actor_template.vision.max_visible_hostiles);
@@ -297,7 +301,7 @@ void hash_actor_template(
     hash_vec3(hash, actor_template.vision.local_forward);
     hash_scalar(hash, actor_template.ai_controller_type);
     hash_scalar(hash, actor_template.ai_tick_interval);
-    hash_scalar(hash, actor_template.director_kind);
+    hash_scalar(hash, static_cast<std::uint32_t>(actor_template.director_kind));
     hash_scalar(hash, actor_template.director_spawn_target_count);
     hash_scalar(hash, actor_template.director_spawn_entity_template_id);
     hash_scalar(hash, actor_template.director_spawn_actor_template_id);
@@ -2541,6 +2545,12 @@ void apply_catalog_director_preload_config(
 void apply_catalog_agent_config(
     const YAML::Node& document,
     GameServerGameplayConfig* config);
+void apply_catalog_patrol_config(
+    const YAML::Node& document,
+    GameServerGameplayConfig* config,
+    const std::string& path,
+    std::uint32_t source_kind);
+void apply_catalog_world_rule_config(GameServerGameplayConfig* config);
 std::uint32_t collider_template_id_from_ref(
     const YAML::Node& node,
     const ColliderCatalogConfig& colliders);
@@ -2815,6 +2825,45 @@ AgentSentryConfig sentry_config_from_yaml(
         }
     }
     return sentry;
+}
+
+AgentPatrolTuning patrol_tuning_from_yaml(
+    const YAML::Node& node,
+    const ActorTemplateConfig& actor_template,
+    const std::string& path,
+    std::uint32_t source_kind) {
+    AgentPatrolTuning patrol = actor_template.patrol;
+    const YAML::Node patrol_node = node ? node["patrol"] : YAML::Node{};
+    if (!patrol_node) {
+        return patrol;
+    }
+    reject_unknown_keys(
+        patrol_node,
+        {
+            "slot_radius_meters",
+            "input_magnitude",
+            "leash_meters",
+            "leash_resume_meters",
+        },
+        path,
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+        actor_template.actor_template_id);
+    if (patrol_node["slot_radius_meters"]) {
+        patrol.slot_radius_meters =
+            patrol_node["slot_radius_meters"].as<float>();
+    }
+    if (patrol_node["input_magnitude"]) {
+        patrol.input_magnitude = patrol_node["input_magnitude"].as<float>();
+    }
+    if (patrol_node["leash_meters"]) {
+        patrol.leash_meters = patrol_node["leash_meters"].as<float>();
+    }
+    if (patrol_node["leash_resume_meters"]) {
+        patrol.leash_resume_meters =
+            patrol_node["leash_resume_meters"].as<float>();
+    }
+    return patrol;
 }
 
 AgentChaseTuning chaser_config_from_yaml(
@@ -3620,6 +3669,7 @@ ActorTemplateConfig actor_template_from_yaml(
                 "tick_interval",
                 "sentry",
                 "chaser",
+                "patrol",
             },
             path,
             source_kind,
@@ -3633,7 +3683,7 @@ ActorTemplateConfig actor_template_from_yaml(
             } else if (controller == "chaser") {
                 actor_template.ai_controller_type = KernelAiControllerType_Chaser;
             } else if (controller == "director") {
-                actor_template.ai_controller_type = KernelAiControllerType_Director;
+                actor_template.ai_controller_type = kAiControllerTypeDirector;
             } else {
                 throw std::runtime_error("unsupported ai.controller: " + controller);
             }
@@ -3647,6 +3697,8 @@ ActorTemplateConfig actor_template_from_yaml(
         sentry_config_from_yaml(node["ai"], actor_template, weapons, path, source_kind);
     actor_template.chaser =
         chaser_config_from_yaml(node["ai"], actor_template, path, source_kind);
+    actor_template.patrol =
+        patrol_tuning_from_yaml(node["ai"], actor_template, path, source_kind);
     actor_template.vision = vision_config_from_yaml(
         node["vision"],
         actor_template,
@@ -4411,7 +4463,7 @@ EntityTemplateConfig entity_template_from_yaml(
     if (controller != "director") {
         throw std::runtime_error("director template requires ai.controller: director");
     }
-    entity_template.ai_controller_type = KernelAiControllerType_Director;
+    entity_template.ai_controller_type = kAiControllerTypeDirector;
     entity_template.ai_tick_interval =
         ai["tick_interval"] ? ai["tick_interval"].as<std::uint32_t>() : 1u;
 
@@ -4433,8 +4485,8 @@ EntityTemplateConfig entity_template_from_yaml(
         throw std::runtime_error("unsupported director.kind: " + kind);
     }
     entity_template.director_kind = kind == "world_rule"
-        ? KernelDirectorKind_WorldRule
-        : KernelDirectorKind_GameRule;
+        ? AuthoredDirectorKind::kWorldRule
+        : AuthoredDirectorKind::kGameRule;
     if (kind == "game_rule") {
         if (director["spawn"] || !director["graph"]) {
             throw std::runtime_error(
@@ -4451,7 +4503,7 @@ EntityTemplateConfig entity_template_from_yaml(
             entity_template.actor_template_id);
         const YAML::Node nodes = graph["nodes"];
         if (!nodes || !nodes.IsSequence() || nodes.size() == 0u ||
-            nodes.size() > KERNEL_MAX_GAME_RULE_NODES) {
+            nodes.size() > kMaxGameRuleNodes) {
             throw std::runtime_error(
                 "game_rule graph requires 1..64 nodes: " + entity_template.name);
         }
@@ -4500,7 +4552,7 @@ EntityTemplateConfig entity_template_from_yaml(
                         "group_eliminated requires group and must not define count");
                 }
                 node_config.condition_type =
-                    KernelGameRuleConditionType_GroupEliminated;
+                    kGameRuleConditionGroupEliminated;
                 node_config.group = condition["group"].as<std::string>();
                 node_config.group_id = node_config.node_id;
                 if (node_config.group.empty() ||
@@ -4514,7 +4566,7 @@ EntityTemplateConfig entity_template_from_yaml(
                         "player_count_at_least requires count and must not define group");
                 }
                 node_config.condition_type =
-                    KernelGameRuleConditionType_PlayerCountAtLeast;
+                    kGameRuleConditionPlayerCountAtLeast;
                 node_config.condition_count =
                     condition["count"].as<std::uint32_t>();
                 if (node_config.condition_count == 0u) {
@@ -4527,7 +4579,7 @@ EntityTemplateConfig entity_template_from_yaml(
             }
             if (authored["on_activate"]) {
                 if (node_config.condition_type !=
-                    KernelGameRuleConditionType_GroupEliminated) {
+                    kGameRuleConditionGroupEliminated) {
                     throw std::runtime_error(
                         "player_count_at_least node must not define on_activate");
                 }
@@ -4569,7 +4621,7 @@ EntityTemplateConfig entity_template_from_yaml(
                         "invalid game_rule spawn_group values");
                 }
             } else if (node_config.condition_type ==
-                       KernelGameRuleConditionType_GroupEliminated) {
+                       kGameRuleConditionGroupEliminated) {
                 throw std::runtime_error(
                     "group_eliminated node requires a matching spawn_group effect");
             }
@@ -4597,7 +4649,7 @@ EntityTemplateConfig entity_template_from_yaml(
                 ++edge_count;
             }
         }
-        if (edge_count > KERNEL_MAX_GAME_RULE_EDGES) {
+        if (edge_count > kMaxGameRuleEdges) {
             throw std::runtime_error("game_rule graph exceeds 256 edges");
         }
         std::vector<std::uint8_t> visit(entity_template.game_rule_nodes.size(), 0u);
@@ -4843,7 +4895,7 @@ std::vector<EntityTemplateConfig> load_entity_templates_from_source(
         if (entity_template.entity_type != KernelEntityType_Director) {
             continue;
         }
-        if (entity_template.director_kind == KernelDirectorKind_WorldRule) {
+        if (entity_template.director_kind == AuthoredDirectorKind::kWorldRule) {
             const YAML::Node ref(
                 entity_template.director_spawn_entity_template_ref);
             entity_template.director_spawn_entity_template_id =
@@ -6605,6 +6657,9 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             "player",
             "enemy",
             "preload_directors",
+            "patrols",
+            "patrol_budget",
+            "navigation_mesh",
         },
         path,
         source.source_kind(),
@@ -6653,7 +6708,8 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     if (catalog_version != 8u && catalog_version != 9u &&
         catalog_version != 10u && catalog_version != 11u &&
         catalog_version != 12u && catalog_version != 13u &&
-        catalog_version != 14u && catalog_version != 15u) {
+        catalog_version != 14u && catalog_version != 15u &&
+        catalog_version != 16u) {
         throw DataLoadError(
             KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNSUPPORTED_CATALOG_VERSION,
             "unsupported catalog_version: " + std::to_string(catalog_version),
@@ -6704,6 +6760,25 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             document["prop_population_rules"],
             path,
             source.source_kind());
+    }
+    if (document["navigation_mesh"]) {
+        const YAML::Node navigation = document["navigation_mesh"];
+        reject_unknown_keys(
+            navigation,
+            {"entry_path"},
+            path,
+            source.source_kind(),
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+        if (!navigation["entry_path"]) {
+            throw std::runtime_error(
+                "navigation_mesh requires entry_path: " + path);
+        }
+        // Path only, the way static_collision_scene does it. The bytes are a
+        // generated artifact that exists in the bundle and not in the source
+        // tree, so reading them here would make every filesystem catalog load
+        // fail on an asset that was never meant to be there.
+        config.navigation_mesh.entry_path =
+            navigation["entry_path"].as<std::string>();
     }
     if (document["static_collision_scene"]) {
         const YAML::Node scene = document["static_collision_scene"];
@@ -6828,6 +6903,10 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     apply_catalog_player_config(document, &config);
     apply_catalog_director_preload_config(document, &config);
     apply_catalog_agent_config(document, &config);
+    apply_catalog_patrol_config(
+        document, &config, path, source.source_kind());
+    // After the preload list and after `enemy:`, because it reads both.
+    apply_catalog_world_rule_config(&config);
 
     const std::vector<std::string> errors = validate_gameplay_config(config);
     if (!errors.empty()) {
@@ -6895,6 +6974,275 @@ void apply_catalog_director_preload_config(
     }
 }
 
+
+PatrolAreaConfig patrol_area_from_yaml(
+    const YAML::Node& node,
+    const std::string& path,
+    std::uint32_t source_kind) {
+    PatrolAreaConfig area;
+    if (!node) {
+        throw std::runtime_error("patrol requires an area");
+    }
+    reject_unknown_keys(
+        node,
+        {"shape", "center", "radius", "half_extents"},
+        path,
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+    const std::string shape =
+        node["shape"] ? node["shape"].as<std::string>() : "circle";
+    if (shape == "rect") {
+        area.shape = PatrolAreaShape::kRect;
+    } else if (shape == "circle") {
+        area.shape = PatrolAreaShape::kCircle;
+    } else {
+        throw std::runtime_error("patrol area shape must be circle or rect");
+    }
+    if (node["center"]) {
+        area.center = vec3_from_yaml(node["center"]);
+    }
+    // A circle says radius and a rect says half_extents. Accepting either key
+    // for either shape would let a rect be authored with one number and quietly
+    // come out with no depth.
+    if (area.shape == PatrolAreaShape::kCircle) {
+        if (!node["radius"]) {
+            throw std::runtime_error("patrol circle area requires radius");
+        }
+        area.half_extents.x = node["radius"].as<float>();
+    } else {
+        if (!node["half_extents"]) {
+            throw std::runtime_error("patrol rect area requires half_extents");
+        }
+        area.half_extents = vec3_from_yaml(node["half_extents"]);
+    }
+    return area;
+}
+
+// Translates every authored director into the form game_server runs it in.
+//
+// Every one, not just the preloaded ones. Which are active is still decided by
+// preload_director_template_ids, but that decision is applied where the
+// directors are constructed rather than baked in here -- otherwise rewriting
+// the preload list, which is how a test disables a director, would silently do
+// nothing because the rules had already been extracted.
+void apply_catalog_world_rule_config(GameServerGameplayConfig* config) {
+    for (const EntityTemplateConfig& candidate : config->entity_templates) {
+        if (candidate.entity_type != KernelEntityType_Director) {
+            continue;
+        }
+        const std::uint32_t template_id = candidate.actor_template_id;
+        const auto entity_template = config->entity_templates.begin() +
+            (&candidate - config->entity_templates.data());
+        if (entity_template->director_kind == AuthoredDirectorKind::kGameRule) {
+            GameRuleConfig game_rule;
+            game_rule.director_template_id = template_id;
+            game_rule.name = entity_template->name;
+            game_rule.tick_interval = entity_template->ai_tick_interval == 0u
+                ? 1u
+                : entity_template->ai_tick_interval;
+            for (const ActorTemplateConfig::GameRuleNodeConfig& authored_node :
+                 entity_template->game_rule_nodes) {
+                GameRuleNodeConfig node;
+                node.node_id = authored_node.node_id;
+                node.condition_type =
+                    authored_node.condition_type ==
+                        kGameRuleConditionPlayerCountAtLeast
+                    ? GameRuleConditionType::kPlayerCountAtLeast
+                    : GameRuleConditionType::kGroupEliminated;
+                node.condition_group_id = authored_node.group_id;
+                node.condition_count = authored_node.condition_count;
+                node.next_node_ids = authored_node.next_node_ids;
+                node.has_spawn_effect = authored_node.has_spawn_effect;
+                node.spawn.group_id = authored_node.group_id;
+                node.spawn.count = authored_node.spawn_count;
+                node.spawn.entity_template_id =
+                    authored_node.spawn_entity_template_id;
+                node.spawn.position = authored_node.spawn_position;
+                node.spawn.radius = authored_node.spawn_radius;
+                node.spawn.seed = authored_node.spawn_seed;
+                game_rule.nodes.push_back(std::move(node));
+            }
+            config->game_rules.push_back(std::move(game_rule));
+            continue;
+        }
+        WorldRuleSpawnConfig rule;
+        rule.director_template_id = template_id;
+        rule.name = entity_template->name;
+        rule.tick_interval = entity_template->ai_tick_interval == 0u
+            ? 1u
+            : entity_template->ai_tick_interval;
+        // `enemy:` replaces every world rule's spawn wholesale. Kept exactly:
+        // it is why world_rule_director.yaml's own spawn block is inert in the
+        // shipping catalog, and changing that here would be a behaviour change
+        // hidden inside a move.
+        if (config->agent.override_director_spawn) {
+            rule.target_count = config->agent.spawn_count;
+            rule.spawn_entity_template_id = config->agent.actor_template_id;
+            rule.spawn_actor_template_id = config->agent.actor_template_id;
+            rule.position = config->agent.spawn_position;
+            rule.radius = config->agent.spawn_radius;
+        } else {
+            rule.target_count = entity_template->director_spawn_target_count;
+            rule.spawn_entity_template_id =
+                entity_template->director_spawn_entity_template_id;
+            rule.spawn_actor_template_id =
+                entity_template->director_spawn_actor_template_id;
+            rule.position = entity_template->director_spawn_position;
+            rule.radius = entity_template->director_spawn_radius;
+        }
+        config->world_rule_spawns.push_back(std::move(rule));
+    }
+}
+
+void apply_catalog_patrol_config(
+    const YAML::Node& document,
+    GameServerGameplayConfig* config,
+    const std::string& path,
+    std::uint32_t source_kind) {
+    const YAML::Node budget = document["patrol_budget"];
+    if (budget) {
+        reject_unknown_keys(
+            budget,
+            {"max_live_agents"},
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+        if (budget["max_live_agents"]) {
+            config->patrol_budget.max_live_agents =
+                budget["max_live_agents"].as<std::uint32_t>();
+        }
+    }
+    const YAML::Node patrols = document["patrols"];
+    if (!patrols) {
+        return;
+    }
+    if (!patrols.IsSequence()) {
+        throw std::runtime_error("patrols must be a sequence");
+    }
+    std::unordered_set<std::uint32_t> configured_ids;
+    for (const YAML::Node& node : patrols) {
+        reject_unknown_keys(
+            node,
+            {
+                "id",
+                "name",
+                "area",
+                "seed",
+                "interval_ticks",
+                "max_live_groups",
+                "count",
+                "composition",
+                "formation_spacing_meters",
+                "advance_speed_meters_per_second",
+                "waypoint_radius_meters",
+                "despawn_linger_ticks",
+                "despawn_distance_meters",
+                "max_detour_ratio",
+                "route_attempts",
+            },
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+        PatrolDefinitionConfig patrol;
+        if (!node["id"] || !node["name"]) {
+            throw std::runtime_error("patrol requires id and name");
+        }
+        patrol.id = node["id"].as<std::uint32_t>();
+        patrol.name = node["name"].as<std::string>();
+        if (patrol.id == 0) {
+            throw std::runtime_error("patrol id must not be zero");
+        }
+        if (!configured_ids.insert(patrol.id).second) {
+            throw std::runtime_error(
+                "duplicate patrol id: " + std::to_string(patrol.id));
+        }
+        patrol.area = patrol_area_from_yaml(node["area"], path, source_kind);
+        if (node["seed"]) {
+            patrol.seed = node["seed"].as<std::uint32_t>();
+        }
+        if (node["interval_ticks"]) {
+            patrol.interval_ticks = node["interval_ticks"].as<std::uint32_t>();
+        }
+        if (node["max_live_groups"]) {
+            patrol.max_live_groups = node["max_live_groups"].as<std::uint32_t>();
+        }
+        if (node["formation_spacing_meters"]) {
+            patrol.formation_spacing_meters =
+                node["formation_spacing_meters"].as<float>();
+        }
+        if (node["advance_speed_meters_per_second"]) {
+            patrol.group.advance_speed_meters_per_second =
+                node["advance_speed_meters_per_second"].as<float>();
+        }
+        if (node["waypoint_radius_meters"]) {
+            patrol.group.waypoint_radius_meters =
+                node["waypoint_radius_meters"].as<float>();
+        }
+        if (node["despawn_linger_ticks"]) {
+            patrol.despawn_linger_ticks =
+                node["despawn_linger_ticks"].as<std::uint32_t>();
+        }
+        if (node["despawn_distance_meters"]) {
+            patrol.despawn_distance_meters =
+                node["despawn_distance_meters"].as<float>();
+        }
+        if (node["max_detour_ratio"]) {
+            patrol.max_detour_ratio = node["max_detour_ratio"].as<float>();
+        }
+        if (node["route_attempts"]) {
+            patrol.route_attempts = node["route_attempts"].as<std::uint32_t>();
+        }
+        const YAML::Node count = node["count"];
+        if (!count) {
+            throw std::runtime_error("patrol requires count");
+        }
+        reject_unknown_keys(
+            count,
+            {"min", "max"},
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+        if (!count["min"] || !count["max"]) {
+            throw std::runtime_error("patrol count requires min and max");
+        }
+        patrol.count_min = count["min"].as<std::uint32_t>();
+        patrol.count_max = count["max"].as<std::uint32_t>();
+        const YAML::Node composition = node["composition"];
+        if (!composition || !composition.IsSequence()) {
+            throw std::runtime_error("patrol composition must be a sequence");
+        }
+        for (const YAML::Node& entry_node : composition) {
+            reject_unknown_keys(
+                entry_node,
+                {"entity_template", "min", "max"},
+                path,
+                source_kind,
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+            if (!entry_node["entity_template"] || !entry_node["min"] ||
+                !entry_node["max"]) {
+                throw std::runtime_error(
+                    "patrol composition entry requires entity_template, min "
+                    "and max");
+            }
+            PatrolCompositionEntry entry;
+            entry.entity_template_ref =
+                entry_node["entity_template"].as<std::string>();
+            entry.entity_template_id = entity_template_ref_from_yaml(
+                entry_node["entity_template"], config->entity_templates);
+            entry.min_count = entry_node["min"].as<std::uint32_t>();
+            entry.max_count = entry_node["max"].as<std::uint32_t>();
+            patrol.composition.push_back(std::move(entry));
+        }
+        // Unsatisfiable here means a catalog that does not load, rather than a
+        // squad that quietly comes out the wrong size at run time.
+        const std::string error = validate_patrol_definition(patrol);
+        if (!error.empty()) {
+            throw std::runtime_error(error + ": " + patrol.name);
+        }
+        config->patrols.push_back(std::move(patrol));
+    }
+}
+
 void apply_catalog_agent_config(
     const YAML::Node& document,
     GameServerGameplayConfig* config) {
@@ -6906,7 +7254,7 @@ void apply_catalog_agent_config(
             [](const EntityTemplateConfig& entity_template) {
                 return entity_template.entity_type == KernelEntityType_Director &&
                        entity_template.director_kind ==
-                           KernelDirectorKind_WorldRule &&
+                           AuthoredDirectorKind::kWorldRule &&
                        entity_template.director_spawn_actor_template_id != 0u;
             });
         if (director != config->entity_templates.end()) {
@@ -7133,6 +7481,69 @@ std::uint64_t compute_gameplay_catalog_hash(
          config.preload_director_template_ids) {
         hash_scalar(&hash, template_id);
     }
+    for (const PatrolDefinitionConfig& patrol : config.patrols) {
+        hash_scalar(&hash, patrol.id);
+        hash_string(&hash, patrol.name);
+        hash_scalar(&hash, static_cast<std::uint32_t>(patrol.area.shape));
+        hash_vec3(&hash, patrol.area.center);
+        hash_vec3(&hash, patrol.area.half_extents);
+        hash_scalar(&hash, patrol.seed);
+        hash_scalar(&hash, static_cast<std::uint32_t>(patrol.trigger));
+        hash_scalar(&hash, patrol.interval_ticks);
+        hash_scalar(&hash, patrol.max_live_groups);
+        hash_scalar(&hash, static_cast<std::uint32_t>(patrol.composition_mode));
+        hash_scalar(&hash, patrol.count_min);
+        hash_scalar(&hash, patrol.count_max);
+        hash_float(&hash, patrol.formation_spacing_meters);
+        hash_float(&hash, patrol.group.advance_speed_meters_per_second);
+        hash_float(&hash, patrol.group.waypoint_radius_meters);
+        hash_scalar(&hash, patrol.despawn_linger_ticks);
+        hash_float(&hash, patrol.despawn_distance_meters);
+        hash_float(&hash, patrol.max_detour_ratio);
+        hash_scalar(&hash, patrol.route_attempts);
+        for (const PatrolCompositionEntry& entry : patrol.composition) {
+            hash_string(&hash, entry.entity_template_ref);
+            hash_scalar(&hash, entry.entity_template_id);
+            hash_scalar(&hash, entry.min_count);
+            hash_scalar(&hash, entry.max_count);
+        }
+    }
+    for (const GameRuleConfig& rule : config.game_rules) {
+        hash_scalar(&hash, rule.director_template_id);
+        hash_string(&hash, rule.name);
+        hash_scalar(&hash, rule.tick_interval);
+        for (const GameRuleNodeConfig& node : rule.nodes) {
+            hash_scalar(&hash, node.node_id);
+            hash_scalar(&hash, static_cast<std::uint32_t>(node.condition_type));
+            hash_scalar(&hash, node.condition_group_id);
+            hash_scalar(&hash, node.condition_count);
+            for (const std::uint32_t next : node.next_node_ids) {
+                hash_scalar(&hash, next);
+            }
+            hash_scalar(&hash, node.has_spawn_effect ? 1u : 0u);
+            hash_scalar(&hash, node.spawn.group_id);
+            hash_scalar(&hash, node.spawn.count);
+            hash_scalar(&hash, node.spawn.entity_template_id);
+            hash_vec3(&hash, node.spawn.position);
+            hash_float(&hash, node.spawn.radius);
+            hash_scalar(&hash, node.spawn.seed);
+        }
+    }
+    for (const WorldRuleSpawnConfig& rule : config.world_rule_spawns) {
+        hash_scalar(&hash, rule.director_template_id);
+        hash_string(&hash, rule.name);
+        hash_scalar(&hash, rule.spawn_entity_template_id);
+        hash_scalar(&hash, rule.spawn_actor_template_id);
+        hash_scalar(&hash, rule.target_count);
+        hash_vec3(&hash, rule.position);
+        hash_float(&hash, rule.radius);
+        hash_scalar(&hash, rule.tick_interval);
+    }
+    hash_scalar(&hash, config.patrol_budget.max_live_agents);
+    hash_string(&hash, config.navigation_mesh.entry_path);
+    hash_scalar(
+        &hash,
+        static_cast<std::uint32_t>(config.navigation_mesh.artifact.size()));
     hash_string(&hash, config.static_collision_scene.entry_path);
     hash_scalar(&hash, config.static_collision_scene.scene_id);
     hash_scalar(&hash, config.static_collision_scene.collider_id);
@@ -8100,98 +8511,11 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
                         : authored_template.ai_tick_interval;
             }
         } else if (authored_template.entity_type == KernelEntityType_Director) {
-            entity_template.component_flags =
-                KERNEL_ENTITY_COMPONENT_TRANSFORM |
-                KERNEL_ENTITY_COMPONENT_AGENT_RUNTIME |
-                KERNEL_ENTITY_COMPONENT_DIRECTOR_RUNTIME;
-            if (authored_template.server_only) {
-                entity_template.component_flags |= KERNEL_ENTITY_COMPONENT_SERVER_ONLY;
-            }
-            entity_template.ai.controller_type = KernelAiControllerType_Director;
-            entity_template.ai.director_kind = authored_template.director_kind;
-            entity_template.ai.game_rule_definition_id =
-                authored_template.director_kind == KernelDirectorKind_GameRule
-                    ? authored_template.actor_template_id
-                    : 0u;
-            entity_template.ai.tick_interval =
-                authored_template.ai_tick_interval == 0u
-                    ? 1u
-                    : authored_template.ai_tick_interval;
-            if (authored_template.director_kind == KernelDirectorKind_GameRule) {
-                const std::uint32_t first_node =
-                    static_cast<std::uint32_t>(storage.game_rule_nodes.size());
-                const std::uint32_t first_edge =
-                    static_cast<std::uint32_t>(storage.game_rule_edges.size());
-                const std::uint32_t first_effect =
-                    static_cast<std::uint32_t>(storage.game_rule_effects.size());
-                for (const ActorTemplateConfig::GameRuleNodeConfig& node :
-                     authored_template.game_rule_nodes) {
-                    storage.game_rule_nodes.push_back(KernelGameRuleNodeDefinition{
-                        sizeof(KernelGameRuleNodeDefinition),
-                        node.node_id,
-                        node.condition_type,
-                        node.group_id,
-                        node.condition_count,
-                    });
-                    if (node.has_spawn_effect) {
-                        storage.game_rule_effects.push_back(
-                            KernelGameRuleSpawnGroupEffectDefinition{
-                                sizeof(KernelGameRuleSpawnGroupEffectDefinition),
-                                KernelGameRuleEffectType_SpawnGroup,
-                                node.node_id,
-                                node.group_id,
-                                node.spawn_count,
-                                node.spawn_entity_template_id,
-                                node.spawn_position,
-                                node.spawn_radius,
-                                node.spawn_seed,
-                            });
-                    }
-                    for (const std::uint32_t next_node_id :
-                         node.next_node_ids) {
-                        storage.game_rule_edges.push_back(
-                            KernelGameRuleEdgeDefinition{
-                                sizeof(KernelGameRuleEdgeDefinition),
-                                node.node_id,
-                                next_node_id,
-                            });
-                    }
-                }
-                storage.game_rules.push_back(KernelGameRuleDefinition{
-                    sizeof(KernelGameRuleDefinition),
-                    authored_template.actor_template_id,
-                    first_node,
-                    static_cast<std::uint32_t>(
-                        authored_template.game_rule_nodes.size()),
-                    first_edge,
-                    static_cast<std::uint32_t>(
-                        storage.game_rule_edges.size() - first_edge),
-                    first_effect,
-                    static_cast<std::uint32_t>(
-                        storage.game_rule_effects.size() - first_effect),
-                });
-            } else if (config.agent.override_director_spawn) {
-                entity_template.ai.spawn_target_count = config.agent.spawn_count;
-                entity_template.ai.spawn_entity_template_id =
-                    config.agent.actor_template_id;
-                entity_template.ai.spawn_actor_template_id =
-                    config.agent.actor_template_id;
-                entity_template.ai.spawn_position = config.agent.spawn_position;
-                entity_template.ai.spawn_radius = config.agent.spawn_radius;
-                entity_template.ai.spawn_seed = config.agent.spawn_seed;
-            } else {
-                entity_template.ai.spawn_target_count =
-                    authored_template.director_spawn_target_count;
-                entity_template.ai.spawn_entity_template_id =
-                    authored_template.director_spawn_entity_template_id;
-                entity_template.ai.spawn_actor_template_id =
-                    authored_template.director_spawn_actor_template_id;
-                entity_template.ai.spawn_position =
-                    authored_template.director_spawn_position;
-                entity_template.ai.spawn_radius =
-                    authored_template.director_spawn_radius;
-                entity_template.ai.spawn_seed = authored_template.director_spawn_seed;
-            }
+            // Neither kind of director is a kernel entity any more, so no
+            // director template is sent at all. The authored graph is compiled
+            // into config.game_rules, and the world rule into
+            // config.world_rule_spawns, both of which game_server runs itself.
+            continue;
         } else if (authored_template.entity_type == KernelEntityType_Prop) {
             entity_template.prop = authored_template.prop;
             entity_template.component_flags = KERNEL_ENTITY_COMPONENT_TRANSFORM;
@@ -8389,18 +8713,6 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
     storage.definition.skeleton_assets = storage.skeleton_assets.data();
     storage.definition.skeleton_asset_count =
         static_cast<std::uint32_t>(storage.skeleton_assets.size());
-    storage.definition.game_rules = storage.game_rules.data();
-    storage.definition.game_rule_count =
-        static_cast<std::uint32_t>(storage.game_rules.size());
-    storage.definition.game_rule_nodes = storage.game_rule_nodes.data();
-    storage.definition.game_rule_node_count =
-        static_cast<std::uint32_t>(storage.game_rule_nodes.size());
-    storage.definition.game_rule_edges = storage.game_rule_edges.data();
-    storage.definition.game_rule_edge_count =
-        static_cast<std::uint32_t>(storage.game_rule_edges.size());
-    storage.definition.game_rule_effects = storage.game_rule_effects.data();
-    storage.definition.game_rule_effect_count =
-        static_cast<std::uint32_t>(storage.game_rule_effects.size());
     return storage;
 }
 

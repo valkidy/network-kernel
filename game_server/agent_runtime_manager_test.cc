@@ -49,7 +49,7 @@ network_example::game_server::GameServerGameplayConfig single_spawn_gameplay_con
     for (network_example::game_server::EntityTemplateConfig& entity_template :
          config.entity_templates) {
         if (entity_template.entity_type != KernelEntityType_Director ||
-            entity_template.director_kind != KernelDirectorKind_WorldRule) {
+            entity_template.director_kind != network_example::game_server::AuthoredDirectorKind::kWorldRule) {
             continue;
         }
         entity_template.director_spawn_target_count = 1;

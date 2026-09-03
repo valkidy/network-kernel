@@ -19,6 +19,28 @@ enum class AgentSentryState : std::uint8_t {
     kIdle = 0,
     kAlert = 1,
     kAttack = 2,
+    // Walking back to the route after a pursuit, and refusing to start another
+    // one on the way. Without a state of its own the agent re-acquires the
+    // target it just broke off from on the very next tick and never returns.
+    kReturn = 3,
+};
+
+// What a squad member needs to know about the squad, which is very little: the
+// point it should be standing on. The route, the formation and the progress
+// along it all live on the PatrolGroup, so the controller can walk a patrol
+// without knowing that routes exist.
+//
+// has_slot false is every agent that is not in a squad, and it leaves the
+// chaser behaving exactly as it did before squads existed.
+struct AgentPatrolRuntimeState {
+    std::uint32_t group_id = 0;
+    KernelVec3 slot{0.0f, 0.0f, 0.0f};
+    bool has_slot = false;
+    // Where the agent stood when it broke off to give chase. The leash is
+    // measured from here rather than from the slot, so "how far a pursuit may
+    // drag a patrol" is a property of the pursuit and does not change as the
+    // squad moves on.
+    KernelVec3 leash_anchor{0.0f, 0.0f, 0.0f};
 };
 
 struct AgentSentryRuntimeState {
@@ -78,6 +100,7 @@ struct AgentRuntimeState {
     // Chaser only: true once the agent has closed inside its stop distance and
     // is holding position, until the target opens the gap back up.
     bool chase_holding = false;
+    AgentPatrolRuntimeState patrol{};
 };
 
 }  // namespace network_example::game_server

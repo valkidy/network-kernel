@@ -1,12 +1,17 @@
+# Mission flow: which objectives exist, in what order, and what has to
+# happen before the next one opens. The graph is acyclic by construction --
+# gameplay_config.cc rejects a cycle at load -- which is right for a mission
+# and wrong for anything periodic. Roaming population belongs to
+# world_rule_director instead.
 id: 101
-name: game_flow_director
+name: game_rule_director
 entity_type: director
 server_only: true
 transform:
   position: {x: 0.0, y: 0.0, z: 0.0}
 ai:
   controller: director
-  profile: game_flow
+  profile: game_rule
   tick_interval: 1
 director:
   kind: game_rule

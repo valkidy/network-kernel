@@ -1,9 +1,9 @@
 #include "game_server/agent_chaser_controller.h"
 
 #include <array>
-#include <cassert>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <vector>
 
@@ -18,11 +18,22 @@ namespace {
 // was loaded, no entity was created, no vision was configured, and the test
 // reported PASSED having called nothing. A precondition with a side effect has
 // to be stated in something that survives NDEBUG.
-void require(bool condition) {
-    if (!condition) {
-        std::abort();
+//
+// The setup calls were converted then; the assertions were not, so every check
+// in main() was compiled out too, under the one configuration this suite runs
+// in. They are require() now and they all pass -- but they had not been running,
+// so their history proves nothing. require() reports the line and the
+// expression, because a bare abort() leaves a failing test with nothing to
+// say.
+void require_impl(bool condition, int line, const char* text) {
+    if (condition) {
+        return;
     }
+    std::fprintf(stderr, "require failed at line %d: %s\n", line, text);
+    std::abort();
 }
+
+#define require(expr) require_impl(static_cast<bool>(expr), __LINE__, #expr)
 
 constexpr std::uint32_t kTestFireActionTemplateId = 100;
 constexpr std::uint32_t kTestReloadActionTemplateId = 101;
@@ -339,6 +350,238 @@ network_example::game_server::AgentChaserConfig chaser_config() {
     return config;
 }
 
+// Patrol tuning layered on the same chase tuning the rest of the file uses, so
+// a difference in behaviour below is the squad and not a retuned chase.
+network_example::game_server::AgentChaserConfig patrol_config() {
+    network_example::game_server::AgentChaserConfig config = chaser_config();
+    config.patrol.slot_radius_meters = 1.0f;
+    // Full speed: patrolling at half speed is the shipping default but it only
+    // doubles how many ticks these cases have to run for.
+    config.patrol.input_magnitude = 1.0f;
+    config.patrol.leash_meters = 6.0f;
+    config.patrol.leash_resume_meters = 2.0f;
+    return config;
+}
+
+// The sub-tests share one agent and one kernel, so each has to put both back to
+// a known state -- including the slot, which otherwise arrives already walked
+// to. The agent goes to the origin with the identity rotation, which is where
+// its vision cone looks down +X; cases that need a target seen on the first
+// tick have to put it there.
+void reset_patrol_agent(
+    KernelHandle* kernel,
+    std::uint32_t agent_net_id,
+    std::uint32_t player_net_id,
+    std::vector<network_example::game_server::AgentRuntimeState>* agents,
+    const KernelVec3& slot) {
+    set_position(kernel, agent_net_id, {0.0f, 0.0f, 0.0f});
+    set_position(kernel, player_net_id, {100.0f, 0.0f, 0.0f});
+    set_combat(kernel, agent_net_id, 30);
+    network_example::game_server::AgentRuntimeState& agent = (*agents)[0];
+    agent.sentry.state = network_example::game_server::AgentSentryState::kIdle;
+    agent.sentry.target = 0;
+    agent.sentry.state_ticks = 0;
+    agent.sentry.lost_target_ticks = 0;
+    agent.chase_holding = false;
+    agent.patrol = {};
+    agent.patrol.group_id = 1;
+    agent.patrol.slot = slot;
+    agent.patrol.has_slot = true;
+    Kernel_Update(kernel, kFixedDelta);
+}
+
+// The member walks to where its squad wants it and then stops. Stopping is the
+// half worth stating: the slot is republished every tick, so an agent that
+// treated "I have a slot" as "I should be moving" would jitter on it forever.
+void a_squad_member_walks_to_the_slot_it_is_given(
+    KernelHandle* kernel,
+    std::uint32_t agent_net_id,
+    std::uint32_t player_net_id,
+    std::vector<network_example::game_server::AgentRuntimeState>* agents) {
+    const network_example::game_server::AgentChaserController controller(
+        patrol_config());
+    reset_patrol_agent(
+        kernel, agent_net_id, player_net_id, agents, {6.0f, 0.0f, 0.0f});
+
+    for (int tick = 0; tick < 100; ++tick) {
+        run_frame(kernel, controller, agents);
+    }
+    KernelVec3 position = query_state(kernel, agent_net_id).position;
+    require(horizontal_distance(position, {6.0f, 0.0f, 0.0f}) <= 1.0f);
+    require(almost_equal((*agents)[0].velocity.x, 0.0f));
+    require(almost_equal((*agents)[0].velocity.z, 0.0f));
+
+    // The squad moves on, and the member follows it there. A slot that only
+    // worked as a spawn-time destination would pass everything above.
+    (*agents)[0].patrol.slot = KernelVec3{6.0f, 0.0f, 6.0f};
+    for (int tick = 0; tick < 120; ++tick) {
+        run_frame(kernel, controller, agents);
+    }
+    position = query_state(kernel, agent_net_id).position;
+    require(horizontal_distance(position, {6.0f, 0.0f, 6.0f}) <= 1.0f);
+}
+
+// Losing the target is what a chaser with no squad answers by standing still
+// forever. A squad member walks back -- and back is wherever the squad has got
+// to by then, not where it left.
+void a_pursuit_that_ends_puts_the_agent_back_in_its_slot(
+    KernelHandle* kernel,
+    std::uint32_t agent_net_id,
+    std::uint32_t player_net_id,
+    std::vector<network_example::game_server::AgentRuntimeState>* agents) {
+    const network_example::game_server::AgentChaserController controller(
+        patrol_config());
+    // Already standing in its slot, so what follows is about the pursuit and
+    // not about walking into formation.
+    reset_patrol_agent(
+        kernel, agent_net_id, player_net_id, agents, {0.0f, 0.0f, 0.0f});
+    for (int tick = 0; tick < 5; ++tick) {
+        run_frame(kernel, controller, agents);
+    }
+    require(
+        (*agents)[0].sentry.state ==
+        network_example::game_server::AgentSentryState::kIdle);
+    require(almost_equal((*agents)[0].velocity.x, 0.0f));
+
+    // Something walks into the cone and pulls it out of formation, but not far
+    // enough to hit the leash -- this case is about the pursuit ending.
+    set_position(kernel, player_net_id, {12.0f, 0.0f, 0.0f});
+    Kernel_Update(kernel, kFixedDelta);
+    for (int tick = 0; tick < 50; ++tick) {
+        run_frame(kernel, controller, agents);
+    }
+    require(
+        (*agents)[0].sentry.state !=
+        network_example::game_server::AgentSentryState::kIdle);
+    const float chased_to = query_state(kernel, agent_net_id).position.x;
+    require(chased_to > 1.0f);
+
+    // And it leaves.
+    set_position(kernel, player_net_id, {100.0f, 0.0f, 0.0f});
+    Kernel_Update(kernel, kFixedDelta);
+    bool returned = false;
+    for (int tick = 0; tick < 10; ++tick) {
+        run_frame(kernel, controller, agents);
+        returned = returned ||
+            (*agents)[0].sentry.state ==
+                network_example::game_server::AgentSentryState::kReturn;
+    }
+    require(returned);
+    require(query_state(kernel, agent_net_id).position.x < chased_to);
+
+    // The squad did not wait where the member left it, and the member ends up
+    // where the squad is now. This says nothing about which state carried it
+    // there -- the return hands over to kIdle partway, and both walk to the
+    // slot -- so the trajectory of a return is pinned separately below.
+    (*agents)[0].patrol.slot = KernelVec3{0.0f, 0.0f, 5.0f};
+    for (int tick = 0; tick < 250; ++tick) {
+        run_frame(kernel, controller, agents);
+    }
+    const KernelVec3 rejoined = query_state(kernel, agent_net_id).position;
+    require(horizontal_distance(rejoined, {0.0f, 0.0f, 5.0f}) <= 1.2f);
+    require(horizontal_distance(rejoined, {0.0f, 0.0f, 0.0f}) > 3.0f);
+}
+
+// A return walks to where the squad is, not back to where the member left it.
+// Those are the same point whenever the squad has not moved, which is why this
+// case drags them apart first: the assertions in the pursuit case above are
+// satisfied by the kIdle rejoin that follows a return, and would pass just as
+// well if a return walked to entirely the wrong place.
+void a_returning_member_walks_to_the_squad_not_to_where_it_left(
+    KernelHandle* kernel,
+    std::uint32_t agent_net_id,
+    std::uint32_t player_net_id,
+    std::vector<network_example::game_server::AgentRuntimeState>* agents) {
+    const network_example::game_server::AgentChaserController controller(
+        patrol_config());
+    reset_patrol_agent(
+        kernel, agent_net_id, player_net_id, agents, {0.0f, 0.0f, 0.0f});
+    set_position(kernel, player_net_id, {10.0f, 0.0f, 0.0f});
+    Kernel_Update(kernel, kFixedDelta);
+    run_frame(kernel, controller, agents);
+    require(almost_equal((*agents)[0].patrol.leash_anchor.x, 0.0f, 0.5f));
+
+    // Dragged past the leash, so the agent is returning.
+    set_position(kernel, agent_net_id, {20.0f, 0.0f, 0.0f});
+    set_position(kernel, player_net_id, {25.0f, 0.0f, 0.0f});
+    Kernel_Update(kernel, kFixedDelta);
+    run_frame(kernel, controller, agents);
+    require(
+        (*agents)[0].sentry.state ==
+        network_example::game_server::AgentSentryState::kReturn);
+
+    // The squad has walked on, and it is further out than the agent -- so its
+    // slot and the point it broke off from are now in opposite directions.
+    (*agents)[0].patrol.slot = KernelVec3{40.0f, 0.0f, 0.0f};
+    const float broke_off_at = query_state(kernel, agent_net_id).position.x;
+    for (int tick = 0; tick < 30; ++tick) {
+        run_frame(kernel, controller, agents);
+        // Neither exit applies out here: the slot is 20 m ahead and the anchor
+        // 20 m behind, so this stays a return the whole way.
+        require(
+            (*agents)[0].sentry.state ==
+            network_example::game_server::AgentSentryState::kReturn);
+    }
+    require(query_state(kernel, agent_net_id).position.x > broke_off_at + 1.0f);
+}
+
+// The leash ends a pursuit the agent is still winning. Nothing else in the
+// state machine can do that: every other way out of a chase runs through losing
+// sight of the target.
+void a_leash_breaks_off_a_pursuit_that_drags_too_far(
+    KernelHandle* kernel,
+    std::uint32_t agent_net_id,
+    std::uint32_t player_net_id,
+    std::vector<network_example::game_server::AgentRuntimeState>* agents) {
+    const network_example::game_server::AgentChaserController leashed(
+        patrol_config());
+    reset_patrol_agent(
+        kernel, agent_net_id, player_net_id, agents, {0.0f, 0.0f, 0.0f});
+    set_position(kernel, player_net_id, {10.0f, 0.0f, 0.0f});
+    Kernel_Update(kernel, kFixedDelta);
+    run_frame(kernel, leashed, agents);
+    require(
+        (*agents)[0].sentry.state ==
+        network_example::game_server::AgentSentryState::kAlert);
+    // The leash is measured from where the chase started, so that is what has
+    // to have been recorded.
+    require(almost_equal((*agents)[0].patrol.leash_anchor.x, 0.0f, 0.5f));
+
+    // Dragged well past the leash, with the target still in front of it.
+    set_position(kernel, agent_net_id, {20.0f, 0.0f, 0.0f});
+    set_position(kernel, player_net_id, {25.0f, 0.0f, 0.0f});
+    Kernel_Update(kernel, kFixedDelta);
+    run_frame(kernel, leashed, agents);
+    require(
+        (*agents)[0].sentry.state ==
+        network_example::game_server::AgentSentryState::kReturn);
+    require((*agents)[0].sentry.target == 0);
+
+    // The same drag with the leash switched off keeps the pursuit. Without this
+    // half the assertion above would also pass for an agent that had merely
+    // lost sight of what it was chasing.
+    network_example::game_server::AgentChaserConfig unleashed = patrol_config();
+    unleashed.patrol.leash_meters = 0.0f;
+    const network_example::game_server::AgentChaserController free_chaser(
+        unleashed);
+    reset_patrol_agent(
+        kernel, agent_net_id, player_net_id, agents, {0.0f, 0.0f, 0.0f});
+    set_position(kernel, player_net_id, {10.0f, 0.0f, 0.0f});
+    Kernel_Update(kernel, kFixedDelta);
+    run_frame(kernel, free_chaser, agents);
+    require(
+        (*agents)[0].sentry.state ==
+        network_example::game_server::AgentSentryState::kAlert);
+    set_position(kernel, agent_net_id, {20.0f, 0.0f, 0.0f});
+    set_position(kernel, player_net_id, {25.0f, 0.0f, 0.0f});
+    Kernel_Update(kernel, kFixedDelta);
+    run_frame(kernel, free_chaser, agents);
+    require(
+        (*agents)[0].sentry.state !=
+        network_example::game_server::AgentSentryState::kReturn);
+    require((*agents)[0].sentry.target == player_net_id);
+}
+
 // Seeing a target and being able to hit one are different distances. The vision
 // cone reaches much further than a melee weapon does, and the controller used
 // to commit an attack the moment the sentry half said "visible" -- so a grunt
@@ -476,24 +719,24 @@ int main() {
 
     // Nothing in sight: idle, and no movement is asked for.
     run_frame(kernel, controller, &agents);
-    assert(
+    require(
         agents[0].sentry.state ==
         network_example::game_server::AgentSentryState::kIdle);
-    assert(almost_equal(agents[0].velocity.x, 0.0f));
-    assert(almost_equal(agents[0].velocity.z, 0.0f));
-    assert(!agents[0].chase_holding);
+    require(almost_equal(agents[0].velocity.x, 0.0f));
+    require(almost_equal(agents[0].velocity.z, 0.0f));
+    require(!agents[0].chase_holding);
 
     // A visible target puts the agent in alert and starts it closing. The
     // player sits well outside the stop distance.
     set_position(kernel, player_net_id, {10.0f, 0.0f, 0.0f});
     Kernel_Update(kernel, kFixedDelta);
     run_frame(kernel, controller, &agents);
-    assert(
+    require(
         agents[0].sentry.state ==
         network_example::game_server::AgentSentryState::kAlert);
-    assert(agents[0].sentry.target == player_net_id);
-    assert(agents[0].velocity.x > 0.0f);
-    assert(!agents[0].chase_holding);
+    require(agents[0].sentry.target == player_net_id);
+    require(agents[0].velocity.x > 0.0f);
+    require(!agents[0].chase_holding);
 
     // The chase actually displaces the agent toward the target, tick over tick.
     KernelServerEntityState agent_state = query_state(kernel, agent_net_id);
@@ -504,67 +747,75 @@ int main() {
         agent_state = query_state(kernel, agent_net_id);
         const float next_distance =
             horizontal_distance(agent_state.position, player_state.position);
-        assert(next_distance < distance);
+        require(next_distance < distance);
         distance = next_distance;
     }
-    assert(
+    require(
         agents[0].sentry.state ==
         network_example::game_server::AgentSentryState::kAttack);
-    assert(agent_state.position.x > 0.5f);
+    require(agent_state.position.x > 0.5f);
 
     // Closing inside the stop distance parks the agent, but it keeps shooting.
     set_position(kernel, agent_net_id, {9.0f, 0.0f, 0.0f});
     Kernel_Update(kernel, kFixedDelta);
     run_frame(kernel, controller, &agents);
-    assert(agents[0].chase_holding);
-    assert(almost_equal(agents[0].velocity.x, 0.0f));
-    assert(almost_equal(agents[0].velocity.z, 0.0f));
+    require(agents[0].chase_holding);
+    require(almost_equal(agents[0].velocity.x, 0.0f));
+    require(almost_equal(agents[0].velocity.z, 0.0f));
     agent_state = query_state(kernel, agent_net_id);
     const std::uint16_t ammo_while_holding = agent_state.ammo[0];
     run_frame(kernel, controller, &agents);
     agent_state = query_state(kernel, agent_net_id);
-    assert(agent_state.ammo[0] < ammo_while_holding);
+    require(agent_state.ammo[0] < ammo_while_holding);
 
     // Holding survives drifting apart by less than the resume distance, and
     // ends once the gap reopens past it.
     set_position(kernel, agent_net_id, {7.5f, 0.0f, 0.0f});
     Kernel_Update(kernel, kFixedDelta);
     run_frame(kernel, controller, &agents);
-    assert(agents[0].chase_holding);
-    assert(almost_equal(agents[0].velocity.x, 0.0f));
+    require(agents[0].chase_holding);
+    require(almost_equal(agents[0].velocity.x, 0.0f));
     set_position(kernel, agent_net_id, {6.0f, 0.0f, 0.0f});
     Kernel_Update(kernel, kFixedDelta);
     run_frame(kernel, controller, &agents);
-    assert(!agents[0].chase_holding);
-    assert(agents[0].velocity.x > 0.0f);
+    require(!agents[0].chase_holding);
+    require(agents[0].velocity.x > 0.0f);
 
     // Losing sight stops the pursuit on the spot: no movement is commanded, and
     // the agent does not walk toward where the target was.
     set_position(kernel, player_net_id, {100.0f, 0.0f, 0.0f});
     Kernel_Update(kernel, kFixedDelta);
     run_frame(kernel, controller, &agents);
-    assert(almost_equal(agents[0].velocity.x, 0.0f));
-    assert(almost_equal(agents[0].velocity.z, 0.0f));
-    assert(!agents[0].chase_holding);
+    require(almost_equal(agents[0].velocity.x, 0.0f));
+    require(almost_equal(agents[0].velocity.z, 0.0f));
+    require(!agents[0].chase_holding);
     agent_state = query_state(kernel, agent_net_id);
     const KernelVec3 stopped_position = agent_state.position;
     for (int tick = 0; tick < 5; ++tick) {
         run_frame(kernel, controller, &agents);
         agent_state = query_state(kernel, agent_net_id);
-        assert(almost_equal(agent_state.position.x, stopped_position.x, 0.01f));
-        assert(almost_equal(agent_state.position.z, stopped_position.z, 0.01f));
-        assert(almost_equal(agents[0].velocity.x, 0.0f));
-        assert(almost_equal(agents[0].velocity.z, 0.0f));
+        require(almost_equal(agent_state.position.x, stopped_position.x, 0.01f));
+        require(almost_equal(agent_state.position.z, stopped_position.z, 0.01f));
+        require(almost_equal(agents[0].velocity.x, 0.0f));
+        require(almost_equal(agents[0].velocity.z, 0.0f));
     }
 
     // And the sentry forget timers still run the state machine back down.
-    assert(
+    require(
         agents[0].sentry.state ==
         network_example::game_server::AgentSentryState::kIdle);
 
     a_chaser_attacks_only_inside_its_attack_range(
         kernel, agent_net_id, player_net_id, &agents);
     a_ranged_chaser_fires_while_it_is_still_closing(
+        kernel, agent_net_id, player_net_id, &agents);
+    a_squad_member_walks_to_the_slot_it_is_given(
+        kernel, agent_net_id, player_net_id, &agents);
+    a_pursuit_that_ends_puts_the_agent_back_in_its_slot(
+        kernel, agent_net_id, player_net_id, &agents);
+    a_returning_member_walks_to_the_squad_not_to_where_it_left(
+        kernel, agent_net_id, player_net_id, &agents);
+    a_leash_breaks_off_a_pursuit_that_drags_too_far(
         kernel, agent_net_id, player_net_id, &agents);
 
     Kernel_Destroy(kernel);

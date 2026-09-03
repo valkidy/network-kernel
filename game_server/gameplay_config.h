@@ -11,6 +11,9 @@
 
 #include "game_server/agent_chaser_controller.h"
 #include "game_server/agent_sentry_controller.h"
+#include "game_server/patrol_director.h"
+#include "game_server/game_rule_director.h"
+#include "game_server/world_rule_director.h"
 #include "kernel/public/kernel_types.h"
 
 struct KernelHandle;
@@ -26,6 +29,33 @@ inline constexpr std::uint8_t kWeaponBeamRifle = 5;
 inline constexpr std::uint8_t kWeaponHomingMissile = 6;
 inline constexpr std::uint8_t kWeaponGrenade = 7;
 inline constexpr std::size_t kWeaponIdCount = 256;
+// These were kernel constants until directors stopped being kernel entities.
+// The values are unchanged on purpose: they are hashed into the catalog, and
+// renumbering them would change the hash of every catalog for no reason.
+inline constexpr std::uint32_t kAiControllerTypeDirector = 2;
+inline constexpr std::uint32_t kGameRuleConditionGroupEliminated = 1;
+inline constexpr std::uint32_t kGameRuleConditionPlayerCountAtLeast = 2;
+inline constexpr std::size_t kMaxGameRuleNodes = 64;
+inline constexpr std::size_t kMaxGameRuleEdges = 256;
+inline constexpr std::size_t kMaxGameRuleEffects = 64;
+
+// Which kind of director a template authors. game_server's own, because the
+// kernel has no director kinds any more -- it has no directors.
+enum class AuthoredDirectorKind : std::uint8_t {
+    kNone = 0,
+    kWorldRule = 1,
+    kGameRule = 2,
+};
+
+struct NavigationMeshConfig {
+    std::string entry_path;
+    // Filled by whoever has the bundle open, not by the catalog loader: the
+    // baked navmesh exists in the bundle and not in the source tree, the same
+    // way the collision scene does. Empty leaves patrol routes on the straight
+    // chord they used before a navmesh was loaded at all.
+    std::vector<std::uint8_t> artifact;
+};
+
 struct EntityHealthDefinition {
     std::uint16_t hp = 0;
     std::uint16_t max_hp = 0;
@@ -198,10 +228,11 @@ struct ActorTemplateConfig {
     // Only read when ai_controller_type is Chaser; the perception and attack
     // half of a chaser comes from `sentry`.
     AgentChaseTuning chaser{};
+    AgentPatrolTuning patrol{};
     KernelAgentVisionConfig vision{};
     std::uint32_t ai_controller_type = KernelAiControllerType_None;
     std::uint32_t ai_tick_interval = 1;
-    std::uint32_t director_kind = KernelDirectorKind_None;
+    AuthoredDirectorKind director_kind = AuthoredDirectorKind::kNone;
     std::uint32_t director_spawn_target_count = 0;
     std::uint32_t director_spawn_entity_template_id = 0;
     std::uint32_t director_spawn_actor_template_id = 0;
@@ -358,6 +389,25 @@ struct GameServerGameplayConfig {
     std::vector<ActionTemplateConfig> action_templates;
     PlayerGameplayDefinition player;
     AgentSpawnDefinition agent;
+    // Squads the world produces on its own schedule. Authored at catalog top
+    // level beside `player:` and `enemy:`, because a patrol is game_server
+    // gameplay and never reaches the kernel as a director: the same reason
+    // AgentSentryConfig is authored, validated and hashed here while living
+    // entirely outside the kernel ABI.
+    std::vector<PatrolDefinitionConfig> patrols;
+    PatrolBudgetConfig patrol_budget;
+    // The baked navmesh, carried whole rather than by path: game_server loads
+    // it itself -- Detour never reaches the kernel -- so nothing downstream has
+    // the archive open any more by the time it is needed.
+    NavigationMeshConfig navigation_mesh;
+    // World rules that were preloaded. Built from director entity templates
+    // whose kind is world_rule, and driven by game_server: a population ceiling
+    // is a gameplay rule, so it never reaches the kernel as a director.
+    std::vector<WorldRuleSpawnConfig> world_rule_spawns;
+    // Mission flows that were preloaded. Like world rules, driven by
+    // game_server: "this wave is cleared, open the next one" is a mission rule,
+    // not something the kernel stores or validates.
+    std::vector<GameRuleConfig> game_rules;
     std::vector<std::uint32_t> preload_director_template_ids;
     std::vector<EntityTemplateConfig> entity_templates;
     std::vector<ActorTemplateConfig> actor_templates;
@@ -381,10 +431,6 @@ struct KernelGameplayCatalogStorage {
     std::vector<KernelItemTemplateDefinition> item_templates;
     std::vector<KernelPropPopulationRuleDefinition> prop_population_rules;
     std::vector<KernelStatusEffectDefinition> status_effects;
-    std::vector<KernelGameRuleDefinition> game_rules;
-    std::vector<KernelGameRuleNodeDefinition> game_rule_nodes;
-    std::vector<KernelGameRuleEdgeDefinition> game_rule_edges;
-    std::vector<KernelGameRuleSpawnGroupEffectDefinition> game_rule_effects;
     std::vector<std::vector<std::uint8_t>> skeleton_asset_bytes;
     std::vector<KernelSkeletonAssetDefinition> skeleton_assets;
     KernelGameplayCatalogDefinition definition{};
