@@ -11,7 +11,7 @@
 
 #include <spdlog/spdlog.h>
 
-#include "game_server/game_server.h"
+#include "game_server/src/game_server.h"
 #include "client_app.h"
 #include "kernel/public/kernel_api.h"
 #include "protocol/public/network_packets.h"

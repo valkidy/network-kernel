@@ -76,6 +76,12 @@ only through the public server-side C API:
 - `Kernel_ServerSubmitEntityInput`
 - `Kernel_ServerQueryEntities`
 
+`game_server` is laid out the way `engine/src/<module>` is: `public/` for the
+headers other things link against -- the `GameServer_*` bridge ABI -- `src/` for
+the implementation and its internal headers, and `tests/` for tests and
+benchmarks. Internal headers are included by their full workspace-relative path,
+`game_server/src/<name>.h`, which is the convention `public/` already used.
+
 That list is enforced, not just documented. `//tools:check_layering_boundaries`
 reads `game_server/BUILD.bazel` and `engine/components/ai/BUILD.bazel` and fails
 on a dependency outside an allowlist. The compiler already stops gameplay code

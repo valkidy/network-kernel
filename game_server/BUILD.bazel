@@ -28,41 +28,41 @@ filegroup(
 cc_library(
     name = "game_server",
     srcs = [
-        "actor_intent_executor.cc",
-        "ai_perception_adapter.cc",
-        "agent_chaser_controller.cc",
-        "agent_sentry_controller.cc",
-        "agent_steering.cc",
-        "agent_runtime_manager.cc",
-        "ballistic_aim.cc",
-        "game_rule_director.cc",
-        "gameplay_config.cc",
-        "game_server.cc",
-        "patrol_director.cc",
-        "patrol_group_runtime.cc",
-        "patrol_navigation.cc",
-        "spawn_sampling.cc",
-        "spawner_director.cc",
-        "world_rule_director.cc",
+        "src/actor_intent_executor.cc",
+        "src/ai_perception_adapter.cc",
+        "src/agent_chaser_controller.cc",
+        "src/agent_sentry_controller.cc",
+        "src/agent_steering.cc",
+        "src/agent_runtime_manager.cc",
+        "src/ballistic_aim.cc",
+        "src/game_rule_director.cc",
+        "src/gameplay_config.cc",
+        "src/game_server.cc",
+        "src/patrol_director.cc",
+        "src/patrol_group_runtime.cc",
+        "src/patrol_navigation.cc",
+        "src/spawn_sampling.cc",
+        "src/spawner_director.cc",
+        "src/world_rule_director.cc",
     ],
     hdrs = [
-        "actor_intent_executor.h",
-        "ai_perception_adapter.h",
-        "agent_chaser_controller.h",
-        "agent_runtime.h",
-        "agent_runtime_manager.h",
-        "agent_sentry_controller.h",
-        "agent_steering.h",
-        "ballistic_aim.h",
-        "game_rule_director.h",
-        "gameplay_config.h",
-        "game_server.h",
-        "patrol_director.h",
-        "patrol_group_runtime.h",
-        "patrol_navigation.h",
-        "spawn_sampling.h",
-        "spawner_director.h",
-        "world_rule_director.h",
+        "src/actor_intent_executor.h",
+        "src/ai_perception_adapter.h",
+        "src/agent_chaser_controller.h",
+        "src/agent_runtime.h",
+        "src/agent_runtime_manager.h",
+        "src/agent_sentry_controller.h",
+        "src/agent_steering.h",
+        "src/ballistic_aim.h",
+        "src/game_rule_director.h",
+        "src/gameplay_config.h",
+        "src/game_server.h",
+        "src/patrol_director.h",
+        "src/patrol_group_runtime.h",
+        "src/patrol_navigation.h",
+        "src/spawn_sampling.h",
+        "src/spawner_director.h",
+        "src/world_rule_director.h",
         "public/game_server_types.h",
     ],
     deps = [
@@ -78,7 +78,7 @@ cc_library(
 
 cc_test(
     name = "gameplay_config_test",
-    srcs = ["gameplay_config_test.cc"],
+    srcs = ["tests/gameplay_config_test.cc"],
     data = glob([
         "action_graph_templates/*.yaml",
         "status_effect_templates/*.yaml",
@@ -108,7 +108,7 @@ cc_test(
 # separate client kernel fed the same wire content; see the file header.
 cc_test(
     name = "listen_host_pose_parity_test",
-    srcs = ["listen_host_pose_parity_test.cc"],
+    srcs = ["tests/listen_host_pose_parity_test.cc"],
     data = [
         "//game_server/gameplay_catalog_bundle:bundle",
     ],
@@ -123,7 +123,7 @@ cc_test(
 # that is the shipping environment; see the file header.
 cc_test(
     name = "limb_collider_test",
-    srcs = ["limb_collider_test.cc"],
+    srcs = ["tests/limb_collider_test.cc"],
     data = [
         "//game_server/gameplay_catalog_bundle:bundle",
     ],
@@ -138,7 +138,7 @@ cc_test(
 # wall-clock bound would be flaky and host-dependent.
 cc_test(
     name = "limb_broad_phase_bench",
-    srcs = ["limb_broad_phase_bench.cc"],
+    srcs = ["tests/limb_broad_phase_bench.cc"],
     data = [
         "//game_server/gameplay_catalog_bundle:bundle",
     ],
@@ -154,7 +154,7 @@ cc_test(
 # wall-clock bound would be flaky and host-dependent.
 cc_test(
     name = "agent_cpu_bench",
-    srcs = ["agent_cpu_bench.cc"],
+    srcs = ["tests/agent_cpu_bench.cc"],
     data = [
         "//game_server/gameplay_catalog_bundle:bundle",
     ],
@@ -172,7 +172,7 @@ cc_test(
 # property of the authored terrain -- so it is manual, like the other benches.
 cc_test(
     name = "patrol_nav_bench",
-    srcs = ["patrol_nav_bench.cc"],
+    srcs = ["tests/patrol_nav_bench.cc"],
     data = [
         "//game_server/gameplay_catalog_bundle:bundle",
         "//game_server/test_mesh_assets:cooked_test_mesh_assets",
@@ -186,7 +186,7 @@ cc_test(
 
 cc_test(
     name = "activation_gameplay_config_test",
-    srcs = ["activation_gameplay_config_test.cc"],
+    srcs = ["tests/activation_gameplay_config_test.cc"],
     data = glob([
         "action_graph_templates/*.yaml",
         "action_templates/*.yaml",
@@ -209,7 +209,7 @@ cc_test(
 
 cc_test(
     name = "weapon_template_loader_test",
-    srcs = ["weapon_template_loader_test.cc"],
+    srcs = ["tests/weapon_template_loader_test.cc"],
     data = glob([
         "action_graph_templates/*.yaml",
         "action_templates/*.yaml",
@@ -250,7 +250,7 @@ cc_library(
 
 cc_test(
     name = "agent_sentry_controller_test",
-    srcs = ["agent_sentry_controller_test.cc"],
+    srcs = ["tests/agent_sentry_controller_test.cc"],
     deps = [
         ":game_server",
         "//engine/src/kernel:kernel",
@@ -259,7 +259,7 @@ cc_test(
 
 cc_test(
     name = "agent_sentry_gravity_test",
-    srcs = ["agent_sentry_gravity_test.cc"],
+    srcs = ["tests/agent_sentry_gravity_test.cc"],
     data = ["//game_server/mesh_assets:cooked_mesh_assets"],
     deps = [
         ":game_server",
@@ -269,7 +269,7 @@ cc_test(
 
 cc_test(
     name = "agent_chaser_controller_test",
-    srcs = ["agent_chaser_controller_test.cc"],
+    srcs = ["tests/agent_chaser_controller_test.cc"],
     deps = [
         ":game_server",
         "//engine/src/kernel:kernel",
@@ -278,7 +278,7 @@ cc_test(
 
 cc_test(
     name = "patrol_director_test",
-    srcs = ["patrol_director_test.cc"],
+    srcs = ["tests/patrol_director_test.cc"],
     data = [
         "//game_server/test_mesh_assets:cooked_test_mesh_assets",
     ],
@@ -290,7 +290,7 @@ cc_test(
 
 cc_test(
     name = "game_rule_director_test",
-    srcs = ["game_rule_director_test.cc"],
+    srcs = ["tests/game_rule_director_test.cc"],
     deps = [
         ":game_server",
         "//engine/src/kernel:kernel",
@@ -299,7 +299,7 @@ cc_test(
 
 cc_test(
     name = "spawner_director_test",
-    srcs = ["spawner_director_test.cc"],
+    srcs = ["tests/spawner_director_test.cc"],
     deps = [
         ":game_server",
         "//engine/src/kernel:kernel",
@@ -308,7 +308,7 @@ cc_test(
 
 cc_test(
     name = "world_rule_director_test",
-    srcs = ["world_rule_director_test.cc"],
+    srcs = ["tests/world_rule_director_test.cc"],
     deps = [
         ":game_server",
         "//engine/src/kernel:kernel",
@@ -317,7 +317,7 @@ cc_test(
 
 cc_test(
     name = "patrol_navigation_test",
-    srcs = ["patrol_navigation_test.cc"],
+    srcs = ["tests/patrol_navigation_test.cc"],
     data = [
         "//game_server/test_mesh_assets:cooked_test_mesh_assets",
     ],
@@ -328,7 +328,7 @@ cc_test(
 
 cc_test(
     name = "patrol_group_runtime_test",
-    srcs = ["patrol_group_runtime_test.cc"],
+    srcs = ["tests/patrol_group_runtime_test.cc"],
     deps = [
         ":game_server",
     ],
@@ -336,7 +336,7 @@ cc_test(
 
 cc_test(
     name = "actor_intent_executor_test",
-    srcs = ["actor_intent_executor_test.cc"],
+    srcs = ["tests/actor_intent_executor_test.cc"],
     deps = [
         ":game_server",
         "//engine/components/ai:ai",
@@ -346,7 +346,7 @@ cc_test(
 
 cc_test(
     name = "agent_query_cap_test",
-    srcs = ["agent_query_cap_test.cc"],
+    srcs = ["tests/agent_query_cap_test.cc"],
     data = glob([
         "action_graph_templates/*.yaml",
         "action_templates/*.yaml",
@@ -370,7 +370,7 @@ cc_test(
 
 cc_test(
     name = "agent_runtime_manager_test",
-    srcs = ["agent_runtime_manager_test.cc"],
+    srcs = ["tests/agent_runtime_manager_test.cc"],
     data = glob([
         "action_graph_templates/*.yaml",
         "action_templates/*.yaml",
@@ -393,7 +393,7 @@ cc_test(
 
 cc_test(
     name = "shipping_catalog_flow_test",
-    srcs = ["shipping_catalog_flow_test.cc"],
+    srcs = ["tests/shipping_catalog_flow_test.cc"],
     data = glob([
         "action_graph_templates/*.yaml",
         "action_templates/*.yaml",
@@ -416,7 +416,7 @@ cc_test(
 
 cc_test(
     name = "agent_sentry_per_agent_config_test",
-    srcs = ["agent_sentry_per_agent_config_test.cc"],
+    srcs = ["tests/agent_sentry_per_agent_config_test.cc"],
     data = glob([
         "action_graph_templates/*.yaml",
         "action_templates/*.yaml",
@@ -439,7 +439,7 @@ cc_test(
 
 cc_test(
     name = "game_server_api_test",
-    srcs = ["game_server_api_test.cc"],
+    srcs = ["tests/game_server_api_test.cc"],
     data = glob([
         "action_graph_templates/*.yaml",
         "action_templates/*.yaml",
@@ -463,7 +463,7 @@ cc_test(
 
 cc_test(
     name = "beam_sentry_template_test",
-    srcs = ["beam_sentry_template_test.cc"],
+    srcs = ["tests/beam_sentry_template_test.cc"],
     data = glob([
         "action_graph_templates/*.yaml",
         "status_effect_templates/*.yaml",

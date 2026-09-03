@@ -53,10 +53,10 @@ hashed while living entirely outside the kernel — patrols follow it.
 
 | Layer | File | Owns |
 |---|---|---|
-| Director | `game_server/patrol_director.{h,cc}` | when to spawn, what to spawn, where, route selection, retirement, budget |
-| Squad | `game_server/patrol_group_runtime.{h,cc}` | the route, progress along it, formation, per-member slots |
-| Member | `game_server/agent_chaser_controller.{h,cc}` | walking to its slot, perception, pursuit, breaking off, returning |
-| Navigation | `game_server/patrol_navigation.{h,cc}` | snapping points onto walkable ground, finding routes |
+| Director | `game_server/src/patrol_director.{h,cc}` | when to spawn, what to spawn, where, route selection, retirement, budget |
+| Squad | `game_server/src/patrol_group_runtime.{h,cc}` | the route, progress along it, formation, per-member slots |
+| Member | `game_server/src/agent_chaser_controller.{h,cc}` | walking to its slot, perception, pursuit, breaking off, returning |
+| Navigation | `game_server/src/patrol_navigation.{h,cc}` | snapping points onto walkable ground, finding routes |
 
 Ordering inside `AgentRuntimeManager::tick` is load-bearing:
 
@@ -315,8 +315,8 @@ and it teaches.
 | Step | Outcome |
 |---|---|
 | Make the gate real | `game_rule_director_test` was 517 lines and 64 `assert()`, all compiled out under `-c opt`. None had ever been evaluated. |
-| Move the world rule | `game_server/world_rule_director.{h,cc}` |
-| Move the game rule | `game_server/game_rule_director.{h,cc}` |
+| Move the world rule | `game_server/src/world_rule_director.{h,cc}` |
+| Move the game rule | `game_server/src/game_rule_director.{h,cc}` |
 | Delete the ABI | `KERNEL_ABI_VERSION` 85 -> 86, a removal |
 
 The gate came first on purpose. A behaviour-preserving port needs behaviour it
