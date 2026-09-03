@@ -21,7 +21,7 @@ namespace {
 constexpr std::uint16_t kDefaultPort = 7777;
 constexpr std::string_view kDefaultAddress = "127.0.0.1:7777";
 constexpr std::string_view kDefaultGameplayCatalog =
-    "game_server/gameplay_catalog.yaml";
+    "game_server/shipping_catalog/gameplay_catalog.yaml";
 constexpr std::string_view kDefaultGameplayCatalogEntry = "gameplay_catalog.yaml";
 
 struct Options {
@@ -48,7 +48,7 @@ void print_usage() {
     spdlog::error(
         "usage: //app:app -- --mode=<dedicated_server|client|host_server> "
         "[--address=127.0.0.1:7777] [--port=7777] "
-        "[--gameplay-catalog=game_server/gameplay_catalog.yaml] "
+        "[--gameplay-catalog=game_server/shipping_catalog/gameplay_catalog.yaml] "
         "[--gameplay-catalog-bundle=path/to/bundle.zip] "
         "[--gameplay-catalog-entry=gameplay_catalog.yaml] "
         "[--catalog-content-namespace=default] "

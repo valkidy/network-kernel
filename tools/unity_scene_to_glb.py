@@ -19,8 +19,8 @@ checked-in input of this repo:
     python3 tools/unity_scene_to_glb.py \
         --scene=../unity-network-example/Assets/Scenes/LocomotionModel.unity \
         --rig=Tripod \
-        --template=game_server/skeleton_assets/raw/simplified_tripod.glb \
-        --output=game_server/skeleton_assets/raw/simplified_tripod.glb
+        --template=game_server/shipping_catalog/skeleton_assets/raw/simplified_tripod.glb \
+        --output=game_server/shipping_catalog/skeleton_assets/raw/simplified_tripod.glb
 """
 
 import argparse
