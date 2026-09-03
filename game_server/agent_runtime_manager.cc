@@ -136,14 +136,6 @@ void AgentRuntimeManager::build_controllers() {
         controllers_.push_back(std::move(binding));
     }
 
-    fallback_controller_index_ = controllers_.size();
-    for (std::size_t index = 0; index < controllers_.size(); ++index) {
-        if (controllers_[index].actor_template_id ==
-            config_.agent.actor_template_id) {
-            fallback_controller_index_ = index;
-            break;
-        }
-    }
 }
 
 AgentRuntimeManager::AgentControllerBinding* AgentRuntimeManager::binding_for(
@@ -153,9 +145,12 @@ AgentRuntimeManager::AgentControllerBinding* AgentRuntimeManager::binding_for(
             return &binding;
         }
     }
-    return fallback_controller_index_ < controllers_.size()
-        ? &controllers_[fallback_controller_index_]
-        : nullptr;
+    // No fallback. build_controllers makes a binding for every agent actor
+    // template in the catalog, so an agent with no binding was spawned from a
+    // template the catalog does not have -- which the kernel would have
+    // refused. The fallback that used to sit here was chosen by the `enemy:`
+    // block and could never be reached.
+    return nullptr;
 }
 
 void AgentRuntimeManager::dispatch_controllers(float delta_seconds) {

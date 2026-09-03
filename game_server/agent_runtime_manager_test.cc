@@ -34,33 +34,29 @@ KernelConfig dedicated_server_config() {
 network_example::game_server::GameServerGameplayConfig single_spawn_gameplay_config() {
     network_example::game_server::GameServerGameplayConfig config =
         network_example::game_server::default_game_server_gameplay_config();
-    config.agent.spawn_count = 1;
-    config.agent.spawn_radius = 0.0f;
-    config.agent.spawn_position = KernelVec3{6.0f, 0.0f, 0.0f};
     // These tests drive the sentry alert/attack state machine and the grunt's
     // weapon loadout, so they pin the spawned agent to the sentry grunt rather
     // than inheriting whatever the map currently populates itself with. The
     // legged monster the catalog spawns today would disarm them outright: it
     // patrols passively, which pins it to kIdle, and its vision cone is authored
     // for a body an order of magnitude larger.
+    //
+    // Stated as a world rule rather than by editing an entity template. A world
+    // rule is game_server config now, extracted from the catalog at load, so a
+    // config assembled in code has to carry the rule itself.
     constexpr std::uint32_t kSentryGruntEntityTemplateId = 2u;
-    config.agent.actor_template_id = kSentryGruntEntityTemplateId;
     config.preload_director_template_ids.clear();
-    for (network_example::game_server::EntityTemplateConfig& entity_template :
-         config.entity_templates) {
-        if (entity_template.entity_type != KernelEntityType_Director ||
-            entity_template.director_kind != network_example::game_server::AuthoredDirectorKind::kWorldRule) {
-            continue;
-        }
-        entity_template.director_spawn_target_count = 1;
-        entity_template.director_spawn_radius = 0.0f;
-        entity_template.director_spawn_position = config.agent.spawn_position;
-        entity_template.director_spawn_entity_template_id =
-            kSentryGruntEntityTemplateId;
-        entity_template.director_spawn_entity_template_ref = "sentry_grunt";
-        config.preload_director_template_ids.push_back(
-            entity_template.actor_template_id);
-    }
+    config.world_rule_spawns.clear();
+    network_example::game_server::WorldRuleSpawnConfig rule;
+    rule.director_template_id = 100u;
+    rule.name = "single_spawn";
+    rule.target_count = 1;
+    rule.spawn_entity_template_id = kSentryGruntEntityTemplateId;
+    rule.position = KernelVec3{6.0f, 0.0f, 0.0f};
+    rule.radius = 0.0f;
+    rule.tick_interval = 1;
+    config.world_rule_spawns.push_back(rule);
+    config.preload_director_template_ids.push_back(rule.director_template_id);
     return config;
 }
 

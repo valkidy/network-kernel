@@ -167,21 +167,18 @@ void manager_resolves_config_from_the_spawned_template() {
     require(tripod != nullptr);
     require(tripod->sentry.passive_patrol);
 
-    // `enemy:` points at a template that does NOT patrol. If the manager still
-    // read the config from here, the spawned tripod would not patrol.
-    gameplay_config.agent.actor_template_id = kSentryGruntTemplateId;
+    // The divergence this test is built on: the grunt does not patrol and the
+    // tripod does, so an agent reading anyone's sentry config but its own is
+    // visible in whether it walks.
     const network_example::game_server::ActorTemplateConfig* grunt =
         find_actor_template(gameplay_config, kSentryGruntTemplateId);
     require(grunt != nullptr);
     require(!grunt->sentry.passive_patrol);
 
-    // Spawn the tripod from the world-rule director instead. The catalog has an
-    // `enemy:` entry, which sets override_director_spawn and would otherwise
-    // rewrite the director's spawn to agent.actor_template_id -- collapsing the
-    // very divergence this test is built on. Turning it off is what a game-rule
-    // director does naturally: its graph nodes carry their own spawn effects and
-    // are never overridden.
-    gameplay_config.agent.override_director_spawn = false;
+    // Spawn the tripod from a world rule stated here. There used to be an
+    // `enemy:` entry to defeat first: it rewrote every world rule's spawn to
+    // one catalog-wide template, which collapsed the divergence above. That
+    // mechanism is gone, so the rule is simply the one this test writes.
     gameplay_config.preload_director_template_ids.clear();
     // The rules the catalog extracted go too. Directors are game_server config
     // now, so editing the entity templates below no longer reaches them --

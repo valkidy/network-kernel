@@ -78,9 +78,6 @@ private:
     KernelHandle* kernel_ = nullptr;
     GameServerGameplayConfig config_;
     std::vector<AgentControllerBinding> controllers_;
-    // Serves agents whose template carries no controller of its own; keeps the
-    // previous single-controller behavior for anything unrecognized.
-    std::size_t fallback_controller_index_ = 0;
     std::vector<AgentRuntimeState> agents_;
     PatrolGroupRuntime patrol_groups_;
     PatrolDirector patrol_director_;

@@ -65,14 +65,6 @@ struct PlayerGameplayDefinition {
     std::uint32_t actor_template_id = 0;
 };
 
-struct AgentSpawnDefinition {
-    std::uint32_t actor_template_id = 0;
-    KernelVec3 spawn_position{6.0f, 0.0f, 0.0f};
-    std::uint32_t spawn_count = 1;
-    float spawn_radius = 0.0f;
-    std::uint32_t spawn_seed = 1;
-    bool override_director_spawn = false;
-};
 
 struct TriggerBindingConfig {
     std::string action_graph_ref;
@@ -388,7 +380,6 @@ struct GameServerGameplayConfig {
     WeaponCatalogConfig weapons;
     std::vector<ActionTemplateConfig> action_templates;
     PlayerGameplayDefinition player;
-    AgentSpawnDefinition agent;
     // Squads the world produces on its own schedule. Authored at catalog top
     // level beside `player:` and `enemy:`, because a patrol is game_server
     // gameplay and never reaches the kernel as a director: the same reason
@@ -489,8 +480,6 @@ const ActorTemplateConfig* find_actor_template(
 std::uint8_t active_weapon_id(const ActorTemplateConfig& actor_template);
 
 KernelCombatStateDefinition make_player_combat_state(
-    const GameServerGameplayConfig& config);
-KernelCombatStateDefinition make_agent_combat_state(
     const GameServerGameplayConfig& config);
 
 }  // namespace network_example::game_server

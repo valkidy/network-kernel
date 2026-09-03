@@ -20,7 +20,7 @@ weapon_template_dir: weapon_templates
 projectile_template_dir: projectile_templates
 entity_template_dir: entity_templates
 preload_directors:
-  - world_rule_director
+  - legged_locomotion_world_rule
 item_template_dir: item_templates
 collider_template_dir: collider_templates
 skeleton_manifests_dir: skeleton_assets/generated
@@ -31,9 +31,3 @@ static_collision_scene:
   collision_layer: 1
 player:
   entity_template: player
-enemy:
-  actor_template: quadruped_actor
-  spawn_count: 1
-  spawn_radius: 0.0
-  spawn_seed: 4242
-  spawn_position: {x: 0.0, y: 10.0, z: 0.0}

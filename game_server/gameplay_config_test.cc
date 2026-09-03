@@ -1309,12 +1309,6 @@ int main() {
         config.weapons.catalog_hash !=
         network_example::game_server::compute_gameplay_catalog_hash(changed_config));
     changed_config = config;
-    changed_config.agent.override_director_spawn =
-        !changed_config.agent.override_director_spawn;
-    require(
-        config.weapons.catalog_hash !=
-        network_example::game_server::compute_gameplay_catalog_hash(changed_config));
-    changed_config = config;
     changed_config.prop_population_rules[0].definition.max_alive -= 1u;
     require(
         config.weapons.catalog_hash !=
@@ -1361,29 +1355,6 @@ int main() {
     assert(player_combat_state.move_speed_meters_per_second == 5.0f);
     assert(player_combat_state.collider_template_id == 1);
 
-    // The catalog's enemy block wins over earth_mother.yaml's own spawn, so this
-    // tracks gameplay_catalog.yaml: grenade_sentry (24). earth_mother still
-    // names tripod_actor, which is what the legged_locomotion catalog entry
-    // above exercises.
-    assert(config.agent.actor_template_id == 24);
-    const KernelCombatStateDefinition enemy_combat_state =
-        network_example::game_server::make_agent_combat_state(config);
-    assert(enemy_combat_state.hp == 500);
-    assert(enemy_combat_state.max_hp == 500);
-    assert(enemy_combat_state.collider_template_id == 2);
-    assert(
-        enemy_combat_state.active_weapon_slot == 0);
-    assert(
-        enemy_combat_state.weapon_ids[0] ==
-        network_example::game_server::kWeaponGrenade);
-    const network_example::game_server::ActorTemplateConfig* config_enemy_template =
-        network_example::game_server::find_actor_template(
-            config,
-            config.agent.actor_template_id);
-    assert(config_enemy_template != nullptr);
-    assert(config_enemy_template->move_speed_meters_per_second == 2.5f);
-    assert(config_enemy_template->vision.camp == KernelAgentCamp_EnemySide);
-    assert(config_enemy_template->vision.vision_collider_template_id == 15);
     const network_example::game_server::KernelGameplayCatalogStorage catalog =
         network_example::game_server::build_kernel_gameplay_catalog(config);
     const network_example::game_server::KernelGameplayCatalogStorage
@@ -2986,18 +2957,37 @@ int main() {
                 static_cast<std::uint32_t>(generated_bundle.size()),
                 "legged_locomotion_gameplay_catalog.yaml");
     require(legged_locomotion_config.weapons.catalog_version == 10u);
-    require(legged_locomotion_config.agent.override_director_spawn);
-    require(legged_locomotion_config.agent.actor_template_id == 21u);
-    require(legged_locomotion_config.agent.spawn_count == 1u);
-    require(legged_locomotion_config.agent.spawn_radius == 0.0f);
-    require(legged_locomotion_config.agent.spawn_seed == 4242u);
-    require(legged_locomotion_config.agent.spawn_position.x == 0.0f);
-    require(legged_locomotion_config.agent.spawn_position.y == 10.0f);
+    // Authored on its own director template rather than through an `enemy:`
+    // override of the shipping one. That override existed only because this
+    // catalog shares entity_template_dir with production and could not edit
+    // world_rule_director.yaml without changing what ships.
+    // Every authored director is translated, and the preload list decides which
+    // are live -- so this shared template directory yields the shipping world
+    // rule as well as this catalog's own. Named, not indexed.
+    const auto legged_locomotion_rule_it = std::find_if(
+        legged_locomotion_config.world_rule_spawns.begin(),
+        legged_locomotion_config.world_rule_spawns.end(),
+        [](const network_example::game_server::WorldRuleSpawnConfig& rule) {
+            return rule.name == "legged_locomotion_world_rule";
+        });
+    require(
+        legged_locomotion_rule_it !=
+        legged_locomotion_config.world_rule_spawns.end());
+    const network_example::game_server::WorldRuleSpawnConfig&
+        legged_locomotion_rule = *legged_locomotion_rule_it;
+    require(
+        legged_locomotion_config.preload_director_template_ids ==
+        std::vector<std::uint32_t>{legged_locomotion_rule.director_template_id});
+    require(legged_locomotion_rule.spawn_entity_template_id == 21u);
+    require(legged_locomotion_rule.target_count == 1u);
+    require(legged_locomotion_rule.radius == 0.0f);
+    require(legged_locomotion_rule.position.x == 0.0f);
+    require(legged_locomotion_rule.position.y == 10.0f);
     const network_example::game_server::ActorTemplateConfig*
         legged_locomotion_actor =
             network_example::game_server::find_actor_template(
                 legged_locomotion_config,
-                legged_locomotion_config.agent.actor_template_id);
+                legged_locomotion_rule.spawn_entity_template_id);
     require(legged_locomotion_actor != nullptr);
     require(legged_locomotion_actor->name == "quadruped_actor");
     require(legged_locomotion_actor->sentry.passive_patrol);
@@ -3018,42 +3008,18 @@ int main() {
         [](const KernelEntityTemplateDefinition& definition) {
             return definition.entity_type == KernelEntityType_Director;
         }));
-    require(legged_locomotion_config.world_rule_spawns.size() == 1u);
-    require(legged_locomotion_config.world_rule_spawns[0].target_count == 1u);
-    require(
-        legged_locomotion_config.world_rule_spawns[0].spawn_entity_template_id ==
-        21u);
-    require(
-        legged_locomotion_config.world_rule_spawns[0].spawn_actor_template_id ==
-        21u);
-
-    // Replaces the catalog's own enemy block rather than appending a second one:
-    // a duplicate key would leave which block wins up to the YAML parser, and
-    // the case is about the loader rejecting a block that names both.
-    const std::string conflicting_enemy_catalog = replace_once(
-        read_text_file("game_server/gameplay_catalog.yaml"),
-        "enemy:\n",
-        "enemy:\n"
-        "  actor_template: sentry_grunt\n");
-    bool conflicting_enemy_rejected = false;
-    try {
-        const std::vector<std::uint8_t> conflicting_enemy_bundle =
-            make_gameplay_bundle_zip(
-                production_sentry_yaml,
-                {},
-                {},
-                conflicting_enemy_catalog);
-        (void)network_example::game_server::
-            load_gameplay_config_from_bundle_memory(
-                conflicting_enemy_bundle.data(),
-                static_cast<std::uint32_t>(conflicting_enemy_bundle.size()),
-                "gameplay_catalog.yaml");
-    } catch (const std::exception& error) {
-        conflicting_enemy_rejected =
-            std::string(error.what()).find("both actor_template and entity_template") !=
-            std::string::npos;
-    }
-    require(conflicting_enemy_rejected);
+    // Named rather than indexed: the shared template directory yields the
+    // shipping world rule as well as this catalog's own, and only the preload
+    // list decides which is live.
+    const auto legged_rule = std::find_if(
+        legged_locomotion_config.world_rule_spawns.begin(),
+        legged_locomotion_config.world_rule_spawns.end(),
+        [](const network_example::game_server::WorldRuleSpawnConfig& rule) {
+            return rule.name == "legged_locomotion_world_rule";
+        });
+    require(legged_rule != legged_locomotion_config.world_rule_spawns.end());
+    require(legged_rule->target_count == 1u);
+    require(legged_rule->spawn_entity_template_id == 21u);
 
     const std::vector<std::uint8_t> unsupported_version_bundle = make_store_zip({
         {"gameplay_catalog.yaml", "catalog_version: 7\n"},

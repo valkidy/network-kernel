@@ -42,8 +42,6 @@ static_collision_scene:
   collision_layer: 1
 player:
   entity_template: player
-enemy:
-  entity_template: grenade_sentry
 # Squads the world produces on its own schedule, independent of the mission.
 # Authored here rather than on world_rule_director because a patrol never
 # reaches the kernel as a director: game_server spawns it, owns its grouping and

@@ -2542,9 +2542,6 @@ void apply_catalog_player_config(
 void apply_catalog_director_preload_config(
     const YAML::Node& document,
     GameServerGameplayConfig* config);
-void apply_catalog_agent_config(
-    const YAML::Node& document,
-    GameServerGameplayConfig* config);
 void apply_catalog_patrol_config(
     const YAML::Node& document,
     GameServerGameplayConfig* config,
@@ -2693,7 +2690,6 @@ void apply_default_actor_templates(GameServerGameplayConfig* config) {
     config->actor_templates.push_back(default_sentry_actor_template());
     config->entity_templates = config->actor_templates;
     config->player.actor_template_id = 1;
-    config->agent.actor_template_id = 2;
 }
 
 std::uint16_t sentry_animation_from_yaml(
@@ -6655,7 +6651,6 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             "skeleton_manifests",
             "skeleton_manifests_dir",
             "player",
-            "enemy",
             "preload_directors",
             "patrols",
             "patrol_budget",
@@ -6902,7 +6897,6 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
 
     apply_catalog_player_config(document, &config);
     apply_catalog_director_preload_config(document, &config);
-    apply_catalog_agent_config(document, &config);
     apply_catalog_patrol_config(
         document, &config, path, source.source_kind());
     // After the preload list and after `enemy:`, because it reads both.
@@ -6918,7 +6912,6 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
 
 void apply_default_non_weapon_config(GameServerGameplayConfig* config) {
     config->player = PlayerGameplayDefinition{};
-    config->agent = AgentSpawnDefinition{};
     apply_default_actor_templates(config);
 }
 
@@ -7071,25 +7064,13 @@ void apply_catalog_world_rule_config(GameServerGameplayConfig* config) {
         rule.tick_interval = entity_template->ai_tick_interval == 0u
             ? 1u
             : entity_template->ai_tick_interval;
-        // `enemy:` replaces every world rule's spawn wholesale. Kept exactly:
-        // it is why world_rule_director.yaml's own spawn block is inert in the
-        // shipping catalog, and changing that here would be a behaviour change
-        // hidden inside a move.
-        if (config->agent.override_director_spawn) {
-            rule.target_count = config->agent.spawn_count;
-            rule.spawn_entity_template_id = config->agent.actor_template_id;
-            rule.spawn_actor_template_id = config->agent.actor_template_id;
-            rule.position = config->agent.spawn_position;
-            rule.radius = config->agent.spawn_radius;
-        } else {
-            rule.target_count = entity_template->director_spawn_target_count;
-            rule.spawn_entity_template_id =
-                entity_template->director_spawn_entity_template_id;
-            rule.spawn_actor_template_id =
-                entity_template->director_spawn_actor_template_id;
-            rule.position = entity_template->director_spawn_position;
-            rule.radius = entity_template->director_spawn_radius;
-        }
+        rule.target_count = entity_template->director_spawn_target_count;
+        rule.spawn_entity_template_id =
+            entity_template->director_spawn_entity_template_id;
+        rule.spawn_actor_template_id =
+            entity_template->director_spawn_actor_template_id;
+        rule.position = entity_template->director_spawn_position;
+        rule.radius = entity_template->director_spawn_radius;
         config->world_rule_spawns.push_back(std::move(rule));
     }
 }
@@ -7243,57 +7224,6 @@ void apply_catalog_patrol_config(
     }
 }
 
-void apply_catalog_agent_config(
-    const YAML::Node& document,
-    GameServerGameplayConfig* config) {
-    const YAML::Node agent = document["enemy"];
-    if (!agent) {
-        const auto director = std::find_if(
-            config->entity_templates.begin(),
-            config->entity_templates.end(),
-            [](const EntityTemplateConfig& entity_template) {
-                return entity_template.entity_type == KernelEntityType_Director &&
-                       entity_template.director_kind ==
-                           AuthoredDirectorKind::kWorldRule &&
-                       entity_template.director_spawn_actor_template_id != 0u;
-            });
-        if (director != config->entity_templates.end()) {
-            config->agent.actor_template_id =
-                director->director_spawn_actor_template_id;
-            config->agent.spawn_count = director->director_spawn_target_count;
-            config->agent.spawn_radius = director->director_spawn_radius;
-            config->agent.spawn_seed = director->director_spawn_seed;
-            config->agent.spawn_position = director->director_spawn_position;
-        }
-        return;
-    }
-    if (agent["actor_template"] && agent["entity_template"]) {
-        throw std::runtime_error(
-            "enemy cannot define both actor_template and entity_template");
-    }
-    config->agent.override_director_spawn = true;
-    if (agent["spawn_count"]) {
-        config->agent.spawn_count = agent["spawn_count"].as<std::uint32_t>();
-    }
-    if (agent["spawn_radius"]) {
-        config->agent.spawn_radius = agent["spawn_radius"].as<float>();
-    }
-    if (agent["spawn_seed"]) {
-        config->agent.spawn_seed = agent["spawn_seed"].as<std::uint32_t>();
-    }
-    if (agent["spawn_position"]) {
-        config->agent.spawn_position = vec3_from_yaml(agent["spawn_position"]);
-    }
-    if (agent["actor_template"]) {
-        config->agent.actor_template_id =
-            actor_template_ref_from_yaml(agent["actor_template"], config->actor_templates);
-    }
-    if (agent["entity_template"]) {
-        config->agent.actor_template_id =
-            entity_template_ref_from_yaml(
-                agent["entity_template"], config->entity_templates);
-    }
-}
 
 }  // namespace
 
@@ -7467,12 +7397,6 @@ std::uint64_t compute_gameplay_catalog_hash(
         }
     }
     hash_scalar(&hash, config.player.actor_template_id);
-    hash_scalar(&hash, config.agent.actor_template_id);
-    hash_vec3(&hash, config.agent.spawn_position);
-    hash_scalar(&hash, config.agent.spawn_count);
-    hash_float(&hash, config.agent.spawn_radius);
-    hash_scalar(&hash, config.agent.spawn_seed);
-    hash_scalar(&hash, config.agent.override_director_spawn);
     hash_scalar(
         &hash,
         static_cast<std::uint32_t>(
@@ -8030,13 +7954,6 @@ std::vector<std::string> validate_gameplay_config(
     if (player_actor == nullptr || player_actor->entity_type != kEntityTypeActor ||
         player_actor->actor_type != kActorTypePlayer) {
         errors.push_back("player actor template must reference a player actor");
-    }
-    const ActorTemplateConfig* agent_actor =
-        find_actor_template(config, config.agent.actor_template_id);
-    if (agent_actor == nullptr || agent_actor->entity_type != kEntityTypeActor ||
-        agent_actor->actor_type != kActorTypeAgent ||
-        config.agent.spawn_count == 0 || config.agent.spawn_radius < 0.0f) {
-        errors.push_back("agent gameplay config must be valid");
     }
     if (config.colliders.templates.empty() || !config.colliders.bindings.empty()) {
         errors.push_back("collider catalog must include templates and no bindings");
@@ -8761,14 +8678,5 @@ KernelCombatStateDefinition make_player_combat_state(
     return make_combat_state_from_actor_template(config, *actor_template);
 }
 
-KernelCombatStateDefinition make_agent_combat_state(
-    const GameServerGameplayConfig& config) {
-    const ActorTemplateConfig* actor_template =
-        find_actor_template(config, config.agent.actor_template_id);
-    if (actor_template == nullptr) {
-        return KernelCombatStateDefinition{};
-    }
-    return make_combat_state_from_actor_template(config, *actor_template);
-}
 
 }  // namespace network_example::game_server
