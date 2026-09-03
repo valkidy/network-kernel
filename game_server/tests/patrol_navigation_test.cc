@@ -63,8 +63,8 @@ int main() {
     using network_example::game_server::PatrolRouteRequest;
 
     const std::vector<std::uint8_t> artifact = read_binary_file(
-        (runfiles_root() / "game_server" / "test_mesh_assets" / "generated" /
-         "recast" / "obstructed_field.navmesh")
+        (runfiles_root() / "game_server" / "test_mesh_assets" / "recast" /
+         "obstructed_field.navmesh")
             .string());
 
     PatrolNavigation navigation;

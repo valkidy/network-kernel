@@ -32,8 +32,8 @@ def mesh_asset_bakes(
             ))
         seen_stems[stem] = source
 
-        jolt_output = "generated/jolt/%s.joltmesh" % stem
-        recast_output = "generated/recast/%s.navmesh" % stem
+        jolt_output = "jolt/%s.joltmesh" % stem
+        recast_output = "recast/%s.navmesh" % stem
         native.genrule(
             name = "bake_%s" % stem,
             srcs = [source, config],

@@ -8,8 +8,8 @@
 // the whole route layer collapses into two points and a direction vector.
 //
 // The navmesh needed to answer that already exists. mesh_asset_bakes emits
-// generated/recast/<stem>.navmesh beside the .joltmesh, the bundle genrule
-// copies it into mesh_assets/recast/, and the payload is raw dtCreateNavMeshData
+// recast/<stem>.navmesh beside the .joltmesh, the bundle genrule copies it into
+// mesh_assets/recast/ at the same path, and the payload is raw dtCreateNavMeshData
 // output. This benchmark loads it the way game_server would and measures three
 // things per terrain:
 //
@@ -560,7 +560,7 @@ void measure_bundled(const std::vector<std::uint8_t>& bundle, const std::string&
 void measure_test_asset(const std::string& name) {
     measure(
         read_binary_file((runfiles_root() / "game_server" / "test_mesh_assets" /
-                          "generated" / "recast" / (name + ".navmesh"))
+                          "recast" / (name + ".navmesh"))
                              .string()),
         name);
 }
