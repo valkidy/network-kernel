@@ -337,7 +337,7 @@ private:
     friend class ActivationSystem;
     friend class ItemGameplaySystem;
     friend class CollisionTriggerSystem;
-    friend     friend class MovementSystem;
+    friend class MovementSystem;
     friend class KernelRpcDispatcher;
     friend class KernelRpcWorldHandlers;
     friend class simulation::Dispatcher;
