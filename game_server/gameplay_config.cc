@@ -292,6 +292,18 @@ void hash_actor_template(
     hash_float(hash, actor_template.patrol.input_magnitude);
     hash_float(hash, actor_template.patrol.leash_meters);
     hash_float(hash, actor_template.patrol.leash_resume_meters);
+    hash_scalar(hash, actor_template.spawner.authored ? 1u : 0u);
+    hash_scalar(hash, actor_template.spawner.seed);
+    hash_scalar(hash, actor_template.spawner.interval_ticks);
+    hash_scalar(hash, actor_template.spawner.max_live_agents);
+    hash_float(hash, actor_template.spawner.radius);
+    hash_scalar(hash, actor_template.spawner.count_min);
+    hash_scalar(hash, actor_template.spawner.count_max);
+    for (const SpawnCompositionEntry& entry : actor_template.spawner.composition) {
+        hash_string(hash, entry.entity_template_ref);
+        hash_scalar(hash, entry.min_count);
+        hash_scalar(hash, entry.max_count);
+    }
     hash_scalar(hash, actor_template.vision.camp);
     hash_scalar(hash, actor_template.vision.vision_collider_template_id);
     hash_scalar(hash, actor_template.vision.max_visible_hostiles);
@@ -2548,6 +2560,15 @@ void apply_catalog_patrol_config(
     const std::string& path,
     std::uint32_t source_kind);
 void apply_catalog_world_rule_config(GameServerGameplayConfig* config);
+void apply_catalog_spawner_config(
+    GameServerGameplayConfig* config,
+    const std::string& path,
+    std::uint32_t source_kind);
+SpawnerConfig spawner_from_yaml(
+    const YAML::Node& node,
+    const std::string& path,
+    std::uint32_t source_kind,
+    std::uint32_t template_id);
 std::uint32_t collider_template_id_from_ref(
     const YAML::Node& node,
     const ColliderCatalogConfig& colliders);
@@ -4194,6 +4215,7 @@ EntityTemplateConfig entity_template_from_yaml(
                 "carry_offset",
                 "lifecycle",
                 "triggers",
+                "spawner",
             },
             path,
             source_kind,
@@ -4208,6 +4230,11 @@ EntityTemplateConfig entity_template_from_yaml(
             entity_template.impulse_resistance =
                 node["impulse_resistance"].as<float>();
         }
+        entity_template.spawner = spawner_from_yaml(
+            node["spawner"],
+            path,
+            source_kind,
+            entity_template.actor_template_id);
         if (node["transform"]) {
             reject_unknown_keys(
                 node["transform"],
@@ -6899,8 +6926,8 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     apply_catalog_director_preload_config(document, &config);
     apply_catalog_patrol_config(
         document, &config, path, source.source_kind());
-    // After the preload list and after `enemy:`, because it reads both.
     apply_catalog_world_rule_config(&config);
+    apply_catalog_spawner_config(&config, path, source.source_kind());
 
     const std::vector<std::string> errors = validate_gameplay_config(config);
     if (!errors.empty()) {
@@ -6968,6 +6995,86 @@ void apply_catalog_director_preload_config(
 }
 
 
+
+// `spawner:` on an entity template: what this thing puts out, and how often.
+SpawnerConfig spawner_from_yaml(
+    const YAML::Node& node,
+    const std::string& path,
+    std::uint32_t source_kind,
+    std::uint32_t template_id) {
+    SpawnerConfig spawner;
+    if (!node) {
+        return spawner;
+    }
+    reject_unknown_keys(
+        node,
+        {
+            "seed",
+            "interval_ticks",
+            "max_live_agents",
+            "radius",
+            "count",
+            "composition",
+        },
+        path,
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+        template_id);
+    spawner.authored = true;
+    if (node["seed"]) {
+        spawner.seed = node["seed"].as<std::uint32_t>();
+    }
+    if (node["interval_ticks"]) {
+        spawner.interval_ticks = node["interval_ticks"].as<std::uint32_t>();
+    }
+    if (node["max_live_agents"]) {
+        spawner.max_live_agents = node["max_live_agents"].as<std::uint32_t>();
+    }
+    if (node["radius"]) {
+        spawner.radius = node["radius"].as<float>();
+    }
+    const YAML::Node count = node["count"];
+    if (!count || !count["min"] || !count["max"]) {
+        throw std::runtime_error("spawner requires count with min and max");
+    }
+    reject_unknown_keys(
+        count,
+        {"min", "max"},
+        path,
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+        template_id);
+    spawner.count_min = count["min"].as<std::uint32_t>();
+    spawner.count_max = count["max"].as<std::uint32_t>();
+    const YAML::Node composition = node["composition"];
+    if (!composition || !composition.IsSequence()) {
+        throw std::runtime_error("spawner composition must be a sequence");
+    }
+    for (const YAML::Node& entry_node : composition) {
+        reject_unknown_keys(
+            entry_node,
+            {"entity_template", "min", "max"},
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+            template_id);
+        if (!entry_node["entity_template"] || !entry_node["min"] ||
+            !entry_node["max"]) {
+            throw std::runtime_error(
+                "spawner composition entry requires entity_template, min and max");
+        }
+        SpawnCompositionEntry entry;
+        // Ref only. The template it names may not be loaded yet, so ids are
+        // resolved in apply_catalog_spawner_config once every template exists --
+        // the same reason the patrol composition resolves in a catalog pass.
+        entry.entity_template_ref = entry_node["entity_template"].as<std::string>();
+        entry.min_count = entry_node["min"].as<std::uint32_t>();
+        entry.max_count = entry_node["max"].as<std::uint32_t>();
+        spawner.composition.push_back(std::move(entry));
+    }
+    return spawner;
+}
+
 SpawnAreaConfig patrol_area_from_yaml(
     const YAML::Node& node,
     const std::string& path,
@@ -7009,6 +7116,47 @@ SpawnAreaConfig patrol_area_from_yaml(
         area.half_extents = vec3_from_yaml(node["half_extents"]);
     }
     return area;
+}
+
+// Resolves what a spawner names and collects the templates that carry one.
+// Separate from the template parse because a spawner names other templates,
+// which may not have been loaded when its own was.
+void apply_catalog_spawner_config(
+    GameServerGameplayConfig* config,
+    const std::string& path,
+    std::uint32_t source_kind) {
+    (void)path;
+    (void)source_kind;
+    for (EntityTemplateConfig& entity_template : config->entity_templates) {
+        if (!entity_template.spawner.authored) {
+            continue;
+        }
+        for (SpawnCompositionEntry& entry : entity_template.spawner.composition) {
+            const auto referenced = std::find_if(
+                config->entity_templates.begin(),
+                config->entity_templates.end(),
+                [&entry](const EntityTemplateConfig& candidate) {
+                    return candidate.name == entry.entity_template_ref;
+                });
+            if (referenced == config->entity_templates.end()) {
+                throw std::runtime_error(
+                    "spawner composition names an unknown entity_template: " +
+                    entry.entity_template_ref);
+            }
+            entry.entity_template_id = referenced->actor_template_id;
+        }
+        const std::string error =
+            validate_spawner_config(entity_template.spawner);
+        if (!error.empty()) {
+            throw std::runtime_error(error + ": " + entity_template.name);
+        }
+        SpawnerCarrierConfig carrier;
+        carrier.entity_template_id = entity_template.actor_template_id;
+        carrier.entity_type = entity_template.entity_type;
+        carrier.name = entity_template.name;
+        carrier.spawner = entity_template.spawner;
+        config->spawner_carriers.push_back(std::move(carrier));
+    }
 }
 
 // Translates every authored director into the form game_server runs it in.

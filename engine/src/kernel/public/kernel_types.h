@@ -83,7 +83,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 86u
+#define KERNEL_ABI_VERSION 87u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -1343,6 +1343,10 @@ typedef struct KernelServerEntityState {
     KernelActionRuntimeView action;
     KernelVec3 aim_direction;
     uint32_t item_template_id;
+    // Which entity template the entity was created from, or zero. Distinct from
+    // actor_template_id, which is only set for actors -- a prop reports nothing
+    // there, so this is the only way to ask what a prop is.
+    uint32_t entity_template_id;
     KernelItemInstanceId item_instance_id;
     uint8_t world_item_mode;
     uint8_t reserved_item0;

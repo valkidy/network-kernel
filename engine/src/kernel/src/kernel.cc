@@ -1082,6 +1082,10 @@ KernelServerEntityState to_server_entity_state(
         state.actor_template_id =
             world.registry().get<ActorTemplateRef>(entity).actor_template_id;
     }
+    if (world.registry().all_of<EntityTemplateRef>(entity)) {
+        state.entity_template_id =
+            world.registry().get<EntityTemplateRef>(entity).entity_template_id;
+    }
     if (world.registry().all_of<ItemTemplateRef>(entity)) {
         state.item_template_id =
             world.registry().get<ItemTemplateRef>(entity).item_template_id;

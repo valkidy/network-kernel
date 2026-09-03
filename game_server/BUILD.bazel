@@ -42,6 +42,7 @@ cc_library(
         "patrol_group_runtime.cc",
         "patrol_navigation.cc",
         "spawn_sampling.cc",
+        "spawner_director.cc",
         "world_rule_director.cc",
     ],
     hdrs = [
@@ -60,6 +61,7 @@ cc_library(
         "patrol_group_runtime.h",
         "patrol_navigation.h",
         "spawn_sampling.h",
+        "spawner_director.h",
         "world_rule_director.h",
         "public/game_server_types.h",
     ],
@@ -289,6 +291,15 @@ cc_test(
 cc_test(
     name = "game_rule_director_test",
     srcs = ["game_rule_director_test.cc"],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
+    name = "spawner_director_test",
+    srcs = ["spawner_director_test.cc"],
     deps = [
         ":game_server",
         "//engine/src/kernel:kernel",

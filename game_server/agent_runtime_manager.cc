@@ -93,6 +93,10 @@ AgentRuntimeManager::AgentRuntimeManager(
     }
     world_rule_director_ = WorldRuleDirector(std::move(world_rules));
     game_rule_director_ = GameRuleDirector(std::move(game_rules));
+    // Not filtered by the preload list: a spawner is active because its
+    // carrier is in the world, which is the whole point of putting the rule
+    // on the carrier.
+    spawner_director_ = SpawnerDirector(config_.spawner_carriers);
     if (!config_.navigation_mesh.artifact.empty()) {
         std::string error;
         if (patrol_navigation_.load(config_.navigation_mesh.artifact, &error)) {
@@ -224,6 +228,7 @@ void AgentRuntimeManager::tick(float delta_seconds) {
     patrol_director_.tick(kernel_, &patrol_groups_, &patrol_navigation_);
     world_rule_director_.tick(kernel_, live_agent_count());
     game_rule_director_.tick(kernel_);
+    spawner_director_.tick(kernel_);
     sync_agents_from_kernel();
     // Ahead of the controllers, so a member reads the slot its squad wants it
     // in this tick rather than the one from last tick.
@@ -282,6 +287,10 @@ const WorldRuleDirector& AgentRuntimeManager::world_rule_director() const {
 
 const GameRuleDirector& AgentRuntimeManager::game_rule_director() const {
     return game_rule_director_;
+}
+
+const SpawnerDirector& AgentRuntimeManager::spawner_director() const {
+    return spawner_director_;
 }
 
 bool AgentRuntimeManager::preload_directors() {

@@ -12,6 +12,7 @@
 #include "game_server/gameplay_config.h"
 #include "game_server/patrol_director.h"
 #include "game_server/patrol_navigation.h"
+#include "game_server/spawner_director.h"
 #include "game_server/world_rule_director.h"
 #include "game_server/patrol_group_runtime.h"
 #include "kernel/public/kernel_api.h"
@@ -43,6 +44,7 @@ public:
     const PatrolNavigation& patrol_navigation() const;
     const WorldRuleDirector& world_rule_director() const;
     const GameRuleDirector& game_rule_director() const;
+    const SpawnerDirector& spawner_director() const;
 
 private:
     // One controller per agent actor template. Agents from different templates
@@ -84,6 +86,7 @@ private:
     PatrolNavigation patrol_navigation_;
     WorldRuleDirector world_rule_director_;
     GameRuleDirector game_rule_director_;
+    SpawnerDirector spawner_director_;
     // Kept across ticks so that a population which has already been sized for
     // does not reallocate every tick.
     mutable std::vector<KernelServerEntityState> actor_query_buffer_;

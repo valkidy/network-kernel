@@ -13,6 +13,7 @@
 #include "game_server/agent_sentry_controller.h"
 #include "game_server/patrol_director.h"
 #include "game_server/game_rule_director.h"
+#include "game_server/spawner_director.h"
 #include "game_server/world_rule_director.h"
 #include "kernel/public/kernel_types.h"
 
@@ -221,6 +222,9 @@ struct ActorTemplateConfig {
     // half of a chaser comes from `sentry`.
     AgentChaseTuning chaser{};
     AgentPatrolTuning patrol{};
+    // Authored on the template, run by game_server, never sent to the
+    // kernel -- the same shape as the ai.* blocks above.
+    SpawnerConfig spawner{};
     KernelAgentVisionConfig vision{};
     std::uint32_t ai_controller_type = KernelAiControllerType_None;
     std::uint32_t ai_tick_interval = 1;
@@ -399,6 +403,9 @@ struct GameServerGameplayConfig {
     // game_server: "this wave is cleared, open the next one" is a mission rule,
     // not something the kernel stores or validates.
     std::vector<GameRuleConfig> game_rules;
+    // Templates that carry a spawner. A rule per live carrier, so this is
+    // the set of kinds rather than the set of rules.
+    std::vector<SpawnerCarrierConfig> spawner_carriers;
     std::vector<std::uint32_t> preload_director_template_ids;
     std::vector<EntityTemplateConfig> entity_templates;
     std::vector<ActorTemplateConfig> actor_templates;
