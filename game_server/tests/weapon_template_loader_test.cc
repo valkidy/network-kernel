@@ -40,7 +40,7 @@ void write_file(const std::filesystem::path& path, const std::string& text) {
 
 void write_valid_collider_catalog(const std::filesystem::path& weapon_dir) {
     const std::filesystem::path source_dir =
-        runfiles_root() / "game_server" / "shipping_catalog" /
+        runfiles_root() / "game_server" / "gameplay_catalog" /
         "collider_templates";
     const std::filesystem::path destination_dir =
         weapon_dir.parent_path() / "collider_templates";
@@ -58,7 +58,7 @@ void write_valid_collider_catalog(const std::filesystem::path& weapon_dir) {
 
 void write_valid_action_catalog(const std::filesystem::path& weapon_dir) {
     const std::filesystem::path source_dir =
-        runfiles_root() / "game_server" / "shipping_catalog" /
+        runfiles_root() / "game_server" / "gameplay_catalog" /
         "action_templates";
     const std::filesystem::path destination_dir =
         weapon_dir.parent_path() / "action_templates";
@@ -76,7 +76,7 @@ void write_valid_action_catalog(const std::filesystem::path& weapon_dir) {
 
 void write_valid_action_graph_catalog(const std::filesystem::path& weapon_dir) {
     const std::filesystem::path source_dir =
-        runfiles_root() / "game_server" / "shipping_catalog" /
+        runfiles_root() / "game_server" / "gameplay_catalog" /
         "action_graph_templates";
     const std::filesystem::path destination_dir =
         weapon_dir.parent_path() / "action_graph_templates";
@@ -280,7 +280,7 @@ const KernelProjectileMechanicsDefinition& projectile_mechanics(
 
 void valid_repo_templates_load_all_slots() {
     const std::filesystem::path dir =
-        runfiles_root() / "game_server" / "shipping_catalog" /
+        runfiles_root() / "game_server" / "gameplay_catalog" /
         "weapon_templates";
     const network_example::game_server::GameServerGameplayConfig config =
         network_example::game_server::
@@ -1181,7 +1181,7 @@ void malformed_collision_masks_are_rejected() {
 
 void catalog_file_loads_colliders() {
     const std::filesystem::path catalog_file =
-        runfiles_root() / "game_server" / "shipping_catalog" /
+        runfiles_root() / "game_server" / "gameplay_catalog" /
         "gameplay_catalog.yaml";
     const network_example::game_server::GameServerGameplayConfig config =
         network_example::game_server::load_gameplay_config_from_catalog_file(
@@ -1197,7 +1197,7 @@ void catalog_file_loads_colliders() {
 // behaviour along with it: the weapon is still resolved by raycast.
 void instant_weapon_keeps_its_fire_mode_and_segment() {
     const std::filesystem::path dir =
-        runfiles_root() / "game_server" / "shipping_catalog" /
+        runfiles_root() / "game_server" / "gameplay_catalog" /
         "weapon_templates";
     const network_example::game_server::GameServerGameplayConfig config =
         network_example::game_server::
@@ -1251,7 +1251,7 @@ void instant_weapon_keeps_its_fire_mode_and_segment() {
 // flag set, and commit count, none of which a scalar could carry.
 void weapons_name_their_own_reload_action() {
     const std::filesystem::path dir =
-        runfiles_root() / "game_server" / "shipping_catalog" /
+        runfiles_root() / "game_server" / "gameplay_catalog" /
         "weapon_templates";
     const network_example::game_server::GameServerGameplayConfig config =
         network_example::game_server::
@@ -1312,7 +1312,7 @@ void weapons_without_a_reload_action_fall_back_to_the_shared_one() {
 // silently lost to.
 void damage_is_authored_once_per_projectile_template() {
     const std::filesystem::path dir =
-        runfiles_root() / "game_server" / "shipping_catalog" /
+        runfiles_root() / "game_server" / "gameplay_catalog" /
         "weapon_templates";
     const network_example::game_server::GameServerGameplayConfig config =
         network_example::game_server::

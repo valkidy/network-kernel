@@ -13,8 +13,8 @@ Reads manifest_version 2 (see //tools:ozz_skeleton_manifest) for the rest pose
 and the entity template for the authored leg parameters:
 
     python3 tools/skeleton_rig_check.py \
-        --manifest=bazel-bin/game_server/shipping_catalog/skeleton_assets/generated/simplified_tripod.skeleton_manifest.json \
-        --template=game_server/shipping_catalog/entity_templates/tripod_actor.yaml
+        --manifest=bazel-bin/game_server/gameplay_catalog/skeleton_assets/generated/simplified_tripod.skeleton_manifest.json \
+        --template=game_server/gameplay_catalog/entity_templates/tripod_actor.yaml
 
 Exits non-zero if any check fails. Warnings alone do not fail the run.
 """

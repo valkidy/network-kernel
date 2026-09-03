@@ -3,8 +3,8 @@ licenses(["notice"])
 cc_test(
     name = "physics_world_test",
     srcs = ["physics_world_test.cc"],
-    args = ["$(location //game_server/shipping_catalog/mesh_assets:jolt/undulating.joltmesh)"],
-    data = ["//game_server/shipping_catalog/mesh_assets:jolt/undulating.joltmesh"],
+    args = ["$(location //game_server/gameplay_catalog/mesh_assets:jolt/undulating.joltmesh)"],
+    data = ["//game_server/gameplay_catalog/mesh_assets:jolt/undulating.joltmesh"],
     deps = ["//engine/src/physics:physics"],
 )
 
@@ -13,8 +13,8 @@ cc_test(
 cc_test(
     name = "locomotion_foothold_bench",
     srcs = ["locomotion_foothold_bench.cc"],
-    args = ["$(location //game_server/shipping_catalog/mesh_assets:jolt/undulating.joltmesh)"],
-    data = ["//game_server/shipping_catalog/mesh_assets:jolt/undulating.joltmesh"],
+    args = ["$(location //game_server/gameplay_catalog/mesh_assets:jolt/undulating.joltmesh)"],
+    data = ["//game_server/gameplay_catalog/mesh_assets:jolt/undulating.joltmesh"],
     tags = ["manual"],
     deps = ["//engine/src/physics:physics"],
 )

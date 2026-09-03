@@ -1,10 +1,10 @@
 licenses(["notice"])
 
-load("//game_server/shipping_catalog/mesh_assets:mesh_bake_rules.bzl", "mesh_asset_bakes")
+load("//game_server/gameplay_catalog/mesh_assets:mesh_bake_rules.bzl", "mesh_asset_bakes")
 
 package(default_visibility = ["//visibility:public"])
 
-# Terrain that exists only to be measured. Kept out of //game_server/shipping_catalog/mesh_assets
+# Terrain that exists only to be measured. Kept out of //game_server/gameplay_catalog/mesh_assets
 # on purpose: that package's glob feeds the shipping catalog bundle, and a test
 # terrain has no business being downloaded by clients. Baked with the same
 # config as the shipping assets so the numbers describe the real pipeline.
@@ -14,5 +14,5 @@ mesh_asset_bakes(
         ["raw/*.obj"],
         allow_empty = True,
     ),
-    config = "//game_server/shipping_catalog/mesh_assets:mesh_bake.yaml",
+    config = "//game_server/gameplay_catalog/mesh_assets:mesh_bake.yaml",
 )

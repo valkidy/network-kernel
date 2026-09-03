@@ -1,5 +1,5 @@
 // Loads the Bazel-generated skeleton manifest JSON (see
-// //game_server/shipping_catalog/skeleton_assets:skeleton_asset_rules.bzl) into the node table
+// //game_server/gameplay_catalog/skeleton_assets:skeleton_asset_rules.bzl) into the node table
 // the hierarchy capture writer expects.
 
 #ifndef ENGINE_SRC_TESTS_CAPTURE_SKELETON_MANIFEST_H_

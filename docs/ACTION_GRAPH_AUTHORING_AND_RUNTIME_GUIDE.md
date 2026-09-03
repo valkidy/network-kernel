@@ -392,8 +392,8 @@ triggers:
 
 參考實作：
 
-- `game_server/shipping_catalog/action_graph_templates/action_apply_damage_at_collision.yaml`
-- `game_server/shipping_catalog/entity_templates/collision_damage_prop.yaml`
+- `game_server/gameplay_catalog/action_graph_templates/action_apply_damage_at_collision.yaml`
+- `game_server/gameplay_catalog/entity_templates/collision_damage_prop.yaml`
 
 ---
 
@@ -528,8 +528,8 @@ Guidelines：
 
 參考實作：
 
-- `game_server/shipping_catalog/action_graph_templates/action_rocket_explosion_at_target.yaml`
-- `game_server/shipping_catalog/projectile_templates/rocket_explosion.yaml`
+- `game_server/gameplay_catalog/action_graph_templates/action_rocket_explosion_at_target.yaml`
+- `game_server/gameplay_catalog/projectile_templates/rocket_explosion.yaml`
 
 ---
 

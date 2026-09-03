@@ -12,12 +12,12 @@ safety.
 The current file layout is:
 
 ```text
-game_server/shipping_catalog/gameplay_catalog.yaml
-  -> action_template_dir: game_server/shipping_catalog/action_templates/*.yaml
-  -> weapon_template_dir: game_server/shipping_catalog/weapon_templates/*.yaml
-  -> projectile_template_dir: game_server/shipping_catalog/projectile_templates/*.yaml
-  -> entity_template_dir: game_server/shipping_catalog/entity_templates/*.yaml
-  -> collider_template_dir: game_server/shipping_catalog/collider_templates/*.yaml
+game_server/gameplay_catalog/gameplay_catalog.yaml
+  -> action_template_dir: game_server/gameplay_catalog/action_templates/*.yaml
+  -> weapon_template_dir: game_server/gameplay_catalog/weapon_templates/*.yaml
+  -> projectile_template_dir: game_server/gameplay_catalog/projectile_templates/*.yaml
+  -> entity_template_dir: game_server/gameplay_catalog/entity_templates/*.yaml
+  -> collider_template_dir: game_server/gameplay_catalog/collider_templates/*.yaml
   -> static_collision_scene: mesh_assets/jolt/*.joltmesh
   -> player.entity_template
   -> director entity template spawn policy

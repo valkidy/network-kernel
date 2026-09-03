@@ -134,7 +134,7 @@ std::vector<std::uint8_t> read_ground_scene() {
     require(test_srcdir != nullptr);
     require(test_workspace != nullptr);
     const std::filesystem::path path = std::filesystem::path(test_srcdir) /
-        test_workspace / "game_server" / "shipping_catalog" / "mesh_assets" /
+        test_workspace / "game_server" / "gameplay_catalog" / "mesh_assets" /
         "jolt" /
         "plane_200x200.joltmesh";
     std::ifstream file(path, std::ios::binary);

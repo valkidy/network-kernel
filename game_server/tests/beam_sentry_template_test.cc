@@ -13,7 +13,7 @@ int main() {
     assert(srcdir != nullptr && workspace != nullptr);
     const std::filesystem::path catalog =
         std::filesystem::path(srcdir) / workspace / "game_server" /
-        "shipping_catalog" / "gameplay_catalog.yaml";
+        "gameplay_catalog" / "gameplay_catalog.yaml";
 
     const gs::GameServerGameplayConfig config =
         gs::load_gameplay_config_from_catalog_file(catalog.string());

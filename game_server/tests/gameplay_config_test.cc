@@ -278,7 +278,7 @@ void append_directory_files(
     std::vector<std::filesystem::path> entries;
     for (const std::filesystem::directory_entry& entry :
          std::filesystem::directory_iterator(
-             "game_server/shipping_catalog/" + directory)) {
+             "game_server/gameplay_catalog/" + directory)) {
         if (entry.is_regular_file() && entry.path().extension() == ".yaml") {
             entries.push_back(entry.path());
         }
@@ -309,7 +309,7 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip(
     files.push_back({
         "gameplay_catalog.yaml",
         catalog_yaml.empty()
-            ? read_text_file("game_server/shipping_catalog/gameplay_catalog.yaml")
+            ? read_text_file("game_server/gameplay_catalog/gameplay_catalog.yaml")
             : catalog_yaml});
     append_collider_template_files(&files);
     // Every entity template on disk, with the three the callers override
@@ -325,7 +325,7 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip(
         std::vector<std::filesystem::path> entity_files;
         for (const std::filesystem::directory_entry& entry :
              std::filesystem::directory_iterator(
-                 "game_server/shipping_catalog/entity_templates")) {
+                 "game_server/gameplay_catalog/entity_templates")) {
             if (entry.is_regular_file() &&
                 entry.path().extension() == ".yaml") {
                 entity_files.push_back(entry.path());
@@ -351,7 +351,7 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip(
         std::vector<std::filesystem::path> generated;
         for (const std::filesystem::directory_entry& entry :
              std::filesystem::directory_iterator(
-                 "game_server/shipping_catalog/skeleton_assets/generated")) {
+                 "game_server/gameplay_catalog/skeleton_assets/generated")) {
             if (entry.is_regular_file()) {
                 generated.push_back(entry.path());
             }
@@ -380,7 +380,7 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip(
 
 std::vector<std::uint8_t> make_gameplay_bundle_zip() {
     return make_gameplay_bundle_zip(
-        read_text_file("game_server/shipping_catalog/entity_templates/sentry_grunt.yaml"));
+        read_text_file("game_server/gameplay_catalog/entity_templates/sentry_grunt.yaml"));
 }
 
 std::string replace_once(
@@ -634,13 +634,13 @@ int main() {
         }));
 
     const std::string production_player_yaml =
-        read_text_file("game_server/shipping_catalog/entity_templates/player.yaml");
+        read_text_file("game_server/gameplay_catalog/entity_templates/player.yaml");
     const std::string production_sentry_yaml =
-        read_text_file("game_server/shipping_catalog/entity_templates/sentry_grunt.yaml");
+        read_text_file("game_server/gameplay_catalog/entity_templates/sentry_grunt.yaml");
     const std::string production_quadruped_yaml =
-        read_text_file("game_server/shipping_catalog/entity_templates/quadruped_actor.yaml");
+        read_text_file("game_server/gameplay_catalog/entity_templates/quadruped_actor.yaml");
     const std::string production_catalog_yaml =
-        read_text_file("game_server/shipping_catalog/gameplay_catalog.yaml");
+        read_text_file("game_server/gameplay_catalog/gameplay_catalog.yaml");
     const auto load_with_catalog = [&](const std::string& catalog_yaml) {
         const std::vector<std::uint8_t> bundle = make_gameplay_bundle_zip(
             production_sentry_yaml,
@@ -681,7 +681,7 @@ int main() {
     require(empty_preload_config.preload_director_template_ids.empty());
     const std::string production_quadruped_rig =
         read_text_file(
-            "game_server/shipping_catalog/skeleton_assets/generated/"
+            "game_server/gameplay_catalog/skeleton_assets/generated/"
             "simplified_quadruped.rig.yaml");
     // The two-bone chain is a claim about the rig, so it is now corrupted in
     // -- and reported against -- the rig file rather than a template.
@@ -2499,7 +2499,7 @@ int main() {
         "      target: event.target\n"
         "      strength: 4.5\n";
     const auto impulse_bundle = make_gameplay_bundle_zip(
-        read_text_file("game_server/shipping_catalog/entity_templates/sentry_grunt.yaml"),
+        read_text_file("game_server/gameplay_catalog/entity_templates/sentry_grunt.yaml"),
         {{"action_graph_templates/action_apply_impulse_test.yaml", impulse_graph},
          {"entity_templates/impulse_prop.yaml", impulse_prop}});
     const auto impulse_config =
@@ -2569,7 +2569,7 @@ int main() {
         "    parameters:\n"
         "      target: event.target\n";
     const auto split_impulse_bundle = make_gameplay_bundle_zip(
-        read_text_file("game_server/shipping_catalog/entity_templates/sentry_grunt.yaml"),
+        read_text_file("game_server/gameplay_catalog/entity_templates/sentry_grunt.yaml"),
         {{"action_graph_templates/action_split_impulse_test.yaml",
           split_impulse_graph},
          {"entity_templates/split_impulse_prop.yaml", split_impulse_prop}});
@@ -2611,7 +2611,7 @@ int main() {
             "    direction: params.direction\n"
             "    lockout_ticks: 100000\n";
         const auto oversized_bundle = make_gameplay_bundle_zip(
-            read_text_file("game_server/shipping_catalog/entity_templates/sentry_grunt.yaml"),
+            read_text_file("game_server/gameplay_catalog/entity_templates/sentry_grunt.yaml"),
             {{"action_graph_templates/action_split_impulse_test.yaml",
               oversized_graph},
              {"entity_templates/split_impulse_prop.yaml", split_impulse_prop}});
@@ -2640,7 +2640,7 @@ int main() {
             "    strength: params.strength\n"
             "    direction: params.direction\n";
         const auto empty_bundle = make_gameplay_bundle_zip(
-            read_text_file("game_server/shipping_catalog/entity_templates/sentry_grunt.yaml"),
+            read_text_file("game_server/gameplay_catalog/entity_templates/sentry_grunt.yaml"),
             {{"action_graph_templates/action_split_impulse_test.yaml",
               empty_graph},
              {"entity_templates/split_impulse_prop.yaml", split_impulse_prop}});
@@ -2695,7 +2695,7 @@ int main() {
         "      amount: 30\n";
     const std::vector<std::uint8_t> health_change_bundle =
         make_gameplay_bundle_zip(
-            read_text_file("game_server/shipping_catalog/entity_templates/sentry_grunt.yaml"),
+            read_text_file("game_server/gameplay_catalog/entity_templates/sentry_grunt.yaml"),
             {
                 {"action_graph_templates/action_apply_health_change.yaml",
                  health_change_graph},
@@ -2791,7 +2791,7 @@ int main() {
         "      direction: event.direction\n";
     const std::vector<std::uint8_t> collision_projectile_bundle =
         make_gameplay_bundle_zip(
-            read_text_file("game_server/shipping_catalog/entity_templates/sentry_grunt.yaml"),
+            read_text_file("game_server/gameplay_catalog/entity_templates/sentry_grunt.yaml"),
             {
                 {"action_graph_templates/"
                  "action_spawn_projectile_at_collision.yaml",
@@ -2851,7 +2851,7 @@ int main() {
             "      amount: " + std::string(invalid_amount) + "\n";
         const std::vector<std::uint8_t> invalid_bundle =
             make_gameplay_bundle_zip(
-                read_text_file("game_server/shipping_catalog/entity_templates/sentry_grunt.yaml"),
+                read_text_file("game_server/gameplay_catalog/entity_templates/sentry_grunt.yaml"),
                 {
                     {"action_graph_templates/action_apply_health_change.yaml",
                      health_change_graph},
@@ -2899,7 +2899,7 @@ int main() {
             "triggers:\n" + invalid_trigger;
         const std::vector<std::uint8_t> invalid_bundle =
             make_gameplay_bundle_zip(
-                read_text_file("game_server/shipping_catalog/entity_templates/sentry_grunt.yaml"),
+                read_text_file("game_server/gameplay_catalog/entity_templates/sentry_grunt.yaml"),
                 {
                     {"action_graph_templates/action_apply_health_change.yaml",
                      health_change_graph},
@@ -2921,7 +2921,7 @@ int main() {
 
     const std::vector<std::uint8_t> bundle_with_large_binary =
         make_gameplay_bundle_zip(
-            read_text_file("game_server/shipping_catalog/entity_templates/sentry_grunt.yaml"),
+            read_text_file("game_server/gameplay_catalog/entity_templates/sentry_grunt.yaml"),
             {{
                 "mesh_assets/jolt/oversized.joltmesh",
                 std::string(1024 * 1024 + 1, 'x'),
@@ -2963,7 +2963,7 @@ int main() {
                 entry);
         const std::vector<std::uint8_t> from_file =
             network_example::game_server::load_gameplay_catalog_file_entry_bytes(
-                "game_server/shipping_catalog/gameplay_catalog.yaml",
+                "game_server/gameplay_catalog/gameplay_catalog.yaml",
                 entry);
         require(!from_bundle.empty());
         require(from_file == from_bundle);
@@ -2974,7 +2974,7 @@ int main() {
     bool missing_entry_rejected = false;
     try {
         network_example::game_server::load_gameplay_catalog_file_entry_bytes(
-            "game_server/shipping_catalog/gameplay_catalog.yaml",
+            "game_server/gameplay_catalog/gameplay_catalog.yaml",
             "mesh_assets/jolt/absent.joltmesh");
     } catch (const std::exception&) {
         missing_entry_rejected = true;
@@ -3136,7 +3136,7 @@ int main() {
     assert(empty_manifest_dir_rejected);
 
     const std::string production_catalog =
-        read_text_file("game_server/shipping_catalog/gameplay_catalog.yaml");
+        read_text_file("game_server/gameplay_catalog/gameplay_catalog.yaml");
     const auto rejects_catalog = [&](const std::string& catalog_yaml) {
         const std::vector<std::uint8_t> bundle = make_gameplay_bundle_zip(
             production_sentry_yaml, {}, {}, catalog_yaml);
@@ -3170,7 +3170,7 @@ int main() {
 
     const std::vector<std::uint8_t> legacy_item_input_bundle =
         make_gameplay_bundle_zip(
-            read_text_file("game_server/shipping_catalog/entity_templates/sentry_grunt.yaml"),
+            read_text_file("game_server/gameplay_catalog/entity_templates/sentry_grunt.yaml"),
             {{"item_templates/legacy.yaml",
               "id: 9900\n"
               "name: legacy\n"
@@ -3194,7 +3194,7 @@ int main() {
 
     const std::vector<std::uint8_t> legacy_throw_speed_bundle =
         make_gameplay_bundle_zip(
-            read_text_file("game_server/shipping_catalog/entity_templates/sentry_grunt.yaml"),
+            read_text_file("game_server/gameplay_catalog/entity_templates/sentry_grunt.yaml"),
             {{"item_templates/legacy_throw.yaml",
               "id: 9902\n"
               "name: legacy_throw\n"
@@ -3219,7 +3219,7 @@ int main() {
 
     const std::vector<std::uint8_t> legacy_prop_mapping_bundle =
         make_gameplay_bundle_zip(
-            read_text_file("game_server/shipping_catalog/entity_templates/sentry_grunt.yaml"),
+            read_text_file("game_server/gameplay_catalog/entity_templates/sentry_grunt.yaml"),
             {{"entity_templates/legacy.yaml",
               "id: 9901\n"
               "name: legacy_prop\n"
@@ -3312,7 +3312,7 @@ int main() {
     for (const std::string& file : duplicate_collider_weapon_files) {
         duplicate_collider_files.push_back({
             "weapon_templates/" + file,
-            read_text_file("game_server/shipping_catalog/weapon_templates/" + file)});
+            read_text_file("game_server/gameplay_catalog/weapon_templates/" + file)});
     }
     duplicate_collider_files.push_back({
         "collider_templates/a.yaml",

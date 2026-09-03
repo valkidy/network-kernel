@@ -55,7 +55,7 @@ namespace {
 constexpr std::uint64_t kFnvOffsetBasis = 14695981039346656037ull;
 constexpr std::uint64_t kFnvPrime = 1099511628211ull;
 constexpr const char* kDefaultGameplayCatalogPath =
-    "game_server/shipping_catalog/gameplay_catalog.yaml";
+    "game_server/gameplay_catalog/gameplay_catalog.yaml";
 constexpr std::uint64_t kMaxYamlEntryBytes = 1024ull * 1024ull;
 constexpr std::uint64_t kMaxTotalYamlBytes = 8ull * 1024ull * 1024ull;
 constexpr std::uint64_t kMaxSkeletonAssetBytes = 4ull * 1024ull * 1024ull;

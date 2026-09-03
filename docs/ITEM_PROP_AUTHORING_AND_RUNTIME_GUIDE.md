@@ -42,9 +42,9 @@ successfully with no graph side effect.
 
 See the checked-in examples:
 
-- `game_server/shipping_catalog/item_templates/activation_token.yaml`
-- `game_server/shipping_catalog/item_templates/grenade_consumable.yaml`
-- `game_server/shipping_catalog/entity_templates/interaction_terminal.yaml`
+- `game_server/gameplay_catalog/item_templates/activation_token.yaml`
+- `game_server/gameplay_catalog/item_templates/grenade_consumable.yaml`
+- `game_server/gameplay_catalog/entity_templates/interaction_terminal.yaml`
 
 ## Identity and residency
 

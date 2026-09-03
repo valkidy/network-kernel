@@ -212,7 +212,7 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip() {
     files.push_back({
         "gameplay_catalog.yaml",
         read_text_file(
-            root / "game_server" / "shipping_catalog" /
+            root / "game_server" / "gameplay_catalog" /
             "gameplay_catalog.yaml")});
 
     // Enumerated rather than listed by hand. This fixture's whole point is a
@@ -230,7 +230,7 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip() {
     };
     for (const std::string& directory : template_dirs) {
         const std::filesystem::path source =
-            root / "game_server" / "shipping_catalog" / directory;
+            root / "game_server" / "gameplay_catalog" / directory;
         std::vector<std::filesystem::path> entries;
         for (const std::filesystem::directory_entry& entry :
              std::filesystem::directory_iterator(source)) {
@@ -251,7 +251,7 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip() {
     // bundle without these fails on a missing manifest and never reaches the
     // missing joltmesh.
     const std::filesystem::path generated =
-        root / "game_server" / "shipping_catalog" / "skeleton_assets" /
+        root / "game_server" / "gameplay_catalog" / "skeleton_assets" /
         "generated";
     std::vector<std::filesystem::path> skeleton_entries;
     for (const std::filesystem::directory_entry& entry :
@@ -506,7 +506,7 @@ int main() {
     game_server = nullptr;
 
     const std::filesystem::path template_dir =
-        runfiles_root() / "game_server" / "shipping_catalog" / "weapon_templates";
+        runfiles_root() / "game_server" / "gameplay_catalog" / "weapon_templates";
     GameServerHandle* yaml_game_server =
         GameServer_CreateWithWeaponTemplateDirectory(kernel, template_dir.string().c_str());
     assert(yaml_game_server != nullptr);

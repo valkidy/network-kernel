@@ -108,7 +108,7 @@ Reproduce the per-leg table for any rig with:
 
 ```bash
 bazel run //engine/src/tests/kernel_tests:locomotion_reach_report -- \
-  $PWD/bazel-bin/game_server/shipping_catalog/skeleton_assets/generated/<rig>.ozz
+  $PWD/bazel-bin/game_server/gameplay_catalog/skeleton_assets/generated/<rig>.ozz
 ```
 
 ## Turning dominates stance drift
