@@ -9084,8 +9084,15 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
             projectile.gravity,
             projectile_age_duration);
 
-        if (projectile.sync_mode ==
-            KernelProjectileSyncMode_LocalPredictedDeterministic) {
+        // Hybrid belongs here too, not just local-predicted. Both modes are
+        // told to predict the flight, and a mode that predicts where a
+        // projectile goes but not what stops it is worse than one that predicts
+        // nothing: it draws the projectile straight through the wall it was
+        // about to hit and then lets the authoritative despawn take it away,
+        // which reads as the impact happening in the wrong place. Server-
+        // snapshot-only is the one mode with no local path to predict from.
+        if (projectile.sync_mode !=
+            KernelProjectileSyncMode_ServerSnapshotOnly) {
             if (prediction_physics_world_ == nullptr) {
                 if (!predicted_projectile_collision_warning_emitted_) {
                     spdlog::warn(

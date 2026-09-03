@@ -487,3 +487,39 @@ cc_test(
         "//engine/src/kernel:kernel",
     ],
 )
+
+# What the shipping catalog's own patrol population costs one tick, split into
+# the phases AgentRuntimeManager::tick runs in order. Reports timings rather
+# than asserting them -- a wall-clock bound would be flaky and host-dependent --
+# so it is manual, like the other benches.
+cc_test(
+    name = "patrol_cpu_bench",
+    srcs = ["tests/patrol_cpu_bench.cc"],
+    data = [
+        "//game_server/gameplay_catalog_bundle:bundle",
+    ],
+    tags = ["manual"],
+    deps = [
+        ":game_server",
+        ":game_server_bridge",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+# What the entity introduction quota costs an entity born mid-fight. Reports
+# deferral counts against a grenade line rather than asserting them -- the
+# quota is a policy being measured against a workload, and both are meant to be
+# tuned -- so it is manual, like the other benches.
+cc_test(
+    name = "spawn_deferral_bench",
+    srcs = ["tests/spawn_deferral_bench.cc"],
+    data = [
+        "//game_server/gameplay_catalog_bundle:bundle",
+    ],
+    tags = ["manual"],
+    deps = [
+        ":game_server",
+        ":game_server_bridge",
+        "//engine/src/kernel:kernel",
+    ],
+)
