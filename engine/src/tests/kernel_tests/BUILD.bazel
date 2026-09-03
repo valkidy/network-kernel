@@ -303,3 +303,16 @@ cc_binary(
         "@ozz_animation//:ozz_animation",
     ],
 )
+
+# How far past the geometry a client keeps drawing a projectile it is
+# predicting. Reports distances rather than asserting them -- client_mode_test
+# pins the behaviour, this says how much of it a player sees -- so it is manual.
+cc_test(
+    name = "impact_prediction_bench",
+    srcs = ["impact_prediction_bench.cc"],
+    tags = ["manual"],
+    deps = [
+        "//engine/src/kernel:kernel",
+        "//engine/src/physics:physics",
+    ],
+)
