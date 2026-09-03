@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 85;
+        public const uint AbiVersion = 86;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int GameplayCatalogEntryPathSize = 128;
@@ -594,7 +594,7 @@ namespace NetworkExample.Kernel
     {
         None = 0,
         Sentry = 1,
-        Director = 2,
+        Chaser = 3,
     }
 
     public enum KernelMovementControllerType : byte
@@ -2170,14 +2170,6 @@ namespace NetworkExample.Kernel
         public uint ai_profile_id;
         public uint tick_interval;
         public uint blackboard_id;
-        public uint spawn_target_count;
-        public uint spawn_entity_template_id;
-        public uint spawn_actor_template_id;
-        public KernelVec3 spawn_position;
-        public float spawn_radius;
-        public uint spawn_seed;
-        public uint director_kind;
-        public uint game_rule_definition_id;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelEntityAiDefinition>();
     }
