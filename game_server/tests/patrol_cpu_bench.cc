@@ -17,6 +17,9 @@
 //   controllers us  -- dispatch_controllers, which is the tick's one bulk
 //                      vision query plus the per-agent controller work
 //   kernel us       -- Kernel_Update: movement, vision, actions, snapshot build
+//   charmove us     -- the part of that which is physics::PhysicsWorld's
+//                      character solver, read off KernelBenchmarkStats rather
+//                      than timed here
 //
 // Table A runs the catalog unmodified, so its population is whatever
 // `patrols:` and `patrol_budget:` currently author -- two squads of 20 to 24.
@@ -154,12 +157,23 @@ struct Phases {
     double groups = 0.0;
     double controllers = 0.0;
     double kernel = 0.0;
+    // Not timed by this bench: the kernel already accumulates it, so this is a
+    // slice out of the kernel column rather than a column beside it.
+    double character_move = 0.0;
+    double character_moves_per_tick = 0.0;
 
     double ai() const {
         return director + world_rule + sync + groups + controllers;
     }
     double total() const { return ai() + kernel; }
 };
+
+KernelBenchmarkStats benchmark_stats(KernelHandle* kernel) {
+    KernelBenchmarkStats stats{};
+    stats.struct_size = sizeof(stats);
+    require(Kernel_GetBenchmarkStats(kernel, &stats));
+    return stats;
+}
 
 struct Row {
     std::uint32_t groups = 0;
@@ -340,9 +354,12 @@ Row measure(
     }
 
     Phases totals;
+    // Cumulative since the kernel started, so the window is the difference.
+    const KernelBenchmarkStats before = benchmark_stats(kernel);
     for (std::uint32_t sample = 0; sample < kSampleTicks; ++sample) {
         tick_manager(&manager, kernel, &totals);
     }
+    const KernelBenchmarkStats after = benchmark_stats(kernel);
 
     const auto divide = [](double value) {
         return value / static_cast<double>(kSampleTicks);
@@ -357,6 +374,10 @@ Row measure(
     row.per_tick.groups = divide(totals.groups);
     row.per_tick.controllers = divide(totals.controllers);
     row.per_tick.kernel = divide(totals.kernel);
+    row.per_tick.character_move = divide(static_cast<double>(
+        after.character_move_cost_us - before.character_move_cost_us));
+    row.per_tick.character_moves_per_tick = divide(static_cast<double>(
+        after.character_move_count - before.character_move_count));
 
     Kernel_Destroy(kernel);
     return row;
@@ -364,7 +385,7 @@ Row measure(
 
 void print_header(const char* first_column) {
     std::printf(
-        "%10s %7s %7s %6s %9s %9s %8s %8s %12s %10s %9s %10s\n",
+        "%10s %7s %7s %6s %9s %9s %8s %8s %12s %10s %9s %11s %8s %10s\n",
         first_column,
         "squads",
         "patrol",
@@ -376,12 +397,15 @@ void print_header(const char* first_column) {
         "controllers",
         "ai us",
         "kernel us",
+        "charmove us",
+        "moves",
         "% of 33ms");
 }
 
 void print_row(const char* label, const Row& row) {
     std::printf(
-        "%10s %7u %7u %6u %9.1f %9.1f %8.1f %8.1f %12.1f %10.1f %9.1f %10.1f\n",
+        "%10s %7u %7u %6u %9.1f %9.1f %8.1f %8.1f %12.1f %10.1f %9.1f %11.1f "
+        "%8.0f %10.1f\n",
         label,
         row.groups,
         row.patrol_agents,
@@ -393,6 +417,8 @@ void print_row(const char* label, const Row& row) {
         row.per_tick.controllers,
         row.per_tick.ai(),
         row.per_tick.kernel,
+        row.per_tick.character_move,
+        row.per_tick.character_moves_per_tick,
         row.per_tick.total() / (1'000'000.0 / kServerTickRate) * 100.0);
 }
 

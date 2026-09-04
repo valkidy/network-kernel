@@ -2649,7 +2649,10 @@ bool EntityStateSystem::set_transform(
         engine.world_.registry().get<MovementState>(*entity)
             .has_controller_height = false;
     }
-    engine.sync_entity_colliders_from_world();
+    // This entity's colliders, not every collider in the world. The AI enqueues
+    // one of these per agent per tick to re-aim it, and the full sweep is
+    // O(every collider), so the pair used to cost agents times colliders.
+    engine.sync_entity_colliders_from_world(net_id);
     if (engine.world_.registry().all_of<EntityKind>(*entity) &&
         engine.world_.registry().get<EntityKind>(*entity).type == EntityType::kProp) {
         engine.queue_prop_state_change(net_id);
