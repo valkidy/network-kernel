@@ -1,0 +1,44 @@
+# A nest: it stands in the world, it can be destroyed, and while it stands it
+# puts gingerbread out around itself.
+#
+# The rule is on the nest rather than in the catalog's `patrols:` list, and that
+# is the difference between the two kinds of world population here. A patrol is
+# a global rule with no body: nothing can stop it. A nest's rule lives exactly
+# as long as the nest, so destroying one stops it -- with no bookkeeping to say
+# so -- and three nests are three instances of this template, each with its own
+# cadence and its own ceiling.
+#
+# What it has already put out survives it. That is deliberate: despawning what a
+# player has just fought their way through, at the moment they destroy the nest,
+# is worse than any population it would save.
+id: 208
+name: gingerbread_nest
+entity_type: prop
+health:
+  hp: 800
+  max_hp: 800
+physics:
+  collider_template: gingerbread_nest_hitbox
+triggers:
+  # Collapsing on whoever brought it down. Free, in the sense that props have
+  # carried this hook all along -- see activation_damage_prop.
+  on_health_depleted:
+    action_graph: action_apply_damage_at_health_depleted
+    parameters:
+      target: event.instigator
+      amount: 40
+spawner:
+  # Every eight seconds at 30 Hz.
+  interval_ticks: 240
+  # Whole waves only: with room for fewer than count.min the nest waits rather
+  # than putting out a short one, because a wave cannot be trimmed -- the
+  # composition's minimums are assigned before anything is drawn.
+  count: {min: 2, max: 4}
+  # A comfortable multiple of the wave, or the headroom between the ceiling and
+  # a whole wave is never usable.
+  max_live_agents: 12
+  radius: 5.0
+  composition:
+    - entity_template: gingerbread
+      min: 2
+      max: 4

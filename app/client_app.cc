@@ -14,7 +14,7 @@
 
 #include <spdlog/spdlog.h>
 
-#include "game_server/gameplay_config.h"
+#include "game_server/src/gameplay_config.h"
 #include "kernel/public/kernel_api.h"
 #include "kernel/src/tick_loop.h"
 #include "protocol/public/sha256.h"

@@ -1,0 +1,18 @@
+# What a weapon has to touch to hurt a nest.
+#
+# `layer: damageable` rather than a single side, for the reason ice_block_hitbox
+# spells out: the layer becomes the collider's gameplay_category, and naming one
+# side would make the nest solid only to projectiles authored to attack that
+# side and let every other one pass through it. The entity's camp still decides
+# who may damage it.
+#
+# PLACEHOLDER EXTENTS. Sized as a squat two-metre box so the thing is hittable
+# and visible in the debug views; not measured from any model.
+id: 24
+name: gingerbread_nest_hitbox
+shape: oriented_box
+center: {x: 0.0, y: 1.0, z: 0.0}
+half_extents: {x: 1.0, y: 1.0, z: 1.0}
+radius: 0.0
+purpose: hit
+layer: damageable

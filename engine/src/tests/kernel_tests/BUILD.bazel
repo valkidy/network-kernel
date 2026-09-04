@@ -118,7 +118,7 @@ sh_binary(
         "--driver=$(location :locomotion_capture_driver)",
         "--dylib=$(location //engine/src/kernel:network_kernel_shared)",
         "--bundle=$(location //game_server/gameplay_catalog_bundle:bundle)",
-        "--manifest=$(location //game_server/skeleton_assets:generated/simplified_quadruped.skeleton_manifest.json)",
+        "--manifest=$(location //game_server/gameplay_catalog/skeleton_assets:generated/simplified_quadruped.skeleton_manifest.json)",
         "--preflight=$(location //tools/capture:capture_preflight.py)",
         "--render=$(location //tools/capture:render_transforms.py)",
         "--analyze=$(location //tools/capture:analyze_capture.py)",
@@ -128,7 +128,7 @@ sh_binary(
         ":locomotion_capture_driver",
         "//engine/src/kernel:network_kernel_shared",
         "//game_server/gameplay_catalog_bundle:bundle",
-        "//game_server/skeleton_assets:generated/simplified_quadruped.skeleton_manifest.json",
+        "//game_server/gameplay_catalog/skeleton_assets:generated/simplified_quadruped.skeleton_manifest.json",
         "//tools/capture:analyze_capture.py",
         "//tools/capture:capture_preflight.py",
         "//tools/capture:render_transforms.py",
@@ -287,19 +287,46 @@ cc_binary(
 cc_test(
     name = "movement_collision_mask_test",
     srcs = ["movement_collision_mask_test.cc"],
-    data = ["//game_server/mesh_assets:cooked_mesh_assets"],
+    data = ["//game_server/gameplay_catalog/mesh_assets:cooked_mesh_assets"],
     deps = ["//engine/src/kernel:kernel"],
 )
 
 # Diagnostic: how much of each leg's reach the bind pose already spends before
 # the gait asks for anything. Run against the monster rig with
 #   bazel run //engine/src/tests/kernel_tests:locomotion_reach_report -- \
-#     $(pwd)/bazel-bin/game_server/skeleton_assets/generated/simplified_quadruped.ozz
+#     $(pwd)/bazel-bin/game_server/gameplay_catalog/skeleton_assets/generated/simplified_quadruped.ozz
 cc_binary(
     name = "locomotion_reach_report",
     srcs = ["locomotion_reach_report.cc"],
     deps = [
         "@glm//:glm",
         "@ozz_animation//:ozz_animation",
+    ],
+)
+
+# How far past the geometry a client keeps drawing a projectile it is
+# predicting. Reports distances rather than asserting them -- client_mode_test
+# pins the behaviour, this says how much of it a player sees -- so it is manual.
+cc_test(
+    name = "impact_prediction_bench",
+    srcs = ["impact_prediction_bench.cc"],
+    tags = ["manual"],
+    deps = [
+        "//engine/src/kernel:kernel",
+        "//engine/src/physics:physics",
+    ],
+)
+
+# The same impact, with latency on the link. Manual for the same reason the
+# other benches are: it reports what a policy costs against a link rather than
+# asserting a bound that would not survive a different host.
+cc_test(
+    name = "impact_latency_bench",
+    srcs = ["impact_latency_bench.cc"],
+    tags = ["manual"],
+    deps = [
+        "//engine/src/kernel:kernel",
+        "//engine/src/physics:physics",
+        "//engine/src/transport:transport",
     ],
 )

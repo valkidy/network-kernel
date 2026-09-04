@@ -286,7 +286,7 @@ Authoring 注意：
   tick 才反映到位置。
 - **水平擊退需要 `lockout_ticks` 才會成立。** Movement solver 每個 tick 由 input
   重新決定水平速度，而且不只玩家會被影響：repo 內每個 AI controller 都刻意每 tick
-  送剛好一個 input（見 `game_server/agent_chaser_controller.cc` 的註解），sentry
+  送剛好一個 input（見 `game_server/src/agent_chaser_controller.cc` 的註解），sentry
   更會另外每 tick 無條件覆寫整個 `Velocity`。所以「沒有 input 的 AI actor 會保留
   水平速度繼續滑行」就 movement solver 單獨看雖然成立，實務上沒有任何 actor 處在
   那個狀態。`lockout_ticks > 0` 會在 target 上掛一個 server-only 的
@@ -392,8 +392,8 @@ triggers:
 
 參考實作：
 
-- `game_server/action_graph_templates/action_apply_damage_at_collision.yaml`
-- `game_server/entity_templates/collision_damage_prop.yaml`
+- `game_server/gameplay_catalog/action_graph_templates/action_apply_damage_at_collision.yaml`
+- `game_server/gameplay_catalog/entity_templates/collision_damage_prop.yaml`
 
 ---
 
@@ -528,8 +528,8 @@ Guidelines：
 
 參考實作：
 
-- `game_server/action_graph_templates/action_rocket_explosion_at_target.yaml`
-- `game_server/projectile_templates/rocket_explosion.yaml`
+- `game_server/gameplay_catalog/action_graph_templates/action_rocket_explosion_at_target.yaml`
+- `game_server/gameplay_catalog/projectile_templates/rocket_explosion.yaml`
 
 ---
 
@@ -748,8 +748,8 @@ template + quantity，或可在 world/inventory 間轉換的 instance。Action G
 
 ## 13. 相關檔案
 
-- Authoring config：`game_server/gameplay_config.h`
-- YAML loader/compiler：`game_server/gameplay_config.cc`
+- Authoring config：`game_server/src/gameplay_config.h`
+- YAML loader/compiler：`game_server/src/gameplay_config.cc`
 - Kernel ABI：`engine/src/kernel/public/kernel_types.h`
 - Compiled runtime model：`engine/src/world/public/components.h`
 - Evaluator/dispatcher：`engine/src/simulation/src/action_graph.cc`

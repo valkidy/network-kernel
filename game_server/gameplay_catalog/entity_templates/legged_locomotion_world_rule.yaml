@@ -1,0 +1,27 @@
+# The world rule the legged-locomotion test catalog runs on.
+#
+# It exists as its own template because that catalog shares
+# entity_template_dir with the shipping one, so it cannot edit
+# world_rule_director.yaml without changing what ships. That sharing is what
+# the catalog's `enemy:` block used to work around: `enemy:` replaced every
+# world rule's spawn wholesale, which was a per-catalog override wearing the
+# name of something else. A second template says the same thing directly, and
+# only the catalog that preloads it is affected.
+id: 102
+name: legged_locomotion_world_rule
+entity_type: director
+server_only: true
+transform:
+  position: {x: 0.0, y: 0.0, z: 0.0}
+ai:
+  controller: director
+  profile: world_rule
+  tick_interval: 30
+director:
+  kind: world_rule
+  spawn:
+    target_count: 1
+    entity_template: quadruped_actor
+    position: {x: 0.0, y: 10.0, z: 0.0}
+    radius: 0.0
+    seed: 4242

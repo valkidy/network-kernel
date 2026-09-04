@@ -22,7 +22,7 @@ movement the way a built level does, with pits and standing walls:
 
 Regenerate with:
   python3 tools/make_obstructed_field_obj.py \
-      game_server/test_mesh_assets/raw/obstructed_field.obj
+      game_server/tests/test_mesh_assets/raw/obstructed_field.obj
 """
 
 import sys

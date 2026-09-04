@@ -1082,6 +1082,10 @@ KernelServerEntityState to_server_entity_state(
         state.actor_template_id =
             world.registry().get<ActorTemplateRef>(entity).actor_template_id;
     }
+    if (world.registry().all_of<EntityTemplateRef>(entity)) {
+        state.entity_template_id =
+            world.registry().get<EntityTemplateRef>(entity).entity_template_id;
+    }
     if (world.registry().all_of<ItemTemplateRef>(entity)) {
         state.item_template_id =
             world.registry().get<ItemTemplateRef>(entity).item_template_id;
@@ -4407,6 +4411,121 @@ void KernelEngine::materialize_projectile_collider(NetId net_id) {
         collider);
 }
 
+// Pushes one collider's current world transform into the physics world, adding
+// it if it is not there yet. Returns false when the collider does not belong in
+// the world at all, so the caller can leave it out of its bookkeeping.
+bool KernelEngine::push_collider_into_physics(const ColliderInstance& collider) {
+    if (collider.lifetime_ticks != 0 || collider.entity_net_id == 0 ||
+        collider.entity_type == EntityType::kProjectile ||
+        collider.shape_type == ColliderShapeType::kSegment ||
+        collider.shape_type == ColliderShapeType::kCone) {
+        return false;
+    }
+    const bool movement_collider =
+        (collider.purpose_flags & KernelColliderPurpose_Movement) != 0u;
+    // A rig's per-bone collider. Kept out of the actor-hitbox mapping below
+    // deliberately: routing a leg segment through kActorHitbox would make it
+    // a damage volume for every existing weapon query, on a world AABB that
+    // does not contain the rotated box. Its own kind and layer keep it
+    // invisible to those queries until something asks for limbs.
+    const bool limb_collider =
+        (collider.purpose_flags & KernelColliderPurpose_Limb) != 0u;
+    const std::optional<entt::entity> entity =
+        world_.find_entity(collider.entity_net_id);
+    if (movement_collider && entity.has_value() &&
+        world_.registry().all_of<MovementState>(*entity) &&
+        !movement_capsule_blocks_other_actors(
+            world_.registry()
+                .get<MovementState>(*entity)
+                .movement_collision_mask)) {
+        // Left out of current_collider_ids, so a capsule that was registered
+        // before the mask changed is removed by the sweep below.
+        return false;
+    }
+    physics::CollisionObjectDescriptor object{};
+    object.identity.entity_net_id = collider.entity_net_id;
+    object.identity.collider_id = collider.collider_id;
+    object.identity.hit_zone = collider.hit_zone;
+    object.identity.kind = limb_collider
+        ? physics::CollisionObjectKind::kActorLimb
+        : movement_collider
+            ? physics::CollisionObjectKind::kActorMovement
+            : collider.entity_type == EntityType::kActor
+                ? physics::CollisionObjectKind::kActorHitbox
+                : physics::CollisionObjectKind::kStaticObstacle;
+    object.identity.layer = limb_collider
+        ? physics::CollisionLayer::kActorLimb
+        : movement_collider
+            ? physics::CollisionLayer::kActorMovement
+            : collider.entity_type == EntityType::kActor
+                ? physics::CollisionLayer::kDamageable
+                : physics::CollisionLayer::kStaticObstacle;
+    object.identity.gameplay_category = collider.layer_mask;
+    object.shape.type = collider.shape_type == ColliderShapeType::kSphere
+        ? physics::CollisionShapeType::kSphere
+        : collider.shape_type == ColliderShapeType::kCapsule
+            ? physics::CollisionShapeType::kCapsule
+            : physics::CollisionShapeType::kBox;
+    object.shape.half_extents = collider.half_extents;
+    object.shape.radius = collider.radius;
+    object.shape.capsule_half_height = collider.capsule_half_height;
+    object.position = collider.world_center;
+    object.rotation = collider.world_rotation;
+    object.enabled = collider.enabled;
+    if (entity.has_value() && world_.registry().all_of<Health>(*entity) &&
+        world_.registry().get<Health>(*entity).hp == 0) {
+        object.enabled = false;
+    }
+    std::string error;
+    if (physics_entity_collider_ids_.contains(collider.collider_id)) {
+        physics_world_->set_object_transform(
+            collider.collider_id,
+            object.position,
+            object.rotation);
+        physics_world_->set_object_enabled(
+            collider.collider_id,
+            object.enabled);
+    } else if (physics_world_->upsert_object(object, &error)) {
+        // Recorded here rather than only by the full sweep's bookkeeping, so a
+        // single-entity sync that adds a collider does not add it again on the
+        // next call.
+        physics_entity_collider_ids_.insert(collider.collider_id);
+    } else {
+        spdlog::error(
+            "failed to materialize collider_id={} in physics world: {}",
+            collider.collider_id,
+            error);
+        return false;
+    }
+    return true;
+}
+
+void KernelEngine::refresh_collider_world_transform(ColliderInstance& collider) {
+    if (collider.lifetime_ticks != 0 || collider.entity_net_id == 0) {
+        return;
+    }
+    const std::optional<entt::entity> entity =
+        world_.find_entity(collider.entity_net_id);
+    if (!entity.has_value() ||
+        !world_.registry().all_of<Transform>(*entity)) {
+        return;
+    }
+    // A beam is re-aimed every tick it is refreshed, and its endpoints do
+    // not follow from the transform the way a rigid offset does.
+    if (world_.registry().all_of<ProjectileBeamRuntime>(*entity)) {
+        apply_beam_collider_geometry(
+            world_.registry().get<ProjectileBeamRuntime>(*entity),
+            &collider);
+        collider.world_bounds = collider_world_bounds(collider);
+        return;
+    }
+    const Transform& transform = world_.registry().get<Transform>(*entity);
+    collider.world_rotation = transform.rotation * collider.local_rotation;
+    collider.world_center =
+        transform.position + transform.rotation * collider.local_center;
+    collider.world_bounds = collider_world_bounds(collider);
+}
+
 void KernelEngine::sync_entity_colliders_from_world() {
     auto projectile_view =
         world_.registry().view<NetworkIdentity, ProjectileState>();
@@ -4418,116 +4537,20 @@ void KernelEngine::sync_entity_colliders_from_world() {
 
     for (ColliderInstance& collider :
          world_.collider_registry().mutable_instances()) {
-        if (collider.lifetime_ticks != 0 || collider.entity_net_id == 0) {
-            continue;
-        }
-        const std::optional<entt::entity> entity =
-            world_.find_entity(collider.entity_net_id);
-        if (!entity.has_value() ||
-            !world_.registry().all_of<Transform>(*entity)) {
-            continue;
-        }
-        // A beam is re-aimed every tick it is refreshed, and its endpoints do
-        // not follow from the transform the way a rigid offset does.
-        if (world_.registry().all_of<ProjectileBeamRuntime>(*entity)) {
-            apply_beam_collider_geometry(
-                world_.registry().get<ProjectileBeamRuntime>(*entity),
-                &collider);
-            collider.world_bounds = collider_world_bounds(collider);
-            continue;
-        }
-        const Transform& transform = world_.registry().get<Transform>(*entity);
-        collider.world_rotation = transform.rotation * collider.local_rotation;
-        collider.world_center =
-            transform.position + transform.rotation * collider.local_center;
-        collider.world_bounds = collider_world_bounds(collider);
+        refresh_collider_world_transform(collider);
     }
 
     if (physics_world_ == nullptr) {
         return;
     }
     std::unordered_set<std::uint32_t> current_collider_ids;
-    // Rebuilt from scratch on every call, and this runs twice per tick, so it is
-    // worth sizing up front. The loop below filters, so the instance count is an
-    // upper bound rather than the exact size -- which is what reserve wants.
+    // Rebuilt from scratch on every call, so it is worth sizing up front. The
+    // loop below filters, so the instance count is an upper bound rather than
+    // the exact size -- which is what reserve wants.
     current_collider_ids.reserve(world_.collider_registry().instances().size());
     for (const ColliderInstance& collider :
          world_.collider_registry().instances()) {
-        if (collider.lifetime_ticks != 0 || collider.entity_net_id == 0 ||
-            collider.entity_type == EntityType::kProjectile ||
-            collider.shape_type == ColliderShapeType::kSegment ||
-            collider.shape_type == ColliderShapeType::kCone) {
-            continue;
-        }
-        const bool movement_collider =
-            (collider.purpose_flags & KernelColliderPurpose_Movement) != 0u;
-        // A rig's per-bone collider. Kept out of the actor-hitbox mapping below
-        // deliberately: routing a leg segment through kActorHitbox would make it
-        // a damage volume for every existing weapon query, on a world AABB that
-        // does not contain the rotated box. Its own kind and layer keep it
-        // invisible to those queries until something asks for limbs.
-        const bool limb_collider =
-            (collider.purpose_flags & KernelColliderPurpose_Limb) != 0u;
-        const std::optional<entt::entity> entity =
-            world_.find_entity(collider.entity_net_id);
-        if (movement_collider && entity.has_value() &&
-            world_.registry().all_of<MovementState>(*entity) &&
-            !movement_capsule_blocks_other_actors(
-                world_.registry()
-                    .get<MovementState>(*entity)
-                    .movement_collision_mask)) {
-            // Left out of current_collider_ids, so a capsule that was registered
-            // before the mask changed is removed by the sweep below.
-            continue;
-        }
-        physics::CollisionObjectDescriptor object{};
-        object.identity.entity_net_id = collider.entity_net_id;
-        object.identity.collider_id = collider.collider_id;
-        object.identity.hit_zone = collider.hit_zone;
-        object.identity.kind = limb_collider
-            ? physics::CollisionObjectKind::kActorLimb
-            : movement_collider
-                ? physics::CollisionObjectKind::kActorMovement
-                : collider.entity_type == EntityType::kActor
-                    ? physics::CollisionObjectKind::kActorHitbox
-                    : physics::CollisionObjectKind::kStaticObstacle;
-        object.identity.layer = limb_collider
-            ? physics::CollisionLayer::kActorLimb
-            : movement_collider
-                ? physics::CollisionLayer::kActorMovement
-                : collider.entity_type == EntityType::kActor
-                    ? physics::CollisionLayer::kDamageable
-                    : physics::CollisionLayer::kStaticObstacle;
-        object.identity.gameplay_category = collider.layer_mask;
-        object.shape.type = collider.shape_type == ColliderShapeType::kSphere
-            ? physics::CollisionShapeType::kSphere
-            : collider.shape_type == ColliderShapeType::kCapsule
-                ? physics::CollisionShapeType::kCapsule
-                : physics::CollisionShapeType::kBox;
-        object.shape.half_extents = collider.half_extents;
-        object.shape.radius = collider.radius;
-        object.shape.capsule_half_height = collider.capsule_half_height;
-        object.position = collider.world_center;
-        object.rotation = collider.world_rotation;
-        object.enabled = collider.enabled;
-        if (entity.has_value() && world_.registry().all_of<Health>(*entity) &&
-            world_.registry().get<Health>(*entity).hp == 0) {
-            object.enabled = false;
-        }
-        std::string error;
-        if (physics_entity_collider_ids_.contains(collider.collider_id)) {
-            physics_world_->set_object_transform(
-                collider.collider_id,
-                object.position,
-                object.rotation);
-            physics_world_->set_object_enabled(
-                collider.collider_id,
-                object.enabled);
-        } else if (!physics_world_->upsert_object(object, &error)) {
-            spdlog::error(
-                "failed to materialize collider_id={} in physics world: {}",
-                collider.collider_id,
-                error);
+        if (!push_collider_into_physics(collider)) {
             continue;
         }
         current_collider_ids.insert(collider.collider_id);
@@ -4545,6 +4568,48 @@ void KernelEngine::sync_entity_colliders_from_world() {
     // to hand retired nodes back to Jolt's allocator. No-ops when nothing was
     // added or removed this tick.
     physics_world_->optimize_broad_phase();
+}
+
+// The same sync narrowed to the colliders of one entity.
+//
+// The full sweep above touches every collider in the world, and it was being
+// run once per SetEntityTransform command -- so a tick in which every agent
+// re-aimed cost agents times colliders, in Jolt body writes and broad phase
+// AABB notifications. Moving one entity moves one entity's colliders.
+//
+// It still walks the instance list to find them, because the registry is a flat
+// vector with no per-entity index; what it does not do is write the other
+// entities' bodies into the physics world. There is also no removal sweep and
+// no broad phase rebuild here: a transform adds and removes nothing, and the
+// three tick-level syncs still do both.
+void KernelEngine::sync_entity_colliders_from_world(NetId net_id) {
+    if (net_id == 0) {
+        return;
+    }
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (!entity.has_value()) {
+        return;
+    }
+    if (world_.registry().all_of<ProjectileState>(*entity)) {
+        materialize_projectile_collider(net_id);
+    }
+    for (ColliderInstance& collider :
+         world_.collider_registry().mutable_instances()) {
+        if (collider.entity_net_id != net_id) {
+            continue;
+        }
+        refresh_collider_world_transform(collider);
+    }
+    if (physics_world_ == nullptr) {
+        return;
+    }
+    for (const ColliderInstance& collider :
+         world_.collider_registry().instances()) {
+        if (collider.entity_net_id != net_id) {
+            continue;
+        }
+        push_collider_into_physics(collider);
+    }
 }
 
 std::uint32_t KernelEngine::collider_template_id_for_projectile_template(
@@ -9080,8 +9145,15 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
             projectile.gravity,
             projectile_age_duration);
 
-        if (projectile.sync_mode ==
-            KernelProjectileSyncMode_LocalPredictedDeterministic) {
+        // Hybrid belongs here too, not just local-predicted. Both modes are
+        // told to predict the flight, and a mode that predicts where a
+        // projectile goes but not what stops it is worse than one that predicts
+        // nothing: it draws the projectile straight through the wall it was
+        // about to hit and then lets the authoritative despawn take it away,
+        // which reads as the impact happening in the wrong place. Server-
+        // snapshot-only is the one mode with no local path to predict from.
+        if (projectile.sync_mode !=
+            KernelProjectileSyncMode_ServerSnapshotOnly) {
             if (prediction_physics_world_ == nullptr) {
                 if (!predicted_projectile_collision_warning_emitted_) {
                     spdlog::warn(

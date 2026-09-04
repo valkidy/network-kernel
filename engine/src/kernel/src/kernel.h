@@ -841,6 +841,10 @@ private:
     void remove_prediction_limb_proxies(NetId net_id);
     void materialize_projectile_collider(NetId net_id);
     void sync_entity_colliders_from_world();
+    // Narrowed to one entity, for the callers that moved exactly one thing.
+    void sync_entity_colliders_from_world(NetId net_id);
+    void refresh_collider_world_transform(ColliderInstance& collider);
+    bool push_collider_into_physics(const ColliderInstance& collider);
     std::uint32_t collider_template_id_for_projectile_template(
         std::uint32_t projectile_template_id) const;
     std::uint32_t collider_template_id_for_actor_template(

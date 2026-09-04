@@ -1,0 +1,45 @@
+# Mission flow: which objectives exist, in what order, and what has to
+# happen before the next one opens. The graph is acyclic by construction --
+# gameplay_config.cc rejects a cycle at load -- which is right for a mission
+# and wrong for anything periodic. Roaming population belongs to
+# world_rule_director instead.
+id: 101
+name: game_rule_director
+entity_type: director
+server_only: true
+transform:
+  position: {x: 0.0, y: 0.0, z: 0.0}
+ai:
+  controller: director
+  profile: game_rule
+  tick_interval: 1
+director:
+  kind: game_rule
+  graph:
+    nodes:
+      - id: wait_for_player
+        condition:
+          type: player_count_at_least
+          count: 1
+        next: [clear_the_nests]
+      # The objective is the nests themselves. Placing them here and waiting on
+      # the same group being eliminated is the whole mission: three things in
+      # the world, each putting gingerbread out until it is destroyed.
+      #
+      # Nothing special connects the two halves. The mission rule spawns props
+      # and waits for them to die, which it could already do; each prop carries
+      # its own spawner, which needs nothing from the mission rule. A nest is a
+      # group member and a spawner at once because those are separate concerns
+      # that happen to meet on one entity.
+      - id: clear_the_nests
+        on_activate:
+          - type: spawn_group
+            group: nests
+            count: 3
+            entity_template: gingerbread_nest
+            position: {x: 0.0, y: 0.0, z: 0.0}
+            radius: 30.0
+            seed: 4242
+        condition:
+          type: group_eliminated
+          group: nests
