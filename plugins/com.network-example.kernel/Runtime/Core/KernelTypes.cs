@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 86;
+        public const uint AbiVersion = 87;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int GameplayCatalogEntryPathSize = 128;
@@ -1472,6 +1472,7 @@ namespace NetworkExample.Kernel
         public KernelActionRuntimeView action;
         public KernelVec3 aim_direction;
         public uint item_template_id;
+        public uint entity_template_id;
         public ulong item_instance_id;
         public byte world_item_mode;
         public byte reserved_item0;

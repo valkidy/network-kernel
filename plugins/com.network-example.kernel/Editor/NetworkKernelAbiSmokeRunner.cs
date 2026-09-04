@@ -24,7 +24,7 @@ namespace NetworkExample.Kernel.Editor
             KernelAbi.ValidateNativeAbi();
             GameServerAbi.ValidateNativeAbi();
             KernelAbiInfo info = KernelAbi.GetInfo();
-            Require(KernelConstants.AbiVersion == 86, "Managed kernel ABI version was not v86.");
+            Require(KernelConstants.AbiVersion == 87, "Managed kernel ABI version was not v87.");
             Require(
                 RenderEntityState.StructSize == 160,
                 "Managed RenderEntityState layout was not 160 bytes.");
