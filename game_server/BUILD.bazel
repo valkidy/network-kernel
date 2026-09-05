@@ -2,56 +2,74 @@ licenses(["notice"])
 
 package(default_visibility = ["//visibility:public"])
 
+# Read by //tools:check_layering_boundaries.
+exports_files(["BUILD.bazel"])
+
 filegroup(
     name = "gameplay_catalog_bundle_sources",
     srcs = glob([
-        "action_graph_templates/*.yaml",
-        "status_effect_templates/*.yaml",
-        "action_templates/*.yaml",
-        "collider_templates/*.yaml",
-        "entity_templates/*.yaml",
-        "item_templates/*.yaml",
-        "projectile_templates/*.yaml",
-        "weapon_templates/*.yaml",
+        "gameplay_catalog/action_graph_templates/*.yaml",
+        "gameplay_catalog/status_effect_templates/*.yaml",
+        "gameplay_catalog/action_templates/*.yaml",
+        "gameplay_catalog/collider_templates/*.yaml",
+        "gameplay_catalog/entity_templates/*.yaml",
+        "gameplay_catalog/item_templates/*.yaml",
+        "gameplay_catalog/projectile_templates/*.yaml",
+        "gameplay_catalog/weapon_templates/*.yaml",
     ]) + [
-        "gameplay_catalog.yaml",
-        "test_catalogs/legged_locomotion/gameplay_catalog.yaml",
-        "//game_server/skeleton_assets:simplified_biped_assets",
-        "//game_server/skeleton_assets:simplified_quadruped_assets",
-        "//game_server/skeleton_assets:simplified_tripod_assets",
+        "gameplay_catalog/gameplay_catalog.yaml",
+        "tests/test_catalogs/legged_locomotion/gameplay_catalog.yaml",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_biped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_quadruped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_tripod_assets",
     ],
 )
 
 cc_library(
     name = "game_server",
     srcs = [
-        "actor_intent_executor.cc",
-        "ai_perception_adapter.cc",
-        "agent_chaser_controller.cc",
-        "agent_sentry_controller.cc",
-        "agent_steering.cc",
-        "agent_runtime_manager.cc",
-        "ballistic_aim.cc",
-        "gameplay_config.cc",
-        "game_server.cc",
+        "src/actor_intent_executor.cc",
+        "src/ai_perception_adapter.cc",
+        "src/agent_chaser_controller.cc",
+        "src/agent_sentry_controller.cc",
+        "src/agent_steering.cc",
+        "src/agent_runtime_manager.cc",
+        "src/ballistic_aim.cc",
+        "src/game_rule_director.cc",
+        "src/gameplay_config.cc",
+        "src/game_server.cc",
+        "src/patrol_director.cc",
+        "src/patrol_group_runtime.cc",
+        "src/patrol_navigation.cc",
+        "src/spawn_sampling.cc",
+        "src/spawner_director.cc",
+        "src/world_rule_director.cc",
     ],
     hdrs = [
-        "actor_intent_executor.h",
-        "ai_perception_adapter.h",
-        "agent_chaser_controller.h",
-        "agent_runtime.h",
-        "agent_runtime_manager.h",
-        "agent_sentry_controller.h",
-        "agent_steering.h",
-        "ballistic_aim.h",
-        "gameplay_config.h",
-        "game_server.h",
+        "src/actor_intent_executor.h",
+        "src/ai_perception_adapter.h",
+        "src/agent_chaser_controller.h",
+        "src/agent_runtime.h",
+        "src/agent_runtime_manager.h",
+        "src/agent_sentry_controller.h",
+        "src/agent_steering.h",
+        "src/ballistic_aim.h",
+        "src/game_rule_director.h",
+        "src/gameplay_config.h",
+        "src/game_server.h",
+        "src/patrol_director.h",
+        "src/patrol_group_runtime.h",
+        "src/patrol_navigation.h",
+        "src/spawn_sampling.h",
+        "src/spawner_director.h",
+        "src/world_rule_director.h",
         "public/game_server_types.h",
     ],
     deps = [
         "//engine/components/ai:ai",
         "//engine/src/kernel:kernel_api",
         "//engine/src/kernel:kernel_api_internal",
+        "@recastnavigation//:detour",
         "@spdlog//:spdlog",
         "@zip_archive//:zip",
         "@yaml-cpp//:yaml-cpp",
@@ -60,24 +78,27 @@ cc_library(
 
 cc_test(
     name = "gameplay_config_test",
-    srcs = ["gameplay_config_test.cc"],
+    srcs = ["tests/gameplay_config_test.cc"],
     data = glob([
-        "action_graph_templates/*.yaml",
-        "status_effect_templates/*.yaml",
-        "action_templates/*.yaml",
-        "collider_templates/*.yaml",
-        "entity_templates/*.yaml",
-        "item_templates/*.yaml",
-        "projectile_templates/*.yaml",
-        "weapon_templates/*.yaml",
+        "gameplay_catalog/action_graph_templates/*.yaml",
+        "gameplay_catalog/status_effect_templates/*.yaml",
+        "gameplay_catalog/action_templates/*.yaml",
+        "gameplay_catalog/collider_templates/*.yaml",
+        "gameplay_catalog/entity_templates/*.yaml",
+        "gameplay_catalog/item_templates/*.yaml",
+        "gameplay_catalog/projectile_templates/*.yaml",
+        "gameplay_catalog/weapon_templates/*.yaml",
     ]) + [
         "//game_server/gameplay_catalog_bundle:bundle",
-        "gameplay_catalog.yaml",
+        "gameplay_catalog/gameplay_catalog.yaml",
         # Present so the skeleton_manifests_dir scan is exercised against a
         # directory the catalog never names file-by-file.
-        "//game_server/skeleton_assets:simplified_biped_assets",
-        "//game_server/skeleton_assets:simplified_quadruped_assets",
-        "//game_server/skeleton_assets:simplified_tripod_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_biped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_quadruped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_tripod_assets",
+        # The scene and the navmesh the catalog names, so the file branch can
+        # be checked against the bundle branch.
+        "//game_server/gameplay_catalog/mesh_assets:cooked_mesh_assets",
     ],
     deps = [
         ":game_server",
@@ -90,7 +111,7 @@ cc_test(
 # separate client kernel fed the same wire content; see the file header.
 cc_test(
     name = "listen_host_pose_parity_test",
-    srcs = ["listen_host_pose_parity_test.cc"],
+    srcs = ["tests/listen_host_pose_parity_test.cc"],
     data = [
         "//game_server/gameplay_catalog_bundle:bundle",
     ],
@@ -105,7 +126,7 @@ cc_test(
 # that is the shipping environment; see the file header.
 cc_test(
     name = "limb_collider_test",
-    srcs = ["limb_collider_test.cc"],
+    srcs = ["tests/limb_collider_test.cc"],
     data = [
         "//game_server/gameplay_catalog_bundle:bundle",
     ],
@@ -120,7 +141,7 @@ cc_test(
 # wall-clock bound would be flaky and host-dependent.
 cc_test(
     name = "limb_broad_phase_bench",
-    srcs = ["limb_broad_phase_bench.cc"],
+    srcs = ["tests/limb_broad_phase_bench.cc"],
     data = [
         "//game_server/gameplay_catalog_bundle:bundle",
     ],
@@ -136,7 +157,7 @@ cc_test(
 # wall-clock bound would be flaky and host-dependent.
 cc_test(
     name = "agent_cpu_bench",
-    srcs = ["agent_cpu_bench.cc"],
+    srcs = ["tests/agent_cpu_bench.cc"],
     data = [
         "//game_server/gameplay_catalog_bundle:bundle",
     ],
@@ -148,22 +169,40 @@ cc_test(
     ],
 )
 
+# Measures whether a patrol route can be a straight line, on the navmesh the
+# mesh bake already ships in the catalog bundle. Reports numbers rather than
+# asserting them -- the acceptable rate is a design decision and the answer is a
+# property of the authored terrain -- so it is manual, like the other benches.
+cc_test(
+    name = "patrol_nav_bench",
+    srcs = ["tests/patrol_nav_bench.cc"],
+    data = [
+        "//game_server/gameplay_catalog_bundle:bundle",
+        "//game_server/tests/test_mesh_assets:cooked_test_mesh_assets",
+    ],
+    tags = ["manual"],
+    deps = [
+        ":game_server",
+        "@recastnavigation//:detour",
+    ],
+)
+
 cc_test(
     name = "activation_gameplay_config_test",
-    srcs = ["activation_gameplay_config_test.cc"],
+    srcs = ["tests/activation_gameplay_config_test.cc"],
     data = glob([
-        "action_graph_templates/*.yaml",
-        "action_templates/*.yaml",
-        "collider_templates/*.yaml",
-        "entity_templates/*.yaml",
-        "item_templates/*.yaml",
-        "projectile_templates/*.yaml",
-        "weapon_templates/*.yaml",
+        "gameplay_catalog/action_graph_templates/*.yaml",
+        "gameplay_catalog/action_templates/*.yaml",
+        "gameplay_catalog/collider_templates/*.yaml",
+        "gameplay_catalog/entity_templates/*.yaml",
+        "gameplay_catalog/item_templates/*.yaml",
+        "gameplay_catalog/projectile_templates/*.yaml",
+        "gameplay_catalog/weapon_templates/*.yaml",
     ]) + [
-        "gameplay_catalog.yaml",
-        "//game_server/skeleton_assets:simplified_biped_assets",
-        "//game_server/skeleton_assets:simplified_quadruped_assets",
-        "//game_server/skeleton_assets:simplified_tripod_assets",
+        "gameplay_catalog/gameplay_catalog.yaml",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_biped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_quadruped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_tripod_assets",
     ],
     deps = [
         ":game_server",
@@ -173,20 +212,20 @@ cc_test(
 
 cc_test(
     name = "weapon_template_loader_test",
-    srcs = ["weapon_template_loader_test.cc"],
+    srcs = ["tests/weapon_template_loader_test.cc"],
     data = glob([
-        "action_graph_templates/*.yaml",
-        "action_templates/*.yaml",
-        "collider_templates/*.yaml",
-        "entity_templates/*.yaml",
-        "item_templates/*.yaml",
-        "projectile_templates/*.yaml",
-        "weapon_templates/*.yaml",
+        "gameplay_catalog/action_graph_templates/*.yaml",
+        "gameplay_catalog/action_templates/*.yaml",
+        "gameplay_catalog/collider_templates/*.yaml",
+        "gameplay_catalog/entity_templates/*.yaml",
+        "gameplay_catalog/item_templates/*.yaml",
+        "gameplay_catalog/projectile_templates/*.yaml",
+        "gameplay_catalog/weapon_templates/*.yaml",
     ]) + [
-        "gameplay_catalog.yaml",
-        "//game_server/skeleton_assets:simplified_biped_assets",
-        "//game_server/skeleton_assets:simplified_quadruped_assets",
-        "//game_server/skeleton_assets:simplified_tripod_assets",
+        "gameplay_catalog/gameplay_catalog.yaml",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_biped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_quadruped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_tripod_assets",
     ],
     deps = [
         ":game_server",
@@ -214,7 +253,7 @@ cc_library(
 
 cc_test(
     name = "agent_sentry_controller_test",
-    srcs = ["agent_sentry_controller_test.cc"],
+    srcs = ["tests/agent_sentry_controller_test.cc"],
     deps = [
         ":game_server",
         "//engine/src/kernel:kernel",
@@ -223,8 +262,8 @@ cc_test(
 
 cc_test(
     name = "agent_sentry_gravity_test",
-    srcs = ["agent_sentry_gravity_test.cc"],
-    data = ["//game_server/mesh_assets:cooked_mesh_assets"],
+    srcs = ["tests/agent_sentry_gravity_test.cc"],
+    data = ["//game_server/gameplay_catalog/mesh_assets:cooked_mesh_assets"],
     deps = [
         ":game_server",
         "//engine/src/kernel:kernel",
@@ -233,7 +272,7 @@ cc_test(
 
 cc_test(
     name = "agent_chaser_controller_test",
-    srcs = ["agent_chaser_controller_test.cc"],
+    srcs = ["tests/agent_chaser_controller_test.cc"],
     deps = [
         ":game_server",
         "//engine/src/kernel:kernel",
@@ -241,8 +280,66 @@ cc_test(
 )
 
 cc_test(
+    name = "patrol_director_test",
+    srcs = ["tests/patrol_director_test.cc"],
+    data = [
+        "//game_server/tests/test_mesh_assets:cooked_test_mesh_assets",
+    ],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
+    name = "game_rule_director_test",
+    srcs = ["tests/game_rule_director_test.cc"],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
+    name = "spawner_director_test",
+    srcs = ["tests/spawner_director_test.cc"],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
+    name = "world_rule_director_test",
+    srcs = ["tests/world_rule_director_test.cc"],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
+    name = "patrol_navigation_test",
+    srcs = ["tests/patrol_navigation_test.cc"],
+    data = [
+        "//game_server/tests/test_mesh_assets:cooked_test_mesh_assets",
+    ],
+    deps = [
+        ":game_server",
+    ],
+)
+
+cc_test(
+    name = "patrol_group_runtime_test",
+    srcs = ["tests/patrol_group_runtime_test.cc"],
+    deps = [
+        ":game_server",
+    ],
+)
+
+cc_test(
     name = "actor_intent_executor_test",
-    srcs = ["actor_intent_executor_test.cc"],
+    srcs = ["tests/actor_intent_executor_test.cc"],
     deps = [
         ":game_server",
         "//engine/components/ai:ai",
@@ -252,20 +349,20 @@ cc_test(
 
 cc_test(
     name = "agent_query_cap_test",
-    srcs = ["agent_query_cap_test.cc"],
+    srcs = ["tests/agent_query_cap_test.cc"],
     data = glob([
-        "action_graph_templates/*.yaml",
-        "action_templates/*.yaml",
-        "collider_templates/*.yaml",
-        "entity_templates/*.yaml",
-        "item_templates/*.yaml",
-        "projectile_templates/*.yaml",
-        "weapon_templates/*.yaml",
+        "gameplay_catalog/action_graph_templates/*.yaml",
+        "gameplay_catalog/action_templates/*.yaml",
+        "gameplay_catalog/collider_templates/*.yaml",
+        "gameplay_catalog/entity_templates/*.yaml",
+        "gameplay_catalog/item_templates/*.yaml",
+        "gameplay_catalog/projectile_templates/*.yaml",
+        "gameplay_catalog/weapon_templates/*.yaml",
     ]) + [
-        "gameplay_catalog.yaml",
-        "//game_server/skeleton_assets:simplified_biped_assets",
-        "//game_server/skeleton_assets:simplified_quadruped_assets",
-        "//game_server/skeleton_assets:simplified_tripod_assets",
+        "gameplay_catalog/gameplay_catalog.yaml",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_biped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_quadruped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_tripod_assets",
     ],
     deps = [
         ":game_server",
@@ -276,20 +373,43 @@ cc_test(
 
 cc_test(
     name = "agent_runtime_manager_test",
-    srcs = ["agent_runtime_manager_test.cc"],
+    srcs = ["tests/agent_runtime_manager_test.cc"],
     data = glob([
-        "action_graph_templates/*.yaml",
-        "action_templates/*.yaml",
-        "collider_templates/*.yaml",
-        "entity_templates/*.yaml",
-        "item_templates/*.yaml",
-        "projectile_templates/*.yaml",
-        "weapon_templates/*.yaml",
+        "gameplay_catalog/action_graph_templates/*.yaml",
+        "gameplay_catalog/action_templates/*.yaml",
+        "gameplay_catalog/collider_templates/*.yaml",
+        "gameplay_catalog/entity_templates/*.yaml",
+        "gameplay_catalog/item_templates/*.yaml",
+        "gameplay_catalog/projectile_templates/*.yaml",
+        "gameplay_catalog/weapon_templates/*.yaml",
     ]) + [
-        "gameplay_catalog.yaml",
-        "//game_server/skeleton_assets:simplified_biped_assets",
-        "//game_server/skeleton_assets:simplified_quadruped_assets",
-        "//game_server/skeleton_assets:simplified_tripod_assets",
+        "gameplay_catalog/gameplay_catalog.yaml",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_biped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_quadruped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_tripod_assets",
+    ],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
+    name = "shipping_catalog_flow_test",
+    srcs = ["tests/shipping_catalog_flow_test.cc"],
+    data = glob([
+        "gameplay_catalog/action_graph_templates/*.yaml",
+        "gameplay_catalog/action_templates/*.yaml",
+        "gameplay_catalog/collider_templates/*.yaml",
+        "gameplay_catalog/entity_templates/*.yaml",
+        "gameplay_catalog/item_templates/*.yaml",
+        "gameplay_catalog/projectile_templates/*.yaml",
+        "gameplay_catalog/weapon_templates/*.yaml",
+    ]) + [
+        "gameplay_catalog/gameplay_catalog.yaml",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_biped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_quadruped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_tripod_assets",
     ],
     deps = [
         ":game_server",
@@ -299,20 +419,20 @@ cc_test(
 
 cc_test(
     name = "agent_sentry_per_agent_config_test",
-    srcs = ["agent_sentry_per_agent_config_test.cc"],
+    srcs = ["tests/agent_sentry_per_agent_config_test.cc"],
     data = glob([
-        "action_graph_templates/*.yaml",
-        "action_templates/*.yaml",
-        "collider_templates/*.yaml",
-        "entity_templates/*.yaml",
-        "item_templates/*.yaml",
-        "projectile_templates/*.yaml",
-        "weapon_templates/*.yaml",
+        "gameplay_catalog/action_graph_templates/*.yaml",
+        "gameplay_catalog/action_templates/*.yaml",
+        "gameplay_catalog/collider_templates/*.yaml",
+        "gameplay_catalog/entity_templates/*.yaml",
+        "gameplay_catalog/item_templates/*.yaml",
+        "gameplay_catalog/projectile_templates/*.yaml",
+        "gameplay_catalog/weapon_templates/*.yaml",
     ]) + [
-        "gameplay_catalog.yaml",
-        "//game_server/skeleton_assets:simplified_biped_assets",
-        "//game_server/skeleton_assets:simplified_quadruped_assets",
-        "//game_server/skeleton_assets:simplified_tripod_assets",
+        "gameplay_catalog/gameplay_catalog.yaml",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_biped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_quadruped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_tripod_assets",
     ],
     deps = [
         ":game_server",
@@ -322,21 +442,21 @@ cc_test(
 
 cc_test(
     name = "game_server_api_test",
-    srcs = ["game_server_api_test.cc"],
+    srcs = ["tests/game_server_api_test.cc"],
     data = glob([
-        "action_graph_templates/*.yaml",
-        "action_templates/*.yaml",
-        "collider_templates/*.yaml",
-        "entity_templates/*.yaml",
-        "item_templates/*.yaml",
-        "projectile_templates/*.yaml",
-        "weapon_templates/*.yaml",
+        "gameplay_catalog/action_graph_templates/*.yaml",
+        "gameplay_catalog/action_templates/*.yaml",
+        "gameplay_catalog/collider_templates/*.yaml",
+        "gameplay_catalog/entity_templates/*.yaml",
+        "gameplay_catalog/item_templates/*.yaml",
+        "gameplay_catalog/projectile_templates/*.yaml",
+        "gameplay_catalog/weapon_templates/*.yaml",
     ]) + [
         "//game_server/gameplay_catalog_bundle:bundle",
-        "gameplay_catalog.yaml",
-        "//game_server/skeleton_assets:simplified_biped_assets",
-        "//game_server/skeleton_assets:simplified_quadruped_assets",
-        "//game_server/skeleton_assets:simplified_tripod_assets",
+        "gameplay_catalog/gameplay_catalog.yaml",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_biped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_quadruped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_tripod_assets",
     ],
     deps = [
         ":game_server_bridge",
@@ -346,24 +466,60 @@ cc_test(
 
 cc_test(
     name = "beam_sentry_template_test",
-    srcs = ["beam_sentry_template_test.cc"],
+    srcs = ["tests/beam_sentry_template_test.cc"],
     data = glob([
-        "action_graph_templates/*.yaml",
-        "status_effect_templates/*.yaml",
-        "action_templates/*.yaml",
-        "collider_templates/*.yaml",
-        "entity_templates/*.yaml",
-        "item_templates/*.yaml",
-        "projectile_templates/*.yaml",
-        "weapon_templates/*.yaml",
+        "gameplay_catalog/action_graph_templates/*.yaml",
+        "gameplay_catalog/status_effect_templates/*.yaml",
+        "gameplay_catalog/action_templates/*.yaml",
+        "gameplay_catalog/collider_templates/*.yaml",
+        "gameplay_catalog/entity_templates/*.yaml",
+        "gameplay_catalog/item_templates/*.yaml",
+        "gameplay_catalog/projectile_templates/*.yaml",
+        "gameplay_catalog/weapon_templates/*.yaml",
     ]) + [
-        "gameplay_catalog.yaml",
-        "//game_server/skeleton_assets:simplified_biped_assets",
-        "//game_server/skeleton_assets:simplified_quadruped_assets",
-        "//game_server/skeleton_assets:simplified_tripod_assets",
+        "gameplay_catalog/gameplay_catalog.yaml",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_biped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_quadruped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_tripod_assets",
     ],
     deps = [
         ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+# What the shipping catalog's own patrol population costs one tick, split into
+# the phases AgentRuntimeManager::tick runs in order. Reports timings rather
+# than asserting them -- a wall-clock bound would be flaky and host-dependent --
+# so it is manual, like the other benches.
+cc_test(
+    name = "patrol_cpu_bench",
+    srcs = ["tests/patrol_cpu_bench.cc"],
+    data = [
+        "//game_server/gameplay_catalog_bundle:bundle",
+    ],
+    tags = ["manual"],
+    deps = [
+        ":game_server",
+        ":game_server_bridge",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+# What the entity introduction quota costs an entity born mid-fight. Reports
+# deferral counts against a grenade line rather than asserting them -- the
+# quota is a policy being measured against a workload, and both are meant to be
+# tuned -- so it is manual, like the other benches.
+cc_test(
+    name = "spawn_deferral_bench",
+    srcs = ["tests/spawn_deferral_bench.cc"],
+    data = [
+        "//game_server/gameplay_catalog_bundle:bundle",
+    ],
+    tags = ["manual"],
+    deps = [
+        ":game_server",
+        ":game_server_bridge",
         "//engine/src/kernel:kernel",
     ],
 )

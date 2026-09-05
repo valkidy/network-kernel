@@ -83,7 +83,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 85u
+#define KERNEL_ABI_VERSION 87u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -329,7 +329,6 @@ typedef enum KernelFootholdQueryType {
 #define KERNEL_ENTITY_COMPONENT_HITBOX UINT32_C(0x00000010)
 #define KERNEL_ENTITY_COMPONENT_AGENT_RUNTIME UINT32_C(0x00000020)
 #define KERNEL_ENTITY_COMPONENT_SENTRY_RUNTIME UINT32_C(0x00000040)
-#define KERNEL_ENTITY_COMPONENT_DIRECTOR_RUNTIME UINT32_C(0x00000080)
 #define KERNEL_ENTITY_COMPONENT_SERVER_ONLY UINT32_C(0x00000100)
 #define KERNEL_ENTITY_COMPONENT_SKELETON UINT32_C(0x00000200)
 
@@ -811,7 +810,6 @@ typedef struct KernelPropDefinition {
 typedef enum KernelAiControllerType {
     KernelAiControllerType_None = 0,
     KernelAiControllerType_Sentry = 1,
-    KernelAiControllerType_Director = 2,
     KernelAiControllerType_Chaser = 3,
 } KernelAiControllerType;
 
@@ -1345,6 +1343,10 @@ typedef struct KernelServerEntityState {
     KernelActionRuntimeView action;
     KernelVec3 aim_direction;
     uint32_t item_template_id;
+    // Which entity template the entity was created from, or zero. Distinct from
+    // actor_template_id, which is only set for actors -- a prop reports nothing
+    // there, so this is the only way to ask what a prop is.
+    uint32_t entity_template_id;
     KernelItemInstanceId item_instance_id;
     uint8_t world_item_mode;
     uint8_t reserved_item0;
@@ -1641,62 +1643,6 @@ typedef struct KernelActionTemplateDefinition {
     uint32_t hold_input_timeout_ticks;
 } KernelActionTemplateDefinition;
 
-#define KERNEL_MAX_GAME_RULE_NODES 64
-#define KERNEL_MAX_GAME_RULE_EDGES 256
-#define KERNEL_MAX_GAME_RULE_EFFECTS 64
-
-typedef enum KernelDirectorKind {
-    KernelDirectorKind_None = 0,
-    KernelDirectorKind_WorldRule = 1,
-    KernelDirectorKind_GameRule = 2,
-} KernelDirectorKind;
-
-typedef enum KernelGameRuleConditionType {
-    KernelGameRuleConditionType_GroupEliminated = 1,
-    KernelGameRuleConditionType_PlayerCountAtLeast = 2,
-} KernelGameRuleConditionType;
-
-typedef enum KernelGameRuleEffectType {
-    KernelGameRuleEffectType_SpawnGroup = 1,
-} KernelGameRuleEffectType;
-
-typedef struct KernelGameRuleDefinition {
-    uint32_t struct_size;
-    uint32_t game_rule_definition_id;
-    uint32_t first_node;
-    uint32_t node_count;
-    uint32_t first_edge;
-    uint32_t edge_count;
-    uint32_t first_effect;
-    uint32_t effect_count;
-} KernelGameRuleDefinition;
-
-typedef struct KernelGameRuleNodeDefinition {
-    uint32_t struct_size;
-    uint32_t node_id;
-    uint32_t condition_type;
-    uint32_t condition_group_id;
-    uint32_t condition_count;
-} KernelGameRuleNodeDefinition;
-
-typedef struct KernelGameRuleEdgeDefinition {
-    uint32_t struct_size;
-    uint32_t source_node_id;
-    uint32_t target_node_id;
-} KernelGameRuleEdgeDefinition;
-
-typedef struct KernelGameRuleSpawnGroupEffectDefinition {
-    uint32_t struct_size;
-    uint32_t effect_type;
-    uint32_t node_id;
-    uint32_t group_id;
-    uint32_t count;
-    uint32_t entity_template_id;
-    KernelVec3 position;
-    float radius;
-    uint32_t seed;
-} KernelGameRuleSpawnGroupEffectDefinition;
-
 typedef struct KernelEntityAiDefinition KernelEntityAiDefinition;
 typedef struct KernelEntityTemplateDefinition KernelEntityTemplateDefinition;
 
@@ -1724,14 +1670,6 @@ typedef struct KernelGameplayCatalogDefinition {
     uint32_t skeleton_asset_count;
     const KernelStatusEffectDefinition* status_effects;
     uint32_t status_effect_count;
-    const KernelGameRuleDefinition* game_rules;
-    uint32_t game_rule_count;
-    const KernelGameRuleNodeDefinition* game_rule_nodes;
-    uint32_t game_rule_node_count;
-    const KernelGameRuleEdgeDefinition* game_rule_edges;
-    uint32_t game_rule_edge_count;
-    const KernelGameRuleSpawnGroupEffectDefinition* game_rule_effects;
-    uint32_t game_rule_effect_count;
 } KernelGameplayCatalogDefinition;
 
 typedef struct KernelGameplayCatalogLoadResult {
@@ -2110,20 +2048,15 @@ typedef struct KernelMovementDefinition {
     uint32_t movement_collision_mask;
 } KernelMovementDefinition;
 
+// Everything a director needed lived here too: a target count, what to spawn,
+// where, a radius, a seed, the director kind and a game-rule id. Directors are
+// game_server's now and never reach the kernel, so none of it does either.
 struct KernelEntityAiDefinition {
     uint32_t struct_size;
     uint32_t controller_type;
     uint32_t ai_profile_id;
     uint32_t tick_interval;
     uint32_t blackboard_id;
-    uint32_t spawn_target_count;
-    uint32_t spawn_entity_template_id;
-    uint32_t spawn_actor_template_id;
-    KernelVec3 spawn_position;
-    float spawn_radius;
-    uint32_t spawn_seed;
-    uint32_t director_kind;
-    uint32_t game_rule_definition_id;
 };
 
 struct KernelEntityTemplateDefinition {

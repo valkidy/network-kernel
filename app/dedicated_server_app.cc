@@ -11,7 +11,7 @@
 
 #include <spdlog/spdlog.h>
 
-#include "game_server/game_server.h"
+#include "game_server/src/game_server.h"
 #include "client_app.h"
 #include "kernel/public/kernel_api.h"
 #include "protocol/public/network_packets.h"
@@ -148,6 +148,16 @@ int RunDedicatedServer(
                         static_cast<std::uint32_t>(bundle_bytes.size()),
                         gameplay_config.static_collision_scene.entry_path);
             }
+            // The navmesh goes to game_server rather than to the kernel, so
+            // unlike the collision scene it rides along on the config it was
+            // named in.
+            if (!gameplay_config.navigation_mesh.entry_path.empty()) {
+                gameplay_config.navigation_mesh.artifact =
+                    network_example::game_server::load_gameplay_bundle_entry_bytes(
+                        bundle_bytes.data(),
+                        static_cast<std::uint32_t>(bundle_bytes.size()),
+                        gameplay_config.navigation_mesh.entry_path);
+            }
             spdlog::info(
                 "loaded gameplay catalog bundle={} entry={} version={} hash={}",
                 gameplay_catalog_bundle_path,
@@ -158,6 +168,21 @@ int RunDedicatedServer(
             gameplay_config =
                 network_example::game_server::load_gameplay_config_from_catalog_file(
                     gameplay_catalog_path);
+            // The same two entries the bundle branch pulls, named the same way
+            // -- relative to the catalog -- which on disk means relative to the
+            // file rather than to the archive root.
+            if (!gameplay_config.static_collision_scene.entry_path.empty()) {
+                collision_scene_bytes =
+                    network_example::game_server::load_gameplay_catalog_file_entry_bytes(
+                        gameplay_catalog_path,
+                        gameplay_config.static_collision_scene.entry_path);
+            }
+            if (!gameplay_config.navigation_mesh.entry_path.empty()) {
+                gameplay_config.navigation_mesh.artifact =
+                    network_example::game_server::load_gameplay_catalog_file_entry_bytes(
+                        gameplay_catalog_path,
+                        gameplay_config.navigation_mesh.entry_path);
+            }
             spdlog::info(
                 "loaded gameplay catalog file={} version={} hash={}",
                 gameplay_catalog_path,

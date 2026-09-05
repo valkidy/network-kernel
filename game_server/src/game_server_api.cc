@@ -9,8 +9,8 @@
 #include <utility>
 #include <vector>
 
-#include "game_server/gameplay_config.h"
-#include "game_server/game_server.h"
+#include "game_server/src/gameplay_config.h"
+#include "game_server/src/game_server.h"
 
 struct GameServerHandle {
     explicit GameServerHandle(

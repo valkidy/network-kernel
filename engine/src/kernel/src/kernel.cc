@@ -1082,6 +1082,10 @@ KernelServerEntityState to_server_entity_state(
         state.actor_template_id =
             world.registry().get<ActorTemplateRef>(entity).actor_template_id;
     }
+    if (world.registry().all_of<EntityTemplateRef>(entity)) {
+        state.entity_template_id =
+            world.registry().get<EntityTemplateRef>(entity).entity_template_id;
+    }
     if (world.registry().all_of<ItemTemplateRef>(entity)) {
         state.item_template_id =
             world.registry().get<ItemTemplateRef>(entity).item_template_id;
@@ -2638,13 +2642,6 @@ bool KernelEngine::load_gameplay_catalog(
          catalog.skeleton_assets == nullptr) ||
         (catalog.status_effect_count != 0 &&
          catalog.status_effects == nullptr) ||
-        (catalog.game_rule_count != 0 && catalog.game_rules == nullptr) ||
-        (catalog.game_rule_node_count != 0 &&
-         catalog.game_rule_nodes == nullptr) ||
-        (catalog.game_rule_edge_count != 0 &&
-         catalog.game_rule_edges == nullptr) ||
-        (catalog.game_rule_effect_count != 0 &&
-         catalog.game_rule_effects == nullptr) ||
         (catalog.entity_template_count != 0 &&
          catalog.entity_templates == nullptr) ||
         catalog.collider_binding_count != 0) {
@@ -2707,11 +2704,6 @@ bool KernelEngine::load_gameplay_catalog(
     std::vector<KernelProjectileTemplateDefinition>
         validated_projectile_templates;
     std::vector<KernelColliderTemplateDefinition> validated_collider_templates;
-    std::vector<KernelGameRuleDefinition> validated_game_rules;
-    std::vector<KernelGameRuleNodeDefinition> validated_game_rule_nodes;
-    std::vector<KernelGameRuleEdgeDefinition> validated_game_rule_edges;
-    std::vector<KernelGameRuleSpawnGroupEffectDefinition>
-        validated_game_rule_effects;
     validated_entity_templates.reserve(catalog.entity_template_count);
     validated_actor_templates.reserve(catalog.actor_template_count);
     validated_projectile_templates.reserve(catalog.projectile_template_count);
@@ -3236,27 +3228,11 @@ bool KernelEngine::load_gameplay_catalog(
              entity_template.collision_trigger_mask != 0u)) {
             return false;
         }
-        if (entity_template.entity_type == KernelEntityType_Director &&
-            ((entity_template.component_flags &
-             KERNEL_ENTITY_COMPONENT_DIRECTOR_RUNTIME) == 0u ||
-             entity_template.ai.controller_type != KernelAiControllerType_Director ||
-             entity_template.ai.tick_interval == 0u ||
-             entity_template.ai.director_kind > KernelDirectorKind_GameRule ||
-             (entity_template.ai.director_kind != KernelDirectorKind_GameRule &&
-              entity_template.ai.spawn_actor_template_id == 0u &&
-              entity_template.ai.spawn_entity_template_id == 0u) ||
-             (entity_template.ai.director_kind != KernelDirectorKind_GameRule &&
-              entity_template.ai.game_rule_definition_id != 0u) ||
-             (entity_template.ai.director_kind == KernelDirectorKind_GameRule &&
-              (entity_template.ai.game_rule_definition_id == 0u ||
-               entity_template.ai.spawn_target_count != 0u ||
-               entity_template.ai.spawn_entity_template_id != 0u ||
-               entity_template.ai.spawn_actor_template_id != 0u ||
-               entity_template.ai.spawn_position.x != 0.0f ||
-               entity_template.ai.spawn_position.y != 0.0f ||
-               entity_template.ai.spawn_position.z != 0.0f ||
-               entity_template.ai.spawn_radius != 0.0f ||
-               entity_template.ai.spawn_seed != 0u)))) {
+        // The kernel has no directors. Both kinds are game_server's, neither
+        // is an entity here, and no director template is sent -- so one
+        // arriving is a catalog built against an older kernel, and accepting it
+        // would mean storing a template nothing can ever instantiate.
+        if (entity_template.entity_type == KernelEntityType_Director) {
             return false;
         }
         if (entity_template.entity_type != KernelEntityType_Prop &&
@@ -3311,171 +3287,6 @@ bool KernelEngine::load_gameplay_catalog(
             }
         }
         validated_entity_templates.push_back(entity_template);
-    }
-    if (catalog.game_rule_node_count != 0u) {
-        validated_game_rule_nodes.assign(
-            catalog.game_rule_nodes,
-            catalog.game_rule_nodes + catalog.game_rule_node_count);
-    }
-    if (catalog.game_rule_edge_count != 0u) {
-        validated_game_rule_edges.assign(
-            catalog.game_rule_edges,
-            catalog.game_rule_edges + catalog.game_rule_edge_count);
-    }
-    if (catalog.game_rule_effect_count != 0u) {
-        validated_game_rule_effects.assign(
-            catalog.game_rule_effects,
-            catalog.game_rule_effects + catalog.game_rule_effect_count);
-    }
-    for (std::uint32_t index = 0u; index < catalog.game_rule_count; ++index) {
-        const KernelGameRuleDefinition& rule = catalog.game_rules[index];
-        if (rule.struct_size < sizeof(KernelGameRuleDefinition) ||
-            rule.game_rule_definition_id == 0u || rule.node_count == 0u ||
-            rule.node_count > KERNEL_MAX_GAME_RULE_NODES ||
-            rule.edge_count > KERNEL_MAX_GAME_RULE_EDGES ||
-            rule.effect_count > KERNEL_MAX_GAME_RULE_EFFECTS ||
-            rule.first_node > catalog.game_rule_node_count ||
-            rule.node_count > catalog.game_rule_node_count - rule.first_node ||
-            rule.first_edge > catalog.game_rule_edge_count ||
-            rule.edge_count > catalog.game_rule_edge_count - rule.first_edge ||
-            rule.first_effect > catalog.game_rule_effect_count ||
-            rule.effect_count >
-                catalog.game_rule_effect_count - rule.first_effect ||
-            std::any_of(
-                validated_game_rules.begin(),
-                validated_game_rules.end(),
-                [&](const KernelGameRuleDefinition& candidate) {
-                    return candidate.game_rule_definition_id ==
-                        rule.game_rule_definition_id;
-                })) {
-            return false;
-        }
-        std::unordered_set<std::uint32_t> node_ids;
-        std::unordered_set<std::uint32_t> group_ids;
-        std::uint32_t group_condition_count = 0u;
-        for (std::uint32_t offset = 0u; offset < rule.node_count; ++offset) {
-            const KernelGameRuleNodeDefinition& node =
-                catalog.game_rule_nodes[rule.first_node + offset];
-            const bool group_condition =
-                node.condition_type ==
-                KernelGameRuleConditionType_GroupEliminated;
-            const bool player_count_condition =
-                node.condition_type ==
-                KernelGameRuleConditionType_PlayerCountAtLeast;
-            if (node.struct_size < sizeof(KernelGameRuleNodeDefinition) ||
-                node.node_id == 0u ||
-                !node_ids.insert(node.node_id).second ||
-                (!group_condition && !player_count_condition) ||
-                (group_condition &&
-                 (node.condition_group_id == 0u ||
-                  node.condition_count != 0u ||
-                  !group_ids.insert(node.condition_group_id).second)) ||
-                (player_count_condition &&
-                 (node.condition_group_id != 0u ||
-                  node.condition_count == 0u))) {
-                return false;
-            }
-            if (group_condition) {
-                ++group_condition_count;
-            }
-        }
-        std::unordered_set<std::uint64_t> edge_keys;
-        std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> outgoing;
-        for (std::uint32_t offset = 0u; offset < rule.edge_count; ++offset) {
-            const KernelGameRuleEdgeDefinition& edge =
-                catalog.game_rule_edges[rule.first_edge + offset];
-            const std::uint64_t key =
-                (static_cast<std::uint64_t>(edge.source_node_id) << 32u) |
-                edge.target_node_id;
-            if (edge.struct_size < sizeof(KernelGameRuleEdgeDefinition) ||
-                edge.source_node_id == edge.target_node_id ||
-                !node_ids.contains(edge.source_node_id) ||
-                !node_ids.contains(edge.target_node_id) ||
-                !edge_keys.insert(key).second) {
-                return false;
-            }
-            outgoing[edge.source_node_id].push_back(edge.target_node_id);
-        }
-        std::unordered_map<std::uint32_t, std::uint8_t> visit;
-        const std::function<bool(std::uint32_t)> has_cycle =
-            [&](std::uint32_t node_id) {
-                std::uint8_t& state = visit[node_id];
-                if (state == 1u) {
-                    return true;
-                }
-                if (state == 2u) {
-                    return false;
-                }
-                state = 1u;
-                for (const std::uint32_t target : outgoing[node_id]) {
-                    if (has_cycle(target)) {
-                        return true;
-                    }
-                }
-                state = 2u;
-                return false;
-            };
-        for (const std::uint32_t node_id : node_ids) {
-            if (has_cycle(node_id)) {
-                return false;
-            }
-        }
-        std::unordered_set<std::uint32_t> effect_node_ids;
-        std::unordered_set<std::uint32_t> effect_group_ids;
-        for (std::uint32_t offset = 0u; offset < rule.effect_count; ++offset) {
-            const KernelGameRuleSpawnGroupEffectDefinition& effect =
-                catalog.game_rule_effects[rule.first_effect + offset];
-            const auto node = std::find_if(
-                catalog.game_rule_nodes + rule.first_node,
-                catalog.game_rule_nodes + rule.first_node + rule.node_count,
-                [&](const KernelGameRuleNodeDefinition& candidate) {
-                    return candidate.node_id == effect.node_id;
-                });
-            const auto entity = std::find_if(
-                validated_entity_templates.begin(),
-                validated_entity_templates.end(),
-                [&](const KernelEntityTemplateDefinition& candidate) {
-                    return candidate.entity_template_id ==
-                        effect.entity_template_id;
-                });
-            if (effect.struct_size <
-                    sizeof(KernelGameRuleSpawnGroupEffectDefinition) ||
-                effect.effect_type != KernelGameRuleEffectType_SpawnGroup ||
-                effect.count == 0u ||
-                !effect_node_ids.insert(effect.node_id).second ||
-                !effect_group_ids.insert(effect.group_id).second || node ==
-                    catalog.game_rule_nodes + rule.first_node + rule.node_count ||
-                node->condition_type !=
-                    KernelGameRuleConditionType_GroupEliminated ||
-                effect.group_id != node->condition_group_id ||
-                entity == validated_entity_templates.end() ||
-                entity->entity_type != KernelEntityType_Actor ||
-                entity->actor_type != KernelActorType_Agent ||
-                !std::isfinite(effect.position.x) ||
-                !std::isfinite(effect.position.y) ||
-                !std::isfinite(effect.position.z) ||
-                !std::isfinite(effect.radius) || effect.radius < 0.0f) {
-                return false;
-            }
-        }
-        if (effect_node_ids.size() != group_condition_count) {
-            return false;
-        }
-        validated_game_rules.push_back(rule);
-    }
-    for (const KernelEntityTemplateDefinition& entity_template :
-         validated_entity_templates) {
-        if (entity_template.entity_type == KernelEntityType_Director &&
-            entity_template.ai.director_kind == KernelDirectorKind_GameRule &&
-            std::none_of(
-                validated_game_rules.begin(),
-                validated_game_rules.end(),
-                [&](const KernelGameRuleDefinition& rule) {
-                    return rule.game_rule_definition_id ==
-                        entity_template.ai.game_rule_definition_id;
-                })) {
-            return false;
-        }
     }
     for (std::uint32_t index = 0; index < catalog.projectile_template_count; ++index) {
         const KernelProjectileTemplateDefinition& projectile_template =
@@ -3609,18 +3420,6 @@ bool KernelEngine::load_gameplay_catalog(
             find_actor_template(
                 validated_actor_templates,
                 entity_template.actor_template_id) == nullptr) {
-            return false;
-        }
-        if (entity_template.ai.spawn_actor_template_id != 0u &&
-            find_actor_template(
-                validated_actor_templates,
-                entity_template.ai.spawn_actor_template_id) == nullptr) {
-            return false;
-        }
-        if (entity_template.ai.spawn_entity_template_id != 0u &&
-            find_entity_template(
-                validated_entity_templates,
-                entity_template.ai.spawn_entity_template_id) == nullptr) {
             return false;
         }
         for (const KernelActionTriggerDefinition* trigger : {
@@ -3838,10 +3637,6 @@ bool KernelEngine::load_gameplay_catalog(
     item_templates_ = std::move(validated_item_templates);
     prop_population_rules_ =
         std::move(validated_prop_population_rules);
-    game_rule_definitions_ = std::move(validated_game_rules);
-    game_rule_nodes_ = std::move(validated_game_rule_nodes);
-    game_rule_edges_ = std::move(validated_game_rule_edges);
-    game_rule_effects_ = std::move(validated_game_rule_effects);
     skeleton_assets_ = std::move(validated_skeleton_assets);
     locomotion_states_.clear();
     skeleton_pose_history_.clear();
@@ -4616,6 +4411,121 @@ void KernelEngine::materialize_projectile_collider(NetId net_id) {
         collider);
 }
 
+// Pushes one collider's current world transform into the physics world, adding
+// it if it is not there yet. Returns false when the collider does not belong in
+// the world at all, so the caller can leave it out of its bookkeeping.
+bool KernelEngine::push_collider_into_physics(const ColliderInstance& collider) {
+    if (collider.lifetime_ticks != 0 || collider.entity_net_id == 0 ||
+        collider.entity_type == EntityType::kProjectile ||
+        collider.shape_type == ColliderShapeType::kSegment ||
+        collider.shape_type == ColliderShapeType::kCone) {
+        return false;
+    }
+    const bool movement_collider =
+        (collider.purpose_flags & KernelColliderPurpose_Movement) != 0u;
+    // A rig's per-bone collider. Kept out of the actor-hitbox mapping below
+    // deliberately: routing a leg segment through kActorHitbox would make it
+    // a damage volume for every existing weapon query, on a world AABB that
+    // does not contain the rotated box. Its own kind and layer keep it
+    // invisible to those queries until something asks for limbs.
+    const bool limb_collider =
+        (collider.purpose_flags & KernelColliderPurpose_Limb) != 0u;
+    const std::optional<entt::entity> entity =
+        world_.find_entity(collider.entity_net_id);
+    if (movement_collider && entity.has_value() &&
+        world_.registry().all_of<MovementState>(*entity) &&
+        !movement_capsule_blocks_other_actors(
+            world_.registry()
+                .get<MovementState>(*entity)
+                .movement_collision_mask)) {
+        // Left out of current_collider_ids, so a capsule that was registered
+        // before the mask changed is removed by the sweep below.
+        return false;
+    }
+    physics::CollisionObjectDescriptor object{};
+    object.identity.entity_net_id = collider.entity_net_id;
+    object.identity.collider_id = collider.collider_id;
+    object.identity.hit_zone = collider.hit_zone;
+    object.identity.kind = limb_collider
+        ? physics::CollisionObjectKind::kActorLimb
+        : movement_collider
+            ? physics::CollisionObjectKind::kActorMovement
+            : collider.entity_type == EntityType::kActor
+                ? physics::CollisionObjectKind::kActorHitbox
+                : physics::CollisionObjectKind::kStaticObstacle;
+    object.identity.layer = limb_collider
+        ? physics::CollisionLayer::kActorLimb
+        : movement_collider
+            ? physics::CollisionLayer::kActorMovement
+            : collider.entity_type == EntityType::kActor
+                ? physics::CollisionLayer::kDamageable
+                : physics::CollisionLayer::kStaticObstacle;
+    object.identity.gameplay_category = collider.layer_mask;
+    object.shape.type = collider.shape_type == ColliderShapeType::kSphere
+        ? physics::CollisionShapeType::kSphere
+        : collider.shape_type == ColliderShapeType::kCapsule
+            ? physics::CollisionShapeType::kCapsule
+            : physics::CollisionShapeType::kBox;
+    object.shape.half_extents = collider.half_extents;
+    object.shape.radius = collider.radius;
+    object.shape.capsule_half_height = collider.capsule_half_height;
+    object.position = collider.world_center;
+    object.rotation = collider.world_rotation;
+    object.enabled = collider.enabled;
+    if (entity.has_value() && world_.registry().all_of<Health>(*entity) &&
+        world_.registry().get<Health>(*entity).hp == 0) {
+        object.enabled = false;
+    }
+    std::string error;
+    if (physics_entity_collider_ids_.contains(collider.collider_id)) {
+        physics_world_->set_object_transform(
+            collider.collider_id,
+            object.position,
+            object.rotation);
+        physics_world_->set_object_enabled(
+            collider.collider_id,
+            object.enabled);
+    } else if (physics_world_->upsert_object(object, &error)) {
+        // Recorded here rather than only by the full sweep's bookkeeping, so a
+        // single-entity sync that adds a collider does not add it again on the
+        // next call.
+        physics_entity_collider_ids_.insert(collider.collider_id);
+    } else {
+        spdlog::error(
+            "failed to materialize collider_id={} in physics world: {}",
+            collider.collider_id,
+            error);
+        return false;
+    }
+    return true;
+}
+
+void KernelEngine::refresh_collider_world_transform(ColliderInstance& collider) {
+    if (collider.lifetime_ticks != 0 || collider.entity_net_id == 0) {
+        return;
+    }
+    const std::optional<entt::entity> entity =
+        world_.find_entity(collider.entity_net_id);
+    if (!entity.has_value() ||
+        !world_.registry().all_of<Transform>(*entity)) {
+        return;
+    }
+    // A beam is re-aimed every tick it is refreshed, and its endpoints do
+    // not follow from the transform the way a rigid offset does.
+    if (world_.registry().all_of<ProjectileBeamRuntime>(*entity)) {
+        apply_beam_collider_geometry(
+            world_.registry().get<ProjectileBeamRuntime>(*entity),
+            &collider);
+        collider.world_bounds = collider_world_bounds(collider);
+        return;
+    }
+    const Transform& transform = world_.registry().get<Transform>(*entity);
+    collider.world_rotation = transform.rotation * collider.local_rotation;
+    collider.world_center =
+        transform.position + transform.rotation * collider.local_center;
+    collider.world_bounds = collider_world_bounds(collider);
+}
+
 void KernelEngine::sync_entity_colliders_from_world() {
     auto projectile_view =
         world_.registry().view<NetworkIdentity, ProjectileState>();
@@ -4627,116 +4537,20 @@ void KernelEngine::sync_entity_colliders_from_world() {
 
     for (ColliderInstance& collider :
          world_.collider_registry().mutable_instances()) {
-        if (collider.lifetime_ticks != 0 || collider.entity_net_id == 0) {
-            continue;
-        }
-        const std::optional<entt::entity> entity =
-            world_.find_entity(collider.entity_net_id);
-        if (!entity.has_value() ||
-            !world_.registry().all_of<Transform>(*entity)) {
-            continue;
-        }
-        // A beam is re-aimed every tick it is refreshed, and its endpoints do
-        // not follow from the transform the way a rigid offset does.
-        if (world_.registry().all_of<ProjectileBeamRuntime>(*entity)) {
-            apply_beam_collider_geometry(
-                world_.registry().get<ProjectileBeamRuntime>(*entity),
-                &collider);
-            collider.world_bounds = collider_world_bounds(collider);
-            continue;
-        }
-        const Transform& transform = world_.registry().get<Transform>(*entity);
-        collider.world_rotation = transform.rotation * collider.local_rotation;
-        collider.world_center =
-            transform.position + transform.rotation * collider.local_center;
-        collider.world_bounds = collider_world_bounds(collider);
+        refresh_collider_world_transform(collider);
     }
 
     if (physics_world_ == nullptr) {
         return;
     }
     std::unordered_set<std::uint32_t> current_collider_ids;
-    // Rebuilt from scratch on every call, and this runs twice per tick, so it is
-    // worth sizing up front. The loop below filters, so the instance count is an
-    // upper bound rather than the exact size -- which is what reserve wants.
+    // Rebuilt from scratch on every call, so it is worth sizing up front. The
+    // loop below filters, so the instance count is an upper bound rather than
+    // the exact size -- which is what reserve wants.
     current_collider_ids.reserve(world_.collider_registry().instances().size());
     for (const ColliderInstance& collider :
          world_.collider_registry().instances()) {
-        if (collider.lifetime_ticks != 0 || collider.entity_net_id == 0 ||
-            collider.entity_type == EntityType::kProjectile ||
-            collider.shape_type == ColliderShapeType::kSegment ||
-            collider.shape_type == ColliderShapeType::kCone) {
-            continue;
-        }
-        const bool movement_collider =
-            (collider.purpose_flags & KernelColliderPurpose_Movement) != 0u;
-        // A rig's per-bone collider. Kept out of the actor-hitbox mapping below
-        // deliberately: routing a leg segment through kActorHitbox would make it
-        // a damage volume for every existing weapon query, on a world AABB that
-        // does not contain the rotated box. Its own kind and layer keep it
-        // invisible to those queries until something asks for limbs.
-        const bool limb_collider =
-            (collider.purpose_flags & KernelColliderPurpose_Limb) != 0u;
-        const std::optional<entt::entity> entity =
-            world_.find_entity(collider.entity_net_id);
-        if (movement_collider && entity.has_value() &&
-            world_.registry().all_of<MovementState>(*entity) &&
-            !movement_capsule_blocks_other_actors(
-                world_.registry()
-                    .get<MovementState>(*entity)
-                    .movement_collision_mask)) {
-            // Left out of current_collider_ids, so a capsule that was registered
-            // before the mask changed is removed by the sweep below.
-            continue;
-        }
-        physics::CollisionObjectDescriptor object{};
-        object.identity.entity_net_id = collider.entity_net_id;
-        object.identity.collider_id = collider.collider_id;
-        object.identity.hit_zone = collider.hit_zone;
-        object.identity.kind = limb_collider
-            ? physics::CollisionObjectKind::kActorLimb
-            : movement_collider
-                ? physics::CollisionObjectKind::kActorMovement
-                : collider.entity_type == EntityType::kActor
-                    ? physics::CollisionObjectKind::kActorHitbox
-                    : physics::CollisionObjectKind::kStaticObstacle;
-        object.identity.layer = limb_collider
-            ? physics::CollisionLayer::kActorLimb
-            : movement_collider
-                ? physics::CollisionLayer::kActorMovement
-                : collider.entity_type == EntityType::kActor
-                    ? physics::CollisionLayer::kDamageable
-                    : physics::CollisionLayer::kStaticObstacle;
-        object.identity.gameplay_category = collider.layer_mask;
-        object.shape.type = collider.shape_type == ColliderShapeType::kSphere
-            ? physics::CollisionShapeType::kSphere
-            : collider.shape_type == ColliderShapeType::kCapsule
-                ? physics::CollisionShapeType::kCapsule
-                : physics::CollisionShapeType::kBox;
-        object.shape.half_extents = collider.half_extents;
-        object.shape.radius = collider.radius;
-        object.shape.capsule_half_height = collider.capsule_half_height;
-        object.position = collider.world_center;
-        object.rotation = collider.world_rotation;
-        object.enabled = collider.enabled;
-        if (entity.has_value() && world_.registry().all_of<Health>(*entity) &&
-            world_.registry().get<Health>(*entity).hp == 0) {
-            object.enabled = false;
-        }
-        std::string error;
-        if (physics_entity_collider_ids_.contains(collider.collider_id)) {
-            physics_world_->set_object_transform(
-                collider.collider_id,
-                object.position,
-                object.rotation);
-            physics_world_->set_object_enabled(
-                collider.collider_id,
-                object.enabled);
-        } else if (!physics_world_->upsert_object(object, &error)) {
-            spdlog::error(
-                "failed to materialize collider_id={} in physics world: {}",
-                collider.collider_id,
-                error);
+        if (!push_collider_into_physics(collider)) {
             continue;
         }
         current_collider_ids.insert(collider.collider_id);
@@ -4754,6 +4568,48 @@ void KernelEngine::sync_entity_colliders_from_world() {
     // to hand retired nodes back to Jolt's allocator. No-ops when nothing was
     // added or removed this tick.
     physics_world_->optimize_broad_phase();
+}
+
+// The same sync narrowed to the colliders of one entity.
+//
+// The full sweep above touches every collider in the world, and it was being
+// run once per SetEntityTransform command -- so a tick in which every agent
+// re-aimed cost agents times colliders, in Jolt body writes and broad phase
+// AABB notifications. Moving one entity moves one entity's colliders.
+//
+// It still walks the instance list to find them, because the registry is a flat
+// vector with no per-entity index; what it does not do is write the other
+// entities' bodies into the physics world. There is also no removal sweep and
+// no broad phase rebuild here: a transform adds and removes nothing, and the
+// three tick-level syncs still do both.
+void KernelEngine::sync_entity_colliders_from_world(NetId net_id) {
+    if (net_id == 0) {
+        return;
+    }
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (!entity.has_value()) {
+        return;
+    }
+    if (world_.registry().all_of<ProjectileState>(*entity)) {
+        materialize_projectile_collider(net_id);
+    }
+    for (ColliderInstance& collider :
+         world_.collider_registry().mutable_instances()) {
+        if (collider.entity_net_id != net_id) {
+            continue;
+        }
+        refresh_collider_world_transform(collider);
+    }
+    if (physics_world_ == nullptr) {
+        return;
+    }
+    for (const ColliderInstance& collider :
+         world_.collider_registry().instances()) {
+        if (collider.entity_net_id != net_id) {
+            continue;
+        }
+        push_collider_into_physics(collider);
+    }
 }
 
 std::uint32_t KernelEngine::collider_template_id_for_projectile_template(
@@ -6008,7 +5864,6 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     vision_configs_.clear();
     vision_states_.clear();
     pending_first_physics_actors_.clear();
-    pending_director_intents_.clear();
     network_stats_ = KernelNetworkStats{};
     network_stats_.struct_size = sizeof(KernelNetworkStats);
     network_stats_.collection_mode = config_.network_stats.mode;
@@ -6020,10 +5875,6 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     last_command_queue_capacity_warning_tick_ = 0;
     last_simulation_command_queue_depth_ = 0;
     last_simulation_command_processed_count_ = 0;
-    last_director_intent_processed_count_ = 0;
-    last_director_intent_created_count_ = 0;
-    last_director_intent_failed_count_ = 0;
-    last_director_intent_unsupported_count_ = 0;
     simulation_tick_cost_samples_us_.fill(0);
     simulation_tick_cost_sample_index_ = 0;
     simulation_tick_cost_sample_count_ = 0;
@@ -9294,8 +9145,15 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
             projectile.gravity,
             projectile_age_duration);
 
-        if (projectile.sync_mode ==
-            KernelProjectileSyncMode_LocalPredictedDeterministic) {
+        // Hybrid belongs here too, not just local-predicted. Both modes are
+        // told to predict the flight, and a mode that predicts where a
+        // projectile goes but not what stops it is worse than one that predicts
+        // nothing: it draws the projectile straight through the wall it was
+        // about to hit and then lets the authoritative despawn take it away,
+        // which reads as the impact happening in the wrong place. Server-
+        // snapshot-only is the one mode with no local path to predict from.
+        if (projectile.sync_mode !=
+            KernelProjectileSyncMode_ServerSnapshotOnly) {
             if (prediction_physics_world_ == nullptr) {
                 if (!predicted_projectile_collision_warning_emitted_) {
                     spdlog::warn(
@@ -10391,8 +10249,9 @@ void KernelEngine::simulate_tick() {
         *this, health_depleted, server_time_us);
     lifecycle_system.destroy_dead_entities(*this, health_depleted);
     update_vision_states(fixed_delta);
-    DirectorAISystem{}.update(*this);
-    DirectorIntentExecutor{}.update(*this);
+    // Directors used to be ticked here and their intents executed. Both kinds
+    // are game_server's now, driven from its own tick, so the kernel has no
+    // director pass at all.
     const std::size_t last_tick_event = events_.size();
     for (std::size_t index = first_tick_event; index < last_tick_event; ++index) {
         if (events_[index].type != KernelEventType_HealthChanged) {

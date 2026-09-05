@@ -62,7 +62,7 @@ genrule(
     name = "bundle",
     srcs = [
         ":gameplay_bundle_base",
-        "//game_server/mesh_assets:cooked_mesh_assets",
+        "//game_server/gameplay_catalog/mesh_assets:cooked_mesh_assets",
     ],
     outs = ["bundle.zip"],
     cmd = """
@@ -76,10 +76,10 @@ for src in $(SRCS); do
     */gameplay_bundle_base.zip)
       /usr/bin/unzip -q "$$src" -d "$$bundle_root"
       ;;
-    */generated/jolt/*.joltmesh)
+    */mesh_assets/jolt/*.joltmesh)
       cp "$$src" "$$bundle_root/mesh_assets/jolt/$$(basename "$$src")"
       ;;
-    */generated/recast/*.navmesh)
+    */mesh_assets/recast/*.navmesh)
       cp "$$src" "$$bundle_root/mesh_assets/recast/$$(basename "$$src")"
       ;;
   esac

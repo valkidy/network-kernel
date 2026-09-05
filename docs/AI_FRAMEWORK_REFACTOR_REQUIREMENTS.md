@@ -634,6 +634,12 @@ This scenario must answer:
 
 ## 13. Non-Goals for First Refactor
 
+Status note: "Mission director" and "Squad tactics" below are no longer
+non-goals -- both shipped, in `game_server`, without a kernel ABI addition. The
+mission director is `game_server/src/game_rule_director.{h,cc}` and the squad is
+the patrol system; `docs/AI_PATROL_SYSTEM.md` covers both. The ownership model
+in section 14 held up under them and is unchanged.
+
 Do not include these in the first refactor:
 
 - Full Utility AI

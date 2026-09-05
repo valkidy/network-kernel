@@ -37,7 +37,6 @@ class EntityStateSystem;
 class ItemGameplaySystem;
 class ActivationSystem;
 class CollisionTriggerSystem;
-class DirectorIntentExecutor;
 class ListenServerTransport;
 class MovementSystem;
 struct EntityDespawnPacket;
@@ -338,8 +337,6 @@ private:
     friend class ActivationSystem;
     friend class ItemGameplaySystem;
     friend class CollisionTriggerSystem;
-    friend class DirectorAISystem;
-    friend class DirectorIntentExecutor;
     friend class MovementSystem;
     friend class KernelRpcDispatcher;
     friend class KernelRpcWorldHandlers;
@@ -844,6 +841,10 @@ private:
     void remove_prediction_limb_proxies(NetId net_id);
     void materialize_projectile_collider(NetId net_id);
     void sync_entity_colliders_from_world();
+    // Narrowed to one entity, for the callers that moved exactly one thing.
+    void sync_entity_colliders_from_world(NetId net_id);
+    void refresh_collider_world_transform(ColliderInstance& collider);
+    bool push_collider_into_physics(const ColliderInstance& collider);
     std::uint32_t collider_template_id_for_projectile_template(
         std::uint32_t projectile_template_id) const;
     std::uint32_t collider_template_id_for_actor_template(
@@ -916,10 +917,6 @@ private:
     std::vector<KernelActionTemplateDefinition> action_templates_;
     std::vector<KernelItemTemplateDefinition> item_templates_;
     std::vector<KernelPropPopulationRuleDefinition> prop_population_rules_;
-    std::vector<KernelGameRuleDefinition> game_rule_definitions_;
-    std::vector<KernelGameRuleNodeDefinition> game_rule_nodes_;
-    std::vector<KernelGameRuleEdgeDefinition> game_rule_edges_;
-    std::vector<KernelGameRuleSpawnGroupEffectDefinition> game_rule_effects_;
     std::vector<RuntimeSkeletonAsset> skeleton_assets_;
     ItemStore item_store_;
     std::vector<KernelGameplayRequestOutcome> processed_gameplay_requests_;
@@ -947,7 +944,6 @@ private:
     std::unordered_map<NetId, VisionRuntimeState> vision_states_;
     std::unordered_map<NetId, PendingFirstPhysicsActor>
         pending_first_physics_actors_;
-    std::vector<ai::ScopedIntent> pending_director_intents_;
     simulation::CommandQueue command_queue_;
     KernelRpcMethodRegistry rpc_method_registry_;
     KernelRpcResponseStore rpc_response_store_;
@@ -958,10 +954,6 @@ private:
     std::uint32_t last_command_queue_capacity_warning_tick_ = 0;
     std::size_t last_simulation_command_queue_depth_ = 0;
     std::size_t last_simulation_command_processed_count_ = 0;
-    std::size_t last_director_intent_processed_count_ = 0;
-    std::uint32_t last_director_intent_created_count_ = 0;
-    std::uint32_t last_director_intent_failed_count_ = 0;
-    std::uint32_t last_director_intent_unsupported_count_ = 0;
     std::array<std::uint64_t, 120> simulation_tick_cost_samples_us_{};
     std::size_t simulation_tick_cost_sample_index_ = 0;
     std::uint32_t simulation_tick_cost_sample_count_ = 0;

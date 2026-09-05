@@ -3605,7 +3605,17 @@ void local_deterministic_box_projectile_hits_prediction_terrain() {
     require(client.predicted_projectiles_[0].position.x < 2.1f);
 }
 
-void local_projectile_miss_and_hybrid_remain_kinematic() {
+// Two projectiles through one advance, contrasting the two reasons a
+// prediction may not stop: one is aimed over the box and genuinely misses, the
+// other is aimed through it. Hybrid used to be in the first group by
+// construction -- the collision block was gated on local-predicted alone, so a
+// hybrid projectile predicted where it was going but never what stopped it, and
+// drew itself through the wall until the authoritative despawn removed it. That
+// is the wrong impact position on every hit, not an approximation of the right
+// one, so hybrid now stops the same way local-predicted does. The snapshot
+// still corrects the flight; what it no longer has to correct is a projectile
+// drawn somewhere the geometry says it cannot be.
+void local_projectile_miss_flies_on_while_hybrid_stops_on_static() {
     KernelConfig config{};
     config.mode = KernelMode_Client;
 
@@ -3632,9 +3642,9 @@ void local_projectile_miss_and_hybrid_remain_kinematic() {
     require(!client.predicted_projectiles_[0].locally_terminated);
     require(client.predicted_projectiles_[0].position.x > 3.32f);
     require(client.predicted_projectiles_[0].position.x < 3.34f);
-    require(!client.predicted_projectiles_[1].locally_terminated);
-    require(client.predicted_projectiles_[1].position.x > 3.32f);
-    require(client.predicted_projectiles_[1].position.x < 3.34f);
+    require(client.predicted_projectiles_[1].locally_terminated);
+    require(client.predicted_projectiles_[1].position.x > 1.5f);
+    require(client.predicted_projectiles_[1].position.x < 2.1f);
 }
 
 void local_projectile_missing_physics_falls_back_once() {
@@ -4779,7 +4789,7 @@ int main() {
     local_deterministic_sphere_projectile_hits_prediction_terrain();
     local_deterministic_projectile_hits_prediction_pure_prop();
     local_deterministic_box_projectile_hits_prediction_terrain();
-    local_projectile_miss_and_hybrid_remain_kinematic();
+    local_projectile_miss_flies_on_while_hybrid_stops_on_static();
     local_projectile_missing_physics_falls_back_once();
     local_terminated_projectile_binds_without_reviving();
     terminal_action_result_clears_local_terminated_projectile();

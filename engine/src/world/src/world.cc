@@ -22,7 +22,6 @@ bool World::destroy(NetId net_id) {
     entities_by_net_id_.erase(net_id);
     collider_registry_.remove_entity_colliders(net_id);
     registry_.destroy(*entity);
-    tombstoned_net_ids_.insert(net_id);
     return true;
 }
 
@@ -430,10 +429,26 @@ std::uint32_t World::ColliderRegistry::allocate_collider_id() {
     return next_collider_id_++;
 }
 
+// Ids are never reused, which is what a client still holding a stale net_id
+// needs and what a tombstone set would otherwise have to provide: this counter
+// only ever advances, and every id in the world came out of it, so the next one
+// is always past every id ever handed out.
+//
+// A destroyed id used to be recorded in a tombstone set that this loop then
+// skipped. That set could never affect the outcome -- the loop cannot reach an
+// id below the counter -- and nothing else read it, so it was one entry of
+// permanent growth per destroyed entity and no protection. Retiring patrols is
+// the first design here that destroys entities continuously rather than once
+// per match, which is what made an unbounded write-only set worth removing
+// rather than bounding.
+//
+// The remaining scan is the guard that would matter if an id ever entered the
+// world from outside this counter, which today nothing does:
+// create_networked_entity is the only thing that populates the map, and it
+// always allocates here.
 NetId World::allocate_net_id() {
     while (next_net_id_ != 0 &&
-           (entities_by_net_id_.find(next_net_id_) != entities_by_net_id_.end() ||
-            tombstoned_net_ids_.find(next_net_id_) != tombstoned_net_ids_.end())) {
+           entities_by_net_id_.find(next_net_id_) != entities_by_net_id_.end()) {
         ++next_net_id_;
     }
     if (next_net_id_ == 0) {

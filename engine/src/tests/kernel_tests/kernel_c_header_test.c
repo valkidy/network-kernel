@@ -6,8 +6,9 @@
 #include "kernel/public/kernel_api.h"
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 85u,
-    "melee fire mode and melee collider template ABI");
+    KERNEL_ABI_VERSION == 87u,
+    "server entity state reports the entity template it came from, which is "
+    "the only way to ask what a prop is");
 _Static_assert(
     offsetof(KernelWeaponMechanicsDefinition, melee_collider_template_id) >
         offsetof(KernelWeaponMechanicsDefinition, collision_mask),
