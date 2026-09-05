@@ -67,7 +67,7 @@ patrols:
     # and gives its place back.
     interval_ticks: 900
     max_live_groups: 2
-    count: {min: 20, max: 24}
+    count: {min: 10, max: 16}
     # Floors plus capacity, not a second opinion about the total. Every entry
     # gets its minimum -- 1 warrior and 6 gingerbread, 7 of the 20 -- and the
     # remainder is handed out one at a time, each unit going to an entry in
@@ -84,9 +84,12 @@ patrols:
       - entity_template: gingerbread_warrior
         min: 1
         max: 5
+      - entity_template: gingerbread_mage
+        min: 1
+        max: 3
       - entity_template: gingerbread
         min: 6
-        max: 24
+        max: 20
     # Three abreast, so 24 members stand eight ranks deep -- about 10 m of
     # column behind the squad's point. The rank width is not authored; it is
     # kRankWidth in formation_offsets.
