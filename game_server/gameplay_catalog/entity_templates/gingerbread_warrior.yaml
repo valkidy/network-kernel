@@ -10,7 +10,7 @@ health:
 movement:
   controller: character
   # Slower than the plain gingerbread. The heavy hit is worth walking into.
-  move_speed_meters_per_second: 2.0
+  move_speed_meters_per_second: 2.2
   collider_template: gingerbread_movement_capsule
   gravity: {x: 0.0, y: -9.81, z: 0.0}
   max_slope_degrees: 50.0

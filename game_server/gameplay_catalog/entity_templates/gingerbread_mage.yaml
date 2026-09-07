@@ -1,0 +1,88 @@
+id: 31
+name: gingerbread_mage
+entity_type: actor
+actor_type: agent
+camp: enemy_side
+collider_template: sentry_grunt_hit_aabb
+# Squishier than the 500 hp grunts: this one fights from across the room, so it
+# pays for the range in health rather than in accuracy.
+health:
+  hp: 300
+  max_hp: 300
+movement:
+  # `character`, not `grounded`: this agent walks, and the character controller
+  # is what chaser_grunt uses for the same reason.
+  controller: character
+  move_speed_meters_per_second: 1.8
+  collider_template: sentry_grunt_movement_capsule
+  gravity: {x: 0.0, y: -9.81, z: 0.0}
+  max_slope_degrees: 50.0
+  step_height: 0.4
+  ground_probe_distance: 0.25
+  ground_snap_distance: 0.5
+  collision_mask: terrain | static_obstacle | actor
+hitbox:
+  center: {x: 0.0, y: 0.8, z: 0.0}
+  half_extents: {x: 0.4, y: 0.8, z: 0.4}
+# Grenade Launcher. Its shell is a parabolic projectile, which is what turns the
+# ballistic solver on: agent_sentry_config() reads the weapon's projectile
+# template and enables ballistic_aim when the motion model is parabolic. There
+# is no flag to set here and `ai.profile` below does not do it -- swapping this
+# slot for a linear weapon silently turns the arc back into a straight line.
+weapon_slots:
+  - 7
+active_weapon_slot: 0
+animations:
+  idle: 0
+  chasing: 1
+vision:
+  collider_template: gingerbread_mage_vision_cone
+# A chaser that carries artillery instead of a claw: it closes to a firing
+# distance rather than to contact, then lobs from there.
+#
+# The three chase distances are one setting. Holding persists from
+# stop_distance out to resume_distance, so resume must stay inside
+# attack_range or the mage opens a band where it has stopped closing and is not
+# yet allowed to fire -- it would stand there doing nothing until the target
+# walked far enough away to restart the chase. 16 < 20 <= 22 closes that band:
+# everywhere the mage is parked, it shoots.
+ai:
+  controller: chaser
+  profile: grenade_artillery
+  sentry:
+    # 1.5 s of wind-up before the first shell, half the grunt's, and it is spent
+    # closing -- kAlert already chases. Long enough to read as a cast, short
+    # enough that a mage that has just come into range is a threat.
+    alert_ticks: 45
+    forget_ticks: 150
+    # A low arc does not exist for every target -- a target directly overhead,
+    # or beyond the shell's v^2/g reach of about 58 m, has no solution. This is
+    # how long the mage waits before trying again instead of re-solving the same
+    # impossible shot every tick.
+    ballistic_retry_cooldown_ticks: 30
+    patrol_rotation_interval_ticks: 30
+    patrol_rotation_min_degrees: 15.0
+    patrol_rotation_max_degrees: 30.0
+    weapon_id: 7
+    animation_idle: idle
+    animation_attack: chasing
+  chaser:
+    # The fighting distance. Far enough that the shell's ~0.9 s flight time is a
+    # real dodge window and the 1 m explosion never reaches the mage, close
+    # enough to stay well inside both the vision cone and the shell's reach.
+    stop_distance_meters: 16.0
+    resume_distance_meters: 20.0
+    input_magnitude: 1.0
+    # Deliberately outside resume_distance, so the mage is already firing while
+    # it closes the last few metres rather than only once it has parked.
+    attack_range_meters: 22.0
+  # Only read when this mage is in a squad; a lone one has no slot and none of
+  # this applies to it.
+  patrol:
+    slot_radius_meters: 1.2
+    input_magnitude: 0.5
+    # The cone's own reach, measured from where the mage broke formation. A
+    # chaser that stops 16 m short of its target travels less than a melee one
+    # for the same pursuit, so this is roughly one engagement's worth of ground.
+    leash_meters: 30.0
+    leash_resume_meters: 10.0

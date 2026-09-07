@@ -1,6 +1,7 @@
 #ifndef WORLD_PUBLIC_COMPONENTS_H_
 #define WORLD_PUBLIC_COMPONENTS_H_
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -795,6 +796,57 @@ struct RuntimeProjectileTemplate {
     float homing_max_turn_degrees_per_tick = 0.0f;
     float homing_acceleration = 0.0f;
     float homing_max_speed = 0.0f;
+};
+
+/*
+ * The loaded gameplay catalog in the form the simulation reads it.
+ *
+ * It is a type of its own, rather than three vectors inside World, because it
+ * outlives a World: a World is one session's entities and is replaced whenever
+ * a server starts, while the catalog is content that was loaded once and is
+ * still the same content afterwards. Holding it here lets exactly one copy
+ * exist, with World referring to it rather than owning a duplicate that can
+ * fall out of step with the kernel's own tables -- which is what let a catalog
+ * loaded before start_listen_server disappear from gameplay while every query
+ * API still reported it as present.
+ */
+struct GameplayCatalogRuntime {
+    std::vector<RuntimeProjectileTemplate> projectile_templates;
+    std::vector<RuntimeActionTemplate> action_templates;
+    std::vector<RuntimeStatusEffectTemplate> status_effect_templates;
+
+    const RuntimeProjectileTemplate* find_projectile_template(
+        std::uint32_t projectile_template_id) const {
+        const auto found = std::find_if(
+            projectile_templates.begin(),
+            projectile_templates.end(),
+            [projectile_template_id](const RuntimeProjectileTemplate& candidate) {
+                return candidate.projectile_template_id == projectile_template_id;
+            });
+        return found == projectile_templates.end() ? nullptr : &*found;
+    }
+
+    const RuntimeActionTemplate* find_action_template(
+        std::uint32_t action_template_id) const {
+        const auto found = std::find_if(
+            action_templates.begin(),
+            action_templates.end(),
+            [action_template_id](const RuntimeActionTemplate& candidate) {
+                return candidate.action_template_id == action_template_id;
+            });
+        return found == action_templates.end() ? nullptr : &*found;
+    }
+
+    const RuntimeStatusEffectTemplate* find_status_effect_template(
+        std::uint32_t status_effect_id) const {
+        const auto found = std::find_if(
+            status_effect_templates.begin(),
+            status_effect_templates.end(),
+            [status_effect_id](const RuntimeStatusEffectTemplate& candidate) {
+                return candidate.status_effect_id == status_effect_id;
+            });
+        return found == status_effect_templates.end() ? nullptr : &*found;
+    }
 };
 
 struct HomingState {

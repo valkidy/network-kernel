@@ -25,7 +25,18 @@ class PhysicsWorld;
 
 class World {
 public:
-    explicit World(bool allow_standalone_collision = true);
+    /*
+     * `catalog` is borrowed, not copied, and must outlive the World. Passing it
+     * to the constructor is what keeps a session's world and the loaded catalog
+     * from drifting apart: a caller that replaces its World cannot forget to
+     * hand the catalog over again, because there is nowhere else to put it.
+     *
+     * Left null, the World has no catalog until set_*_templates gives it one of
+     * its own, which is the standalone path the tests use.
+     */
+    explicit World(
+        bool allow_standalone_collision = true,
+        const GameplayCatalogRuntime* catalog = nullptr);
     ~World();
     World(World&&) noexcept;
     World& operator=(World&&) noexcept;
@@ -167,9 +178,14 @@ private:
     entt::registry registry_;
     std::unordered_map<NetId, entt::entity> entities_by_net_id_;
     std::vector<ProjectileInteractionRule> projectile_interaction_rules_;
-    std::vector<RuntimeProjectileTemplate> projectile_templates_;
-    std::vector<RuntimeActionTemplate> action_templates_;
-    std::vector<RuntimeStatusEffectTemplate> status_effect_templates_;
+    // Owned only on the standalone path, where set_*_templates builds a catalog
+    // for a World that was not given one. Held by pointer so that moving a World
+    // keeps `catalog_` pointing at the same object rather than into the corpse
+    // of the moved-from one.
+    GameplayCatalogRuntime& mutable_owned_catalog();
+
+    std::unique_ptr<GameplayCatalogRuntime> owned_catalog_;
+    const GameplayCatalogRuntime* catalog_ = nullptr;
     struct ActionGraphDedupKeyHash {
         std::size_t operator()(const ActionGraphDedupKey& key) const noexcept {
             std::size_t hash = std::hash<PeerId>{}(key.requester_peer);

@@ -855,7 +855,13 @@ private:
 
     KernelConfig config_;
     TickLoop tick_loop_;
-    World world_;
+    // Declared ahead of world_, and deliberately outside it: the catalog is
+    // content loaded once, while a World is one session and is replaced every
+    // time a server starts. world_ borrows this rather than copying it, so a
+    // reset cannot leave the simulation reading a catalog the kernel no longer
+    // agrees with -- there is only one.
+    GameplayCatalogRuntime catalog_runtime_;
+    World world_{true, &catalog_runtime_};
     HistoryBuffer history_buffer_;
     DamagePipeline damage_pipeline_;
     std::uint32_t next_action_graph_sequence_ = 1;
@@ -914,7 +920,6 @@ private:
     std::vector<KernelActorTemplateDefinition> actor_templates_;
     std::vector<KernelProjectileTemplateDefinition> projectile_templates_;
     std::vector<KernelColliderTemplateDefinition> collider_templates_;
-    std::vector<KernelActionTemplateDefinition> action_templates_;
     std::vector<KernelItemTemplateDefinition> item_templates_;
     std::vector<KernelPropPopulationRuleDefinition> prop_population_rules_;
     std::vector<RuntimeSkeletonAsset> skeleton_assets_;

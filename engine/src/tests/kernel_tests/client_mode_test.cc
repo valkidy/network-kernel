@@ -1534,28 +1534,21 @@ void owner_action_prediction_and_discrete_interpolation() {
             *player_entity);
     weapon.weapon_slot_count = 1;
     weapon.weapon_ids[0] = network_example::kWeaponSlot3;
-    KernelActionTemplateDefinition action_template{};
-    action_template.struct_size = sizeof(action_template);
-    action_template.action_template_id = 1001;
-    action_template.trigger_mode = KernelActionTriggerMode_Press;
-    action_template.flags = KernelActionTemplateFlag_CancelBeforeFirstCommit;
-    action_template.ammo_cost_per_commit = 1;
-    action_template.commit_offset_ticks = 2;
-    action_template.commit_interval_ticks = 30;
-    action_template.max_commit_count = 1;
-    action_template.recovery_ticks = 2;
-    engine.action_templates_.push_back(action_template);
-    engine.world_.set_action_templates({network_example::RuntimeActionTemplate{
-        1001,
-        KernelActionTriggerMode_Press,
-        KernelActionTemplateFlag_CancelBeforeFirstCommit,
-        1,
-        2,
-        30,
-        1,
-        2,
-        0,
-    }});
+    // One catalog, which prediction and the simulation both read. This used to
+    // be written twice -- once into the kernel's table and once into the world's
+    // -- and the two had to be kept in agreement by hand.
+    engine.catalog_runtime_.action_templates.push_back(
+        network_example::RuntimeActionTemplate{
+            1001,
+            KernelActionTriggerMode_Press,
+            KernelActionTemplateFlag_CancelBeforeFirstCommit,
+            1,
+            2,
+            30,
+            1,
+            2,
+            0,
+        });
 
     KernelPlayerInput input{};
     input.input_seq = 1;
@@ -2651,16 +2644,14 @@ void thrown_prop_renders_its_trajectory_while_snapshots_omit_it() {
     const glm::vec3 anchor_velocity{24.0f, 6.0f, 0.0f};
     const glm::vec3 gravity{0.0f, -9.81f, 0.0f};
 
-    KernelProjectileTemplateDefinition trajectory{};
-    trajectory.struct_size = sizeof(trajectory);
+    network_example::RuntimeProjectileTemplate trajectory{};
     trajectory.projectile_template_id = kTrajectoryTemplateId;
-    trajectory.mechanics.struct_size = sizeof(trajectory.mechanics);
-    trajectory.mechanics.motion_model = KernelProjectileMotionModel_Parabolic;
-    trajectory.mechanics.sync_mode =
-        KernelProjectileSyncMode_LocalPredictedDeterministic;
-    trajectory.mechanics.speed = 24.0f;
-    trajectory.mechanics.gravity = KernelVec3{gravity.x, gravity.y, gravity.z};
-    client.projectile_templates_.push_back(trajectory);
+    trajectory.motion_model = network_example::ProjectileMotionModel::kParabolic;
+    trajectory.sync_mode =
+        network_example::ProjectileSyncMode::kLocalPredictedDeterministic;
+    trajectory.speed = 24.0f;
+    trajectory.gravity = gravity;
+    client.catalog_runtime_.projectile_templates.push_back(trajectory);
 
     KernelEntityTemplateDefinition entity_template{};
     entity_template.struct_size = sizeof(entity_template);

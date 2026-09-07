@@ -3633,7 +3633,6 @@ bool KernelEngine::load_gameplay_catalog(
     actor_templates_ = std::move(validated_actor_templates);
     projectile_templates_ = std::move(validated_projectile_templates);
     collider_templates_ = std::move(validated_collider_templates);
-    action_templates_ = std::move(validated_action_templates);
     item_templates_ = std::move(validated_item_templates);
     prop_population_rules_ =
         std::move(validated_prop_population_rules);
@@ -3645,9 +3644,10 @@ bool KernelEngine::load_gameplay_catalog(
     if (!item_store_.set_templates(item_templates_, &item_validation_error)) {
         return false;
     }
-    world_.set_projectile_templates(runtime_projectile_templates);
-    world_.set_action_templates(runtime_action_templates);
-    world_.set_status_effect_templates(runtime_status_effect_templates);
+    catalog_runtime_.projectile_templates = std::move(runtime_projectile_templates);
+    catalog_runtime_.action_templates = std::move(runtime_action_templates);
+    catalog_runtime_.status_effect_templates =
+        std::move(runtime_status_effect_templates);
     if (running_ &&
         (catalog_version_ != catalog.catalog_version ||
          catalog_hash_ != catalog.catalog_hash)) {
@@ -4153,13 +4153,22 @@ bool KernelEngine::get_action_template(
         out_definition->struct_size < sizeof(KernelActionTemplateDefinition)) {
         return false;
     }
-    const KernelActionTemplateDefinition* definition =
-        find_action_template(action_templates_, action_template_id);
+    const RuntimeActionTemplate* definition =
+        catalog_runtime_.find_action_template(action_template_id);
     if (definition == nullptr) {
         return false;
     }
-    *out_definition = *definition;
     out_definition->struct_size = sizeof(KernelActionTemplateDefinition);
+    out_definition->action_template_id = definition->action_template_id;
+    out_definition->trigger_mode = definition->trigger_mode;
+    out_definition->flags = definition->flags;
+    out_definition->ammo_cost_per_commit = definition->ammo_cost_per_commit;
+    out_definition->commit_offset_ticks = definition->commit_offset_ticks;
+    out_definition->commit_interval_ticks = definition->commit_interval_ticks;
+    out_definition->max_commit_count = definition->max_commit_count;
+    out_definition->recovery_ticks = definition->recovery_ticks;
+    out_definition->hold_input_timeout_ticks =
+        definition->hold_input_timeout_ticks;
     return true;
 }
 
@@ -4369,9 +4378,8 @@ void KernelEngine::materialize_projectile_collider(NetId net_id) {
     const Transform& transform = world_.registry().get<Transform>(*entity);
     const ProjectileState& projectile =
         world_.registry().get<ProjectileState>(*entity);
-    const KernelProjectileTemplateDefinition* projectile_template =
-        find_projectile_template(
-            projectile_templates_,
+    const RuntimeProjectileTemplate* projectile_template =
+        catalog_runtime_.find_projectile_template(
             projectile.projectile_template_id);
     if (projectile_template == nullptr) {
         return;
@@ -4379,7 +4387,7 @@ void KernelEngine::materialize_projectile_collider(NetId net_id) {
     const KernelColliderTemplateDefinition* collider_template =
         find_collider_template(
             collider_templates_,
-            projectile_template->mechanics.collider_template_id);
+            projectile_template->collider_template_id);
     if (collider_template == nullptr) {
         return;
     }
@@ -4614,11 +4622,11 @@ void KernelEngine::sync_entity_colliders_from_world(NetId net_id) {
 
 std::uint32_t KernelEngine::collider_template_id_for_projectile_template(
     std::uint32_t projectile_template_id) const {
-    const KernelProjectileTemplateDefinition* projectile_template =
-        find_projectile_template(projectile_templates_, projectile_template_id);
+    const RuntimeProjectileTemplate* projectile_template =
+        catalog_runtime_.find_projectile_template(projectile_template_id);
     return projectile_template == nullptr
                ? 0u
-               : projectile_template->mechanics.collider_template_id;
+               : projectile_template->collider_template_id;
 }
 
 void KernelEngine::sync_client_follower_limb_colliders() {
@@ -5526,11 +5534,9 @@ bool KernelEngine::server_set_entity_weapon_mechanics(
     const KernelWeaponMechanicsDefinition& weapon_mechanics) {
     if (!running_ || !is_server_mode(config_.mode) ||
         !validate_weapon_mechanics(weapon_mechanics) ||
-        find_action_template(
-            action_templates_,
+        catalog_runtime_.find_action_template(
             weapon_mechanics.fire_action_template_id) == nullptr ||
-        find_action_template(
-            action_templates_,
+        catalog_runtime_.find_action_template(
             weapon_mechanics.reload_action_template_id) == nullptr) {
         return false;
     }
@@ -5800,10 +5806,20 @@ void KernelEngine::filter_pending_first_physics_actors(
 void KernelEngine::reset_runtime_state(KernelMode mode) {
     config_.mode = mode;
     tick_loop_ = TickLoop(config_.tick);
-    world_ = World{false};
+    // The catalog outlives this reset and the new world borrows it, so the
+    // simulation keeps reading the templates that are already loaded.
+    world_ = World{false, &catalog_runtime_};
     world_.set_action_graph_dedup_retention_ticks(
         action_graph_dedup_retention_ticks(config_.tick));
+    // The item store holds instances as well as templates, so it is emptied
+    // rather than borrowed -- which loses the catalog's item templates with it.
+    // They were validated when the catalog was loaded, so re-applying them here
+    // cannot fail and the error is taken only to satisfy the signature.
     item_store_ = ItemStore{};
+    if (!item_templates_.empty()) {
+        std::string item_validation_error;
+        item_store_.set_templates(item_templates_, &item_validation_error);
+    }
     client_inventory_snapshot_assemblies_.clear();
     client_inventory_sync_states_.clear();
     client_inventory_resync_pending_.clear();
@@ -6589,9 +6605,8 @@ void KernelEngine::handle_client_local_action_results(
             outstanding->second.confirmed_commit_count =
                 result.confirmed_commit_count;
             outstanding->second.last_activity_us = client_local_time_us_;
-            const KernelActionTemplateDefinition* action_template =
-                find_action_template(
-                    action_templates_,
+            const RuntimeActionTemplate* action_template =
+                catalog_runtime_.find_action_template(
                     outstanding->second.action_template_id);
             std::size_t result_weapon_slot = kWeaponSlotCount;
             if (const auto actor = world_.find_entity(local_player_net_id_);
@@ -6721,9 +6736,8 @@ void KernelEngine::handle_client_local_action_results(
         }
         bool completed_finite_action = false;
         if (result.result == KernelLocalActionResultType_Accepted) {
-            const KernelActionTemplateDefinition* action_template =
-                find_action_template(
-                    action_templates_,
+            const RuntimeActionTemplate* action_template =
+                catalog_runtime_.find_action_template(
                     outstanding->second.action_template_id);
             completed_finite_action =
                 action_template != nullptr &&
@@ -6966,9 +6980,8 @@ void KernelEngine::handle_client_projectile_spawn_batch(
         return;
     }
     for (const ProjectileSpawnGroup& group : packet.groups) {
-        const KernelProjectileTemplateDefinition* projectile_template =
-            find_projectile_template(
-                projectile_templates_,
+        const RuntimeProjectileTemplate* projectile_template =
+            catalog_runtime_.find_projectile_template(
                 group.projectile_template_id);
         if (projectile_template == nullptr) {
             push_event(KernelEventType_Error, 0, kServerPeerId, 23);
@@ -6993,7 +7006,7 @@ void KernelEngine::handle_client_projectile_spawn_batch(
                 entity.projectile_template_id =
                     projectile_template->projectile_template_id;
                 entity.collider_template_id =
-                    projectile_template->mechanics.collider_template_id;
+                    projectile_template->collider_template_id;
                 entity.position = record.spawn_position;
                 entity.velocity = record.initial_velocity;
                 entity.snapshot_tick = packet.server_tick;
@@ -7006,13 +7019,13 @@ void KernelEngine::handle_client_projectile_spawn_batch(
                 replicated->projectile_template_id =
                     projectile_template->projectile_template_id;
                 replicated->collider_template_id =
-                    projectile_template->mechanics.collider_template_id;
+                    projectile_template->collider_template_id;
                 replicated->position = record.spawn_position;
                 replicated->rotation = glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
             }
             client_metadata_timeout_reported_entities_.erase(record.projectile_net_id);
-            if (projectile_template->mechanics.sync_mode ==
-                KernelProjectileSyncMode_ServerSnapshotOnly) {
+            if (projectile_template->sync_mode ==
+                ProjectileSyncMode::kServerSnapshotOnly) {
                 continue;
             }
             PredictedProjectile* predicted = find_predicted_projectile(
@@ -7024,9 +7037,10 @@ void KernelEngine::handle_client_projectile_spawn_batch(
                 predicted->projectile_template_id =
                     projectile_template->projectile_template_id;
                 predicted->collider_template_id =
-                    projectile_template->mechanics.collider_template_id;
+                    projectile_template->collider_template_id;
                 predicted->weapon_id = projectile_template->weapon_id;
-                predicted->sync_mode = projectile_template->mechanics.sync_mode;
+                predicted->sync_mode = to_kernel_projectile_sync_mode(
+                    projectile_template->sync_mode);
                 predicted->bound = true;
             } else if (has_predicted_projectile_net_id(record.projectile_net_id)) {
                 continue;
@@ -7046,14 +7060,14 @@ void KernelEngine::handle_client_projectile_spawn_batch(
                     initial_velocity,
                     spawn_position,
                     initial_velocity,
-                    from_kernel_vec3(projectile_template->mechanics.gravity),
-                    to_projectile_motion_model(
-                        projectile_template->mechanics.motion_model),
-                    projectile_template->mechanics.lifetime_ticks,
+                    projectile_template->gravity,
+                    projectile_template->motion_model,
+                    projectile_template->lifetime_ticks,
                     projectile_template->projectile_template_id,
-                    projectile_template->mechanics.collider_template_id,
+                    projectile_template->collider_template_id,
                     projectile_template->weapon_id,
-                    projectile_template->mechanics.sync_mode,
+                    to_kernel_projectile_sync_mode(
+                        projectile_template->sync_mode),
                     glm::vec3{0.0f, 0.0f, 0.0f},
                     false,
                     false,
@@ -7072,9 +7086,10 @@ void KernelEngine::handle_client_projectile_spawn_batch(
             debug_info.data.projectile.owner_peer = record.owner_peer;
             debug_info.data.projectile.weapon_id = projectile_template->weapon_id;
             debug_info.data.projectile.motion_model =
-                projectile_template->mechanics.motion_model;
+                to_kernel_projectile_motion_model(
+                    projectile_template->motion_model);
             debug_info.data.projectile.sync_mode =
-                projectile_template->mechanics.sync_mode;
+                to_kernel_projectile_sync_mode(projectile_template->sync_mode);
             debug_info.data.projectile.position = to_kernel_vec3(spawn_position);
             debug_info.data.projectile.velocity = to_kernel_vec3(initial_velocity);
             debug_records_.push_back(debug_info);
@@ -8303,9 +8318,9 @@ void KernelEngine::reconcile_local_prediction(const WorldSnapshot& snapshot) {
     }
     predicted_action_buttons_ = 0u;
     predicted_action_next_commit_tick_ = 0u;
-    if (const KernelActionTemplateDefinition* action_template =
-            find_action_template(
-                action_templates_, authoritative->action_template_id)) {
+    if (const RuntimeActionTemplate* action_template =
+            catalog_runtime_.find_action_template(
+                authoritative->action_template_id)) {
         predicted_action_next_commit_tick_ =
             authoritative->action_start_tick +
             action_template->commit_offset_ticks +
@@ -8538,8 +8553,8 @@ bool KernelEngine::predict_local_action(const KernelPlayerInput& input) {
                 : input.action_intent.binding_id == KernelActionBinding_Reload
                     ? weapon->reload_action_template_id
                     : 0u;
-        const KernelActionTemplateDefinition* action_template =
-            find_action_template(action_templates_, action_template_id);
+        const RuntimeActionTemplate* action_template =
+            catalog_runtime_.find_action_template(action_template_id);
         if (action_template == nullptr) {
             return false;
         }
@@ -8572,9 +8587,9 @@ bool KernelEngine::predict_local_action(const KernelPlayerInput& input) {
         predicted_local_entity_.action_commit_count = 0u;
     }
 
-    const KernelActionTemplateDefinition* action_template =
-        find_action_template(
-            action_templates_, predicted_local_entity_.action_template_id);
+    const RuntimeActionTemplate* action_template =
+        catalog_runtime_.find_action_template(
+            predicted_local_entity_.action_template_id);
     if (action_template == nullptr) {
         return false;
     }
@@ -8642,15 +8657,16 @@ void KernelEngine::predict_local_projectile(const KernelPlayerInput& input) {
     if (weapon == nullptr || weapon->mode != WeaponFireMode::kProjectile) {
         return;
     }
-    const KernelProjectileTemplateDefinition* projectile_template =
-        find_projectile_template(projectile_templates_, weapon->projectile_template_id);
+    const RuntimeProjectileTemplate* projectile_template =
+        catalog_runtime_.find_projectile_template(
+            weapon->projectile_template_id);
     if (projectile_template == nullptr) {
         return;
     }
-    const KernelProjectileMechanicsDefinition& mechanics =
-        projectile_template->mechanics;
-    const std::uint8_t sync_mode = mechanics.sync_mode;
-    const std::uint32_t collider_template_id = mechanics.collider_template_id;
+    const std::uint8_t sync_mode =
+        to_kernel_projectile_sync_mode(projectile_template->sync_mode);
+    const std::uint32_t collider_template_id =
+        projectile_template->collider_template_id;
     if (sync_mode == KernelProjectileSyncMode_ServerSnapshotOnly) {
         return;
     }
@@ -8666,10 +8682,9 @@ void KernelEngine::predict_local_projectile(const KernelPlayerInput& input) {
 
     const glm::vec3 origin = player_position + glm::vec3{0.0f, 1.0f, 0.0f};
     const glm::vec3 direction = input_aim_to_world(input);
-    const glm::vec3 velocity = direction * mechanics.speed;
-    const ProjectileMotionModel motion_model =
-        to_projectile_motion_model(mechanics.motion_model);
-    const glm::vec3 gravity = from_kernel_vec3(mechanics.gravity);
+    const glm::vec3 velocity = direction * projectile_template->speed;
+    const ProjectileMotionModel motion_model = projectile_template->motion_model;
+    const glm::vec3 gravity = projectile_template->gravity;
     predicted_projectiles_.push_back(PredictedProjectile{
         allocate_predicted_entity_id(),
         0,
@@ -8685,7 +8700,7 @@ void KernelEngine::predict_local_projectile(const KernelPlayerInput& input) {
         velocity,
         gravity,
         motion_model,
-        mechanics.lifetime_ticks,
+        projectile_template->lifetime_ticks,
         weapon->projectile_template_id,
         collider_template_id,
         weapon->id,
@@ -9162,6 +9177,12 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
                     predicted_projectile_collision_warning_emitted_ = true;
                 }
             } else {
+                // The one projectile reader that cannot take the catalog's
+                // runtime form: further down it reads the raw
+                // projectile_impact_trigger, and the runtime form compiles that
+                // into a binding instead of keeping the trigger definition. It
+                // reads the templates the catalog was loaded from, which are
+                // filled in the same load and are not reset either.
                 const KernelProjectileTemplateDefinition* projectile_template =
                     find_projectile_template(
                         projectile_templates_, projectile.projectile_template_id);
@@ -10390,11 +10411,11 @@ WorldSnapshot KernelEngine::build_snapshot_send_set(
             } else if (world_.registry().all_of<ProjectileState>(*world_entity)) {
                 const ProjectileState& projectile =
                     world_.registry().get<ProjectileState>(*world_entity);
-                if (const KernelProjectileTemplateDefinition* projectile_template =
-                        find_projectile_template(
-                            projectile_templates_,
+                if (const RuntimeProjectileTemplate* projectile_template =
+                        catalog_runtime_.find_projectile_template(
                             projectile.projectile_template_id)) {
-                    sync_mode = projectile_template->mechanics.sync_mode;
+                    sync_mode = to_kernel_projectile_sync_mode(
+                        projectile_template->sync_mode);
                 }
             }
 
@@ -11436,9 +11457,8 @@ bool KernelEngine::thrown_prop_render_transform(
         entity_template->prop.throw_trajectory_projectile_template_id == 0u) {
         return false;
     }
-    const KernelProjectileTemplateDefinition* trajectory =
-        find_projectile_template(
-            projectile_templates_,
+    const RuntimeProjectileTemplate* trajectory =
+        catalog_runtime_.find_projectile_template(
             entity_template->prop.throw_trajectory_projectile_template_id);
     if (trajectory == nullptr) {
         return false;
@@ -11456,9 +11476,8 @@ bool KernelEngine::thrown_prop_render_transform(
     // model and gravity -- both read from the trajectory projectile the item's
     // throw policy names, which the client already holds in the synced catalog.
     // Nothing about this needs a wire field that is not already sent.
-    const ProjectileMotionModel motion_model =
-        to_projectile_motion_model(trajectory->mechanics.motion_model);
-    const glm::vec3 gravity = from_kernel_vec3(trajectory->mechanics.gravity);
+    const ProjectileMotionModel motion_model = trajectory->motion_model;
+    const glm::vec3 gravity = trajectory->gravity;
     *out_position = projectile_position_at(
         replicated.thrown_anchor_position,
         replicated.thrown_anchor_velocity,

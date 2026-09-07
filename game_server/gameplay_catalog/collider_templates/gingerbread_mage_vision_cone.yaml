@@ -1,0 +1,13 @@
+# Between the claw grunt's 12 m and the artillery sentry's 60 m. It is the only
+# thing that starts and ends a chaser's pursuit, so it has to reach past the
+# distance the mage intends to fight at (resume_distance 20 m) with room to
+# spare -- a cone that ends at the fighting distance would have the mage losing
+# sight of the target on the same tick it stops to fire.
+id: 25
+name: gingerbread_mage_vision_cone
+shape: cone
+center: {x: 0.0, y: 0.0, z: 0.0}
+range: 30.0
+fov_degrees: 90.0
+purpose: vision
+layer: agent_vision

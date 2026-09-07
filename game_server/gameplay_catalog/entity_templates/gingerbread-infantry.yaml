@@ -1,16 +1,16 @@
-id: 28
-name: gingerbread
+id: 30
+name: gingerbread-infantry
 entity_type: actor
 actor_type: agent
 camp: enemy_side
 collider_template: gingerbread_hit_aabb
 health:
-  hp: 50
-  max_hp: 50
+  hp: 700
+  max_hp: 700
 movement:
   controller: character
-  # Quicker and lighter than the warrior: this one closes fast and pecks.
-  move_speed_meters_per_second: 5.0 # 2.8
+  # Slower than the plain gingerbread. The heavy hit is worth walking into.
+  move_speed_meters_per_second: 3.2
   collider_template: gingerbread_movement_capsule
   gravity: {x: 0.0, y: -9.81, z: 0.0}
   max_slope_degrees: 50.0
@@ -21,18 +21,16 @@ movement:
 hitbox:
   center: {x: 0.0, y: 0.8, z: 0.0}
   half_extents: {x: 0.4, y: 0.8, z: 0.4}
-# The plain claw: damage on contact, nothing else.
+# The slam: its shot template names an impact graph, so the hit arrives as
+# damage plus knockback rather than damage alone.
 weapon_slots:
-  - 10
+  - 11
 active_weapon_slot: 0
 animations:
   idle: 0
   chasing: 1
 vision:
   collider_template: sentry_grunt_vision_cone
-# A melee attacker has to be a chaser: it cannot hurt anything it has not walked
-# up to. The distances below are one setting, not three -- see the comment on
-# them.
 ai:
   controller: chaser
   profile: default
@@ -42,24 +40,16 @@ ai:
     patrol_rotation_interval_ticks: 30
     patrol_rotation_min_degrees: 15.0
     patrol_rotation_max_degrees: 30.0
-    weapon_id: 10
+    weapon_id: 11
     animation_idle: idle
-    # Despite the name this plays whenever the agent is *moving*, not when it
-    # attacks -- the controller sets it from a non-zero move, and the swing
-    # itself is driven client-side off the replicated action timeline. Naming
-    # an "attack" clip here would play it while walking.
+    # See gingerbread.yaml: this is the locomotion clip, not the swing.
     animation_attack: chasing
   chaser:
-    # Holding persists from stop_distance out to resume_distance, so a resume
-    # beyond attack_range opens a band where the agent has stopped chasing and
-    # cannot yet attack: it parks and does nothing. Keeping resume inside
-    # attack_range closes that band, and the catalog rejects the alternative.
     stop_distance_meters: 1.8
     resume_distance_meters: 2.1
     input_magnitude: 1.0
-    # Matches grunt_claw_cone's range. Measured origin to origin, while the
-    # swing reaches to a target's near edge, so this is conservative: whatever
-    # this lets the gingerbread attack, it can actually hit.
+    # Matches grunt_slam_cone's range, which currently equals the claw's. If
+    # you widen or shorten the slam's cone, this has to move with it.
     attack_range_meters: 2.2
   # Only read when this one is in a squad; a lone chaser has no slot.
   #
@@ -67,10 +57,10 @@ ai:
   # squad's cursor advances at a fixed metres per second regardless. So the
   # SLOWEST member's patrol speed has to beat advance_speed_meters_per_second,
   # or that member falls behind its slot for the whole route and never arrives.
-  # 2.8 m/s x 0.45 = 1.26 m/s here, against a cursor at 0.9.
+  # 2.0 m/s x 0.6 = 1.2 m/s here, against a cursor at 0.9.
   patrol:
     slot_radius_meters: 1.2
-    input_magnitude: 0.45
+    input_magnitude: 0.6
     # About the vision cone's own reach, so it gives up at roughly the distance
     # it would have lost sight anyway. resume sits well inside it, or it yo-yos
     # on the boundary.
