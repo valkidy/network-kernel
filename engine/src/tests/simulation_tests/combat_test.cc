@@ -302,6 +302,78 @@ std::uint32_t projectile_count(const network_example::World& world) {
             .size_hint());
 }
 
+/*
+ * A hold weapon whose trigger goes down after the world has been running a
+ * while.
+ *
+ * The Unity client sends the intent alone on the frame the trigger goes down
+ * and the held input only from the frame after -- unlike fire_input above,
+ * which carries both on the same tick and so hides this. That one-tick gap is
+ * the whole bug: the action began with no input tick of its own, inherited
+ * whatever tick the last held input landed on (zero, on a fresh session), and
+ * advance_action cancelled it as timed out in the same pass it was admitted.
+ * Every hold weapon was dead from the moment the world outlived its own
+ * hold_input_timeout_ticks, which is a fifth of a second in.
+ *
+ * The tick matters: the same press at tick 0 passes either way, which is why
+ * the timeline test above never caught this.
+ */
+void hold_action_pressed_late_is_not_cancelled_as_timed_out() {
+    const network_example::RuntimeActionTemplate rifle_action{
+        1002,
+        KernelActionTriggerMode_Hold,
+        KernelActionTemplateFlag_CancelOnRelease |
+            KernelActionTemplateFlag_CancelOnDeath |
+            KernelActionTemplateFlag_CancelOnWeaponChange |
+            KernelActionTemplateFlag_CancelBeforeFirstCommit,
+        1,
+        0,
+        3,
+        0,
+        2,
+        6,
+    };
+
+    network_example::World world;
+    const network_example::NetId player =
+        spawn_player(world, 1, glm::vec3{0.0f, 0.0f, 0.0f});
+    world.set_action_templates({rifle_action});
+    const auto entity = world.find_entity(player);
+    require(entity.has_value());
+    network_example::WeaponTuning& tuning =
+        world.registry().get<network_example::WeaponTuning>(*entity);
+    tuning.definitions[network_example::kWeaponSlot0].fire_action_template_id =
+        rifle_action.action_template_id;
+
+    // The intent on its own, the way the client sends it on the trigger frame.
+    KernelPlayerInput press{};
+    press.input_seq = 1;
+    press.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
+    press.selected_weapon = network_example::kWeaponSlot0;
+    press.action_intent = KernelActionIntent{
+        7101u, KernelActionBinding_PrimaryFire, 0u, 0u};
+
+    // Far past hold_input_timeout_ticks, as any press in a running session is.
+    constexpr std::uint32_t kPressTick = 500u;
+    std::vector<KernelEvent> events;
+    std::vector<network_example::ActionOutcome> outcomes;
+    network_example::simulate_weapons(
+        world,
+        queue(press),
+        network_example::WeaponSimulationContext{
+            nullptr, nullptr, nullptr, kPressTick, kPressTick, 0.0f, 0u, &outcomes},
+        &events);
+
+    for (const network_example::ActionOutcome& outcome : outcomes) {
+        require(outcome.reason != KernelLocalActionResultReason_TimedOut);
+    }
+    require(count_events(events, KernelEventType_FireConfirmed) == 1);
+    require(
+        world.registry()
+            .get<network_example::ActionRuntimeState>(*entity)
+            .action_instance_id == 7101u);
+}
+
 void action_timeline_drives_rocket_rifle_and_beam() {
     const network_example::RuntimeActionTemplate rocket_action{
         1001,
@@ -1527,6 +1599,7 @@ void weapon_fired_area_effect_survives_the_tick_it_lands() {
 }  // namespace
 
 int main() {
+    hold_action_pressed_late_is_not_cancelled_as_timed_out();
     action_timeline_drives_rocket_rifle_and_beam();
     finite_press_and_per_weapon_gates_are_independent();
     deterministic_projectile_paths_match_motion_models();

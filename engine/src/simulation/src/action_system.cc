@@ -523,7 +523,17 @@ std::vector<ActionCommit> simulate_actions(
             };
             input.last_input_tick = current_tick;
         }
-        admit_action(world, entity, input, current_tick, outcomes);
+        if (admit_action(world, entity, input, current_tick, outcomes)) {
+            // The intent that starts a hold action is itself input for that
+            // action. Without this it inherits whatever tick the last held input
+            // happened to land on -- zero on a fresh session -- and
+            // advance_action, which runs later in this same pass, reads that as
+            // "no input for a long time" and cancels the action as timed out on
+            // the very tick it began. Once the world is older than
+            // hold_input_timeout_ticks, which is a fraction of a second, no hold
+            // weapon can ever reach its first commit.
+            input.last_input_tick = current_tick;
+        }
         if (queued_input.input.action_input.action_instance_id != 0u &&
             queued_input.input.action_input.action_instance_id ==
                 action.action_instance_id) {
