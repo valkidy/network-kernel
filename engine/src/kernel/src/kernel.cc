@@ -3645,9 +3645,10 @@ bool KernelEngine::load_gameplay_catalog(
     if (!item_store_.set_templates(item_templates_, &item_validation_error)) {
         return false;
     }
-    world_.set_projectile_templates(runtime_projectile_templates);
-    world_.set_action_templates(runtime_action_templates);
-    world_.set_status_effect_templates(runtime_status_effect_templates);
+    runtime_projectile_templates_ = std::move(runtime_projectile_templates);
+    runtime_action_templates_ = std::move(runtime_action_templates);
+    runtime_status_effect_templates_ = std::move(runtime_status_effect_templates);
+    install_catalog_runtime_state();
     if (running_ &&
         (catalog_version_ != catalog.catalog_version ||
          catalog_hash_ != catalog.catalog_hash)) {
@@ -5797,6 +5798,32 @@ void KernelEngine::filter_pending_first_physics_actors(
         snapshot->entities.end());
 }
 
+/*
+ * Hands the loaded gameplay catalog to the world and the item store.
+ *
+ * Both are replaced wholesale by reset_runtime_state, and start_listen_server
+ * resets after the catalog has already been loaded -- which is the order the
+ * Unity host starts in. Without this the catalog survives only in the kernel's
+ * own tables: every query API still reports the templates while gameplay looks
+ * them up in the new, empty world and finds nothing, so `world_` reports no
+ * action template for any weapon and every fire and reload intent is rejected
+ * with MissingTemplate.
+ *
+ * Idempotent, and a no-op before any catalog has been loaded.
+ */
+void KernelEngine::install_catalog_runtime_state() {
+    world_.set_projectile_templates(runtime_projectile_templates_);
+    world_.set_action_templates(runtime_action_templates_);
+    world_.set_status_effect_templates(runtime_status_effect_templates_);
+    if (!item_templates_.empty()) {
+        // These definitions were validated when the catalog was loaded, so the
+        // only caller that can see a failure is that load; here the error is
+        // taken and dropped rather than checked.
+        std::string item_validation_error;
+        item_store_.set_templates(item_templates_, &item_validation_error);
+    }
+}
+
 void KernelEngine::reset_runtime_state(KernelMode mode) {
     config_.mode = mode;
     tick_loop_ = TickLoop(config_.tick);
@@ -5804,6 +5831,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     world_.set_action_graph_dedup_retention_ticks(
         action_graph_dedup_retention_ticks(config_.tick));
     item_store_ = ItemStore{};
+    install_catalog_runtime_state();
     client_inventory_snapshot_assemblies_.clear();
     client_inventory_sync_states_.clear();
     client_inventory_resync_pending_.clear();

@@ -338,9 +338,73 @@ void configure_local_player(KernelHandle* kernel, std::uint32_t player_net_id) {
     assert(Kernel_ServerSetEntityWeaponMechanics(kernel, player_net_id, &rocket));
 }
 
+/*
+ * The Unity host loads the gameplay catalog and only then starts the server,
+ * which is the reverse of main()'s order below. Starting resets the runtime
+ * state, so a catalog loaded first has to survive that reset.
+ *
+ * It used to survive only halfway: the kernel's own template tables came
+ * through, so every query API reported the catalog as loaded, while the world
+ * -- which is what gameplay reads -- was replaced empty. The result was a
+ * kernel that could name an action template it would not act on, and every
+ * weapon's fire and reload intent rejected with MissingTemplate.
+ */
+void catalog_loaded_before_the_server_starts_survives_the_reset() {
+    KernelConfig config{};
+    config.mode = KernelMode_ListenServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 30;
+
+    KernelHandle* kernel = Kernel_Create(&config);
+    assert(kernel != nullptr);
+    load_minimal_gameplay_catalog(kernel);
+    assert(Kernel_StartListenServer(kernel, 7778));
+
+    KernelLocalPlayerInfo local_info{};
+    assert(Kernel_GetLocalPlayerInfo(kernel, &local_info));
+    configure_local_player(kernel, local_info.player_net_id);
+    Kernel_Update(kernel, 1.0f / 30.0f);
+
+    KernelPlayerInput fire_input{};
+    fire_input.input_seq = 1;
+    fire_input.client_action_time_us = 33333;
+    fire_input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
+    fire_input.action_intent = KernelActionIntent{
+        3100u, KernelActionBinding_PrimaryFire, 0u, 0u};
+    fire_input.selected_weapon = 0;
+    Kernel_SubmitPlayerInput(kernel, 1, &fire_input);
+    Kernel_Update(kernel, 1.0f / 30.0f);
+
+    std::array<KernelLocalActionResult, 8> results{};
+    const std::uint32_t result_count = Kernel_PollLocalActionResults(
+        kernel,
+        results.data(),
+        static_cast<std::uint32_t>(results.size()));
+    for (std::uint32_t index = 0; index < result_count; ++index) {
+        assert(results[index].result != KernelLocalActionResultType_Rejected);
+    }
+
+    std::array<KernelEvent, 16> fire_events{};
+    const std::uint32_t fire_event_count = Kernel_PollEvents(
+        kernel,
+        fire_events.data(),
+        static_cast<std::uint32_t>(fire_events.size()));
+    bool saw_fire_confirmed = false;
+    for (std::uint32_t index = 0; index < fire_event_count; ++index) {
+        saw_fire_confirmed =
+            saw_fire_confirmed ||
+            fire_events[index].type == KernelEventType_FireConfirmed;
+    }
+    assert(saw_fire_confirmed);
+
+    Kernel_Destroy(kernel);
+}
+
 }  // namespace
 
 int main() {
+    catalog_loaded_before_the_server_starts_survives_the_reset();
+
     KernelConfig config{};
     config.mode = KernelMode_ListenServer;
     config.tick.server_tick_rate = 30;

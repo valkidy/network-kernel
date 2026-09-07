@@ -547,6 +547,7 @@ private:
     bool is_actor_pending_first_physics(NetId net_id) const;
     void filter_pending_first_physics_actors(WorldSnapshot* snapshot) const;
     void reset_runtime_state(KernelMode mode);
+    void install_catalog_runtime_state();
     bool prepare_server_physics(
         std::unique_ptr<physics::PhysicsWorld>* out_world);
     void clear_client_action_sync_state();
@@ -916,6 +917,12 @@ private:
     std::vector<KernelColliderTemplateDefinition> collider_templates_;
     std::vector<KernelActionTemplateDefinition> action_templates_;
     std::vector<KernelItemTemplateDefinition> item_templates_;
+    // The world's own form of the catalog. Kept here because the world is
+    // replaced wholesale on reset and has to be given them back; the tables
+    // above are the kernel's copies, which a reset does not touch.
+    std::vector<RuntimeProjectileTemplate> runtime_projectile_templates_;
+    std::vector<RuntimeActionTemplate> runtime_action_templates_;
+    std::vector<RuntimeStatusEffectTemplate> runtime_status_effect_templates_;
     std::vector<KernelPropPopulationRuleDefinition> prop_population_rules_;
     std::vector<RuntimeSkeletonAsset> skeleton_assets_;
     ItemStore item_store_;
