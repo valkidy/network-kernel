@@ -547,7 +547,6 @@ private:
     bool is_actor_pending_first_physics(NetId net_id) const;
     void filter_pending_first_physics_actors(WorldSnapshot* snapshot) const;
     void reset_runtime_state(KernelMode mode);
-    void install_catalog_runtime_state();
     bool prepare_server_physics(
         std::unique_ptr<physics::PhysicsWorld>* out_world);
     void clear_client_action_sync_state();
@@ -856,7 +855,13 @@ private:
 
     KernelConfig config_;
     TickLoop tick_loop_;
-    World world_;
+    // Declared ahead of world_, and deliberately outside it: the catalog is
+    // content loaded once, while a World is one session and is replaced every
+    // time a server starts. world_ borrows this rather than copying it, so a
+    // reset cannot leave the simulation reading a catalog the kernel no longer
+    // agrees with -- there is only one.
+    GameplayCatalogRuntime catalog_runtime_;
+    World world_{true, &catalog_runtime_};
     HistoryBuffer history_buffer_;
     DamagePipeline damage_pipeline_;
     std::uint32_t next_action_graph_sequence_ = 1;
@@ -915,14 +920,7 @@ private:
     std::vector<KernelActorTemplateDefinition> actor_templates_;
     std::vector<KernelProjectileTemplateDefinition> projectile_templates_;
     std::vector<KernelColliderTemplateDefinition> collider_templates_;
-    std::vector<KernelActionTemplateDefinition> action_templates_;
     std::vector<KernelItemTemplateDefinition> item_templates_;
-    // The world's own form of the catalog. Kept here because the world is
-    // replaced wholesale on reset and has to be given them back; the tables
-    // above are the kernel's copies, which a reset does not touch.
-    std::vector<RuntimeProjectileTemplate> runtime_projectile_templates_;
-    std::vector<RuntimeActionTemplate> runtime_action_templates_;
-    std::vector<RuntimeStatusEffectTemplate> runtime_status_effect_templates_;
     std::vector<KernelPropPopulationRuleDefinition> prop_population_rules_;
     std::vector<RuntimeSkeletonAsset> skeleton_assets_;
     ItemStore item_store_;

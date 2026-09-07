@@ -7,8 +7,8 @@
 
 namespace network_example {
 
-World::World(bool allow_standalone_collision)
-    : allow_standalone_collision_(allow_standalone_collision) {}
+World::World(bool allow_standalone_collision, const GameplayCatalogRuntime* catalog)
+    : allow_standalone_collision_(allow_standalone_collision), catalog_(catalog) {}
 
 World::~World() = default;
 World::World(World&&) noexcept = default;
@@ -66,51 +66,51 @@ World::projectile_interaction_rules() const {
     return projectile_interaction_rules_;
 }
 
+// Gives a World that was not handed a catalog one of its own to write into.
+// Only the standalone path reaches this; a World constructed with a catalog
+// borrows that one and is never asked to hold templates itself.
+GameplayCatalogRuntime& World::mutable_owned_catalog() {
+    if (owned_catalog_ == nullptr) {
+        owned_catalog_ = std::make_unique<GameplayCatalogRuntime>();
+    }
+    catalog_ = owned_catalog_.get();
+    return *owned_catalog_;
+}
+
 void World::set_projectile_templates(
     const std::vector<RuntimeProjectileTemplate>& projectile_templates) {
-    projectile_templates_ = projectile_templates;
+    mutable_owned_catalog().projectile_templates = projectile_templates;
 }
 
 const RuntimeProjectileTemplate* World::find_projectile_template(
     std::uint32_t projectile_template_id) const {
-    const auto found = std::find_if(
-        projectile_templates_.begin(),
-        projectile_templates_.end(),
-        [projectile_template_id](const RuntimeProjectileTemplate& projectile_template) {
-            return projectile_template.projectile_template_id == projectile_template_id;
-        });
-    return found == projectile_templates_.end() ? nullptr : &*found;
+    return catalog_ == nullptr
+        ? nullptr
+        : catalog_->find_projectile_template(projectile_template_id);
 }
 
 void World::set_action_templates(
     const std::vector<RuntimeActionTemplate>& action_templates) {
-    action_templates_ = action_templates;
+    mutable_owned_catalog().action_templates = action_templates;
 }
 
 const RuntimeActionTemplate* World::find_action_template(
     std::uint32_t action_template_id) const {
-    const auto found = std::find_if(
-        action_templates_.begin(),
-        action_templates_.end(),
-        [action_template_id](const RuntimeActionTemplate& action_template) {
-            return action_template.action_template_id == action_template_id;
-        });
-    return found == action_templates_.end() ? nullptr : &*found;
+    return catalog_ == nullptr
+        ? nullptr
+        : catalog_->find_action_template(action_template_id);
 }
 
 void World::set_status_effect_templates(
     const std::vector<RuntimeStatusEffectTemplate>& status_effect_templates) {
-    status_effect_templates_ = status_effect_templates;
+    mutable_owned_catalog().status_effect_templates = status_effect_templates;
 }
 
 const RuntimeStatusEffectTemplate* World::find_status_effect_template(
     std::uint32_t status_effect_id) const {
-    const auto found = std::find_if(
-        status_effect_templates_.begin(), status_effect_templates_.end(),
-        [status_effect_id](const RuntimeStatusEffectTemplate& status) {
-            return status.status_effect_id == status_effect_id;
-        });
-    return found == status_effect_templates_.end() ? nullptr : &*found;
+    return catalog_ == nullptr
+        ? nullptr
+        : catalog_->find_status_effect_template(status_effect_id);
 }
 
 std::uint32_t World::allocate_status_instance_id() {
