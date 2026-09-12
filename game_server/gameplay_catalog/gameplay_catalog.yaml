@@ -87,7 +87,7 @@ patrols:
       - entity_template: gingerbread_mage
         min: 1
         max: 3
-      - entity_template: gingerbread
+      - entity_template: gingerbread_mushroom
         min: 6
         max: 20
     # Three abreast, so 24 members stand eight ranks deep -- about 10 m of
