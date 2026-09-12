@@ -5,6 +5,11 @@
 
 0.7.0 release notes:
 
+- refreshes Unity package artifact for kernel ABI 87
+
+
+0.7.0 release notes:
+
 - rebuilds Unity package for kernel ABI 87
 
 
