@@ -12850,7 +12850,18 @@ void KernelEngine::finalize_server_action_outcomes(
             session->active_action_commit_count =
                 outcome.confirmed_commit_count;
         }
-        if (outcome.type == ActionOutcomeType::Corrected && session != nullptr &&
+        // Rejected belongs here beside Corrected. The session claims the
+        // instance optimistically when it forwards the intent, before the
+        // simulation has had a say; if the simulation then refuses it -- most
+        // often Busy, because the previous action is still in its recovery
+        // window -- that claim has to be released again. Leaving it set wedges
+        // the session for good: every later intent, fire and reload alike, is
+        // refused as Busy by the check above while the simulation's own action
+        // state sits idle at phase None. Only a reconnect cleared it, because
+        // the claim outlives the actor it was made for.
+        if ((outcome.type == ActionOutcomeType::Corrected ||
+             outcome.type == ActionOutcomeType::Rejected) &&
+            session != nullptr &&
             session->active_action_instance_id == outcome.action_instance_id) {
             session->active_action_instance_id = 0u;
             session->active_action_template_id = 0u;

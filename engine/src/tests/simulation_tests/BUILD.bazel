@@ -113,3 +113,9 @@ cc_binary(
     srcs = ["projectile_query_benchmark.cc"],
     deps = ["//engine/src/simulation:simulation"],
 )
+
+cc_test(
+    name = "action_tap_stall_test",
+    srcs = ["action_tap_stall_test.cc"],
+    deps = ["//engine/src/simulation:simulation"],
+)

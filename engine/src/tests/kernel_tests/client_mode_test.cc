@@ -4268,6 +4268,146 @@ void server_routes_status_presentation_only_to_remote_observer() {
     require(!target_owner_received);
 }
 
+/*
+ * A session claims an action instance the moment it forwards the intent, before
+ * the simulation has had a say. When the simulation refuses that intent -- most
+ * often Busy, because the previous action is still inside its recovery window,
+ * which is all a player tapping the trigger has to do to arrive early -- the
+ * claim has to be released again.
+ *
+ * It used to be released only for Completed and Corrected outcomes, never for
+ * Rejected. One refused intent therefore left the claim standing for the life of
+ * the session, and every later intent -- reload as much as fire -- was refused
+ * as Busy by the session itself, while the simulation's own action state sat
+ * idle at phase None. Nothing short of reconnecting cleared it, because the
+ * claim outlived the actor that it was made for: even respawning kept it.
+ */
+void rejected_action_intent_releases_the_session_claim() {
+    constexpr int kGapTicks = 2;
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine server(config);
+    server.reset_runtime_state(KernelMode_DedicatedServer);
+
+    auto loopback = std::make_unique<network_example::LoopbackTransport>();
+    require(loopback->StartServer(7788));
+    server.transport_ = std::move(loopback);
+
+    const network_example::NetId owner_actor =
+        server.world_.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
+    const auto owner_entity = server.world_.find_entity(owner_actor);
+    require(owner_entity.has_value());
+
+    network_example::WeaponTuning& tuning =
+        server.world_.registry()
+            .get<network_example::WeaponTuning>(*owner_entity);
+    tuning.configured[0] = true;
+    tuning.definitions[0] = network_example::WeaponMechanicsDefinition{};
+    tuning.definitions[0].id = 0;
+    tuning.definitions[0].mode = network_example::WeaponFireMode::kHitscan;
+    tuning.definitions[0].magazine_size = 3000;
+    tuning.definitions[0].damage = 1;
+    tuning.definitions[0].max_range = 20.0f;
+    tuning.definitions[0].fire_action_template_id = 1001u;
+    tuning.definitions[0].reload_action_template_id = 1000u;
+    // The real rifle_fire shape: it holds the actor in recovery for four ticks
+    // after the action ends, which is the window an early intent lands in.
+    server.world_.set_action_templates({
+        network_example::RuntimeActionTemplate{
+            1000u, KernelActionTriggerMode_Press, 0u, 0u, 30u, 0u, 1u, 0u, 0u},
+        network_example::RuntimeActionTemplate{
+            1001u,
+            KernelActionTriggerMode_Hold,
+            static_cast<std::uint8_t>(
+                KernelActionTemplateFlag_CancelOnRelease |
+                KernelActionTemplateFlag_CancelOnDeath |
+                KernelActionTemplateFlag_CancelOnWeaponChange |
+                KernelActionTemplateFlag_CancelBeforeFirstCommit),
+            1u,
+            0u,
+            3u,
+            0u,
+            4u,
+            6u},
+    });
+
+    network_example::WeaponState& owner_weapon =
+        server.world_.registry()
+            .get<network_example::WeaponState>(*owner_entity);
+    owner_weapon.weapon_slot_count = 1;
+    owner_weapon.weapon_ids[0] = 0;
+    owner_weapon.ammo[0] = 3000;
+    network_example::Health& owner_health =
+        server.world_.registry().get<network_example::Health>(*owner_entity);
+    owner_health.hp = 100;
+    owner_health.max_hp = 100;
+
+    network_example::KernelEngine::PeerSession owner{};
+    owner.peer = 1;
+    owner.player = owner_actor;
+    owner.welcomed = true;
+    owner.relevant_entities.insert(owner_actor);
+    server.peer_sessions_.push_back(owner);
+
+    const auto submit = [&](std::uint32_t action_instance_id) {
+        KernelPlayerInput input{};
+        input.input_seq = action_instance_id;
+        input.selected_weapon = 0;
+        input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
+        input.action_intent = KernelActionIntent{
+            action_instance_id, KernelActionBinding_PrimaryFire, 0u, 0u};
+        auto* session = server.find_session(1);
+        server.prepare_server_action_intent(session, &input);
+        server.pending_inputs_.push_back(
+            network_example::QueuedInput{1, input, 0, 0, false, 0});
+        server.simulate_tick();
+    };
+
+    const auto release = [&](std::uint32_t action_instance_id) {
+        KernelPlayerInput input{};
+        input.input_seq = action_instance_id;
+        input.selected_weapon = 0;
+        input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
+        input.action_input =
+            KernelActionInput{action_instance_id, 0u, 0u, 0u};
+        server.pending_inputs_.push_back(
+            network_example::QueuedInput{1, input, 0, 0, false, 0});
+        server.simulate_tick();
+    };
+
+    // Tap once and let go, then tap again straight away, while the first action
+    // is still inside its four-tick recovery window. The simulation refuses the
+    // second intent -- correctly.
+    submit(7101u);
+    release(7101u);
+    // Let the weapon cooldown lapse while the actor is still in recovery: the
+    // session gate and the simulation gate run off different clocks, and this is
+    // the window between them.
+    for (int gap = 0; gap < kGapTicks; ++gap) {
+        server.simulate_tick();
+    }
+    submit(7102u);
+    // The simulation refused that intent -- it was still in recovery -- so the
+    // session must not still be holding the claim it made before asking.
+    const auto* session_after = server.find_session(1);
+    require(session_after != nullptr);
+    require(session_after->active_action_instance_id != 7102u);
+
+    // Drain the recovery window with no input at all.
+    for (int idle = 0; idle < 12; ++idle) {
+        server.simulate_tick();
+    }
+
+    // A fresh intent, with nothing whatsoever in its way, has to be admitted.
+    submit(7103u);
+    const network_example::ActionRuntimeState& action_state =
+        server.world_.registry()
+            .get<network_example::ActionRuntimeState>(*owner_entity);
+    require(action_state.action_instance_id == 7103u);
+}
+
 void server_routes_fire_result_to_owner_and_presentation_to_observer() {
     KernelConfig config{};
     config.mode = KernelMode_DedicatedServer;
@@ -4792,6 +4932,7 @@ int main() {
     owner_action_correction_timeout_and_reset_converge();
     reliable_local_status_state_replaces_and_rejects_stale_revision();
     server_routes_status_presentation_only_to_remote_observer();
+    rejected_action_intent_releases_the_session_claim();
     server_routes_fire_result_to_owner_and_presentation_to_observer();
     owner_action_prediction_and_discrete_interpolation();
     native_fixed_tick_coalesces_client_input_and_owns_sequence();
