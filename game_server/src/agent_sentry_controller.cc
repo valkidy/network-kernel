@@ -68,6 +68,11 @@ void AgentSentryController::tick(
                     config.patrol_input_magnitude,
                 0.0f,
             };
+            // A passive patroller never aims at anything, but its input still
+            // carries an aim: the kernel reads a zero aim_dir as world +X and
+            // replicates it, which would point the sentry east however its cone
+            // was placed. It looks where it looks.
+            input.aim_dir = perception.vision_forward;
             if (Kernel_ServerSubmitEntityInput(kernel, agent.net_id, &input)) {
                 ++agent.next_input_seq;
             }

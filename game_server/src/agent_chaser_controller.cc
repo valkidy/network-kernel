@@ -307,6 +307,13 @@ void AgentChaserController::tick(
             // this as a weapon change and cancels itself.
             input.selected_weapon =
                 static_cast<std::uint8_t>(sentry_config.weapon_id);
+            // And so must the aim. A zero aim_dir is not "no opinion": the
+            // kernel reads it as aiming down world +X and replicates that, so
+            // every tick the executor declined to fire on -- reloading, waiting
+            // out a ballistic retry, closing the last metres into range -- used
+            // to turn the agent away from the target it is shooting at.
+            input.aim_dir = actor_executor.input_aim_direction(
+                kernel, agent.net_id, perception);
             if (Kernel_ServerEnqueueEntityInput(
                     kernel,
                     KernelCommandSource_AI,

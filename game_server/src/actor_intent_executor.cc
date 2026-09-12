@@ -30,6 +30,16 @@ KernelVec3 normalized_direction(const KernelVec3& from, const KernelVec3& to) {
     return scale(delta, 1.0f / std::sqrt(distance_squared));
 }
 
+KernelVec3 normalized_or_default(const KernelVec3& value) {
+    const float magnitude_squared = length_squared(value);
+    if (magnitude_squared <= 0.0001f * 0.0001f) {
+        // The same direction the kernel reads a zero aim as, spelled out here
+        // so an agent with no vision cone keeps the facing it always had.
+        return KernelVec3{1.0f, 0.0f, 0.0f};
+    }
+    return scale(value, 1.0f / std::sqrt(magnitude_squared));
+}
+
 void add_missing(
     ai::CapabilityReport* report,
     std::string_view type,
@@ -130,31 +140,25 @@ ActorIntentExecutionResult ActorIntentExecutor::execute(
         binding_id = KernelActionBinding_Reload;
     }
 
-    KernelVec3 launch_position = perception.self_state.position;
-    Kernel_ServerGetProjectileLaunchPosition(
-        kernel,
-        actor->net_id,
-        &launch_position);
-    KernelVec3 aim_direction =
-        normalized_direction(launch_position, target_position);
-    if (intent.type == "AttackTarget" && config_.ballistic_aim.enabled) {
-        const float fixed_delta_seconds = Kernel_GetFixedDeltaSeconds(kernel);
-        const float max_flight_seconds =
-            static_cast<float>(config_.ballistic_aim.lifetime_ticks) *
-            fixed_delta_seconds;
-        const std::optional<BallisticAimSolution> ballistic_solution =
-            solve_low_ballistic_aim(
-                launch_position,
-                target_position,
-                config_.ballistic_aim.speed,
-                config_.ballistic_aim.gravity,
-                max_flight_seconds);
-        if (!ballistic_solution.has_value()) {
+    KernelVec3 aim_direction{1.0f, 0.0f, 0.0f};
+    if (intent.type == "AttackTarget") {
+        const std::optional<KernelVec3> solved_aim = solve_aim_direction(
+            kernel,
+            actor->net_id,
+            perception.self_state.position,
+            target_position);
+        if (!solved_aim.has_value()) {
             add_missing(&result.report, "data", "Data.BallisticAimSolution");
             result.ballistic_solution_unavailable = true;
             return result;
         }
-        aim_direction = ballistic_solution->aim_direction;
+        aim_direction = *solved_aim;
+    } else {
+        // A reload is not aimed at anything, but the input still carries an
+        // aim, and leaving it zero would face the agent east for the reload.
+        // Where it is already looking is the honest answer.
+        aim_direction =
+            input_aim_direction(kernel, actor->net_id, perception);
     }
 
     KernelPlayerInput input{};
@@ -191,6 +195,61 @@ ActorIntentExecutionResult ActorIntentExecutor::execute(
         add_missing(&result.report, "executor", "Executor.ActorIntent");
     }
     return result;
+}
+
+std::optional<KernelVec3> ActorIntentExecutor::solve_aim_direction(
+    KernelHandle* kernel,
+    std::uint32_t shooter_net_id,
+    const KernelVec3& shooter_position,
+    const KernelVec3& target_position) const {
+    if (kernel == nullptr) {
+        return std::nullopt;
+    }
+    KernelVec3 launch_position = shooter_position;
+    Kernel_ServerGetProjectileLaunchPosition(
+        kernel,
+        shooter_net_id,
+        &launch_position);
+    if (!config_.ballistic_aim.enabled) {
+        return normalized_direction(launch_position, target_position);
+    }
+    const float max_flight_seconds =
+        static_cast<float>(config_.ballistic_aim.lifetime_ticks) *
+        Kernel_GetFixedDeltaSeconds(kernel);
+    const std::optional<BallisticAimSolution> ballistic_solution =
+        solve_low_ballistic_aim(
+            launch_position,
+            target_position,
+            config_.ballistic_aim.speed,
+            config_.ballistic_aim.gravity,
+            max_flight_seconds);
+    if (!ballistic_solution.has_value()) {
+        return std::nullopt;
+    }
+    return ballistic_solution->aim_direction;
+}
+
+KernelVec3 ActorIntentExecutor::input_aim_direction(
+    KernelHandle* kernel,
+    std::uint32_t shooter_net_id,
+    const SentryPerceptionSnapshot& perception) const {
+    if (perception.has_visible_target && perception.has_target_position) {
+        const std::optional<KernelVec3> solved_aim = solve_aim_direction(
+            kernel,
+            shooter_net_id,
+            perception.self_state.position,
+            perception.target_position);
+        if (solved_aim.has_value()) {
+            return *solved_aim;
+        }
+        // No arc reaches: the agent is still looking at the target it cannot
+        // hit, so the straight line to it beats snapping back to the cone.
+        KernelVec3 launch_position = perception.self_state.position;
+        Kernel_ServerGetProjectileLaunchPosition(
+            kernel, shooter_net_id, &launch_position);
+        return normalized_direction(launch_position, perception.target_position);
+    }
+    return normalized_or_default(perception.vision_forward);
 }
 
 }  // namespace network_example::game_server
