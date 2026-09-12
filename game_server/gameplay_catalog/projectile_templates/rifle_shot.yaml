@@ -13,7 +13,7 @@ movement_model: linear
 sync_mode: local_predicted_deterministic
 hit_response: destroy
 damage_shape: direct_hit
-damage: 25
+damage: 45
 # actor | limb: a rifle shot resolves against a rig's bones as well as its body,
 # which is what makes shooting a monster's leg mean anything. terrain and
 # static_obstacle keep walls stopping the shot.
