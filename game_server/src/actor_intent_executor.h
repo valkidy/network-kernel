@@ -2,6 +2,7 @@
 #define GAME_SERVER_ACTOR_INTENT_EXECUTOR_H_
 
 #include <cstdint>
+#include <optional>
 
 #include "ai_intent.h"
 #include "capability_registry.h"
@@ -37,6 +38,35 @@ public:
         const ai::ScopedIntent& intent,
         const SentryPerceptionSnapshot& perception,
         KernelVec2 move = KernelVec2{0.0f, 0.0f}) const;
+
+    // The direction a shot at `target_position` leaves along: from the muzzle,
+    // and lofted when this actor's weapon is ballistic. Empty only when a
+    // ballistic weapon has no arc that reaches the target.
+    //
+    // `shooter_position` stands in for the muzzle if the kernel cannot place
+    // one, which is how the aim was derived before there was a muzzle to ask
+    // for.
+    std::optional<KernelVec3> solve_aim_direction(
+        KernelHandle* kernel,
+        std::uint32_t shooter_net_id,
+        const KernelVec3& shooter_position,
+        const KernelVec3& target_position) const;
+
+    // The aim to stamp on any input this actor submits, firing or not.
+    //
+    // Not optional, and not zero: the kernel reads an input whose aim_dir is
+    // zero as aiming down world +X, and that aim is replicated -- the client
+    // turns the body with it and drives the aim blend from it. An agent that
+    // submits one aimless input while reloading, waiting out a ballistic retry
+    // or walking back into range therefore snaps round to face east for as long
+    // as it is not shooting, which is exactly the ticks where nothing else is
+    // pointing it at anything. Every input carries the direction the agent is
+    // looking along instead: the shot it would fire at a visible target, or the
+    // way its vision cone already points when it has none.
+    KernelVec3 input_aim_direction(
+        KernelHandle* kernel,
+        std::uint32_t shooter_net_id,
+        const SentryPerceptionSnapshot& perception) const;
 
 private:
     ActorIntentExecutorConfig config_;

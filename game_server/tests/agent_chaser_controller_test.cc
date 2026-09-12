@@ -356,6 +356,55 @@ network_example::game_server::AgentChaserConfig chaser_config() {
     return config;
 }
 
+// The most recently spawned projectile, which is the one the shot under test
+// produced: earlier sub-tests leave theirs in flight for their whole lifetime,
+// and net ids are handed out in spawn order.
+KernelServerEntityState newest_projectile(KernelHandle* kernel) {
+    std::array<KernelServerEntityState, 32> states{};
+    for (KernelServerEntityState& state : states) {
+        state.struct_size = sizeof(state);
+    }
+    const std::uint32_t count = Kernel_ServerQueryEntities(
+        kernel,
+        KernelEntityType_Projectile,
+        states.data(),
+        static_cast<std::uint32_t>(states.size()));
+    require(count > 0);
+    const KernelServerEntityState* newest = &states[0];
+    for (std::uint32_t index = 1; index < count && index < states.size(); ++index) {
+        if (states[index].net_id >= newest->net_id) {
+            newest = &states[index];
+        }
+    }
+    return *newest;
+}
+
+// The kernel's actors face +X at the identity rotation -- the same direction it
+// reads a zero aim as, and the direction a vision cone with no authored forward
+// looks along.
+KernelVec3 facing_forward(const KernelQuat& rotation) {
+    const float x = rotation.x;
+    const float y = rotation.y;
+    const float z = rotation.z;
+    const float w = rotation.w;
+    return KernelVec3{
+        1.0f - 2.0f * (y * y + z * z),
+        2.0f * (x * y + z * w),
+        2.0f * (x * z - y * w),
+    };
+}
+
+// Cosine between two directions flattened onto the ground plane. Facing is a
+// yaw and the aim is not, so the two are only ever comparable here.
+float horizontal_alignment(const KernelVec3& lhs, const KernelVec3& rhs) {
+    const float lhs_length = std::sqrt(lhs.x * lhs.x + lhs.z * lhs.z);
+    const float rhs_length = std::sqrt(rhs.x * rhs.x + rhs.z * rhs.z);
+    if (lhs_length <= 0.0001f || rhs_length <= 0.0001f) {
+        return 0.0f;
+    }
+    return (lhs.x * rhs.x + lhs.z * rhs.z) / (lhs_length * rhs_length);
+}
+
 // Patrol tuning layered on the same chase tuning the rest of the file uses, so
 // a difference in behaviour below is the squad and not a retuned chase.
 network_example::game_server::AgentChaserConfig patrol_config() {
@@ -697,6 +746,83 @@ void a_ranged_chaser_fires_while_it_is_still_closing(
     require(!(*agents)[0].chase_holding);
 }
 
+// Every input an agent submits carries an aim, including the ones it does not
+// shoot on.
+//
+// That aim is replicated, and it is the agent's view direction on the client:
+// the body is turned along it and the aim blend is driven from it. So it has to
+// agree with the direction the agent's projectiles leave along -- on every
+// tick, not only the ones a shot gets away on. A KernelPlayerInput that leaves
+// aim_dir zero does not say "no opinion": the kernel reads it as aiming down
+// world +X. The chaser submits exactly one input per tick and only some of them
+// come from the executor, so the aimless ones used to swing the agent round to
+// face east for every tick it spent reloading -- or waiting out a ballistic
+// retry, or closing back into range -- while the shots either side of them left
+// along the target.
+void an_agents_aim_holds_its_target_through_the_ticks_it_cannot_fire(
+    KernelHandle* kernel,
+    std::uint32_t agent_net_id,
+    std::uint32_t player_net_id,
+    std::vector<network_example::game_server::AgentRuntimeState>* agents) {
+    network_example::game_server::AgentChaserConfig config = chaser_config();
+    config.chase.stop_distance_meters = 6.0f;
+    config.chase.resume_distance_meters = 8.0f;
+    config.chase.attack_range_meters = 12.0f;
+    const network_example::game_server::AgentChaserController controller(config);
+    reset_patrol_agent(
+        kernel, agent_net_id, player_net_id, agents, {0.0f, 0.0f, 0.0f});
+    (*agents)[0].patrol.has_slot = false;
+
+    // Off the +X axis the cone starts on, which is the whole point: an aim that
+    // has stopped tracking reads as world +X, and a target on the axis would
+    // make that indistinguishable from an aim that is still on it.
+    set_position(kernel, player_net_id, {8.0f, 0.0f, 5.0f});
+    Kernel_Update(kernel, kFixedDelta);
+    for (int tick = 0; tick < 6; ++tick) {
+        run_frame(kernel, controller, agents);
+    }
+    require(
+        (*agents)[0].sentry.state ==
+        network_example::game_server::AgentSentryState::kAttack);
+
+    // One round left, so the magazine runs out mid-run and the reload -- the
+    // stretch of ticks the executor declines to submit anything for -- happens
+    // inside the loop below rather than before it.
+    set_combat(kernel, agent_net_id, 1);
+    bool reloaded = false;
+    bool fired = false;
+    std::uint16_t ammo = query_state(kernel, agent_net_id).ammo[0];
+    for (int tick = 0; tick < 30; ++tick) {
+        run_frame(kernel, controller, agents);
+        const KernelServerEntityState state = query_state(kernel, agent_net_id);
+        const KernelVec3 target = query_state(kernel, player_net_id).position;
+        if (state.ammo[0] < ammo) {
+            // The end of the chain the aim is only a proxy for: a round that
+            // just left travels the way the body is pointing.
+            fired = true;
+            require(
+                horizontal_alignment(
+                    newest_projectile(kernel).velocity,
+                    facing_forward(state.rotation)) > 0.999f);
+        }
+        ammo = state.ammo[0];
+        const KernelVec3 toward_target{
+            target.x - state.position.x,
+            0.0f,
+            target.z - state.position.z,
+        };
+        reloaded = reloaded || state.is_reloading != 0u;
+        // Where it is shooting...
+        require(horizontal_alignment(state.aim_direction, toward_target) > 0.999f);
+        // ...and where it is looking are the same direction.
+        require(
+            horizontal_alignment(
+                facing_forward(state.rotation), state.aim_direction) > 0.999f);
+    }
+    require(reloaded);
+    require(fired);
+}
+
 }  // namespace
 
 int main() {
@@ -822,6 +948,8 @@ int main() {
     a_returning_member_walks_to_the_squad_not_to_where_it_left(
         kernel, agent_net_id, player_net_id, &agents);
     a_leash_breaks_off_a_pursuit_that_drags_too_far(
+        kernel, agent_net_id, player_net_id, &agents);
+    an_agents_aim_holds_its_target_through_the_ticks_it_cannot_fire(
         kernel, agent_net_id, player_net_id, &agents);
 
     Kernel_Destroy(kernel);
