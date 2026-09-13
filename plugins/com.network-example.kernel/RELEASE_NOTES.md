@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- aligns Unity plugin API with kernel ABI 88
+
+
+0.7.0 release notes:
+
 - aligns Unity plugin API with kernel ABI 88: adds `Kernel.TryGetLocalWeaponState`
   and `KernelLocalWeaponState`, `KernelConstants.CapabilityLocalWeaponState` and
   the two `LocalWeaponStateFlag*` bits, and appends `local_weapon_state_size` to
