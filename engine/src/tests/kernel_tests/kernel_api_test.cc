@@ -166,6 +166,14 @@ int main() {
     assert(abi_info.skeleton_leg_definition_size ==
            sizeof(KernelSkeletonLegDefinition));
     assert(abi_info.status_effect_view_size == sizeof(KernelStatusEffectView));
+    // Fetched again under require: the call above sits inside assert(), which
+    // an opt build compiles out along with the call itself.
+    KernelAbiInfo weapon_abi_info{};
+    require(Kernel_GetAbiInfo(&weapon_abi_info, sizeof(weapon_abi_info)));
+    require(weapon_abi_info.local_weapon_state_size ==
+            sizeof(KernelLocalWeaponState));
+    require((weapon_abi_info.capability_flags &
+             KERNEL_CAPABILITY_LOCAL_WEAPON_STATE) != 0u);
     assert((abi_info.capability_flags &
             KERNEL_CAPABILITY_ITEM_PROP_SYSTEM) != 0u);
     assert(abi_info.weapon_mechanics_definition_size ==
@@ -501,6 +509,10 @@ int main() {
     KernelLocalPlayerInfo local_info{};
     assert(!Kernel_GetLocalPlayerInfo(nullptr, &local_info));
     assert(!Kernel_GetLocalPlayerInfo(nullptr, nullptr));
+    KernelLocalWeaponState local_weapon{};
+    local_weapon.struct_size = sizeof(local_weapon);
+    require(!Kernel_GetLocalWeaponState(nullptr, &local_weapon));
+    require(!Kernel_GetLocalWeaponState(nullptr, nullptr));
     KernelServerEntityCreateInfo create_info{};
     create_info.struct_size = sizeof(create_info);
     create_info.entity_type = 1;

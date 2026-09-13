@@ -5,6 +5,7 @@ EXPORTS
     Kernel_GetAbiInfo
     Kernel_GetBuildInfo
     Kernel_GetLocalPlayerInfo
+    Kernel_GetLocalWeaponState
     Kernel_LANDiscovery_Create
     Kernel_LANDiscovery_Destroy
     Kernel_LANDiscovery_StartServer

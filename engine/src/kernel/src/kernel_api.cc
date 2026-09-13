@@ -242,6 +242,7 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
         out_info->skeleton_leg_definition_size =
             sizeof(KernelSkeletonLegDefinition);
         out_info->status_effect_view_size = sizeof(KernelStatusEffectView);
+        out_info->local_weapon_state_size = sizeof(KernelLocalWeaponState);
         out_info->capability_flags =
             KERNEL_CAPABILITY_CLIENT_MODE |
             KERNEL_CAPABILITY_LISTEN_SERVER_MODE |
@@ -284,7 +285,8 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             KERNEL_CAPABILITY_ACTION_INTENTS |
             KERNEL_CAPABILITY_ITEM_PROP_SYSTEM |
             KERNEL_CAPABILITY_SKELETON_RENDER_STATES |
-            KERNEL_CAPABILITY_SKELETON_BIND_POSE;
+            KERNEL_CAPABILITY_SKELETON_BIND_POSE |
+            KERNEL_CAPABILITY_LOCAL_WEAPON_STATE;
         return true;
     });
 }
@@ -296,6 +298,15 @@ bool Kernel_GetBuildInfo(KernelBuildInfo* out_info, uint32_t out_info_size) {
         }
         *out_info = network_example::current_build_info();
         return true;
+    });
+}
+
+bool Kernel_GetLocalWeaponState(
+    KernelHandle* kernel,
+    KernelLocalWeaponState* out_state) {
+    return abi_call("Kernel_GetLocalWeaponState", false, [&]() {
+        return kernel != nullptr &&
+            kernel->engine->local_weapon_state(out_state);
     });
 }
 

@@ -201,6 +201,7 @@ public:
         KernelColliderBindingDefinition* out_bindings,
         std::uint32_t max_bindings) const;
     KernelLocalPlayerInfo local_player_info() const;
+    bool local_weapon_state(KernelLocalWeaponState* out_state) const;
     bool server_create_entity(
         const KernelServerEntityCreateInfo& create_info,
         NetId* out_net_id);
@@ -501,6 +502,34 @@ private:
         std::size_t offset = 0;
     };
 
+    // One primary-fire commit this client predicted, charged against the
+    // magazine until a snapshot's last_processed_input_seq reaches the input
+    // that caused it. Keyed by input rather than by tick because that is the
+    // one clock both sides agree on: the server consumes inputs in order, and a
+    // snapshot says exactly how far it got.
+    struct PredictedAmmoSpend {
+        std::uint32_t input_seq = 0;
+        std::uint32_t action_instance_id = 0;
+        std::uint8_t weapon_id = 0;
+        std::uint16_t cost = 0;
+    };
+
+    // The own player's weapon block from the newest owner snapshot that carried
+    // one. A snapshot without the block leaves it alone: the block is missing
+    // because the server had nothing to report, not because the value changed.
+    struct AuthoritativeLocalWeapon {
+        bool valid = false;
+        std::uint32_t server_tick = 0;
+        std::uint8_t active_weapon_slot = 0;
+        std::uint8_t flags = 0;
+        std::uint16_t ammo = 0;
+    };
+
+    // Unacknowledged spends are bounded by the input window the server has not
+    // caught up with, which is a handful of snapshots. The cap only matters if
+    // acknowledgement stops altogether, and then the oldest are the least true.
+    static constexpr std::size_t kMaxPredictedAmmoSpends = 256;
+
     struct OutstandingPredictedAction {
         std::uint32_t action_instance_id = 0;
         std::uint64_t last_activity_us = 0;
@@ -645,6 +674,15 @@ private:
         const KernelStaticCollisionSceneConfig& config);
     void diagnose_client_snapshot_metadata_waits();
     void reconcile_local_prediction(const WorldSnapshot& snapshot);
+    void apply_authoritative_local_weapon(const WorldSnapshot& snapshot);
+    void record_predicted_ammo_spend(
+        std::uint32_t input_seq,
+        std::uint32_t action_instance_id,
+        std::uint8_t weapon_id,
+        std::uint16_t cost);
+    void drop_predicted_ammo_spends(
+        std::uint32_t action_instance_id,
+        std::uint32_t keep_count);
     void reconcile_predicted_projectiles(const WorldSnapshot& snapshot);
     bool emit_client_input_for_tick();
     void process_client_input_command(PeerId peer, const KernelPlayerInput& input);
@@ -916,6 +954,8 @@ private:
         outstanding_predicted_actions_;
     std::unordered_map<std::uint32_t, KernelLocalActionResult>
         applied_local_action_results_;
+    std::vector<PredictedAmmoSpend> predicted_ammo_spends_;
+    AuthoritativeLocalWeapon authoritative_local_weapon_;
     std::vector<KernelEntityTemplateDefinition> entity_templates_;
     std::vector<KernelActorTemplateDefinition> actor_templates_;
     std::vector<KernelProjectileTemplateDefinition> projectile_templates_;

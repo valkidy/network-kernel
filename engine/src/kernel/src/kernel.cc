@@ -2308,6 +2308,9 @@ void KernelEngine::update(float delta_seconds) {
             continue;
         }
         const std::uint32_t expired_action_id = outstanding->first;
+        // Nothing came back for it, so nothing it predicted is known to have
+        // happened; the next owner snapshot says what did.
+        drop_predicted_ammo_spends(expired_action_id, 0u);
         if (const auto actor = world_.find_entity(local_player_net_id_);
             actor.has_value() && world_.registry().all_of<WeaponState>(*actor)) {
             WeaponState& weapon = world_.registry().get<WeaponState>(*actor);
@@ -2519,6 +2522,19 @@ void KernelEngine::process_client_input_command(
     }
     if (predicted_commit) {
         predict_local_projectile(input);
+        // Recorded here, once per submitted input, and not inside
+        // predict_local_action: reconciliation replays pending inputs through
+        // that function, and a spend recorded there would be charged again on
+        // every snapshot.
+        if (const RuntimeActionTemplate* action_template =
+                catalog_runtime_.find_action_template(
+                    predicted_local_entity_.action_template_id)) {
+            record_predicted_ammo_spend(
+                input.input_seq,
+                predicted_local_entity_.action_instance_id,
+                predicted_action_weapon_id_,
+                action_template->ammo_cost_per_commit);
+        }
     }
 
     const std::vector<std::uint8_t> packet =
@@ -5876,6 +5892,8 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     predicted_projectile_collision_warning_emitted_ = false;
     outstanding_predicted_actions_.clear();
     applied_local_action_results_.clear();
+    predicted_ammo_spends_.clear();
+    authoritative_local_weapon_ = AuthoritativeLocalWeapon{};
     debug_records_.clear();
     vision_configs_.clear();
     vision_states_.clear();
@@ -6672,6 +6690,12 @@ void KernelEngine::handle_client_local_action_results(
             has_client_snapshot_ &&
             latest_client_snapshot_.header.server_tick >= result.authoritative_tick;
         if (terminal) {
+            // The server stopped this action after confirmed_commit_count
+            // commits. Those spent ammo and are still owed until a snapshot
+            // acknowledges them; anything predicted past them never happened.
+            drop_predicted_ammo_spends(
+                result.action_instance_id,
+                result.confirmed_commit_count);
             for (PendingPredictionInput& pending : pending_prediction_inputs_) {
                 KernelPlayerInput& input = pending.input;
                 if (input.action_intent.action_instance_id ==
@@ -7418,6 +7442,8 @@ void KernelEngine::clear_client_action_sync_state() {
     predicted_projectiles_.clear();
     outstanding_predicted_actions_.clear();
     applied_local_action_results_.clear();
+    predicted_ammo_spends_.clear();
+    authoritative_local_weapon_ = AuthoritativeLocalWeapon{};
     pending_presentation_events_.clear();
     local_action_results_.clear();
     remote_action_presentation_events_.clear();
@@ -7686,6 +7712,9 @@ void KernelEngine::handle_client_snapshot(WorldSnapshot snapshot) {
     }
     store_client_snapshot(std::move(snapshot));
     diagnose_client_snapshot_metadata_waits();
+    // Ahead of the prediction_failed_ return: the magazine the server reports is
+    // true whether or not this client can still predict movement.
+    apply_authoritative_local_weapon(latest_client_snapshot_);
     if (prediction_failed_) {
         return;
     }
@@ -8227,6 +8256,142 @@ void KernelEngine::fail_client_prediction(std::string_view diagnostic) {
     push_event(KernelEventType_Error, local_player_net_id_, kServerPeerId, 31);
     clear_client_session();
     prediction_failed_ = true;
+}
+
+bool KernelEngine::local_weapon_state(KernelLocalWeaponState* out_state) const {
+    if (out_state == nullptr ||
+        out_state->struct_size < sizeof(KernelLocalWeaponState) ||
+        local_player_net_id_ == 0u) {
+        return false;
+    }
+    const std::optional<entt::entity> actor = world_.find_entity(local_player_net_id_);
+    const WeaponState* weapon =
+        actor.has_value() && world_.registry().all_of<WeaponState>(*actor)
+            ? &world_.registry().get<WeaponState>(*actor)
+            : nullptr;
+
+    KernelLocalWeaponState state{};
+    state.struct_size = sizeof(state);
+    if (is_server_mode(config_.mode)) {
+        // A server's world is the authority, so there is nothing predicted to
+        // take off it.
+        if (weapon == nullptr ||
+            weapon->active_weapon_slot >= weapon->weapon_slot_count ||
+            weapon->active_weapon_slot >= kWeaponSlotCount) {
+            return false;
+        }
+        const std::uint8_t slot = weapon->active_weapon_slot;
+        state.authoritative_tick = tick_loop_.current_tick();
+        state.weapon_id = weapon->weapon_ids[slot];
+        state.active_weapon_slot = slot;
+        state.flags = KERNEL_LOCAL_WEAPON_STATE_FLAG_WEAPON_ID_VALID |
+            (weapon->is_reloading ? KERNEL_LOCAL_WEAPON_STATE_FLAG_RELOADING : 0u);
+        state.authoritative_ammo = weapon->ammo[slot];
+        state.ammo = state.authoritative_ammo;
+        *out_state = state;
+        return true;
+    }
+
+    if (!authoritative_local_weapon_.valid) {
+        return false;
+    }
+    const std::uint8_t slot = authoritative_local_weapon_.active_weapon_slot;
+    // The snapshot names a slot, not a weapon. The client's own combat state,
+    // spawned from the same template the server used, is what turns one into
+    // the other; without it every spend counts, since there is nothing to tell
+    // them apart by.
+    const bool weapon_known = weapon != nullptr &&
+        slot < weapon->weapon_slot_count && slot < kWeaponSlotCount;
+    const std::uint32_t weapon_id = weapon_known ? weapon->weapon_ids[slot] : 0u;
+    std::uint32_t spent = 0u;
+    for (const PredictedAmmoSpend& spend : predicted_ammo_spends_) {
+        if (!weapon_known || spend.weapon_id == weapon_id) {
+            spent += spend.cost;
+        }
+    }
+    state.authoritative_tick = authoritative_local_weapon_.server_tick;
+    state.weapon_id = weapon_id;
+    state.active_weapon_slot = slot;
+    state.flags =
+        (weapon_known ? KERNEL_LOCAL_WEAPON_STATE_FLAG_WEAPON_ID_VALID : 0u) |
+        ((authoritative_local_weapon_.flags &
+          kSnapshotWeaponStateFlagReloading) != 0u
+             ? KERNEL_LOCAL_WEAPON_STATE_FLAG_RELOADING
+             : 0u);
+    state.authoritative_ammo = authoritative_local_weapon_.ammo;
+    state.ammo = spent >= authoritative_local_weapon_.ammo
+        ? 0u
+        : static_cast<std::uint16_t>(authoritative_local_weapon_.ammo - spent);
+    *out_state = state;
+    return true;
+}
+
+void KernelEngine::apply_authoritative_local_weapon(const WorldSnapshot& snapshot) {
+    if (local_player_net_id_ == 0u) {
+        return;
+    }
+    const EntitySnapshot* own = find_snapshot_entity(snapshot, local_player_net_id_);
+    if (own == nullptr || !own->has_owner_weapon_state) {
+        return;
+    }
+    authoritative_local_weapon_ = AuthoritativeLocalWeapon{
+        true,
+        snapshot.header.server_tick,
+        own->active_weapon_slot,
+        own->weapon_state_flags,
+        own->active_weapon_ammo,
+    };
+    // Everything up to last_processed_input_seq is already inside the magazine
+    // the server just reported, so charging it again would count it twice.
+    const std::uint32_t acknowledged = snapshot.header.last_processed_input_seq;
+    predicted_ammo_spends_.erase(
+        std::remove_if(
+            predicted_ammo_spends_.begin(),
+            predicted_ammo_spends_.end(),
+            [acknowledged](const PredictedAmmoSpend& spend) {
+                return spend.input_seq <= acknowledged;
+            }),
+        predicted_ammo_spends_.end());
+}
+
+void KernelEngine::record_predicted_ammo_spend(
+    std::uint32_t input_seq,
+    std::uint32_t action_instance_id,
+    std::uint8_t weapon_id,
+    std::uint16_t cost) {
+    if (cost == 0u) {
+        return;
+    }
+    if (predicted_ammo_spends_.size() >= kMaxPredictedAmmoSpends) {
+        predicted_ammo_spends_.erase(predicted_ammo_spends_.begin());
+    }
+    predicted_ammo_spends_.push_back(PredictedAmmoSpend{
+        input_seq,
+        action_instance_id,
+        weapon_id,
+        cost,
+    });
+}
+
+void KernelEngine::drop_predicted_ammo_spends(
+    std::uint32_t action_instance_id,
+    std::uint32_t keep_count) {
+    // Spends are appended in input order, so the first keep_count of an action
+    // are its earliest commits -- the ones a confirmed count refers to.
+    std::uint32_t kept = 0u;
+    auto write = predicted_ammo_spends_.begin();
+    for (auto read = predicted_ammo_spends_.begin();
+         read != predicted_ammo_spends_.end();
+         ++read) {
+        if (read->action_instance_id == action_instance_id) {
+            if (kept >= keep_count) {
+                continue;
+            }
+            ++kept;
+        }
+        *write++ = *read;
+    }
+    predicted_ammo_spends_.erase(write, predicted_ammo_spends_.end());
 }
 
 void KernelEngine::reconcile_local_prediction(const WorldSnapshot& snapshot) {

@@ -31,6 +31,17 @@ bool Kernel_GetBuildInfo(KernelBuildInfo* out_info, uint32_t out_info_size);
 bool Kernel_GetLocalPlayerInfo(
     KernelHandle* kernel,
     KernelLocalPlayerInfo* out_info);
+/*
+ * Copies the local player's active weapon into out_state; see
+ * KernelLocalWeaponState for where each field comes from. The caller sets
+ * out_state->struct_size. Returns false for a smaller struct_size, when there
+ * is no local player (a dedicated server has none), when the local player has
+ * no configured weapon, and on a client until an owner snapshot has carried the
+ * weapon block.
+ */
+bool Kernel_GetLocalWeaponState(
+    KernelHandle* kernel,
+    KernelLocalWeaponState* out_state);
 
 KernelLANDiscoveryHandle* Kernel_LANDiscovery_Create(void);
 void Kernel_LANDiscovery_Destroy(KernelLANDiscoveryHandle* discovery);

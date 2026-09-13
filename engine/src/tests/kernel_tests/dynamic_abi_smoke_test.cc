@@ -329,6 +329,11 @@ int main() {
         load_symbol<bool(KernelHandle*, KernelLocalPlayerInfo*)>(
             library,
             "Kernel_GetLocalPlayerInfo");
+    auto* kernel_get_local_weapon_state =
+        load_symbol<bool(KernelHandle*, KernelLocalWeaponState*)>(
+            library,
+            "Kernel_GetLocalWeaponState");
+    require(!kernel_get_local_weapon_state(nullptr, nullptr));
     auto* kernel_lan_discovery_create =
         load_symbol<KernelLANDiscoveryHandle*()>(
             library,
@@ -520,6 +525,14 @@ int main() {
     assert(abi_info.skeleton_leg_definition_size ==
            sizeof(KernelSkeletonLegDefinition));
     assert(abi_info.status_effect_view_size == sizeof(KernelStatusEffectView));
+    // Fetched again under require: the call above sits inside assert(), which
+    // an opt build compiles out along with the call itself.
+    KernelAbiInfo weapon_abi_info{};
+    require(kernel_get_abi_info(&weapon_abi_info, sizeof(weapon_abi_info)));
+    require(weapon_abi_info.local_weapon_state_size ==
+            sizeof(KernelLocalWeaponState));
+    require((weapon_abi_info.capability_flags &
+             KERNEL_CAPABILITY_LOCAL_WEAPON_STATE) != 0u);
     assert((abi_info.capability_flags &
             KERNEL_CAPABILITY_SKELETON_RENDER_STATES) != 0u);
     assert((abi_info.capability_flags &
