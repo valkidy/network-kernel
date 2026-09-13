@@ -25,6 +25,13 @@ namespace NetworkExample.Kernel
             IntPtr kernel,
             out KernelLocalPlayerInfo outInfo);
 
+        // ref, not out: the kernel reads struct_size before it writes anything.
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_GetLocalWeaponState(
+            IntPtr kernel,
+            ref KernelLocalWeaponState outState);
+
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern IntPtr Kernel_LANDiscovery_Create();
 

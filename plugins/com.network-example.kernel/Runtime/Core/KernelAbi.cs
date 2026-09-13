@@ -167,6 +167,10 @@ namespace NetworkExample.Kernel
                 info,
                 KernelConstants.CapabilitySkeletonBindPose,
                 "Kernel skeleton bind-pose capability is missing.");
+            RequireCapability(
+                info,
+                KernelConstants.CapabilityLocalWeaponState,
+                "Kernel local weapon state capability is missing.");
 
             RequireSize(nameof(KernelAbiInfo), info.struct_size, Marshal.SizeOf<KernelAbiInfo>());
             RequireSize(nameof(KernelConfig), info.kernel_config_size, Marshal.SizeOf<KernelConfig>());
@@ -395,6 +399,10 @@ namespace NetworkExample.Kernel
                 nameof(KernelStatusEffectView),
                 info.status_effect_view_size,
                 Marshal.SizeOf<KernelStatusEffectView>());
+            RequireSize(
+                nameof(KernelLocalWeaponState),
+                info.local_weapon_state_size,
+                Marshal.SizeOf<KernelLocalWeaponState>());
         }
 
         private static void RequireCapability(

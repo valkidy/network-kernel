@@ -1,5 +1,16 @@
 0.7.0 release notes:
 
+- aligns Unity plugin API with kernel ABI 88: adds `Kernel.TryGetLocalWeaponState`
+  and `KernelLocalWeaponState`, `KernelConstants.CapabilityLocalWeaponState` and
+  the two `LocalWeaponStateFlag*` bits, and appends `local_weapon_state_size` to
+  `KernelAbiInfo`
+- breaks wire compatibility: snapshot schema 21 adds the own-player weapon
+  block, so a client on the previous package is rejected at the handshake by a
+  server built from this kernel. Clients and servers must be upgraded together.
+
+
+0.7.0 release notes:
+
 - refreshes Unity package artifact for kernel ABI 87
 
 

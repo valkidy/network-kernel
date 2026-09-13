@@ -34,7 +34,14 @@ public static class NetworkKernelManagedAbiSmoke
         KernelBuildInfo buildInfo = KernelAbi.GetBuildInfo();
         GameServerAbiInfo gameServerInfo = GameServerAbi.GetInfo();
         RequireSkeletonBindingContract();
-        Require(KernelConstants.AbiVersion == 87, "Managed kernel ABI version was not v87.");
+        Require(KernelConstants.AbiVersion == 88, "Managed kernel ABI version was not v88.");
+        Require(
+            KernelLocalWeaponState.StructSize == 20 &&
+            info.local_weapon_state_size == KernelLocalWeaponState.StructSize,
+            "Kernel local weapon state layout was not 20 bytes.");
+        Require(
+            (info.capability_flags & KernelConstants.CapabilityLocalWeaponState) != 0,
+            "Kernel local weapon state capability was missing.");
         Require(
             RenderEntityState.StructSize == 160,
             "Managed RenderEntityState layout was not 160 bytes.");
@@ -211,6 +218,18 @@ public static class NetworkKernelManagedAbiSmoke
                 kernel.LocalPlayerNetId == localInfo.player_net_id &&
                 kernel.IsClientReady,
                 "Kernel_GetLocalPlayerInfo returned no local player.");
+            // Whether the local player is armed yet depends on the game server
+            // having configured it, so only the marshalled shape is checked.
+            if (kernel.TryGetLocalWeaponState(out KernelLocalWeaponState weaponState))
+            {
+                Require(
+                    weaponState.struct_size == KernelLocalWeaponState.StructSize &&
+                    weaponState.active_weapon_slot < KernelConstants.MaxWeaponSlots &&
+                    (weaponState.flags & ~(KernelConstants.LocalWeaponStateFlagReloading |
+                        KernelConstants.LocalWeaponStateFlagWeaponIdValid)) == 0 &&
+                    weaponState.ammo == weaponState.authoritative_ammo,
+                    "Kernel_GetLocalWeaponState returned an inconsistent listen-server state.");
+            }
 
             var createInfo = new KernelServerEntityCreateInfo
             {

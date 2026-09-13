@@ -178,6 +178,13 @@ client count. A single connected client may see its player, enemies,
 projectiles, and other replicated entities. Use `Kernel.LocalPlayerNetId` or
 `TryGetLocalPlayerInfo` to identify the local player state.
 
+For a HUD, `Kernel.TryGetLocalWeaponState` reports the local player's active
+weapon slot, weapon id, reloading flag and rounds left. On a server both ammo
+fields are authoritative. On a client `authoritative_ammo` is the magazine from
+the newest owner snapshot and `ammo` is that value less the shots this client
+has predicted but the server has not yet acknowledged, which is the one to show
+while firing.
+
 When another player leaves, consume `KernelEventType.PlayerLeft` through
 `Kernel.PollEvents`. Snapshots remain the source of render-state truth; the
 event is for gameplay/UI notification.

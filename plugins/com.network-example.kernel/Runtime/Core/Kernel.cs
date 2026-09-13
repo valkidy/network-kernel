@@ -362,6 +362,21 @@ namespace NetworkExample.Kernel
             return KernelNative.Kernel_GetLocalPlayerInfo(handle, out info);
         }
 
+        /// <summary>
+        /// The local player's active weapon and rounds left. False when there is no
+        /// local player or it has no configured weapon, and on a client until an
+        /// owner snapshot has carried the weapon block.
+        /// </summary>
+        public bool TryGetLocalWeaponState(out KernelLocalWeaponState state)
+        {
+            ThrowIfDisposed();
+            state = new KernelLocalWeaponState
+            {
+                struct_size = KernelLocalWeaponState.StructSize,
+            };
+            return KernelNative.Kernel_GetLocalWeaponState(handle, ref state);
+        }
+
         public uint GetRenderStates(RenderEntityState[] states)
         {
             ThrowIfDisposed();

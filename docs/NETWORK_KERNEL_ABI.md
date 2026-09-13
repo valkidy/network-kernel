@@ -58,7 +58,8 @@ reported magazine already includes it. A terminal local action result keeps the
 commits the server confirmed and drops the rest; a timed-out action drops all of
 its own. The charge is recorded once per submitted input, not in
 `predict_local_action`, because reconciliation replays pending inputs through
-that function on every snapshot. The managed mirror has not been updated yet.
+that function on every snapshot. The managed mirror is
+`Kernel.TryGetLocalWeaponState`, which fills in `struct_size` before the call.
 
 Snapshot schema 19 shrinks the beam snapshot record from 34 bytes to 6:
 `net_id` plus the beam's reach as centimetres in a `uint16`. Position,

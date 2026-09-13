@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 87;
+        public const uint AbiVersion = 88;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int GameplayCatalogEntryPathSize = 128;
@@ -105,6 +105,13 @@ namespace NetworkExample.Kernel
         public const ulong CapabilityItemPropSystem = 0x0000020000000000UL;
         public const ulong CapabilitySkeletonRenderStates = 0x0000040000000000UL;
         public const ulong CapabilitySkeletonBindPose = 0x0000080000000000UL;
+        public const ulong CapabilityLocalWeaponState = 0x0000100000000000UL;
+
+        // KernelLocalWeaponState.flags.
+        public const byte LocalWeaponStateFlagReloading = 0x01;
+        // weapon_id names a weapon. Weapon id 0 is a real weapon, so the id alone
+        // cannot say whether the kernel knew which one sits in the slot.
+        public const byte LocalWeaponStateFlagWeaponIdValid = 0x02;
 
         public const uint SkeletonRenderStatusSuccess = 0;
         public const uint SkeletonRenderStatusInsufficientCapacity = 1;
@@ -682,6 +689,7 @@ namespace NetworkExample.Kernel
         public uint skeleton_binding_definition_size;
         public uint skeleton_leg_definition_size;
         public uint status_effect_view_size;
+        public uint local_weapon_state_size;
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
@@ -716,6 +724,35 @@ namespace NetworkExample.Kernel
         public uint player_net_id;
         public uint has_welcome;
         public uint connected;
+    }
+
+    /// <summary>
+    /// The local player's active weapon, for a HUD.
+    /// </summary>
+    /// <remarks>
+    /// On a dedicated or listen server every field is read from the authoritative
+    /// world and <see cref="ammo"/> equals <see cref="authoritative_ammo"/>.
+    ///
+    /// On a client the slot, the reloading flag and <see cref="authoritative_ammo"/>
+    /// come from the newest owner snapshot that carried the weapon block, and
+    /// <see cref="authoritative_tick"/> is that snapshot's server tick.
+    /// <see cref="ammo"/> is the same magazine less the primary-fire commits this
+    /// client has predicted on inputs the server has not yet acknowledged, clamped
+    /// at zero -- the number to show while firing.
+    /// </remarks>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelLocalWeaponState
+    {
+        public uint struct_size;
+        public uint authoritative_tick;
+        public uint weapon_id;
+        public byte active_weapon_slot;
+        public byte flags;
+        public ushort ammo;
+        public ushort authoritative_ammo;
+        public ushort reserved0;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelLocalWeaponState>();
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
