@@ -89,7 +89,7 @@ public static class NetworkKernelManagedAbiSmoke
                 KernelCombatStateDefinition.StructSize,
             "Kernel combat state definition size mismatch.");
         Require(
-            info.actor_template_definition_size ==
+            info.entity_template_definition_size ==
                 KernelEntityTemplateDefinition.StructSize,
             "Kernel entity template definition size mismatch.");
         // The limb layers are two different bit spaces that must not be
