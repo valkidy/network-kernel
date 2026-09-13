@@ -12,7 +12,7 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 86u`. (This line had read 76 for some time; treat
+`KERNEL_ABI_VERSION == 88u`. (This line had read 76 for some time; treat
 `kernel_types.h` as the authority and this document as a description.)
 
 ## Ownership
@@ -43,6 +43,22 @@ template is now rejected at catalog load rather than validated. Nothing outside
 `engine` and `game_server` consumed any of it -- no managed binding referenced a
 game-rule struct or the director kind -- so this needed no coordination.
 `docs/AI_PATROL_SYSTEM.md` records why they moved.
+
+ABI 88 adds `Kernel_GetLocalWeaponState`, `KernelLocalWeaponState`, its two
+`KERNEL_LOCAL_WEAPON_STATE_FLAG_*` bits, `KERNEL_CAPABILITY_LOCAL_WEAPON_STATE`,
+and `KernelAbiInfo::local_weapon_state_size` (appended). It answers the one HUD
+question a client could not: how many rounds are left. A server reads its
+world. A client has only snapshot schema 21's own-player weapon block -- active
+slot, a reloading bit and that slot's ammo, 4 B -- so it reports that value as
+`authoritative_ammo` and, in `ammo`, the same value less the primary-fire
+commits it predicted on inputs the server has not yet consumed. Each predicted
+commit is charged under the `input_seq` that caused it and stops being charged
+once a snapshot's `last_processed_input_seq` reaches that input, since the
+reported magazine already includes it. A terminal local action result keeps the
+commits the server confirmed and drops the rest; a timed-out action drops all of
+its own. The charge is recorded once per submitted input, not in
+`predict_local_action`, because reconciliation replays pending inputs through
+that function on every snapshot. The managed mirror has not been updated yet.
 
 Snapshot schema 19 shrinks the beam snapshot record from 34 bytes to 6:
 `net_id` plus the beam's reach as centimetres in a `uint16`. Position,

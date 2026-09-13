@@ -6,9 +6,12 @@
 #include "kernel/public/kernel_api.h"
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 87u,
-    "server entity state reports the entity template it came from, which is "
-    "the only way to ask what a prop is");
+    KERNEL_ABI_VERSION == 88u,
+    "the local player's weapon state is queryable, which a client can only "
+    "answer from the owner snapshot's weapon block");
+_Static_assert(
+    sizeof(KernelLocalWeaponState) == 20u,
+    "a managed mirror of the local weapon state must match this layout");
 _Static_assert(
     offsetof(KernelWeaponMechanicsDefinition, melee_collider_template_id) >
         offsetof(KernelWeaponMechanicsDefinition, collision_mask),

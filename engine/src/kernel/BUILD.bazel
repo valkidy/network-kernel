@@ -189,6 +189,7 @@ cc_shared_library(
             "-Wl,-exported_symbol,_Kernel_GetAbiInfo",
             "-Wl,-exported_symbol,_Kernel_GetBuildInfo",
             "-Wl,-exported_symbol,_Kernel_GetLocalPlayerInfo",
+            "-Wl,-exported_symbol,_Kernel_GetLocalWeaponState",
             "-Wl,-exported_symbol,_Kernel_LANDiscovery_Create",
             "-Wl,-exported_symbol,_Kernel_LANDiscovery_Destroy",
             "-Wl,-exported_symbol,_Kernel_LANDiscovery_StartServer",

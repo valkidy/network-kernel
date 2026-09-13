@@ -5,6 +5,11 @@
 #include <stdint.h>
 
 /*
+ * 88: Kernel_GetLocalWeaponState and KernelLocalWeaponState were added, and
+ *     KernelAbiInfo gained local_weapon_state_size, appended. A client answers
+ *     from snapshot schema 21's own-player weapon block less its unacknowledged
+ *     predicted commits; a server answers from its world. Nothing existing
+ *     changed layout, but KernelAbiInfo grew, so a mirror sized to 87 is short.
  * 85: KernelWeaponFireMode gained _Melee, and KernelWeaponMechanicsDefinition
  *     gained melee_collider_template_id, appended. Zero for every other fire
  *     mode, so catalogs authored before this are bit-identical. A melee weapon
@@ -83,7 +88,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 87u
+#define KERNEL_ABI_VERSION 88u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -192,6 +197,7 @@
 #define KERNEL_CAPABILITY_ITEM_PROP_SYSTEM UINT64_C(0x0000020000000000)
 #define KERNEL_CAPABILITY_SKELETON_RENDER_STATES UINT64_C(0x0000040000000000)
 #define KERNEL_CAPABILITY_SKELETON_BIND_POSE UINT64_C(0x0000080000000000)
+#define KERNEL_CAPABILITY_LOCAL_WEAPON_STATE UINT64_C(0x0000100000000000)
 
 #define KERNEL_SKELETON_RENDER_STATUS_SUCCESS UINT32_C(0)
 #define KERNEL_SKELETON_RENDER_STATUS_INSUFFICIENT_CAPACITY UINT32_C(1)
@@ -398,6 +404,7 @@ typedef struct KernelAbiInfo {
     uint32_t skeleton_binding_definition_size;
     uint32_t skeleton_leg_definition_size;
     uint32_t status_effect_view_size;
+    uint32_t local_weapon_state_size;
 } KernelAbiInfo;
 
 typedef struct KernelBuildInfo {
@@ -421,6 +428,38 @@ typedef struct KernelLocalPlayerInfo {
     uint32_t has_welcome;
     uint32_t connected;
 } KernelLocalPlayerInfo;
+
+/* KernelLocalWeaponState::flags. */
+#define KERNEL_LOCAL_WEAPON_STATE_FLAG_RELOADING UINT8_C(0x01)
+/* weapon_id names a weapon. Clear when a client has a slot from the server but
+ * no combat state of its own to look the slot up in; weapon id 0 is a real
+ * weapon, so the id alone cannot say so. */
+#define KERNEL_LOCAL_WEAPON_STATE_FLAG_WEAPON_ID_VALID UINT8_C(0x02)
+
+/*
+ * The local player's active weapon, for a HUD.
+ *
+ * On a dedicated or listen server this is read straight from the authoritative
+ * world, and ammo == authoritative_ammo.
+ *
+ * On a client, active_weapon_slot, the reloading flag and authoritative_ammo
+ * come from the newest owner snapshot carrying the weapon block, and
+ * authoritative_tick is that snapshot's server tick. ammo is authoritative_ammo
+ * less the primary-fire commits this client has predicted on inputs the server
+ * has not yet acknowledged through last_processed_input_seq, clamped at zero.
+ * A commit the server rejects stops being charged when its local action result
+ * arrives, or when the action times out.
+ */
+typedef struct KernelLocalWeaponState {
+    uint32_t struct_size;
+    uint32_t authoritative_tick;
+    uint32_t weapon_id;
+    uint8_t active_weapon_slot;
+    uint8_t flags;
+    uint16_t ammo;
+    uint16_t authoritative_ammo;
+    uint16_t reserved0;
+} KernelLocalWeaponState;
 
 typedef struct KernelLANDiscoveryServerConfig {
     uint32_t struct_size;

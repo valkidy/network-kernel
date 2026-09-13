@@ -4865,9 +4865,151 @@ void native_action_intent_latch_and_server_movement_hold_are_bounded() {
     require(!server.peer_sessions_[0].has_movement_input);
 }
 
+// The HUD's magazine on a client: what the server last reported, less the shots
+// this client has predicted on inputs the server has not consumed yet.
+void client_weapon_state_charges_unacknowledged_predicted_spends() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine client(config);
+    client.reset_runtime_state(KernelMode_Client);
+
+    KernelLocalWeaponState state{};
+    state.struct_size = sizeof(state);
+    require(!client.local_weapon_state(&state));
+
+    const network_example::NetId player =
+        client.world_.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
+    client.local_player_net_id_ = player;
+    const std::optional<entt::entity> player_entity =
+        client.world_.find_entity(player);
+    require(player_entity.has_value());
+    network_example::WeaponState& weapon =
+        client.world_.registry().get<network_example::WeaponState>(*player_entity);
+    weapon.weapon_slot_count = 2;
+    weapon.weapon_ids[0] = 0;
+    weapon.weapon_ids[1] = 3;
+    // No owner snapshot yet, so nothing authoritative to report.
+    require(!client.local_weapon_state(&state));
+
+    client.record_predicted_ammo_spend(5, 70, 3, 1);
+    client.record_predicted_ammo_spend(6, 70, 3, 1);
+    client.record_predicted_ammo_spend(7, 70, 3, 1);
+    // A spend on another weapon is not charged against the active one.
+    client.record_predicted_ammo_spend(7, 71, 0, 1);
+
+    network_example::WorldSnapshot snapshot;
+    snapshot.header.server_tick = 100;
+    snapshot.header.last_processed_input_seq = 5;
+    network_example::EntitySnapshot own;
+    own.net_id = player;
+    own.type = network_example::EntityType::kActor;
+    own.actor_type = network_example::ActorType::kPlayer;
+    own.has_owner_weapon_state = true;
+    own.active_weapon_slot = 1;
+    own.weapon_state_flags = network_example::kSnapshotWeaponStateFlagReloading;
+    own.active_weapon_ammo = 6;
+    snapshot.entities.push_back(own);
+    client.apply_authoritative_local_weapon(snapshot);
+
+    require(client.local_weapon_state(&state));
+    require(state.authoritative_tick == 100u);
+    require(state.active_weapon_slot == 1u);
+    require(state.weapon_id == 3u);
+    require((state.flags & KERNEL_LOCAL_WEAPON_STATE_FLAG_WEAPON_ID_VALID) != 0u);
+    require((state.flags & KERNEL_LOCAL_WEAPON_STATE_FLAG_RELOADING) != 0u);
+    require(state.authoritative_ammo == 6u);
+    // Input 5 is already inside the reported magazine; 6 and 7 are still owed.
+    require(state.ammo == 4u);
+
+    // The server stopped action 70 after one confirmed commit: input 6 stays
+    // owed, and input 7 never happened.
+    client.drop_predicted_ammo_spends(70, 1);
+    require(client.local_weapon_state(&state));
+    require(state.ammo == 5u);
+
+    snapshot.header.server_tick = 102;
+    snapshot.header.last_processed_input_seq = 6;
+    snapshot.entities[0].active_weapon_ammo = 5;
+    snapshot.entities[0].weapon_state_flags = 0;
+    client.apply_authoritative_local_weapon(snapshot);
+    require(client.local_weapon_state(&state));
+    require(state.authoritative_ammo == 5u);
+    require(state.ammo == 5u);
+    require((state.flags & KERNEL_LOCAL_WEAPON_STATE_FLAG_RELOADING) == 0u);
+
+    // An own record without the block acknowledges nothing and changes nothing.
+    client.record_predicted_ammo_spend(8, 72, 3, 2);
+    network_example::WorldSnapshot bare = snapshot;
+    bare.header.server_tick = 104;
+    bare.header.last_processed_input_seq = 9;
+    bare.entities[0].has_owner_weapon_state = false;
+    client.apply_authoritative_local_weapon(bare);
+    require(client.local_weapon_state(&state));
+    require(state.authoritative_tick == 102u);
+    require(state.ammo == 3u);
+
+    // More owed than the magazine holds reads empty rather than wrapping.
+    client.record_predicted_ammo_spend(9, 72, 3, 10);
+    require(client.local_weapon_state(&state));
+    require(state.ammo == 0u);
+
+    KernelLocalWeaponState too_small{};
+    too_small.struct_size = sizeof(too_small) - 1u;
+    require(!client.local_weapon_state(&too_small));
+
+    client.clear_client_action_sync_state();
+    require(!client.local_weapon_state(&state));
+}
+
+// A server owns the magazine, so it answers from its world and ignores anything
+// its own local prediction has recorded.
+void server_weapon_state_reads_the_authoritative_world() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine server(config);
+
+    const network_example::NetId player =
+        server.world_.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
+    KernelLocalWeaponState state{};
+    state.struct_size = sizeof(state);
+    // A dedicated server has no local player to report for.
+    require(!server.local_weapon_state(&state));
+
+    server.local_player_net_id_ = player;
+    // Spawned unarmed: no configured weapon, no magazine.
+    require(!server.local_weapon_state(&state));
+
+    const std::optional<entt::entity> player_entity =
+        server.world_.find_entity(player);
+    require(player_entity.has_value());
+    network_example::WeaponState& weapon =
+        server.world_.registry().get<network_example::WeaponState>(*player_entity);
+    weapon.weapon_slot_count = 2;
+    weapon.weapon_ids[0] = 0;
+    weapon.weapon_ids[1] = 3;
+    weapon.active_weapon_slot = 1;
+    weapon.ammo[1] = 12;
+    weapon.is_reloading = true;
+    server.record_predicted_ammo_spend(1, 80, 3, 5);
+
+    require(server.local_weapon_state(&state));
+    require(state.weapon_id == 3u);
+    require(state.active_weapon_slot == 1u);
+    require(state.authoritative_ammo == 12u);
+    require(state.ammo == 12u);
+    require((state.flags & KERNEL_LOCAL_WEAPON_STATE_FLAG_WEAPON_ID_VALID) != 0u);
+    require((state.flags & KERNEL_LOCAL_WEAPON_STATE_FLAG_RELOADING) != 0u);
+}
+
 }  // namespace
 
 int main() {
+    client_weapon_state_charges_unacknowledged_predicted_spends();
+    server_weapon_state_reads_the_authoritative_world();
     client_query_collider_shapes_reports_render_colliders();
     presentation_gate_releases_at_render_time();
     clock_sync_ping_pong_updates_peer_offset();
