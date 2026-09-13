@@ -35,6 +35,8 @@ constexpr std::size_t kActorOwnerPeerPayloadSize = 4;
 constexpr std::size_t kActorRotationPayloadSize = 16;
 constexpr std::size_t kActorHealthPayloadSize = 4;
 constexpr std::size_t kActorMovementPayloadSize = 22;
+// active slot 1 + state flags 1 + ammo 2.
+constexpr std::size_t kActorWeaponStatePayloadSize = 4;
 constexpr std::size_t kProjectileCompactSnapshotPayloadSize = 34;
 // net_id 4 + effective_length 2. No position, rotation or velocity: a beam does
 // not move, and its origin and aim are the shooter's, which every snapshot
@@ -221,6 +223,7 @@ enum ActorSnapshotRecordFlag : std::uint16_t {
     kActorSnapshotHasHealth = 1u << 2,
     kActorSnapshotHasActionTimeline = 1u << 3,
     kActorSnapshotHasMovementState = 1u << 4,
+    kActorSnapshotHasWeaponState = 1u << 5,
 };
 
 bool is_actor_entity_type(EntityType type) {
@@ -241,6 +244,9 @@ std::uint16_t actor_record_flags(const EntitySnapshot& entity) {
     }
     if (entity.has_authoritative_movement_state) {
         flags |= kActorSnapshotHasMovementState;
+    }
+    if (entity.has_owner_weapon_state) {
+        flags |= kActorSnapshotHasWeaponState;
     }
     return flags;
 }
@@ -289,11 +295,12 @@ SnapshotSectionType snapshot_section_type(EntityType type) {
 
 SnapshotSectionType snapshot_section_type(const EntitySnapshot& entity) {
     if (is_actor_entity_type(entity.type)) {
-        // Movement state is written for the receiving session's own player and
-        // nothing else, so an actor carrying it is never eligible for the
-        // agent record however its actor type reads.
+        // Movement and weapon state are written for the receiving session's own
+        // player and nothing else, so an actor carrying either is never
+        // eligible for the agent record however its actor type reads.
         return entity.actor_type == ActorType::kAgent &&
-                !entity.has_authoritative_movement_state
+                !entity.has_authoritative_movement_state &&
+                !entity.has_owner_weapon_state
             ? SnapshotSectionType::kActorAgent
             : SnapshotSectionType::kActor;
     }
@@ -468,6 +475,11 @@ std::vector<std::uint8_t> encode_snapshot_packet(
                         payload.write_vec3(entity->ground_normal);
                         payload.write_u32(entity->supporting_entity_net_id);
                         payload.write_u32(entity->supporting_collider_id);
+                    }
+                    if ((record_flags & kActorSnapshotHasWeaponState) != 0u) {
+                        payload.write_u8(entity->active_weapon_slot);
+                        payload.write_u8(entity->weapon_state_flags);
+                        payload.write_u16(entity->active_weapon_ammo);
                     }
                     break;
                 }
@@ -656,6 +668,17 @@ bool decode_snapshot_packet(
                         }
                         entity.has_authoritative_movement_state = true;
                     }
+                    if ((record_flags & kActorSnapshotHasWeaponState) != 0u) {
+                        if (!reader.read_u8(&entity.active_weapon_slot) ||
+                            entity.active_weapon_slot >= KERNEL_MAX_WEAPON_SLOTS ||
+                            !reader.read_u8(&entity.weapon_state_flags) ||
+                            (entity.weapon_state_flags &
+                             ~kSnapshotWeaponStateFlagReloading) != 0u ||
+                            !reader.read_u16(&entity.active_weapon_ammo)) {
+                            return false;
+                        }
+                        entity.has_owner_weapon_state = true;
+                    }
                     break;
                 }
                 case SnapshotSectionType::kActorAgent: {
@@ -831,6 +854,10 @@ std::size_t estimate_snapshot_entity_size(const EntitySnapshot& entity) {
                    ((actor_record_flags(entity) &
                      kActorSnapshotHasMovementState) != 0u
                         ? kActorMovementPayloadSize
+                        : 0u) +
+                   ((actor_record_flags(entity) &
+                     kActorSnapshotHasWeaponState) != 0u
+                        ? kActorWeaponStatePayloadSize
                         : 0u);
         case SnapshotSectionType::kActorAgent:
             return kAgentSnapshotBasePayloadSize +

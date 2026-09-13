@@ -10366,6 +10366,8 @@ WorldSnapshot KernelEngine::build_relevant_snapshot(
             EntitySnapshot filtered_entity = entity;
             filtered_entity.has_authoritative_movement_state =
                 entity.net_id == session.player;
+            filtered_entity.has_owner_weapon_state =
+                entity.has_owner_weapon_state && entity.net_id == session.player;
             filtered.entities.push_back(filtered_entity);
         }
     }

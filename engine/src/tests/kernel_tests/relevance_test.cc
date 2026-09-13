@@ -947,6 +947,61 @@ void listen_server_projectile_destruction_uses_destroyed_reason() {
         engine.local_listen_session_.out_of_range_projectiles.end());
 }
 
+// The weapon block is the one client's HUD, so a teammate standing right next to
+// the player -- relevant, and armed -- still arrives without one.
+void only_the_own_player_carries_weapon_state() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+
+    auto transport = std::make_unique<network_example::LoopbackTransport>();
+    network_example::LoopbackTransport* loopback = transport.get();
+    engine.transport_ = std::move(transport);
+    engine.reset_runtime_state(KernelMode_DedicatedServer);
+    require(loopback->StartServer(7796));
+
+    const network_example::NetId player =
+        engine.world_.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
+    const network_example::NetId teammate =
+        engine.world_.spawn_player(2, glm::vec3{5.0f, 0.0f, 0.0f});
+    const auto arm = [&](network_example::NetId net_id, std::uint16_t ammo) {
+        const std::optional<entt::entity> entity = engine.world_.find_entity(net_id);
+        require(entity.has_value());
+        network_example::WeaponState& weapon =
+            engine.world_.registry().get<network_example::WeaponState>(*entity);
+        weapon.weapon_slot_count = 2;
+        weapon.active_weapon_slot = 1;
+        weapon.ammo[1] = ammo;
+        weapon.is_reloading = true;
+    };
+    arm(player, 7);
+    arm(teammate, 9);
+
+    network_example::KernelEngine::PeerSession session{1, player, 0, true, {}};
+    const network_example::WorldSnapshot snapshot =
+        engine.build_relevant_snapshot(session, 0);
+
+    bool saw_player = false;
+    bool saw_teammate = false;
+    for (const network_example::EntitySnapshot& entity : snapshot.entities) {
+        if (entity.net_id == player) {
+            saw_player = true;
+            require(entity.has_owner_weapon_state);
+            require(entity.active_weapon_slot == 1);
+            require(entity.active_weapon_ammo == 7);
+            require(entity.weapon_state_flags ==
+                    network_example::kSnapshotWeaponStateFlagReloading);
+        } else if (entity.net_id == teammate) {
+            saw_teammate = true;
+            require(!entity.has_owner_weapon_state);
+        }
+    }
+    require(saw_player);
+    require(saw_teammate);
+}
+
 }  // namespace
 
 int main() {
@@ -960,6 +1015,7 @@ int main() {
     a_distant_teammate_competes_and_the_own_player_does_not();
     every_kind_of_entity_shares_one_budget();
     a_large_rig_is_measured_by_its_edge_not_its_origin();
+    only_the_own_player_carries_weapon_state();
 
     KernelConfig config{};
     config.mode = KernelMode_DedicatedServer;

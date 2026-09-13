@@ -5,7 +5,9 @@
 - Kernel ABI: 82
 - Protocol version: 3
 - Packet schema: 24
-- Snapshot schema: 20
+- Snapshot schema: 21 (the 4 B own-player weapon state block; the measured
+  tables below were taken at 20 and are unaffected, see **Runtime Snapshot
+  Budget**)
 - Gameplay catalog version: 15
 
 The catalog measurements are from that baseline. The snapshot budget table and
@@ -122,6 +124,15 @@ Which conditional blocks appear is decided per session, not per entity:
   player. `build_relevant_snapshot` overwrites
   `has_authoritative_movement_state` with `entity.net_id == session.player`, so
   no agent ever carries movement state on the wire, whatever the world holds.
+- The **weapon state** block — active slot, a reloading bit and the rounds
+  left in that slot — follows the same rule: `build_relevant_snapshot` keeps it
+  only on the receiving session's own player, so a teammate's record never
+  carries it, and it is omitted when the active slot indexes no configured
+  weapon. It costs 4 B a snapshot, 60 B/s per client at the default rate.
+  Against a saturated budget it does not move `K`: an idle own player leaves
+  1,034 B instead of 1,038 B, which still packs 32 idle agents or 19 acting
+  ones. The measured tables below spawn their players without a configured
+  weapon, so they carry no block and read the same at schema 21.
 - The **action timeline** block is written for any actor with a non-zero
   `action_template_id` or a non-`None` action phase.
 
@@ -134,10 +145,13 @@ Which conditional blocks appear is decided per session, not per entity:
 | Actor health block (player only) | +4 B |
 | Actor action timeline | +20 B |
 | Actor movement state (own player only) | +22 B |
+| Actor weapon state (own player only) | +4 B |
 | Agent base | 32 B |
 | Agent action timeline | +20 B |
 | Own player, idle | 98 B |
+| Own player, idle, armed | 102 B |
 | Own player, active action | 118 B |
+| Own player, active action, armed | 122 B |
 | **Agent, idle** | **32 B** |
 | **Agent, active action** | **52 B** |
 | Compact projectile | 34 B |

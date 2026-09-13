@@ -78,6 +78,14 @@ void the_estimator_agrees_with_the_encoder() {
     idle_player.action_phase = KernelActionPhase_None;
     require(agrees(idle_player));
 
+    network_example::EntitySnapshot armed_player = own_player;
+    armed_player.has_owner_weapon_state = true;
+    armed_player.active_weapon_slot = 2;
+    armed_player.weapon_state_flags =
+        network_example::kSnapshotWeaponStateFlagReloading;
+    armed_player.active_weapon_ammo = 17;
+    require(agrees(armed_player));
+
     network_example::EntitySnapshot agent;
     agent.net_id = 3;
     agent.type = network_example::EntityType::kActor;
@@ -325,6 +333,10 @@ int main() {
     player.ground_normal = glm::vec3{0.0f, 1.0f, 0.0f};
     player.supporting_entity_net_id = 99;
     player.supporting_collider_id = 123;
+    player.has_owner_weapon_state = true;
+    player.active_weapon_slot = 3;
+    player.weapon_state_flags = network_example::kSnapshotWeaponStateFlagReloading;
+    player.active_weapon_ammo = 2999;
     snapshot.entities.push_back(player);
     network_example::EntitySnapshot enemy;
     enemy.net_id = 6;
@@ -368,12 +380,17 @@ int main() {
         network_example::encode_snapshot_packet(snapshot, 43);
     assert(network_example::estimate_snapshot_packet_size(snapshot) ==
            snapshot_packet.size());
-    assert(network_example::estimate_snapshot_entity_size(player) == 118u);
+    require(network_example::estimate_snapshot_entity_size(player) == 122u);
     network_example::EntitySnapshot owner_without_action = player;
     owner_without_action.action_template_id = 0;
     owner_without_action.action_instance_id = 0;
     owner_without_action.action_phase = KernelActionPhase_None;
-    assert(network_example::estimate_snapshot_entity_size(owner_without_action) == 98u);
+    require(network_example::estimate_snapshot_entity_size(owner_without_action) == 102u);
+    // The weapon block is the whole 4 B difference an armed own player costs.
+    network_example::EntitySnapshot owner_unarmed = owner_without_action;
+    owner_unarmed.has_owner_weapon_state = false;
+    require(network_example::estimate_snapshot_entity_size(owner_without_action) ==
+            network_example::estimate_snapshot_entity_size(owner_unarmed) + 4u);
     // Agents ride their own, narrower record; see the agent section in
     // network_packets.cc.
     assert(network_example::estimate_snapshot_entity_size(enemy) == 32u);
@@ -426,6 +443,38 @@ int main() {
     assert(decoded_snapshot.entities[1].hp == 0);
     assert(decoded_snapshot.entities[1].max_hp == 0);
     assert(!decoded_snapshot.entities[1].has_authoritative_movement_state);
+
+    // Decoded again under require: the decode above sits inside assert(), which
+    // an opt build compiles out along with the call itself.
+    network_example::WorldSnapshot weapon_decoded;
+    require(network_example::decode_snapshot_packet(
+        snapshot_packet.data(),
+        snapshot_packet.size(),
+        &weapon_decoded));
+    require(weapon_decoded.entities.size() == 5);
+    require(weapon_decoded.entities[0].net_id == 4);
+    require(weapon_decoded.entities[0].has_owner_weapon_state);
+    require(weapon_decoded.entities[0].active_weapon_slot == 3);
+    require(weapon_decoded.entities[0].weapon_state_flags ==
+            network_example::kSnapshotWeaponStateFlagReloading);
+    require(weapon_decoded.entities[0].active_weapon_ammo == 2999);
+    require(weapon_decoded.entities[1].net_id == 6);
+    require(!weapon_decoded.entities[1].has_owner_weapon_state);
+
+    // A slot past the four a combat state can hold is not a weapon anyone owns;
+    // the decoder refuses the packet rather than hand the client an index it
+    // would read out of bounds.
+    network_example::WorldSnapshot bad_slot_snapshot;
+    network_example::EntitySnapshot bad_slot_player = player;
+    bad_slot_player.active_weapon_slot = KERNEL_MAX_WEAPON_SLOTS;
+    bad_slot_snapshot.entities.push_back(bad_slot_player);
+    const std::vector<std::uint8_t> bad_slot_packet =
+        network_example::encode_snapshot_packet(bad_slot_snapshot, 44);
+    network_example::WorldSnapshot bad_slot_decoded;
+    require(!network_example::decode_snapshot_packet(
+        bad_slot_packet.data(),
+        bad_slot_packet.size(),
+        &bad_slot_decoded));
     assert(decoded_snapshot.entities[2].net_id == 5);
     assert(decoded_snapshot.entities[2].type == network_example::EntityType::kProjectile);
     assert(decoded_snapshot.entities[2].owner_peer == 0);
