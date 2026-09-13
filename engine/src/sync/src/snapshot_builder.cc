@@ -77,6 +77,21 @@ WorldSnapshot build_world_snapshot(
             entity_snapshot.supporting_collider_id =
                 movement.supporting_collider_id;
         }
+        if (world.registry().all_of<WeaponState>(entity)) {
+            const WeaponState& weapon = world.registry().get<WeaponState>(entity);
+            // An actor with no configured weapon has no magazine to report, and
+            // leaving the block off is what tells the client so.
+            if (weapon.active_weapon_slot < weapon.weapon_slot_count &&
+                weapon.active_weapon_slot < kWeaponSlotCount) {
+                entity_snapshot.has_owner_weapon_state = true;
+                entity_snapshot.active_weapon_slot = weapon.active_weapon_slot;
+                entity_snapshot.weapon_state_flags = weapon.is_reloading
+                    ? kSnapshotWeaponStateFlagReloading
+                    : 0u;
+                entity_snapshot.active_weapon_ammo =
+                    weapon.ammo[weapon.active_weapon_slot];
+            }
+        }
         if (world.registry().all_of<Health>(entity)) {
             const Health& health = world.registry().get<Health>(entity);
             entity_snapshot.hp = health.hp;

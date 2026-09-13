@@ -22,6 +22,9 @@ inline constexpr std::uint32_t kSnapshotStateFlagProjectileHybridCorrection = 1u
 // already in every snapshot's actor section.
 inline constexpr std::uint32_t kSnapshotStateFlagProjectileBeam = 1u << 2;
 
+// EntitySnapshot::weapon_state_flags.
+inline constexpr std::uint8_t kSnapshotWeaponStateFlagReloading = 1u << 0;
+
 struct SnapshotHeader {
     std::uint32_t server_tick = 0;
     std::uint32_t server_time_ms = 0;
@@ -60,6 +63,15 @@ struct EntitySnapshot {
     glm::vec3 ground_normal{0.0f, 1.0f, 0.0f};
     NetId supporting_entity_net_id = 0;
     std::uint32_t supporting_collider_id = 0;
+    // The weapon the player is holding, for the one client that holds it. Like
+    // movement state, the builder fills it for every armed actor and
+    // build_relevant_snapshot keeps it only on the receiving session's own
+    // player: nobody else's HUD shows another player's magazine. Only the active
+    // slot travels, because that is the only one a HUD reads.
+    bool has_owner_weapon_state = false;
+    std::uint8_t active_weapon_slot = 0;
+    std::uint8_t weapon_state_flags = 0;
+    std::uint16_t active_weapon_ammo = 0;
     std::uint32_t item_template_id = 0;
     std::uint64_t item_instance_id = 0;
     std::uint8_t world_item_mode = 0;
