@@ -11,7 +11,7 @@
 id: 3007
 name: fungible_glyph_bottle
 mode: fungible
-max_stack: 5
+max_stack: 10
 capabilities: [pickupable, throwable]
 entity_template: glyph_bottle_prop
 world_interaction:
