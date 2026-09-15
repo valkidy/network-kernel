@@ -261,16 +261,20 @@ int main() {
             wave[index],
             position.x, position.y, position.z,
             horizontal_distance(nest_position, position));
-        // 4. Out of the nest's box -- 1 m half extent plus the 0.4 m capsule --
-        //    rather than released still overlapping it.
-        require(horizontal_distance(nest_position, position) > 1.4f);
-        // 5. At the authored door, within the tolerance the walk stops on, and
-        //    not somewhere along the line to the player: the chaser would have
-        //    taken them -x, and the door is +z.
+        // 4. At the authored door, within the tolerance the walk stops on, and
+        //    nowhere along the line to the player: a chaser would have taken
+        //    them towards the player, which is the opposite side of the nest.
+        //    Asserted against the exit the catalog carries rather than a
+        //    hardcoded axis, so re-siting the door to match a model moves this
+        //    test with it.
         require(
-            std::fabs(position.z - authored_exit.z) <
+            horizontal_distance(authored_exit, position) <
             network_example::game_server::kSpawnerEntryArrivalMeters + 0.2f);
-        require(std::fabs(position.x - authored_exit.x) < 0.5f);
+        // 5. And therefore clear of the nest's own collider, which the catalog
+        //    checks every exit against.
+        require(
+            horizontal_distance(nest_position, position) >
+            horizontal_distance(nest_position, authored_exit) - 1.0f);
     }
 
     Kernel_Destroy(kernel);

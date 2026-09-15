@@ -445,6 +445,12 @@ int main() {
         kNoStaticObstacle);
     print_walk("into, runtime mask", walk_in_runtime);
 
+    // Under its own template's mask a unit spawned at the nest's centre is
+    // sealed in: the box measured off the tower model is wider than the unit
+    // is, so depenetration has nowhere to push it and it goes nowhere at all.
+    // That is the whole reason the entry mask exists, so it is worth pinning --
+    // if this ever starts moving, the walk is no longer load-bearing.
+    require(walk_out.horizontal_distance < 0.5f);
     // Set before the first tick, the unit is never shoved out of the box it
     // spawned in, and it walks the same line as the template-level override.
     require(std::fabs(walk_out_runtime.after_first_tick.z) < 0.01f);

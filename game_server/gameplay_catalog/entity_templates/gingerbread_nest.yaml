@@ -59,9 +59,15 @@ spawner:
     # the walls, which is exactly what has been switched off.
     movement_collision_mask: terrain
     exits:
-      # Straight out the front. 2.6 m clears the hitbox's 1 m half extent plus
-      # the gingerbread's 0.4 m capsule with room to spare, which is what the
-      # catalog checks: released still overlapping the nest, a unit would be
-      # shoved sideways the moment its own mask came back.
+      # Out of the front of the tower model, which is +x: the low structure at
+      # the base -- the one with the door on it -- sits on that side, while the
+      # tower's own mass leans towards -x.
+      #
+      # The hitbox reaches x 1.88 on this side, and a unit is clear of it at
+      # 1.88 + 0.4 (its capsule) + 0.3 (the tolerance the walk stops on) = 2.58.
+      # 3.0 leaves margin, and is well inside what a 5 m/s gingerbread covers in
+      # max_ticks. Both numbers are what the catalog checks: released still
+      # overlapping the nest, a unit would be shoved sideways the moment its own
+      # movement mask came back.
       - start: {x: 0.0, y: 0.0, z: 0.0}
-        exit: {x: 0.0, y: 0.0, z: 2.6}
+        exit: {x: 3.0, y: 0.0, z: 0.0}
