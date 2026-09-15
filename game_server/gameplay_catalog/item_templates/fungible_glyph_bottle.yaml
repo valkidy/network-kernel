@@ -1,0 +1,26 @@
+# A stack of bottles that each leave one glyph_block where they land.
+#
+# Fungible, unlike stateful_magic_bottle: a throw splits one bottle off the
+# stack as a fresh Item Instance and throws that, identity preserved, so the
+# prop that lands is the split bottle and its on_collision is the one that fires.
+#
+# No portable_state, unlike stateful_magic_bottle: the kernel only lets a
+# stateful item project world health (kernel.cc, the health_current check in
+# load_gameplay_catalog), and one bad field rejects the whole catalog. Nothing
+# is lost -- the bottle prop always spawns with its template's hp: 1.
+id: 3007
+name: fungible_glyph_bottle
+mode: fungible
+max_stack: 5
+capabilities: [pickupable, throwable]
+entity_template: glyph_bottle_prop
+world_interaction:
+  range: 3.0
+  line_of_sight_required: false
+throw:
+  mode: identity_preserving
+  trajectory_projectile: grenade_shell_projectile
+use:
+  quantity_cost: 0
+  cooldown_ticks: 0
+  destroy_when_empty: false

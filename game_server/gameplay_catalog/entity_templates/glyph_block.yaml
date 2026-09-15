@@ -1,0 +1,15 @@
+# One character standing where a fungible_glyph_bottle lands. Deployable like
+# ice_block, and nothing more on the server: which character it shows is picked
+# by each client from the entity's net id, so no gameplay rule can depend on it.
+id: 209
+name: glyph_block
+entity_type: prop
+impulse_resistance: 15.0
+lifecycle:
+  lifetime_ticks: 900
+  population_group: temporary_deployable
+health:
+  hp: 100
+  max_hp: 100
+physics:
+  collider_template: glyph_block_hitbox
