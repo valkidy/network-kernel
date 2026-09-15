@@ -1,0 +1,17 @@
+# The standing glyph a fungible_glyph_bottle leaves where it lands: a slab one
+# metre square and 0.2 deep, standing on its bottom center like ice_block_hitbox.
+#
+# `oriented_box`, not `aabb`: spawn_entity yaws the block to follow
+# event.direction, and an aabb would keep its thin side on the world axes while
+# the glyph turns. The client fits the glyph mesh inside these extents
+# (WaxGlyphBlock.boxSize in unity-network-example), so change both together.
+#
+# `layer: damageable` for the reason ice_block_hitbox gives.
+id: 26
+name: glyph_block_hitbox
+shape: oriented_box
+center: {x: 0.0, y: 0.5, z: 0.0}
+half_extents: {x: 0.5, y: 0.5, z: 0.1}
+radius: 0.0
+purpose: hit
+layer: damageable
