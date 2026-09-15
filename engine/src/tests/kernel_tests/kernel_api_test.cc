@@ -275,6 +275,12 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_NETWORK_STATS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_VISION_STATE_QUERY) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
+    assert(
+        (abi_info.capability_flags &
+         KERNEL_CAPABILITY_SERVER_ENTITY_MOVEMENT_MASK_WRITE) != 0);
+    // Rejected before it can reach a world: an unknown movement layer bit, and
+    // a null handle.
+    assert(!Kernel_ServerSetEntityMovementCollisionMask(nullptr, 1u, 0u));
     assert(KERNEL_ABI_VERSION == 72u);
     assert(Kernel_QueryStatusEffects(nullptr, 1u, nullptr, 0u) == 0u);
     assert((abi_info.capability_flags &

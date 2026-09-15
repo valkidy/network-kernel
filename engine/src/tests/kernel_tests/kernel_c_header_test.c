@@ -6,9 +6,9 @@
 #include "kernel/public/kernel_api.h"
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 88u,
-    "the local player's weapon state is queryable, which a client can only "
-    "answer from the owner snapshot's weapon block");
+    KERNEL_ABI_VERSION == 89u,
+    "an entity's movement collision mask is writable at runtime, so a unit can "
+    "walk out of the building it spawned inside");
 _Static_assert(
     sizeof(KernelLocalWeaponState) == 20u,
     "a managed mirror of the local weapon state must match this layout");

@@ -5377,6 +5377,34 @@ bool KernelEngine::server_set_entity_health(NetId net_id, std::uint16_t hp) {
     return true;
 }
 
+bool KernelEngine::server_set_entity_movement_collision_mask(
+    NetId net_id,
+    std::uint32_t movement_collision_mask) {
+    // Zero is "the engine default"; every other bit has to be one the catalog
+    // would have accepted on a template, because this writes the same field a
+    // template does and the movement filter reads it with no second check.
+    if (!running_ || !is_server_mode(config_.mode) || net_id == 0 ||
+        (movement_collision_mask & ~KERNEL_MOVEMENT_MASK_SUPPORTED) != 0u) {
+        return false;
+    }
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (!entity.has_value() ||
+        !world_.registry().all_of<MovementState>(*entity)) {
+        return false;
+    }
+    MovementState& movement = world_.registry().get<MovementState>(*entity);
+    if (movement.movement_collision_mask == movement_collision_mask) {
+        return true;
+    }
+    movement.movement_collision_mask = movement_collision_mask;
+    // Nothing else to do here. The movement filter is rebuilt from this field
+    // every tick, and whether the capsule is itself a body other actors collide
+    // with follows the ACTOR bit through movement_capsule_blocks_other_actors,
+    // which sync_entity_colliders_from_world re-evaluates on the next tick --
+    // including removing a capsule that has stopped blocking.
+    return true;
+}
+
 bool KernelEngine::server_submit_entity_input(NetId net_id, const KernelPlayerInput& input) {
     return MovementSystem{}.submit_player_input(*this, net_id, input);
 }

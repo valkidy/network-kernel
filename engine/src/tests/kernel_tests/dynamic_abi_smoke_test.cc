@@ -390,6 +390,10 @@ int main() {
         load_symbol<bool(KernelHandle*, std::uint32_t, std::uint16_t)>(
             library,
             "Kernel_ServerSetEntityHealth");
+    auto* kernel_server_set_entity_movement_collision_mask =
+        load_symbol<bool(KernelHandle*, std::uint32_t, std::uint32_t)>(
+            library,
+            "Kernel_ServerSetEntityMovementCollisionMask");
     [[maybe_unused]] auto* kernel_server_submit_entity_input =
         load_symbol<bool(KernelHandle*, std::uint32_t, const KernelPlayerInput*)>(
             library,
