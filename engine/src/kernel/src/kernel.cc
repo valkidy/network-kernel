@@ -765,6 +765,21 @@ float collider_template_radius(
         : collider_template.shape_params.x;
 }
 
+// The box bounding a collider template, for volumes that are boxes whatever the
+// shape is -- a history hitbox. Zero for shapes it does not size.
+glm::vec3 collider_template_bounding_half_extents(
+    const KernelColliderTemplateDefinition& collider_template) {
+    switch (collider_template.shape_type) {
+        case KernelColliderShapeType_Aabb:
+        case KernelColliderShapeType_OrientedBox:
+            return collider_template_half_extents(collider_template);
+        case KernelColliderShapeType_Sphere:
+            return glm::vec3{collider_template.shape_params.x};
+        default:
+            return glm::vec3{0.0f};
+    }
+}
+
 float collider_template_cone_range(
     const KernelColliderTemplateDefinition& collider_template) {
     return collider_template.shape_params.x;
@@ -4248,7 +4263,7 @@ void KernelEngine::materialize_entity_collider(NetId net_id) {
         return;
     }
     const Transform& transform = world_.registry().get<Transform>(*entity);
-    const Hitbox& hitbox = world_.registry().get<Hitbox>(*entity);
+    Hitbox& hitbox = world_.registry().get<Hitbox>(*entity);
     if (hitbox.collider_template_id == 0) {
         return;
     }
@@ -4256,6 +4271,17 @@ void KernelEngine::materialize_entity_collider(NetId net_id) {
         find_collider_template(collider_templates_, hitbox.collider_template_id);
     if (collider_template == nullptr) {
         return;
+    }
+    // A lag-compensated shot tests Hitbox volumes, not colliders (see
+    // raycast_history_frame). A prop template authors a collider and no hitbox
+    // block, so its extents arrive as zero and every rewound weapon passed
+    // straight through it. Sized here, from the collider being built below, so
+    // the rewound shape and the physics shape come from one source.
+    if (kind.type != EntityType::kActor &&
+        hitbox.half_extents == glm::vec3{0.0f}) {
+        hitbox.center = from_kernel_vec3(collider_template->center);
+        hitbox.half_extents =
+            collider_template_bounding_half_extents(*collider_template);
     }
 
     ColliderInstance collider{};

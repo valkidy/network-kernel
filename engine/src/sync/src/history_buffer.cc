@@ -101,6 +101,14 @@ void HistoryBuffer::write_frame(const World& world, std::uint32_t server_tick) {
         if (world.registry().all_of<ProjectileTag>(entity)) {
             continue;
         }
+        // A carried prop rides its carrier with its collider switched off, and
+        // area effects skip it for the same reason: a rewound shot at whoever
+        // holds it must not stop on -- or detonate -- what they are holding.
+        const PropWorldMode* prop_mode =
+            world.registry().try_get<PropWorldMode>(entity);
+        if (prop_mode != nullptr && prop_mode->mode == PropMode::kCarrying) {
+            continue;
+        }
         const NetworkIdentity& identity = view.get<const NetworkIdentity>(entity);
         const Transform& transform = view.get<const Transform>(entity);
         const Hitbox& hitbox = view.get<const Hitbox>(entity);
