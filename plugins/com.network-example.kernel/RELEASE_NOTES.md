@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- refreshes Unity package artifacts for kernel ABI 88
+
+
+0.7.0 release notes:
+
 - aligns Unity plugin API with kernel ABI 88
 
 
