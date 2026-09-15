@@ -81,6 +81,14 @@ private:
     // needed, and returns how many it wrote.
     std::uint32_t query_actor_states(
         std::vector<KernelServerEntityState>* buffer) const;
+    // Takes the walks a director handed over this tick and binds each to the
+    // agent it names. Runs after the resync, because the agent was created by
+    // that same director moments ago and is not in the list until then.
+    void attach_pending_entries();
+    // Drives everyone still walking out of whatever spawned them: one input per
+    // tick towards the door, and the template's own movement mask back the
+    // moment they are through it or out of time.
+    void tick_entries();
     void build_controllers();
     // Takes the tick's perception frame off `actors` first: the controllers used
     // to ask the kernel per agent for the vision state and for the entity state

@@ -14,6 +14,28 @@ constexpr KernelQuat kIdentityRotation{0.0f, 0.0f, 0.0f, 1.0f};
 constexpr std::size_t kInitialQueriedEntities = 64;
 constexpr std::size_t kMaxQueriedEntities = 8192;
 
+// An authored offset, turned by the carrier's rotation and placed where the
+// carrier is standing. Written out rather than pulled from glm because this is
+// the only rotation game_server does, and the identity case -- every carrier
+// placed unrotated today -- has to cost nothing.
+KernelVec3 carrier_world_point(
+    const KernelServerEntityState& carrier,
+    const KernelVec3& local) {
+    const float x = carrier.rotation.x;
+    const float y = carrier.rotation.y;
+    const float z = carrier.rotation.z;
+    const float w = carrier.rotation.w;
+    // v + 2 * cross(q.xyz, cross(q.xyz, v) + w * v)
+    const float tx = 2.0f * (y * local.z - z * local.y);
+    const float ty = 2.0f * (z * local.x - x * local.z);
+    const float tz = 2.0f * (x * local.y - y * local.x);
+    return KernelVec3{
+        carrier.position.x + local.x + w * tx + (y * tz - z * ty),
+        carrier.position.y + local.y + w * ty + (z * tx - x * tz),
+        carrier.position.z + local.z + w * tz + (x * ty - y * tx),
+    };
+}
+
 // Whether the kernel still knows this net id at all. Deliberately not a check
 // on `valid`: an entity created this tick is not valid until physics finalises
 // it, so a ceiling that treated "not yet valid" as "dead" would let a nest put
@@ -45,6 +67,27 @@ std::string validate_spawner_config(const SpawnerConfig& spawner) {
     if (spawner.max_live_agents != 0u &&
         spawner.max_live_agents < spawner.count_max) {
         return "spawner ceiling is below the largest wave it would draw";
+    }
+    if (spawner.entry.authored) {
+        if (spawner.entry.exits.empty()) {
+            return "spawner entry requires at least one exit";
+        }
+        if (spawner.entry.max_ticks == 0u) {
+            return "spawner entry max_ticks must be at least one tick";
+        }
+        // Zero is the kernel's "engine default", which here means the carrier
+        // goes on blocking the unit it just put inside itself: it would stand in
+        // the doorway until the timeout and then be released where it started.
+        // An entry that cannot be walked is a misconfiguration, not a style.
+        if (spawner.entry.movement_collision_mask == 0u) {
+            return "spawner entry movement_collision_mask must name the layers "
+                   "that still block a unit on its way out";
+        }
+        if ((spawner.entry.movement_collision_mask &
+             ~static_cast<std::uint32_t>(KERNEL_MOVEMENT_MASK_SUPPORTED)) != 0u) {
+            return "spawner entry movement_collision_mask names a movement "
+                   "layer the kernel does not have";
+        }
     }
     return {};
 }
@@ -210,9 +253,17 @@ void SpawnerDirector::tick(KernelHandle* kernel) {
 
         const std::vector<std::uint32_t> drawn =
             draw_spawn_composition(spawner.composition, count, &random_state);
+        const bool walks_out =
+            spawner.entry.authored && !spawner.entry.exits.empty();
         std::uint32_t created = 0;
         for (std::size_t entry = 0; entry < drawn.size(); ++entry) {
             for (std::uint32_t unit = 0; unit < drawn[entry]; ++unit) {
+                // Doors are dealt round robin across the whole wave, so a
+                // carrier that names two of them puts half its units through
+                // each rather than queueing everyone at the first.
+                const SpawnerEntryExit* door = walks_out
+                    ? &spawner.entry.exits[created % spawner.entry.exits.size()]
+                    : nullptr;
                 KernelServerEntityCreateInfo create_info{};
                 create_info.struct_size = sizeof(create_info);
                 create_info.owner_peer = 0;
@@ -220,10 +271,15 @@ void SpawnerDirector::tick(KernelHandle* kernel) {
                     spawner.composition[entry].entity_template_id;
                 // Around wherever the carrier is now, not where it was placed:
                 // a nest that has been knocked across the floor should emit
-                // from where it ended up.
-                create_info.position =
-                    sample_area(area, carrier_state.position, &random_state);
-                create_info.rotation = kIdentityRotation;
+                // from where it ended up. A carrier with doors puts them at the
+                // authored start instead, which is inside itself.
+                create_info.position = door != nullptr
+                    ? carrier_world_point(carrier_state, door->start)
+                    : sample_area(area, carrier_state.position, &random_state);
+                // Facing the way the carrier faces, so a unit walking out is
+                // already pointed at the door rather than turning on the spot.
+                create_info.rotation =
+                    door != nullptr ? carrier_state.rotation : kIdentityRotation;
                 std::uint32_t net_id = 0;
                 if (!Kernel_ServerCreateEntity(kernel, &create_info, &net_id) ||
                     net_id == 0) {
@@ -232,6 +288,34 @@ void SpawnerDirector::tick(KernelHandle* kernel) {
                         carrier->name,
                         spawner.composition[entry].entity_template_id);
                     continue;
+                }
+                if (door != nullptr) {
+                    // Before the next Kernel_Update, so the unit's very first
+                    // physics tick already runs under the entry mask. Set any
+                    // later it would spend that tick blocked by the carrier it
+                    // is standing inside, and be shoved out through the wall.
+                    if (Kernel_ServerSetEntityMovementCollisionMask(
+                            kernel,
+                            net_id,
+                            spawner.entry.movement_collision_mask)) {
+                        SpawnerEntryRequest request;
+                        request.net_id = net_id;
+                        request.exit =
+                            carrier_world_point(carrier_state, door->exit);
+                        request.hold_ticks =
+                            created * spawner.entry.stagger_ticks;
+                        request.max_ticks = spawner.entry.max_ticks;
+                        pending_entries_.push_back(request);
+                    } else {
+                        // No request, so nothing will drive or release it: it is
+                        // an ordinary unit that happens to be standing in the
+                        // carrier, and the carrier pushes it out. Worth a line,
+                        // because that is a visible difference.
+                        spdlog::warn(
+                            "spawner entry mask failed carrier={} net_id={}",
+                            carrier->name,
+                            net_id);
+                    }
                 }
                 instance.spawned_net_ids.push_back(net_id);
                 ++created;
@@ -263,6 +347,12 @@ const std::vector<SpawnerDirector::Instance>& SpawnerDirector::instances() const
 
 std::uint32_t SpawnerDirector::spawned_unit_count() const {
     return spawned_unit_count_;
+}
+
+std::vector<SpawnerEntryRequest> SpawnerDirector::take_pending_entries() {
+    std::vector<SpawnerEntryRequest> taken = std::move(pending_entries_);
+    pending_entries_.clear();
+    return taken;
 }
 
 }  // namespace network_example::game_server
