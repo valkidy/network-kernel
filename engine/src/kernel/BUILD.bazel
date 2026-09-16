@@ -252,6 +252,7 @@ cc_shared_library(
             "-Wl,-exported_symbol,_Kernel_ServerSetEntityHealth",
             "-Wl,-exported_symbol,_Kernel_ServerSubmitEntityInput",
             "-Wl,-exported_symbol,_Kernel_ServerSetEntityCombatState",
+            "-Wl,-exported_symbol,_Kernel_ServerSetEntityMovementCollisionMask",
             "-Wl,-exported_symbol,_Kernel_ServerSetEntityActorTemplate",
             "-Wl,-exported_symbol,_Kernel_ServerSetEntityVisionConfig",
             "-Wl,-exported_symbol,_Kernel_ServerClearEntityVisionConfig",

@@ -419,6 +419,24 @@ bool Kernel_ServerSetEntityHealth(
     uint32_t net_id,
     uint16_t hp);
 
+/*
+ * The layers this actor sweeps against from now on, as KERNEL_MOVEMENT_LAYER_*
+ * bits; zero restores the engine default. Authored per template, and changed
+ * here for the length of a scripted move -- a unit walking out of the building
+ * it spawned inside needs that building to stop blocking it, and needs it to
+ * block again the moment it is clear.
+ *
+ * Rejected unless the entity carries movement state and every bit named is one
+ * KERNEL_MOVEMENT_MASK_SUPPORTED allows, so an unknown bit cannot silently
+ * widen or narrow what stops the actor. The movement capsule's own registration
+ * follows the ACTOR bit and is rebuilt on the next collider sync, so dropping
+ * that bit also stops this actor from blocking others.
+ */
+bool Kernel_ServerSetEntityMovementCollisionMask(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    uint32_t movement_collision_mask);
+
 bool Kernel_ServerSubmitEntityInput(
     KernelHandle* kernel,
     uint32_t net_id,

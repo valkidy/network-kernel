@@ -8,6 +8,8 @@
 // lying at an angle -- which is what a rig's leg is.
 
 #include "sync/public/history_buffer.h"
+#include "world/public/components.h"
+#include "world/public/world.h"
 
 #include <cmath>
 #include <cstdio>
@@ -140,6 +142,63 @@ int main() {
             0u,
             &hit));
         require(hit.net_id == 42u);
+    }
+
+    // Recording. A placed prop is in the rewound world -- a lag-compensated shot
+    // has to be able to land on it -- and a carried one is not: its collider is
+    // off while it rides the carrier, and a shot at the carrier must not stop on
+    // what they hold.
+    {
+        network_example::World world;
+        const network_example::NetId placed = world.spawn_entity(
+            network_example::EntityType::kProp,
+            network_example::ActorType::kUnknown,
+            0u,
+            glm::vec3{0.0f, 0.0f, 0.0f});
+        const network_example::NetId carried = world.spawn_entity(
+            network_example::EntityType::kProp,
+            network_example::ActorType::kUnknown,
+            0u,
+            glm::vec3{5.0f, 0.0f, 0.0f});
+        for (const network_example::NetId net_id : {placed, carried}) {
+            const auto entity = world.find_entity(net_id);
+            require(entity.has_value());
+            world.registry().emplace<network_example::Hitbox>(
+                *entity,
+                network_example::Hitbox{
+                    glm::vec3{0.0f, 1.0f, 0.0f},
+                    glm::vec3{1.0f, 1.0f, 1.0f},
+                    0u});
+            world.registry().emplace<network_example::PropWorldMode>(
+                *entity,
+                network_example::PropWorldMode{network_example::PropMode::kPlaced});
+        }
+        world.registry()
+            .get<network_example::PropWorldMode>(*world.find_entity(carried))
+            .mode = network_example::PropMode::kCarrying;
+
+        network_example::HistoryBuffer history(4u);
+        history.write_frame(world, 7u);
+        const network_example::HistoryFrame* recorded = history.find_frame(7u);
+        require(recorded != nullptr);
+        bool saw_placed = false;
+        bool saw_carried = false;
+        for (const network_example::HitVolumeSnapshot& volume : recorded->volumes) {
+            saw_placed = saw_placed || volume.net_id == placed;
+            saw_carried = saw_carried || volume.net_id == carried;
+        }
+        require(saw_placed);
+        require(!saw_carried);
+
+        network_example::HistoricalHitResult hit;
+        require(network_example::raycast_history_frame(
+            *recorded,
+            glm::vec3{-10.0f, 1.0f, 0.0f},
+            glm::vec3{1.0f, 0.0f, 0.0f},
+            100.0f,
+            0u,
+            &hit));
+        require(hit.net_id == placed);
     }
 
     std::printf("history_buffer_test: PASS\n");

@@ -765,6 +765,21 @@ float collider_template_radius(
         : collider_template.shape_params.x;
 }
 
+// The box bounding a collider template, for volumes that are boxes whatever the
+// shape is -- a history hitbox. Zero for shapes it does not size.
+glm::vec3 collider_template_bounding_half_extents(
+    const KernelColliderTemplateDefinition& collider_template) {
+    switch (collider_template.shape_type) {
+        case KernelColliderShapeType_Aabb:
+        case KernelColliderShapeType_OrientedBox:
+            return collider_template_half_extents(collider_template);
+        case KernelColliderShapeType_Sphere:
+            return glm::vec3{collider_template.shape_params.x};
+        default:
+            return glm::vec3{0.0f};
+    }
+}
+
 float collider_template_cone_range(
     const KernelColliderTemplateDefinition& collider_template) {
     return collider_template.shape_params.x;
@@ -4248,7 +4263,7 @@ void KernelEngine::materialize_entity_collider(NetId net_id) {
         return;
     }
     const Transform& transform = world_.registry().get<Transform>(*entity);
-    const Hitbox& hitbox = world_.registry().get<Hitbox>(*entity);
+    Hitbox& hitbox = world_.registry().get<Hitbox>(*entity);
     if (hitbox.collider_template_id == 0) {
         return;
     }
@@ -4256,6 +4271,17 @@ void KernelEngine::materialize_entity_collider(NetId net_id) {
         find_collider_template(collider_templates_, hitbox.collider_template_id);
     if (collider_template == nullptr) {
         return;
+    }
+    // A lag-compensated shot tests Hitbox volumes, not colliders (see
+    // raycast_history_frame). A prop template authors a collider and no hitbox
+    // block, so its extents arrive as zero and every rewound weapon passed
+    // straight through it. Sized here, from the collider being built below, so
+    // the rewound shape and the physics shape come from one source.
+    if (kind.type != EntityType::kActor &&
+        hitbox.half_extents == glm::vec3{0.0f}) {
+        hitbox.center = from_kernel_vec3(collider_template->center);
+        hitbox.half_extents =
+            collider_template_bounding_half_extents(*collider_template);
     }
 
     ColliderInstance collider{};
@@ -5348,6 +5374,34 @@ bool KernelEngine::server_set_entity_health(NetId net_id, std::uint16_t hp) {
         world_.registry().get<EntityKind>(*entity).type == EntityType::kProp) {
         queue_prop_state_change(net_id);
     }
+    return true;
+}
+
+bool KernelEngine::server_set_entity_movement_collision_mask(
+    NetId net_id,
+    std::uint32_t movement_collision_mask) {
+    // Zero is "the engine default"; every other bit has to be one the catalog
+    // would have accepted on a template, because this writes the same field a
+    // template does and the movement filter reads it with no second check.
+    if (!running_ || !is_server_mode(config_.mode) || net_id == 0 ||
+        (movement_collision_mask & ~KERNEL_MOVEMENT_MASK_SUPPORTED) != 0u) {
+        return false;
+    }
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (!entity.has_value() ||
+        !world_.registry().all_of<MovementState>(*entity)) {
+        return false;
+    }
+    MovementState& movement = world_.registry().get<MovementState>(*entity);
+    if (movement.movement_collision_mask == movement_collision_mask) {
+        return true;
+    }
+    movement.movement_collision_mask = movement_collision_mask;
+    // Nothing else to do here. The movement filter is rebuilt from this field
+    // every tick, and whether the capsule is itself a body other actors collide
+    // with follows the ACTOR bit through movement_capsule_blocks_other_actors,
+    // which sync_entity_colliders_from_world re-evaluates on the next tick --
+    // including removing a capsule that has stopped blocking.
     return true;
 }
 

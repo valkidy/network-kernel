@@ -9,7 +9,7 @@ lifecycle:
   lifetime_ticks: 900
   population_group: temporary_deployable
 health:
-  hp: 100
-  max_hp: 100
+  hp: 10000
+  max_hp: 10000
 physics:
   collider_template: glyph_block_hitbox

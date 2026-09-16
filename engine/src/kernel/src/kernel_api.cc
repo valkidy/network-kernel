@@ -259,6 +259,7 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             KERNEL_CAPABILITY_SERVER_ENTITY_TRANSFORM_WRITE |
             KERNEL_CAPABILITY_SERVER_ENTITY_VELOCITY_WRITE |
             KERNEL_CAPABILITY_SERVER_ENTITY_STATE_WRITE |
+            KERNEL_CAPABILITY_SERVER_ENTITY_MOVEMENT_MASK_WRITE |
             KERNEL_CAPABILITY_SERVER_ENTITY_QUERY |
             KERNEL_CAPABILITY_SERVER_RELEVANCE_FILTER |
             KERNEL_CAPABILITY_LAG_COMPENSATED_PROJECTILE |
@@ -1076,6 +1077,21 @@ bool Kernel_ServerSetEntityHealth(
         return kernel != nullptr &&
                kernel->engine->server_set_entity_health(net_id, hp);
     });
+}
+
+bool Kernel_ServerSetEntityMovementCollisionMask(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    uint32_t movement_collision_mask) {
+    return abi_call(
+        "Kernel_ServerSetEntityMovementCollisionMask",
+        false,
+        [&]() {
+            return kernel != nullptr &&
+                   kernel->engine->server_set_entity_movement_collision_mask(
+                       net_id,
+                       movement_collision_mask);
+        });
 }
 
 bool Kernel_ServerEnqueueEntityState(

@@ -92,6 +92,29 @@ struct AgentSentryConfig {
     std::uint16_t animation_attack = 0;
 };
 
+// An agent that is still walking out of whatever spawned it.
+//
+// While this is active the agent is not the AI's: the controllers skip it, the
+// entry pass drives it, and its movement mask is the spawner's rather than its
+// template's. Everything here is resolved when the request is attached, so the
+// pass itself needs nothing but the agent.
+struct AgentEntryRuntimeState {
+    bool active = false;
+    // Where it is walking to, in world space.
+    KernelVec3 exit{0.0f, 0.0f, 0.0f};
+    // Ticks to wait before setting off, which is how a wave leaves one at a
+    // time. It stands still inside the carrier until then.
+    std::uint32_t hold_ticks = 0;
+    // The budget for the walk itself. At zero the agent is released wherever it
+    // stands: a door blocked by something the walk cannot push aside must not
+    // strand it.
+    std::uint32_t remaining_ticks = 0;
+    // The template's own mask, put back the moment the walk ends. Zero is a
+    // legal value -- it means the engine default -- so `active` is what says
+    // whether a restore is owed, not this.
+    std::uint32_t restore_movement_collision_mask = 0;
+};
+
 struct AgentRuntimeState {
     std::uint32_t net_id = 0;
     // Selects which controller and which tuning this agent runs under; agents
@@ -116,6 +139,7 @@ struct AgentRuntimeState {
     // is holding position, until the target opens the gap back up.
     bool chase_holding = false;
     AgentPatrolRuntimeState patrol{};
+    AgentEntryRuntimeState entry{};
 };
 
 // Where each agent sits in the manager's list.

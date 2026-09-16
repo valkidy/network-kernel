@@ -68,6 +68,7 @@ EXPORTS
     Kernel_ServerSetEntityVelocity
     Kernel_ServerSetEntityState
     Kernel_ServerSetEntityHealth
+    Kernel_ServerSetEntityMovementCollisionMask
     Kernel_ServerSubmitEntityInput
     Kernel_ServerSetEntityCombatState
     Kernel_ServerSetEntityActorTemplate

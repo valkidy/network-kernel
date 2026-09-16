@@ -6,13 +6,31 @@
 # side and let every other one pass through it. The entity's camp still decides
 # who may damage it.
 #
-# PLACEHOLDER EXTENTS. Sized as a squat two-metre box so the thing is hittable
-# and visible in the debug views; not measured from any model.
+# Measured off the client's tower model (Resources/tower-atlas.glb), taking
+# everything the model puts above its pivot: x -3.43..1.88, y 0..8.67,
+# z -2.80..2.15. The box is not centred on the pivot because the tower is not --
+# it leans towards -x -- so the centre carries that offset rather than the box
+# being grown symmetrically around it, which would have added two metres of
+# invisible wall on the side the model does not occupy.
+#
+# The rock base the model hangs below its pivot (down to y -1.51) is left out.
+# It is underground wherever a nest is placed on terrain, and a collider that
+# reaches below the floor catches ground probes without ever being visible.
+#
+# One box, roof included: the overhang only reaches 0.1-0.4 m past the body, so
+# covering the whole silhouette costs almost nothing in invisible wall at player
+# height, and shots at the roof land instead of passing through it.
+#
+# This is what a weapon has to touch, and -- because every non-actor collider is
+# registered as a static obstacle -- what a body has to walk around. The
+# spawner's entry exits are validated against it, so changing these extents can
+# make gingerbread_nest.yaml's door fail catalog load rather than silently put
+# units out inside the wall.
 id: 24
 name: gingerbread_nest_hitbox
 shape: oriented_box
-center: {x: 0.0, y: 1.0, z: 0.0}
-half_extents: {x: 1.0, y: 1.0, z: 1.0}
+center: {x: -0.77, y: 4.34, z: -0.32}
+half_extents: {x: 2.65, y: 4.34, z: 2.48}
 radius: 0.0
 purpose: hit
 layer: damageable

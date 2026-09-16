@@ -304,6 +304,14 @@ void hash_actor_template(
         hash_scalar(hash, entry.min_count);
         hash_scalar(hash, entry.max_count);
     }
+    hash_scalar(hash, actor_template.spawner.entry.authored ? 1u : 0u);
+    hash_scalar(hash, actor_template.spawner.entry.max_ticks);
+    hash_scalar(hash, actor_template.spawner.entry.stagger_ticks);
+    hash_scalar(hash, actor_template.spawner.entry.movement_collision_mask);
+    for (const SpawnerEntryExit& door : actor_template.spawner.entry.exits) {
+        hash_vec3(hash, door.start);
+        hash_vec3(hash, door.exit);
+    }
     hash_scalar(hash, actor_template.vision.camp);
     hash_scalar(hash, actor_template.vision.vision_collider_template_id);
     hash_scalar(hash, actor_template.vision.max_visible_hostiles);
@@ -7024,6 +7032,7 @@ SpawnerConfig spawner_from_yaml(
             "radius",
             "count",
             "composition",
+            "entry",
         },
         path,
         source_kind,
@@ -7081,6 +7090,53 @@ SpawnerConfig spawner_from_yaml(
         entry.max_count = entry_node["max"].as<std::uint32_t>();
         spawner.composition.push_back(std::move(entry));
     }
+    // `entry:` -- how a unit gets out of the carrier. Absent, a wave appears
+    // around it the way it always did.
+    const YAML::Node entry_node = node["entry"];
+    if (entry_node) {
+        reject_unknown_keys(
+            entry_node,
+            {"max_ticks", "stagger_ticks", "movement_collision_mask", "exits"},
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+            template_id);
+        spawner.entry.authored = true;
+        if (entry_node["max_ticks"]) {
+            spawner.entry.max_ticks = entry_node["max_ticks"].as<std::uint32_t>();
+        }
+        if (entry_node["stagger_ticks"]) {
+            spawner.entry.stagger_ticks =
+                entry_node["stagger_ticks"].as<std::uint32_t>();
+        }
+        if (entry_node["movement_collision_mask"]) {
+            spawner.entry.movement_collision_mask =
+                movement_collision_mask_from_yaml(
+                    entry_node["movement_collision_mask"]);
+        }
+        const YAML::Node exits = entry_node["exits"];
+        if (!exits || !exits.IsSequence() || exits.size() == 0) {
+            throw std::runtime_error(
+                "spawner entry requires exits as a non-empty sequence");
+        }
+        for (const YAML::Node& exit_node : exits) {
+            reject_unknown_keys(
+                exit_node,
+                {"start", "exit"},
+                path,
+                source_kind,
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+                template_id);
+            if (!exit_node["start"] || !exit_node["exit"]) {
+                throw std::runtime_error(
+                    "spawner entry exit requires start and exit");
+            }
+            SpawnerEntryExit door;
+            door.start = vec3_from_yaml(exit_node["start"]);
+            door.exit = vec3_from_yaml(exit_node["exit"]);
+            spawner.entry.exits.push_back(door);
+        }
+    }
     return spawner;
 }
 
@@ -7130,6 +7186,88 @@ SpawnAreaConfig patrol_area_from_yaml(
 // Resolves what a spawner names and collects the templates that carry one.
 // Separate from the template parse because a spawner names other templates,
 // which may not have been loaded when its own was.
+// Whether a wave can actually get out of the carrier it is authored on.
+//
+// Separate from validate_spawner_config because every question here needs a
+// second template: the carrier's own collider, and the capsule and speed of the
+// units it puts through the door. A spawner on its own cannot answer them.
+//
+// The rate is game_server's own 30 Hz. The catalog carries no tick rate -- it is
+// a kernel config -- so a walk budget authored in ticks can only be turned into
+// metres here by naming it.
+std::string validate_spawner_entry_placement(
+    const GameServerGameplayConfig& config,
+    const EntityTemplateConfig& carrier) {
+    constexpr float kServerTicksPerSecond = 30.0f;
+    const SpawnerEntryConfig& entry = carrier.spawner.entry;
+    KernelVec3 carrier_center{};
+    float carrier_half_x = 0.0f;
+    float carrier_half_z = 0.0f;
+    for (const ColliderTemplateConfig& collider : config.colliders.templates) {
+        if (collider.definition.template_id != carrier.collider_template_id) {
+            continue;
+        }
+        carrier_center = collider.definition.center;
+        carrier_half_x = collider.definition.shape_params.x;
+        carrier_half_z = collider.definition.shape_params.z;
+    }
+
+    // The worst case across the whole composition: the widest unit has to fit
+    // through the gap, and the slowest has to cover the distance in time.
+    float widest_radius = 0.0f;
+    float slowest_speed = 0.0f;
+    for (const SpawnCompositionEntry& composition : carrier.spawner.composition) {
+        const auto unit = std::find_if(
+            config.entity_templates.begin(),
+            config.entity_templates.end(),
+            [&composition](const EntityTemplateConfig& candidate) {
+                return candidate.actor_template_id == composition.entity_template_id;
+            });
+        if (unit == config.entity_templates.end()) {
+            continue;
+        }
+        if (slowest_speed == 0.0f ||
+            (unit->move_speed_meters_per_second > 0.0f &&
+             unit->move_speed_meters_per_second < slowest_speed)) {
+            slowest_speed = unit->move_speed_meters_per_second;
+        }
+        for (const ColliderTemplateConfig& collider : config.colliders.templates) {
+            if (collider.definition.template_id !=
+                unit->movement_collider_template_id) {
+                continue;
+            }
+            // A capsule carries its radius in y; see collider_template_radius.
+            widest_radius = std::max(widest_radius, collider.definition.shape_params.y);
+        }
+    }
+    if (slowest_speed <= 0.0f) {
+        return "spawner entry puts out a unit with no movement speed";
+    }
+
+    const float clearance = widest_radius + kSpawnerEntryArrivalMeters;
+    const float reach = slowest_speed * static_cast<float>(entry.max_ticks) /
+        kServerTicksPerSecond;
+    for (const SpawnerEntryExit& door : entry.exits) {
+        // Outside the carrier's box on at least one horizontal axis, by enough
+        // that a unit standing at the exit is clear of it. Restoring the mask
+        // while it still overlaps would shove it out sideways, which is the
+        // shove the whole walk exists to avoid.
+        const float clear_x = std::fabs(door.exit.x - carrier_center.x) -
+            (carrier_half_x + clearance);
+        const float clear_z = std::fabs(door.exit.z - carrier_center.z) -
+            (carrier_half_z + clearance);
+        if (clear_x < 0.0f && clear_z < 0.0f) {
+            return "spawner entry exit is not clear of the carrier's collider";
+        }
+        const float dx = door.exit.x - door.start.x;
+        const float dz = door.exit.z - door.start.z;
+        if (std::sqrt(dx * dx + dz * dz) > reach) {
+            return "spawner entry cannot be walked within max_ticks";
+        }
+    }
+    return {};
+}
+
 void apply_catalog_spawner_config(
     GameServerGameplayConfig* config,
     const std::string& path,
@@ -7158,6 +7296,16 @@ void apply_catalog_spawner_config(
             validate_spawner_config(entity_template.spawner);
         if (!error.empty()) {
             throw std::runtime_error(error + ": " + entity_template.name);
+        }
+        if (entity_template.spawner.entry.authored) {
+            // Only once the composition's ids are resolved above: this reads the
+            // templates the wave is made of.
+            const std::string entry_error =
+                validate_spawner_entry_placement(*config, entity_template);
+            if (!entry_error.empty()) {
+                throw std::runtime_error(
+                    entry_error + ": " + entity_template.name);
+            }
         }
         SpawnerCarrierConfig carrier;
         carrier.entity_template_id = entity_template.actor_template_id;

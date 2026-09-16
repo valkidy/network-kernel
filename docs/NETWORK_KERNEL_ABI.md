@@ -44,6 +44,19 @@ template is now rejected at catalog load rather than validated. Nothing outside
 game-rule struct or the director kind -- so this needed no coordination.
 `docs/AI_PATROL_SYSTEM.md` records why they moved.
 
+ABI 89 adds `Kernel_ServerSetEntityMovementCollisionMask` and
+`KERNEL_CAPABILITY_SERVER_ENTITY_MOVEMENT_MASK_WRITE`. It writes the same
+`MovementState::movement_collision_mask` an entity template authors, for the
+length of a scripted move: a unit spawned inside a building has to stop being
+blocked by it to walk out of the door, and has to be blocked again once it is
+clear. The value is rejected unless every bit is one `KERNEL_MOVEMENT_MASK_SUPPORTED`
+allows -- zero still means the engine default -- and unless the entity carries
+movement state at all. No struct layout changes. Whether the capsule is itself a
+body other actors collide with follows the ACTOR bit, and the collider sync
+re-evaluates that every tick, so a mask that drops the bit also removes the
+body. Managed mirrors need the new export before a client can call it; nothing
+in the kernel requires them to.
+
 ABI 88 adds `Kernel_GetLocalWeaponState`, `KernelLocalWeaponState`, its two
 `KERNEL_LOCAL_WEAPON_STATE_FLAG_*` bits, `KERNEL_CAPABILITY_LOCAL_WEAPON_STATE`,
 and `KernelAbiInfo::local_weapon_state_size` (appended). It answers the one HUD

@@ -42,3 +42,32 @@ spawner:
     - entity_template: gingerbread
       min: 2
       max: 4
+  # Coming out of the door rather than appearing in the yard. A unit is created
+  # at `start` -- inside the nest, where the nest's own collider is what a shot
+  # hits first -- and is not the AI's until it reaches `exit`.
+  entry:
+    # 1.2 s at 30 Hz. Also the timeout: a door blocked by something the walk
+    # cannot push aside releases the unit where it stands rather than stranding
+    # it inside the nest for good.
+    max_ticks: 36
+    # A fifth of a second apart, so a wave comes out in single file instead of
+    # as one clump in the doorway.
+    stagger_ticks: 6
+    # Terrain only, for the length of the walk. The nest has to stop blocking
+    # them or they cannot leave at all, and so does each other: a queue waiting
+    # its turn inside the nest would otherwise shove its own members out through
+    # the walls, which is exactly what has been switched off.
+    movement_collision_mask: terrain
+    exits:
+      # Out of the front of the tower model, which is +x: the low structure at
+      # the base -- the one with the door on it -- sits on that side, while the
+      # tower's own mass leans towards -x.
+      #
+      # The hitbox reaches x 1.88 on this side, and a unit is clear of it at
+      # 1.88 + 0.4 (its capsule) + 0.3 (the tolerance the walk stops on) = 2.58.
+      # 3.0 leaves margin, and is well inside what a 5 m/s gingerbread covers in
+      # max_ticks. Both numbers are what the catalog checks: released still
+      # overlapping the nest, a unit would be shoved sideways the moment its own
+      # movement mask came back.
+      - start: {x: 0.0, y: 0.0, z: 0.0}
+        exit: {x: 3.0, y: 0.0, z: 0.0}

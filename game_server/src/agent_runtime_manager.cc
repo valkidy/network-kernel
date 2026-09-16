@@ -1,6 +1,7 @@
 #include "game_server/src/agent_runtime_manager.h"
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
 
 #include <spdlog/spdlog.h>
@@ -16,6 +17,9 @@ constexpr KernelQuat kIdentityRotation{0.0f, 0.0f, 0.0f, 1.0f};
 // back short cannot grow without bound.
 constexpr std::size_t kInitialQueriedActors = 128;
 constexpr std::size_t kMaxQueriedActors = 65536;
+// The same tolerance the catalog validates every exit against, so "far enough
+// out" and "close enough to stop" cannot drift apart.
+constexpr float kEntryArrivalMeters = kSpawnerEntryArrivalMeters;
 
 // Resolved from the agent's OWN actor template, not from the catalog's single
 // `enemy:` entry. Holding one controller-wide config meant an agent spawned by a
@@ -165,6 +169,13 @@ void AgentRuntimeManager::dispatch_controllers(
         binding.batch.clear();
     }
     for (AgentRuntimeState& agent : agents_) {
+        if (agent.entry.active) {
+            // Still walking out. The entry pass has already submitted this
+            // agent's input, and only the highest input_seq of a tick survives
+            // -- a controller adding its own would win that tie and steer the
+            // unit back into the building it is halfway out of.
+            continue;
+        }
         AgentControllerBinding* binding = binding_for(agent.actor_template_id);
         if (binding == nullptr) {
             continue;
@@ -204,6 +215,101 @@ void AgentRuntimeManager::handle_event(const KernelEvent& event) {
     // wrong agents until it is rebuilt. This runs between ticks, not inside
     // one, so the next resync would otherwise read it stale.
     agent_index_.rebuild(agents_);
+}
+
+void AgentRuntimeManager::attach_pending_entries() {
+    for (const SpawnerEntryRequest& request :
+         spawner_director_.take_pending_entries()) {
+        const std::size_t index = agent_index_.find(request.net_id);
+        if (index == AgentIndex::kNotFound) {
+            // Gone within the tick that created it, or not an agent at all.
+            // Nothing here can drive it and nothing will put its mask back, so
+            // it is worth a line rather than a silent ghost walking through
+            // walls for the rest of its life.
+            spdlog::warn("entry request has no agent net_id={}", request.net_id);
+            continue;
+        }
+        AgentRuntimeState& agent = agents_[index];
+        const ActorTemplateConfig* actor_template =
+            find_actor_template(config_, agent.actor_template_id);
+        agent.entry.active = true;
+        agent.entry.exit = request.exit;
+        agent.entry.hold_ticks = request.hold_ticks;
+        agent.entry.remaining_ticks = request.max_ticks;
+        // Read once, here: the walk has to put back exactly what this unit
+        // would have been blocked by had it never been inside anything, and
+        // zero -- the engine default -- is one of the legal answers.
+        agent.entry.restore_movement_collision_mask = actor_template == nullptr
+            ? 0u
+            : actor_template->movement_collision_mask;
+    }
+}
+
+void AgentRuntimeManager::tick_entries() {
+    for (AgentRuntimeState& agent : agents_) {
+        if (!agent.entry.active) {
+            continue;
+        }
+        // Horizontal only. The door is a place on the floor, and a unit still
+        // settling onto the ground must not read as short of it.
+        const float to_exit_x = agent.entry.exit.x - agent.position.x;
+        const float to_exit_z = agent.entry.exit.z - agent.position.z;
+        const float distance =
+            std::sqrt(to_exit_x * to_exit_x + to_exit_z * to_exit_z);
+        const bool holding = agent.entry.hold_ticks > 0u;
+        const bool arrived = distance <= kEntryArrivalMeters;
+        const bool walking = !holding && !arrived;
+
+        KernelPlayerInput input{};
+        input.input_seq = agent.next_input_seq;
+        if (walking) {
+            input.move = KernelVec2{to_exit_x / distance, to_exit_z / distance};
+        }
+        // A zero aim_dir replicates as world +X, so even a unit waiting its turn
+        // faces the door it is about to come out of rather than east.
+        input.aim_dir = distance > 0.0001f
+            ? KernelVec3{to_exit_x / distance, 0.0f, to_exit_z / distance}
+            : KernelVec3{1.0f, 0.0f, 0.0f};
+        // Submitted every tick, including the ones spent waiting: an agent that
+        // sends nothing keeps the velocity it had, so a queue would coast out of
+        // the carrier without ever having been told to walk.
+        if (Kernel_ServerSubmitEntityInput(kernel_, agent.net_id, &input)) {
+            ++agent.next_input_seq;
+        }
+        agent.animation_state = walking
+            ? agent.sentry_config.animation_attack
+            : agent.sentry_config.animation_idle;
+        Kernel_ServerEnqueueEntityState(
+            kernel_,
+            KernelCommandSource_AI,
+            agent.net_id,
+            agent.animation_state,
+            0);
+
+        if (holding) {
+            --agent.entry.hold_ticks;
+            continue;
+        }
+        if (agent.entry.remaining_ticks > 0u) {
+            --agent.entry.remaining_ticks;
+        }
+        if (!arrived && agent.entry.remaining_ticks > 0u) {
+            continue;
+        }
+        // Through the door, or out of time. Either way the walk is over: put the
+        // template's own mask back before the controllers get their hands on it,
+        // or this unit spends the rest of the match walking through cover.
+        if (!Kernel_ServerSetEntityMovementCollisionMask(
+                kernel_,
+                agent.net_id,
+                agent.entry.restore_movement_collision_mask)) {
+            spdlog::warn(
+                "entry restore failed net_id={} mask={}",
+                agent.net_id,
+                agent.entry.restore_movement_collision_mask);
+        }
+        agent.entry = AgentEntryRuntimeState{};
+    }
 }
 
 void AgentRuntimeManager::tick(float delta_seconds) {
@@ -246,6 +352,12 @@ void AgentRuntimeManager::tick(float delta_seconds) {
     // after them.
     actors = refresh_actor_states();
     sync_agents_from_kernel(actors);
+    // After the resync, because the agent a walk names was created by one of
+    // the directors above and is not in the list until now.
+    attach_pending_entries();
+    // Before the controllers, which skip anyone still walking: this is what
+    // submits their input for the tick, and only one input per agent survives.
+    tick_entries();
     // Ahead of the controllers, so a member reads the slot its squad wants it
     // in this tick rather than the one from last tick.
     patrol_groups_.tick(&agents_, agent_index_, delta_seconds);
