@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 88;
+        public const uint AbiVersion = 89;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int GameplayCatalogEntryPathSize = 128;
@@ -106,6 +106,7 @@ namespace NetworkExample.Kernel
         public const ulong CapabilitySkeletonRenderStates = 0x0000040000000000UL;
         public const ulong CapabilitySkeletonBindPose = 0x0000080000000000UL;
         public const ulong CapabilityLocalWeaponState = 0x0000100000000000UL;
+        public const ulong CapabilityServerEntityMovementMaskWrite = 0x0000200000000000UL;
 
         // KernelLocalWeaponState.flags.
         public const byte LocalWeaponStateFlagReloading = 0x01;

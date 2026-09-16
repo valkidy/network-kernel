@@ -65,6 +65,10 @@ namespace NetworkExample.Kernel
                 "Kernel server entity state-write capability is missing.");
             RequireCapability(
                 info,
+                KernelConstants.CapabilityServerEntityMovementMaskWrite,
+                "Kernel server entity movement-mask-write capability is missing.");
+            RequireCapability(
+                info,
                 KernelConstants.CapabilityServerEntityQuery,
                 "Kernel server entity query capability is missing.");
             RequireCapability(

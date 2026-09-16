@@ -24,7 +24,7 @@ namespace NetworkExample.Kernel.Editor
             KernelAbi.ValidateNativeAbi();
             GameServerAbi.ValidateNativeAbi();
             KernelAbiInfo info = KernelAbi.GetInfo();
-            Require(KernelConstants.AbiVersion == 88, "Managed kernel ABI version was not v88.");
+            Require(KernelConstants.AbiVersion == 89, "Managed kernel ABI version was not v89.");
             Require(
                 KernelLocalWeaponState.StructSize == 20 &&
                 info.local_weapon_state_size == KernelLocalWeaponState.StructSize,
@@ -32,6 +32,9 @@ namespace NetworkExample.Kernel.Editor
             Require(
                 (info.capability_flags & KernelConstants.CapabilityLocalWeaponState) != 0,
                 "Kernel local weapon state capability was missing.");
+            Require(
+                (info.capability_flags & KernelConstants.CapabilityServerEntityMovementMaskWrite) != 0,
+                "Kernel server entity movement-mask-write capability was missing.");
             Require(
                 RenderEntityState.StructSize == 160,
                 "Managed RenderEntityState layout was not 160 bytes.");

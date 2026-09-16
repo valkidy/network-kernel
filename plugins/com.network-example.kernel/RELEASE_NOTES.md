@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- adds managed support for movement collision mask writes in ABI 89
+
+
+0.7.0 release notes:
+
 - refreshes Unity package artifacts for kernel ABI 88
 
 

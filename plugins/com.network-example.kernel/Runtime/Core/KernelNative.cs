@@ -439,6 +439,13 @@ namespace NetworkExample.Kernel
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_ServerSetEntityMovementCollisionMask(
+            IntPtr kernel,
+            uint netId,
+            uint movementCollisionMask);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
         internal static extern bool Kernel_ServerSubmitEntityInput(
             IntPtr kernel,
             uint netId,

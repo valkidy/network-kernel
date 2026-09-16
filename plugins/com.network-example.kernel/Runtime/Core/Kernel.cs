@@ -917,6 +917,18 @@ namespace NetworkExample.Kernel
             return KernelNative.Kernel_ServerSetEntityHealth(handle, netId, hp);
         }
 
+        /// <summary>
+        /// Sets the movement collision layers for an entity. Zero restores the engine default.
+        /// </summary>
+        public bool ServerSetEntityMovementCollisionMask(uint netId, uint movementCollisionMask)
+        {
+            ThrowIfDisposed();
+            return KernelNative.Kernel_ServerSetEntityMovementCollisionMask(
+                handle,
+                netId,
+                movementCollisionMask);
+        }
+
         public bool ServerSubmitEntityInput(uint netId, KernelPlayerInput input)
         {
             ThrowIfDisposed();
