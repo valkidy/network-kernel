@@ -4,7 +4,7 @@
 id: 209
 name: glyph_block
 entity_type: prop
-impulse_resistance: 15.0
+impulse_resistance: 5.0
 lifecycle:
   lifetime_ticks: 900
   population_group: temporary_deployable
