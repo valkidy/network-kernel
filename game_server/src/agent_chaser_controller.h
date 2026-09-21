@@ -37,13 +37,12 @@ struct AgentChaseTuning {
 // agent has a slot, so a chaser that is not part of a patrol reads the same as
 // one authored before any of this existed.
 struct AgentPatrolTuning {
-    // How close to its slot counts as standing in it. A tick of movement covers
-    // move_speed/tick_rate metres, so a radius smaller than that leaves the
-    // agent overshooting the slot and turning back forever.
+    // Arrival radius while the squad is stopped, also used when rejoining
+    // after pursuit. Moving squads do not stop members inside this radius.
     float slot_radius_meters = 1.0f;
-    // Fraction of move speed to walk the route at, 0..1. Patrolling is not
-    // chasing; the same value at both would make a patrol indistinguishable
-    // from a pursuit at a glance.
+    // Fraction of move speed for arrival at a stopped squad's slot, 0..1.
+    // During travel, members match squad velocity and correct formation error
+    // up to their template's full move speed.
     float input_magnitude = 0.5f;
     // How far a pursuit may drag the agent from where it broke formation before
     // it gives up and walks back. Zero disables the leash entirely, which is

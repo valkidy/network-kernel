@@ -127,6 +127,7 @@ void PatrolGroupRuntime::tick(
             heading_z = waypoint.z - group.cursor.z;
         }
 
+        const KernelVec3 previous_cursor = group.cursor;
         if (!group.holding && !group.route_complete) {
             float remaining = group.tuning.advance_speed_meters_per_second * delta_seconds;
             // A loop rather than one step, so a tick long enough to cross a
@@ -173,6 +174,14 @@ void PatrolGroupRuntime::tick(
                 group.cursor.z + offset.z,
             };
             agent->patrol.has_slot = true;
+            agent->patrol.travel_velocity = {};
+            if (!group.holding && !group.route_complete) {
+                agent->patrol.travel_velocity = KernelVec3{
+                    (group.cursor.x - previous_cursor.x) / delta_seconds,
+                    0.0f,
+                    (group.cursor.z - previous_cursor.z) / delta_seconds,
+                };
+            }
         }
     }
 }
