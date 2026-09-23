@@ -90,6 +90,10 @@ patrols:
       - entity_template: gingerbread_mushroom
         min: 6
         max: 20
+      # Testing the chaser AI on a legged rig: exactly one per squad.
+      - entity_template: tripod_chaser
+        min: 1
+        max: 1
     # Three abreast, so 24 members stand eight ranks deep -- about 10 m of
     # column behind the squad's point. The rank width is not authored; it is
     # kRankWidth in formation_offsets.
