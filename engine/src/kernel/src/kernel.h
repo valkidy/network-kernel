@@ -207,6 +207,7 @@ public:
         NetId* out_net_id);
     bool server_activate_entity(
         const KernelServerEntityActivateInfo& activate_info);
+    bool server_clear_inventory_container(KernelInventoryContainerId container_id);
     bool server_create_inventory_container(
         std::uint32_t owner_entity_id,
         std::uint32_t slot_capacity,

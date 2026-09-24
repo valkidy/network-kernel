@@ -41,6 +41,7 @@ cc_library(
         "src/patrol_director.cc",
         "src/patrol_group_runtime.cc",
         "src/patrol_navigation.cc",
+        "src/respawn_scheduler.cc",
         "src/spawn_sampling.cc",
         "src/spawner_director.cc",
         "src/world_rule_director.cc",
@@ -57,6 +58,7 @@ cc_library(
         "src/game_rule_director.h",
         "src/gameplay_config.h",
         "src/game_server.h",
+        "src/respawn_scheduler.h",
         "src/patrol_director.h",
         "src/patrol_group_runtime.h",
         "src/patrol_navigation.h",
@@ -124,6 +126,25 @@ cc_test(
 # The authoritative half of per-bone limb colliders, and the reference the
 # client side is compared against. Runs on a dedicated-server kernel because
 # that is the shipping environment; see the file header.
+cc_test(
+    name = "respawn_scheduler_test",
+    srcs = ["tests/respawn_scheduler_test.cc"],
+    deps = [":game_server"],
+)
+
+# The respawn loop on the real bundle, with a listen-server player.
+cc_test(
+    name = "player_respawn_test",
+    srcs = ["tests/player_respawn_test.cc"],
+    data = [
+        "//game_server/gameplay_catalog_bundle:bundle",
+    ],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
 cc_test(
     name = "stagger_config_test",
     srcs = ["tests/stagger_config_test.cc"],

@@ -284,6 +284,15 @@ bool Kernel_ServerCreateInventoryContainer(
     uint32_t slot_capacity,
     KernelInventoryContainerId* out_container_id);
 
+/*
+ * Terminates every item in a container and leaves it empty, publishing a
+ * Remove delta per occupied slot. How a loadout is reset: clear, then create
+ * the starting items again.
+ */
+bool Kernel_ServerClearInventoryContainer(
+    KernelHandle* kernel,
+    KernelInventoryContainerId container_id);
+
 bool Kernel_ServerCreateInventoryItem(
     KernelHandle* kernel,
     uint32_t item_template_id,

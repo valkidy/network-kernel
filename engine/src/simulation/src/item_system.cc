@@ -844,6 +844,21 @@ bool ItemStore::terminate(KernelItemInstanceId id) {
     return true;
 }
 
+bool ItemStore::clear_container(KernelInventoryContainerId id) {
+    const auto container = containers_.find(id);
+    if (container == containers_.end()) {
+        return false;
+    }
+    // A copy: terminate() writes each emptied slot back into this vector.
+    const std::vector<KernelItemInstanceId> slots = container->second.slots;
+    for (const KernelItemInstanceId item_id : slots) {
+        if (item_id != 0) {
+            (void)terminate(item_id);
+        }
+    }
+    return true;
+}
+
 void ItemStore::publish_delta(
     InventoryContainerRecord* container,
     KernelInventoryDeltaType type,

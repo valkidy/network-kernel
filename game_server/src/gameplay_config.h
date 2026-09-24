@@ -62,8 +62,20 @@ struct EntityHealthDefinition {
     std::uint16_t max_hp = 0;
 };
 
+// A dead player comes back after delay_seconds, height_offset_meters above
+// where its body lies (less if something is overhead), unhurtable for
+// invulnerable_seconds. team_revive_times is one pool for every player; -1 is
+// unlimited.
+struct PlayerRespawnConfig {
+    float delay_seconds = 4.0f;
+    float height_offset_meters = 5.0f;
+    float invulnerable_seconds = 2.0f;
+    std::int32_t team_revive_times = -1;
+};
+
 struct PlayerGameplayDefinition {
     std::uint32_t actor_template_id = 0;
+    PlayerRespawnConfig respawn{};
 };
 
 

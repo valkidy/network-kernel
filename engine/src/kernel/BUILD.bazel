@@ -235,6 +235,7 @@ cc_shared_library(
             "-Wl,-exported_symbol,_Kernel_GetColliderBindings",
             "-Wl,-exported_symbol,_Kernel_ServerCreateEntity",
             "-Wl,-exported_symbol,_Kernel_ServerCreateInventoryContainer",
+            "-Wl,-exported_symbol,_Kernel_ServerClearInventoryContainer",
             "-Wl,-exported_symbol,_Kernel_ServerCreateInventoryItem",
             "-Wl,-exported_symbol,_Kernel_ServerCreateWorldItem",
             "-Wl,-exported_symbol,_Kernel_ServerSubmitGameplayRequest",

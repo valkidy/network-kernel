@@ -5068,6 +5068,12 @@ bool KernelEngine::server_activate_entity(
     return ActivationSystem{}.activate_entity(*this, activate_info);
 }
 
+bool KernelEngine::server_clear_inventory_container(
+    KernelInventoryContainerId container_id) {
+    return is_server_mode(config_.mode) &&
+        item_store_.clear_container(container_id);
+}
+
 bool KernelEngine::server_create_inventory_container(
     std::uint32_t owner_entity_id,
     std::uint32_t slot_capacity,

@@ -42,6 +42,15 @@ static_collision_scene:
   collision_layer: 1
 player:
   entity_template: player
+  # A dead player comes back delay_seconds later, height_offset metres above
+  # its body (less under a ceiling) so it drops back in, and cannot be hurt for
+  # invulnerable_seconds. team_revive_times is one pool shared by every player:
+  # -1 never runs out; at 0 the dead stay dead.
+  respawn:
+    delay_seconds: 4.0
+    height_offset: 5.0
+    invulnerable_seconds: 2.0
+    team_revive_times: -1
 # Squads the world produces on its own schedule, independent of the mission.
 # Authored here rather than on world_rule_director because a patrol never
 # reaches the kernel as a director: game_server spawns it, owns its grouping and

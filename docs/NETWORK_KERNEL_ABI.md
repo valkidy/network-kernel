@@ -53,7 +53,10 @@ ceiling does not start inside it -- no knockback, stagger, velocity or status
 effects (dropped, not expired: their `on_expire` graphs do not run), and all
 confirmed damage discarded for `invulnerable_ticks`. Loadout is not its
 business: ammo, weapons and inventory are the caller's to reapply, the way
-game_server's `configure_player` already applies them on join.
+game_server's `configure_player` already applies them on join. For the
+inventory half it also adds `Kernel_ServerClearInventoryContainer` and
+`KERNEL_CAPABILITY_SERVER_INVENTORY_CLEAR`: every item in the container is
+terminated, one Remove delta per occupied slot, and the container stays.
 
 ABI 91 is the generic death state. `KernelEntityTemplateDefinition` appends
 `death_policy` (`KernelDeathPolicy`): `Default` (0) keeps the old behaviour,

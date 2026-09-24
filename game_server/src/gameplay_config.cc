@@ -6820,10 +6820,19 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     if (document["player"]) {
         reject_unknown_keys(
             document["player"],
-            {"actor_template", "entity_template"},
+            {"actor_template", "entity_template", "respawn"},
             path,
             source.source_kind(),
             KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+        if (document["player"]["respawn"]) {
+            reject_unknown_keys(
+                document["player"]["respawn"],
+                {"delay_seconds", "height_offset", "invulnerable_seconds",
+                 "team_revive_times"},
+                path,
+                source.source_kind(),
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+        }
     }
     if (document["enemy"]) {
         reject_unknown_keys(
@@ -7087,6 +7096,36 @@ void apply_catalog_player_config(
     if (player["entity_template"]) {
         config->player.actor_template_id =
             entity_template_ref_from_yaml(player["entity_template"], config->entity_templates);
+    }
+    if (const YAML::Node respawn = player["respawn"]) {
+        PlayerRespawnConfig& config_respawn = config->player.respawn;
+        if (respawn["delay_seconds"]) {
+            config_respawn.delay_seconds = respawn["delay_seconds"].as<float>();
+        }
+        if (respawn["height_offset"]) {
+            config_respawn.height_offset_meters = respawn["height_offset"].as<float>();
+        }
+        if (respawn["invulnerable_seconds"]) {
+            config_respawn.invulnerable_seconds =
+                respawn["invulnerable_seconds"].as<float>();
+        }
+        if (respawn["team_revive_times"]) {
+            config_respawn.team_revive_times =
+                respawn["team_revive_times"].as<std::int32_t>();
+        }
+        const auto finite_non_negative = [](float value) {
+            return std::isfinite(value) && value >= 0.0f;
+        };
+        if (!finite_non_negative(config_respawn.delay_seconds) ||
+            !finite_non_negative(config_respawn.height_offset_meters) ||
+            !finite_non_negative(config_respawn.invulnerable_seconds)) {
+            throw std::runtime_error(
+                "player.respawn times and height must be finite and non-negative");
+        }
+        if (config_respawn.team_revive_times < -1) {
+            throw std::runtime_error(
+                "player.respawn.team_revive_times must be -1 (unlimited) or more");
+        }
     }
 }
 
@@ -7818,6 +7857,10 @@ std::uint64_t compute_gameplay_catalog_hash(
         }
     }
     hash_scalar(&hash, config.player.actor_template_id);
+    hash_float(&hash, config.player.respawn.delay_seconds);
+    hash_float(&hash, config.player.respawn.height_offset_meters);
+    hash_float(&hash, config.player.respawn.invulnerable_seconds);
+    hash_scalar(&hash, config.player.respawn.team_revive_times);
     hash_scalar(
         &hash,
         static_cast<std::uint32_t>(
