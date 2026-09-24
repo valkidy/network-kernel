@@ -420,6 +420,16 @@ bool Kernel_ServerSetEntityHealth(
     uint16_t hp);
 
 /*
+ * Brings a dead entity back; see KernelServerReviveInfo. Health, lift, a clean
+ * slate (no knockback, stagger, velocity or status effects) and invulnerability
+ * land in one call, so no tick ever sees half of a revive. Combat loadout --
+ * ammo, weapons, inventory -- is the caller's to reapply.
+ */
+bool Kernel_ServerReviveEntity(
+    KernelHandle* kernel,
+    const KernelServerReviveInfo* info);
+
+/*
  * The layers this actor sweeps against from now on, as KERNEL_MOVEMENT_LAYER_*
  * bits; zero restores the engine default. Authored per template, and changed
  * here for the length of a scripted move -- a unit walking out of the building

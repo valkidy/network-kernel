@@ -103,6 +103,15 @@ public:
         NetId net_id,
         std::uint16_t animation_state,
         std::uint32_t visual_flags) const;
+    // Brings a dead entity back where its body lies: full health, lifted by as
+    // much of `lift_meters` as its capsule has headroom for, with nothing of
+    // the old life left on it, and immune to damage for `invulnerable_ticks`.
+    // False, and nothing touched, unless the entity is actually dead.
+    bool revive(
+        KernelEngine& engine,
+        NetId net_id,
+        float lift_meters,
+        std::uint32_t invulnerable_ticks) const;
 };
 
 class MovementSystem {

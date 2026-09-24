@@ -2728,6 +2728,80 @@ bool EntityStateSystem::set_transform(
     return true;
 }
 
+bool EntityStateSystem::revive(
+    KernelEngine& engine,
+    NetId net_id,
+    float lift_meters,
+    std::uint32_t invulnerable_ticks) const {
+    if (!engine.running_ || !is_server_mode(engine.config_.mode) || net_id == 0 ||
+        !std::isfinite(lift_meters) || lift_meters < 0.0f) {
+        return false;
+    }
+    World& world = engine.world_;
+    entt::registry& registry = world.registry();
+    const std::optional<entt::entity> entity = world.find_entity(net_id);
+    if (!entity.has_value() || !registry.all_of<Health, Transform>(*entity)) {
+        return false;
+    }
+    Health& health = registry.get<Health>(*entity);
+    if (health.max_hp == 0u || health.hp != 0u) {
+        return false;
+    }
+
+    // Whatever the death left on it. enter_death_state already cleared the
+    // first two; a revive does not assume nothing re-armed them since.
+    registry.remove<ImpulseLockout>(*entity);
+    registry.remove<StaggerState>(*entity);
+    if (Velocity* velocity = registry.try_get<Velocity>(*entity)) {
+        velocity->linear = glm::vec3{0.0f};
+    }
+    // Status effects ran on while it lay dead. They are dropped rather than
+    // expired: on_expire is an effect running its course, and these did not.
+    if (StatusEffectState* status = registry.try_get<StatusEffectState>(*entity);
+        status != nullptr && !status->active.empty()) {
+        for (const ActiveStatusEffect& active : status->active) {
+            engine.queue_status_effect_presentation(
+                net_id,
+                active.status_effect_id,
+                active.instance_id,
+                KernelRemoteActionPresentationEventType_StatusRemoved,
+                active.stack_count);
+        }
+        status->active.clear();
+        status->speed_modifiers.clear();
+        recompute_speed(world, *entity);
+        advance_status_revision(*status);
+        engine.publish_status_effect_state(net_id);
+    }
+
+    health.hp = health.max_hp;
+    if (invulnerable_ticks != 0u) {
+        registry.emplace_or_replace<DamageImmunity>(
+            *entity,
+            DamageImmunity{engine.current_tick() + invulnerable_ticks});
+    } else {
+        registry.remove<DamageImmunity>(*entity);
+    }
+
+    Transform& transform = registry.get<Transform>(*entity);
+    transform.position.y += available_lift(
+        world, net_id, transform.position, transform.rotation, lift_meters);
+    // The same reset set_actor_template gives a respawn: the controller did not
+    // make this move, so nothing it remembers about the old spot still holds.
+    if (MovementState* movement = registry.try_get<MovementState>(*entity)) {
+        movement->ground_state = MovementState::GroundState::kAirborne;
+        movement->has_last_queried_position = false;
+        movement->has_controller_height = false;
+        movement->landed_this_tick = false;
+    }
+    if (engine.physics_world_ != nullptr) {
+        engine.physics_world_->remove_character(net_id);
+    }
+    // Also what turns its colliders back on: they were disabled at hp 0.
+    engine.sync_entity_colliders_from_world(net_id);
+    return true;
+}
+
 bool EntityStateSystem::set_velocity(
     KernelEngine& engine,
     NetId net_id,

@@ -99,7 +99,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 91u
+#define KERNEL_ABI_VERSION 92u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -210,6 +210,7 @@
 #define KERNEL_CAPABILITY_SKELETON_BIND_POSE UINT64_C(0x0000080000000000)
 #define KERNEL_CAPABILITY_LOCAL_WEAPON_STATE UINT64_C(0x0000100000000000)
 #define KERNEL_CAPABILITY_SERVER_ENTITY_MOVEMENT_MASK_WRITE UINT64_C(0x0000200000000000)
+#define KERNEL_CAPABILITY_SERVER_ENTITY_REVIVE UINT64_C(0x0000400000000000)
 
 #define KERNEL_SKELETON_RENDER_STATUS_SUCCESS UINT32_C(0)
 #define KERNEL_SKELETON_RENDER_STATUS_INSUFFICIENT_CAPACITY UINT32_C(1)
@@ -1289,6 +1290,19 @@ typedef struct KernelServerEntityCreateInfo {
     uint32_t actor_template_id;
     uint32_t entity_template_id;
 } KernelServerEntityCreateInfo;
+
+/*
+ * Kernel_ServerReviveEntity's arguments. Only a dead entity (health zero out of
+ * a non-zero maximum) can be revived. It comes back at full health where its
+ * body lies, lifted by as much of lift_meters as its movement capsule has
+ * headroom for, and discards all confirmed damage for invulnerable_ticks.
+ */
+typedef struct KernelServerReviveInfo {
+    uint32_t struct_size;
+    uint32_t net_id;
+    float lift_meters;
+    uint32_t invulnerable_ticks;
+} KernelServerReviveInfo;
 
 KERNEL_RPC_STRUCT(R"json({"type":"KernelServerEntityActivateInfo"})json")
 typedef struct KernelServerEntityActivateInfo {

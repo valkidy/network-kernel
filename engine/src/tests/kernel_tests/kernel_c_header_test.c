@@ -6,9 +6,11 @@
 #include "kernel/public/kernel_api.h"
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 91u,
-    "death policy: entity templates carry a death_policy, EntityDied is "
-    "reported, and a dead instigator's gameplay requests are refused");
+    KERNEL_ABI_VERSION == 92u,
+    "revive: Kernel_ServerReviveEntity brings a dead entity back in one call");
+_Static_assert(
+    sizeof(KernelServerReviveInfo) == 16u,
+    "a managed mirror of the revive arguments must match this layout");
 _Static_assert(
     offsetof(KernelEntityTemplateDefinition, death_policy) >
         offsetof(KernelEntityTemplateDefinition, stagger_immunity_ticks),

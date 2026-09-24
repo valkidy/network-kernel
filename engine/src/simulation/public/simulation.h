@@ -252,6 +252,17 @@ void simulate_actor_movement(
 
 void simulate_velocity_movement(World& world, float fixed_delta_seconds);
 
+// How much of `lift` metres straight up the entity's movement capsule can
+// travel from `position` before its head meets something, less a small skin.
+// Returns `lift` unchanged when there is no physics world or no movement
+// capsule to sweep, and never less than zero.
+float available_lift(
+    World& world,
+    NetId net_id,
+    const glm::vec3& position,
+    const glm::quat& rotation,
+    float lift);
+
 void simulate_projectiles(World& world, float fixed_delta_seconds);
 void simulate_projectiles(
     World& world,

@@ -276,6 +276,10 @@ public:
         std::uint16_t animation_state,
         std::uint32_t visual_flags);
     bool server_set_entity_health(NetId net_id, std::uint16_t hp);
+    bool server_revive_entity(
+        NetId net_id,
+        float lift_meters,
+        std::uint32_t invulnerable_ticks);
     bool server_set_entity_movement_collision_mask(
         NetId net_id,
         std::uint32_t movement_collision_mask);

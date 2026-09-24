@@ -220,6 +220,13 @@ struct DeathBehavior {
     DeathPolicy policy = DeathPolicy::kDefault;
 };
 
+// Server-only. While current_tick < until_tick, confirmed damage against this
+// entity is discarded whole: no health loss, no stagger, no hit events. A revive
+// arms it so the body is not killed again where it died.
+struct DamageImmunity {
+    std::uint32_t until_tick = 0;
+};
+
 struct PlayerTag {};
 struct AgentTag {};
 struct ProjectileTag {};

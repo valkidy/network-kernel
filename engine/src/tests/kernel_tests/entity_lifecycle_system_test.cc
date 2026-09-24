@@ -269,6 +269,84 @@ void damage_death_follows_each_entity_policy() {
     require(velocity.y == -2.0f);
 }
 
+// A revive is for the dead only, brings the body back whole and lifted, drops
+// what the old life left on it, and holds off damage for exactly as long as
+// asked.
+void revive_restores_only_the_dead() {
+    using network_example::ConfirmedDamage;
+    using network_example::Health;
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+    engine.reset_runtime_state(KernelMode_DedicatedServer);
+    entt::registry& registry = engine.world_.registry();
+
+    std::uint32_t player = 0;
+    require(engine.server_create_entity(player_create_info(), &player));
+    const entt::entity entity = *engine.world_.find_entity(player);
+    registry.emplace_or_replace<Health>(entity, Health{100, 100});
+    const float ground_y =
+        registry.get<network_example::Transform>(entity).position.y;
+
+    // The living are not revived, and nothing about them changes.
+    require(!engine.server_revive_entity(player, 5.0f, 60u));
+    require(!registry.all_of<network_example::DamageImmunity>(entity));
+
+    const auto hit = [&](std::uint16_t amount, std::uint32_t tick) {
+        ConfirmedDamage damage;
+        damage.source_net_id = 99u;
+        damage.target_net_id = player;
+        damage.damage = amount;
+        engine.events_.clear();
+        return network_example::apply_damage_applications(
+            engine.world_, {damage}, tick, &engine.events_);
+    };
+    const std::vector<ConfirmedDamage> depleted = hit(1000u, engine.current_tick());
+    require(depleted.size() == 1u);
+    network_example::EntityLifecycleSystem lifecycle;
+    lifecycle.enter_death_state(engine, depleted);
+    lifecycle.destroy_dead_entities(engine, depleted);
+    require(engine.world_.find_entity(player).has_value());
+
+    // What a body can pick up while it lies there.
+    network_example::StatusEffectState status;
+    network_example::ActiveStatusEffect burning;
+    burning.instance_id = 9u;
+    burning.status_effect_id = 3u;
+    status.active.push_back(burning);
+    status.speed_modifiers.push_back(network_example::SpeedModifier{9u, 0.0f, 0.5f});
+    registry.emplace_or_replace<network_example::StatusEffectState>(entity, status);
+    registry.get_or_emplace<network_example::Velocity>(entity).linear =
+        glm::vec3{0.0f, -4.0f, 0.0f};
+
+    const std::uint32_t revive_tick = engine.current_tick();
+    require(engine.server_revive_entity(player, 5.0f, 60u));
+    require(registry.get<Health>(entity).hp == 100u);
+    // No movement capsule here, so nothing to clamp against: the whole lift.
+    require(registry.get<network_example::Transform>(entity).position.y ==
+            ground_y + 5.0f);
+    require(registry.get<network_example::Velocity>(entity).linear ==
+            glm::vec3{0.0f});
+    const auto& cleared = registry.get<network_example::StatusEffectState>(entity);
+    require(cleared.active.empty());
+    require(cleared.speed_modifiers.empty());
+    require(registry.get<network_example::DamageImmunity>(entity).until_tick ==
+            revive_tick + 60u);
+
+    // Alive again, so a second revive is refused.
+    require(!engine.server_revive_entity(player, 5.0f, 60u));
+
+    // Immune through the last protected tick: no health lost, no hit reported.
+    require(hit(10u, revive_tick + 59u).empty());
+    require(registry.get<Health>(entity).hp == 100u);
+    require(engine.events_.empty());
+    // And not a tick longer.
+    hit(10u, revive_tick + 60u);
+    require(registry.get<Health>(entity).hp == 90u);
+}
+
 }  // namespace
 
 // The world-rule director cases that used to live here are gone with the
@@ -285,5 +363,6 @@ int main() {
     lifecycle_system_create_matches_legacy_path();
     lifecycle_system_destroy_matches_legacy_side_effects();
     damage_death_follows_each_entity_policy();
+    revive_restores_only_the_dead();
     return 0;
 }

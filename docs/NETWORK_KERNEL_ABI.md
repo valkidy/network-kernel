@@ -44,6 +44,28 @@ template is now rejected at catalog load rather than validated. Nothing outside
 game-rule struct or the director kind -- so this needed no coordination.
 `docs/AI_PATROL_SYSTEM.md` records why they moved.
 
+ABI 92 adds `Kernel_ServerReviveEntity`, `KernelServerReviveInfo` (16 B) and
+`KERNEL_CAPABILITY_SERVER_ENTITY_REVIVE`. It brings back an entity whose health
+is zero out of a non-zero maximum, and refuses anything alive. In one call: full
+health, a lift of up to `lift_meters` above where the body lies -- clamped by an
+upward sweep of its movement capsule, less a 0.05 m skin, so a revive under a
+ceiling does not start inside it -- no knockback, stagger, velocity or status
+effects (dropped, not expired: their `on_expire` graphs do not run), and all
+confirmed damage discarded for `invulnerable_ticks`. Loadout is not its
+business: ammo, weapons and inventory are the caller's to reapply, the way
+game_server's `configure_player` already applies them on join.
+
+ABI 91 is the generic death state. `KernelEntityTemplateDefinition` appends
+`death_policy` (`KernelDeathPolicy`): `Default` (0) keeps the old behaviour,
+players dormant and everything else destroyed; `Destroy` and `Dormant` override
+it. Every entity damage empties now reports `KernelEventType_EntityDied`
+(server-local; `peer_id` the damage's source peer, `code` the instigator's net
+id) and loses its knockback, stagger and horizontal velocity, whichever policy
+follows. A dead actor does not move itself, is not a vision candidate, and has
+its gameplay requests refused with the new
+`KernelGameplayRequestRejection_InstigatorDead`. Managed mirrors of the two
+enums need the new values.
+
 ABI 89 adds `Kernel_ServerSetEntityMovementCollisionMask` and
 `KERNEL_CAPABILITY_SERVER_ENTITY_MOVEMENT_MASK_WRITE`. It writes the same
 `MovementState::movement_collision_mask` an entity template authors, for the

@@ -5385,6 +5385,14 @@ bool KernelEngine::server_set_entity_state(
         visual_flags);
 }
 
+bool KernelEngine::server_revive_entity(
+    NetId net_id,
+    float lift_meters,
+    std::uint32_t invulnerable_ticks) {
+    return EntityStateSystem{}.revive(
+        *this, net_id, lift_meters, invulnerable_ticks);
+}
+
 bool KernelEngine::server_set_entity_health(NetId net_id, std::uint16_t hp) {
     if (!running_ || !is_server_mode(config_.mode) || net_id == 0) {
         return false;
