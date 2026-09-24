@@ -1683,20 +1683,7 @@ bool EntityLifecycleSystem::create_entity(
         registry.emplace_or_replace<ImpulseResistance>(
             *entity,
             ImpulseResistance{entity_template->impulse_resistance});
-        if (entity_template->stagger_threshold > 0.0f) {
-            registry.emplace_or_replace<StaggerProfile>(
-                *entity,
-                StaggerProfile{
-                    entity_template->stagger_threshold,
-                    entity_template->stagger_per_damage,
-                    entity_template->stagger_decay_per_tick,
-                    entity_template->stagger_decay_delay_ticks,
-                    entity_template->stagger_ticks,
-                    entity_template->stagger_immunity_ticks,
-                });
-        } else {
-            registry.remove<StaggerProfile>(*entity);
-        }
+        apply_stagger_profile(engine.world_, *entity, *entity_template);
         registry.emplace_or_replace<DeathBehavior>(
             *entity,
             DeathBehavior{static_cast<DeathPolicy>(entity_template->death_policy)});
@@ -2420,7 +2407,7 @@ void EntityLifecycleSystem::enter_death_state(
         // next life. Status effects run out on their own: their removal fires
         // on_expire graphs, which is the revive's business, not the death's.
         registry.remove<ImpulseLockout>(*entity);
-        registry.remove<StaggerState>(*entity);
+        clear_stagger(engine.world_, *entity);
         if (Velocity* velocity = registry.try_get<Velocity>(*entity)) {
             velocity->linear.x = 0.0f;
             velocity->linear.z = 0.0f;
@@ -2658,6 +2645,10 @@ bool EntityStateSystem::set_actor_template(
             authored_entity_template->movement.movement_collision_mask;
         movement.locomotion_owns_height =
             authored_entity_template->skeleton.body_follow_speed > 0.0f;
+        // A player is spawned bare and only ever gets its template here, so
+        // anything per-template that combat reads has to be applied here too.
+        apply_stagger_profile(
+            engine.world_, *entity, *authored_entity_template);
         movement.ground_state = MovementState::GroundState::kAirborne;
         movement.has_last_queried_position = false;
         // Respawn moves the body without the controller; its remembered anchor
@@ -2751,7 +2742,7 @@ bool EntityStateSystem::revive(
     // Whatever the death left on it. enter_death_state already cleared the
     // first two; a revive does not assume nothing re-armed them since.
     registry.remove<ImpulseLockout>(*entity);
-    registry.remove<StaggerState>(*entity);
+    clear_stagger(world, *entity);
     if (Velocity* velocity = registry.try_get<Velocity>(*entity)) {
         velocity->linear = glm::vec3{0.0f};
     }
