@@ -327,7 +327,15 @@ void simulate_actor_movement(
             world.registry().try_get<ImpulseLockout>(entity);
         const bool impulse_locked = impulse_lockout != nullptr &&
             current_tick < impulse_lockout->until_tick;
-        if (impulse_locked) {
+        const Health* health = world.registry().try_get<Health>(entity);
+        const bool dead =
+            health != nullptr && health->max_hp > 0u && health->hp == 0u;
+        if (dead) {
+            // The dead do not move themselves: ahead of the lockout, because
+            // death clears the knockback that killed it. Gravity still runs, so
+            // a body killed in the air comes down where it will revive from.
+            desired_horizontal = glm::vec3{0.0f};
+        } else if (impulse_locked) {
             // nothing: the seeded current-velocity horizontal stands
         } else if (is_staggered(world, entity, current_tick)) {
             // A stagger roots the actor. After the lockout test on purpose: a

@@ -416,6 +416,31 @@ void a_stagger_holds_the_actor_against_its_input() {
     require(fixture.velocity_x() < 0.0f);
 }
 
+// The dead do not move themselves, whatever they send, and the same input moves
+// them again once they are alive.
+void a_dead_actor_ignores_its_input() {
+    MovementFixture fixture({0.0f, 0.0f, 0.0f});
+    fixture.tick_pushing_back();
+    require(fixture.grounded());
+    // Control: input moves the living actor at full speed.
+    require(fixture.velocity_x() < -kSpeed + 0.001f);
+
+    fixture.world.registry().emplace_or_replace<Health>(fixture.entity, Health{0, 100});
+    const float x_at_death =
+        fixture.world.registry().get<Transform>(fixture.entity).position.x;
+    for (std::uint32_t tick = 0; tick < 5u; ++tick) {
+        fixture.tick_pushing_back();
+        require(fixture.velocity_x() == 0.0f);
+    }
+    require(
+        fixture.world.registry().get<Transform>(fixture.entity).position.x ==
+        x_at_death);
+
+    fixture.world.registry().replace<Health>(fixture.entity, Health{100, 100});
+    fixture.tick_pushing_back();
+    require(fixture.velocity_x() < 0.0f);
+}
+
 // A hit that both knocks back and staggers keeps its knockback: the lockout is
 // tested first, so the stagger's rooting never zeroes a flight in progress.
 void a_knockback_outranks_a_stagger_in_movement() {
@@ -440,5 +465,6 @@ int main() {
     a_flat_knockback_on_a_grounded_actor_is_not_released_by_relanding();
     a_stagger_holds_the_actor_against_its_input();
     a_knockback_outranks_a_stagger_in_movement();
+    a_dead_actor_ignores_its_input();
     return 0;
 }

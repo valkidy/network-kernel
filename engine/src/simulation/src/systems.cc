@@ -1697,6 +1697,9 @@ bool EntityLifecycleSystem::create_entity(
         } else {
             registry.remove<StaggerProfile>(*entity);
         }
+        registry.emplace_or_replace<DeathBehavior>(
+            *entity,
+            DeathBehavior{static_cast<DeathPolicy>(entity_template->death_policy)});
         if ((entity_template->component_flags & KERNEL_ENTITY_COMPONENT_HEALTH) !=
             0u) {
             registry.emplace_or_replace<Health>(
@@ -2383,6 +2386,48 @@ void EntityLifecycleSystem::process_health_depleted(
     }
 }
 
+bool EntityLifecycleSystem::stays_dormant_on_death(
+    const entt::registry& registry,
+    entt::entity entity) {
+    const DeathBehavior* behavior = registry.try_get<DeathBehavior>(entity);
+    const DeathPolicy policy =
+        behavior == nullptr ? DeathPolicy::kDefault : behavior->policy;
+    if (policy == DeathPolicy::kDefault) {
+        return registry.all_of<PlayerTag>(entity);
+    }
+    return policy == DeathPolicy::kDormant;
+}
+
+void EntityLifecycleSystem::enter_death_state(
+    KernelEngine& engine,
+    const std::vector<ConfirmedDamage>& health_depleted) const {
+    entt::registry& registry = engine.world_.registry();
+    for (const ConfirmedDamage& damage : health_depleted) {
+        const std::optional<entt::entity> entity =
+            engine.world_.find_entity(damage.target_net_id);
+        // An on_health_depleted graph ran first and may have healed it.
+        if (!entity.has_value() || !registry.all_of<Health>(*entity) ||
+            registry.get<Health>(*entity).hp != 0u) {
+            continue;
+        }
+        engine.push_event(
+            KernelEventType_EntityDied,
+            damage.target_net_id,
+            damage.source_peer,
+            damage.source_net_id);
+        // A corpse holds still. The knockback and the stagger that killed it
+        // would otherwise carry it on, and a dormant one keeps both into its
+        // next life. Status effects run out on their own: their removal fires
+        // on_expire graphs, which is the revive's business, not the death's.
+        registry.remove<ImpulseLockout>(*entity);
+        registry.remove<StaggerState>(*entity);
+        if (Velocity* velocity = registry.try_get<Velocity>(*entity)) {
+            velocity->linear.x = 0.0f;
+            velocity->linear.z = 0.0f;
+        }
+    }
+}
+
 void EntityLifecycleSystem::destroy_dead_entities(
     KernelEngine& engine,
     const std::vector<ConfirmedDamage>& health_depleted) const {
@@ -2391,7 +2436,7 @@ void EntityLifecycleSystem::destroy_dead_entities(
     for (const entt::entity entity : view) {
         const Health& health = view.get<Health>(entity);
         if (health.max_hp > 0u && health.hp == 0u &&
-            !engine.world_.registry().all_of<PlayerTag>(entity)) {
+            !stays_dormant_on_death(engine.world_.registry(), entity)) {
             dead_entities.push_back(view.get<NetworkIdentity>(entity).net_id);
         }
     }

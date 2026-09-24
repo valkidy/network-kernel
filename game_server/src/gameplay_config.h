@@ -219,6 +219,8 @@ struct ActorTemplateConfig {
     float movement_max_yaw_degrees_per_second = 0.0f;
     float impulse_resistance = 0.0f;
     StaggerConfig stagger{};
+    // A KernelDeathPolicy; Default leaves it to the kernel (players dormant).
+    std::uint32_t death_policy = KernelDeathPolicy_Default;
     // KERNEL_MOVEMENT_LAYER_* bits; 0 keeps the engine default.
     std::uint32_t movement_collision_mask = 0u;
     std::array<std::uint32_t, KERNEL_MAX_WEAPON_SLOTS> weapon_ids{};

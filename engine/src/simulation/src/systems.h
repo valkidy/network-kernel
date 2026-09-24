@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <vector>
 
+#include <entt/entt.hpp>
+
 #include "ai_intent.h"
 #include "kernel/public/kernel_types.h"
 #include "world/public/components.h"
@@ -40,9 +42,19 @@ public:
         const std::vector<ConfirmedDamage>& health_depleted,
         std::uint64_t server_time_us) const;
 
+    // Every entity damage emptied this tick: EntityDied, and the corpse is
+    // stopped. Runs before destroy_dead_entities, for both death policies.
+    void enter_death_state(
+        KernelEngine& engine,
+        const std::vector<ConfirmedDamage>& health_depleted) const;
+
     void destroy_dead_entities(
         KernelEngine& engine,
         const std::vector<ConfirmedDamage>& health_depleted) const;
+
+    static bool stays_dormant_on_death(
+        const entt::registry& registry,
+        entt::entity entity);
 
 private:
     bool destroy_entity_with_context(

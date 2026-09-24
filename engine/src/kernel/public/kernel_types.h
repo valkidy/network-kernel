@@ -99,7 +99,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 90u
+#define KERNEL_ABI_VERSION 91u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -526,6 +526,12 @@ typedef enum KernelEventType {
      * interrupted and new actions are refused until the stagger ends. `code`
      * carries the stagger duration in ticks. */
     KernelEventType_Staggered = 14,
+    /* Damage took an entity's health to zero this tick. Emitted for every such
+     * entity before its death policy runs, so it fires whether the entity is
+     * then destroyed or left dormant. `peer_id` is the damage's source peer and
+     * `code` the instigating entity's net id (0 when unknown). Server-local:
+     * never replicated. Setting health to zero directly does not emit it. */
+    KernelEventType_EntityDied = 15,
 } KernelEventType;
 
 typedef enum KernelDespawnReason {
@@ -647,6 +653,8 @@ typedef enum KernelGameplayRequestRejectionReason {
     KernelGameplayRequestRejection_Claimed = 14,
     KernelGameplayRequestRejection_Cooldown = 15,
     KernelGameplayRequestRejection_GraphRejected = 16,
+    /* The instigator's health is zero: the dead do not use, throw or pick up. */
+    KernelGameplayRequestRejection_InstigatorDead = 17,
 } KernelGameplayRequestRejectionReason;
 
 typedef enum KernelEntityTriggerActionType {
@@ -2132,6 +2140,18 @@ struct KernelEntityAiDefinition {
     uint32_t blackboard_id;
 };
 
+/* What happens to an entity once damage takes its health to zero. */
+typedef enum KernelDeathPolicy {
+    /* By kind: players stay dormant, everything else is destroyed. Zero, so a
+     * template that predates the field keeps the behaviour it always had. */
+    KernelDeathPolicy_Default = 0,
+    /* Despawned the tick it dies. */
+    KernelDeathPolicy_Destroy = 1,
+    /* Stays in the world, dead: no movement, actions or requests, not hittable,
+     * but still the anchor its owner's relevance is measured from. */
+    KernelDeathPolicy_Dormant = 2,
+} KernelDeathPolicy;
+
 struct KernelEntityTemplateDefinition {
     uint32_t struct_size;
     uint32_t entity_template_id;
@@ -2164,6 +2184,8 @@ struct KernelEntityTemplateDefinition {
     uint32_t stagger_decay_delay_ticks;
     uint32_t stagger_ticks;
     uint32_t stagger_immunity_ticks;
+    /* A KernelDeathPolicy. */
+    uint32_t death_policy;
 };
 
 typedef struct KernelEvent {

@@ -207,6 +207,19 @@ struct Health {
     std::uint16_t max_hp = 0;
 };
 
+// Server-only. What the entity's template says happens when damage empties its
+// health. Absent reads as kDefault.
+enum class DeathPolicy : std::uint8_t {
+    // Players stay dormant; everything else is destroyed.
+    kDefault = 0,
+    kDestroy = 1,
+    kDormant = 2,
+};
+
+struct DeathBehavior {
+    DeathPolicy policy = DeathPolicy::kDefault;
+};
+
 struct PlayerTag {};
 struct AgentTag {};
 struct ProjectileTag {};

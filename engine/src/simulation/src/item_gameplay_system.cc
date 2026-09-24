@@ -530,6 +530,10 @@ bool ItemGameplaySystem::submit_request(
                engine.world_.registry().get<NetworkIdentity>(*instigator)
                        .owner_peer != request.requester_peer) {
         reject(&outcome, KernelGameplayRequestRejection_NotAuthorized);
+    } else if (const Health* health =
+                   engine.world_.registry().try_get<Health>(*instigator);
+               health != nullptr && health->max_hp > 0u && health->hp == 0u) {
+        reject(&outcome, KernelGameplayRequestRejection_InstigatorDead);
     } else {
         ScopeTransferTransaction transfer_transaction(engine, &outcome);
         ItemInstanceRecord* item = request.selected_item_instance_id == 0

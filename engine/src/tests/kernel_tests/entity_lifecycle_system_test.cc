@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <string>
 #include <type_traits>
+#include <vector>
 #include <variant>
 
 #include <entt/entt.hpp>
@@ -176,6 +177,98 @@ void lifecycle_system_destroy_matches_legacy_side_effects() {
     require(engine.latest_snapshot_.entities.empty());
 }
 
+// Four deaths in one tick, one per cell of {player, agent} x {default, explicit
+// policy}: the policy alone decides who stays, every one of them reports
+// EntityDied, and the corpse that stays keeps neither its knockback nor its
+// stagger.
+void damage_death_follows_each_entity_policy() {
+    using network_example::ConfirmedDamage;
+    using network_example::DeathBehavior;
+    using network_example::DeathPolicy;
+    using network_example::Health;
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+    engine.reset_runtime_state(KernelMode_DedicatedServer);
+    entt::registry& registry = engine.world_.registry();
+
+    const auto with_health = [&](std::uint32_t net_id) {
+        const auto entity = engine.world_.find_entity(net_id);
+        require(entity.has_value());
+        registry.emplace_or_replace<Health>(*entity, Health{100, 100});
+        return *entity;
+    };
+    std::uint32_t player = 0;
+    require(engine.server_create_entity(player_create_info(), &player));
+    std::uint32_t destroyed_player = 0;
+    require(engine.server_create_entity(player_create_info(), &destroyed_player));
+    const std::uint32_t agent =
+        engine.world_.spawn_enemy(glm::vec3{5.0f, 0.0f, 0.0f});
+    const std::uint32_t dormant_agent =
+        engine.world_.spawn_enemy(glm::vec3{6.0f, 0.0f, 0.0f});
+    const entt::entity player_entity = with_health(player);
+    registry.emplace_or_replace<DeathBehavior>(
+        with_health(destroyed_player), DeathBehavior{DeathPolicy::kDestroy});
+    with_health(agent);
+    registry.emplace_or_replace<DeathBehavior>(
+        with_health(dormant_agent), DeathBehavior{DeathPolicy::kDormant});
+
+    // What the killing blow leaves on the player.
+    registry.emplace_or_replace<network_example::ImpulseLockout>(
+        player_entity, network_example::ImpulseLockout{1000u, 0u});
+    network_example::StaggerState stagger;
+    stagger.until_tick = 1000u;
+    registry.emplace_or_replace<network_example::StaggerState>(
+        player_entity, stagger);
+    registry.get_or_emplace<network_example::Velocity>(player_entity).linear =
+        glm::vec3{3.0f, -2.0f, 4.0f};
+
+    std::vector<ConfirmedDamage> damage;
+    for (const std::uint32_t target : {player, destroyed_player, agent, dormant_agent}) {
+        ConfirmedDamage hit;
+        hit.source_net_id = 99u;
+        hit.target_net_id = target;
+        hit.source_peer = 5u;
+        hit.damage = 1000u;
+        damage.push_back(hit);
+    }
+    engine.events_.clear();
+    const std::vector<ConfirmedDamage> depleted =
+        network_example::apply_damage_applications(
+            engine.world_, damage, engine.current_tick(), &engine.events_);
+    require(depleted.size() == 4u);
+    network_example::EntityLifecycleSystem lifecycle;
+    lifecycle.enter_death_state(engine, depleted);
+    lifecycle.destroy_dead_entities(engine, depleted);
+
+    require(engine.world_.find_entity(player).has_value());
+    require(!engine.world_.find_entity(destroyed_player).has_value());
+    require(!engine.world_.find_entity(agent).has_value());
+    require(engine.world_.find_entity(dormant_agent).has_value());
+
+    std::size_t died = 0;
+    for (const KernelEvent& event : engine.events_) {
+        if (event.type != KernelEventType_EntityDied) {
+            continue;
+        }
+        ++died;
+        require(event.peer_id == 5u);
+        require(event.code == 99u);
+    }
+    require(died == 4u);
+
+    require(!registry.all_of<network_example::ImpulseLockout>(player_entity));
+    require(!registry.all_of<network_example::StaggerState>(player_entity));
+    const glm::vec3 velocity =
+        registry.get<network_example::Velocity>(player_entity).linear;
+    require(velocity.x == 0.0f);
+    require(velocity.z == 0.0f);
+    // Gravity's axis is left alone: a body killed in the air still falls.
+    require(velocity.y == -2.0f);
+}
+
 }  // namespace
 
 // The world-rule director cases that used to live here are gone with the
@@ -191,5 +284,6 @@ void lifecycle_system_destroy_matches_legacy_side_effects() {
 int main() {
     lifecycle_system_create_matches_legacy_path();
     lifecycle_system_destroy_matches_legacy_side_effects();
+    damage_death_follows_each_entity_policy();
     return 0;
 }

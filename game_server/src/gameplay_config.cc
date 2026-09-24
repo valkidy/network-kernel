@@ -293,6 +293,7 @@ void hash_actor_template(
     hash_scalar(hash, actor_template.stagger.decay_delay_ticks);
     hash_scalar(hash, actor_template.stagger.duration_ticks);
     hash_scalar(hash, actor_template.stagger.immunity_ticks);
+    hash_scalar(hash, actor_template.death_policy);
     hash_scalar(hash, actor_template.movement_collision_mask);
     hash_scalar(hash, actor_template.weapon_slot_count);
     for (std::uint8_t index = 0; index < actor_template.weapon_slot_count; ++index) {
@@ -3489,6 +3490,7 @@ ActorTemplateConfig actor_template_from_yaml(
             "health",
             "impulse_resistance",
             "stagger",
+            "death_policy",
             "movement",
             "hitbox",
             "weapon_slots",
@@ -3532,6 +3534,18 @@ ActorTemplateConfig actor_template_from_yaml(
     if (node["impulse_resistance"]) {
         actor_template.impulse_resistance =
             node["impulse_resistance"].as<float>();
+    }
+    if (node["death_policy"]) {
+        const std::string policy = node["death_policy"].as<std::string>();
+        if (policy == "destroy") {
+            actor_template.death_policy = KernelDeathPolicy_Destroy;
+        } else if (policy == "dormant") {
+            actor_template.death_policy = KernelDeathPolicy_Dormant;
+        } else {
+            throw std::runtime_error(
+                "actor death_policy must be destroy or dormant: " +
+                actor_template.name);
+        }
     }
     if (const YAML::Node stagger = node["stagger"]) {
         reject_unknown_keys(
@@ -8679,6 +8693,7 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
         entity_template.stagger_ticks = authored_template.stagger.duration_ticks;
         entity_template.stagger_immunity_ticks =
             authored_template.stagger.immunity_ticks;
+        entity_template.death_policy = authored_template.death_policy;
         entity_template.activated_trigger = compile_action_trigger_binding(
             authored_template.activated_trigger,
             "on_activated",
