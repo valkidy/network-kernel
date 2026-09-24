@@ -7,6 +7,13 @@ collider_template: gingerbread_hit_aabb
 health:
   hp: 700
   max_hp: 700
+stagger:
+  threshold: 150
+  per_damage: 1.0
+  decay_per_tick: 5.0
+  decay_delay_ticks: 20
+  duration_ticks: 15
+  immunity_ticks: 45
 movement:
   controller: character
   # Slower than the plain gingerbread. The heavy hit is worth walking into.

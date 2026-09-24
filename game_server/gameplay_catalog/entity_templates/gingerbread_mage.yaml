@@ -7,8 +7,15 @@ collider_template: sentry_grunt_hit_aabb
 # Squishier than the 500 hp grunts: this one fights from across the room, so it
 # pays for the range in health rather than in accuracy.
 health:
-  hp: 300
-  max_hp: 300
+  hp: 800
+  max_hp: 800
+stagger:
+  threshold: 150
+  per_damage: 1.0
+  decay_per_tick: 5.0
+  decay_delay_ticks: 20
+  duration_ticks: 15
+  immunity_ticks: 45
 movement:
   # `character`, not `grounded`: this agent walks, and the character controller
   # is what chaser_grunt uses for the same reason.
