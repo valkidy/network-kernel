@@ -298,6 +298,8 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
             action.impulse_strength_mode = trigger.impulse_strength_mode;
             action.impulse_strength_vertical =
                 trigger.impulse_strength_vertical;
+            action.damage_stagger_authored = trigger.damage_stagger_authored;
+            action.damage_stagger = trigger.damage_stagger;
         } else {
             action = trigger.actions[index];
         }
@@ -495,6 +497,9 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
                 target_name,
                 amount_name,
                 *condition,
+                action.damage_stagger_authored != 0u
+                    ? std::optional<float>{action.damage_stagger}
+                    : std::nullopt,
             });
         } else {
             binding.graph.actions.push_back(ActionApplyHealthChangeDefinition{
@@ -1079,6 +1084,7 @@ bool evaluate_action_graph(
                 target,
                 static_cast<std::uint16_t>(amount),
                 provenance,
+                damage->stagger.value_or(kStaggerDerivedFromDamage),
             });
         } else {
             commands->push_back(ActionApplyHealthChangeCommand{

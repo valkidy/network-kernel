@@ -1683,6 +1683,20 @@ bool EntityLifecycleSystem::create_entity(
         registry.emplace_or_replace<ImpulseResistance>(
             *entity,
             ImpulseResistance{entity_template->impulse_resistance});
+        if (entity_template->stagger_threshold > 0.0f) {
+            registry.emplace_or_replace<StaggerProfile>(
+                *entity,
+                StaggerProfile{
+                    entity_template->stagger_threshold,
+                    entity_template->stagger_per_damage,
+                    entity_template->stagger_decay_per_tick,
+                    entity_template->stagger_decay_delay_ticks,
+                    entity_template->stagger_ticks,
+                    entity_template->stagger_immunity_ticks,
+                });
+        } else {
+            registry.remove<StaggerProfile>(*entity);
+        }
         if ((entity_template->component_flags & KERNEL_ENTITY_COMPONENT_HEALTH) !=
             0u) {
             registry.emplace_or_replace<Health>(

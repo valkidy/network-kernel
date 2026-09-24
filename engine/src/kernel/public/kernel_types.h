@@ -5,6 +5,17 @@
 #include <stdint.h>
 
 /*
+ * 90: hit stagger. KernelEventType_Staggered, KERNEL_VISUAL_FLAG_STAGGERED
+ *     and the Staggered / KnockedBack local action result reasons were added.
+ *     KernelActionDefinition and KernelActionTriggerDefinition gained
+ *     damage_stagger_authored and damage_stagger, read by apply_damage: zero
+ *     authored (the default) derives the hit's stagger from its damage through
+ *     the target's stagger_per_damage, so every catalog authored before this
+ *     behaves as it did. KernelEntityTemplateDefinition gained the stagger_*
+ *     profile; a zero stagger_threshold, the default, means the actor cannot
+ *     be staggered. All appended, but every managed mirror must add the same
+ *     fields or the nested layout of the trigger definitions inside
+ *     KernelEntityTemplateDefinition shifts.
  * 88: Kernel_GetLocalWeaponState and KernelLocalWeaponState were added, and
  *     KernelAbiInfo gained local_weapon_state_size, appended. A client answers
  *     from snapshot schema 21's own-player weapon block less its unacknowledged
@@ -88,7 +99,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 89u
+#define KERNEL_ABI_VERSION 90u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -695,6 +706,10 @@ typedef enum KernelActionConditionType {
  * separate tables and drifted. */
 #define KERNEL_MAX_IMPULSE_LOCKOUT_TICKS 300u
 
+/* Ceiling on an actor's stagger duration_ticks and immunity_ticks, for the
+ * same reason and checked by the same two parties as the lockout above. */
+#define KERNEL_MAX_STAGGER_TICKS 300u
+
 /* How apply_impulse reads impulse_strength / impulse_strength_vertical.
  * RADIAL: the historical single-scalar form, delta = normalize(dir) * strength.
  * SPLIT:  delta = {dir.x * horizontal, vertical, dir.z * horizontal}, both
@@ -728,6 +743,10 @@ typedef struct KernelActionDefinition {
     uint32_t impulse_lockout_ticks;
     uint32_t impulse_strength_mode;
     float impulse_strength_vertical;
+    /* apply_damage only. Non-zero authored means damage_stagger is the meter
+     * this hit adds, including an explicit 0.0 that never staggers. */
+    uint32_t damage_stagger_authored;
+    float damage_stagger;
 } KernelActionDefinition;
 
 typedef struct KernelActionTriggerDefinition {
@@ -760,6 +779,8 @@ typedef struct KernelActionTriggerDefinition {
     uint32_t impulse_lockout_ticks;
     uint32_t impulse_strength_mode;
     float impulse_strength_vertical;
+    uint32_t damage_stagger_authored;
+    float damage_stagger;
 } KernelActionTriggerDefinition;
 
 typedef struct KernelStatusEffectDefinition {
@@ -2130,6 +2151,15 @@ struct KernelEntityTemplateDefinition {
     uint32_t collision_trigger_mask;
     KernelSkeletonBindingDefinition skeleton;
     float impulse_resistance;
+    /* Hit stagger profile. stagger_threshold == 0 disables it; a zero
+     * stagger_per_damage leaves only hits that author a stagger able to fill
+     * the meter. */
+    float stagger_threshold;
+    float stagger_per_damage;
+    float stagger_decay_per_tick;
+    uint32_t stagger_decay_delay_ticks;
+    uint32_t stagger_ticks;
+    uint32_t stagger_immunity_ticks;
 };
 
 typedef struct KernelEvent {

@@ -7,6 +7,15 @@ collider_template: sentry_grunt_hit_aabb
 health:
   hp: 500
   max_hp: 500
+# First-pass tuning. Four rifle hits (45 each, one per 3 ticks) inside the
+# decay window stagger it for half a second, then 1.5 s of immunity.
+stagger:
+  threshold: 150
+  per_damage: 1.0
+  decay_per_tick: 5.0
+  decay_delay_ticks: 20
+  duration_ticks: 15
+  immunity_ticks: 45
 movement:
   controller: character
   move_speed_meters_per_second: 2.5

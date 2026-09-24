@@ -7,6 +7,17 @@ collider_template: player_hit_aabb
 health:
   hp: 1000
   max_hp: 1000
+# First-pass tuning. 30 Hz ticks. The grunt slam authors 120 of stagger, so it
+# always staggers; claws and projectiles need several hits inside the decay
+# window. Two seconds of immunity after each stagger keeps a crowd from
+# chain-locking the player.
+stagger:
+  threshold: 120
+  per_damage: 1.0
+  decay_per_tick: 3.0
+  decay_delay_ticks: 30
+  duration_ticks: 12
+  immunity_ticks: 60
 movement:
   controller: character
   move_speed_meters_per_second: 5.0

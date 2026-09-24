@@ -664,6 +664,9 @@ struct ActionApplyDamageDefinition {
     std::string target_parameter;
     std::string amount_parameter;
     ActionConditionType condition = ActionConditionType::kAlways;
+    // The stagger meter this hit adds. Absent derives it from the damage
+    // through the target's StaggerProfile::stagger_per_damage.
+    std::optional<float> stagger;
 };
 
 struct ActionApplyHealthChangeDefinition {
