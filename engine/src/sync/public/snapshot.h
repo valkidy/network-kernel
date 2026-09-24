@@ -92,6 +92,13 @@ struct WorldSnapshot {
     std::vector<EntitySnapshot> entities;
 };
 
+// The visual flags a world entity's own components imply: moving, reloading,
+// dead, and grounded / falling / landed from its movement state. Every render
+// and snapshot path takes its flags from here, so a flag one path learns about
+// reaches all of them. Flags an action writes -- aiming, firing, staggered --
+// live on ReplicationState instead and are merged on top by the caller.
+std::uint32_t derived_visual_flags(const World& world, entt::entity entity);
+
 WorldSnapshot build_world_snapshot(
     const World& world,
     std::uint32_t server_tick,

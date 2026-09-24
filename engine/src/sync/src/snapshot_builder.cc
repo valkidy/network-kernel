@@ -1,7 +1,6 @@
 #include "sync/public/snapshot.h"
 
 namespace network_example {
-namespace {
 
 std::uint32_t derived_visual_flags(const World& world, entt::entity entity) {
     std::uint32_t flags = 0;
@@ -17,10 +16,19 @@ std::uint32_t derived_visual_flags(const World& world, entt::entity entity) {
         world.registry().get<Health>(entity).hp == 0) {
         flags |= kVisualFlagDead;
     }
+    if (world.registry().all_of<MovementState>(entity)) {
+        const MovementState& movement =
+            world.registry().get<MovementState>(entity);
+        flags |= movement.ground_state == MovementState::GroundState::kGrounded
+            ? kVisualFlagGrounded
+            : kVisualFlagFalling;
+        if (movement.landed_this_tick) {
+            flags |= kVisualFlagLanded;
+        }
+    }
     return flags;
 }
 
-}  // namespace
 
 WorldSnapshot build_world_snapshot(
     const World& world,
@@ -104,7 +112,12 @@ WorldSnapshot build_world_snapshot(
             entity_snapshot.hp = health.hp;
             entity_snapshot.max_hp = health.max_hp;
         }
-        entity_snapshot.flags = derived_visual_flags(world, entity);
+        // Landed holds for the one tick the actor touched down, and snapshots
+        // go out less often than ticks: a client would see some landings and
+        // not others. Grounded and Falling are states and survive the gap;
+        // a client wanting the moment of touchdown reads their edge.
+        entity_snapshot.flags =
+            derived_visual_flags(world, entity) & ~kVisualFlagLanded;
         if (world.registry().all_of<ReplicationState>(entity)) {
             const ReplicationState& replication =
                 world.registry().get<ReplicationState>(entity);

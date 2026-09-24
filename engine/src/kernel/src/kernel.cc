@@ -551,33 +551,6 @@ bool stagger_profile_is_authorable(const KernelEntityTemplateDefinition& entity_
         entity_template.stagger_immunity_ticks <= KERNEL_MAX_STAGGER_TICKS;
 }
 
-std::uint32_t derived_visual_flags(const World& world, entt::entity entity) {
-    std::uint32_t flags = 0;
-    if (world.registry().all_of<Velocity>(entity) &&
-        glm::length(world.registry().get<Velocity>(entity).linear) > 0.001f) {
-        flags |= kVisualFlagMoving;
-    }
-    if (world.registry().all_of<WeaponState>(entity) &&
-        world.registry().get<WeaponState>(entity).is_reloading) {
-        flags |= kVisualFlagReloading;
-    }
-    if (world.registry().all_of<Health>(entity) &&
-        world.registry().get<Health>(entity).hp == 0) {
-        flags |= kVisualFlagDead;
-    }
-    if (world.registry().all_of<MovementState>(entity)) {
-        const MovementState& movement =
-            world.registry().get<MovementState>(entity);
-        flags |= movement.ground_state == MovementState::GroundState::kGrounded
-            ? kVisualFlagGrounded
-            : kVisualFlagFalling;
-        if (movement.landed_this_tick) {
-            flags |= kVisualFlagLanded;
-        }
-    }
-    return flags;
-}
-
 glm::vec3 input_aim_to_world(const KernelPlayerInput& input) {
     glm::vec3 aim{input.aim_dir.x, input.aim_dir.y, input.aim_dir.z};
     if (glm::length(aim) <= 0.0001f) {
@@ -9377,6 +9350,19 @@ void KernelEngine::append_predicted_local_render_state() {
     RenderEntityState state = render_state_from_snapshot_entity(
         local,
         entity_id_for_net_id(local.net_id));
+    // The owner snapshot says where the server had the body a round trip ago;
+    // the prediction says where it is drawn now. Ground contact has to agree
+    // with the drawn body, or a jump reads as grounded until the server
+    // answers and a landing reads as airborne after the feet are down. Only a
+    // physics prediction steps ground contact; without one the snapshot's
+    // answer is the only one there is.
+    if (prediction_physics_world_ != nullptr) {
+        state.visual_flags &= ~(kVisualFlagGrounded | kVisualFlagFalling);
+        state.visual_flags |= predicted_character_state_.ground_state ==
+                physics::CharacterGroundState::kGrounded
+            ? kVisualFlagGrounded
+            : kVisualFlagFalling;
+    }
     const auto replicated = std::find_if(
         client_replicated_entities_.begin(),
         client_replicated_entities_.end(),

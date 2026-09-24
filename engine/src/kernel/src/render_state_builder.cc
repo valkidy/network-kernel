@@ -27,33 +27,6 @@ KernelVec3 beam_end_from(const EntitySnapshot& entity) {
         entity.position + forward * entity.beam_effective_length);
 }
 
-std::uint32_t derived_visual_flags(const World& world, entt::entity entity) {
-    std::uint32_t flags = 0;
-    if (world.registry().all_of<Velocity>(entity) &&
-        glm::length(world.registry().get<Velocity>(entity).linear) > 0.001f) {
-        flags |= kVisualFlagMoving;
-    }
-    if (world.registry().all_of<WeaponState>(entity) &&
-        world.registry().get<WeaponState>(entity).is_reloading) {
-        flags |= kVisualFlagReloading;
-    }
-    if (world.registry().all_of<Health>(entity) &&
-        world.registry().get<Health>(entity).hp == 0) {
-        flags |= kVisualFlagDead;
-    }
-    if (world.registry().all_of<MovementState>(entity)) {
-        const MovementState& movement =
-            world.registry().get<MovementState>(entity);
-        flags |= movement.ground_state == MovementState::GroundState::kGrounded
-            ? kVisualFlagGrounded
-            : kVisualFlagFalling;
-        if (movement.landed_this_tick) {
-            flags |= kVisualFlagLanded;
-        }
-    }
-    return flags;
-}
-
 }  // namespace
 
 RenderEntityState render_state_from_world_entity(
