@@ -1,5 +1,19 @@
 0.7.0 release notes:
 
+- aligns Unity plugin API with kernel ABI 90 (hit stagger): appends
+  `damage_stagger_authored` / `damage_stagger` to `KernelActionDefinition` and
+  `KernelActionTriggerDefinition` (the trigger grows to 764 bytes), appends the
+  `stagger_*` profile to `KernelEntityTemplateDefinition`, and adds
+  `KernelEventType.Staggered`, `KernelConstants.VisualFlagStaggered`,
+  `KernelConstants.MaxStaggerTicks` and the `Staggered` / `KnockedBack`
+  local action result reasons
+- the bundled native libraries and catalog bundle are not yet rebuilt for
+  ABI 90; `KernelAbi.ValidateNativeAbi` rejects the current binaries until they
+  are refreshed
+
+
+0.7.0 release notes:
+
 - adds managed support for movement collision mask writes in ABI 89
 
 

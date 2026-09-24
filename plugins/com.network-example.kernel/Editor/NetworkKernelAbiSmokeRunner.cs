@@ -24,7 +24,7 @@ namespace NetworkExample.Kernel.Editor
             KernelAbi.ValidateNativeAbi();
             GameServerAbi.ValidateNativeAbi();
             KernelAbiInfo info = KernelAbi.GetInfo();
-            Require(KernelConstants.AbiVersion == 89, "Managed kernel ABI version was not v89.");
+            Require(KernelConstants.AbiVersion == 90, "Managed kernel ABI version was not v90.");
             Require(
                 KernelLocalWeaponState.StructSize == 20 &&
                 info.local_weapon_state_size == KernelLocalWeaponState.StructSize,
@@ -115,6 +115,20 @@ namespace NetworkExample.Kernel.Editor
                 KernelConstants.VisualFlagLanded == 0x00000040U &&
                 KernelEventType.ActorLanded == (KernelEventType)12,
                 "Kernel grounding presentation ABI mismatch.");
+            Require(
+                KernelConstants.VisualFlagStaggered == 0x00000080U &&
+                KernelEventType.Staggered == (KernelEventType)14 &&
+                KernelLocalActionResultReason.Staggered == (KernelLocalActionResultReason)13 &&
+                KernelLocalActionResultReason.KnockedBack == (KernelLocalActionResultReason)14 &&
+                KernelConstants.MaxStaggerTicks == 300U,
+                "Kernel hit stagger ABI mismatch.");
+            Require(
+                System.Runtime.InteropServices.Marshal.SizeOf<KernelActionTriggerDefinition>() == 764 &&
+                (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("damage_stagger") >
+                    (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("impulse_strength_vertical") &&
+                (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelEntityTemplateDefinition>("stagger_immunity_ticks") >
+                    (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelEntityTemplateDefinition>("impulse_resistance"),
+                "Kernel hit stagger fields are not appended in native order.");
             RequireLANDiscovery();
             byte[] catalogBundleBytes = LoadGameplayCatalogBundleBytes();
 

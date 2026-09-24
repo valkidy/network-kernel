@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 89;
+        public const uint AbiVersion = 90;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int GameplayCatalogEntryPathSize = 128;
@@ -28,6 +28,7 @@ namespace NetworkExample.Kernel
         public const int MaxActionGraphActions = 8;
         public const int MaxPortableStateFields = 8;
         public const uint MaxImpulseLockoutTicks = 300U;
+        public const uint MaxStaggerTicks = 300U;
         public const uint ImpulseStrengthModeRadial = 0U;
         public const uint ImpulseStrengthModeSplit = 1U;
         public const byte DebugWildcardU8 = 0xff;
@@ -170,6 +171,7 @@ namespace NetworkExample.Kernel
         public const uint VisualFlagGrounded = 0x00000010U;
         public const uint VisualFlagFalling = 0x00000020U;
         public const uint VisualFlagLanded = 0x00000040U;
+        public const uint VisualFlagStaggered = 0x00000080U;
         public const uint VisualFlagAiming = 0x00000100U;
         public const uint VisualFlagFiring = 0x00000200U;
         public const uint MaxVisibleHostiles = 16;
@@ -212,6 +214,8 @@ namespace NetworkExample.Kernel
         Error = 11,
         ActorLanded = 12,
         HealthChanged = 13,
+        // `code` carries the stagger duration in ticks.
+        Staggered = 14,
     }
 
     public enum KernelDespawnReason : uint
@@ -464,6 +468,8 @@ namespace NetworkExample.Kernel
         WeaponChanged = 10,
         EffectFailed = 11,
         Cooldown = 12,
+        Staggered = 13,
+        KnockedBack = 14,
     }
 
     public enum KernelRemoteActionPresentationEventType : byte
@@ -984,6 +990,10 @@ namespace NetworkExample.Kernel
         public uint impulse_lockout_ticks;
         public uint impulse_strength_mode;
         public float impulse_strength_vertical;
+        // apply_damage only. Non-zero authored means damage_stagger is the
+        // meter this hit adds, including an explicit 0 that never staggers.
+        public uint damage_stagger_authored;
+        public float damage_stagger;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelActionDefinition>();
     }
@@ -1019,6 +1029,8 @@ namespace NetworkExample.Kernel
         public uint impulse_lockout_ticks;
         public uint impulse_strength_mode;
         public float impulse_strength_vertical;
+        public uint damage_stagger_authored;
+        public float damage_stagger;
 
         public static uint StructSize =>
             (uint)Marshal.SizeOf<KernelActionTriggerDefinition>();
@@ -2329,6 +2341,13 @@ namespace NetworkExample.Kernel
         public uint collision_trigger_mask;
         public KernelSkeletonBindingDefinition skeleton;
         public float impulse_resistance;
+        // Hit stagger profile. stagger_threshold == 0 disables it.
+        public float stagger_threshold;
+        public float stagger_per_damage;
+        public float stagger_decay_per_tick;
+        public uint stagger_decay_delay_ticks;
+        public uint stagger_ticks;
+        public uint stagger_immunity_ticks;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelEntityTemplateDefinition>();
     }
