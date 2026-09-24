@@ -35,6 +35,20 @@ inline bool impulse_strength_is_authorable(
         (horizontal > 0.0f || vertical != 0.0f);
 }
 
+// An apply_damage action's authored stagger: absent, or a finite non-negative
+// meter value.
+inline bool damage_stagger_is_authorable(
+    std::uint32_t authored,
+    float stagger) {
+    return authored == 0u ||
+        (authored == 1u && std::isfinite(stagger) && stagger >= 0.0f);
+}
+
+inline bool damage_stagger_is_authorable(const KernelActionDefinition& action) {
+    return damage_stagger_is_authorable(
+        action.damage_stagger_authored, action.damage_stagger);
+}
+
 // The magnitude an impulse is weighed at against a target's
 // impulse_resistance. Radial mode returns the strength unchanged -- bit for
 // bit -- so no existing template's resistance outcome can move.
@@ -74,6 +88,8 @@ struct ActionApplyDamageCommand {
     NetId target = 0;
     std::uint16_t amount = 0;
     ActionExecutionProvenance provenance;
+    // Explicit stagger meter this hit adds; negative derives it from damage.
+    float stagger = kStaggerDerivedFromDamage;
 };
 
 struct ActionApplyHealthChangeCommand {

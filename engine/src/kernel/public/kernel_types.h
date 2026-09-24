@@ -5,6 +5,17 @@
 #include <stdint.h>
 
 /*
+ * 90: hit stagger. KernelEventType_Staggered, KERNEL_VISUAL_FLAG_STAGGERED
+ *     and the Staggered / KnockedBack local action result reasons were added.
+ *     KernelActionDefinition and KernelActionTriggerDefinition gained
+ *     damage_stagger_authored and damage_stagger, read by apply_damage: zero
+ *     authored (the default) derives the hit's stagger from its damage through
+ *     the target's stagger_per_damage, so every catalog authored before this
+ *     behaves as it did. KernelEntityTemplateDefinition gained the stagger_*
+ *     profile; a zero stagger_threshold, the default, means the actor cannot
+ *     be staggered. All appended, but every managed mirror must add the same
+ *     fields or the nested layout of the trigger definitions inside
+ *     KernelEntityTemplateDefinition shifts.
  * 88: Kernel_GetLocalWeaponState and KernelLocalWeaponState were added, and
  *     KernelAbiInfo gained local_weapon_state_size, appended. A client answers
  *     from snapshot schema 21's own-player weapon block less its unacknowledged
@@ -88,7 +99,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 89u
+#define KERNEL_ABI_VERSION 90u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -304,6 +315,7 @@ typedef enum KernelFootholdQueryType {
  * Moving                visual_flags & KERNEL_VISUAL_FLAG_MOVING
  * Reloading             visual_flags & KERNEL_VISUAL_FLAG_RELOADING
  * Dead                  visual_flags & KERNEL_VISUAL_FLAG_DEAD
+ * Staggered             visual_flags & KERNEL_VISUAL_FLAG_STAGGERED
  * Aiming                visual_flags & KERNEL_VISUAL_FLAG_AIMING
  * Firing                visual_flags & KERNEL_VISUAL_FLAG_FIRING, or
  *                       action.phase == KernelActionPhase_Active
@@ -322,6 +334,7 @@ typedef enum KernelFootholdQueryType {
 #define KERNEL_VISUAL_FLAG_GROUNDED UINT32_C(0x00000010)
 #define KERNEL_VISUAL_FLAG_FALLING UINT32_C(0x00000020)
 #define KERNEL_VISUAL_FLAG_LANDED UINT32_C(0x00000040)
+#define KERNEL_VISUAL_FLAG_STAGGERED UINT32_C(0x00000080)
 #define KERNEL_VISUAL_FLAG_AIMING UINT32_C(0x00000100)
 #define KERNEL_VISUAL_FLAG_FIRING UINT32_C(0x00000200)
 
@@ -509,6 +522,10 @@ typedef enum KernelEventType {
     KernelEventType_Error = 11,
     KernelEventType_ActorLanded = 12,
     KernelEventType_HealthChanged = 13,
+    /* An actor's stagger meter crossed its threshold: any in-flight action is
+     * interrupted and new actions are refused until the stagger ends. `code`
+     * carries the stagger duration in ticks. */
+    KernelEventType_Staggered = 14,
 } KernelEventType;
 
 typedef enum KernelDespawnReason {
@@ -689,6 +706,10 @@ typedef enum KernelActionConditionType {
  * separate tables and drifted. */
 #define KERNEL_MAX_IMPULSE_LOCKOUT_TICKS 300u
 
+/* Ceiling on an actor's stagger duration_ticks and immunity_ticks, for the
+ * same reason and checked by the same two parties as the lockout above. */
+#define KERNEL_MAX_STAGGER_TICKS 300u
+
 /* How apply_impulse reads impulse_strength / impulse_strength_vertical.
  * RADIAL: the historical single-scalar form, delta = normalize(dir) * strength.
  * SPLIT:  delta = {dir.x * horizontal, vertical, dir.z * horizontal}, both
@@ -722,6 +743,10 @@ typedef struct KernelActionDefinition {
     uint32_t impulse_lockout_ticks;
     uint32_t impulse_strength_mode;
     float impulse_strength_vertical;
+    /* apply_damage only. Non-zero authored means damage_stagger is the meter
+     * this hit adds, including an explicit 0.0 that never staggers. */
+    uint32_t damage_stagger_authored;
+    float damage_stagger;
 } KernelActionDefinition;
 
 typedef struct KernelActionTriggerDefinition {
@@ -754,6 +779,8 @@ typedef struct KernelActionTriggerDefinition {
     uint32_t impulse_lockout_ticks;
     uint32_t impulse_strength_mode;
     float impulse_strength_vertical;
+    uint32_t damage_stagger_authored;
+    float damage_stagger;
 } KernelActionTriggerDefinition;
 
 typedef struct KernelStatusEffectDefinition {
@@ -905,6 +932,8 @@ typedef enum KernelLocalActionResultReason {
     KernelLocalActionResultReason_WeaponChanged = 10,
     KernelLocalActionResultReason_EffectFailed = 11,
     KernelLocalActionResultReason_Cooldown = 12,
+    KernelLocalActionResultReason_Staggered = 13,
+    KernelLocalActionResultReason_KnockedBack = 14,
 } KernelLocalActionResultReason;
 
 typedef enum KernelRemoteActionPresentationEventType {
@@ -2122,6 +2151,15 @@ struct KernelEntityTemplateDefinition {
     uint32_t collision_trigger_mask;
     KernelSkeletonBindingDefinition skeleton;
     float impulse_resistance;
+    /* Hit stagger profile. stagger_threshold == 0 disables it; a zero
+     * stagger_per_damage leaves only hits that author a stagger able to fill
+     * the meter. */
+    float stagger_threshold;
+    float stagger_per_damage;
+    float stagger_decay_per_tick;
+    uint32_t stagger_decay_delay_ticks;
+    uint32_t stagger_ticks;
+    uint32_t stagger_immunity_ticks;
 };
 
 typedef struct KernelEvent {

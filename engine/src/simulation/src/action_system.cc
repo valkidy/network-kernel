@@ -121,12 +121,12 @@ void reset_action(ActionRuntimeState& action) {
     action.last_advanced_tick = last_advanced_tick;
 }
 
-void enter_recovery(
+// What an action holds on the weapon beyond its own runtime state: the reload
+// latch and a live beam or cast effect. Every way an action ends lets go of it.
+void release_action_resources(
     World& world,
     entt::entity entity,
-    ActionRuntimeState& action,
-    const RuntimeActionTemplate& action_template,
-    std::uint32_t current_tick) {
+    const ActionRuntimeState& action) {
     if (world.registry().all_of<WeaponState>(entity)) {
         WeaponState& weapon = world.registry().get<WeaponState>(entity);
         if (action.binding_id == KernelActionBinding_Reload) {
@@ -137,6 +137,15 @@ void enter_recovery(
             weapon.active_effect_net_id = 0u;
         }
     }
+}
+
+void enter_recovery(
+    World& world,
+    entt::entity entity,
+    ActionRuntimeState& action,
+    const RuntimeActionTemplate& action_template,
+    std::uint32_t current_tick) {
+    release_action_resources(world, entity, action);
     action.recovery_end_tick = current_tick + action_template.recovery_ticks;
     if (action_template.recovery_ticks == 0u) {
         reset_action(action);
@@ -193,6 +202,19 @@ bool admit_action(
             action_template_id,
             current_tick,
             KernelLocalActionResultReason_InvalidActionId,
+            outcomes);
+        return false;
+    }
+    if (const KernelLocalActionResultReason blocked =
+            action_block_reason(world, entity, current_tick);
+        blocked != KernelLocalActionResultReason_None) {
+        push_rejection(
+            world,
+            entity,
+            intent,
+            action_template_id,
+            current_tick,
+            blocked,
             outcomes);
         return false;
     }
@@ -482,6 +504,49 @@ void advance_action(
     update_visual_flags(world, entity);
 }
 
+// Runs before any input is read, over every staggered actor rather than only
+// the ones that sent input this tick: an interrupt must not wait for the
+// victim's next packet. It skips recovery on purpose -- the stagger itself is
+// the lockout, and a recovery on top would hold the actor for both.
+void interrupt_staggered_actions(
+    World& world,
+    std::uint32_t current_tick,
+    std::vector<ActionOutcome>* outcomes) {
+    const auto view = world.registry().view<StaggerState>();
+    for (const entt::entity entity : view) {
+        StaggerState& stagger = view.get<StaggerState>(entity);
+        ReplicationState& replication =
+            world.registry().get_or_emplace<ReplicationState>(entity);
+        if (current_tick < stagger.until_tick) {
+            replication.visual_flags |= kVisualFlagStaggered;
+        } else {
+            replication.visual_flags &= ~kVisualFlagStaggered;
+        }
+        if (stagger.interrupted_trigger_count == stagger.trigger_count) {
+            continue;
+        }
+        stagger.interrupted_trigger_count = stagger.trigger_count;
+        ActionRuntimeState* action =
+            world.registry().try_get<ActionRuntimeState>(entity);
+        if (action == nullptr ||
+            (action->phase != KernelActionPhase_Windup &&
+             action->phase != KernelActionPhase_Active)) {
+            continue;
+        }
+        push_outcome(
+            world,
+            entity,
+            *action,
+            current_tick,
+            ActionOutcomeType::Corrected,
+            KernelLocalActionResultReason_Staggered,
+            outcomes);
+        release_action_resources(world, entity, *action);
+        reset_action(*action);
+        update_visual_flags(world, entity);
+    }
+}
+
 }  // namespace
 
 std::vector<ActionCommit> simulate_actions(
@@ -490,6 +555,7 @@ std::vector<ActionCommit> simulate_actions(
     std::uint32_t current_tick,
     std::vector<ActionOutcome>* outcomes) {
     std::vector<ActionCommit> commits;
+    interrupt_staggered_actions(world, current_tick, outcomes);
     std::unordered_set<entt::entity> touched;
     for (const QueuedInput& queued_input : inputs) {
         const entt::entity entity = input_entity(world, queued_input);

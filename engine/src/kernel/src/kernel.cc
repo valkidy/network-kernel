@@ -532,6 +532,25 @@ void log_snapshot_decode_failure(const TransportEvent& transport_event) {
         static_cast<int>(transport_event.channel));
 }
 
+// Zero threshold is "not staggerable" and needs nothing else; a live profile
+// needs a real duration and bounded windows. Mirrors the catalog loader.
+bool stagger_profile_is_authorable(const KernelEntityTemplateDefinition& entity_template) {
+    const auto finite_non_negative = [](float value) {
+        return std::isfinite(value) && value >= 0.0f;
+    };
+    if (!finite_non_negative(entity_template.stagger_threshold)) {
+        return false;
+    }
+    if (entity_template.stagger_threshold == 0.0f) {
+        return true;
+    }
+    return finite_non_negative(entity_template.stagger_per_damage) &&
+        finite_non_negative(entity_template.stagger_decay_per_tick) &&
+        entity_template.stagger_ticks != 0u &&
+        entity_template.stagger_ticks <= KERNEL_MAX_STAGGER_TICKS &&
+        entity_template.stagger_immunity_ticks <= KERNEL_MAX_STAGGER_TICKS;
+}
+
 std::uint32_t derived_visual_flags(const World& world, entt::entity entity) {
     std::uint32_t flags = 0;
     if (world.registry().all_of<Velocity>(entity) &&
@@ -1660,6 +1679,8 @@ bool validate_projectile_mechanics(
                 action.impulse_strength_mode = trigger.impulse_strength_mode;
                 action.impulse_strength_vertical =
                     trigger.impulse_strength_vertical;
+                action.damage_stagger_authored = trigger.damage_stagger_authored;
+                action.damage_stagger = trigger.damage_stagger;
             } else {
                 action = trigger.actions[index];
             }
@@ -1671,7 +1692,8 @@ bool validate_projectile_mechanics(
                 }
             } else if (action.action_type == KernelEntityTriggerActionType_ApplyDamage) {
                 if (action.target_source > KernelEntityRefSource_EventInstigator ||
-                    action.damage_amount == 0u) return false;
+                    action.damage_amount == 0u ||
+                    !damage_stagger_is_authorable(action)) return false;
             } else if (action.action_type == KernelEntityTriggerActionType_ApplyImpulse) {
                 if (action.target_source > KernelEntityRefSource_EventInstigator ||
                     !impulse_strength_is_authorable(
@@ -2954,7 +2976,8 @@ bool KernelEngine::load_gameplay_catalog(
              entity_template.entity_type != KernelEntityType_Prop &&
              entity_template.entity_type != KernelEntityType_Director) ||
             entity_template.ai.struct_size < sizeof(KernelEntityAiDefinition) ||
-            entity_template.ai.controller_type > KernelAiControllerType_Chaser) {
+            entity_template.ai.controller_type > KernelAiControllerType_Chaser ||
+            !stagger_profile_is_authorable(entity_template)) {
             return false;
         }
         const KernelSkeletonBindingDefinition& skeleton =
@@ -3121,6 +3144,9 @@ bool KernelEngine::load_gameplay_catalog(
                         trigger->impulse_strength_mode;
                     action.impulse_strength_vertical =
                         trigger->impulse_strength_vertical;
+                    action.damage_stagger_authored =
+                        trigger->damage_stagger_authored;
+                    action.damage_stagger = trigger->damage_stagger;
                     action.condition_type = trigger->condition_type;
                 } else {
                     action = trigger->actions[action_index];
@@ -3133,7 +3159,8 @@ bool KernelEngine::load_gameplay_catalog(
                     KernelEntityTriggerActionType_ApplyDamage) {
                     if (action.target_source >
                             KernelEntityRefSource_EventInstigator ||
-                        action.damage_amount == 0u) {
+                        action.damage_amount == 0u ||
+                        !damage_stagger_is_authorable(action)) {
                         return false;
                     }
                     continue;

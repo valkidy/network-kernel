@@ -329,6 +329,12 @@ void simulate_actor_movement(
             current_tick < impulse_lockout->until_tick;
         if (impulse_locked) {
             // nothing: the seeded current-velocity horizontal stands
+        } else if (is_staggered(world, entity, current_tick)) {
+            // A stagger roots the actor. After the lockout test on purpose: a
+            // hit that both knocks back and staggers keeps its knockback.
+            // Unconditional on input, because an AI agent that submits none
+            // would otherwise coast on whatever its controller last wrote.
+            desired_horizontal = glm::vec3{0.0f};
         } else if (movement_input != nullptr) {
             desired_horizontal =
                 movement_solver::input_move_to_world(movement_input->input) *

@@ -19,6 +19,9 @@ actions:
   - type: apply_damage
     target: params.target
     amount: params.amount
+    # Authored, not derived: a slam should stagger on its own regardless of
+    # its damage number. 120 is the player's threshold.
+    stagger: 120
   - type: apply_impulse
     target: params.target
     strength: params.strength

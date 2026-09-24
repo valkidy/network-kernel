@@ -396,6 +396,38 @@ void a_flat_knockback_on_a_grounded_actor_is_not_released_by_relanding() {
     require(fixture.velocity_x() < 0.0f);
 }
 
+// A stagger roots the actor: input may not move it, whether or not it sends any.
+void a_stagger_holds_the_actor_against_its_input() {
+    MovementFixture fixture({0.0f, 0.0f, 0.0f});
+    fixture.tick_pushing_back();
+    require(fixture.grounded());
+    // Control: input moves the actor at full speed before the stagger.
+    require(fixture.velocity_x() < -kSpeed + 0.001f);
+
+    constexpr std::uint32_t kStaggerTicks = 4;
+    StaggerState stagger;
+    stagger.until_tick = fixture.tick_index + kStaggerTicks;
+    fixture.world.registry().emplace<StaggerState>(fixture.entity, stagger);
+    for (std::uint32_t tick = 0; tick < kStaggerTicks; ++tick) {
+        fixture.tick_pushing_back();
+        require(fixture.velocity_x() == 0.0f);
+    }
+    fixture.tick_pushing_back();
+    require(fixture.velocity_x() < 0.0f);
+}
+
+// A hit that both knocks back and staggers keeps its knockback: the lockout is
+// tested first, so the stagger's rooting never zeroes a flight in progress.
+void a_knockback_outranks_a_stagger_in_movement() {
+    MovementFixture fixture({0.0f, 40.0f, 0.0f});
+    StaggerState stagger;
+    stagger.until_tick = fixture.tick_index + 20u;
+    fixture.world.registry().emplace<StaggerState>(fixture.entity, stagger);
+    fixture.arm_lockout(6u);
+    fixture.tick_pushing_back();
+    require(fixture.velocity_x() > kKnockbackX - 0.001f);
+}
+
 }  // namespace
 
 int main() {
@@ -406,5 +438,7 @@ int main() {
     input_does_not_redefine_horizontal_velocity_during_lockout();
     landing_releases_the_lockout_early();
     a_flat_knockback_on_a_grounded_actor_is_not_released_by_relanding();
+    a_stagger_holds_the_actor_against_its_input();
+    a_knockback_outranks_a_stagger_in_movement();
     return 0;
 }

@@ -10,6 +10,15 @@ collider_template: sentry_grunt_hit_aabb
 health:
   hp: 10000
   max_hp: 10000
+# First-pass tuning: a heavy. It takes sustained fire to stagger, and the
+# stagger is long enough to be worth earning.
+stagger:
+  threshold: 400
+  per_damage: 1.0
+  decay_per_tick: 4.0
+  decay_delay_ticks: 30
+  duration_ticks: 20
+  immunity_ticks: 90
 movement:
   controller: character
   move_speed_meters_per_second: 2.5
