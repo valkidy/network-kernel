@@ -420,6 +420,20 @@ bool apply_stagger(
 
 bool is_staggered(const World& world, entt::entity entity, std::uint32_t current_tick);
 
+// Gives the actor its template's StaggerProfile, or takes it away when the
+// template authors none. Both ways an actor gets a template call this: the
+// entity-create path and set_actor_template, which is the only one a player
+// ever goes through.
+void apply_stagger_profile(
+    World& world,
+    entt::entity entity,
+    const KernelEntityTemplateDefinition& entity_template);
+
+// Ends any stagger outright: the state and the replicated flag with it. The
+// flag is only ever cleared by the action pass walking StaggerState, so
+// removing the state without this leaves the flag raised for good.
+void clear_stagger(World& world, entt::entity entity);
+
 // Why this actor may not start a new action right now, or
 // KernelLocalActionResultReason_None. Staggered outranks KnockedBack so a hit
 // that does both reports the one that also interrupted.

@@ -230,7 +230,15 @@ EntitySnapshot interpolate_snapshot_entity(
     const EntitySnapshot& to,
     float alpha) {
     EntitySnapshot entity = to;
-    entity.position = from.position + (to.position - from.position) * alpha;
+    // A revive lifts the body off its corpse in the tick it clears the dead
+    // flag, and the flags come from the newer snapshot: interpolating would
+    // draw the revived actor sliding up out of the corpse for a whole
+    // snapshot interval. Nothing moved between the two; it was placed.
+    if ((from.flags & kVisualFlagDead) != 0u &&
+        (to.flags & kVisualFlagDead) == 0u) {
+        return entity;
+    }
+    entity.position =from.position + (to.position - from.position) * alpha;
     entity.rotation = glm::slerp(from.rotation, to.rotation, alpha);
     entity.velocity = from.velocity + (to.velocity - from.velocity) * alpha;
     // A beam sweeps as its owner turns and its reach jumps whenever what blocks

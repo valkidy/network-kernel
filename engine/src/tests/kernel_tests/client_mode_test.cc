@@ -1589,6 +1589,24 @@ void owner_action_prediction_and_discrete_interpolation() {
     require(interpolated.action_phase == KernelActionPhase_Recovery);
     require(interpolated.aim_direction.z == 1.0f);
 
+    // A revive is a placement, not movement: the revived body is drawn where
+    // it was placed from the first frame it is alive. Dying still
+    // interpolates -- the body really did travel to where it fell.
+    network_example::EntitySnapshot corpse = from;
+    corpse.flags = network_example::kVisualFlagDead;
+    network_example::EntitySnapshot revived = from;
+    revived.position = glm::vec3{0.0f, 5.0f, 0.0f};
+    revived.flags = 0u;
+    const network_example::EntitySnapshot reviving =
+        network_example::interpolate_snapshot_entity(corpse, revived, 0.25f);
+    require(reviving.position.y == 5.0f);
+    require((reviving.flags & network_example::kVisualFlagDead) == 0u);
+    network_example::EntitySnapshot falling = to;
+    falling.flags = 0u;
+    const network_example::EntitySnapshot dying =
+        network_example::interpolate_snapshot_entity(falling, corpse, 0.5f);
+    require(dying.position.x == 5.0f);
+
     from.flags = network_example::kVisualFlagFiring;
     const RenderEntityState active_render =
         network_example::render_state_from_snapshot_entity(from, 1);

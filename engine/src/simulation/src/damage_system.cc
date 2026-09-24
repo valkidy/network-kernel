@@ -92,6 +92,34 @@ bool is_staggered(const World& world, entt::entity entity, std::uint32_t current
     return state != nullptr && current_tick < state->until_tick;
 }
 
+void apply_stagger_profile(
+    World& world,
+    entt::entity entity,
+    const KernelEntityTemplateDefinition& entity_template) {
+    if (entity_template.stagger_threshold > 0.0f) {
+        world.registry().emplace_or_replace<StaggerProfile>(
+            entity,
+            StaggerProfile{
+                entity_template.stagger_threshold,
+                entity_template.stagger_per_damage,
+                entity_template.stagger_decay_per_tick,
+                entity_template.stagger_decay_delay_ticks,
+                entity_template.stagger_ticks,
+                entity_template.stagger_immunity_ticks,
+            });
+    } else {
+        world.registry().remove<StaggerProfile>(entity);
+    }
+}
+
+void clear_stagger(World& world, entt::entity entity) {
+    world.registry().remove<StaggerState>(entity);
+    if (ReplicationState* replication =
+            world.registry().try_get<ReplicationState>(entity)) {
+        replication->visual_flags &= ~kVisualFlagStaggered;
+    }
+}
+
 KernelLocalActionResultReason action_block_reason(
     const World& world,
     entt::entity entity,
