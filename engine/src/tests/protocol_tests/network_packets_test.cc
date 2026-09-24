@@ -86,6 +86,12 @@ void the_estimator_agrees_with_the_encoder() {
     armed_player.active_weapon_ammo = 17;
     require(agrees(armed_player));
 
+    network_example::EntitySnapshot thrown_player = armed_player;
+    thrown_player.has_impulse_lockout = true;
+    thrown_player.impulse_lockout_until_tick = 128;
+    thrown_player.impulse_lockout_armed_tick = 100;
+    require(agrees(thrown_player));
+
     network_example::EntitySnapshot agent;
     agent.net_id = 3;
     agent.type = network_example::EntityType::kActor;
@@ -216,10 +222,65 @@ void an_agent_record_survives_a_round_trip() {
 
 }  // namespace
 
+// The own player's knockback lockout rides an 8 B block of its own, so a client
+// can replay a throw it did not cause instead of steering through it.
+void an_impulse_lockout_block_survives_a_round_trip() {
+    network_example::WorldSnapshot snapshot;
+    network_example::EntitySnapshot player;
+    player.net_id = 4;
+    player.type = network_example::EntityType::kActor;
+    player.actor_type = network_example::ActorType::kPlayer;
+    player.owner_peer = 7;
+    player.hp = 90;
+    player.max_hp = 100;
+    player.has_authoritative_movement_state = true;
+    player.ground_normal = glm::vec3{0.0f, 1.0f, 0.0f};
+    player.has_owner_weapon_state = true;
+    player.active_weapon_slot = 3;
+    player.active_weapon_ammo = 2999;
+    snapshot.entities.push_back(player);
+
+    network_example::WorldSnapshot thrown;
+    thrown.header.server_tick = 120;
+    network_example::EntitySnapshot thrown_player = snapshot.entities[0];
+    thrown_player.has_impulse_lockout = true;
+    thrown_player.impulse_lockout_until_tick = 128;
+    thrown_player.impulse_lockout_armed_tick = 100;
+    thrown.entities.push_back(thrown_player);
+    require(network_example::estimate_snapshot_entity_size(thrown_player) ==
+            network_example::estimate_snapshot_entity_size(
+                snapshot.entities[0]) + 8u);
+    const std::vector<std::uint8_t> thrown_packet =
+        network_example::encode_snapshot_packet(thrown, 44);
+    network_example::WorldSnapshot thrown_decoded;
+    require(network_example::decode_snapshot_packet(
+        thrown_packet.data(),
+        thrown_packet.size(),
+        &thrown_decoded));
+    require(thrown_decoded.entities.size() == 1);
+    require(thrown_decoded.entities[0].has_impulse_lockout);
+    require(thrown_decoded.entities[0].impulse_lockout_until_tick == 128u);
+    require(thrown_decoded.entities[0].impulse_lockout_armed_tick == 100u);
+    // The weapon block before it still reads correctly.
+    require(thrown_decoded.entities[0].active_weapon_ammo == 2999);
+
+    // A lockout that ends no later than it was armed is not one the server
+    // can hold; the decoder refuses it rather than arm it on the client.
+    thrown.entities[0].impulse_lockout_armed_tick = 128;
+    const std::vector<std::uint8_t> bad_packet =
+        network_example::encode_snapshot_packet(thrown, 45);
+    network_example::WorldSnapshot bad_decoded;
+    require(!network_example::decode_snapshot_packet(
+        bad_packet.data(),
+        bad_packet.size(),
+        &bad_decoded));
+}
+
 int main() {
     // Ahead of everything else: main() carries a long-standing abort part way
     // down, and anything below it never runs in a build where assert() is live.
     the_estimator_agrees_with_the_encoder();
+    an_impulse_lockout_block_survives_a_round_trip();
     an_agent_record_survives_a_round_trip();
 
     // Replicated locomotion steps. A step is 22 bytes of payload: the entity,
@@ -460,6 +521,7 @@ int main() {
     require(weapon_decoded.entities[0].active_weapon_ammo == 2999);
     require(weapon_decoded.entities[1].net_id == 6);
     require(!weapon_decoded.entities[1].has_owner_weapon_state);
+
 
     // A slot past the four a combat state can hold is not a weapon anyone owns;
     // the decoder refuses the packet rather than hand the client an index it

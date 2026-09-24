@@ -77,6 +77,13 @@ WorldSnapshot build_world_snapshot(
             entity_snapshot.supporting_collider_id =
                 movement.supporting_collider_id;
         }
+        if (const ImpulseLockout* lockout =
+                world.registry().try_get<ImpulseLockout>(entity);
+            lockout != nullptr && server_tick < lockout->until_tick) {
+            entity_snapshot.has_impulse_lockout = true;
+            entity_snapshot.impulse_lockout_until_tick = lockout->until_tick;
+            entity_snapshot.impulse_lockout_armed_tick = lockout->armed_tick;
+        }
         if (world.registry().all_of<WeaponState>(entity)) {
             const WeaponState& weapon = world.registry().get<WeaponState>(entity);
             // An actor with no configured weapon has no magazine to report, and
