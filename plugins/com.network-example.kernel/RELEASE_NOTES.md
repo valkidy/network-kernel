@@ -20,6 +20,11 @@
 
 0.7.0 release notes:
 
+- refreshes Unity package artifacts for kernel ABI 92
+
+
+0.7.0 release notes:
+
 - aligns Unity plugin API with kernel ABI 91 (generic death state): appends
   `death_policy` to `KernelEntityTemplateDefinition` and adds
   `KernelDeathPolicy`, `KernelEventType.EntityDied` (server-local),
