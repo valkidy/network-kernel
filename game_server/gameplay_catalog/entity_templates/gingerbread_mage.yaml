@@ -30,7 +30,7 @@ hitbox:
 # is no flag to set here and `ai.profile` below does not do it -- swapping this
 # slot for a linear weapon silently turns the arc back into a straight line.
 weapon_slots:
-  - 7
+  - 12
 active_weapon_slot: 0
 animations:
   idle: 0
@@ -63,7 +63,7 @@ ai:
     patrol_rotation_interval_ticks: 30
     patrol_rotation_min_degrees: 15.0
     patrol_rotation_max_degrees: 30.0
-    weapon_id: 7
+    weapon_id: 12
     animation_idle: idle
     animation_attack: chasing
   chaser:
