@@ -534,6 +534,10 @@ typedef enum KernelDespawnReason {
     KernelDespawnReason_Disconnected = 2,
     KernelDespawnReason_Expired = 3,
     KernelDespawnReason_CapacityEvicted = 4,
+    /* The server removed a live entity because it was done with it -- a patrol
+     * squad that finished its route, say. Not a kill: clients must not play
+     * death presentation for it. */
+    KernelDespawnReason_Retired = 5,
 } KernelDespawnReason;
 
 typedef enum RenderEntityStatus {

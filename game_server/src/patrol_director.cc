@@ -15,10 +15,11 @@ namespace network_example::game_server {
 namespace {
 
 constexpr KernelQuat kIdentityRotation{0.0f, 0.0f, 0.0f, 1.0f};
-// The lifecycle command's `reason` is an opaque caller-chosen tag -- the kernel
-// stores and reports it without attaching any meaning -- so this only has to be
-// distinguishable from whatever else destroys an entity.
-constexpr std::uint32_t kPatrolRetiredReason = 2;
+// The lifecycle command's `reason` is a KernelDespawnReason, not a free tag:
+// the kernel maps Destroyed to a Destroyed lifecycle event, and clients read
+// Destroyed on an actor as a kill and splat it. A retired squad is alive, so it
+// has to leave under a reason that is not Destroyed.
+constexpr std::uint32_t kPatrolRetiredReason = KernelDespawnReason_Retired;
 // A route of two points is the whole of the degenerate navigation this ships
 // with: a straight chord, walked with the character controller absorbing slopes
 // and steps. //game_server:patrol_nav_bench measured what that costs -- on flat
