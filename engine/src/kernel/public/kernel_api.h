@@ -284,6 +284,15 @@ bool Kernel_ServerCreateInventoryContainer(
     uint32_t slot_capacity,
     KernelInventoryContainerId* out_container_id);
 
+/*
+ * Terminates every item in a container and leaves it empty, publishing a
+ * Remove delta per occupied slot. How a loadout is reset: clear, then create
+ * the starting items again.
+ */
+bool Kernel_ServerClearInventoryContainer(
+    KernelHandle* kernel,
+    KernelInventoryContainerId container_id);
+
 bool Kernel_ServerCreateInventoryItem(
     KernelHandle* kernel,
     uint32_t item_template_id,
@@ -418,6 +427,16 @@ bool Kernel_ServerSetEntityHealth(
     KernelHandle* kernel,
     uint32_t net_id,
     uint16_t hp);
+
+/*
+ * Brings a dead entity back; see KernelServerReviveInfo. Health, lift, a clean
+ * slate (no knockback, stagger, velocity or status effects) and invulnerability
+ * land in one call, so no tick ever sees half of a revive. Combat loadout --
+ * ammo, weapons, inventory -- is the caller's to reapply.
+ */
+bool Kernel_ServerReviveEntity(
+    KernelHandle* kernel,
+    const KernelServerReviveInfo* info);
 
 /*
  * The layers this actor sweeps against from now on, as KERNEL_MOVEMENT_LAYER_*

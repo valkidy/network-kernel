@@ -53,6 +53,7 @@ EXPORTS
     Kernel_GetColliderBindings
     Kernel_ServerCreateEntity
     Kernel_ServerCreateInventoryContainer
+    Kernel_ServerClearInventoryContainer
     Kernel_ServerCreateInventoryItem
     Kernel_ServerCreateWorldItem
     Kernel_ServerSubmitGameplayRequest
@@ -68,6 +69,7 @@ EXPORTS
     Kernel_ServerSetEntityVelocity
     Kernel_ServerSetEntityState
     Kernel_ServerSetEntityHealth
+    Kernel_ServerReviveEntity
     Kernel_ServerSetEntityMovementCollisionMask
     Kernel_ServerSubmitEntityInput
     Kernel_ServerSetEntityCombatState

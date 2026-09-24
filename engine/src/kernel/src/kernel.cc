@@ -2977,7 +2977,8 @@ bool KernelEngine::load_gameplay_catalog(
              entity_template.entity_type != KernelEntityType_Director) ||
             entity_template.ai.struct_size < sizeof(KernelEntityAiDefinition) ||
             entity_template.ai.controller_type > KernelAiControllerType_Chaser ||
-            !stagger_profile_is_authorable(entity_template)) {
+            !stagger_profile_is_authorable(entity_template) ||
+            entity_template.death_policy > KernelDeathPolicy_Dormant) {
             return false;
         }
         const KernelSkeletonBindingDefinition& skeleton =
@@ -5067,6 +5068,12 @@ bool KernelEngine::server_activate_entity(
     return ActivationSystem{}.activate_entity(*this, activate_info);
 }
 
+bool KernelEngine::server_clear_inventory_container(
+    KernelInventoryContainerId container_id) {
+    return is_server_mode(config_.mode) &&
+        item_store_.clear_container(container_id);
+}
+
 bool KernelEngine::server_create_inventory_container(
     std::uint32_t owner_entity_id,
     std::uint32_t slot_capacity,
@@ -5382,6 +5389,14 @@ bool KernelEngine::server_set_entity_state(
         net_id,
         animation_state,
         visual_flags);
+}
+
+bool KernelEngine::server_revive_entity(
+    NetId net_id,
+    float lift_meters,
+    std::uint32_t invulnerable_ticks) {
+    return EntityStateSystem{}.revive(
+        *this, net_id, lift_meters, invulnerable_ticks);
 }
 
 bool KernelEngine::server_set_entity_health(NetId net_id, std::uint16_t hp) {
@@ -10514,6 +10529,7 @@ void KernelEngine::simulate_tick() {
     EntityLifecycleSystem lifecycle_system;
     lifecycle_system.process_health_depleted(
         *this, health_depleted, server_time_us);
+    lifecycle_system.enter_death_state(*this, health_depleted);
     lifecycle_system.destroy_dead_entities(*this, health_depleted);
     update_vision_states(fixed_delta);
     // Directors used to be ticked here and their intents executed. Both kinds
@@ -10936,6 +10952,14 @@ void KernelEngine::update_vision_states(float delta_seconds) {
             }
             const KernelAgentVisionConfig& candidate_config =
                 candidate_config_iter->second;
+            // A dormant corpse keeps its vision config but is nothing to chase,
+            // aim at or count as an ally.
+            if (const Health* candidate_health =
+                    world_.registry().try_get<Health>(candidate_entity);
+                candidate_health != nullptr && candidate_health->max_hp > 0u &&
+                candidate_health->hp == 0u) {
+                continue;
+            }
             const std::uint8_t relation = classify_agent_relation(
                 agent_net_id,
                 config.camp,

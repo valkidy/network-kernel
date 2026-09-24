@@ -1,5 +1,6 @@
 #include "game_server/src/patrol_director.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -649,6 +650,27 @@ void a_finished_patrol_retires_after_its_linger() {
         const bool found = Kernel_ServerGetEntityState(kernel, net_id, &state);
         require(!found || state.valid == 0u);
     }
+
+    // And they left as retired, not killed: a client reads Destroyed on an
+    // actor as a death and splats it where the squad stood.
+    std::vector<KernelEntityLifecycleEvent> lifecycle(256);
+    const std::uint32_t lifecycle_count = Kernel_PollEntityLifecycleEvents(
+        kernel,
+        lifecycle.data(),
+        static_cast<std::uint32_t>(lifecycle.size()));
+    std::size_t retired_members = 0;
+    for (std::uint32_t index = 0; index < lifecycle_count; ++index) {
+        const KernelEntityLifecycleEvent& event = lifecycle[index];
+        if (std::find(members.begin(), members.end(), event.net_id) ==
+            members.end()) {
+            continue;
+        }
+        require(event.reason == KernelDespawnReason_Retired);
+        require(event.type == KernelEntityLifecycleEventType_Despawned);
+        ++retired_members;
+    }
+    require(!members.empty());
+    require(retired_members == members.size());
 
     // And the freed place is taken, which is the whole point of retiring.
     tick_director(&director, kernel, &groups, nullptr);

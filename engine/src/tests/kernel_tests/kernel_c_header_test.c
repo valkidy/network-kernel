@@ -6,9 +6,15 @@
 #include "kernel/public/kernel_api.h"
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 90u,
-    "hit stagger: apply_damage authors damage_stagger and entity templates "
-    "carry a stagger profile");
+    KERNEL_ABI_VERSION == 92u,
+    "revive: Kernel_ServerReviveEntity brings a dead entity back in one call");
+_Static_assert(
+    sizeof(KernelServerReviveInfo) == 16u,
+    "a managed mirror of the revive arguments must match this layout");
+_Static_assert(
+    offsetof(KernelEntityTemplateDefinition, death_policy) >
+        offsetof(KernelEntityTemplateDefinition, stagger_immunity_ticks),
+    "the death policy is appended to KernelEntityTemplateDefinition");
 _Static_assert(
     offsetof(KernelActionDefinition, damage_stagger) >
         offsetof(KernelActionDefinition, impulse_strength_vertical),

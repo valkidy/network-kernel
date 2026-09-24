@@ -7,6 +7,10 @@ collider_template: player_hit_aabb
 health:
   hp: 1000
   max_hp: 1000
+# Dead players stay in the world, hidden and inert, so their relevance still has
+# an anchor and a revive has a body to bring back. It is the kernel's default for
+# players anyway; authored so the template says so.
+death_policy: dormant
 # First-pass tuning. 30 Hz ticks. The grunt slam authors 120 of stagger, so it
 # always staggers; claws and projectiles need several hits inside the decay
 # window. Two seconds of immunity after each stagger keeps a crowd from

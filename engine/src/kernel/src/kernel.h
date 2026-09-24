@@ -207,6 +207,7 @@ public:
         NetId* out_net_id);
     bool server_activate_entity(
         const KernelServerEntityActivateInfo& activate_info);
+    bool server_clear_inventory_container(KernelInventoryContainerId container_id);
     bool server_create_inventory_container(
         std::uint32_t owner_entity_id,
         std::uint32_t slot_capacity,
@@ -276,6 +277,10 @@ public:
         std::uint16_t animation_state,
         std::uint32_t visual_flags);
     bool server_set_entity_health(NetId net_id, std::uint16_t hp);
+    bool server_revive_entity(
+        NetId net_id,
+        float lift_meters,
+        std::uint32_t invulnerable_ticks);
     bool server_set_entity_movement_collision_mask(
         NetId net_id,
         std::uint32_t movement_collision_mask);

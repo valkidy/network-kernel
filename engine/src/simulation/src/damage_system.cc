@@ -119,6 +119,11 @@ std::vector<ConfirmedDamage> apply_damage_applications(
             !world.registry().all_of<Health>(*target)) {
             continue;
         }
+        if (const DamageImmunity* immunity =
+                world.registry().try_get<DamageImmunity>(*target);
+            immunity != nullptr && current_tick < immunity->until_tick) {
+            continue;
+        }
         const std::uint16_t hp_before =
             world.registry().get<Health>(*target).hp;
         if (!world.apply_damage(damage.target_net_id, damage.damage)) {

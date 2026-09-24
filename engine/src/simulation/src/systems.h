@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <vector>
 
+#include <entt/entt.hpp>
+
 #include "ai_intent.h"
 #include "kernel/public/kernel_types.h"
 #include "world/public/components.h"
@@ -40,9 +42,19 @@ public:
         const std::vector<ConfirmedDamage>& health_depleted,
         std::uint64_t server_time_us) const;
 
+    // Every entity damage emptied this tick: EntityDied, and the corpse is
+    // stopped. Runs before destroy_dead_entities, for both death policies.
+    void enter_death_state(
+        KernelEngine& engine,
+        const std::vector<ConfirmedDamage>& health_depleted) const;
+
     void destroy_dead_entities(
         KernelEngine& engine,
         const std::vector<ConfirmedDamage>& health_depleted) const;
+
+    static bool stays_dormant_on_death(
+        const entt::registry& registry,
+        entt::entity entity);
 
 private:
     bool destroy_entity_with_context(
@@ -91,6 +103,15 @@ public:
         NetId net_id,
         std::uint16_t animation_state,
         std::uint32_t visual_flags) const;
+    // Brings a dead entity back where its body lies: full health, lifted by as
+    // much of `lift_meters` as its capsule has headroom for, with nothing of
+    // the old life left on it, and immune to damage for `invulnerable_ticks`.
+    // False, and nothing touched, unless the entity is actually dead.
+    bool revive(
+        KernelEngine& engine,
+        NetId net_id,
+        float lift_meters,
+        std::uint32_t invulnerable_ticks) const;
 };
 
 class MovementSystem {

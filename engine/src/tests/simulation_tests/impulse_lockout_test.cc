@@ -8,6 +8,7 @@
 // tick. Only the Y component survived, which is why knockback read as "pop up
 // in place". lockout_ticks holds both of those off for a while.
 #include <cassert>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -416,6 +417,62 @@ void a_stagger_holds_the_actor_against_its_input() {
     require(fixture.velocity_x() < 0.0f);
 }
 
+// The dead do not move themselves, whatever they send, and the same input moves
+// them again once they are alive.
+void a_dead_actor_ignores_its_input() {
+    MovementFixture fixture({0.0f, 0.0f, 0.0f});
+    fixture.tick_pushing_back();
+    require(fixture.grounded());
+    // Control: input moves the living actor at full speed.
+    require(fixture.velocity_x() < -kSpeed + 0.001f);
+
+    fixture.world.registry().emplace_or_replace<Health>(fixture.entity, Health{0, 100});
+    const float x_at_death =
+        fixture.world.registry().get<Transform>(fixture.entity).position.x;
+    for (std::uint32_t tick = 0; tick < 5u; ++tick) {
+        fixture.tick_pushing_back();
+        require(fixture.velocity_x() == 0.0f);
+    }
+    require(
+        fixture.world.registry().get<Transform>(fixture.entity).position.x ==
+        x_at_death);
+
+    fixture.world.registry().replace<Health>(fixture.entity, Health{100, 100});
+    fixture.tick_pushing_back();
+    require(fixture.velocity_x() < 0.0f);
+}
+
+// A revive's lift is clamped to the headroom the capsule actually has, and the
+// ground it is standing on does not count as something above it.
+void revive_lift_stops_under_a_ceiling() {
+    MovementFixture fixture({0.0f, 0.0f, 0.0f});
+    fixture.tick_pushing_back();
+    require(fixture.grounded());
+    const Transform& transform =
+        fixture.world.registry().get<Transform>(fixture.entity);
+    // Control: open sky gives the whole lift.
+    require(available_lift(
+                fixture.world, fixture.actor, transform.position,
+                transform.rotation, 5.0f) == 5.0f);
+
+    // A slab whose underside is 3 m up. The capsule's top is at 0.9 + 0.55 +
+    // 0.35 = 1.8 m, so 1.2 m of headroom, less the 0.05 m skin.
+    CollisionObjectDescriptor ceiling{};
+    ceiling.identity = CollisionObjectIdentity{
+        0, 101, 0,
+        CollisionObjectKind::kStaticObstacle,
+        CollisionLayer::kStaticObstacle,
+    };
+    ceiling.shape.type = CollisionShapeType::kBox;
+    ceiling.shape.half_extents = glm::vec3{10.0f, 0.5f, 10.0f};
+    ceiling.position = transform.position + glm::vec3{0.0f, 3.5f, 0.0f};
+    std::string error;
+    require(fixture.physics.upsert_object(ceiling, &error));
+    const float lift = available_lift(
+        fixture.world, fixture.actor, transform.position, transform.rotation, 5.0f);
+    require(std::fabs(lift - 1.15f) < 0.02f);
+}
+
 // A hit that both knocks back and staggers keeps its knockback: the lockout is
 // tested first, so the stagger's rooting never zeroes a flight in progress.
 void a_knockback_outranks_a_stagger_in_movement() {
@@ -440,5 +497,7 @@ int main() {
     a_flat_knockback_on_a_grounded_actor_is_not_released_by_relanding();
     a_stagger_holds_the_actor_against_its_input();
     a_knockback_outranks_a_stagger_in_movement();
+    a_dead_actor_ignores_its_input();
+    revive_lift_stops_under_a_ceiling();
     return 0;
 }

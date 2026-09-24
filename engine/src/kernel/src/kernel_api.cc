@@ -260,6 +260,8 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             KERNEL_CAPABILITY_SERVER_ENTITY_VELOCITY_WRITE |
             KERNEL_CAPABILITY_SERVER_ENTITY_STATE_WRITE |
             KERNEL_CAPABILITY_SERVER_ENTITY_MOVEMENT_MASK_WRITE |
+            KERNEL_CAPABILITY_SERVER_ENTITY_REVIVE |
+            KERNEL_CAPABILITY_SERVER_INVENTORY_CLEAR |
             KERNEL_CAPABILITY_SERVER_ENTITY_QUERY |
             KERNEL_CAPABILITY_SERVER_RELEVANCE_FILTER |
             KERNEL_CAPABILITY_LAG_COMPENSATED_PROJECTILE |
@@ -835,6 +837,15 @@ bool Kernel_ServerCreateEntity(
     });
 }
 
+bool Kernel_ServerClearInventoryContainer(
+    KernelHandle* kernel,
+    KernelInventoryContainerId container_id) {
+    return abi_call("Kernel_ServerClearInventoryContainer", false, [&]() {
+        return kernel != nullptr &&
+            kernel->engine->server_clear_inventory_container(container_id);
+    });
+}
+
 bool Kernel_ServerCreateInventoryContainer(
     KernelHandle* kernel,
     uint32_t owner_entity_id,
@@ -998,6 +1009,19 @@ bool Kernel_ServerEnqueueEntityLifecycle(
                kernel->engine->server_enqueue_entity_lifecycle(
                    command_source,
                    *command);
+    });
+}
+
+bool Kernel_ServerReviveEntity(
+    KernelHandle* kernel,
+    const KernelServerReviveInfo* info) {
+    return abi_call("Kernel_ServerReviveEntity", false, [&]() {
+        return kernel != nullptr && info != nullptr &&
+               info->struct_size >= sizeof(KernelServerReviveInfo) &&
+               kernel->engine->server_revive_entity(
+                   info->net_id,
+                   info->lift_meters,
+                   info->invulnerable_ticks);
     });
 }
 

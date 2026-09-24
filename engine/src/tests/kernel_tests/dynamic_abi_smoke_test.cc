@@ -394,6 +394,14 @@ int main() {
         load_symbol<bool(KernelHandle*, std::uint32_t, std::uint32_t)>(
             library,
             "Kernel_ServerSetEntityMovementCollisionMask");
+    [[maybe_unused]] auto* kernel_server_revive_entity =
+        load_symbol<bool(KernelHandle*, const KernelServerReviveInfo*)>(
+            library,
+            "Kernel_ServerReviveEntity");
+    [[maybe_unused]] auto* kernel_server_clear_inventory_container =
+        load_symbol<bool(KernelHandle*, KernelInventoryContainerId)>(
+            library,
+            "Kernel_ServerClearInventoryContainer");
     [[maybe_unused]] auto* kernel_server_submit_entity_input =
         load_symbol<bool(KernelHandle*, std::uint32_t, const KernelPlayerInput*)>(
             library,

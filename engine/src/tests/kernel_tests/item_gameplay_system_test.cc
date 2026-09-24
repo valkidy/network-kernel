@@ -893,13 +893,18 @@ void health_change_no_op_still_consumes_item() {
     require(engine.poll_gameplay_request_outcomes(&outcome, 1) == 1);
     require(outcome.graph_outcome == KernelGameplayGraphOutcome_Succeeded);
 
+    // A dead holder used to be the other no-op heal. It is refused now instead:
+    // the dead do not use items, so the potion is never touched.
     engine.world_.registry().get<network_example::Health>(*actor_entity).hp = 0;
     consume.request_id = 501;
     require(engine.server_submit_gameplay_request(consume));
-    require(engine.item_store_.find_item(item)->terminal);
+    require(engine.item_store_.find_item(item)->quantity == 1u);
+    require(!engine.item_store_.find_item(item)->terminal);
     require(engine.events_.empty());
     require(engine.poll_gameplay_request_outcomes(&outcome, 1) == 1);
-    require(outcome.graph_outcome == KernelGameplayGraphOutcome_Succeeded);
+    require(outcome.status == KernelGameplayRequestStatus_Rejected);
+    require(outcome.rejection_reason ==
+        KernelGameplayRequestRejection_InstigatorDead);
 }
 
 // CarriedBy and PropWorldMode{kCarrying} are emplaced together and dropped
@@ -975,6 +980,111 @@ void impulse_on_uncarried_prop_does_not_touch_absent_carrier() {
 
 }  // namespace
 
+// A dead instigator is refused before any item logic runs; the same request
+// from the same actor alive again goes through.
+void a_dead_instigator_is_refused() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+    engine.reset_runtime_state(KernelMode_DedicatedServer);
+
+    KernelEntityTemplateDefinition carryable = prop_template();
+    carryable.entity_template_id = 201;
+    carryable.prop.interaction.capability_flags = KernelItemCapability_Carryable;
+    carryable.prop.interaction.interaction_range = 3.0f;
+    engine.entity_templates_.push_back(carryable);
+
+    KernelServerEntityCreateInfo actor_info{};
+    actor_info.struct_size = sizeof(actor_info);
+    actor_info.entity_type = KernelEntityType_Actor;
+    actor_info.actor_type = KernelActorType_Player;
+    actor_info.owner_peer = 7;
+    actor_info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+    std::uint32_t actor = 0;
+    require(engine.server_create_entity(actor_info, &actor));
+    const auto actor_entity = engine.world_.find_entity(actor);
+    require(actor_entity.has_value());
+    engine.world_.registry().emplace_or_replace<network_example::Health>(
+        *actor_entity, network_example::Health{0, 100});
+
+    KernelServerEntityCreateInfo prop_info{};
+    prop_info.struct_size = sizeof(prop_info);
+    prop_info.entity_type = KernelEntityType_Prop;
+    prop_info.entity_template_id = 201;
+    prop_info.position = KernelVec3{2.0f, 0.0f, 0.0f};
+    prop_info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+    std::uint32_t prop = 0;
+    require(engine.server_create_entity(prop_info, &prop));
+
+    KernelGameplayRequest carry = request(700, actor, KernelDomainAction_Carry);
+    carry.target_net_id = prop;
+    require(engine.server_submit_gameplay_request(carry));
+    KernelGameplayRequestOutcome outcome{};
+    require(engine.poll_gameplay_request_outcomes(&outcome, 1) == 1);
+    require(outcome.status == KernelGameplayRequestStatus_Rejected);
+    require(outcome.rejection_reason ==
+        KernelGameplayRequestRejection_InstigatorDead);
+
+    engine.world_.registry().replace<network_example::Health>(
+        *actor_entity, network_example::Health{100, 100});
+    carry.request_id = 701;
+    require(engine.server_submit_gameplay_request(carry));
+    require(engine.poll_gameplay_request_outcomes(&outcome, 1) == 1);
+    require(outcome.status == KernelGameplayRequestStatus_Committed);
+}
+
+// Clearing empties every slot through terminate(), so each removal is a
+// published delta and each item is terminal, and the container stays usable.
+void clearing_a_container_terminates_its_items() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+    engine.reset_runtime_state(KernelMode_DedicatedServer);
+    engine.item_templates_.push_back(item_template());
+    std::string error;
+    require(engine.item_store_.set_templates(engine.item_templates_, &error));
+
+    KernelServerEntityCreateInfo actor_info{};
+    actor_info.struct_size = sizeof(actor_info);
+    actor_info.entity_type = KernelEntityType_Actor;
+    actor_info.actor_type = KernelActorType_Player;
+    actor_info.owner_peer = 7;
+    actor_info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+    std::uint32_t actor = 0;
+    require(engine.server_create_entity(actor_info, &actor));
+    KernelInventoryContainerId container = 0;
+    require(engine.server_create_inventory_container(actor, 4, &container));
+    KernelItemInstanceId first = 0;
+    KernelItemInstanceId second = 0;
+    require(engine.server_create_inventory_item(10, 1, container, &first));
+    require(engine.server_create_inventory_item(10, 1, container, &second));
+    (void)engine.item_store_.take_inventory_deltas(container);
+
+    require(!engine.server_clear_inventory_container(container + 100u));
+    require(engine.server_clear_inventory_container(container));
+    require(engine.item_store_.find_item(first)->terminal);
+    require(engine.item_store_.find_item(second)->terminal);
+    for (const KernelItemInstanceId slot :
+         engine.item_store_.find_container(container)->slots) {
+        require(slot == 0u);
+    }
+    std::size_t removed = 0;
+    for (const KernelInventoryDelta& delta :
+         engine.item_store_.take_inventory_deltas(container)) {
+        if (delta.type == KernelInventoryDeltaType_Remove) {
+            ++removed;
+        }
+    }
+    require(removed == 2u);
+    // Still a container: the starting items go straight back in.
+    KernelItemInstanceId refilled = 0;
+    require(engine.server_create_inventory_item(10, 1, container, &refilled));
+}
+
 int main() {
     semantic_requests_preserve_identity_and_dedupe();
     direct_actions_reject_invalid_contexts_and_capabilities();
@@ -985,5 +1095,7 @@ int main() {
     catalog_cross_validates_health_projection();
     health_change_no_op_still_consumes_item();
     impulse_on_uncarried_prop_does_not_touch_absent_carrier();
+    a_dead_instigator_is_refused();
+    clearing_a_container_terminates_its_items();
     return 0;
 }

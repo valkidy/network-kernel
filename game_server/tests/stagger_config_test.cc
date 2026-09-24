@@ -151,6 +151,12 @@ int main() {
     require(rocket != nullptr);
     require(rocket->damage_stagger_authored == 0u);
 
+    // The death policy rides the same template: authored on the player, left to
+    // the kernel's by-kind default everywhere else.
+    require(player->death_policy == KernelDeathPolicy_Dormant);
+    require(compiled_entity(catalog, template_id(config, "chaser_grunt"))
+                ->death_policy == KernelDeathPolicy_Default);
+
     // The kernel takes the real catalog, and turns away what the loader would.
     require(kernel_accepts(catalog));
     KernelEntityTemplateDefinition* mutable_player =
@@ -163,6 +169,10 @@ int main() {
     mutable_player->stagger_per_damage = std::numeric_limits<float>::quiet_NaN();
     require(!kernel_accepts(catalog));
     mutable_player->stagger_per_damage = 1.0f;
+    require(kernel_accepts(catalog));
+    mutable_player->death_policy = KernelDeathPolicy_Dormant + 1u;
+    require(!kernel_accepts(catalog));
+    mutable_player->death_policy = KernelDeathPolicy_Dormant;
     require(kernel_accepts(catalog));
 
     std::puts("stagger_config_test: ok");

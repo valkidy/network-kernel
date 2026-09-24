@@ -99,7 +99,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 90u
+#define KERNEL_ABI_VERSION 92u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -210,6 +210,8 @@
 #define KERNEL_CAPABILITY_SKELETON_BIND_POSE UINT64_C(0x0000080000000000)
 #define KERNEL_CAPABILITY_LOCAL_WEAPON_STATE UINT64_C(0x0000100000000000)
 #define KERNEL_CAPABILITY_SERVER_ENTITY_MOVEMENT_MASK_WRITE UINT64_C(0x0000200000000000)
+#define KERNEL_CAPABILITY_SERVER_ENTITY_REVIVE UINT64_C(0x0000400000000000)
+#define KERNEL_CAPABILITY_SERVER_INVENTORY_CLEAR UINT64_C(0x0000800000000000)
 
 #define KERNEL_SKELETON_RENDER_STATUS_SUCCESS UINT32_C(0)
 #define KERNEL_SKELETON_RENDER_STATUS_INSUFFICIENT_CAPACITY UINT32_C(1)
@@ -526,6 +528,12 @@ typedef enum KernelEventType {
      * interrupted and new actions are refused until the stagger ends. `code`
      * carries the stagger duration in ticks. */
     KernelEventType_Staggered = 14,
+    /* Damage took an entity's health to zero this tick. Emitted for every such
+     * entity before its death policy runs, so it fires whether the entity is
+     * then destroyed or left dormant. `peer_id` is the damage's source peer and
+     * `code` the instigating entity's net id (0 when unknown). Server-local:
+     * never replicated. Setting health to zero directly does not emit it. */
+    KernelEventType_EntityDied = 15,
 } KernelEventType;
 
 typedef enum KernelDespawnReason {
@@ -534,6 +542,10 @@ typedef enum KernelDespawnReason {
     KernelDespawnReason_Disconnected = 2,
     KernelDespawnReason_Expired = 3,
     KernelDespawnReason_CapacityEvicted = 4,
+    /* The server removed a live entity because it was done with it -- a patrol
+     * squad that finished its route, say. Not a kill: clients must not play
+     * death presentation for it. */
+    KernelDespawnReason_Retired = 5,
 } KernelDespawnReason;
 
 typedef enum RenderEntityStatus {
@@ -643,6 +655,8 @@ typedef enum KernelGameplayRequestRejectionReason {
     KernelGameplayRequestRejection_Claimed = 14,
     KernelGameplayRequestRejection_Cooldown = 15,
     KernelGameplayRequestRejection_GraphRejected = 16,
+    /* The instigator's health is zero: the dead do not use, throw or pick up. */
+    KernelGameplayRequestRejection_InstigatorDead = 17,
 } KernelGameplayRequestRejectionReason;
 
 typedef enum KernelEntityTriggerActionType {
@@ -1277,6 +1291,19 @@ typedef struct KernelServerEntityCreateInfo {
     uint32_t actor_template_id;
     uint32_t entity_template_id;
 } KernelServerEntityCreateInfo;
+
+/*
+ * Kernel_ServerReviveEntity's arguments. Only a dead entity (health zero out of
+ * a non-zero maximum) can be revived. It comes back at full health where its
+ * body lies, lifted by as much of lift_meters as its movement capsule has
+ * headroom for, and discards all confirmed damage for invulnerable_ticks.
+ */
+typedef struct KernelServerReviveInfo {
+    uint32_t struct_size;
+    uint32_t net_id;
+    float lift_meters;
+    uint32_t invulnerable_ticks;
+} KernelServerReviveInfo;
 
 KERNEL_RPC_STRUCT(R"json({"type":"KernelServerEntityActivateInfo"})json")
 typedef struct KernelServerEntityActivateInfo {
@@ -2128,6 +2155,18 @@ struct KernelEntityAiDefinition {
     uint32_t blackboard_id;
 };
 
+/* What happens to an entity once damage takes its health to zero. */
+typedef enum KernelDeathPolicy {
+    /* By kind: players stay dormant, everything else is destroyed. Zero, so a
+     * template that predates the field keeps the behaviour it always had. */
+    KernelDeathPolicy_Default = 0,
+    /* Despawned the tick it dies. */
+    KernelDeathPolicy_Destroy = 1,
+    /* Stays in the world, dead: no movement, actions or requests, not hittable,
+     * but still the anchor its owner's relevance is measured from. */
+    KernelDeathPolicy_Dormant = 2,
+} KernelDeathPolicy;
+
 struct KernelEntityTemplateDefinition {
     uint32_t struct_size;
     uint32_t entity_template_id;
@@ -2160,6 +2199,8 @@ struct KernelEntityTemplateDefinition {
     uint32_t stagger_decay_delay_ticks;
     uint32_t stagger_ticks;
     uint32_t stagger_immunity_ticks;
+    /* A KernelDeathPolicy. */
+    uint32_t death_policy;
 };
 
 typedef struct KernelEvent {

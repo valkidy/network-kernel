@@ -121,6 +121,10 @@ public:
         KernelWorldItemMode world_mode,
         std::uint32_t carrier_entity_id = 0);
     bool terminate(KernelItemInstanceId id);
+    // Terminates every item in the container, publishing a Remove delta per
+    // slot. The container itself stays, empty. False if there is no such
+    // container.
+    bool clear_container(KernelInventoryContainerId id);
 
     std::vector<KernelInventoryDelta> take_inventory_deltas(
         KernelInventoryContainerId container_id,

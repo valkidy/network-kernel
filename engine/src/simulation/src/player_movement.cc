@@ -327,7 +327,15 @@ void simulate_actor_movement(
             world.registry().try_get<ImpulseLockout>(entity);
         const bool impulse_locked = impulse_lockout != nullptr &&
             current_tick < impulse_lockout->until_tick;
-        if (impulse_locked) {
+        const Health* health = world.registry().try_get<Health>(entity);
+        const bool dead =
+            health != nullptr && health->max_hp > 0u && health->hp == 0u;
+        if (dead) {
+            // The dead do not move themselves: ahead of the lockout, because
+            // death clears the knockback that killed it. Gravity still runs, so
+            // a body killed in the air comes down where it will revive from.
+            desired_horizontal = glm::vec3{0.0f};
+        } else if (impulse_locked) {
             // nothing: the seeded current-velocity horizontal stands
         } else if (is_staggered(world, entity, current_tick)) {
             // A stagger roots the actor. After the lockout test on purpose: a
@@ -629,6 +637,58 @@ void simulate_actor_movement(
             });
         }
     }
+}
+
+float available_lift(
+    World& world,
+    NetId net_id,
+    const glm::vec3& position,
+    const glm::quat& rotation,
+    float lift) {
+    // Enough that the revived capsule does not start touching the ceiling it
+    // was clamped under, which the controller would read as an overlap.
+    constexpr float kLiftSkinMeters = 0.05f;
+    physics::PhysicsWorld* physics_world = world.collision_world();
+    if (physics_world == nullptr || lift <= 0.0f) {
+        return std::max(0.0f, lift);
+    }
+    const ColliderInstance* collider = nullptr;
+    for (const ColliderInstance& candidate :
+         world.collider_registry().instances()) {
+        if (candidate.entity_net_id == net_id && candidate.lifetime_ticks == 0 &&
+            candidate.enabled &&
+            candidate.shape_type == ColliderShapeType::kCapsule &&
+            (candidate.purpose_flags & KernelColliderPurpose_Movement) != 0u) {
+            collider = &candidate;
+            break;
+        }
+    }
+    if (collider == nullptr) {
+        return lift;
+    }
+    const std::optional<entt::entity> entity = world.find_entity(net_id);
+    const MovementState* movement = entity.has_value()
+        ? world.registry().try_get<MovementState>(*entity)
+        : nullptr;
+    physics::ShapeCastRequest request{};
+    request.shape = movement_shape(*collider);
+    request.start = position;
+    request.rotation = rotation;
+    request.displacement = glm::vec3{0.0f, lift, 0.0f};
+    request.filter = movement_filter(
+        net_id,
+        collider->collider_id,
+        movement == nullptr ? 0u : movement->movement_collision_mask);
+    float clear = lift;
+    for (const physics::CollisionHit& hit :
+         physics_world->shape_cast_all(request)) {
+        // Only what faces down blocks a rise: the ground the body lies on is
+        // touching the capsule too, with its normal pointing the other way.
+        if (hit.normal.y < -0.0001f) {
+            clear = std::min(clear, hit.fraction * lift - kLiftSkinMeters);
+        }
+    }
+    return std::max(0.0f, clear);
 }
 
 void simulate_velocity_movement(World& world, float fixed_delta_seconds) {
