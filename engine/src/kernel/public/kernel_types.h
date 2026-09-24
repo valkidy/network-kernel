@@ -304,6 +304,7 @@ typedef enum KernelFootholdQueryType {
  * Moving                visual_flags & KERNEL_VISUAL_FLAG_MOVING
  * Reloading             visual_flags & KERNEL_VISUAL_FLAG_RELOADING
  * Dead                  visual_flags & KERNEL_VISUAL_FLAG_DEAD
+ * Staggered             visual_flags & KERNEL_VISUAL_FLAG_STAGGERED
  * Aiming                visual_flags & KERNEL_VISUAL_FLAG_AIMING
  * Firing                visual_flags & KERNEL_VISUAL_FLAG_FIRING, or
  *                       action.phase == KernelActionPhase_Active
@@ -322,6 +323,7 @@ typedef enum KernelFootholdQueryType {
 #define KERNEL_VISUAL_FLAG_GROUNDED UINT32_C(0x00000010)
 #define KERNEL_VISUAL_FLAG_FALLING UINT32_C(0x00000020)
 #define KERNEL_VISUAL_FLAG_LANDED UINT32_C(0x00000040)
+#define KERNEL_VISUAL_FLAG_STAGGERED UINT32_C(0x00000080)
 #define KERNEL_VISUAL_FLAG_AIMING UINT32_C(0x00000100)
 #define KERNEL_VISUAL_FLAG_FIRING UINT32_C(0x00000200)
 
@@ -509,6 +511,10 @@ typedef enum KernelEventType {
     KernelEventType_Error = 11,
     KernelEventType_ActorLanded = 12,
     KernelEventType_HealthChanged = 13,
+    /* An actor's stagger meter crossed its threshold: any in-flight action is
+     * interrupted and new actions are refused until the stagger ends. `code`
+     * carries the stagger duration in ticks. */
+    KernelEventType_Staggered = 14,
 } KernelEventType;
 
 typedef enum KernelDespawnReason {
@@ -905,6 +911,8 @@ typedef enum KernelLocalActionResultReason {
     KernelLocalActionResultReason_WeaponChanged = 10,
     KernelLocalActionResultReason_EffectFailed = 11,
     KernelLocalActionResultReason_Cooldown = 12,
+    KernelLocalActionResultReason_Staggered = 13,
+    KernelLocalActionResultReason_KnockedBack = 14,
 } KernelLocalActionResultReason;
 
 typedef enum KernelRemoteActionPresentationEventType {

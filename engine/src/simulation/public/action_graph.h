@@ -74,6 +74,8 @@ struct ActionApplyDamageCommand {
     NetId target = 0;
     std::uint16_t amount = 0;
     ActionExecutionProvenance provenance;
+    // Explicit stagger meter this hit adds; negative derives it from damage.
+    float stagger = kStaggerDerivedFromDamage;
 };
 
 struct ActionApplyHealthChangeCommand {

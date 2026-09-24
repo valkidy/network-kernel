@@ -351,6 +351,13 @@ bool prepare_status_lifecycle_trigger(
         event_type == TriggerEventType::kStatusTick ||
         event_type == TriggerEventType::kStatusExpired;
     for (ActionGraphCommand& command : batch.commands) {
+        // Status damage never staggers unless its graph says so: a burn tick
+        // derived from damage would refill the meter every tick and pin the
+        // target in place for the whole status duration.
+        if (auto* damage = std::get_if<ActionApplyDamageCommand>(&command);
+            damage != nullptr && damage->stagger < 0.0f) {
+            damage->stagger = 0.0f;
+        }
         if (auto* damage = std::get_if<ActionApplyDamageCommand>(&command);
             damage != nullptr && scale_amount) {
             const std::uint32_t scaled =
@@ -756,16 +763,18 @@ bool execute_action_graph_commands(
                 !world.registry().all_of<Health>(*target)) {
                 continue;
             }
-            if (!damage_pipeline->submit_damage_request(damage_request_at(
-                    damage->provenance.server_tick,
-                    static_cast<std::uint32_t>(index),
-                    damage->source,
-                    damage->target,
-                    damage->provenance.owner_peer,
-                    0u,
-                    damage->amount,
-                    server_time_us,
-                    batch.event.position))) {
+            DamageRequest request = damage_request_at(
+                damage->provenance.server_tick,
+                static_cast<std::uint32_t>(index),
+                damage->source,
+                damage->target,
+                damage->provenance.owner_peer,
+                0u,
+                damage->amount,
+                server_time_us,
+                batch.event.position);
+            request.stagger = damage->stagger;
+            if (!damage_pipeline->submit_damage_request(request)) {
                 return false;
             }
             continue;

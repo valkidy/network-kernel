@@ -164,6 +164,44 @@ struct ImpulseLockout {
     std::uint32_t armed_tick = 0;
 };
 
+// A damage hit's stagger contribution when the hit did not author one: the
+// target's StaggerProfile::stagger_per_damage decides it instead.
+inline constexpr float kStaggerDerivedFromDamage = -1.0f;
+
+// Authored per actor. Absent means the actor cannot be staggered at all --
+// hits still land, they just never interrupt anything.
+struct StaggerProfile {
+    // The meter value at which a stagger triggers. Must be > 0.
+    float threshold = 0.0f;
+    // Meter per point of damage for a hit that does not author its own stagger.
+    float stagger_per_damage = 1.0f;
+    // Meter drained per tick, once decay_delay_ticks have passed since the
+    // last hit that added to it.
+    float decay_per_tick = 0.0f;
+    std::uint32_t decay_delay_ticks = 0;
+    // How long a triggered stagger holds the actor.
+    std::uint32_t stagger_ticks = 0;
+    // After a stagger ends, hits still deal damage but do not fill the meter
+    // for this long -- otherwise sustained fire chains staggers back to back
+    // and the target never acts again.
+    std::uint32_t immunity_ticks = 0;
+};
+
+// Server-only, for the same reason as ImpulseLockout. While
+// current_tick < until_tick the actor is staggered: its in-flight action was
+// interrupted, new actions are refused, and its own input may not move it.
+struct StaggerState {
+    float meter = 0.0f;
+    std::uint32_t last_hit_tick = 0;
+    std::uint32_t until_tick = 0;
+    std::uint32_t immune_until_tick = 0;
+    // The action pass interrupts exactly once per trigger. A counter rather
+    // than the trigger tick, because a one-tick stagger has already expired by
+    // the time the action pass next runs and must still interrupt.
+    std::uint32_t trigger_count = 0;
+    std::uint32_t interrupted_trigger_count = 0;
+};
+
 struct Health {
     std::uint16_t hp = 0;
     std::uint16_t max_hp = 0;
@@ -966,6 +1004,7 @@ inline constexpr std::uint32_t kVisualFlagHpUnknown = 0x00000008u;
 inline constexpr std::uint32_t kVisualFlagGrounded = 0x00000010u;
 inline constexpr std::uint32_t kVisualFlagFalling = 0x00000020u;
 inline constexpr std::uint32_t kVisualFlagLanded = 0x00000040u;
+inline constexpr std::uint32_t kVisualFlagStaggered = 0x00000080u;
 inline constexpr std::uint32_t kVisualFlagAiming = 0x00000100u;
 inline constexpr std::uint32_t kVisualFlagFiring = 0x00000200u;
 
