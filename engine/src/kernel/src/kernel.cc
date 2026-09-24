@@ -6029,6 +6029,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     predicted_next_primary_commit_tick_.fill(0u);
     local_presentation_position_ = glm::vec3{0.0f, 0.0f, 0.0f};
     local_presentation_velocity_ = glm::vec3{0.0f, 0.0f, 0.0f};
+    predicted_local_motion_velocity_ = glm::vec3{0.0f, 0.0f, 0.0f};
     has_local_presentation_position_ = false;
     predicted_local_state_time_us_ = 0;
     next_entity_id_ = 1;
@@ -7609,6 +7610,7 @@ void KernelEngine::clear_client_session() {
     predicted_impulse_lockout_armed_tick_ = 0u;
     local_presentation_position_ = glm::vec3{0.0f, 0.0f, 0.0f};
     local_presentation_velocity_ = glm::vec3{0.0f, 0.0f, 0.0f};
+    predicted_local_motion_velocity_ = glm::vec3{0.0f, 0.0f, 0.0f};
     has_local_presentation_position_ = false;
     predicted_local_state_time_us_ = 0;
     client_clock_offset_us_ = 0;
@@ -8286,7 +8288,7 @@ bool KernelEngine::step_local_character_prediction(
     if (!has_local_presentation_position_ && has_predicted_local_entity_) {
         local_presentation_position_ =
             predicted_local_simulation_position(client_local_time_us_);
-        local_presentation_velocity_ = predicted_local_entity_.velocity;
+        local_presentation_velocity_ = predicted_local_motion_velocity_;
         has_local_presentation_position_ = true;
     }
     // Before the capsules, and on this clock rather than the render frame's:
@@ -8317,6 +8319,7 @@ bool KernelEngine::step_local_character_prediction(
         : movement_solver::input_move_to_world(input) *
               local_player_move_speed_meters_per_second_;
     std::string error;
+    const glm::vec3 position_before_step = predicted_character_state_.position;
     if (!movement_solver::step_character(
             *prediction_physics_world_,
             movement_config,
@@ -8326,6 +8329,11 @@ bool KernelEngine::step_local_character_prediction(
             &error)) {
         spdlog::error("client CharacterVirtual prediction step failed: {}", error);
         return false;
+    }
+    if (tick_loop_.fixed_delta_seconds() > 0.0f) {
+        predicted_local_motion_velocity_ =
+            (predicted_character_state_.position - position_before_step) /
+            tick_loop_.fixed_delta_seconds();
     }
     // Same rule as the authority: the landing release cannot fire on the tick
     // the impulse armed, or a flat knockback on a grounded actor releases
@@ -8490,6 +8498,36 @@ void KernelEngine::drop_predicted_ammo_spends(
     predicted_ammo_spends_.erase(write, predicted_ammo_spends_.end());
 }
 
+// The replay below restarts from the authority's velocity, so it has to
+// restart from the authority's lockout too: a knockback the client did not
+// predict -- an enemy's swing -- would otherwise be replayed as input-driven
+// movement, stopped dead by the replay and dragged forward again by the next
+// snapshot for as long as the actor is in the air.
+//
+// A lockout the client armed itself after the snapshot's tick is its own
+// impulse the authority has not simulated yet, and is left standing. One armed
+// at or before that tick the authority has seen, so the snapshot's word on it
+// is final: absent means it already ended.
+void KernelEngine::adopt_authoritative_impulse_lockout(
+    const EntitySnapshot& authoritative,
+    std::uint32_t snapshot_tick) {
+    if (authoritative.has_impulse_lockout) {
+        if (authoritative.impulse_lockout_armed_tick >=
+                predicted_impulse_lockout_armed_tick_ ||
+            predicted_impulse_lockout_until_tick_ <= snapshot_tick) {
+            predicted_impulse_lockout_until_tick_ =
+                authoritative.impulse_lockout_until_tick;
+            predicted_impulse_lockout_armed_tick_ =
+                authoritative.impulse_lockout_armed_tick;
+        }
+        return;
+    }
+    if (predicted_impulse_lockout_armed_tick_ <= snapshot_tick) {
+        predicted_impulse_lockout_until_tick_ = 0u;
+        predicted_impulse_lockout_armed_tick_ = 0u;
+    }
+}
+
 void KernelEngine::reconcile_local_prediction(const WorldSnapshot& snapshot) {
     if (local_player_net_id_ == 0) {
         return;
@@ -8535,10 +8573,11 @@ void KernelEngine::reconcile_local_prediction(const WorldSnapshot& snapshot) {
     if (!has_local_presentation_position_ && has_predicted_local_entity_) {
         local_presentation_position_ =
             predicted_local_simulation_position(client_local_time_us_);
-        local_presentation_velocity_ = predicted_local_entity_.velocity;
+        local_presentation_velocity_ = predicted_local_motion_velocity_;
         has_local_presentation_position_ = true;
     }
     predicted_local_entity_ = *authoritative;
+    predicted_local_motion_velocity_ = authoritative->velocity;
     predicted_local_state_time_us_ = client_local_time_us_;
     has_predicted_local_entity_ = true;
     has_authoritative_local_entity_ = true;
@@ -8561,6 +8600,8 @@ void KernelEngine::reconcile_local_prediction(const WorldSnapshot& snapshot) {
         predicted_character_state_.supporting_identity.collider_id =
             authoritative->supporting_collider_id;
         predicted_character_tick_ = snapshot.header.server_tick;
+        adopt_authoritative_impulse_lockout(
+            *authoritative, snapshot.header.server_tick);
         movement_solver::CharacterMovementConfig movement_config{};
         std::string error;
         if (!build_local_character_movement_config(&movement_config)) {
@@ -8737,6 +8778,7 @@ void KernelEngine::predict_local_input(const KernelPlayerInput& input) {
         predicted_character_state_.position = predicted_local_entity_.position;
         predicted_character_state_.rotation = predicted_local_entity_.rotation;
         predicted_character_state_.velocity = predicted_local_entity_.velocity;
+        predicted_local_motion_velocity_ = predicted_local_entity_.velocity;
         if (predicted_local_entity_.has_authoritative_movement_state) {
             predicted_character_state_.ground_state =
                 static_cast<physics::CharacterGroundState>(
@@ -9262,7 +9304,7 @@ glm::vec3 KernelEngine::predicted_local_simulation_position(
             tick_loop_.fixed_delta_seconds());
     }
     return predicted_local_entity_.position +
-        predicted_local_entity_.velocity * extrapolation_seconds;
+        predicted_local_motion_velocity_ * extrapolation_seconds;
 }
 
 void KernelEngine::advance_local_presentation(float delta_seconds) {
@@ -9278,7 +9320,7 @@ void KernelEngine::advance_local_presentation(float delta_seconds) {
         predicted_local_simulation_position(client_local_time_us_);
     if (!has_local_presentation_position_) {
         local_presentation_position_ = target;
-        local_presentation_velocity_ = predicted_local_entity_.velocity;
+        local_presentation_velocity_ = predicted_local_motion_velocity_;
         has_local_presentation_position_ = true;
         return;
     }
@@ -9288,7 +9330,7 @@ void KernelEngine::advance_local_presentation(float delta_seconds) {
     if (glm::length(target - local_presentation_position_) >
         kPredictionCorrectionSnapDistanceMeters) {
         local_presentation_position_ = target;
-        local_presentation_velocity_ = predicted_local_entity_.velocity;
+        local_presentation_velocity_ = predicted_local_motion_velocity_;
         return;
     }
 
@@ -9315,7 +9357,7 @@ void KernelEngine::advance_local_presentation(float delta_seconds) {
     }
 
     local_presentation_position_ += velocity_displacement + correction;
-    local_presentation_velocity_ = predicted_local_entity_.velocity;
+    local_presentation_velocity_ = predicted_local_motion_velocity_;
 }
 
 glm::vec3 KernelEngine::predicted_local_render_position() const {
@@ -9610,6 +9652,7 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
                                             action.impulse_strength,
                                             action.impulse_strength_vertical);
                                     predicted_local_entity_.velocity += impulse;
+                                    predicted_local_motion_velocity_ += impulse;
                                     predicted_character_state_.velocity += impulse;
                                     predicted_character_state_.ground_state =
                                         physics::CharacterGroundState::kAirborne;
@@ -10630,6 +10673,8 @@ WorldSnapshot KernelEngine::build_relevant_snapshot(
                 entity.net_id == session.player;
             filtered_entity.has_owner_weapon_state =
                 entity.has_owner_weapon_state && entity.net_id == session.player;
+            filtered_entity.has_impulse_lockout =
+                entity.has_impulse_lockout && entity.net_id == session.player;
             filtered.entities.push_back(filtered_entity);
         }
     }

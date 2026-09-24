@@ -63,6 +63,15 @@ struct EntitySnapshot {
     glm::vec3 ground_normal{0.0f, 1.0f, 0.0f};
     NetId supporting_entity_net_id = 0;
     std::uint32_t supporting_collider_id = 0;
+    // The actor's ImpulseLockout while one stands, for the one client that
+    // predicts it. A knockback the client did not cause -- an enemy's swing --
+    // is otherwise invisible to its prediction, which rebuilds horizontal
+    // velocity from input over the top of the throw and is pulled back to the
+    // authority on every snapshot until the actor lands. Filtered to the
+    // receiving session's own player exactly like movement state.
+    bool has_impulse_lockout = false;
+    std::uint32_t impulse_lockout_until_tick = 0;
+    std::uint32_t impulse_lockout_armed_tick = 0;
     // The weapon the player is holding, for the one client that holds it. Like
     // movement state, the builder fills it for every armed actor and
     // build_relevant_snapshot keeps it only on the receiving session's own

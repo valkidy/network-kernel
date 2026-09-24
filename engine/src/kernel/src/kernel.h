@@ -681,6 +681,9 @@ private:
         std::vector<std::uint8_t> scene,
         const KernelStaticCollisionSceneConfig& config);
     void diagnose_client_snapshot_metadata_waits();
+    void adopt_authoritative_impulse_lockout(
+        const EntitySnapshot& authoritative,
+        std::uint32_t snapshot_tick);
     void reconcile_local_prediction(const WorldSnapshot& snapshot);
     void apply_authoritative_local_weapon(const WorldSnapshot& snapshot);
     void record_predicted_ammo_spend(
@@ -1077,6 +1080,14 @@ private:
         predicted_next_primary_commit_tick_{};
     glm::vec3 local_presentation_position_{0.0f, 0.0f, 0.0f};
     glm::vec3 local_presentation_velocity_{0.0f, 0.0f, 0.0f};
+    // How fast the predicted position actually moved over the last prediction
+    // step, as opposed to predicted_local_entity_.velocity, which is what the
+    // character asked for. The two part company whenever the capsule is
+    // blocked: running into a wall asks for full speed and gets none. Anything
+    // that extrapolates the drawn position has to use this one, or the drawn
+    // body settles ahead of the simulated one by speed * half-life / ln 2 and
+    // springs back the moment the velocity is taken away.
+    glm::vec3 predicted_local_motion_velocity_{0.0f, 0.0f, 0.0f};
     bool has_local_presentation_position_ = false;
     std::uint64_t predicted_local_state_time_us_ = 0;
     std::uint64_t next_entity_id_ = 1;

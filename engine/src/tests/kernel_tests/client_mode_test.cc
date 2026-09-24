@@ -1307,6 +1307,7 @@ void local_presentation_absorbs_tick_residual_and_prevents_reverse_motion() {
         network_example::ActorType::kPlayer;
     engine.predicted_local_entity_.position = glm::vec3{0.0f, 0.0f, 0.0f};
     engine.predicted_local_entity_.velocity = glm::vec3{5.0f, 0.0f, 0.0f};
+    engine.predicted_local_motion_velocity_ = glm::vec3{5.0f, 0.0f, 0.0f};
     engine.has_predicted_local_entity_ = true;
     engine.has_authoritative_local_entity_ = true;
     engine.advance_local_presentation(0.0f);
@@ -1330,6 +1331,7 @@ void local_presentation_absorbs_tick_residual_and_prevents_reverse_motion() {
         before_correction - 0.000001f);
 
     engine.predicted_local_entity_.velocity = glm::vec3{0.0f, 0.0f, 0.0f};
+    engine.predicted_local_motion_velocity_ = glm::vec3{0.0f, 0.0f, 0.0f};
     engine.advance_local_presentation(kRenderDeltaSeconds);
     const float before_stopped_convergence =
         engine.local_presentation_position_.x;
@@ -1355,6 +1357,7 @@ void local_presentation_survives_reconcile_and_snaps_large_corrections() {
     engine.predicted_local_entity_.position =
         glm::vec3{1.0f / 6.0f, 0.0f, 0.0f};
     engine.predicted_local_entity_.velocity = glm::vec3{5.0f, 0.0f, 0.0f};
+    engine.predicted_local_motion_velocity_ = glm::vec3{5.0f, 0.0f, 0.0f};
     engine.has_predicted_local_entity_ = true;
     engine.has_authoritative_local_entity_ = true;
     engine.advance_local_presentation(0.0f);
@@ -1390,6 +1393,7 @@ void local_presentation_survives_reconcile_and_snaps_large_corrections() {
 
     engine.predicted_local_entity_.position = glm::vec3{3.0f, 0.0f, 0.0f};
     engine.predicted_local_entity_.velocity = glm::vec3{0.0f, 0.0f, 0.0f};
+    engine.predicted_local_motion_velocity_ = glm::vec3{0.0f, 0.0f, 0.0f};
     engine.predicted_local_state_time_us_ = engine.client_local_time_us_;
     engine.advance_local_presentation(kRenderDeltaSeconds);
     require(engine.local_presentation_position_.x == 3.0f);
@@ -1504,6 +1508,225 @@ void real_character_prediction_is_presented_smoothly_at_720_fps() {
         }
         previous_position = position;
     }
+}
+
+// The setup real_character_prediction_is_presented_smoothly_at_720_fps uses: a
+// grounded player on a flat box, predicted through the real CharacterVirtual.
+void prepare_character_prediction(network_example::KernelEngine* engine) {
+    engine->reset_runtime_state(KernelMode_Client);
+    engine->local_player_net_id_ = 1;
+    engine->has_predicted_local_entity_ = true;
+    engine->has_authoritative_local_entity_ = true;
+    engine->predicted_local_entity_.net_id = 1;
+    engine->predicted_local_entity_.type = network_example::EntityType::kActor;
+    engine->predicted_local_entity_.actor_type =
+        network_example::ActorType::kPlayer;
+    engine->predicted_local_entity_.has_authoritative_movement_state = true;
+    engine->predicted_local_entity_.ground_state =
+        static_cast<std::uint8_t>(
+            network_example::physics::CharacterGroundState::kGrounded);
+    engine->predicted_local_entity_.ground_normal = glm::vec3{0.0f, 1.0f, 0.0f};
+    engine->predicted_character_state_.position = glm::vec3{0.0f, 0.0f, 0.0f};
+    engine->predicted_character_state_.ground_state =
+        network_example::physics::CharacterGroundState::kGrounded;
+    engine->predicted_character_state_.ground_normal =
+        glm::vec3{0.0f, 1.0f, 0.0f};
+
+    add_client_render_metadata(
+        engine,
+        1,
+        network_example::EntityType::kActor,
+        network_example::ActorType::kPlayer);
+    KernelColliderTemplateDefinition movement_collider{};
+    movement_collider.struct_size = sizeof(movement_collider);
+    movement_collider.template_id = 11;
+    movement_collider.shape_type = KernelColliderShapeType_Capsule;
+    movement_collider.center = KernelVec3{0.0f, 0.9f, 0.0f};
+    movement_collider.shape_params = KernelVec4{0.5f, 0.4f, 0.0f, 0.0f};
+    movement_collider.layer_mask = KERNEL_COLLISION_LAYER_PLAYER_SIDE;
+    movement_collider.purpose_flags = KernelColliderPurpose_Movement;
+    engine->collider_templates_.push_back(movement_collider);
+
+    KernelEntityTemplateDefinition player_template{};
+    player_template.struct_size = sizeof(player_template);
+    player_template.entity_template_id = 101;
+    player_template.actor_type = KernelActorType_Player;
+    player_template.actor_template_id = 1;
+    player_template.combat.struct_size = sizeof(player_template.combat);
+    player_template.combat.move_speed_meters_per_second = 5.0f;
+    player_template.movement.struct_size = sizeof(player_template.movement);
+    player_template.movement.controller_type =
+        KernelMovementControllerType_Character;
+    player_template.movement.movement_collider_template_id = 11;
+    player_template.movement.gravity = KernelVec3{0.0f, -9.8f, 0.0f};
+    player_template.movement.max_slope_degrees = 45.0f;
+    player_template.movement.step_height = 0.4f;
+    player_template.movement.ground_probe_distance = 0.2f;
+    player_template.movement.ground_snap_distance = 0.2f;
+    engine->entity_templates_.push_back(player_template);
+
+    install_prediction_terrain_box(
+        engine,
+        glm::vec3{0.0f, -0.5f, 0.0f},
+        glm::vec3{20.0f, 0.5f, 20.0f});
+}
+
+// Running into a wall asks the character for full speed and gets none. The
+// drawn body used to be extrapolated along what was asked for, so it settled
+// about speed * half-life / ln 2 -- 0.36 m at 5 m/s -- inside the wall, and
+// sprang back out the moment anything zeroed the velocity: a stagger read as
+// the player sliding backwards.
+void local_presentation_does_not_lead_a_blocked_character() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    network_example::KernelEngine engine(config);
+    prepare_character_prediction(&engine);
+    network_example::physics::CollisionObjectDescriptor wall{};
+    wall.identity.collider_id = 901;
+    wall.identity.kind = network_example::physics::CollisionObjectKind::kTerrain;
+    wall.identity.layer = network_example::physics::CollisionLayer::kTerrain;
+    wall.shape.type = network_example::physics::CollisionShapeType::kBox;
+    wall.shape.half_extents = glm::vec3{0.5f, 2.0f, 20.0f};
+    wall.position = glm::vec3{2.0f, 2.0f, 0.0f};
+    std::string error;
+    require(engine.prediction_physics_world_->upsert_object(wall, &error));
+    engine.prediction_physics_world_->optimize_broad_phase();
+
+    engine.advance_local_presentation(0.0f);
+    constexpr float kRenderDeltaSeconds = 1.0f / 240.0f;
+    std::uint32_t prediction_tick = 1;
+    for (std::uint32_t frame = 1; frame <= 480; ++frame) {
+        engine.client_local_time_us_ += static_cast<std::uint64_t>(
+            static_cast<double>(kRenderDeltaSeconds) * 1000000.0);
+        if (frame % 8u == 0u) {
+            KernelPlayerInput input{};
+            input.move.x = 1.0f;
+            require(engine.step_local_character_prediction(
+                input,
+                prediction_tick++));
+        }
+        engine.advance_local_presentation(kRenderDeltaSeconds);
+    }
+
+    // Two seconds of pushing: the capsule is against the wall and not moving.
+    const glm::vec3 simulated = engine.predicted_local_entity_.position;
+    require(simulated.x > 1.0f);
+    require(simulated.x < 1.2f);
+    require(glm::length(engine.predicted_local_motion_velocity_) < 0.05f);
+    const float lead =
+        engine.predicted_local_render_position().x - simulated.x;
+    if (!(lead < 0.02f)) {
+        std::fprintf(
+            stderr,
+            "  blocked lead=%.4f simulated.x=%.4f requested vx=%.3f\n",
+            lead,
+            simulated.x,
+            engine.predicted_local_entity_.velocity.x);
+    }
+    require(lead < 0.02f);
+}
+
+// A knockback the client did not cause -- an enemy's swing -- reaches it only
+// through the snapshot. The replay restarts from the authority's velocity, and
+// without the authority's lockout it rebuilt horizontal velocity from input on
+// top of the throw: every snapshot stopped the flight dead and the next one
+// dragged it forward again.
+void reconcile_replays_an_authoritative_knockback() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    network_example::KernelEngine engine(config);
+    prepare_character_prediction(&engine);
+
+    network_example::WorldSnapshot snapshot = snapshot_with_entity(
+        40,
+        1,
+        network_example::EntityType::kActor,
+        0.0f,
+        network_example::ActorType::kPlayer);
+    snapshot.header.last_processed_input_seq = 10;
+    network_example::EntitySnapshot& thrown = snapshot.entities[0];
+    thrown.position = glm::vec3{0.0f, 0.3f, 0.0f};
+    thrown.velocity = glm::vec3{8.0f, 3.5f, 0.0f};
+    thrown.has_authoritative_movement_state = true;
+    thrown.ground_state = static_cast<std::uint16_t>(
+        network_example::physics::CharacterGroundState::kAirborne);
+    thrown.ground_normal = glm::vec3{0.0f, 1.0f, 0.0f};
+    thrown.has_impulse_lockout = true;
+    thrown.impulse_lockout_armed_tick = 38;
+    thrown.impulse_lockout_until_tick = 66;
+
+    // Inputs the server has not processed yet, all asking to stand still --
+    // which is what a staggered player sends.
+    for (std::uint32_t seq = 11; seq <= 13; ++seq) {
+        network_example::KernelEngine::PendingPredictionInput pending{};
+        pending.input.input_seq = seq;
+        pending.prediction_tick = 40 + (seq - 10);
+        engine.pending_prediction_inputs_.push_back(pending);
+    }
+
+    engine.reconcile_local_prediction(snapshot);
+    require(!engine.prediction_failed_);
+    require(engine.predicted_impulse_lockout_until_tick_ == 66u);
+    require(engine.predicted_impulse_lockout_armed_tick_ == 38u);
+    // Three replayed ticks later the throw still carries.
+    require(engine.predicted_local_entity_.velocity.x > 7.9f);
+    require(engine.predicted_local_entity_.position.x > 0.7f);
+
+    // Without the lockout on the wire the same replay stops the actor.
+    thrown.has_impulse_lockout = false;
+    network_example::KernelEngine unaware(config);
+    prepare_character_prediction(&unaware);
+    for (std::uint32_t seq = 11; seq <= 13; ++seq) {
+        network_example::KernelEngine::PendingPredictionInput pending{};
+        pending.input.input_seq = seq;
+        pending.prediction_tick = 40 + (seq - 10);
+        unaware.pending_prediction_inputs_.push_back(pending);
+    }
+    unaware.reconcile_local_prediction(snapshot);
+    require(!unaware.prediction_failed_);
+    require(unaware.predicted_local_entity_.velocity.x < 0.1f);
+}
+
+// The client arms a lockout of its own for an impulse it predicts -- its own
+// rocket at its feet -- before the authority has simulated it. A snapshot older
+// than that must not clear it; one that has seen it has the final word.
+void authoritative_lockout_respects_a_newer_local_one() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    network_example::KernelEngine engine(config);
+    engine.reset_runtime_state(KernelMode_Client);
+
+    network_example::EntitySnapshot quiet;
+    engine.predicted_impulse_lockout_armed_tick_ = 45;
+    engine.predicted_impulse_lockout_until_tick_ = 60;
+    engine.adopt_authoritative_impulse_lockout(quiet, 40);
+    require(engine.predicted_impulse_lockout_until_tick_ == 60u);
+
+    engine.adopt_authoritative_impulse_lockout(quiet, 45);
+    require(engine.predicted_impulse_lockout_until_tick_ == 0u);
+    require(engine.predicted_impulse_lockout_armed_tick_ == 0u);
+
+    network_example::EntitySnapshot thrown;
+    thrown.has_impulse_lockout = true;
+    thrown.impulse_lockout_armed_tick = 30;
+    thrown.impulse_lockout_until_tick = 58;
+    engine.predicted_impulse_lockout_armed_tick_ = 45;
+    engine.predicted_impulse_lockout_until_tick_ = 60;
+    engine.adopt_authoritative_impulse_lockout(thrown, 40);
+    require(engine.predicted_impulse_lockout_until_tick_ == 60u);
+    require(engine.predicted_impulse_lockout_armed_tick_ == 45u);
+
+    engine.predicted_impulse_lockout_armed_tick_ = 0;
+    engine.predicted_impulse_lockout_until_tick_ = 0;
+    engine.adopt_authoritative_impulse_lockout(thrown, 40);
+    require(engine.predicted_impulse_lockout_until_tick_ == 58u);
+    require(engine.predicted_impulse_lockout_armed_tick_ == 30u);
 }
 
 void owner_action_prediction_and_discrete_interpolation() {
@@ -5048,6 +5271,9 @@ int main() {
     local_presentation_absorbs_tick_residual_and_prevents_reverse_motion();
     local_presentation_survives_reconcile_and_snaps_large_corrections();
     real_character_prediction_is_presented_smoothly_at_720_fps();
+    local_presentation_does_not_lead_a_blocked_character();
+    reconcile_replays_an_authoritative_knockback();
+    authoritative_lockout_respects_a_newer_local_one();
     late_snapshot_is_stored_but_not_used_for_reconciliation();
     server_accepts_matching_handshake_versions();
     server_rejects_mismatched_snapshot_schema_before_welcome();

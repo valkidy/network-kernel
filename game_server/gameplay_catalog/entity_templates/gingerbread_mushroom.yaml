@@ -5,8 +5,15 @@ actor_type: agent
 camp: enemy_side
 collider_template: gingerbread_hit_aabb
 health:
-  hp: 150
-  max_hp: 150
+  hp: 650
+  max_hp: 650
+stagger:
+  threshold: 150
+  per_damage: 1.0
+  decay_per_tick: 5.0
+  decay_delay_ticks: 20
+  duration_ticks: 15
+  immunity_ticks: 45
 movement:
   controller: character
   # Quicker and lighter than the warrior: this one closes fast and pecks.

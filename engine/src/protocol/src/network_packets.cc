@@ -37,6 +37,7 @@ constexpr std::size_t kActorHealthPayloadSize = 4;
 constexpr std::size_t kActorMovementPayloadSize = 22;
 // active slot 1 + state flags 1 + ammo 2.
 constexpr std::size_t kActorWeaponStatePayloadSize = 4;
+constexpr std::size_t kActorImpulseLockoutPayloadSize = 8;
 constexpr std::size_t kProjectileCompactSnapshotPayloadSize = 34;
 // net_id 4 + effective_length 2. No position, rotation or velocity: a beam does
 // not move, and its origin and aim are the shooter's, which every snapshot
@@ -224,6 +225,7 @@ enum ActorSnapshotRecordFlag : std::uint16_t {
     kActorSnapshotHasActionTimeline = 1u << 3,
     kActorSnapshotHasMovementState = 1u << 4,
     kActorSnapshotHasWeaponState = 1u << 5,
+    kActorSnapshotHasImpulseLockout = 1u << 6,
 };
 
 bool is_actor_entity_type(EntityType type) {
@@ -247,6 +249,9 @@ std::uint16_t actor_record_flags(const EntitySnapshot& entity) {
     }
     if (entity.has_owner_weapon_state) {
         flags |= kActorSnapshotHasWeaponState;
+    }
+    if (entity.has_impulse_lockout) {
+        flags |= kActorSnapshotHasImpulseLockout;
     }
     return flags;
 }
@@ -300,7 +305,8 @@ SnapshotSectionType snapshot_section_type(const EntitySnapshot& entity) {
         // eligible for the agent record however its actor type reads.
         return entity.actor_type == ActorType::kAgent &&
                 !entity.has_authoritative_movement_state &&
-                !entity.has_owner_weapon_state
+                !entity.has_owner_weapon_state &&
+                !entity.has_impulse_lockout
             ? SnapshotSectionType::kActorAgent
             : SnapshotSectionType::kActor;
     }
@@ -480,6 +486,10 @@ std::vector<std::uint8_t> encode_snapshot_packet(
                         payload.write_u8(entity->active_weapon_slot);
                         payload.write_u8(entity->weapon_state_flags);
                         payload.write_u16(entity->active_weapon_ammo);
+                    }
+                    if ((record_flags & kActorSnapshotHasImpulseLockout) != 0u) {
+                        payload.write_u32(entity->impulse_lockout_until_tick);
+                        payload.write_u32(entity->impulse_lockout_armed_tick);
                     }
                     break;
                 }
@@ -679,6 +689,15 @@ bool decode_snapshot_packet(
                         }
                         entity.has_owner_weapon_state = true;
                     }
+                    if ((record_flags & kActorSnapshotHasImpulseLockout) != 0u) {
+                        if (!reader.read_u32(&entity.impulse_lockout_until_tick) ||
+                            !reader.read_u32(&entity.impulse_lockout_armed_tick) ||
+                            entity.impulse_lockout_armed_tick >=
+                                entity.impulse_lockout_until_tick) {
+                            return false;
+                        }
+                        entity.has_impulse_lockout = true;
+                    }
                     break;
                 }
                 case SnapshotSectionType::kActorAgent: {
@@ -858,6 +877,10 @@ std::size_t estimate_snapshot_entity_size(const EntitySnapshot& entity) {
                    ((actor_record_flags(entity) &
                      kActorSnapshotHasWeaponState) != 0u
                         ? kActorWeaponStatePayloadSize
+                        : 0u) +
+                   ((actor_record_flags(entity) &
+                     kActorSnapshotHasImpulseLockout) != 0u
+                        ? kActorImpulseLockoutPayloadSize
                         : 0u);
         case SnapshotSectionType::kActorAgent:
             return kAgentSnapshotBasePayloadSize +

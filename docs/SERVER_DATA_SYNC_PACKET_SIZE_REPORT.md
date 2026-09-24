@@ -5,9 +5,9 @@
 - Kernel ABI: 82
 - Protocol version: 3
 - Packet schema: 24
-- Snapshot schema: 21 (the 4 B own-player weapon state block; the measured
-  tables below were taken at 20 and are unaffected, see **Runtime Snapshot
-  Budget**)
+- Snapshot schema: 22 (21 added the 4 B own-player weapon state block, 22 the
+  8 B own-player impulse lockout block; the measured tables below were taken
+  at 20 and are unaffected, see **Runtime Snapshot Budget**)
 - Gameplay catalog version: 15
 
 The catalog measurements are from that baseline. The snapshot budget table and
@@ -133,6 +133,12 @@ Which conditional blocks appear is decided per session, not per entity:
   1,034 B instead of 1,038 B, which still packs 32 idle agents or 19 acting
   ones. The measured tables below spawn their players without a configured
   weapon, so they carry no block and read the same at schema 21.
+- The **impulse lockout** block — the tick a knockback's lockout ends and the
+  tick it was armed — is kept by the same filter to the receiving session's
+  own player, and is written only while a lockout stands: a knockback lasts
+  well under a second, so an own player pays its 8 B on a handful of snapshots
+  a fight and none otherwise. Nothing in the measured tables is knocked back,
+  so they read the same at schema 22.
 - The **action timeline** block is written for any actor with a non-zero
   `action_template_id` or a non-`None` action phase.
 
