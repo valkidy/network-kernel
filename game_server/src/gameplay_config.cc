@@ -52,6 +52,33 @@ DataLoadError::DataLoadError(
 
 namespace {
 
+bool damage_stagger_is_authorable(std::uint32_t authored, float stagger) {
+    return authored == 0u || (std::isfinite(stagger) && stagger >= 0.0f);
+}
+
+// Mirrors the kernel's catalog validator; both bound against
+// KERNEL_MAX_STAGGER_TICKS.
+bool stagger_profile_is_authorable(
+    float threshold,
+    float per_damage,
+    float decay_per_tick,
+    std::uint32_t duration_ticks,
+    std::uint32_t immunity_ticks) {
+    const auto finite_non_negative = [](float value) {
+        return std::isfinite(value) && value >= 0.0f;
+    };
+    if (!finite_non_negative(threshold)) {
+        return false;
+    }
+    if (threshold == 0.0f) {
+        return true;
+    }
+    return finite_non_negative(per_damage) &&
+        finite_non_negative(decay_per_tick) &&
+        duration_ticks != 0u && duration_ticks <= KERNEL_MAX_STAGGER_TICKS &&
+        immunity_ticks <= KERNEL_MAX_STAGGER_TICKS;
+}
+
 constexpr std::uint64_t kFnvOffsetBasis = 14695981039346656037ull;
 constexpr std::uint64_t kFnvPrime = 1099511628211ull;
 constexpr const char* kDefaultGameplayCatalogPath =
@@ -221,6 +248,8 @@ void hash_projectile_template(
             hash_scalar(hash, action.impulse_lockout_ticks);
             hash_scalar(hash, action.impulse_strength_mode);
             hash_scalar(hash, action.impulse_strength_vertical);
+            hash_scalar(hash, action.damage_stagger_authored);
+            hash_scalar(hash, action.damage_stagger);
             hash_scalar(hash, action.condition_type);
         }
     }
@@ -258,6 +287,12 @@ void hash_actor_template(
     hash_float(hash, actor_template.movement_ground_snap_distance);
     hash_float(hash, actor_template.movement_max_yaw_degrees_per_second);
     hash_float(hash, actor_template.impulse_resistance);
+    hash_float(hash, actor_template.stagger.threshold);
+    hash_float(hash, actor_template.stagger.per_damage);
+    hash_float(hash, actor_template.stagger.decay_per_tick);
+    hash_scalar(hash, actor_template.stagger.decay_delay_ticks);
+    hash_scalar(hash, actor_template.stagger.duration_ticks);
+    hash_scalar(hash, actor_template.stagger.immunity_ticks);
     hash_scalar(hash, actor_template.movement_collision_mask);
     hash_scalar(hash, actor_template.weapon_slot_count);
     for (std::uint8_t index = 0; index < actor_template.weapon_slot_count; ++index) {
@@ -1747,6 +1782,7 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 "value",
                 "collision_mask",
                 "lockout_ticks",
+                "stagger",
                 "item_template",
                 "quantity",
                 "when",
@@ -1760,6 +1796,20 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
         }
         ActionGraphActionConfig compiled_action;
         compiled_action.action_type = action["type"].as<std::string>();
+        // Authored on the action rather than the target, like lockout_ticks:
+        // a slam and a jab want different stagger against the same actor.
+        if (action["stagger"]) {
+            if (compiled_action.action_type != "apply_damage") {
+                throw std::runtime_error(
+                    "stagger is only supported on apply_damage: " + path);
+            }
+            compiled_action.stagger = action["stagger"].as<float>();
+            if (!damage_stagger_is_authorable(1u, *compiled_action.stagger)) {
+                throw std::runtime_error(
+                    "apply_damage stagger must be finite and non-negative: " +
+                    path);
+            }
+        }
         if (action["when"]) {
             const std::string condition = action["when"].as<std::string>();
             if (condition != "event.has_target") {
@@ -3438,6 +3488,7 @@ ActorTemplateConfig actor_template_from_yaml(
             "collider_template",
             "health",
             "impulse_resistance",
+            "stagger",
             "movement",
             "hitbox",
             "weapon_slots",
@@ -3481,6 +3532,42 @@ ActorTemplateConfig actor_template_from_yaml(
     if (node["impulse_resistance"]) {
         actor_template.impulse_resistance =
             node["impulse_resistance"].as<float>();
+    }
+    if (const YAML::Node stagger = node["stagger"]) {
+        reject_unknown_keys(
+            stagger,
+            {
+                "threshold",
+                "per_damage",
+                "decay_per_tick",
+                "decay_delay_ticks",
+                "duration_ticks",
+                "immunity_ticks",
+            },
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR);
+        if (!stagger["threshold"] || !stagger["duration_ticks"]) {
+            throw std::runtime_error(
+                "actor stagger requires threshold and duration_ticks: " +
+                actor_template.name);
+        }
+        StaggerConfig& config = actor_template.stagger;
+        config.threshold = stagger["threshold"].as<float>();
+        config.duration_ticks = stagger["duration_ticks"].as<std::uint32_t>();
+        if (stagger["per_damage"]) {
+            config.per_damage = stagger["per_damage"].as<float>();
+        }
+        if (stagger["decay_per_tick"]) {
+            config.decay_per_tick = stagger["decay_per_tick"].as<float>();
+        }
+        if (stagger["decay_delay_ticks"]) {
+            config.decay_delay_ticks =
+                stagger["decay_delay_ticks"].as<std::uint32_t>();
+        }
+        if (stagger["immunity_ticks"]) {
+            config.immunity_ticks = stagger["immunity_ticks"].as<std::uint32_t>();
+        }
     }
 
     const YAML::Node health = node["health"];
@@ -5815,6 +5902,15 @@ void validate_trigger_parameters(
     }
 }
 
+void compile_damage_stagger(
+    const ActionGraphActionConfig& action,
+    KernelActionDefinition* compiled_action) {
+    if (action.stagger.has_value()) {
+        compiled_action->damage_stagger_authored = 1u;
+        compiled_action->damage_stagger = *action.stagger;
+    }
+}
+
 void mirror_first_action(KernelActionTriggerDefinition* trigger) {
     if (trigger == nullptr || trigger->action_count == 0u) {
         return;
@@ -5838,6 +5934,8 @@ void mirror_first_action(KernelActionTriggerDefinition* trigger) {
     trigger->impulse_lockout_ticks = action.impulse_lockout_ticks;
     trigger->impulse_strength_mode = action.impulse_strength_mode;
     trigger->impulse_strength_vertical = action.impulse_strength_vertical;
+    trigger->damage_stagger_authored = action.damage_stagger_authored;
+    trigger->damage_stagger = action.damage_stagger;
     trigger->status_effect_id = action.status_effect_id;
     trigger->modifier_operation = action.modifier_operation;
     trigger->modifier_value = action.modifier_value;
@@ -5965,6 +6063,7 @@ void compile_projectile_trigger_binding(
                     KernelEntityTriggerActionType_ApplyDamage) {
                     compiled_action.damage_amount =
                         static_cast<std::uint16_t>(parsed_amount);
+                    compile_damage_stagger(action, &compiled_action);
                 } else {
                     compiled_action.health_change_amount =
                         static_cast<std::int32_t>(parsed_amount);
@@ -6282,6 +6381,7 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
                 KernelEntityTriggerActionType_ApplyDamage;
             compiled_action.damage_amount =
                 static_cast<std::uint16_t>(parsed_amount);
+            compile_damage_stagger(action, &compiled_action);
         } else {
             if (parsed != amount.size() || parsed_amount == 0 ||
                 parsed_amount <
@@ -7609,6 +7709,8 @@ std::uint64_t compute_gameplay_catalog_hash(
             hash_string(&hash, action.value_parameter);
             hash_scalar(&hash, action.collision_mask);
             hash_scalar(&hash, action.lockout_ticks);
+            hash_scalar(&hash, action.stagger.has_value());
+            hash_scalar(&hash, action.stagger.value_or(0.0f));
             hash_string(&hash, action.item_template_ref);
             hash_scalar(&hash, action.quantity);
             hash_scalar(&hash, action.condition_type);
@@ -8022,6 +8124,16 @@ std::vector<std::string> validate_gameplay_config(
         if (!std::isfinite(entity_template.impulse_resistance) ||
             entity_template.impulse_resistance < 0.0f) {
             errors.push_back("impulse_resistance must be finite and non-negative");
+        }
+        if (!stagger_profile_is_authorable(
+                entity_template.stagger.threshold,
+                entity_template.stagger.per_damage,
+                entity_template.stagger.decay_per_tick,
+                entity_template.stagger.duration_ticks,
+                entity_template.stagger.immunity_ticks)) {
+            errors.push_back(
+                "stagger threshold, per_damage and decay_per_tick must be finite and non-negative, and a positive threshold needs duration_ticks and immunity_ticks within KERNEL_MAX_STAGGER_TICKS: " +
+                entity_template.name);
         }
         if (entity_template.entity_type != KernelEntityType_Prop &&
             (entity_template.prop.lifetime_ticks != 0u ||
@@ -8558,6 +8670,15 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
             authored_template.movement_collision_mask;
         entity_template.impulse_resistance =
             authored_template.impulse_resistance;
+        entity_template.stagger_threshold = authored_template.stagger.threshold;
+        entity_template.stagger_per_damage = authored_template.stagger.per_damage;
+        entity_template.stagger_decay_per_tick =
+            authored_template.stagger.decay_per_tick;
+        entity_template.stagger_decay_delay_ticks =
+            authored_template.stagger.decay_delay_ticks;
+        entity_template.stagger_ticks = authored_template.stagger.duration_ticks;
+        entity_template.stagger_immunity_ticks =
+            authored_template.stagger.immunity_ticks;
         entity_template.activated_trigger = compile_action_trigger_binding(
             authored_template.activated_trigger,
             "on_activated",

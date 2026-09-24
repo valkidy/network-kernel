@@ -187,6 +187,16 @@ struct SkeletonBindingConfig {
     SkeletonCollisionFlagsConfig collision_flags;
 };
 
+// actor `stagger:` block. threshold 0 (absent) means never staggered.
+struct StaggerConfig {
+    float threshold = 0.0f;
+    float per_damage = 1.0f;
+    float decay_per_tick = 0.0f;
+    std::uint32_t decay_delay_ticks = 0;
+    std::uint32_t duration_ticks = 0;
+    std::uint32_t immunity_ticks = 0;
+};
+
 struct ActorTemplateConfig {
     std::uint32_t actor_template_id = 0;
     std::string name;
@@ -208,6 +218,7 @@ struct ActorTemplateConfig {
     float movement_ground_snap_distance = 0.5f;
     float movement_max_yaw_degrees_per_second = 0.0f;
     float impulse_resistance = 0.0f;
+    StaggerConfig stagger{};
     // KERNEL_MOVEMENT_LAYER_* bits; 0 keeps the engine default.
     std::uint32_t movement_collision_mask = 0u;
     std::array<std::uint32_t, KERNEL_MAX_WEAPON_SLOTS> weapon_ids{};
@@ -324,6 +335,9 @@ struct ActionGraphActionConfig {
     std::string value_parameter;
     std::uint32_t collision_mask = KERNEL_COLLISION_MASK_ACTOR;
     std::uint32_t lockout_ticks = 0;
+    // apply_damage only: the stagger meter the hit adds. Absent derives it
+    // from the damage through the target's per_damage.
+    std::optional<float> stagger;
     std::string item_template_ref;
     std::uint32_t quantity = 0;
     std::uint32_t condition_type = KernelActionConditionType_Always;

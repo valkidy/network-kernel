@@ -125,6 +125,18 @@ cc_test(
 # client side is compared against. Runs on a dedicated-server kernel because
 # that is the shipping environment; see the file header.
 cc_test(
+    name = "stagger_config_test",
+    srcs = ["tests/stagger_config_test.cc"],
+    data = [
+        "//game_server/gameplay_catalog_bundle:bundle",
+    ],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
     name = "limb_collider_test",
     srcs = ["tests/limb_collider_test.cc"],
     data = [

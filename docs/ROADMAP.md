@@ -4,7 +4,7 @@ This document records the major features delivered since the repository was
 created. It is a chronological development history, not a list of planned
 milestones.
 
-- **Covered period:** 2026-05-05 to 2026-08-24
+- **Covered period:** 2026-05-05 to 2026-09-21
 - **Source of truth:** Git history on the current branch
 - **Selection rule:** Functional, architecture, platform, and integration
   milestones are included. Routine fixes and small tuning changes are omitted
@@ -49,13 +49,23 @@ milestones.
 | 2026-08-16 – 2026-08-17 | Game rules, ballistic AI, and limb collision | Added the server-only game-rule director with spawn groups and lifecycle tracking, player-gated flow, ballistic grenade-sentry aiming, chaser AI, and catalog-driven per-bone limb colliders rebuilt on clients. | `cf9e2a3`, `3d11d0f`, `5b2e1f8`, `5ffc78a`, `4cf5645`, `1b34a0e` |
 | 2026-08-18 – 2026-08-20 | Beam weapons and scalable rig collision | Added data-driven beam weapons with swept-volume collision, endpoint replication, deployable-side damage rules, query benchmarking, and compact beam snapshots; made limb colliders an authorable movement layer and included followed rigs in client prediction. | `32c8b25`, `c91da7a`, `70a3c16`, `5a9d4c2`, `dede2b7`, `39900b4`, `30d6ae1` |
 | 2026-08-21 – 2026-08-24 | Limb-aware combat and unified presentation | Added opt-in rewound limb hits, per-bone hit zones and damage multipliers, oriented-volume rewind, weapon-selected limb targeting, listen-server rendering through its client half, Unity package 0.7.0 with ABI 79, single-source weapon authoring, and area-effect impulse synchronization fixes. | `3524d81`, `135c386`, `3aa94e3`, `242e527`, `7c1e9a3`, `24f3784`, `e6b6424`, `d35db3d` |
+| 2026-08-25 – 2026-08-27 | Authored knockback and travelling area effects | Made `apply_impulse` keep its knockback with per-axis split strength and a movement lockout, authored the rocket blast with it, added test bottles for hand-testing action graphs, let area effects travel and be stopped by named world layers, exposed heading to graphs, added an allied beam sentry, and charged area-effect overlaps per interval. | `bc6962d`, `193298e`, `3fc4ca2`, `8fcb124`, `b56e454`, `363317f`, `888715d`, `4b65ced` |
+| 2026-08-28 – 2026-08-30 | Crowd-scale snapshot scheduling | Gave snapshot slots to the longest-waiting entity weighted by noticeability, introduced crowds over several snapshots, added a compact agent record, put every entity kind in one budget queue, made the per-player snapshot cost server-selectable, bound and capped footfalls to their bodies, and added relevance hysteresis. | `1389d7f`, `0f6708f`, `6d3231c`, `bd445a2`, `274c163`, `99e1a6d`, `761b95d`, `c7e6855`, `ca3bc93` |
+| 2026-08-30 – 2026-09-01 | Melee combat | Added cone-based melee reach, overlap-landed swings that spawn nothing, reach-gated chaser attacks, swings that hand hits to impact graphs, edge-based entity distance, and a melee AI agent. | `1f2c0d0`, `013e29c`, `a0f26e3`, `d4227c0`, `3b4fba6`, `5e5438e` |
+| 2026-09-02 | Navmesh patrols and director relocation | Gave chasers routes and leashes, added catalog-spawned patrol squads with their own cadence, retirement, and caps routed over the shipped navmesh; moved the world-rule and game-rule directors into `game_server`, deleted the kernel director ABI, and enforced the dependency direction in the build. | `fb353b4`, `1ef1677`, `f30e75b`, `00e0631`, `5fb9d29`, `2e6e355`, `5ff45bd`, `a1f6b31`, `3e40225` |
+| 2026-09-03 – 2026-09-04 | Shipping catalog, nest mission, and AI tick cost | Gave the shipping catalog its own root with its scene and navmesh, made the mission a nest clearance with world-carried spawn rules and a mixed gingerbread warband, let hybrid projectiles predict what stops them, and cut AI tick cost by querying actors once per tick, sharing a per-tick frame, indexing agents by net id, and syncing only a moved entity's colliders. | `4dd78da`, `32a058e`, `cfde81e`, `588927e`, `6ff2511`, `9634698`, `d9ebb85`, `7cf0d19`, `1f32aa2`, `1dab4da` |
+| 2026-09-05 – 2026-09-13 | Gingerbread roster and local weapon state | Added gingerbread mage, infantry, and mushroom units, unified catalog ownership, carried firing aim on every agent input, replicated the own player's weapon slot, reload, and ammo (snapshot schema 21), and exposed predicted local weapon state through `Kernel_GetLocalWeaponState` (ABI 88). | `a634f03`, `abb56e3`, `703a75d`, `108ea89`, `977abcb`, `5d40db9` |
+| 2026-09-15 – 2026-09-21 | Glyph blocks, nest tower, and runtime collision masks | Added the fungible glyph bottle that leaves a glyph block, sized prop history hitboxes from their colliders so rewound shots hit props, let the server change movement collision masks at runtime (ABI 89), walked spawned units out of their carrier, sized the nest hitbox and door from its tower model, and kept patrol formations moving with adaptive catch-up speed. | `bce52b2`, `2b177c2`, `c6d8333`, `19a1428`, `5dc6443`, `42a4e52` |
 
 ## Current State
 
-As of 2026-08-24, the repository provides a server-authoritative multiplayer
+As of 2026-09-21, the repository provides a server-authoritative multiplayer
 kernel with dedicated-server and listen-host modes, real network transport,
-prediction and interpolation, data-driven gameplay catalogs, authoritative
-weapons, projectiles, beams, items, and props, triggered action graphs, status
-effects, ECS/director AI, native legged locomotion and skeleton presentation,
-rewound limb-aware collision, Jolt-based character and world collision, native
-control-plane APIs, and Unity-facing native plugin packaging through ABI 79.
+prediction and interpolation, crowd-scale budgeted snapshots, data-driven
+gameplay catalogs with a self-contained shipping catalog, authoritative
+weapons, projectiles, beams, melee, items, and props, triggered action graphs,
+authored knockback and status effects, ECS AI with navmesh patrols and
+`game_server`-owned directors, a playable nest-clearance mission, native legged
+locomotion and skeleton presentation, rewound limb-aware collision, Jolt-based
+character and world collision, native control-plane APIs, and Unity-facing
+native plugin packaging through ABI 89.

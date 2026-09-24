@@ -51,6 +51,8 @@ struct DamageRequest {
     // The multiplier carried by the volume that was hit, in hundredths. Carried
     // here but not yet applied to `damage`; see kHitZoneUnscaled.
     std::uint16_t hit_zone = kHitZoneUnscaled;
+    // Explicit stagger meter this hit adds; negative derives it from damage.
+    float stagger = kStaggerDerivedFromDamage;
 };
 
 struct ConfirmedDamage {
@@ -64,6 +66,7 @@ struct ConfirmedDamage {
     std::uint64_t hit_time_us = 0;
     glm::vec3 hit_position{0.0f, 0.0f, 0.0f};
     std::uint16_t hit_zone = kHitZoneUnscaled;
+    float stagger = kStaggerDerivedFromDamage;
 };
 
 // Applies a volume's multiplier to a damage amount.
@@ -211,6 +214,7 @@ private:
         std::uint16_t hit_zone = kHitZoneUnscaled;
         bool canceled = false;
         bool parry_applied = false;
+        float stagger = kStaggerDerivedFromDamage;
     };
 
     void apply_defensive_actions(PendingDamage* pending);
@@ -388,6 +392,30 @@ bool damage_source_may_damage(
     const World& world,
     std::uint32_t attacker_collision_mask,
     NetId target_net_id);
+
+// Feeds one landed hit into the target's stagger meter. `explicit_stagger` is
+// the hit's authored contribution; a negative value derives it from `damage`
+// through the target's StaggerProfile. Returns true when this hit triggered a
+// stagger. Targets without a StaggerProfile, dead targets, targets already
+// staggered and targets inside their post-stagger immunity are left alone.
+bool apply_stagger(
+    World& world,
+    NetId target_net_id,
+    std::uint16_t damage,
+    float explicit_stagger,
+    PeerId source_peer,
+    std::uint32_t current_tick,
+    std::vector<KernelEvent>* events);
+
+bool is_staggered(const World& world, entt::entity entity, std::uint32_t current_tick);
+
+// Why this actor may not start a new action right now, or
+// KernelLocalActionResultReason_None. Staggered outranks KnockedBack so a hit
+// that does both reports the one that also interrupted.
+KernelLocalActionResultReason action_block_reason(
+    const World& world,
+    entt::entity entity,
+    std::uint32_t current_tick);
 
 std::vector<ConfirmedDamage> apply_damage_applications(
     World& world,

@@ -1,0 +1,11 @@
+id: 27
+name: tripod_vision_cone
+# The grunt's 12 m cone is smaller than the tripod's own hitbox (10 m half
+# extent), so it could barely see past its feet. 50 m reaches well beyond the
+# chase's stop distance and still leaves the leash (60 m) to give up past it.
+shape: cone
+center: {x: 0.0, y: 0.0, z: 0.0}
+range: 50.0
+fov_degrees: 90.0
+purpose: vision
+layer: agent_vision

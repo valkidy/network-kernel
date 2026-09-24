@@ -41,15 +41,18 @@ enum class AgentSentryState : std::uint8_t {
 };
 
 // What a squad member needs to know about the squad, which is very little: the
-// point it should be standing on. The route, the formation and the progress
-// along it all live on the PatrolGroup, so the controller can walk a patrol
-// without knowing that routes exist.
+// point it should be standing on and the squad's travel velocity. The route,
+// formation and progress all live on the PatrolGroup, so the controller can
+// walk a patrol without knowing that routes exist.
 //
 // has_slot false is every agent that is not in a squad, and it leaves the
 // chaser behaving exactly as it did before squads existed.
 struct AgentPatrolRuntimeState {
     std::uint32_t group_id = 0;
     KernelVec3 slot{0.0f, 0.0f, 0.0f};
+    // Zero while holding or finished; otherwise members keep walking even
+    // inside the slot radius, and use their full move speed to catch up.
+    KernelVec3 travel_velocity{0.0f, 0.0f, 0.0f};
     bool has_slot = false;
     // Where the agent stood when it broke off to give chase. The leash is
     // measured from here rather than from the slot, so "how far a pursuit may

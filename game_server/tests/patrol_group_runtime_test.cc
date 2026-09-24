@@ -115,6 +115,8 @@ int main() {
     for (const AgentRuntimeState& member : agents) {
         require(member.patrol.has_slot);
         require(member.patrol.group_id == group_id);
+        require(almost_equal(member.patrol.travel_velocity.x, 3.0f));
+        require(almost_equal(member.patrol.travel_velocity.z, 0.0f));
     }
     require(almost_equal(agents[0].patrol.slot.x, group->cursor.x));
     require(almost_equal(agents[0].patrol.slot.z, group->cursor.z));
@@ -130,6 +132,8 @@ int main() {
         tick_groups(&runtime, &agents, kFixedDelta);
     }
     require(group->holding);
+    require(almost_equal(agents[0].patrol.travel_velocity.x, 0.0f));
+    require(almost_equal(agents[0].patrol.travel_velocity.z, 0.0f));
     require(almost_equal(group->cursor.x, held_at.x));
     require(almost_equal(group->cursor.z, held_at.z));
 
@@ -142,6 +146,7 @@ int main() {
     }
     require(!group->holding);
     require(group->cursor.x > held_at.x + 1.0f);
+    require(almost_equal(agents[0].patrol.travel_velocity.x, 3.0f));
     agents[1].sentry.state = AgentSentryState::kIdle;
 
     // Round the corner. The formation has to turn with the route: after the
@@ -149,6 +154,9 @@ int main() {
     // and left of the new heading, not still sitting at a world-axis offset.
     for (int tick = 0; tick < 120; ++tick) {
         tick_groups(&runtime, &agents, kFixedDelta);
+        require(almost_equal(
+            std::hypot(agents[0].patrol.travel_velocity.x,
+                       agents[0].patrol.travel_velocity.z), 3.0f));
     }
     require(group->next_waypoint == 1);
     require(almost_equal(group->cursor.x, 10.0f, 0.6f));
@@ -177,6 +185,8 @@ int main() {
         tick_groups(&runtime, &agents, kFixedDelta);
     }
     require(group->route_complete);
+    require(almost_equal(agents[0].patrol.travel_velocity.x, 0.0f));
+    require(almost_equal(agents[0].patrol.travel_velocity.z, 0.0f));
     const KernelVec3 finished_at = group->cursor;
     for (int tick = 0; tick < 30; ++tick) {
         tick_groups(&runtime, &agents, kFixedDelta);

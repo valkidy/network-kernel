@@ -14,9 +14,10 @@
 id: 208
 name: gingerbread_nest
 entity_type: prop
+impulse_resistance: 15.0
 health:
-  hp: 800
-  max_hp: 800
+  hp: 8000
+  max_hp: 8000
 physics:
   collider_template: gingerbread_nest_hitbox
 triggers:

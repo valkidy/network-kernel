@@ -476,6 +476,70 @@ void a_squad_member_walks_to_the_slot_it_is_given(
     require(horizontal_distance(position, {6.0f, 0.0f, 6.0f}) <= 1.0f);
 }
 
+void a_moving_squad_member_keeps_walking_and_catches_up(
+    KernelHandle* kernel,
+    std::uint32_t agent_net_id,
+    std::uint32_t player_net_id,
+    std::vector<network_example::game_server::AgentRuntimeState>* agents) {
+    auto config = patrol_config();
+    // Like the mage, the old patrol input only matches the squad's pace.
+    // Catch-up must be allowed to exceed it.
+    config.patrol.input_magnitude = 0.9f / kAgentMoveSpeed;
+    const network_example::game_server::AgentChaserController controller(config);
+    for (float offset : {0.0f, 1.2f, 6.0f, -4.0f}) {
+        reset_patrol_agent(
+            kernel, agent_net_id, player_net_id, agents, {offset, 0.0f, 0.0f});
+        auto& agent = (*agents)[0];
+        agent.patrol.travel_velocity = {0.9f, 0.0f, 0.0f};
+        for (int tick = 0; tick < 360; ++tick) {
+            agent.patrol.slot.x += 0.9f * kFixedDelta;
+            run_frame(kernel, controller, agents);
+            const auto state = query_state(kernel, agent_net_id);
+            require(state.velocity.x > 0.1f);
+            require(state.velocity.x <= kAgentMoveSpeed + 0.01f);
+            if (offset == 6.0f && tick == 0) {
+                require(state.velocity.x > 0.9f + 0.5f);
+            }
+            if (offset == -4.0f && tick == 0) {
+                require(state.velocity.x < 0.9f);
+            }
+        }
+        auto state = query_state(kernel, agent_net_id);
+        require(horizontal_distance(state.position, agent.patrol.slot) < 0.1f);
+        require(almost_equal(state.velocity.x, 0.9f, 0.02f));
+
+        // A pass-through turn keeps movement alive and corrects lateral error.
+        agent.patrol.travel_velocity = {0.0f, 0.0f, 0.9f};
+        agent.patrol.slot.x += 1.0f;
+        for (int tick = 0; tick < 180; ++tick) {
+            agent.patrol.slot.z += 0.9f * kFixedDelta;
+            run_frame(kernel, controller, agents);
+            state = query_state(kernel, agent_net_id);
+            require(state.velocity.z > 0.1f);
+        }
+        require(horizontal_distance(state.position, agent.patrol.slot) < 0.1f);
+
+        // A stopped squad still permits arrival and then stays idle.
+        agent.patrol.travel_velocity = {};
+        for (int tick = 0; tick < 30; ++tick) {
+            run_frame(kernel, controller, agents);
+            state = query_state(kernel, agent_net_id);
+            require(almost_equal(state.velocity.x, 0.0f));
+            require(almost_equal(state.velocity.z, 0.0f));
+        }
+    }
+
+    // Returning members must also catch a moving formation.
+    reset_patrol_agent(
+        kernel, agent_net_id, player_net_id, agents, {10.0f, 0.0f, 0.0f});
+    auto& agent = (*agents)[0];
+    agent.sentry.state = network_example::game_server::AgentSentryState::kReturn;
+    agent.patrol.leash_anchor = {10.0f, 0.0f, 0.0f};
+    agent.patrol.travel_velocity = {0.9f, 0.0f, 0.0f};
+    run_frame(kernel, controller, agents);
+    require(query_state(kernel, agent_net_id).velocity.x > 1.4f);
+}
+
 // Losing the target is what a chaser with no squad answers by standing still
 // forever. A squad member walks back -- and back is wherever the squad has got
 // to by then, not where it left.
@@ -942,6 +1006,8 @@ int main() {
     a_ranged_chaser_fires_while_it_is_still_closing(
         kernel, agent_net_id, player_net_id, &agents);
     a_squad_member_walks_to_the_slot_it_is_given(
+        kernel, agent_net_id, player_net_id, &agents);
+    a_moving_squad_member_keeps_walking_and_catches_up(
         kernel, agent_net_id, player_net_id, &agents);
     a_pursuit_that_ends_puts_the_agent_back_in_its_slot(
         kernel, agent_net_id, player_net_id, &agents);

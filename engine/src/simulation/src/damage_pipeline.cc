@@ -194,6 +194,7 @@ std::vector<ConfirmedDamage> DamagePipeline::drain_ready_damage(
             request.hit_zone,
             false,
             false,
+            request.stagger,
         };
         apply_defensive_actions(&pending);
         pending_damage_.push_back(pending);
@@ -245,6 +246,7 @@ std::vector<ConfirmedDamage> DamagePipeline::drain_ready_damage(
             pending.hit_time_us,
             pending.hit_position,
             pending.hit_zone,
+            pending.stagger,
         });
     }
     pending_damage_ = std::move(still_pending);

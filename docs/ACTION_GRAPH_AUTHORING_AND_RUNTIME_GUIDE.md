@@ -151,6 +151,42 @@ schema 的欄位會在載入階段被拒絕。
 適用於 entity-backed triggers：`on_activated`、`on_collision`、
 `on_health_depleted`、`on_destroy_entity`。
 
+#### 硬直（stagger）
+
+`apply_damage` 可另外寫 `stagger`，指定這一擊加進目標硬直值的量：
+
+```yaml
+- type: apply_damage
+  target: params.target
+  amount: params.amount
+  stagger: 120   # 可省略；省略時 = 傷害 × 目標的 stagger.per_damage
+```
+
+- `stagger` 是 action 上的字面值（同 `lockout_ticks`），不是 parameter；只有
+  `apply_damage` 接受，寫在其他 action 上會被 loader 拒絕。必須是有限且 >= 0，
+  `0` 表示這一擊明確不造成硬直。
+- Status effect 的 lifecycle graph（`on_tick` 等）沒寫 `stagger` 時一律視為 `0`，
+  否則持續傷害每 tick 都會補滿硬直值。
+- 目標是否會硬直由 actor template 的 `stagger:` 區塊決定；沒有這個區塊的 actor
+  永遠不會硬直：
+
+```yaml
+stagger:
+  threshold: 150          # 累積到此值觸發硬直（必填，> 0 才啟用）
+  duration_ticks: 15      # 硬直 tick 數（必填，1～KERNEL_MAX_STAGGER_TICKS）
+  per_damage: 1.0         # 未寫 stagger 的命中：每點傷害換算的硬直值
+  decay_per_tick: 5.0     # 最後一次命中後、過了 decay_delay_ticks 才開始衰減
+  decay_delay_ticks: 20
+  immunity_ticks: 45      # 硬直結束後這段時間命中不累積，避免連續鎖死
+```
+
+觸發硬直時：進行中的 action（windup / active）立即中斷且**不進 recovery**，即使
+template 沒有 `CancelBeforeFirstCommit` 也不會先打出一次；硬直期間新 action 以
+`Staggered` 拒絕；角色原地站定（同時被擊退時保留擊退速度）。另外，
+`apply_impulse` 的 `lockout_ticks` 期間新 action 會以 `KnockedBack` 拒絕，但進行
+中的 action 照常完成。Client 端可用 `KernelEventType_Staggered` 事件與
+`KERNEL_VISUAL_FLAG_STAGGERED` 播放受擊動作。
+
 ### 4.2 `spawn_entity`
 
 ```yaml

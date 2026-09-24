@@ -1,5 +1,8 @@
 #include "game_server/src/agent_chaser_controller.h"
 
+#include <algorithm>
+#include <cmath>
+
 #include "ai_intent.h"
 #include "game_server/src/actor_intent_executor.h"
 #include "game_server/src/agent_steering.h"
@@ -42,6 +45,41 @@ bool standing_in_slot(
     const AgentRuntimeState& agent) {
     return agent_steering::horizontal_distance(
                agent.position, agent.patrol.slot) <= patrol.slot_radius_meters;
+}
+
+KernelVec2 patrol_move(
+    const AgentPatrolTuning& patrol,
+    const AgentRuntimeState& agent,
+    float max_speed) {
+    const KernelVec3& travel = agent.patrol.travel_velocity;
+    const float speed = std::hypot(travel.x, travel.z);
+    if (speed <= 0.0001f) {
+        return standing_in_slot(patrol, agent)
+            ? KernelVec2{0.0f, 0.0f}
+            : agent_steering::horizontal_move_toward(
+                  agent.position, agent.patrol.slot, patrol.input_magnitude);
+    }
+    if (max_speed <= 0.0f) {
+        return KernelVec2{0.0f, 0.0f};
+    }
+
+    const float forward_x = travel.x / speed;
+    const float forward_z = travel.z / speed;
+    // Correct position error over roughly one second, while feeding through
+    // the squad velocity. Ahead members slow down without stopping or backing
+    // up; lagging members may use the template's full movement speed.
+    constexpr float kCorrectionPerSecond = 1.0f;
+    const float error_x = agent.patrol.slot.x - agent.position.x;
+    const float error_z = agent.patrol.slot.z - agent.position.z;
+    const float along = error_x * forward_x + error_z * forward_z;
+    const float forward_speed = std::max(
+        speed * 0.25f, speed + along * kCorrectionPerSecond);
+    const float velocity_x = forward_x * forward_speed +
+        (error_x - along * forward_x) * kCorrectionPerSecond;
+    const float velocity_z = forward_z * forward_speed +
+        (error_z - along * forward_z) * kCorrectionPerSecond;
+    const float scale = std::max(max_speed, std::hypot(velocity_x, velocity_z));
+    return KernelVec2{velocity_x / scale, velocity_z / scale};
 }
 
 // Hysteresis around the stop distance. Without the separate resume threshold an
@@ -157,17 +195,13 @@ void AgentChaserController::tick(
                 // the next chase starts.
                 agent_steering::transition_to(&agent, AgentSentryState::kIdle);
             } else {
-                // Walked back at patrol pace: hurrying back is a tuning
-                // opinion, and this way a returning agent reads the same as a
-                // patrolling one to anything watching velocity.
-                move = agent_steering::horizontal_move_toward(
-                    agent.position,
-                    agent.patrol.slot,
-                    config_.patrol.input_magnitude);
+                move = patrol_move(
+                    config_.patrol, agent, sentry_config.move_speed_meters_per_second);
                 should_update_rotation =
                     agent_steering::facing_rotation_from_vision_toward(
                         agent.position,
-                        agent.patrol.slot,
+                        KernelVec3{agent.position.x + move.x, agent.position.y,
+                                   agent.position.z + move.y},
                         perception.vision_forward,
                         entity_state.rotation,
                         &desired_rotation) ||
@@ -181,15 +215,17 @@ void AgentChaserController::tick(
                 // pursuit rather than the ground the squad has since covered.
                 agent.patrol.leash_anchor = agent.position;
                 agent_steering::transition_to(&agent, AgentSentryState::kAlert);
-            } else if (has_slot(agent) && !standing_in_slot(config_.patrol, agent)) {
-                move = agent_steering::horizontal_move_toward(
-                    agent.position,
-                    agent.patrol.slot,
-                    config_.patrol.input_magnitude);
+            } else if (has_slot(agent) &&
+                       (!standing_in_slot(config_.patrol, agent) ||
+                        std::hypot(agent.patrol.travel_velocity.x,
+                                   agent.patrol.travel_velocity.z) > 0.0001f)) {
+                move = patrol_move(
+                    config_.patrol, agent, sentry_config.move_speed_meters_per_second);
                 should_update_rotation =
                     agent_steering::facing_rotation_from_vision_toward(
                         agent.position,
-                        agent.patrol.slot,
+                        KernelVec3{agent.position.x + move.x, agent.position.y,
+                                   agent.position.z + move.y},
                         perception.vision_forward,
                         entity_state.rotation,
                         &desired_rotation) ||
