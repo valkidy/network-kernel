@@ -1404,6 +1404,68 @@ void local_presentation_survives_reconcile_and_snaps_large_corrections() {
     require(engine.local_presentation_velocity_ == glm::vec3{});
 }
 
+void local_ground_contact_follows_the_prediction_not_the_snapshot() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    const auto local_flags = [](network_example::KernelEngine* engine) {
+        engine->render_states_.clear();
+        engine->append_predicted_local_render_state();
+        require(engine->render_states_.size() == 1);
+        return engine->render_states_[0].visual_flags;
+    };
+    const auto seed_local = [](network_example::KernelEngine* engine) {
+        engine->reset_runtime_state(KernelMode_Client);
+        engine->local_player_net_id_ = 1;
+        engine->has_predicted_local_entity_ = true;
+        engine->has_authoritative_local_entity_ = true;
+        engine->predicted_local_entity_.net_id = 1;
+        engine->predicted_local_entity_.type =
+            network_example::EntityType::kActor;
+        engine->predicted_local_entity_.actor_type =
+            network_example::ActorType::kPlayer;
+        // What the owner snapshot said a round trip ago.
+        engine->predicted_local_entity_.flags =
+            network_example::kVisualFlagGrounded;
+    };
+
+    network_example::KernelEngine engine(config);
+    seed_local(&engine);
+    install_prediction_terrain_box(
+        &engine,
+        glm::vec3{0.0f, -0.5f, 0.0f},
+        glm::vec3{20.0f, 0.5f, 20.0f});
+    require(engine.prediction_physics_world_ != nullptr);
+
+    // Jumped locally; the server has not heard yet.
+    engine.predicted_character_state_.ground_state =
+        network_example::physics::CharacterGroundState::kAirborne;
+    std::uint32_t flags = local_flags(&engine);
+    require((flags & network_example::kVisualFlagFalling) != 0u);
+    require((flags & network_example::kVisualFlagGrounded) == 0u);
+
+    // Landed locally while the snapshot still says airborne.
+    engine.predicted_local_entity_.flags = network_example::kVisualFlagFalling;
+    engine.predicted_character_state_.ground_state =
+        network_example::physics::CharacterGroundState::kGrounded;
+    flags = local_flags(&engine);
+    require((flags & network_example::kVisualFlagGrounded) != 0u);
+    require((flags & network_example::kVisualFlagFalling) == 0u);
+
+    // Without a physics prediction nothing steps ground contact locally, so
+    // the snapshot's answer stands.
+    network_example::KernelEngine unpredicted(config);
+    seed_local(&unpredicted);
+    require(unpredicted.prediction_physics_world_ == nullptr);
+    unpredicted.predicted_character_state_.ground_state =
+        network_example::physics::CharacterGroundState::kAirborne;
+    flags = local_flags(&unpredicted);
+    require((flags & network_example::kVisualFlagGrounded) != 0u);
+    require((flags & network_example::kVisualFlagFalling) == 0u);
+}
+
 void real_character_prediction_is_presented_smoothly_at_720_fps() {
     KernelConfig config{};
     config.mode = KernelMode_Client;
@@ -5271,6 +5333,7 @@ int main() {
     local_presentation_absorbs_tick_residual_and_prevents_reverse_motion();
     local_presentation_survives_reconcile_and_snaps_large_corrections();
     real_character_prediction_is_presented_smoothly_at_720_fps();
+    local_ground_contact_follows_the_prediction_not_the_snapshot();
     local_presentation_does_not_lead_a_blocked_character();
     reconcile_replays_an_authoritative_knockback();
     authoritative_lockout_respects_a_newer_local_one();

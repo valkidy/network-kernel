@@ -104,7 +104,10 @@ int main() {
                 entity.owner_peer == 0 && entity.state == 9 &&
                 entity.hp == 25 &&
                 entity.max_hp == 50 &&
-                entity.flags == 0x01020100u;
+                // Its replicated flags, plus the ground contact its movement
+                // state implies: it was spawned standing on nothing.
+                entity.flags ==
+                    (0x01020100u | network_example::kVisualFlagFalling);
         }
         if (entity.net_id == projectile) {
             saw_projectile_metadata =
@@ -189,5 +192,50 @@ int main() {
         10.0f,
         dead_player,
         &hit));
+
+    // Ground contact reaches the snapshot as a state: grounded or falling,
+    // never the one-tick landed pulse, which a snapshot sent less often than
+    // the simulation ticks would deliver for some landings and not others.
+    network_example::World movement_world;
+    const network_example::NetId grounded_player =
+        movement_world.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
+    const network_example::NetId airborne_player =
+        movement_world.spawn_player(2, glm::vec3{5.0f, 8.0f, 0.0f});
+    network_example::MovementState grounded_movement;
+    grounded_movement.ground_state =
+        network_example::MovementState::GroundState::kGrounded;
+    grounded_movement.landed_this_tick = true;
+    movement_world.registry().emplace_or_replace<network_example::MovementState>(
+        *movement_world.find_entity(grounded_player),
+        grounded_movement);
+    network_example::MovementState airborne_movement;
+    airborne_movement.ground_state =
+        network_example::MovementState::GroundState::kAirborne;
+    movement_world.registry().emplace_or_replace<network_example::MovementState>(
+        *movement_world.find_entity(airborne_player),
+        airborne_movement);
+    const network_example::WorldSnapshot movement_snapshot =
+        network_example::build_world_snapshot(movement_world, 1, 33, 0);
+    bool saw_grounded = false;
+    bool saw_airborne = false;
+    for (const network_example::EntitySnapshot& entity : movement_snapshot.entities) {
+        if (entity.net_id == grounded_player) {
+            saw_grounded = true;
+            assert((entity.flags & network_example::kVisualFlagGrounded) != 0u);
+            assert((entity.flags & network_example::kVisualFlagFalling) == 0u);
+            assert((entity.flags & network_example::kVisualFlagLanded) == 0u);
+        }
+        if (entity.net_id == airborne_player) {
+            saw_airborne = true;
+            assert((entity.flags & network_example::kVisualFlagFalling) != 0u);
+            assert((entity.flags & network_example::kVisualFlagGrounded) == 0u);
+        }
+    }
+    assert(saw_grounded && saw_airborne);
+    // The world path keeps the pulse: it renders every tick it is asked for.
+    assert((network_example::derived_visual_flags(
+                movement_world,
+                *movement_world.find_entity(grounded_player)) &
+            network_example::kVisualFlagLanded) != 0u);
     return 0;
 }
