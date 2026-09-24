@@ -34,7 +34,7 @@ public static class NetworkKernelManagedAbiSmoke
         KernelBuildInfo buildInfo = KernelAbi.GetBuildInfo();
         GameServerAbiInfo gameServerInfo = GameServerAbi.GetInfo();
         RequireSkeletonBindingContract();
-        Require(KernelConstants.AbiVersion == 90, "Managed kernel ABI version was not v90.");
+        Require(KernelConstants.AbiVersion == 92, "Managed kernel ABI version was not v92.");
         Require(
             KernelLocalWeaponState.StructSize == 20 &&
             info.local_weapon_state_size == KernelLocalWeaponState.StructSize,
@@ -174,6 +174,20 @@ public static class NetworkKernelManagedAbiSmoke
             (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelEntityTemplateDefinition>("stagger_immunity_ticks") >
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelEntityTemplateDefinition>("impulse_resistance"),
             "Kernel hit stagger fields are not appended in native order.");
+        Require(
+            KernelEventType.EntityDied == (KernelEventType)15 &&
+            KernelDespawnReason.Retired == (KernelDespawnReason)5 &&
+            KernelGameplayRequestRejectionReason.InstigatorDead ==
+                (KernelGameplayRequestRejectionReason)17 &&
+            KernelDeathPolicy.Dormant == (KernelDeathPolicy)2 &&
+            KernelConstants.CapabilityServerEntityRevive == 0x0000400000000000UL &&
+            KernelConstants.CapabilityServerInventoryClear == 0x0000800000000000UL,
+            "Kernel death and revive ABI mismatch.");
+        Require(
+            System.Runtime.InteropServices.Marshal.SizeOf<KernelServerReviveInfo>() == 16 &&
+            (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelEntityTemplateDefinition>("death_policy") >
+                (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelEntityTemplateDefinition>("stagger_immunity_ticks"),
+            "Kernel death policy is not appended in native order, or the revive info layout drifted.");
         Require(buildInfo.struct_size != 0, "Kernel_GetBuildInfo returned empty struct size.");
         Require(!string.IsNullOrEmpty(buildInfo.module_version), "Kernel_GetBuildInfo module version was empty.");
         Require(!string.IsNullOrEmpty(buildInfo.git_commit), "Kernel_GetBuildInfo git commit was empty.");

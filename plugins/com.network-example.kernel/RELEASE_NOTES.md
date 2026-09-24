@@ -1,5 +1,20 @@
 0.7.0 release notes:
 
+- aligns Unity plugin API with kernel ABI 91 (generic death state): appends
+  `death_policy` to `KernelEntityTemplateDefinition` and adds
+  `KernelDeathPolicy`, `KernelEventType.EntityDied` (server-local),
+  `KernelDespawnReason.Retired` and
+  `KernelGameplayRequestRejectionReason.InstigatorDead`
+- aligns with kernel ABI 92 (revive): adds `KernelServerReviveInfo` (16 bytes),
+  `Kernel.ServerReviveEntity`, `Kernel.ServerClearInventoryContainer` and the
+  `CapabilityServerEntityRevive` / `CapabilityServerInventoryClear` flags
+- the bundled native libraries and catalog bundle are not yet rebuilt for
+  ABI 92; `KernelAbi.ValidateNativeAbi` rejects the current binaries until they
+  are refreshed
+
+
+0.7.0 release notes:
+
 - aligns Unity plugin API with kernel ABI 90 (hit stagger): appends
   `damage_stagger_authored` / `damage_stagger` to `KernelActionDefinition` and
   `KernelActionTriggerDefinition` (the trigger grows to 764 bytes), appends the

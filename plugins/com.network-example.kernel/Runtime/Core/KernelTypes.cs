@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 90;
+        public const uint AbiVersion = 92;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int GameplayCatalogEntryPathSize = 128;
@@ -108,6 +108,8 @@ namespace NetworkExample.Kernel
         public const ulong CapabilitySkeletonBindPose = 0x0000080000000000UL;
         public const ulong CapabilityLocalWeaponState = 0x0000100000000000UL;
         public const ulong CapabilityServerEntityMovementMaskWrite = 0x0000200000000000UL;
+        public const ulong CapabilityServerEntityRevive = 0x0000400000000000UL;
+        public const ulong CapabilityServerInventoryClear = 0x0000800000000000UL;
 
         // KernelLocalWeaponState.flags.
         public const byte LocalWeaponStateFlagReloading = 0x01;
@@ -216,6 +218,9 @@ namespace NetworkExample.Kernel
         HealthChanged = 13,
         // `code` carries the stagger duration in ticks.
         Staggered = 14,
+        // Server-local, never replicated: damage emptied this entity's health.
+        // `peer_id` is the damage's source peer, `code` the instigator net id.
+        EntityDied = 15,
     }
 
     public enum KernelDespawnReason : uint
@@ -225,6 +230,20 @@ namespace NetworkExample.Kernel
         Disconnected = 2,
         Expired = 3,
         CapacityEvicted = 4,
+        // Removed alive by the server (a patrol squad done with its route).
+        // Not a kill: no death presentation.
+        Retired = 5,
+    }
+
+    // What happens to an entity once damage empties its health.
+    public enum KernelDeathPolicy : uint
+    {
+        // Players stay dormant, everything else is destroyed.
+        Default = 0,
+        Destroy = 1,
+        // Stays in the world, dead: hidden, inert, still its owner's
+        // relevance anchor.
+        Dormant = 2,
     }
 
     public enum KernelGameplayCatalogSyncState
@@ -383,6 +402,8 @@ namespace NetworkExample.Kernel
         Claimed = 14,
         Cooldown = 15,
         GraphRejected = 16,
+        // The instigator is dead.
+        InstigatorDead = 17,
     }
 
     public enum KernelEntityTriggerActionType
@@ -1358,6 +1379,20 @@ namespace NetworkExample.Kernel
         public uint entity_template_id;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelServerEntityCreateInfo>();
+    }
+
+    // Kernel_ServerReviveEntity's arguments. Only a dead entity is revived:
+    // full health, lifted up to lift_meters above its body (clamped to the
+    // capsule's headroom), damage discarded for invulnerable_ticks.
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelServerReviveInfo
+    {
+        public uint struct_size;
+        public uint net_id;
+        public float lift_meters;
+        public uint invulnerable_ticks;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelServerReviveInfo>();
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -2348,6 +2383,8 @@ namespace NetworkExample.Kernel
         public uint stagger_decay_delay_ticks;
         public uint stagger_ticks;
         public uint stagger_immunity_ticks;
+        // A KernelDeathPolicy.
+        public uint death_policy;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelEntityTemplateDefinition>();
     }

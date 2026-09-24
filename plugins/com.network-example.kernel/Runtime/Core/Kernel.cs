@@ -742,6 +742,15 @@ namespace NetworkExample.Kernel
                 out containerId);
         }
 
+        /// <summary>
+        /// Terminates every item in the container and leaves it empty.
+        /// </summary>
+        public bool ServerClearInventoryContainer(ulong containerId)
+        {
+            ThrowIfDisposed();
+            return KernelNative.Kernel_ServerClearInventoryContainer(handle, containerId);
+        }
+
         public bool ServerCreateInventoryItem(
             uint itemTemplateId,
             uint quantity,
@@ -915,6 +924,17 @@ namespace NetworkExample.Kernel
         {
             ThrowIfDisposed();
             return KernelNative.Kernel_ServerSetEntityHealth(handle, netId, hp);
+        }
+
+        /// <summary>
+        /// Brings a dead entity back in one call; false, and nothing changed,
+        /// if it is alive. Loadout (ammo, weapons, inventory) is the caller's.
+        /// </summary>
+        public bool ServerReviveEntity(KernelServerReviveInfo info)
+        {
+            ThrowIfDisposed();
+            info.struct_size = KernelServerReviveInfo.StructSize;
+            return KernelNative.Kernel_ServerReviveEntity(handle, ref info);
         }
 
         /// <summary>

@@ -69,6 +69,14 @@ namespace NetworkExample.Kernel
                 "Kernel server entity movement-mask-write capability is missing.");
             RequireCapability(
                 info,
+                KernelConstants.CapabilityServerEntityRevive,
+                "Kernel server entity revive capability is missing.");
+            RequireCapability(
+                info,
+                KernelConstants.CapabilityServerInventoryClear,
+                "Kernel server inventory clear capability is missing.");
+            RequireCapability(
+                info,
                 KernelConstants.CapabilityServerEntityQuery,
                 "Kernel server entity query capability is missing.");
             RequireCapability(

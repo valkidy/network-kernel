@@ -330,6 +330,12 @@ namespace NetworkExample.Kernel
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_ServerClearInventoryContainer(
+            IntPtr kernel,
+            ulong containerId);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
         internal static extern bool Kernel_ServerCreateInventoryItem(
             IntPtr kernel,
             uint itemTemplateId,
@@ -436,6 +442,12 @@ namespace NetworkExample.Kernel
             IntPtr kernel,
             uint netId,
             ushort hp);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_ServerReviveEntity(
+            IntPtr kernel,
+            ref KernelServerReviveInfo info);
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         [return: MarshalAs(UnmanagedType.I1)]
