@@ -520,6 +520,11 @@ struct ThrownPropMotion {
     glm::vec3 initial_velocity{0.0f};
     glm::vec3 gravity{0.0f};
     glm::vec3 previous_position{0.0f};
+    // Who threw it, or zero for a prop launched some other way. The prop
+    // starts inside its thrower's hitbox, so the in-flight collision check
+    // skips this entity -- otherwise a downward throw collides with the
+    // thrower on its first tick and detonates in their hand.
+    NetId thrower_net_id = 0;
 };
 
 struct PropLifecycle {

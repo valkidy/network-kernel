@@ -1,16 +1,17 @@
 // A thrown bottle must not go off on the player who threw it.
 //
 // The shipped catalog, driven through the kernel API. A thrown prop starts at
-// its thrower + (0, 1, 0), inside the thrower's own hitbox, and the prop
-// collision check (CollisionTriggerSystem, systems.cc) ignores only the prop
-// itself. Measured 2026-09-25: a level or rising throw leaves the hitbox
-// cleanly, but any downward throw -- 10 degrees is enough -- collides with the
-// thrower on its first tick and detonates there. The frag bottle deals 1000 to
-// every side, so that is the thrower dead.
+// its thrower + (0, 1, 0), inside the thrower's own hitbox. Measured
+// 2026-09-25, before the fix: a level or rising throw left the hitbox cleanly,
+// but any downward throw -- 10 degrees was enough -- collided with the thrower
+// on its first tick and detonated there. The frag bottle deals 1000 to every
+// side, so that was the thrower dead. The in-flight collision check now skips
+// ThrownPropMotion::thrower_net_id.
 //
-// The downward case is expected to FAIL until the engine excludes the thrower.
-// It is not about throwing at your own feet: there is no terrain here, so the
-// only thing the bottle can hit is the thrower's own body.
+// The downward case is not about throwing at your own feet: there is no
+// terrain here, so the only thing the bottle could hit is the thrower's body.
+// A frag that lands at your feet still kills you; that is the blast, which has
+// no shooter to skip, not the bottle.
 //
 // The level throw's bystander is the control. It shows the bottle does
 // detonate and the blast does deal damage, so a thrower left at full health
