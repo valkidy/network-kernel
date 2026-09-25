@@ -1,9 +1,13 @@
 # The kill grenade: medium radius, heavy damage, no shove and no stagger.
 #
 # It hits every side, the thrower included: 1000 is a full player health bar, so
-# a frag at your own feet is a death. hit_instigator is what makes that true --
-# an area effect skips its shooter unless it is authored, and the shooter here
-# is whoever the throw's provenance names.
+# a frag at your own feet is a death.
+#
+# hit_instigator is not what makes that true today. An area effect skips its
+# shooter unless this is set, but this blast has no shooter: the bottle's
+# on_collision trigger is dispatched with instigator 0, so nobody is skipped.
+# It is kept so the frag still hits its thrower if that provenance ever starts
+# naming the thrower.
 #
 # It goes through a graph rather than the plain damage path so that it can say
 # stagger: 0. Plain area damage derives stagger from the amount (per_damage 1.0),
