@@ -2056,6 +2056,21 @@ void CollisionTriggerSystem::update(
                     hits = engine.physics_world_->shape_cast_all(request);
                 }
             }
+            // The filter holds one ignored entity and the prop itself takes it,
+            // so the thrower is dropped here. Before the empty check, so a cast
+            // that only found the thrower still falls through to the overlap.
+            const NetId thrower_net_id =
+                thrown_motion != nullptr ? thrown_motion->thrower_net_id : 0u;
+            const auto drop_thrower = [thrower_net_id](
+                                          std::vector<physics::CollisionHit>* found) {
+                if (thrower_net_id == 0u) {
+                    return;
+                }
+                std::erase_if(*found, [thrower_net_id](const physics::CollisionHit& hit) {
+                    return hit.identity.entity_net_id == thrower_net_id;
+                });
+            };
+            drop_thrower(&hits);
             if (hits.empty()) {
                 physics::OverlapRequest request{};
                 request.shape.type =
@@ -2072,6 +2087,7 @@ void CollisionTriggerSystem::update(
                 request.rotation = collider.world_rotation;
                 request.filter = filter;
                 hits = engine.physics_world_->overlap_all(request);
+                drop_thrower(&hits);
                 for (physics::CollisionHit& hit : hits) {
                     hit.fraction = 1.0f;
                 }

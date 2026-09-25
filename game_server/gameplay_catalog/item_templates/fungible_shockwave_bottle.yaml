@@ -1,0 +1,22 @@
+# Control grenade: wide radius, low damage, always shoves and staggers -- and
+# only hostile_side, so it is safe to throw near yourself and your team.
+# The pair of fungible_frag_grenade_bottle.
+#
+# Fungible and identity-preserving, like fungible_glyph_bottle: a throw splits
+# one bottle off the stack and the prop that lands is that bottle.
+id: 3008
+name: fungible_shockwave_bottle
+mode: fungible
+max_stack: 3
+capabilities: [pickupable, throwable]
+entity_template: shockwave_bottle_prop
+world_interaction:
+  range: 3.0
+  line_of_sight_required: false
+throw:
+  mode: identity_preserving
+  trajectory_projectile: grenade_shell_projectile
+use:
+  quantity_cost: 0
+  cooldown_ticks: 0
+  destroy_when_empty: false

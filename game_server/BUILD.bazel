@@ -451,6 +451,29 @@ cc_test(
 )
 
 cc_test(
+    name = "thrown_bottle_self_hit_test",
+    srcs = ["tests/thrown_bottle_self_hit_test.cc"],
+    data = glob([
+        "gameplay_catalog/action_graph_templates/*.yaml",
+        "gameplay_catalog/action_templates/*.yaml",
+        "gameplay_catalog/collider_templates/*.yaml",
+        "gameplay_catalog/entity_templates/*.yaml",
+        "gameplay_catalog/item_templates/*.yaml",
+        "gameplay_catalog/projectile_templates/*.yaml",
+        "gameplay_catalog/weapon_templates/*.yaml",
+    ]) + [
+        "gameplay_catalog/gameplay_catalog.yaml",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_biped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_quadruped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_tripod_assets",
+    ],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
     name = "agent_sentry_per_agent_config_test",
     srcs = ["tests/agent_sentry_per_agent_config_test.cc"],
     data = glob([

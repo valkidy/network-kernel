@@ -1,0 +1,20 @@
+# World half of fungible_frag_grenade_bottle: breaks on whatever it hits and
+# leaves a frag_blast. See shockwave_bottle_prop.
+id: 213
+name: frag_grenade_bottle_prop
+entity_type: prop
+health:
+  hp: 1
+  max_hp: 1
+physics:
+  collider_template: collision_damage_prop_hitbox
+triggers:
+  on_collision:
+    collision_mask: terrain | static_obstacle | actor
+    action_graph: action_spawn_projectile_and_damage_self_at_collision
+    parameters:
+      template: frag_blast
+      position: event.position
+      direction: event.direction
+      source: self
+      self_damage: 1

@@ -1,0 +1,10 @@
+# The blast volume of frag_blast. Medium on purpose: smaller than the shockwave,
+# so the frag is the one that has to be aimed.
+id: 29
+name: frag_area_sphere
+shape: sphere
+center: {x: 0.0, y: 0.0, z: 0.0}
+half_extents: {x: 3.5, y: 3.5, z: 3.5}
+radius: 3.5
+purpose: damage
+layer: area_effect
