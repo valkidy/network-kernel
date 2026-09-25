@@ -21,6 +21,7 @@ actions:
     strength: params.strength
     direction: params.direction
     collision_mask: actor | prop
-    # 6.0 m/s against 9.81 is ~1.2 s of airtime (~37 ticks); the ceiling leaves
-    # headroom for a target blasted off a ledge.
-    lockout_ticks: 45
+    # 6.0 m/s against 9.81 is ~1.2 s of airtime (~37 ticks). This is a ceiling,
+    # not a duration: landing releases the lockout, so on flat ground 60 still
+    # ends around tick 37. The extra only holds a target blasted off a ledge.
+    lockout_ticks: 60
