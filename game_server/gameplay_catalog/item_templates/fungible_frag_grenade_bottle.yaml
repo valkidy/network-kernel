@@ -1,0 +1,19 @@
+# Kill grenade: medium radius, high damage, no shove and no stagger.
+# The pair of fungible_shockwave_bottle; carried in smaller stacks because it
+# is the one that ends fights.
+id: 3009
+name: fungible_frag_grenade_bottle
+mode: fungible
+max_stack: 2
+capabilities: [pickupable, throwable]
+entity_template: frag_grenade_bottle_prop
+world_interaction:
+  range: 3.0
+  line_of_sight_required: false
+throw:
+  mode: identity_preserving
+  trajectory_projectile: grenade_shell_projectile
+use:
+  quantity_cost: 0
+  cooldown_ticks: 0
+  destroy_when_empty: false

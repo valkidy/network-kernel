@@ -53,6 +53,10 @@ inventory_slots:
   #  quantity: 1
   - item_template: fungible_glyph_bottle
     quantity: 10
+  - item_template: fungible_shockwave_bottle
+    quantity: 3
+  - item_template: fungible_frag_grenade_bottle
+    quantity: 2
   - item_template: stateful_magic_bottle
     quantity: 1
   - item_template: stateful_magic_bottle

@@ -1,0 +1,26 @@
+id: action_shockwave_at_target
+parameters:
+  target: null
+  # Low on purpose: the shockwave softens and displaces, it does not kill.
+  amount: 20
+  # [horizontal, vertical] m/s, the split form, for the reason
+  # action_rocket_explosion_at_target gives: a level blast's radial has y ~ 0,
+  # so the lift has to be added outright. Stronger than the rocket's [12, 5]
+  # because shoving is this grenade's whole job.
+  strength: [14.0, 6.0]
+  direction: null
+actions:
+  - type: apply_damage
+    target: params.target
+    amount: params.amount
+    # Authored, not derived: 20 damage would never stagger on its own. 150 is
+    # the highest threshold in the catalog, so this staggers every actor.
+    stagger: 150
+  - type: apply_impulse
+    target: params.target
+    strength: params.strength
+    direction: params.direction
+    collision_mask: actor | prop
+    # 6.0 m/s against 9.81 is ~1.2 s of airtime (~37 ticks); the ceiling leaves
+    # headroom for a target blasted off a ledge.
+    lockout_ticks: 45
