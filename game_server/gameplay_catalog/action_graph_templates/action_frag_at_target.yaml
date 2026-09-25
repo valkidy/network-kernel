@@ -1,7 +1,7 @@
 id: action_frag_at_target
 parameters:
   target: null
-  amount: 200
+  amount: 1000
 actions:
   # Damage only. No apply_impulse, and stagger: 0 so the hit adds nothing to
   # the target's stagger meter -- the frag must not do the shockwave's job.

@@ -1,4 +1,5 @@
-# Control grenade: wide radius, low damage, always shoves and staggers.
+# Control grenade: wide radius, low damage, always shoves and staggers -- and
+# only hostile_side, so it is safe to throw near yourself and your team.
 # The pair of fungible_frag_grenade_bottle.
 #
 # Fungible and identity-preserving, like fungible_glyph_bottle: a throw splits

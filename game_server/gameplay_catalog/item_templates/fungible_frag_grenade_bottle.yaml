@@ -1,4 +1,5 @@
-# Kill grenade: medium radius, high damage, no shove and no stagger.
+# Kill grenade: medium radius, 1000 damage to every side including the thrower,
+# no shove and no stagger.
 # The pair of fungible_shockwave_bottle; carried in smaller stacks because it
 # is the one that ends fights.
 id: 3009
