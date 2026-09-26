@@ -23,6 +23,7 @@ W2–W6 與 W5a。每一項都寫明現況（含程式碼位置）、設計、�
 | 步驟 2 | 擊退 anchor：`ActorImpulseBatch`（reliable），client 依 solver 的逐 tick 公式重播飛行 | `274ed2e` | packet schema 25 |
 | a | 投擲 prop 的結束、server-only projectile 的開始與結束，改依畫面時間生效 | `2eb4a18` | 無 |
 | b | 以 anchor 繪製的飛行中 prop 不再進入 snapshot send set | `2eb4a18` | 無 |
+| a/b 修正 | a、b 只看 entity template 的投擲軌跡，但 catalog 把軌跡放在 item template（沒有任何 entity template 有 `throw:`），所以在遊戲中從未生效：瓶子留在 snapshot 裡，停住再跳 4–11 m（G0 實測）。改成先查 item（IdentityPreserving）再查 entity template；server 另外比對 `ThrownPropMotion` 與軌跡 template 一致才排除 | `78a8f23`（`claude/item-thrown-prop-anchor`） | 無 |
 
 已知的量測數據（`-c opt`，2026-09-26）：
 
