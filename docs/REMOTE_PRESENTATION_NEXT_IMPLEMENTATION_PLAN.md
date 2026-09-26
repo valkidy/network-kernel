@@ -9,7 +9,7 @@ Status: **Planned（下一單）**
 
 本文件把「遠端呈現 jitter」這條工作線上尚未處理的項目整理成可實作的計畫：
 共用畫面時鐘（W1）、AI 移動意圖同步（W7），以及討論中發現、尚未排程的
-W2–W6。每一項都寫明現況（含程式碼位置）、設計、改動範圍、版本影響、
+W2–W6 與 W5a。每一項都寫明現況（含程式碼位置）、設計、改動範圍、版本影響、
 測試與驗收標準。
 
 ---
@@ -43,6 +43,7 @@ W2–W6。每一項都寫明現況（含程式碼位置）、設計、改動範�
 | W3 | 戰鬥事件依 relevance 過濾 | server | 無 | 無 | 與 W2 同一段送出程式碼 |
 | W4 | 受擊呈現事件的預算 | server / 設定 | 視方案而定 | 視方案而定 | G0 量測 |
 | W5 | client 預測 projectile 碰撞時納入 actor | client | 無 | 無 | G0 確認可見度 |
+| W5a | 預測 projectile 壽命到期時在本地結束 | client | 無 | 無 | 無 |
 | W6 | 自己投擲的預測 | client + server | 可能 | packet 升版 | 獨立一單 |
 | G1 | bench：畫出位置 vs 真實位置誤差 | test | — | — | W1 |
 | G2 | Hermite 內插、提高 snapshot 預算 | client / 設定 | 無 | 無 | G1 |
@@ -55,6 +56,7 @@ G0 ─→ W1 ─┬─→ G1 ─→ G2 ─→ W7（先做 patrol，再 sentry，
           └─→ W2 + W3
 G0 ─→ W4（先看量測，有掉才動）
 G0 ─→ W5（確認玩家看得出來再做）
+W5a：不依賴 G0 或 W1，可提前或與 W1 並行
 W6：獨立一單，時機由內容需求決定
 ```
 
@@ -341,6 +343,80 @@ G0 時先觀察「穿過 agent」在實際遊玩中是否明顯，再決定要�
 
 ---
 
+## 8a. W5a — 預測 projectile 壽命到期時在本地結束
+
+### 8a.1 問題
+
+自己射出的 projectile 到達射程或壽命終點時不會消失，要等 server 的
+despawn 到了才消失，畫面上會多飛一段。
+
+### 8a.2 跟 W1 不是同一類問題
+
+| | 世界時間軸（W1 的對象） | 自己預測的 projectile |
+|---|---|---|
+| 畫在哪個時間 | 過去（比 server 晚約 133 ms） | 現在（比 server 超前） |
+| 結束時的問題 | 結束紀錄比畫面早到，要延後套用（a 已處理） | 結束紀錄比畫面晚到，會多飛一段 |
+| 讀的時鐘 | `render_server_time_us_` | `local_prediction_server_tick` |
+
+W1 不會改善這個問題。`handle_client_despawn` 本來就把自己預測的 projectile
+排除在延後刪除之外（`!has_predicted_projectile_net_id`），despawn 一到就刪除，
+但那時已經晚了：server 在 tick T 結束，client 畫的位置早已超過 T，
+despawn 還要再半個 RTT 才會到。多飛的距離約等於「速度 × (RTT + input buffer)」。
+
+### 8a.3 現況：三種終點
+
+`advance_predicted_projectiles`：
+
+| 終點 | client 現在的行為 | 會延遲消失嗎 |
+|---|---|---|
+| 撞到地形或靜態障礙 | 本地立刻 `locally_terminated`，隱藏 | 不會 |
+| 撞到 actor | filter 裡沒有 actor 圖層，直接穿過 | 會，屬於 W5 |
+| 壽命或射程到期 | 有 `age_ticks >= max_lifetime_ticks` 檢查，**但綁定後實際上失效** | 會，屬於本項 |
+
+失效的原因：`reconcile_predicted_projectiles` 每收到一個 snapshot，就把
+projectile 的基準改成那個 snapshot：
+
+```cpp
+predicted->spawn_position = entity.position;     // snapshot 當下的位置，不是發射點
+predicted->age_ticks = authoritative_age_ticks;  // local_tick - snapshot tick
+```
+
+所以綁定之後，`age_ticks` 代表的是「距離上一個 snapshot 幾個 tick」，
+每收到一個 snapshot 就歸零，幾乎不可能達到 `max_lifetime_ticks`。
+（這是從程式碼讀出來的推論，實作時先用測試證實。）
+
+### 8a.4 設計
+
+- 軌跡基準（`spawn_position`、`age_ticks`）維持現狀，讓 reconcile 的修正行為不變。
+- 另外保存「發射時的 tick」：綁定前用預測時的 `spawn_tick`，綁定後用
+  `entity.spawn_tick`。壽命檢查改成比較 `local_tick - spawn_tick` 與
+  `max_lifetime_ticks`。
+- 到期時設 `locally_terminated`（隱藏），和撞到地形時一樣，不直接刪除。
+  物件本身仍由 server 的 despawn 或 action result 移除。
+- 原則與 W6 相同：**自己預測的東西，結束也用自己的時間軸。**
+
+### 8a.5 需要先確認
+
+- server 端 projectile 的壽命是否就是 `spawn_tick + lifetime_ticks`，是否差一個 tick。
+- homing 會把外推限制在 `kMaxHomingVisualExtrapolationSeconds` 以內，
+  壽命到期時要不要也受這個限制。
+- area effect 碰撞後會停住並把 `age_ticks` 歸零。它的壽命由
+  `area_effect.lifetime_ticks` 決定，要確認新的判斷方式也適用。
+- 如果 server 延長了壽命（目前應該不存在這種情況），本地結束會造成誤判。
+
+### 8a.6 測試
+
+- 單一 client 的測試：預測 projectile 綁定後持續收到 snapshot，到達壽命的那個
+  tick 時，render states 裡就不能再有它，不必等 despawn。
+- 咬合檢查：把壽命檢查改回使用 `age_ticks`，確認測試會失敗。
+- 回歸：撞到地形的 projectile，以及停住的 area effect，行為都不能改變。
+
+### 8a.7 版本影響
+
+無，只改 client。
+
+---
+
 ## 9. W6 — 自己投擲的預測（對應第 6 項）
 
 ### 9.1 現況
@@ -468,6 +544,7 @@ client 只需要沿轉角點走，**不需要 navmesh 查詢**。
 | W2 / W3 | 否 | 否 | 否 | 否（只改 server） | 否 |
 | W4 | 視方案 | 視方案 | 否 | 視方案 | 否 |
 | W5 | 否 | 否 | 否 | 否（只改 client） | 否 |
+| W5a | 否 | 否 | 否 | 否（只改 client） | 否 |
 | W6 | 可能 | 是 | 否 | 是 | 否 |
 | W7 | **是** | **是** | 否 | 是 | 否 |
 
