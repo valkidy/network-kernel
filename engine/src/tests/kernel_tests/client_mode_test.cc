@@ -3050,8 +3050,11 @@ void thrown_prop_renders_its_trajectory_while_snapshots_omit_it() {
     const float second_elapsed = on_trajectory_elapsed_seconds(states[0].position);
     require(second_elapsed > first_elapsed);
 
-    // Landing clears the anchor: a placed prop is wherever the server says it
-    // came to rest, not wherever the parabola would have carried it.
+    // Landing ends the flight on the world timeline, not when the record
+    // arrives. It lands at tick 51 while the render instant is still an
+    // interpolation delay behind the newest snapshot, so the prop is still in
+    // the air and still on its curve -- applying the record on arrival cut the
+    // throw short and jumped it onto its landing spot.
     network_example::PropStateChangeBatchPacket landed{};
     landed.server_tick = 51;
     network_example::PropStateChangeRecord landed_record{};
@@ -3067,6 +3070,18 @@ void thrown_prop_renders_its_trajectory_while_snapshots_omit_it() {
     client.handle_client_prop_state_change_batch(landed);
 
     count = client.get_render_states_at_time(1400000, states.data(), states.size());
+    require(count == 1);
+    require(states[0].world_item_mode == KernelWorldItemMode_InFlight);
+    require(on_trajectory_elapsed_seconds(states[0].position) >= second_elapsed);
+
+    // Once the world timeline passes tick 51 it is wherever the server says it
+    // came to rest, not wherever the parabola would have carried it.
+    for (std::uint32_t tick = 51; tick <= 60; ++tick) {
+        network_example::WorldSnapshot omitted;
+        omitted.header.server_tick = tick;
+        client.handle_client_snapshot(omitted);
+    }
+    count = client.get_render_states_at_time(2000000, states.data(), states.size());
     require(count == 1);
     require(states[0].world_item_mode == KernelWorldItemMode_Placed);
     require(std::fabs(states[0].position.x - 12.0f) < 0.001f);

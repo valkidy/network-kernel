@@ -5960,6 +5960,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     client_metadata_timeout_reported_entities_.clear();
     client_despawned_entities_.clear();
     client_knockback_anchors_.clear();
+    deferred_flight_despawns_.clear();
     pending_prediction_inputs_.clear();
     latest_client_input_ = KernelPlayerInput{};
     pending_client_action_intents_.clear();
@@ -7124,6 +7125,8 @@ void KernelEngine::handle_client_projectile_spawn_batch(
                 entity.position = record.spawn_position;
                 entity.velocity = record.initial_velocity;
                 entity.snapshot_tick = packet.server_tick;
+                entity.spawn_tick = packet.server_tick;
+                entity.has_spawn_tick = true;
                 client_replicated_entities_.push_back(entity);
             } else {
                 replicated->type = EntityType::kProjectile;
@@ -7136,6 +7139,8 @@ void KernelEngine::handle_client_projectile_spawn_batch(
                     projectile_template->collider_template_id;
                 replicated->position = record.spawn_position;
                 replicated->rotation = glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
+                replicated->spawn_tick = packet.server_tick;
+                replicated->has_spawn_tick = true;
             }
             client_metadata_timeout_reported_entities_.erase(record.projectile_net_id);
             if (projectile_template->sync_mode ==
@@ -7450,7 +7455,62 @@ void KernelEngine::handle_client_template_update(
     }
 }
 
+bool KernelEngine::is_prop_in_flight_on_client(
+    const ClientReplicatedEntity& entity) const {
+    return entity.type == EntityType::kProp && entity.has_thrown_anchor &&
+        (entity.world_item_mode == KernelWorldItemMode_InFlight ||
+         entity.has_thrown_flight_end);
+}
+
+void KernelEngine::release_deferred_flight_despawns() {
+    if (deferred_flight_despawns_.empty()) return;
+    std::vector<DeferredDespawn> due;
+    std::erase_if(deferred_flight_despawns_, [&](const DeferredDespawn& held) {
+        if (render_server_time_us_ <
+            tick_time_us(held.server_tick, tick_loop_.fixed_delta_seconds())) {
+            return false;
+        }
+        due.push_back(held);
+        return true;
+    });
+    for (const DeferredDespawn& held : due) {
+        EntityDespawnPacket packet{};
+        packet.net_id = held.net_id;
+        packet.server_tick = held.server_tick;
+        packet.reason = held.reason;
+        handle_client_despawn(packet);
+    }
+}
+
 void KernelEngine::handle_client_despawn(const EntityDespawnPacket& packet) {
+    // Something that ends on the world timeline -- a prop in flight, a
+    // server-only projectile -- is still being drawn short of the tick it was
+    // destroyed on when the despawn arrives, an interpolation delay early.
+    // Applying it then removed a thrown bottle in mid-air, well before the
+    // blast it set off. Everything a despawn does, the lifecycle event Unity
+    // removes the view on included, waits for the render instant instead.
+    // Leaving relevance is not an ending and is applied at once.
+    if (packet.reason != KernelDespawnReason_OutOfRange && has_client_render_time_ &&
+        render_server_time_us_ <
+            tick_time_us(packet.server_tick, tick_loop_.fixed_delta_seconds())) {
+        const auto drawn = std::find_if(
+            client_replicated_entities_.begin(),
+            client_replicated_entities_.end(),
+            [&packet](const ClientReplicatedEntity& entity) {
+                return entity.net_id == packet.net_id;
+            });
+        const bool on_world_timeline = drawn != client_replicated_entities_.end() &&
+            !has_predicted_projectile_net_id(packet.net_id) &&
+            (is_prop_in_flight_on_client(*drawn) ||
+             (drawn->type == EntityType::kProjectile && drawn->has_spawn_tick &&
+              (local_client_peer_id_ == 0u ||
+               drawn->owner_peer != local_client_peer_id_)));
+        if (on_world_timeline) {
+            deferred_flight_despawns_.push_back(
+                DeferredDespawn{packet.net_id, packet.server_tick, packet.reason});
+            return;
+        }
+    }
     client_status_effect_states_.erase(packet.net_id);
     client_despawned_entities_[packet.net_id] = ClientEntityTombstone{
         packet.server_tick,
@@ -7589,6 +7649,7 @@ void KernelEngine::clear_client_session() {
     client_metadata_timeout_reported_entities_.clear();
     client_despawned_entities_.clear();
     client_knockback_anchors_.clear();
+    deferred_flight_despawns_.clear();
     latest_client_snapshot_ = WorldSnapshot{};
     predicted_local_entity_ = EntitySnapshot{};
     has_authoritative_local_entity_ = false;
@@ -10965,7 +11026,8 @@ WorldSnapshot KernelEngine::build_snapshot_send_set(
         [&](const EntitySnapshot& entity) -> std::optional<EntitySnapshot> {
             EntitySnapshot send_entity = entity;
             if (entity.type == EntityType::kProp &&
-                is_dormant_placed_prop(entity.net_id)) {
+                (is_dormant_placed_prop(entity.net_id) ||
+                 is_anchored_in_flight_prop(entity.net_id))) {
                 return std::nullopt;
             }
             if (entity.type != EntityType::kProjectile) {
@@ -11537,6 +11599,26 @@ bool KernelEngine::is_dormant_placed_prop(NetId net_id) const {
     }
     return !world_.registry().all_of<Velocity>(*entity) ||
         glm::length(world_.registry().get<Velocity>(*entity).linear) <= 0.001f;
+}
+
+// A prop in flight whose client draws it from its throw anchor: the prop-state
+// record that started the flight already told the client everything, and every
+// later change re-anchors it the same way. A snapshot record of it would be a
+// sample the render pass throws away, bought with a slot an actor could use.
+bool KernelEngine::is_anchored_in_flight_prop(NetId net_id) const {
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (!entity.has_value() ||
+        !world_.registry().all_of<EntityKind, PropWorldMode, EntityTemplateRef>(
+            *entity) ||
+        world_.registry().get<EntityKind>(*entity).type != EntityType::kProp ||
+        world_.registry().get<PropWorldMode>(*entity).mode != PropMode::kInFlight) {
+        return false;
+    }
+    const KernelEntityTemplateDefinition* entity_template = find_entity_template(
+        entity_templates_,
+        world_.registry().get<EntityTemplateRef>(*entity).entity_template_id);
+    return entity_template != nullptr &&
+        entity_template->prop.throw_trajectory_projectile_template_id != 0u;
 }
 
 void KernelEngine::send_entity_spawn(PeerId peer, const EntitySnapshot& entity) {
@@ -12124,7 +12206,18 @@ void KernelEngine::handle_client_prop_state_change_batch(
             entity->thrown_anchor_velocity = entity->velocity;
             entity->thrown_anchor_tick = packet.server_tick;
             entity->has_thrown_anchor = true;
-        } else if (!in_flight) {
+            entity->has_thrown_flight_end = false;
+        } else if (!in_flight && entity->has_thrown_anchor &&
+                   !entity->has_thrown_flight_end &&
+                   static_cast<std::int32_t>(
+                       packet.server_tick - entity->thrown_anchor_tick) > 0) {
+            // The end of a flight the render pass is still drawing. The new
+            // mode, transform and velocity are applied above as usual; keeping
+            // the anchor with the tick it ended on lets the flight run on until
+            // the render instant gets there.
+            entity->thrown_flight_end_tick = packet.server_tick;
+            entity->has_thrown_flight_end = true;
+        } else if (!in_flight && !entity->has_thrown_flight_end) {
             entity->has_thrown_anchor = false;
         }
     }
@@ -12138,8 +12231,14 @@ bool KernelEngine::thrown_prop_render_transform(
     glm::vec3* out_velocity) const {
     if (out_position == nullptr || out_velocity == nullptr ||
         replicated.type != EntityType::kProp ||
-        !replicated.has_thrown_anchor ||
-        replicated.world_item_mode != KernelWorldItemMode_InFlight) {
+        !replicated.has_thrown_anchor) {
+        return false;
+    }
+    if (replicated.has_thrown_flight_end
+            ? render_server_time_us >= tick_time_us(
+                  replicated.thrown_flight_end_tick,
+                  tick_loop_.fixed_delta_seconds())
+            : replicated.world_item_mode != KernelWorldItemMode_InFlight) {
         return false;
     }
     const KernelEntityTemplateDefinition* entity_template =
@@ -12513,6 +12612,20 @@ void KernelEngine::rebuild_render_states_from_snapshot(
     // moves every frame the way an interpolated entity does.
     std::uint64_t thrown_render_time_us = current_render_time_us_;
     client_render_server_time_us(client_render_time_us, &thrown_render_time_us);
+    render_server_time_us_ = thrown_render_time_us;
+    release_deferred_flight_despawns();
+    // A server-only projectile lives on the world timeline like everything
+    // else drawn from snapshots, but its reliable spawn made it drawable the
+    // moment it arrived -- an interpolation delay early. A bottle's blast
+    // showed up while the bottle was still visibly on its way to it.
+    const auto before_its_spawn = [&](const ClientReplicatedEntity& candidate) {
+        return candidate.type == EntityType::kProjectile &&
+            candidate.has_spawn_tick &&
+            (local_client_peer_id_ == 0u ||
+             candidate.owner_peer != local_client_peer_id_) &&
+            thrown_render_time_us < tick_time_us(
+                candidate.spawn_tick, tick_loop_.fixed_delta_seconds());
+    };
     std::unordered_set<NetId> rendered_entities;
     for (const PredictedProjectile& projectile : predicted_projectiles_) {
         if (projectile.net_id != 0) {
@@ -12539,6 +12652,11 @@ void KernelEngine::rebuild_render_states_from_snapshot(
                 return replicated_entity.net_id == entity.net_id;
             });
         if (replicated == client_replicated_entities_.end()) {
+            continue;
+        }
+        if (before_its_spawn(*replicated)) {
+            // Claimed, so the omitted-entity pass below does not draw it either.
+            rendered_entities.insert(entity.net_id);
             continue;
         }
         if (entity.type == EntityType::kActor &&
@@ -12592,6 +12710,10 @@ void KernelEngine::rebuild_render_states_from_snapshot(
                 &thrown_velocity)) {
             render_entity.position = thrown_position;
             render_entity.velocity = thrown_velocity;
+            // Still in the air on the world timeline, whatever the record that
+            // ended the flight has already written.
+            render_entity.world_item_mode = KernelWorldItemMode_InFlight;
+            render_entity.carrier_entity_id = 0u;
         }
         if ((render_entity.state_flags & kSnapshotStateFlagHpUnknown) != 0u) {
             if (replicated->hp_known) {
@@ -12645,6 +12767,9 @@ void KernelEngine::rebuild_render_states_from_snapshot(
              entity.collider_template_id == 0u)) {
             continue;
         }
+        if (before_its_spawn(entity)) {
+            continue;
+        }
         const std::uint32_t collider_template_id =
             entity.type == EntityType::kActor
                 ? collider_template_id_for_actor_template(entity.actor_template_id)
@@ -12687,6 +12812,10 @@ void KernelEngine::rebuild_render_states_from_snapshot(
             0,
             entity.carrier_entity_id,
         });
+        if (thrown) {
+            render_states_.back().world_item_mode = KernelWorldItemMode_InFlight;
+            render_states_.back().carrier_entity_id = 0u;
+        }
     }
 }
 

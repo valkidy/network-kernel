@@ -161,6 +161,32 @@ Client:
 The owner predicts its own knockback from the lockout block in its own
 snapshot record instead.
 
+### Endings on the world timeline
+
+Reliable records arrive about one interpolation delay before the world
+timeline reaches the tick they describe. A record that ends or starts
+something drawn on that timeline takes effect when the render instant reaches
+its tick, not when it arrives:
+
+```text
+Thrown prop, flight ended (landed, caught, placed):
+    the new state is applied, but the flight keeps being drawn from its
+    anchor, and reported InFlight, until the render instant reaches the tick.
+
+Thrown prop or server-only projectile, destroyed or expired:
+    the whole despawn -- removal, EntityDestroyed, the lifecycle event the
+    view is removed on -- is held until the render instant reaches the tick.
+    Leaving relevance is not an ending and is applied at once.
+
+Server-only projectile spawned (a bottle's blast, a remote melee hit):
+    not drawn until the render instant reaches its spawn tick.
+    The local player's own are drawn at once.
+```
+
+A thrown prop the client can anchor is also left out of the snapshot send set
+while it is in flight: the render pass never uses those samples, and the slot
+goes to an actor.
+
 ## Local-Owned Deterministic Projectiles
 
 Rocket and grenade projectiles are deterministic projectiles.

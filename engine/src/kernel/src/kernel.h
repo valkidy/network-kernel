@@ -476,7 +476,27 @@ private:
         glm::vec3 thrown_anchor_velocity{0.0f, 0.0f, 0.0f};
         std::uint32_t thrown_anchor_tick = 0;
         bool has_thrown_anchor = false;
+        // The tick a flight ended on the authority -- it landed, was caught or
+        // was placed -- kept alongside the anchor so the flight is still drawn
+        // until the render instant reaches that tick. The record announcing it
+        // arrives a full interpolation delay before the drawing does; applying
+        // it on arrival cut the throw short and jumped the prop onto its
+        // landing spot.
+        std::uint32_t thrown_flight_end_tick = 0;
+        bool has_thrown_flight_end = false;
+        // The tick a server-only projectile was spawned on, so it is not drawn
+        // before the world timeline reaches it.
+        std::uint32_t spawn_tick = 0;
+        bool has_spawn_tick = false;
         bool active = false;
+    };
+
+    // A despawn held back until the render instant reaches its tick; see
+    // handle_client_despawn.
+    struct DeferredDespawn {
+        NetId net_id = 0;
+        std::uint32_t server_tick = 0;
+        std::uint32_t reason = 0;
     };
 
     struct PendingPredictionInput {
@@ -835,6 +855,9 @@ private:
     void handle_client_prop_state_change_batch(
         const PropStateChangeBatchPacket& packet);
     void handle_client_actor_impulse_batch(const ActorImpulseBatchPacket& packet);
+    bool is_prop_in_flight_on_client(const ClientReplicatedEntity& entity) const;
+    void release_deferred_flight_despawns();
+    bool is_anchored_in_flight_prop(NetId net_id) const;
     void request_inventory_snapshot(
         KernelInventoryContainerId container_id,
         std::uint64_t client_revision);
@@ -975,6 +998,10 @@ private:
     std::unordered_set<NetId> client_metadata_timeout_reported_entities_;
     std::unordered_map<NetId, ClientEntityTombstone> client_despawned_entities_;
     std::unordered_map<NetId, RemoteKnockbackAnchor> client_knockback_anchors_;
+    std::vector<DeferredDespawn> deferred_flight_despawns_;
+    // The unrounded server instant the last render pass drew the world
+    // timeline at; valid once has_client_render_time_ is set.
+    std::uint64_t render_server_time_us_ = 0;
     std::vector<PendingPredictionInput> pending_prediction_inputs_;
     KernelPlayerInput latest_client_input_{};
     std::deque<KernelPlayerInput> pending_client_action_intents_;
