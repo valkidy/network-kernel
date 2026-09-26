@@ -281,7 +281,9 @@ when available, and sends the resulting gameplay events.
 
 Status: the next piece of work after the endings above are validated in play.
 The render clock comes first; AI movement intent only if measurement still
-calls for it afterwards.
+calls for it afterwards. The implementation plan, together with the related
+combat-event, presentation-budget, projectile-collision and local-throw items,
+is `docs/REMOTE_PRESENTATION_NEXT_IMPLEMENTATION_PLAN.md`.
 
 ### Two kinds of waiting for snapshots
 
