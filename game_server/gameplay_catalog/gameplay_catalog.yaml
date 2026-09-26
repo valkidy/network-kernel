@@ -48,7 +48,7 @@ player:
   # -1 never runs out; at 0 the dead stay dead.
   respawn:
     delay_seconds: 4.0
-    height_offset: 5.0
+    height_offset: 50.0
     invulnerable_seconds: 2.0
     team_revive_times: -1
 # Squads the world produces on its own schedule, independent of the mission.
