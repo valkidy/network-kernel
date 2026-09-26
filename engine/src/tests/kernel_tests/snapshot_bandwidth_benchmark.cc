@@ -62,6 +62,15 @@ struct Row {
     double mid_blackout_seconds = 0.0;
     double far_blackout_seconds = 0.0;
     double bytes_per_second = 0.0;
+    // Per band, 0 near / 1 mid / 2 far. The worst gap above is what a far agent
+    // can suffer; these are what a typical one does. The interpolator pairs
+    // consecutive snapshots and holds an entity that is missing from the later
+    // one, so every snapshot interval an agent sits out is one it is drawn
+    // frozen and then jumps -- frozen_fraction is that share of its intervals.
+    std::array<std::size_t, 3> band_agents{};
+    std::array<double, 3> band_p50_seconds{};
+    std::array<double, 3> band_p90_seconds{};
+    std::array<double, 3> band_frozen_fraction{};
 };
 
 // Spreads `count` agents through the relevance sphere deterministically.
@@ -121,6 +130,7 @@ Row measure(
             ? 0u
             : (distance <= kMidBandMeters ? 1u : 2u);
     }
+    std::array<std::size_t, 3> band_appearances{};
     std::vector<std::size_t> packed_per_snapshot;
     std::vector<std::size_t> bytes_per_snapshot;
     std::size_t relevant_agents = 0;
@@ -156,6 +166,9 @@ Row measure(
             }
             const std::size_t slot =
                 static_cast<std::size_t>(found - agents.begin());
+            if (tick > 0) {
+                ++band_appearances[agent_band[slot]];
+            }
             if (seen_once[slot]) {
                 gaps.push_back(tick - last_seen[slot]);
                 band_gaps[agent_band[slot]].push_back(tick - last_seen[slot]);
@@ -210,6 +223,29 @@ Row measure(
     row.near_blackout_seconds = band_blackout(0);
     row.mid_blackout_seconds = band_blackout(1);
     row.far_blackout_seconds = band_blackout(2);
+    for (std::size_t band = 0; band < 3; ++band) {
+        row.band_agents[band] = static_cast<std::size_t>(
+            std::count(agent_band.begin(), agent_band.end(), band));
+        std::vector<std::size_t>& band_gap = band_gaps[band];
+        if (band_gap.empty() || row.band_agents[band] == 0) {
+            continue;
+        }
+        std::sort(band_gap.begin(), band_gap.end());
+        const auto percentile_seconds = [&](double fraction) {
+            const std::size_t index = std::min(
+                band_gap.size() - 1,
+                static_cast<std::size_t>(
+                    fraction * static_cast<double>(band_gap.size())));
+            return static_cast<double>(band_gap[index]) /
+                static_cast<double>(kSnapshotsPerSecond);
+        };
+        row.band_p50_seconds[band] = percentile_seconds(0.5);
+        row.band_p90_seconds[band] = percentile_seconds(0.9);
+        const double intervals = static_cast<double>(row.band_agents[band]) *
+            static_cast<double>(snapshot_count - 1);
+        row.band_frozen_fraction[band] =
+            1.0 - static_cast<double>(band_appearances[band]) / intervals;
+    }
     row.bytes_per_second =
         row.mean_snapshot_bytes * static_cast<double>(kSnapshotsPerSecond);
     return row;
@@ -244,11 +280,39 @@ void print_table(const char* title, bool agents_acting = false) {
     std::printf("\n");
 }
 
+// The typical case rather than the worst, at the populations the jitter reports
+// are about. Gaps are measured in snapshot intervals: one interval (0.07 s) is
+// an agent in every snapshot, interpolated without a hold.
+void print_cadence_table(const char* title, bool agents_acting) {
+    std::printf("%s\n", title);
+    std::printf(
+        "%7s  %-5s %6s %9s %9s %9s\n",
+        "agents", "band", "count", "p50 s", "p90 s", "frozen");
+    const char* band_names[] = {"near", "mid", "far"};
+    for (const std::size_t agent_count : {40u, 80u, 200u}) {
+        const std::size_t snapshots = std::max<std::size_t>(600, agent_count * 8);
+        const Row row = measure(agent_count, snapshots, agents_acting);
+        for (std::size_t band = 0; band < 3; ++band) {
+            std::printf(
+                "%7zu  %-5s %6zu %9.2f %9.2f %8.0f%%\n",
+                row.agent_count,
+                band_names[band],
+                row.band_agents[band],
+                row.band_p50_seconds[band],
+                row.band_p90_seconds[band],
+                row.band_frozen_fraction[band] * 100.0);
+        }
+    }
+    std::printf("\n");
+}
+
 int main() {
     std::printf("budget=%zu B  snapshot_rate=%u Hz  relevance_radius=%.0f m\n\n",
                 kSendBudgetBytes, kSnapshotsPerSecond, kRelevanceRadiusMeters);
     print_table("A. Idle agents");
     print_table("B. Every agent mid-action (+20 B each)", true);
+    print_cadence_table("C. Typical refresh per band, idle agents", false);
+    print_cadence_table("D. Typical refresh per band, every agent mid-action", true);
     std::printf("per-client snapshot ceiling at a continuously full budget: "
                 "%zu B/s (%.0f kbit/s)\n",
                 kSendBudgetBytes * kSnapshotsPerSecond,
