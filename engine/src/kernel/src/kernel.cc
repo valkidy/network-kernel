@@ -5917,6 +5917,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     client_inventory_sync_states_.clear();
     client_inventory_resync_pending_.clear();
     pending_prop_state_changes_.clear();
+    pending_actor_impulses_.clear();
     claimed_item_instances_.clear();
     claimed_prop_entities_.clear();
     std::string item_validation_error;
@@ -5958,6 +5959,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     client_replicated_entities_.clear();
     client_metadata_timeout_reported_entities_.clear();
     client_despawned_entities_.clear();
+    client_knockback_anchors_.clear();
     pending_prediction_inputs_.clear();
     latest_client_input_ = KernelPlayerInput{};
     pending_client_action_intents_.clear();
@@ -6542,6 +6544,16 @@ void KernelEngine::handle_client_reliable_event(const TransportEvent& transport_
             &status_effect_state)) {
         record_packet_deserialization_cost(elapsed_cost_us(decode_start));
         handle_client_status_effect_state(status_effect_state);
+        return;
+    }
+    ActorImpulseBatchPacket actor_impulse_batch;
+    decode_start = std::chrono::steady_clock::now();
+    if (decode_actor_impulse_batch_packet(
+            transport_event.payload.data(),
+            transport_event.payload.size(),
+            &actor_impulse_batch)) {
+        record_packet_deserialization_cost(elapsed_cost_us(decode_start));
+        handle_client_actor_impulse_batch(actor_impulse_batch);
         return;
     }
     PropStateChangeBatchPacket prop_state_batch;
@@ -7576,6 +7588,7 @@ void KernelEngine::clear_client_session() {
     client_replicated_entities_.clear();
     client_metadata_timeout_reported_entities_.clear();
     client_despawned_entities_.clear();
+    client_knockback_anchors_.clear();
     latest_client_snapshot_ = WorldSnapshot{};
     predicted_local_entity_ = EntitySnapshot{};
     has_authoritative_local_entity_ = false;
@@ -7790,6 +7803,15 @@ void KernelEngine::handle_client_snapshot(WorldSnapshot snapshot) {
         replicated->active = true;
     }
     store_client_snapshot(std::move(snapshot));
+    // Nothing is ever rendered before the oldest buffered snapshot, so a
+    // flight that ended before it can no longer be drawn.
+    std::erase_if(
+        client_knockback_anchors_,
+        [this](const auto& entry) {
+            return static_cast<std::int32_t>(
+                       entry.second.end_tick -
+                       client_snapshot_buffer_.front().header.server_tick) < 0;
+        });
     diagnose_client_snapshot_metadata_waits();
     // Ahead of the prediction_failed_ return: the magazine the server reports is
     // true whether or not this client can still predict movement.
@@ -9194,20 +9216,112 @@ namespace {
 // pressed it into the floor with, and stepping along it would sink the body.
 // Anything that is not an actor keeps the pairwise result -- a prop's moves
 // are pickups and placements, which a long interpolation would draw as a slide.
+struct ActorSample {
+    const EntitySnapshot* entity = nullptr;
+    std::uint64_t time_us = 0;
+};
+
+struct ActorSampleBracket {
+    ActorSample previous;
+    ActorSample next;
+};
+
+// Redraws an actor inside a knockback from the flight its anchor announced.
+//
+// Between samples the step-1 bridge draws a knocked-back actor on the chord
+// between them, or -- with no newer sample yet -- carries it level along its
+// last velocity, which misses the launch entirely: the anchor is usually the
+// only record of the tick it was struck. Inside the flight the authority
+// ignores the actor's controller, so the newest authoritative state inside it,
+// replayed through knockback_flight_position_at, is where it is. That state is
+// the anchor itself or any snapshot sample taken after it. A later in-flight
+// sample is bent toward, so a wall the flight ran into -- the one thing the
+// replay cannot know -- is absorbed by the time that sample is reached rather
+// than snapped at it.
+//
+// Once the flight is over the actor is held where it came down until a sample
+// from after the release arrives, then eased to it; carrying it on at the
+// knockback velocity would slide it past where the controller took over.
+void apply_knockback_anchor(
+    const RemoteKnockbackAnchor& anchor,
+    const ActorSampleBracket& bracket,
+    float fixed_delta_seconds,
+    std::uint64_t target_server_time_us,
+    EntitySnapshot* bridged) {
+    const std::uint64_t anchor_us = tick_time_us(anchor.tick, fixed_delta_seconds);
+    const std::uint64_t end_us =
+        tick_time_us(anchor.end_tick, fixed_delta_seconds);
+    if (target_server_time_us < anchor_us ||
+        (bridged->flags & kVisualFlagDead) != 0u) {
+        return;
+    }
+    glm::vec3 base_position = anchor.position;
+    glm::vec3 base_velocity = anchor.velocity;
+    std::uint64_t base_us = anchor_us;
+    if (bracket.previous.entity != nullptr &&
+        bracket.previous.time_us > anchor_us) {
+        if (bracket.previous.time_us > end_us) {
+            // Released, and the snapshot already has it back.
+            return;
+        }
+        base_position = bracket.previous.entity->position;
+        base_velocity = bracket.previous.entity->velocity;
+        base_us = bracket.previous.time_us;
+    }
+    const auto flight_at = [&](std::uint64_t time_us) {
+        const float elapsed_seconds = static_cast<float>(
+            static_cast<double>(std::min(time_us, end_us) - base_us) /
+            1'000'000.0);
+        glm::vec3 position = knockback_flight_position_at(
+            base_position,
+            base_velocity,
+            anchor.gravity_y,
+            fixed_delta_seconds,
+            elapsed_seconds);
+        position.y = std::max(position.y, anchor.floor_y);
+        return position;
+    };
+
+    glm::vec3 position = flight_at(target_server_time_us);
+    glm::vec3 velocity{0.0f};
+    if (target_server_time_us < end_us) {
+        velocity = knockback_flight_velocity_at(
+            base_velocity,
+            anchor.gravity_y,
+            static_cast<float>(
+                static_cast<double>(target_server_time_us - base_us) /
+                1'000'000.0));
+    }
+    if (bracket.next.entity != nullptr) {
+        const std::uint64_t next_us = bracket.next.time_us;
+        const glm::vec3& next_position = bracket.next.entity->position;
+        if (next_us <= end_us) {
+            const float alpha = static_cast<float>(
+                static_cast<double>(target_server_time_us - base_us) /
+                static_cast<double>(next_us - base_us));
+            position += (next_position - flight_at(next_us)) * alpha;
+        } else if (target_server_time_us > end_us) {
+            const glm::vec3 landed = flight_at(end_us);
+            const float alpha = static_cast<float>(
+                static_cast<double>(target_server_time_us - end_us) /
+                static_cast<double>(next_us - end_us));
+            position = landed + (next_position - landed) * alpha;
+            velocity = bracket.next.entity->velocity;
+        }
+    }
+    bridged->position = position;
+    bridged->velocity = velocity;
+}
+
 void bridge_remote_actor_samples(
     const std::vector<WorldSnapshot>& buffer,
+    const std::unordered_map<NetId, RemoteKnockbackAnchor>& knockback_anchors,
     float fixed_delta_seconds,
     std::uint64_t snapshot_interval_us,
     std::uint64_t target_server_time_us,
     WorldSnapshot* snapshot) {
-    struct Sample {
-        const EntitySnapshot* entity = nullptr;
-        std::uint64_t time_us = 0;
-    };
-    struct Bracket {
-        Sample previous;
-        Sample next;
-    };
+    using Sample = ActorSample;
+    using Bracket = ActorSampleBracket;
     std::unordered_map<NetId, Bracket> brackets;
     for (const WorldSnapshot& buffered : buffer) {
         const std::uint64_t time_us =
@@ -9279,6 +9393,15 @@ void bridge_remote_actor_samples(
             // first sample is the only place it has ever been.
             bridged = *bracket.next.entity;
         }
+        if (const auto anchor = knockback_anchors.find(net_id);
+            anchor != knockback_anchors.end()) {
+            apply_knockback_anchor(
+                anchor->second,
+                bracket,
+                fixed_delta_seconds,
+                target_server_time_us,
+                &bridged);
+        }
         const auto slot = slots.find(net_id);
         if (slot != slots.end()) {
             snapshot->entities[slot->second] = bridged;
@@ -9312,6 +9435,7 @@ bool KernelEngine::build_interpolated_snapshot_for_server_time(
         *out_snapshot = client_snapshot_buffer_.front();
         bridge_remote_actor_samples(
             client_snapshot_buffer_,
+            client_knockback_anchors_,
             fixed_delta_seconds,
             snapshot_interval_us,
             target_server_time_us,
@@ -9326,6 +9450,7 @@ bool KernelEngine::build_interpolated_snapshot_for_server_time(
         *out_snapshot = client_snapshot_buffer_.back();
         bridge_remote_actor_samples(
             client_snapshot_buffer_,
+            client_knockback_anchors_,
             fixed_delta_seconds,
             snapshot_interval_us,
             target_server_time_us,
@@ -9352,6 +9477,7 @@ bool KernelEngine::build_interpolated_snapshot_for_server_time(
         *out_snapshot = *from;
         bridge_remote_actor_samples(
             client_snapshot_buffer_,
+            client_knockback_anchors_,
             fixed_delta_seconds,
             snapshot_interval_us,
             target_server_time_us,
@@ -9388,6 +9514,7 @@ bool KernelEngine::build_interpolated_snapshot_for_server_time(
     }
     bridge_remote_actor_samples(
         client_snapshot_buffer_,
+        client_knockback_anchors_,
         fixed_delta_seconds,
         snapshot_interval_us,
         target_server_time_us,
@@ -10761,6 +10888,7 @@ void KernelEngine::simulate_tick() {
     }
     flush_inventory_replication();
     flush_prop_state_changes();
+    flush_actor_impulses();
     // With the snapshot rather than every tick, which is what
     // LocomotionStepRecord has always said it does: start_tick_delta exists so
     // that a batch can span a snapshot interval. Flushing per tick sent a packet
@@ -11505,6 +11633,18 @@ void KernelEngine::queue_prop_state_change(NetId net_id) {
     if (net_id != 0u) pending_prop_state_changes_.push_back(net_id);
 }
 
+void KernelEngine::queue_actor_impulse(NetId net_id, float floor_y) {
+    if (net_id == 0u) return;
+    // A second impulse in the same tick re-arms the lockout and changes the
+    // velocity, both of which the flush reads afterwards. The floor is the one
+    // thing it cannot read afterwards: by then the first hit has lifted the
+    // actor off it.
+    for (const auto& pending : pending_actor_impulses_) {
+        if (pending.first == net_id) return;
+    }
+    pending_actor_impulses_.emplace_back(net_id, floor_y);
+}
+
 bool KernelEngine::make_prop_state_change_record(
     NetId net_id,
     PropStateChangeRecord* out_record) const {
@@ -11830,6 +11970,103 @@ void KernelEngine::flush_prop_state_changes() {
     }
     for (PeerSession& session : peer_sessions_) {
         if (session.welcomed) send(&session);
+    }
+}
+
+void KernelEngine::flush_actor_impulses() {
+    if (pending_actor_impulses_.empty()) return;
+    const std::uint32_t tick = tick_loop_.current_tick();
+    ActorImpulseBatchPacket batch{};
+    batch.server_tick = tick;
+    for (const auto& [net_id, floor_y] : pending_actor_impulses_) {
+        const std::optional<entt::entity> entity = world_.find_entity(net_id);
+        if (!entity.has_value()) continue;
+        const auto& registry = world_.registry();
+        const ImpulseLockout* lockout = registry.try_get<ImpulseLockout>(*entity);
+        const Transform* transform = registry.try_get<Transform>(*entity);
+        const Velocity* velocity = registry.try_get<Velocity>(*entity);
+        const MovementState* movement = registry.try_get<MovementState>(*entity);
+        const Health* health = registry.try_get<Health>(*entity);
+        // No lockout left means the flight already ended inside this tick (it
+        // landed, or a death cleared it); the snapshot says the rest.
+        if (lockout == nullptr || transform == nullptr || velocity == nullptr ||
+            movement == nullptr || lockout->until_tick <= tick ||
+            (health != nullptr && health->max_hp > 0u && health->hp == 0u)) {
+            continue;
+        }
+        ActorImpulseRecord record{};
+        record.net_id = net_id;
+        record.position = transform->position;
+        record.velocity = velocity->linear;
+        record.gravity_y = movement->gravity.y;
+        record.floor_y = floor_y;
+        record.lockout_ticks = static_cast<std::uint16_t>(std::min<std::uint32_t>(
+            lockout->until_tick - tick, UINT16_MAX));
+        batch.records.push_back(record);
+    }
+    pending_actor_impulses_.clear();
+    if (batch.records.empty()) return;
+
+    const auto send = [&](PeerSession* session) {
+        ActorImpulseBatchPacket relevant{};
+        relevant.server_tick = batch.server_tick;
+        for (const ActorImpulseRecord& record : batch.records) {
+            // The owner predicts its own knockback from the lockout block in
+            // its own snapshot record.
+            if (record.net_id != session->player &&
+                session->relevant_entities.contains(record.net_id)) {
+                relevant.records.push_back(record);
+            }
+        }
+        if (relevant.records.empty()) return;
+        const std::vector<std::uint8_t> encoded =
+            encode_actor_impulse_batch_packet(relevant, next_packet_sequence_++);
+        if (encoded.empty() || !transport_->Send(
+                session->peer,
+                encoded.data(),
+                static_cast<std::uint32_t>(encoded.size()),
+                SendMode::kReliable,
+                ChannelId::kReliableEvent)) {
+            push_event(KernelEventType_Error, 0u, session->peer, 34u);
+            return;
+        }
+        record_sent_packet(
+            static_cast<std::uint32_t>(encoded.size()),
+            SendMode::kReliable,
+            ChannelId::kReliableEvent);
+    };
+    if (config_.mode == KernelMode_ListenServer && local_listen_session_.welcomed) {
+        send(&local_listen_session_);
+    }
+    for (PeerSession& session : peer_sessions_) {
+        if (session.welcomed) send(&session);
+    }
+}
+
+void KernelEngine::handle_client_actor_impulse_batch(
+    const ActorImpulseBatchPacket& packet) {
+    const float fixed_delta_seconds = tick_loop_.fixed_delta_seconds();
+    for (const ActorImpulseRecord& record : packet.records) {
+        if (record.net_id == local_player_net_id_) continue;
+        const auto existing = client_knockback_anchors_.find(record.net_id);
+        if (existing != client_knockback_anchors_.end() &&
+            static_cast<std::int32_t>(packet.server_tick - existing->second.tick) < 0) {
+            continue;
+        }
+        RemoteKnockbackAnchor anchor{};
+        anchor.tick = packet.server_tick;
+        anchor.position = record.position;
+        anchor.velocity = record.velocity;
+        anchor.gravity_y = record.gravity_y;
+        anchor.floor_y = record.floor_y;
+        anchor.end_tick = packet.server_tick + knockback_flight_ticks(
+            record.position,
+            record.velocity,
+            record.gravity_y,
+            record.floor_y,
+            fixed_delta_seconds,
+            record.lockout_ticks);
+        client_knockback_anchors_[record.net_id] = anchor;
     }
 }
 

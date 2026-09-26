@@ -2016,4 +2016,77 @@ bool decode_prop_state_change_batch_packet(
     return true;
 }
 
+namespace {
+
+bool finite_vec3(const glm::vec3& value) {
+    return std::isfinite(value.x) && std::isfinite(value.y) &&
+        std::isfinite(value.z);
+}
+
+bool valid_actor_impulse_record(const ActorImpulseRecord& record) {
+    return record.net_id != 0u && record.lockout_ticks != 0u &&
+        finite_vec3(record.position) && finite_vec3(record.velocity) &&
+        std::isfinite(record.gravity_y) && std::isfinite(record.floor_y);
+}
+
+}  // namespace
+
+std::vector<std::uint8_t> encode_actor_impulse_batch_packet(
+    const ActorImpulseBatchPacket& packet,
+    std::uint32_t sequence) {
+    if (packet.records.empty() || packet.records.size() > UINT16_MAX) return {};
+    protocol_internal::PacketWriter payload;
+    payload.write_u32(packet.server_tick);
+    payload.write_u16(static_cast<std::uint16_t>(packet.records.size()));
+    for (const ActorImpulseRecord& record : packet.records) {
+        if (!valid_actor_impulse_record(record)) return {};
+        payload.write_u32(record.net_id);
+        payload.write_vec3(record.position);
+        payload.write_vec3(record.velocity);
+        payload.write_float(record.gravity_y);
+        payload.write_float(record.floor_y);
+        payload.write_u16(record.lockout_ticks);
+    }
+    return protocol_internal::wrap_packet(
+        MessageType::kActorImpulseBatch, payload.bytes(), sequence);
+}
+
+bool decode_actor_impulse_batch_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    ActorImpulseBatchPacket* out_packet) {
+    const std::uint8_t* payload = nullptr;
+    std::size_t payload_size = 0;
+    if (out_packet == nullptr ||
+        !protocol_internal::unwrap_packet(
+            data, size, MessageType::kActorImpulseBatch,
+            &payload, &payload_size) || payload_size < 6u) {
+        return false;
+    }
+    ActorImpulseBatchPacket packet;
+    std::uint16_t count = 0;
+    protocol_internal::PacketReader reader(payload, payload_size);
+    if (!reader.read_u32(&packet.server_tick) || !reader.read_u16(&count) ||
+        count == 0u) {
+        return false;
+    }
+    packet.records.reserve(count);
+    for (std::uint16_t index = 0; index < count; ++index) {
+        ActorImpulseRecord record;
+        if (!reader.read_u32(&record.net_id) ||
+            !reader.read_vec3(&record.position) ||
+            !reader.read_vec3(&record.velocity) ||
+            !reader.read_float(&record.gravity_y) ||
+            !reader.read_float(&record.floor_y) ||
+            !reader.read_u16(&record.lockout_ticks) ||
+            !valid_actor_impulse_record(record)) {
+            return false;
+        }
+        packet.records.push_back(record);
+    }
+    if (!reader.done()) return false;
+    *out_packet = std::move(packet);
+    return true;
+}
+
 }  // namespace network_example

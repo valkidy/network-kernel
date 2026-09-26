@@ -14,12 +14,14 @@
 #include <entt/entt.hpp>
 #include <glm/glm.hpp>
 
+#include "protocol/public/network_packets.h"
+#include "simulation/public/simulation.h"
+#include "sync/public/snapshot.h"
+#include "world/public/components.h"
+
 #define private public
 #include "kernel/src/kernel.h"
 #undef private
-
-#include "sync/public/snapshot.h"
-#include "world/public/components.h"
 
 namespace ne = network_example;
 
@@ -215,6 +217,113 @@ void a_prop_keeps_the_pairwise_result() {
     require(near(x_at(h.at(101), 20), 0.0f));
 }
 
+// ---------------------------------------------------------------------------
+// Knockback anchors: a struck actor is drawn along the flight the server
+// announced, not on a chord between whatever samples the send set spared.
+// ---------------------------------------------------------------------------
+
+constexpr float kGravity = -9.81f;
+constexpr float kTickSeconds = 1.0f / 30.0f;
+const glm::vec3 kLaunchOrigin{0.2f, 0.1f, 0.0f};
+const glm::vec3 kLaunchVelocity{8.0f, 6.0f, 0.0f};
+
+void announce_knockback(Harness* h, ne::NetId net_id, std::uint32_t tick) {
+    ne::ActorImpulseBatchPacket packet;
+    packet.server_tick = tick;
+    ne::ActorImpulseRecord record;
+    record.net_id = net_id;
+    record.position = kLaunchOrigin;
+    record.velocity = kLaunchVelocity;
+    record.gravity_y = kGravity;
+    record.floor_y = 0.0f;
+    record.lockout_ticks = 300;
+    packet.records.push_back(record);
+    h->engine.handle_client_actor_impulse_batch(packet);
+}
+
+glm::vec3 flight(double ticks_after_anchor) {
+    glm::vec3 at = ne::knockback_flight_position_at(
+        kLaunchOrigin,
+        kLaunchVelocity,
+        kGravity,
+        kTickSeconds,
+        static_cast<float>(ticks_after_anchor) * kTickSeconds);
+    at.y = std::max(at.y, 0.0f);
+    return at;
+}
+
+bool near_vec(const glm::vec3& lhs, const glm::vec3& rhs) {
+    return near(lhs.x, rhs.x) && near(lhs.y, rhs.y) && near(lhs.z, rhs.z);
+}
+
+// Struck at 102, and the send set skips it for the rest of the flight. Without
+// the anchor the chord from its last walking sample would be all there is.
+void a_struck_actor_follows_the_announced_flight() {
+    Harness h;
+    ne::EntitySnapshot walking = actor(30, 0.0f);
+    walking.position.y = 0.0f;
+    walking.velocity = glm::vec3{1.0f, 0.0f, 0.0f};
+    h.store(100, {walking});
+    for (std::uint32_t tick = 102; tick <= 140; tick += 2) {
+        h.store(tick, {});
+    }
+    announce_knockback(&h, 30, 102);
+    const ne::RemoteKnockbackAnchor& anchor = h.engine.client_knockback_anchors_.at(30);
+    const std::uint32_t landing = anchor.end_tick;
+    require(landing > 102u && landing < 140u);
+
+    const ne::WorldSnapshot mid_snapshot = h.at(105);
+    const ne::EntitySnapshot* mid = find(mid_snapshot, 30);
+    require(mid != nullptr);
+    std::printf(
+        "flight: x=%.4f y=%.4f expected x=%.4f y=%.4f\n",
+        mid->position.x, mid->position.y, flight(3).x, flight(3).y);
+    require(near_vec(mid->position, flight(3)));
+    require(mid->velocity.y < kLaunchVelocity.y);
+
+    // Down, and held where it came down until a sample says otherwise --
+    // not carried on at 8 m/s past where its controller took over.
+    const glm::vec3 landed = flight(landing - 102u);
+    require(near(landed.y, 0.0f));
+    const ne::WorldSnapshot after_snapshot = h.at(landing + 4.0);
+    const ne::EntitySnapshot* after = find(after_snapshot, 30);
+    require(after != nullptr);
+    require(near_vec(after->position, landed));
+
+    // Before the anchor tick it is still the walking actor.
+    require(near(x_at(h.at(101), 30), 1.0f / 30.0f));
+}
+
+// A later sample inside the flight disagrees -- it hit something the replay
+// cannot know about. The drawn position is bent toward it, not snapped.
+void an_in_flight_sample_is_bent_toward_not_snapped_to() {
+    Harness h;
+    h.store(100, {actor(31, 0.0f)});
+    h.store(102, {});
+    h.store(104, {});
+    ne::EntitySnapshot blocked = actor(31, 0.0f);
+    blocked.position = flight(4) - glm::vec3{0.3f, 0.0f, 0.0f};
+    blocked.velocity = glm::vec3{0.0f, 2.0f, 0.0f};
+    h.store(106, {blocked});
+    h.store(108, {});
+    announce_knockback(&h, 31, 102);
+
+    const glm::vec3 halfway = flight(2) - glm::vec3{0.15f, 0.0f, 0.0f};
+    const ne::WorldSnapshot bent_snapshot = h.at(104);
+    const ne::EntitySnapshot* bent = find(bent_snapshot, 31);
+    require(bent != nullptr);
+    require(near_vec(bent->position, halfway));
+}
+
+// The local player predicts its own knockback from its owner lockout block;
+// an anchor for it is ignored.
+void the_local_player_is_not_anchored() {
+    Harness h;
+    h.engine.local_player_net_id_ = 32;
+    announce_knockback(&h, 32, 102);
+    require(!h.engine.client_knockback_anchors_.contains(32));
+}
+
 }  // namespace
 
 int main() {
@@ -223,6 +332,9 @@ int main() {
     discrete_state_waits_for_the_last_interval();
     the_dead_are_neither_extrapolated_nor_slid_out_of_the_corpse();
     a_prop_keeps_the_pairwise_result();
+    a_struck_actor_follows_the_announced_flight();
+    an_in_flight_sample_is_bent_toward_not_snapped_to();
+    the_local_player_is_not_anchored();
     std::printf("remote_actor_gap_bridging_test: PASS\n");
     return 0;
 }

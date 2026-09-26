@@ -1227,6 +1227,14 @@ bool execute_action_graph_commands(
             }
             const EntityKind& kind = world.registry().get<EntityKind>(target);
             if (kind.type == EntityType::kActor) {
+                // Only a locked-out flight is the authority's alone to steer;
+                // without the lockout the controller overwrites it next tick,
+                // and there is nothing for a client to replay.
+                if (impulse->lockout_ticks > 0u) {
+                    engine.queue_actor_impulse(
+                        impulse->target,
+                        world.registry().get<Transform>(target).position.y);
+                }
                 MovementState& movement =
                     world.registry().get_or_emplace<MovementState>(target);
                 movement.ground_state = MovementState::GroundState::kAirborne;
