@@ -109,6 +109,84 @@ deterministic local presentation simulation from spawn metadata. In that mode,
 the reliable spawn/despawn stream owns lifecycle while compact low-frequency
 projectile snapshots remain optional correction data.
 
+### Starved actors
+
+A snapshot is a send set, not the world. Past the budget most actors are left
+out of most snapshots (measured at 80 acting agents: half of every agent's
+snapshot intervals, even within 10 m), so interpolating between the two
+buffered snapshots around the render time has nothing to say about them.
+
+Remote actors are therefore drawn from their own samples:
+
+```text
+1. Find the actor's own previous and next sample anywhere in the buffer.
+2. Both known:
+       interpolate position, rotation and velocity across the gap;
+       keep flags, hp and the action timeline from the older sample
+       until the last snapshot interval before the newer one.
+3. Only the previous sample known:
+       carry it along its last horizontal velocity for at most 0.25 s,
+       then hold. Never extrapolate vertically or while dead.
+4. Only a newer sample known:
+       the actor just became relevant; draw it at that sample.
+```
+
+Props and projectiles keep the pairwise result: a prop's moves are pickups and
+placements, which interpolating across a gap would draw as a slide.
+
+### Knockback anchors
+
+While an `ImpulseLockout` stands, the authority ignores the actor's controller:
+horizontal velocity carries and gravity pulls until the actor lands or the
+lockout expires. The state at the end of the tick it was struck is therefore
+the whole flight, and it is the tick the send set is least likely to cover.
+
+```text
+Server, the tick an impulse arms a lockout:
+    ActorImpulseBatch on the reliable-event channel, relevance-filtered,
+    never sent to the actor's own owner:
+        position, velocity, gravity, height it was struck from,
+        lockout ticks remaining.
+
+Client:
+    replay the flight with knockback_flight_position_at
+        (the solver's per-tick sum, exact on every tick);
+    end it with knockback_flight_ticks
+        (first landing, or the lockout ceiling for a flat slide);
+    re-base on any later in-flight snapshot sample and bend toward it,
+        so a collision the replay cannot know is absorbed, not snapped;
+    after the flight, hold where it came down until a later sample arrives.
+```
+
+The owner predicts its own knockback from the lockout block in its own
+snapshot record instead.
+
+### Endings on the world timeline
+
+Reliable records arrive about one interpolation delay before the world
+timeline reaches the tick they describe. A record that ends or starts
+something drawn on that timeline takes effect when the render instant reaches
+its tick, not when it arrives:
+
+```text
+Thrown prop, flight ended (landed, caught, placed):
+    the new state is applied, but the flight keeps being drawn from its
+    anchor, and reported InFlight, until the render instant reaches the tick.
+
+Thrown prop or server-only projectile, destroyed or expired:
+    the whole despawn -- removal, EntityDestroyed, the lifecycle event the
+    view is removed on -- is held until the render instant reaches the tick.
+    Leaving relevance is not an ending and is applied at once.
+
+Server-only projectile spawned (a bottle's blast, a remote melee hit):
+    not drawn until the render instant reaches its spawn tick.
+    The local player's own are drawn at once.
+```
+
+A thrown prop the client can anchor is also left out of the snapshot send set
+while it is in flight: the render pass never uses those samples, and the slot
+goes to an actor.
+
 ## Local-Owned Deterministic Projectiles
 
 Rocket and grenade projectiles are deterministic projectiles.
@@ -198,6 +276,132 @@ sound
 
 The server performs authoritative hit detection, including lag compensation
 when available, and sends the resulting gameplay events.
+
+## Render Clock and AI Movement Intent (Next)
+
+Status: the next piece of work after the endings above are validated in play.
+The render clock comes first; AI movement intent only if measurement still
+calls for it afterwards.
+
+### Two kinds of waiting for snapshots
+
+```text
+One entity missing from snapshots, the stream still arriving:
+    the send set had no slot for it. Handled: starved actors are drawn from
+    their own samples, knockback flights and thrown props from their anchors.
+
+The whole stream late by more than the interpolation delay:
+    network jitter, loss, a biased clock-offset estimate, a server hitch.
+    Not handled.
+```
+
+The second stalls everything at once. `client_render_server_time_us` clamps
+the render instant to the newest buffered snapshot, and every world-timeline
+consumer reads that one instant: interpolation, knockback flights, thrown-prop
+anchors, and the endings held back for it. Anchored motion needs no new samples
+to be drawn, but it still asks the render clock what time it is, so it stops
+with everything else and jumps when the next snapshot arrives (measured on a
+thrown prop: held at 24.0 m, then 27.2 m in one frame).
+
+### Planned: let the one render clock run ahead, bounded
+
+```text
+1. Let the shared render instant pass the newest snapshot by at most a cap
+   (start from the 0.25 s actors are already extrapolated for). Everything
+   that can advance without samples keeps moving: anchors, knockback flights,
+   predicted projectiles, actor extrapolation, and held-back endings are
+   released on the same clock.
+2. When snapshots resume, never step the clock backwards: run it slightly
+   slow until the buffer is ahead of it again.
+3. Size the interpolation delay from measured arrival jitter (jitter_us)
+   instead of a fixed two snapshot intervals.
+```
+
+It has to be the one clock. Advancing a single consumer on its own breaks
+ordering: a thrown bottle given its own unclamped time flies past the point
+where its destroy -- still waiting on the clamped clock -- removes it.
+
+Client only; no ABI or packet change.
+
+### Planned, gated: AI movement intent
+
+Replicate what an agent is doing (route, destination, speed) instead of where
+it is, so the client moves it between samples. Gates, in order:
+
+```text
+1. In-play validation shows the remaining jitter is actor motion, not stalls.
+2. A benchmark measures drawn-versus-true position per distance band at
+   40 / 80 / 200 moving, turning agents.
+3. The cheap fixes are tried first: Hermite interpolation across a gap using
+   both samples' velocities (client only), and a larger per-player snapshot
+   budget (already server-selectable).
+```
+
+Scope, which is why it is gated: the kernel has no notion of intent -- routes
+live in `game_server` (`patrol_navigation`, `patrol_director`, the chaser) and
+the kernel sees one move input per agent per tick. It needs a new C API for
+`game_server` to hand intent to the kernel (ABI bump, both export lists, the
+Unity managed mirrors), controller changes, a packet schema bump, and
+client-side route following. Order by how rarely intent changes: patrol
+routes, then sentries, chasers last.
+
+What it does and does not buy:
+
+```text
+With the clock above, intent makes a late stream mostly invisible: an agent
+keeps walking its route. Without it, intent still stalls like everything else.
+
+A change inside a late window -- a turn, a hit, a death -- arrives already in
+the past and becomes a correction instead of a stall. Intent travels on the
+reliable channel, so under packet loss head-of-line blocking can make that
+correction later than a snapshot would have been.
+
+The interpolation delay stops being a hard requirement and becomes a buffer
+that trades latency for fewer corrections.
+```
+
+## Homing Projectiles (Deferred)
+
+Status: deferred until a homing weapon is designed and equipped. The
+`homing_missile` projectile, weapon, and fire/reload actions are authored, but
+no player or agent loadout uses them, so the work below cannot be validated in
+play yet.
+
+Current behavior, which is known to jitter under crowd load:
+
+```text
+Server:
+    boost straight for boost_ticks, then lock the nearest valid target in the
+    lock cone, turn at most max_turn_degrees_per_tick toward it, accelerate to
+    max_speed, and fly straight once the target is lost.
+
+Client:
+    projectile_position_at has no homing branch, so a remote homing projectile
+    is drawn as a straight line from its spawn record and pulled onto the real
+    path only by hybrid snapshot corrections (straight-line extrapolation,
+    capped at 0.2 s). Projectiles carry 1/8 of an actor's send weight, so in a
+    crowd a correction can be up to a second apart: straight, then a snap.
+```
+
+Planned when the weapon exists, following the knockback anchor pattern:
+
+```text
+1. Server sends a reliable guidance record only when the guidance phase
+   changes (lock-on, target lost, retarget): projectile, tick, phase,
+   target net_id, position, velocity. Two or three per missile.
+2. Client steers between records with the server's own turn-rate and
+   acceleration rules, shared as a simulation function like
+   knockback_flight_position_at, toward the target's position.
+3. Hybrid snapshot corrections and the existing correction offset absorb
+   the remaining error.
+4. Packet schema bump; server and client rebuilt together.
+```
+
+Known limit to design around: the replay cannot be exact. A remote homing
+projectile is fast-forwarded to the present while a remote target is drawn
+about one interpolation delay in the past, so steering toward the drawn target
+aims at the wrong instant. A local-player target is predicted in the present
+and lines up, which is also the case players notice most.
 
 ## Physics Projectiles
 

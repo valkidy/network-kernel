@@ -320,6 +320,14 @@ constexpr std::uint32_t kMaxCompensationWindowUs = 100000u;
 constexpr std::uint64_t kClockSyncIntervalUs = 1000000u;
 constexpr double kClientClockOffsetSmoothingFactor = 0.25;
 constexpr float kMaxHomingVisualExtrapolationSeconds = 0.2f;
+// How far past its newest sample a remote actor is carried along its last
+// velocity before it is held. The send set starves actors for several
+// snapshots at a time once a crowd outgrows the budget (measured at 80 acting
+// agents: half of all intervals, even 10 m away), and the one-interval
+// interpolation delay cannot hide a gap that long. Beyond this the guess is
+// worth less than the jump it would save: a quarter second at run speed is a
+// metre and a quarter, and an agent that turned inside it lands that far off.
+constexpr float kMaxRemoteActorExtrapolationSeconds = 0.25f;
 constexpr float kDefaultEntityRelevanceDistanceMeters = 40.0f;
 // The radius an entity has to pass to STOP being relevant, as opposed to the
 // one it has to pass to start. Leaving costs a reliable despawn and returning
@@ -5909,6 +5917,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     client_inventory_sync_states_.clear();
     client_inventory_resync_pending_.clear();
     pending_prop_state_changes_.clear();
+    pending_actor_impulses_.clear();
     claimed_item_instances_.clear();
     claimed_prop_entities_.clear();
     std::string item_validation_error;
@@ -5950,6 +5959,8 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     client_replicated_entities_.clear();
     client_metadata_timeout_reported_entities_.clear();
     client_despawned_entities_.clear();
+    client_knockback_anchors_.clear();
+    deferred_flight_despawns_.clear();
     pending_prediction_inputs_.clear();
     latest_client_input_ = KernelPlayerInput{};
     pending_client_action_intents_.clear();
@@ -6536,6 +6547,16 @@ void KernelEngine::handle_client_reliable_event(const TransportEvent& transport_
         handle_client_status_effect_state(status_effect_state);
         return;
     }
+    ActorImpulseBatchPacket actor_impulse_batch;
+    decode_start = std::chrono::steady_clock::now();
+    if (decode_actor_impulse_batch_packet(
+            transport_event.payload.data(),
+            transport_event.payload.size(),
+            &actor_impulse_batch)) {
+        record_packet_deserialization_cost(elapsed_cost_us(decode_start));
+        handle_client_actor_impulse_batch(actor_impulse_batch);
+        return;
+    }
     PropStateChangeBatchPacket prop_state_batch;
     decode_start = std::chrono::steady_clock::now();
     if (decode_prop_state_change_batch_packet(
@@ -7104,6 +7125,8 @@ void KernelEngine::handle_client_projectile_spawn_batch(
                 entity.position = record.spawn_position;
                 entity.velocity = record.initial_velocity;
                 entity.snapshot_tick = packet.server_tick;
+                entity.spawn_tick = packet.server_tick;
+                entity.has_spawn_tick = true;
                 client_replicated_entities_.push_back(entity);
             } else {
                 replicated->type = EntityType::kProjectile;
@@ -7116,6 +7139,8 @@ void KernelEngine::handle_client_projectile_spawn_batch(
                     projectile_template->collider_template_id;
                 replicated->position = record.spawn_position;
                 replicated->rotation = glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
+                replicated->spawn_tick = packet.server_tick;
+                replicated->has_spawn_tick = true;
             }
             client_metadata_timeout_reported_entities_.erase(record.projectile_net_id);
             if (projectile_template->sync_mode ==
@@ -7430,7 +7455,62 @@ void KernelEngine::handle_client_template_update(
     }
 }
 
+bool KernelEngine::is_prop_in_flight_on_client(
+    const ClientReplicatedEntity& entity) const {
+    return entity.type == EntityType::kProp && entity.has_thrown_anchor &&
+        (entity.world_item_mode == KernelWorldItemMode_InFlight ||
+         entity.has_thrown_flight_end);
+}
+
+void KernelEngine::release_deferred_flight_despawns() {
+    if (deferred_flight_despawns_.empty()) return;
+    std::vector<DeferredDespawn> due;
+    std::erase_if(deferred_flight_despawns_, [&](const DeferredDespawn& held) {
+        if (render_server_time_us_ <
+            tick_time_us(held.server_tick, tick_loop_.fixed_delta_seconds())) {
+            return false;
+        }
+        due.push_back(held);
+        return true;
+    });
+    for (const DeferredDespawn& held : due) {
+        EntityDespawnPacket packet{};
+        packet.net_id = held.net_id;
+        packet.server_tick = held.server_tick;
+        packet.reason = held.reason;
+        handle_client_despawn(packet);
+    }
+}
+
 void KernelEngine::handle_client_despawn(const EntityDespawnPacket& packet) {
+    // Something that ends on the world timeline -- a prop in flight, a
+    // server-only projectile -- is still being drawn short of the tick it was
+    // destroyed on when the despawn arrives, an interpolation delay early.
+    // Applying it then removed a thrown bottle in mid-air, well before the
+    // blast it set off. Everything a despawn does, the lifecycle event Unity
+    // removes the view on included, waits for the render instant instead.
+    // Leaving relevance is not an ending and is applied at once.
+    if (packet.reason != KernelDespawnReason_OutOfRange && has_client_render_time_ &&
+        render_server_time_us_ <
+            tick_time_us(packet.server_tick, tick_loop_.fixed_delta_seconds())) {
+        const auto drawn = std::find_if(
+            client_replicated_entities_.begin(),
+            client_replicated_entities_.end(),
+            [&packet](const ClientReplicatedEntity& entity) {
+                return entity.net_id == packet.net_id;
+            });
+        const bool on_world_timeline = drawn != client_replicated_entities_.end() &&
+            !has_predicted_projectile_net_id(packet.net_id) &&
+            (is_prop_in_flight_on_client(*drawn) ||
+             (drawn->type == EntityType::kProjectile && drawn->has_spawn_tick &&
+              (local_client_peer_id_ == 0u ||
+               drawn->owner_peer != local_client_peer_id_)));
+        if (on_world_timeline) {
+            deferred_flight_despawns_.push_back(
+                DeferredDespawn{packet.net_id, packet.server_tick, packet.reason});
+            return;
+        }
+    }
     client_status_effect_states_.erase(packet.net_id);
     client_despawned_entities_[packet.net_id] = ClientEntityTombstone{
         packet.server_tick,
@@ -7568,6 +7648,8 @@ void KernelEngine::clear_client_session() {
     client_replicated_entities_.clear();
     client_metadata_timeout_reported_entities_.clear();
     client_despawned_entities_.clear();
+    client_knockback_anchors_.clear();
+    deferred_flight_despawns_.clear();
     latest_client_snapshot_ = WorldSnapshot{};
     predicted_local_entity_ = EntitySnapshot{};
     has_authoritative_local_entity_ = false;
@@ -7782,6 +7864,15 @@ void KernelEngine::handle_client_snapshot(WorldSnapshot snapshot) {
         replicated->active = true;
     }
     store_client_snapshot(std::move(snapshot));
+    // Nothing is ever rendered before the oldest buffered snapshot, so a
+    // flight that ended before it can no longer be drawn.
+    std::erase_if(
+        client_knockback_anchors_,
+        [this](const auto& entry) {
+            return static_cast<std::int32_t>(
+                       entry.second.end_tick -
+                       client_snapshot_buffer_.front().header.server_tick) < 0;
+        });
     diagnose_client_snapshot_metadata_waits();
     // Ahead of the prediction_failed_ return: the magazine the server reports is
     // true whether or not this client can still predict movement.
@@ -9165,6 +9256,224 @@ bool KernelEngine::build_interpolated_snapshot(
         out_snapshot);
 }
 
+namespace {
+
+// Rewrites every actor in `snapshot` from that actor's own samples rather than
+// from whichever two buffered snapshots happen to bracket the render instant.
+//
+// A snapshot is a send set, not the world: past the budget an actor is left out
+// of most of them, and pairing the two snapshots around the target then has
+// nothing to say about it. It used to be held at `from` for the interval, drop
+// out of the interpolated snapshot entirely for the next one -- and be drawn
+// from client_replicated_entities_, which handle_client_snapshot has already
+// moved to the newest sample, a full interpolation delay ahead -- and then be
+// drawn at `to`. Hold, leap forward, fall back: every starved interval.
+//
+// Its own previous and next samples are both authoritative, so interpolating
+// between them across the gap is exact for anything moving in a straight line,
+// and the interpolation delay usually means the next one has already arrived.
+// When it has not, the actor is carried along its last velocity, horizontally
+// only: a grounded character's vertical velocity is whatever the controller
+// pressed it into the floor with, and stepping along it would sink the body.
+// Anything that is not an actor keeps the pairwise result -- a prop's moves
+// are pickups and placements, which a long interpolation would draw as a slide.
+struct ActorSample {
+    const EntitySnapshot* entity = nullptr;
+    std::uint64_t time_us = 0;
+};
+
+struct ActorSampleBracket {
+    ActorSample previous;
+    ActorSample next;
+};
+
+// Redraws an actor inside a knockback from the flight its anchor announced.
+//
+// Between samples the step-1 bridge draws a knocked-back actor on the chord
+// between them, or -- with no newer sample yet -- carries it level along its
+// last velocity, which misses the launch entirely: the anchor is usually the
+// only record of the tick it was struck. Inside the flight the authority
+// ignores the actor's controller, so the newest authoritative state inside it,
+// replayed through knockback_flight_position_at, is where it is. That state is
+// the anchor itself or any snapshot sample taken after it. A later in-flight
+// sample is bent toward, so a wall the flight ran into -- the one thing the
+// replay cannot know -- is absorbed by the time that sample is reached rather
+// than snapped at it.
+//
+// Once the flight is over the actor is held where it came down until a sample
+// from after the release arrives, then eased to it; carrying it on at the
+// knockback velocity would slide it past where the controller took over.
+void apply_knockback_anchor(
+    const RemoteKnockbackAnchor& anchor,
+    const ActorSampleBracket& bracket,
+    float fixed_delta_seconds,
+    std::uint64_t target_server_time_us,
+    EntitySnapshot* bridged) {
+    const std::uint64_t anchor_us = tick_time_us(anchor.tick, fixed_delta_seconds);
+    const std::uint64_t end_us =
+        tick_time_us(anchor.end_tick, fixed_delta_seconds);
+    if (target_server_time_us < anchor_us ||
+        (bridged->flags & kVisualFlagDead) != 0u) {
+        return;
+    }
+    glm::vec3 base_position = anchor.position;
+    glm::vec3 base_velocity = anchor.velocity;
+    std::uint64_t base_us = anchor_us;
+    if (bracket.previous.entity != nullptr &&
+        bracket.previous.time_us > anchor_us) {
+        if (bracket.previous.time_us > end_us) {
+            // Released, and the snapshot already has it back.
+            return;
+        }
+        base_position = bracket.previous.entity->position;
+        base_velocity = bracket.previous.entity->velocity;
+        base_us = bracket.previous.time_us;
+    }
+    const auto flight_at = [&](std::uint64_t time_us) {
+        const float elapsed_seconds = static_cast<float>(
+            static_cast<double>(std::min(time_us, end_us) - base_us) /
+            1'000'000.0);
+        glm::vec3 position = knockback_flight_position_at(
+            base_position,
+            base_velocity,
+            anchor.gravity_y,
+            fixed_delta_seconds,
+            elapsed_seconds);
+        position.y = std::max(position.y, anchor.floor_y);
+        return position;
+    };
+
+    glm::vec3 position = flight_at(target_server_time_us);
+    glm::vec3 velocity{0.0f};
+    if (target_server_time_us < end_us) {
+        velocity = knockback_flight_velocity_at(
+            base_velocity,
+            anchor.gravity_y,
+            static_cast<float>(
+                static_cast<double>(target_server_time_us - base_us) /
+                1'000'000.0));
+    }
+    if (bracket.next.entity != nullptr) {
+        const std::uint64_t next_us = bracket.next.time_us;
+        const glm::vec3& next_position = bracket.next.entity->position;
+        if (next_us <= end_us) {
+            const float alpha = static_cast<float>(
+                static_cast<double>(target_server_time_us - base_us) /
+                static_cast<double>(next_us - base_us));
+            position += (next_position - flight_at(next_us)) * alpha;
+        } else if (target_server_time_us > end_us) {
+            const glm::vec3 landed = flight_at(end_us);
+            const float alpha = static_cast<float>(
+                static_cast<double>(target_server_time_us - end_us) /
+                static_cast<double>(next_us - end_us));
+            position = landed + (next_position - landed) * alpha;
+            velocity = bracket.next.entity->velocity;
+        }
+    }
+    bridged->position = position;
+    bridged->velocity = velocity;
+}
+
+void bridge_remote_actor_samples(
+    const std::vector<WorldSnapshot>& buffer,
+    const std::unordered_map<NetId, RemoteKnockbackAnchor>& knockback_anchors,
+    float fixed_delta_seconds,
+    std::uint64_t snapshot_interval_us,
+    std::uint64_t target_server_time_us,
+    WorldSnapshot* snapshot) {
+    using Sample = ActorSample;
+    using Bracket = ActorSampleBracket;
+    std::unordered_map<NetId, Bracket> brackets;
+    for (const WorldSnapshot& buffered : buffer) {
+        const std::uint64_t time_us =
+            tick_time_us(buffered.header.server_tick, fixed_delta_seconds);
+        for (const EntitySnapshot& entity : buffered.entities) {
+            if (entity.type != EntityType::kActor) {
+                continue;
+            }
+            Bracket& bracket = brackets[entity.net_id];
+            if (time_us <= target_server_time_us) {
+                // The buffer is sorted, so the last one seen is the newest.
+                bracket.previous = Sample{&entity, time_us};
+            } else if (bracket.next.entity == nullptr) {
+                bracket.next = Sample{&entity, time_us};
+            }
+        }
+    }
+    if (brackets.empty()) {
+        return;
+    }
+
+    std::unordered_map<NetId, std::size_t> slots;
+    slots.reserve(snapshot->entities.size());
+    for (std::size_t index = 0; index < snapshot->entities.size(); ++index) {
+        slots.emplace(snapshot->entities[index].net_id, index);
+    }
+    for (const auto& [net_id, bracket] : brackets) {
+        EntitySnapshot bridged;
+        if (bracket.previous.entity != nullptr && bracket.next.entity != nullptr) {
+            const float alpha = static_cast<float>(
+                static_cast<double>(
+                    target_server_time_us - bracket.previous.time_us) /
+                static_cast<double>(
+                    bracket.next.time_us - bracket.previous.time_us));
+            const EntitySnapshot moved = interpolate_snapshot_entity(
+                *bracket.previous.entity, *bracket.next.entity, alpha);
+            if (bracket.next.time_us - target_server_time_us <=
+                snapshot_interval_us) {
+                bridged = moved;
+            } else if ((bracket.previous.entity->flags & kVisualFlagDead) != 0u) {
+                // Dead until the sample that says otherwise: a revive is a
+                // placement, not a walk out of the corpse.
+                bridged = *bracket.previous.entity;
+            } else {
+                // Flags, hp and the action timeline changed at some tick inside
+                // the gap, and the pairwise path takes them from the newer
+                // snapshot -- one interval early at worst. Across a gap that
+                // would be a death or a swing shown most of a second early, so
+                // the older sample's state stands until the last interval.
+                bridged = *bracket.previous.entity;
+                bridged.position = moved.position;
+                bridged.rotation = moved.rotation;
+                bridged.velocity = moved.velocity;
+            }
+        } else if (bracket.previous.entity != nullptr) {
+            bridged = *bracket.previous.entity;
+            if ((bridged.flags & kVisualFlagDead) == 0u) {
+                const float elapsed_seconds = std::min(
+                    static_cast<float>(
+                        static_cast<double>(
+                            target_server_time_us - bracket.previous.time_us) /
+                        1'000'000.0),
+                    kMaxRemoteActorExtrapolationSeconds);
+                bridged.position.x += bridged.velocity.x * elapsed_seconds;
+                bridged.position.z += bridged.velocity.z * elapsed_seconds;
+            }
+        } else {
+            // Only newer samples: the actor has just become relevant, and its
+            // first sample is the only place it has ever been.
+            bridged = *bracket.next.entity;
+        }
+        if (const auto anchor = knockback_anchors.find(net_id);
+            anchor != knockback_anchors.end()) {
+            apply_knockback_anchor(
+                anchor->second,
+                bracket,
+                fixed_delta_seconds,
+                target_server_time_us,
+                &bridged);
+        }
+        const auto slot = slots.find(net_id);
+        if (slot != slots.end()) {
+            snapshot->entities[slot->second] = bridged;
+        } else {
+            snapshot->entities.push_back(bridged);
+        }
+    }
+}
+
+}  // namespace
+
 bool KernelEngine::build_interpolated_snapshot_for_server_time(
     std::uint64_t target_server_time_us,
     WorldSnapshot* out_snapshot) const {
@@ -9177,12 +9486,21 @@ bool KernelEngine::build_interpolated_snapshot_for_server_time(
     }
 
     const float fixed_delta_seconds = tick_loop_.fixed_delta_seconds();
+    const std::uint64_t snapshot_interval_us = tick_time_us(
+        tick_loop_.snapshot_interval_ticks(), fixed_delta_seconds);
     const std::uint64_t oldest_time_us =
         tick_time_us(
             client_snapshot_buffer_.front().header.server_tick,
             fixed_delta_seconds);
     if (target_server_time_us <= oldest_time_us) {
         *out_snapshot = client_snapshot_buffer_.front();
+        bridge_remote_actor_samples(
+            client_snapshot_buffer_,
+            client_knockback_anchors_,
+            fixed_delta_seconds,
+            snapshot_interval_us,
+            target_server_time_us,
+            out_snapshot);
         return true;
     }
     const std::uint64_t newest_time_us =
@@ -9191,6 +9509,13 @@ bool KernelEngine::build_interpolated_snapshot_for_server_time(
             fixed_delta_seconds);
     if (target_server_time_us >= newest_time_us) {
         *out_snapshot = client_snapshot_buffer_.back();
+        bridge_remote_actor_samples(
+            client_snapshot_buffer_,
+            client_knockback_anchors_,
+            fixed_delta_seconds,
+            snapshot_interval_us,
+            target_server_time_us,
+            out_snapshot);
         return true;
     }
 
@@ -9211,6 +9536,13 @@ bool KernelEngine::build_interpolated_snapshot_for_server_time(
 
     if (from->header.server_tick == to->header.server_tick) {
         *out_snapshot = *from;
+        bridge_remote_actor_samples(
+            client_snapshot_buffer_,
+            client_knockback_anchors_,
+            fixed_delta_seconds,
+            snapshot_interval_us,
+            target_server_time_us,
+            out_snapshot);
         return true;
     }
 
@@ -9241,6 +9573,13 @@ bool KernelEngine::build_interpolated_snapshot_for_server_time(
             interpolated.entities.push_back(to_entity);
         }
     }
+    bridge_remote_actor_samples(
+        client_snapshot_buffer_,
+        client_knockback_anchors_,
+        fixed_delta_seconds,
+        snapshot_interval_us,
+        target_server_time_us,
+        &interpolated);
 
     *out_snapshot = std::move(interpolated);
     return true;
@@ -10610,6 +10949,7 @@ void KernelEngine::simulate_tick() {
     }
     flush_inventory_replication();
     flush_prop_state_changes();
+    flush_actor_impulses();
     // With the snapshot rather than every tick, which is what
     // LocomotionStepRecord has always said it does: start_tick_delta exists so
     // that a batch can span a snapshot interval. Flushing per tick sent a packet
@@ -10686,7 +11026,8 @@ WorldSnapshot KernelEngine::build_snapshot_send_set(
         [&](const EntitySnapshot& entity) -> std::optional<EntitySnapshot> {
             EntitySnapshot send_entity = entity;
             if (entity.type == EntityType::kProp &&
-                is_dormant_placed_prop(entity.net_id)) {
+                (is_dormant_placed_prop(entity.net_id) ||
+                 is_anchored_in_flight_prop(entity.net_id))) {
                 return std::nullopt;
             }
             if (entity.type != EntityType::kProjectile) {
@@ -11260,6 +11601,26 @@ bool KernelEngine::is_dormant_placed_prop(NetId net_id) const {
         glm::length(world_.registry().get<Velocity>(*entity).linear) <= 0.001f;
 }
 
+// A prop in flight whose client draws it from its throw anchor: the prop-state
+// record that started the flight already told the client everything, and every
+// later change re-anchors it the same way. A snapshot record of it would be a
+// sample the render pass throws away, bought with a slot an actor could use.
+bool KernelEngine::is_anchored_in_flight_prop(NetId net_id) const {
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (!entity.has_value() ||
+        !world_.registry().all_of<EntityKind, PropWorldMode, EntityTemplateRef>(
+            *entity) ||
+        world_.registry().get<EntityKind>(*entity).type != EntityType::kProp ||
+        world_.registry().get<PropWorldMode>(*entity).mode != PropMode::kInFlight) {
+        return false;
+    }
+    const KernelEntityTemplateDefinition* entity_template = find_entity_template(
+        entity_templates_,
+        world_.registry().get<EntityTemplateRef>(*entity).entity_template_id);
+    return entity_template != nullptr &&
+        entity_template->prop.throw_trajectory_projectile_template_id != 0u;
+}
+
 void KernelEngine::send_entity_spawn(PeerId peer, const EntitySnapshot& entity) {
     PeerId owner_peer = 0;
     std::uint32_t actor_template_id = 0;
@@ -11352,6 +11713,18 @@ void KernelEngine::send_entity_spawn(PeerId peer, const EntitySnapshot& entity) 
 
 void KernelEngine::queue_prop_state_change(NetId net_id) {
     if (net_id != 0u) pending_prop_state_changes_.push_back(net_id);
+}
+
+void KernelEngine::queue_actor_impulse(NetId net_id, float floor_y) {
+    if (net_id == 0u) return;
+    // A second impulse in the same tick re-arms the lockout and changes the
+    // velocity, both of which the flush reads afterwards. The floor is the one
+    // thing it cannot read afterwards: by then the first hit has lifted the
+    // actor off it.
+    for (const auto& pending : pending_actor_impulses_) {
+        if (pending.first == net_id) return;
+    }
+    pending_actor_impulses_.emplace_back(net_id, floor_y);
 }
 
 bool KernelEngine::make_prop_state_change_record(
@@ -11682,6 +12055,103 @@ void KernelEngine::flush_prop_state_changes() {
     }
 }
 
+void KernelEngine::flush_actor_impulses() {
+    if (pending_actor_impulses_.empty()) return;
+    const std::uint32_t tick = tick_loop_.current_tick();
+    ActorImpulseBatchPacket batch{};
+    batch.server_tick = tick;
+    for (const auto& [net_id, floor_y] : pending_actor_impulses_) {
+        const std::optional<entt::entity> entity = world_.find_entity(net_id);
+        if (!entity.has_value()) continue;
+        const auto& registry = world_.registry();
+        const ImpulseLockout* lockout = registry.try_get<ImpulseLockout>(*entity);
+        const Transform* transform = registry.try_get<Transform>(*entity);
+        const Velocity* velocity = registry.try_get<Velocity>(*entity);
+        const MovementState* movement = registry.try_get<MovementState>(*entity);
+        const Health* health = registry.try_get<Health>(*entity);
+        // No lockout left means the flight already ended inside this tick (it
+        // landed, or a death cleared it); the snapshot says the rest.
+        if (lockout == nullptr || transform == nullptr || velocity == nullptr ||
+            movement == nullptr || lockout->until_tick <= tick ||
+            (health != nullptr && health->max_hp > 0u && health->hp == 0u)) {
+            continue;
+        }
+        ActorImpulseRecord record{};
+        record.net_id = net_id;
+        record.position = transform->position;
+        record.velocity = velocity->linear;
+        record.gravity_y = movement->gravity.y;
+        record.floor_y = floor_y;
+        record.lockout_ticks = static_cast<std::uint16_t>(std::min<std::uint32_t>(
+            lockout->until_tick - tick, UINT16_MAX));
+        batch.records.push_back(record);
+    }
+    pending_actor_impulses_.clear();
+    if (batch.records.empty()) return;
+
+    const auto send = [&](PeerSession* session) {
+        ActorImpulseBatchPacket relevant{};
+        relevant.server_tick = batch.server_tick;
+        for (const ActorImpulseRecord& record : batch.records) {
+            // The owner predicts its own knockback from the lockout block in
+            // its own snapshot record.
+            if (record.net_id != session->player &&
+                session->relevant_entities.contains(record.net_id)) {
+                relevant.records.push_back(record);
+            }
+        }
+        if (relevant.records.empty()) return;
+        const std::vector<std::uint8_t> encoded =
+            encode_actor_impulse_batch_packet(relevant, next_packet_sequence_++);
+        if (encoded.empty() || !transport_->Send(
+                session->peer,
+                encoded.data(),
+                static_cast<std::uint32_t>(encoded.size()),
+                SendMode::kReliable,
+                ChannelId::kReliableEvent)) {
+            push_event(KernelEventType_Error, 0u, session->peer, 34u);
+            return;
+        }
+        record_sent_packet(
+            static_cast<std::uint32_t>(encoded.size()),
+            SendMode::kReliable,
+            ChannelId::kReliableEvent);
+    };
+    if (config_.mode == KernelMode_ListenServer && local_listen_session_.welcomed) {
+        send(&local_listen_session_);
+    }
+    for (PeerSession& session : peer_sessions_) {
+        if (session.welcomed) send(&session);
+    }
+}
+
+void KernelEngine::handle_client_actor_impulse_batch(
+    const ActorImpulseBatchPacket& packet) {
+    const float fixed_delta_seconds = tick_loop_.fixed_delta_seconds();
+    for (const ActorImpulseRecord& record : packet.records) {
+        if (record.net_id == local_player_net_id_) continue;
+        const auto existing = client_knockback_anchors_.find(record.net_id);
+        if (existing != client_knockback_anchors_.end() &&
+            static_cast<std::int32_t>(packet.server_tick - existing->second.tick) < 0) {
+            continue;
+        }
+        RemoteKnockbackAnchor anchor{};
+        anchor.tick = packet.server_tick;
+        anchor.position = record.position;
+        anchor.velocity = record.velocity;
+        anchor.gravity_y = record.gravity_y;
+        anchor.floor_y = record.floor_y;
+        anchor.end_tick = packet.server_tick + knockback_flight_ticks(
+            record.position,
+            record.velocity,
+            record.gravity_y,
+            record.floor_y,
+            fixed_delta_seconds,
+            record.lockout_ticks);
+        client_knockback_anchors_[record.net_id] = anchor;
+    }
+}
+
 void KernelEngine::handle_client_prop_state_change_batch(
     const PropStateChangeBatchPacket& packet) {
     for (const PropStateChangeRecord& record : packet.records) {
@@ -11736,7 +12206,18 @@ void KernelEngine::handle_client_prop_state_change_batch(
             entity->thrown_anchor_velocity = entity->velocity;
             entity->thrown_anchor_tick = packet.server_tick;
             entity->has_thrown_anchor = true;
-        } else if (!in_flight) {
+            entity->has_thrown_flight_end = false;
+        } else if (!in_flight && entity->has_thrown_anchor &&
+                   !entity->has_thrown_flight_end &&
+                   static_cast<std::int32_t>(
+                       packet.server_tick - entity->thrown_anchor_tick) > 0) {
+            // The end of a flight the render pass is still drawing. The new
+            // mode, transform and velocity are applied above as usual; keeping
+            // the anchor with the tick it ended on lets the flight run on until
+            // the render instant gets there.
+            entity->thrown_flight_end_tick = packet.server_tick;
+            entity->has_thrown_flight_end = true;
+        } else if (!in_flight && !entity->has_thrown_flight_end) {
             entity->has_thrown_anchor = false;
         }
     }
@@ -11745,13 +12226,19 @@ void KernelEngine::handle_client_prop_state_change_batch(
 
 bool KernelEngine::thrown_prop_render_transform(
     const ClientReplicatedEntity& replicated,
-    std::uint32_t render_tick,
+    std::uint64_t render_server_time_us,
     glm::vec3* out_position,
     glm::vec3* out_velocity) const {
     if (out_position == nullptr || out_velocity == nullptr ||
         replicated.type != EntityType::kProp ||
-        !replicated.has_thrown_anchor ||
-        replicated.world_item_mode != KernelWorldItemMode_InFlight) {
+        !replicated.has_thrown_anchor) {
+        return false;
+    }
+    if (replicated.has_thrown_flight_end
+            ? render_server_time_us >= tick_time_us(
+                  replicated.thrown_flight_end_tick,
+                  tick_loop_.fixed_delta_seconds())
+            : replicated.world_item_mode != KernelWorldItemMode_InFlight) {
         return false;
     }
     const KernelEntityTemplateDefinition* entity_template =
@@ -11766,15 +12253,20 @@ bool KernelEngine::thrown_prop_render_transform(
     if (trajectory == nullptr) {
         return false;
     }
-    // Signed: the render instant sits an interpolation delay behind the server,
-    // so the first frames after a throw are still earlier than the anchor. The
-    // curve is only run forwards -- backwards would draw the prop somewhere it
-    // was never thrown from.
-    const std::int32_t elapsed_ticks =
-        static_cast<std::int32_t>(render_tick - replicated.thrown_anchor_tick);
-    const float elapsed_seconds = elapsed_ticks <= 0
+    // The render instant sits an interpolation delay behind the server, so the
+    // first frames after a throw are still earlier than the anchor. The curve
+    // is only run forwards -- backwards would draw the prop somewhere it was
+    // never thrown from. It is measured in microseconds, not whole ticks: a
+    // tick-quantised elapsed time holds the prop for every frame inside a tick
+    // and then jumps a full tick of flight, which at throw speed is the jitter.
+    const std::uint64_t anchor_time_us = tick_time_us(
+        replicated.thrown_anchor_tick,
+        tick_loop_.fixed_delta_seconds());
+    const float elapsed_seconds = render_server_time_us <= anchor_time_us
         ? 0.0f
-        : static_cast<float>(elapsed_ticks) * tick_loop_.fixed_delta_seconds();
+        : static_cast<float>(
+              static_cast<double>(render_server_time_us - anchor_time_us) /
+              1000000.0);
     // The same evaluator the server steps the prop with, over the same motion
     // model and gravity -- both read from the trajectory projectile the item's
     // throw policy names, which the client already holds in the synced catalog.
@@ -12115,6 +12607,25 @@ void KernelEngine::rebuild_render_states_from_snapshot(
     current_render_time_us_ =
         tick_time_us(snapshot.header.server_tick, tick_loop_.fixed_delta_seconds());
     has_client_render_time_ = true;
+    // The snapshot header's tick is floored to a whole tick; a prop in flight
+    // is evaluated at the unrounded instant the interpolation landed on, so it
+    // moves every frame the way an interpolated entity does.
+    std::uint64_t thrown_render_time_us = current_render_time_us_;
+    client_render_server_time_us(client_render_time_us, &thrown_render_time_us);
+    render_server_time_us_ = thrown_render_time_us;
+    release_deferred_flight_despawns();
+    // A server-only projectile lives on the world timeline like everything
+    // else drawn from snapshots, but its reliable spawn made it drawable the
+    // moment it arrived -- an interpolation delay early. A bottle's blast
+    // showed up while the bottle was still visibly on its way to it.
+    const auto before_its_spawn = [&](const ClientReplicatedEntity& candidate) {
+        return candidate.type == EntityType::kProjectile &&
+            candidate.has_spawn_tick &&
+            (local_client_peer_id_ == 0u ||
+             candidate.owner_peer != local_client_peer_id_) &&
+            thrown_render_time_us < tick_time_us(
+                candidate.spawn_tick, tick_loop_.fixed_delta_seconds());
+    };
     std::unordered_set<NetId> rendered_entities;
     for (const PredictedProjectile& projectile : predicted_projectiles_) {
         if (projectile.net_id != 0) {
@@ -12141,6 +12652,11 @@ void KernelEngine::rebuild_render_states_from_snapshot(
                 return replicated_entity.net_id == entity.net_id;
             });
         if (replicated == client_replicated_entities_.end()) {
+            continue;
+        }
+        if (before_its_spawn(*replicated)) {
+            // Claimed, so the omitted-entity pass below does not draw it either.
+            rendered_entities.insert(entity.net_id);
             continue;
         }
         if (entity.type == EntityType::kActor &&
@@ -12189,11 +12705,15 @@ void KernelEngine::rebuild_render_states_from_snapshot(
         glm::vec3 thrown_velocity{0.0f, 0.0f, 0.0f};
         if (thrown_prop_render_transform(
                 *replicated,
-                snapshot.header.server_tick,
+                thrown_render_time_us,
                 &thrown_position,
                 &thrown_velocity)) {
             render_entity.position = thrown_position;
             render_entity.velocity = thrown_velocity;
+            // Still in the air on the world timeline, whatever the record that
+            // ended the flight has already written.
+            render_entity.world_item_mode = KernelWorldItemMode_InFlight;
+            render_entity.carrier_entity_id = 0u;
         }
         if ((render_entity.state_flags & kSnapshotStateFlagHpUnknown) != 0u) {
             if (replicated->hp_known) {
@@ -12247,6 +12767,9 @@ void KernelEngine::rebuild_render_states_from_snapshot(
              entity.collider_template_id == 0u)) {
             continue;
         }
+        if (before_its_spawn(entity)) {
+            continue;
+        }
         const std::uint32_t collider_template_id =
             entity.type == EntityType::kActor
                 ? collider_template_id_for_actor_template(entity.actor_template_id)
@@ -12260,7 +12783,7 @@ void KernelEngine::rebuild_render_states_from_snapshot(
         glm::vec3 velocity{0.0f, 0.0f, 0.0f};
         const bool thrown = thrown_prop_render_transform(
             entity,
-            snapshot.header.server_tick,
+            thrown_render_time_us,
             &position,
             &velocity);
         render_states_.push_back(RenderEntityState{
@@ -12289,6 +12812,10 @@ void KernelEngine::rebuild_render_states_from_snapshot(
             0,
             entity.carrier_entity_id,
         });
+        if (thrown) {
+            render_states_.back().world_item_mode = KernelWorldItemMode_InFlight;
+            render_states_.back().carrier_entity_id = 0u;
+        }
     }
 }
 

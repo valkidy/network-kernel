@@ -397,6 +397,62 @@ void a_flat_knockback_on_a_grounded_actor_is_not_released_by_relanding() {
     require(fixture.velocity_x() < 0.0f);
 }
 
+// The client does not simulate a remote actor's knockback; it replays one from
+// the anchor the server sends, through knockback_flight_position_at and
+// knockback_flight_ticks. This pins that replay to the real character solver
+// tick by tick, and the tick the replay says the flight ends to the tick the
+// server actually hands the actor back.
+//
+// The fixture arms between ticks, so the state read here is the one a snapshot
+// taken at the end of the tick before would carry, and the lockout it sends is
+// one longer than the fixture's count.
+void check_flight_replay(float launch_y, std::uint32_t lockout_ticks, bool expect_landing) {
+    MovementFixture fixture({0.0f, 0.0f, 0.0f});
+    fixture.tick_pushing_back();
+    require(fixture.grounded());
+    const float floor_y = fixture.world.registry().get<Transform>(fixture.entity).position.y;
+
+    fixture.arm_lockout(lockout_ticks, launch_y);
+    const glm::vec3 origin =
+        fixture.world.registry().get<Transform>(fixture.entity).position;
+    const glm::vec3 velocity = fixture.world.registry().get<Velocity>(fixture.entity).linear;
+    constexpr float kDt = 1.0f / 30.0f;
+    const std::uint32_t flight_ticks = knockback_flight_ticks(
+        origin, velocity, -9.81f, floor_y, kDt, lockout_ticks + 1u);
+    require(flight_ticks >= 1u);
+    require(expect_landing ? flight_ticks < lockout_ticks : flight_ticks == lockout_ticks);
+
+    float worst_x = 0.0f;
+    float worst_y = 0.0f;
+    for (std::uint32_t tick = 1; tick <= flight_ticks; ++tick) {
+        require(fixture.locked());
+        fixture.tick_pushing_back();
+        glm::vec3 replay = knockback_flight_position_at(
+            origin, velocity, -9.81f, kDt, static_cast<float>(tick) * kDt);
+        replay.y = std::max(replay.y, floor_y);
+        const glm::vec3 server =
+            fixture.world.registry().get<Transform>(fixture.entity).position;
+        worst_x = std::max(worst_x, std::fabs(server.x - replay.x));
+        worst_y = std::max(worst_y, std::fabs(server.y - replay.y));
+    }
+    std::printf(
+        "flight replay launch_y=%.1f ticks=%u worst |dx|=%.5f |dy|=%.5f\n",
+        launch_y, flight_ticks, worst_x, worst_y);
+    require(worst_x < 0.001f);
+    require(worst_y < 0.001f);
+    // The replay's last tick is the server's last locked one: the very next
+    // tick belongs to the controller again.
+    require(!fixture.locked() || !expect_landing);
+    fixture.tick_pushing_back();
+    require(!fixture.locked());
+    require(fixture.velocity_x() < 0.0f);
+}
+
+void the_client_flight_replay_matches_the_server_tick_by_tick() {
+    check_flight_replay(6.0f, 300u, true);
+    check_flight_replay(0.0f, 12u, false);
+}
+
 // A stagger roots the actor: input may not move it, whether or not it sends any.
 void a_stagger_holds_the_actor_against_its_input() {
     MovementFixture fixture({0.0f, 0.0f, 0.0f});
@@ -488,6 +544,7 @@ void a_knockback_outranks_a_stagger_in_movement() {
 }  // namespace
 
 int main() {
+    the_client_flight_replay_matches_the_server_tick_by_tick();
     authored_lockout_ticks_arm_the_component();
     an_impulse_without_lockout_ticks_arms_nothing();
     a_second_impulse_re_arms_the_full_duration();

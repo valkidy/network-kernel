@@ -1,0 +1,11 @@
+# The blast volume of shockwave_blast. An area effect's radius is its collider's
+# radius (kernel.cc derives area_radius from the template), so the size of the
+# shockwave is authored here and nowhere else.
+id: 28
+name: shockwave_area_sphere
+shape: sphere
+center: {x: 0.0, y: 0.0, z: 0.0}
+half_extents: {x: 6.0, y: 6.0, z: 6.0}
+radius: 6.0
+purpose: damage
+layer: area_effect

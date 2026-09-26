@@ -46,7 +46,8 @@ bool begin_thrown_prop_motion(
     entt::entity prop,
     const glm::vec3& origin,
     const glm::vec3& direction,
-    std::uint32_t trajectory_projectile_template_id) {
+    std::uint32_t trajectory_projectile_template_id,
+    NetId thrower_net_id) {
     const RuntimeProjectileTemplate* trajectory =
         engine.simulation_world().find_projectile_template(
             trajectory_projectile_template_id);
@@ -74,6 +75,7 @@ bool begin_thrown_prop_motion(
             initial_velocity,
             trajectory->gravity,
             origin,
+            thrower_net_id,
         });
     return true;
 }
@@ -774,7 +776,8 @@ bool ItemGameplaySystem::submit_request(
                         *origin,
                         direction,
                         entity_template->prop
-                            .throw_trajectory_projectile_template_id)) {
+                            .throw_trajectory_projectile_template_id,
+                        request.instigator_net_id)) {
                     reject(&outcome, KernelGameplayRequestRejection_InvalidContext);
                     goto record_outcome;
                 }
@@ -1233,7 +1236,8 @@ bool ItemGameplaySystem::submit_request(
                     *origin,
                     direction,
                     item_template->throw_policy
-                        .trajectory_projectile_template_id)) {
+                        .trajectory_projectile_template_id,
+                    request.instigator_net_id)) {
                 reject(&outcome, KernelGameplayRequestRejection_InvalidContext);
                 goto record_outcome;
             }

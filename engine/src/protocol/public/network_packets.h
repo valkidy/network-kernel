@@ -160,6 +160,36 @@ struct PropStateChangeBatchPacket {
     std::vector<PropStateChangeRecord> records;
 };
 
+// A knockback, sent the tick it lands so the client can draw the flight
+// instead of waiting for the send set to get round to the actor. For as long
+// as the ImpulseLockout stands the authority ignores the actor's controller:
+// horizontal velocity carries, gravity pulls, and nothing else moves it short
+// of a collision. So this state, at the end of server_tick, is the whole of
+// the flight -- knockback_flight_position_at replays it.
+//
+// Reliable, on the reliable-event channel beside prop state, and filtered by
+// the same relevance: a lost anchor would leave the flight to the starved
+// snapshot, which is the thing this exists to route around.
+struct ActorImpulseRecord {
+    NetId net_id = 0;
+    glm::vec3 position{0.0f};
+    glm::vec3 velocity{0.0f};
+    float gravity_y = 0.0f;
+    // The height the actor was standing at when it was struck. The flight
+    // never draws below it: a flat knockback slides along the ground it was
+    // hit on rather than falling through it, and a launched one comes back
+    // down to it.
+    float floor_y = 0.0f;
+    // Ticks after server_tick at which the lockout expires. Landing can end
+    // it sooner.
+    std::uint16_t lockout_ticks = 0;
+};
+
+struct ActorImpulseBatchPacket {
+    std::uint32_t server_tick = 0;
+    std::vector<ActorImpulseRecord> records;
+};
+
 // One procedural step an authoritative actor's leg took, addressed to the
 // entity that took it. Both swing endpoints are frozen at lift-off, so this is
 // the whole of a step: a receiver reproduces the swing from it without the
@@ -361,6 +391,14 @@ bool decode_prop_state_change_batch_packet(
     const std::uint8_t* data,
     std::size_t size,
     PropStateChangeBatchPacket* out_packet);
+
+std::vector<std::uint8_t> encode_actor_impulse_batch_packet(
+    const ActorImpulseBatchPacket& packet,
+    std::uint32_t sequence = 0);
+bool decode_actor_impulse_batch_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    ActorImpulseBatchPacket* out_packet);
 
 }  // namespace network_example
 

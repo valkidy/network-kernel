@@ -1,0 +1,25 @@
+# The control grenade: wide, weak, and it always shoves and staggers.
+#
+# hostile_side only, so it can be thrown at your own feet or into a melee your
+# team is in: players and props are never pushed. It does not break props.
+#
+# One hit per blast -- lifetime equals the interval, as in rocket_explosion.
+# The damage here is not what lands: an area effect with a graph binding
+# submits no damage of its own, so the graph's amount is the real number.
+id: 16
+name: shockwave_blast
+kind: area_effect
+collider_template: shockwave_area_sphere
+damage: 20
+lifetime_ticks: 30
+damage_behavior:
+  type: area_interval
+  damage_interval_ticks: 30
+  falloff: none
+collision_mask: hostile_side
+triggers:
+  on_projectile_impact:
+    action_graph: action_shockwave_at_target
+    parameters:
+      target: event.target
+      direction: event.direction
