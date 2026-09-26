@@ -320,6 +320,14 @@ constexpr std::uint32_t kMaxCompensationWindowUs = 100000u;
 constexpr std::uint64_t kClockSyncIntervalUs = 1000000u;
 constexpr double kClientClockOffsetSmoothingFactor = 0.25;
 constexpr float kMaxHomingVisualExtrapolationSeconds = 0.2f;
+// How far past its newest sample a remote actor is carried along its last
+// velocity before it is held. The send set starves actors for several
+// snapshots at a time once a crowd outgrows the budget (measured at 80 acting
+// agents: half of all intervals, even 10 m away), and the one-interval
+// interpolation delay cannot hide a gap that long. Beyond this the guess is
+// worth less than the jump it would save: a quarter second at run speed is a
+// metre and a quarter, and an agent that turned inside it lands that far off.
+constexpr float kMaxRemoteActorExtrapolationSeconds = 0.25f;
 constexpr float kDefaultEntityRelevanceDistanceMeters = 40.0f;
 // The radius an entity has to pass to STOP being relevant, as opposed to the
 // one it has to pass to start. Leaving costs a reliable despawn and returning
@@ -9165,6 +9173,123 @@ bool KernelEngine::build_interpolated_snapshot(
         out_snapshot);
 }
 
+namespace {
+
+// Rewrites every actor in `snapshot` from that actor's own samples rather than
+// from whichever two buffered snapshots happen to bracket the render instant.
+//
+// A snapshot is a send set, not the world: past the budget an actor is left out
+// of most of them, and pairing the two snapshots around the target then has
+// nothing to say about it. It used to be held at `from` for the interval, drop
+// out of the interpolated snapshot entirely for the next one -- and be drawn
+// from client_replicated_entities_, which handle_client_snapshot has already
+// moved to the newest sample, a full interpolation delay ahead -- and then be
+// drawn at `to`. Hold, leap forward, fall back: every starved interval.
+//
+// Its own previous and next samples are both authoritative, so interpolating
+// between them across the gap is exact for anything moving in a straight line,
+// and the interpolation delay usually means the next one has already arrived.
+// When it has not, the actor is carried along its last velocity, horizontally
+// only: a grounded character's vertical velocity is whatever the controller
+// pressed it into the floor with, and stepping along it would sink the body.
+// Anything that is not an actor keeps the pairwise result -- a prop's moves
+// are pickups and placements, which a long interpolation would draw as a slide.
+void bridge_remote_actor_samples(
+    const std::vector<WorldSnapshot>& buffer,
+    float fixed_delta_seconds,
+    std::uint64_t snapshot_interval_us,
+    std::uint64_t target_server_time_us,
+    WorldSnapshot* snapshot) {
+    struct Sample {
+        const EntitySnapshot* entity = nullptr;
+        std::uint64_t time_us = 0;
+    };
+    struct Bracket {
+        Sample previous;
+        Sample next;
+    };
+    std::unordered_map<NetId, Bracket> brackets;
+    for (const WorldSnapshot& buffered : buffer) {
+        const std::uint64_t time_us =
+            tick_time_us(buffered.header.server_tick, fixed_delta_seconds);
+        for (const EntitySnapshot& entity : buffered.entities) {
+            if (entity.type != EntityType::kActor) {
+                continue;
+            }
+            Bracket& bracket = brackets[entity.net_id];
+            if (time_us <= target_server_time_us) {
+                // The buffer is sorted, so the last one seen is the newest.
+                bracket.previous = Sample{&entity, time_us};
+            } else if (bracket.next.entity == nullptr) {
+                bracket.next = Sample{&entity, time_us};
+            }
+        }
+    }
+    if (brackets.empty()) {
+        return;
+    }
+
+    std::unordered_map<NetId, std::size_t> slots;
+    slots.reserve(snapshot->entities.size());
+    for (std::size_t index = 0; index < snapshot->entities.size(); ++index) {
+        slots.emplace(snapshot->entities[index].net_id, index);
+    }
+    for (const auto& [net_id, bracket] : brackets) {
+        EntitySnapshot bridged;
+        if (bracket.previous.entity != nullptr && bracket.next.entity != nullptr) {
+            const float alpha = static_cast<float>(
+                static_cast<double>(
+                    target_server_time_us - bracket.previous.time_us) /
+                static_cast<double>(
+                    bracket.next.time_us - bracket.previous.time_us));
+            const EntitySnapshot moved = interpolate_snapshot_entity(
+                *bracket.previous.entity, *bracket.next.entity, alpha);
+            if (bracket.next.time_us - target_server_time_us <=
+                snapshot_interval_us) {
+                bridged = moved;
+            } else if ((bracket.previous.entity->flags & kVisualFlagDead) != 0u) {
+                // Dead until the sample that says otherwise: a revive is a
+                // placement, not a walk out of the corpse.
+                bridged = *bracket.previous.entity;
+            } else {
+                // Flags, hp and the action timeline changed at some tick inside
+                // the gap, and the pairwise path takes them from the newer
+                // snapshot -- one interval early at worst. Across a gap that
+                // would be a death or a swing shown most of a second early, so
+                // the older sample's state stands until the last interval.
+                bridged = *bracket.previous.entity;
+                bridged.position = moved.position;
+                bridged.rotation = moved.rotation;
+                bridged.velocity = moved.velocity;
+            }
+        } else if (bracket.previous.entity != nullptr) {
+            bridged = *bracket.previous.entity;
+            if ((bridged.flags & kVisualFlagDead) == 0u) {
+                const float elapsed_seconds = std::min(
+                    static_cast<float>(
+                        static_cast<double>(
+                            target_server_time_us - bracket.previous.time_us) /
+                        1'000'000.0),
+                    kMaxRemoteActorExtrapolationSeconds);
+                bridged.position.x += bridged.velocity.x * elapsed_seconds;
+                bridged.position.z += bridged.velocity.z * elapsed_seconds;
+            }
+        } else {
+            // Only newer samples: the actor has just become relevant, and its
+            // first sample is the only place it has ever been.
+            bridged = *bracket.next.entity;
+        }
+        const auto slot = slots.find(net_id);
+        if (slot != slots.end()) {
+            snapshot->entities[slot->second] = bridged;
+        } else {
+            snapshot->entities.push_back(bridged);
+        }
+    }
+}
+
+}  // namespace
+
 bool KernelEngine::build_interpolated_snapshot_for_server_time(
     std::uint64_t target_server_time_us,
     WorldSnapshot* out_snapshot) const {
@@ -9177,12 +9302,20 @@ bool KernelEngine::build_interpolated_snapshot_for_server_time(
     }
 
     const float fixed_delta_seconds = tick_loop_.fixed_delta_seconds();
+    const std::uint64_t snapshot_interval_us = tick_time_us(
+        tick_loop_.snapshot_interval_ticks(), fixed_delta_seconds);
     const std::uint64_t oldest_time_us =
         tick_time_us(
             client_snapshot_buffer_.front().header.server_tick,
             fixed_delta_seconds);
     if (target_server_time_us <= oldest_time_us) {
         *out_snapshot = client_snapshot_buffer_.front();
+        bridge_remote_actor_samples(
+            client_snapshot_buffer_,
+            fixed_delta_seconds,
+            snapshot_interval_us,
+            target_server_time_us,
+            out_snapshot);
         return true;
     }
     const std::uint64_t newest_time_us =
@@ -9191,6 +9324,12 @@ bool KernelEngine::build_interpolated_snapshot_for_server_time(
             fixed_delta_seconds);
     if (target_server_time_us >= newest_time_us) {
         *out_snapshot = client_snapshot_buffer_.back();
+        bridge_remote_actor_samples(
+            client_snapshot_buffer_,
+            fixed_delta_seconds,
+            snapshot_interval_us,
+            target_server_time_us,
+            out_snapshot);
         return true;
     }
 
@@ -9211,6 +9350,12 @@ bool KernelEngine::build_interpolated_snapshot_for_server_time(
 
     if (from->header.server_tick == to->header.server_tick) {
         *out_snapshot = *from;
+        bridge_remote_actor_samples(
+            client_snapshot_buffer_,
+            fixed_delta_seconds,
+            snapshot_interval_us,
+            target_server_time_us,
+            out_snapshot);
         return true;
     }
 
@@ -9241,6 +9386,12 @@ bool KernelEngine::build_interpolated_snapshot_for_server_time(
             interpolated.entities.push_back(to_entity);
         }
     }
+    bridge_remote_actor_samples(
+        client_snapshot_buffer_,
+        fixed_delta_seconds,
+        snapshot_interval_us,
+        target_server_time_us,
+        &interpolated);
 
     *out_snapshot = std::move(interpolated);
     return true;
