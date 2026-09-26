@@ -321,6 +321,12 @@ cc_test(
 )
 
 cc_binary(
+    name = "render_clock_bench",
+    srcs = ["render_clock_bench.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
+cc_binary(
     name = "snapshot_bandwidth_benchmark",
     srcs = ["snapshot_bandwidth_benchmark.cc"],
     deps = ["//engine/src/kernel:kernel"],
