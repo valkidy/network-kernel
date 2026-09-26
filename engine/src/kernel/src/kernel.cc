@@ -11601,24 +11601,66 @@ bool KernelEngine::is_dormant_placed_prop(NetId net_id) const {
         glm::length(world_.registry().get<Velocity>(*entity).linear) <= 0.001f;
 }
 
+// The trajectory a thrown prop flies on, resolved the same way on both ends
+// from what both ends hold: the prop's item, if it is one, and its entity
+// template. An item thrown whole flies on its item template's trajectory --
+// that is where the catalog puts it (`throw.trajectory_projectile`), and no
+// shipped entity template has a `throw:` block. Only a prop that is not an item
+// falls back to its entity template's. An item thrown by consuming it spawns a
+// new prop and launches it with an impulse, which is not a trajectory at all;
+// zero says there is nothing to draw it from.
+std::uint32_t KernelEngine::prop_throw_trajectory_template_id(
+    std::uint32_t entity_template_id,
+    std::uint32_t item_template_id) const {
+    if (item_template_id != 0u) {
+        const auto item_template = std::find_if(
+            item_templates_.begin(),
+            item_templates_.end(),
+            [item_template_id](const KernelItemTemplateDefinition& candidate) {
+                return candidate.item_template_id == item_template_id;
+            });
+        if (item_template != item_templates_.end()) {
+            return item_template->throw_policy.mode ==
+                    KernelItemThrowMode_IdentityPreserving
+                ? item_template->throw_policy.trajectory_projectile_template_id
+                : 0u;
+        }
+    }
+    const KernelEntityTemplateDefinition* entity_template =
+        find_entity_template(entity_templates_, entity_template_id);
+    return entity_template == nullptr
+        ? 0u
+        : entity_template->prop.throw_trajectory_projectile_template_id;
+}
+
 // A prop in flight whose client draws it from its throw anchor: the prop-state
 // record that started the flight already told the client everything, and every
 // later change re-anchors it the same way. A snapshot record of it would be a
 // sample the render pass throws away, bought with a slot an actor could use.
+// Only when the flight really is that trajectory: the motion the prop carries
+// has to be the one the client will evaluate, or leaving the samples out would
+// leave it drawing a curve the prop is not on.
 bool KernelEngine::is_anchored_in_flight_prop(NetId net_id) const {
     const std::optional<entt::entity> entity = world_.find_entity(net_id);
     if (!entity.has_value() ||
-        !world_.registry().all_of<EntityKind, PropWorldMode, EntityTemplateRef>(
-            *entity) ||
+        !world_.registry().all_of<EntityKind, PropWorldMode, EntityTemplateRef,
+                                  ThrownPropMotion>(*entity) ||
         world_.registry().get<EntityKind>(*entity).type != EntityType::kProp ||
         world_.registry().get<PropWorldMode>(*entity).mode != PropMode::kInFlight) {
         return false;
     }
-    const KernelEntityTemplateDefinition* entity_template = find_entity_template(
-        entity_templates_,
-        world_.registry().get<EntityTemplateRef>(*entity).entity_template_id);
-    return entity_template != nullptr &&
-        entity_template->prop.throw_trajectory_projectile_template_id != 0u;
+    const ItemTemplateRef* item =
+        world_.registry().try_get<ItemTemplateRef>(*entity);
+    const std::uint32_t trajectory_id = prop_throw_trajectory_template_id(
+        world_.registry().get<EntityTemplateRef>(*entity).entity_template_id,
+        item == nullptr ? 0u : item->item_template_id);
+    const RuntimeProjectileTemplate* trajectory =
+        trajectory_id == 0u ? nullptr : world_.find_projectile_template(trajectory_id);
+    const ThrownPropMotion& motion =
+        world_.registry().get<ThrownPropMotion>(*entity);
+    return trajectory != nullptr &&
+        trajectory->motion_model == motion.motion_model &&
+        trajectory->gravity == motion.gravity;
 }
 
 void KernelEngine::send_entity_spawn(PeerId peer, const EntitySnapshot& entity) {
@@ -12241,15 +12283,13 @@ bool KernelEngine::thrown_prop_render_transform(
             : replicated.world_item_mode != KernelWorldItemMode_InFlight) {
         return false;
     }
-    const KernelEntityTemplateDefinition* entity_template =
-        find_entity_template(entity_templates_, replicated.entity_template_id);
-    if (entity_template == nullptr ||
-        entity_template->prop.throw_trajectory_projectile_template_id == 0u) {
+    const std::uint32_t trajectory_id = prop_throw_trajectory_template_id(
+        replicated.entity_template_id, replicated.item_template_id);
+    if (trajectory_id == 0u) {
         return false;
     }
     const RuntimeProjectileTemplate* trajectory =
-        catalog_runtime_.find_projectile_template(
-            entity_template->prop.throw_trajectory_projectile_template_id);
+        catalog_runtime_.find_projectile_template(trajectory_id);
     if (trajectory == nullptr) {
         return false;
     }

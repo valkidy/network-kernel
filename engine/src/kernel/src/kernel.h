@@ -858,6 +858,9 @@ private:
     bool is_prop_in_flight_on_client(const ClientReplicatedEntity& entity) const;
     void release_deferred_flight_despawns();
     bool is_anchored_in_flight_prop(NetId net_id) const;
+    std::uint32_t prop_throw_trajectory_template_id(
+        std::uint32_t entity_template_id,
+        std::uint32_t item_template_id) const;
     void request_inventory_snapshot(
         KernelInventoryContainerId container_id,
         std::uint64_t client_revision);
