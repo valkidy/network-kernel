@@ -303,6 +303,39 @@ presentation_time_us = tick_time_us(event.tick)
 
 ---
 
+### 5.7 實作結果（`claude/combat-event-timing`，與 W3 一起）
+
+**§5.1 的前提有誤。** `HitConfirmed` 和 `DamageApplied` 其實有設定
+`presentation_time_us`（在 simulation 層的 `damage_system.cc` 設為 `hit_time_us`；
+先前只搜尋了 kernel.cc）。多數傷害來源的 `hit_time_us` 是命中當下的 server 時間
+（projectile、範圍攻擊、beam、action graph，包含 AI 近戰），hitscan 則是射擊者
+開火時看到的時間。所以受害者端的 hit 和 damage 本來就會延到畫面時間，local agent
+的 `LastDamagedTime` 也早已是延後的。
+
+用端對端測試（`combat_event_delivery_end_to_end_test`，一個 server 加上射擊者、
+受害者、遠處旁觀者三個 client）量到的實際現況：
+
+| 事件 | 射擊者（自己） | 受害者 | 遠處旁觀者 |
+|---|---|---|---|
+| `FireConfirmed` | 立即 | **立即**（比畫面上的動作早約 100 ms） | **有收到** |
+| `HitConfirmed` / `DamageApplied` | **延到畫面時間**（命中提示晚約 133 ms） | 延到畫面時間 | **有收到** |
+
+**改動：** `broadcast_combat_events` 改成逐一 session 判斷。
+
+- 送給誰（W3）：事件的主體（`net_id`）在這個 session 的 relevance 範圍內、主體是
+  這個 session 的玩家，或這個 session 就是發起者（`peer_id`），才會送出。
+- 什麼時候出現（W2）：發起者自己的事件，`presentation_time_us` 設為 0，立即出現；
+  其他人收到的事件如果原本是 0，就填入事件 tick 的時間。已經有值的保留原值
+  （hitscan 的回溯時間）。
+- `Explosion` 列在廣播清單中，但沒有任何地方會產生這種事件，未處理。
+
+**Unity 端影響：** 用到這些事件的只有兩處，都是 `DamageApplied`：本地玩家的受擊
+動作，以及 local agent 的 `LastDamagedTime`。兩者對受害者來說原本就已經延後，
+所以行為不變。已確認接受這個延遲：它讓 local agent 和一般玩家在同一個時間點
+得知自己被打。
+
+---
+
 ## 6. W3 — 戰鬥事件依 relevance 過濾（對應第 9 項）
 
 ### 6.1 現況
