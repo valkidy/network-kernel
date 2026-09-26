@@ -14280,6 +14280,21 @@ void KernelEngine::flush_remote_action_presentation(
     }
 }
 
+// A combat event is a presentation cue, sent to whoever can see it and timed
+// to the timeline they see it on. Its subject is net_id -- the one who fired,
+// or the one who was hit -- and peer_id is the peer whose action it was.
+//
+// Who: a session hears of it if it can see the subject, if the subject is its
+// own player, or if it is the one who acted. One far from both hears nothing:
+// it has nothing to draw it on, and the channel is reliable, so every event
+// sent to it costs the same as one that matters.
+//
+// When: the one who acted is looking at their own action, predicted now, so
+// theirs is presented the moment it arrives. Everyone else sees the action on
+// the world timeline, an interpolation delay behind the server, so theirs waits
+// for the world to be drawn at its tick -- or a hit lands before the swing that
+// dealt it. An event already timed keeps its time: a rewound hitscan hit is
+// stamped with the instant its shooter saw.
 void KernelEngine::broadcast_combat_events(
     std::size_t first_event,
     std::size_t last_event) {
@@ -14292,7 +14307,24 @@ void KernelEngine::broadcast_combat_events(
         if (!is_authoritative_combat_event(event.type)) {
             continue;
         }
-        broadcast_reliable_event(event);
+        for (const PeerSession& session : peer_sessions_) {
+            if (!session.welcomed) {
+                continue;
+            }
+            const bool acted = event.peer_id != 0u && event.peer_id == session.peer;
+            if (!acted && event.net_id != session.player &&
+                !session.relevant_entities.contains(event.net_id)) {
+                continue;
+            }
+            KernelEvent sent = event;
+            if (acted) {
+                sent.presentation_time_us = 0u;
+            } else if (sent.presentation_time_us == 0u) {
+                sent.presentation_time_us =
+                    tick_time_us(event.tick, tick_loop_.fixed_delta_seconds());
+            }
+            send_reliable_event(session.peer, sent);
+        }
     }
 }
 
