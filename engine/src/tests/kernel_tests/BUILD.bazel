@@ -308,6 +308,12 @@ cc_test(
     deps = ["//engine/src/kernel:kernel"],
 )
 
+cc_test(
+    name = "item_thrown_prop_end_to_end_test",
+    srcs = ["item_thrown_prop_end_to_end_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
 cc_binary(
     name = "snapshot_bandwidth_benchmark",
     srcs = ["snapshot_bandwidth_benchmark.cc"],
