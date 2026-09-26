@@ -384,7 +384,8 @@ predicted->age_ticks = authoritative_age_ticks;  // local_tick - snapshot tick
 
 所以綁定之後，`age_ticks` 代表的是「距離上一個 snapshot 幾個 tick」，
 每收到一個 snapshot 就歸零，幾乎不可能達到 `max_lifetime_ticks`。
-（這是從程式碼讀出來的推論，實作時先用測試證實。）
+已由 `predicted_projectile_lifetime_test` 證實：修正前，projectile 在最後一個
+snapshot 之後，又從那一刻重新飛了一整段壽命。
 
 ### 8a.4 設計
 
@@ -415,6 +416,23 @@ predicted->age_ticks = authoritative_age_ticks;  // local_tick - snapshot tick
 ### 8a.7 版本影響
 
 無，只改 client。
+
+### 8a.8 實作結果（`claude/predicted-projectile-lifetime`）
+
+- server 在同一個 tick 裡先開火、再模擬 projectile，所以 projectile 在 spawn
+  tick 當下年齡已經是 1，到 `spawn + lifetime - 1` 那個 tick 結束。client 綁定時，
+  用 `local_tick - spawn_tick + 1` 還原同樣的計數。
+- 只有 standard projectile 會依壽命在本地結束。area effect 的結束時間由
+  `expire_tick = spawn + lifetime` 決定，比 standard 晚一個 tick；beam 由 weapon
+  持續刷新。這兩種維持原本的行為。
+- 到期時先隱藏，保留 1 秒（`kPredictedProjectileEndedRetentionSeconds`）才刪除。
+  這段時間讓 despawn 還找得到它：如果先刪掉，despawn 會被當成世界時間軸上的
+  物件而延後處理。另外，離開 relevance 的 deterministic projectile 在 client 上
+  會被保留、繼續飛，它只能靠這個逾時來清掉。
+- 保留時間的計數在隱藏之後仍會繼續。撞牆而隱藏的 standard projectile，
+  也改成在「壽命 + 1 秒」後刪除；在這之前，它只能等 despawn 才會被清掉。
+- `client_mode_test` 的 `predicted_projectile_lifetime_cleanup_removes_batch_projectile`
+  改成驗證「先隱藏，保留期過後才刪除」。
 
 ---
 

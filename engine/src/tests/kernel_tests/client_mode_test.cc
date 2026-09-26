@@ -3817,6 +3817,12 @@ void predicted_projectile_lifetime_cleanup_removes_batch_projectile() {
     client.handle_client_projectile_spawn_batch(batch);
     require(client.predicted_projectiles_.size() == 1);
 
+    // Ended on its lifetime, it is hidden at once but kept for a second, for a
+    // despawn to find; nothing arrives, so it is then forgotten.
+    client.advance_predicted_projectiles(0.6f);
+    require(client.predicted_projectiles_.size() == 1);
+    require(client.predicted_projectiles_.front().locally_terminated);
+    client.advance_predicted_projectiles(0.6f);
     client.advance_predicted_projectiles(0.6f);
 
     require(client.predicted_projectiles_.empty());

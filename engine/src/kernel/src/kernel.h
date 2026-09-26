@@ -532,6 +532,12 @@ private:
         glm::vec3 correction_offset{0.0f, 0.0f, 0.0f};
         bool bound = false;
         bool locally_terminated = false;
+        // Ticks since the authority's spawn tick, counted the way it counts
+        // them. age_ticks cannot stand in: a snapshot re-bases the flight and
+        // restarts it. Only a standard projectile ends on it; an area effect
+        // and a beam have their lifetimes kept by other systems.
+        std::uint32_t lifetime_elapsed_ticks = 0;
+        bool ends_on_lifetime = false;
     };
 
     struct VisionRuntimeState {

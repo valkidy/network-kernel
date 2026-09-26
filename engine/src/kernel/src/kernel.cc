@@ -320,6 +320,11 @@ constexpr std::uint32_t kMaxCompensationWindowUs = 100000u;
 constexpr std::uint64_t kClockSyncIntervalUs = 1000000u;
 constexpr double kClientClockOffsetSmoothingFactor = 0.25;
 constexpr float kMaxHomingVisualExtrapolationSeconds = 0.2f;
+// How long a predicted projectile that ended on its lifetime stays hidden before
+// it is forgotten. The despawn normally takes it first, a round trip after the
+// end; this is only for the one it never comes for -- a deterministic
+// projectile that left relevance keeps flying here and has no other ending.
+constexpr float kPredictedProjectileEndedRetentionSeconds = 1.0f;
 // How far past its newest sample a remote actor is carried along its last
 // velocity before it is held. The send set starves actors for several
 // snapshots at a time once a crowd outgrows the budget (measured at 80 acting
@@ -7190,6 +7195,9 @@ void KernelEngine::handle_client_projectile_spawn_batch(
                     glm::vec3{0.0f, 0.0f, 0.0f},
                     false,
                     false,
+                    0,
+                    projectile_template->projectile_type ==
+                        ProjectileType::kStandard,
                 });
             }
 
@@ -8779,6 +8787,13 @@ void KernelEngine::reconcile_predicted_projectiles(const WorldSnapshot& snapshot
         predicted->initial_velocity = entity.velocity;
         predicted->age_ticks = authoritative_age_ticks;
         predicted->spawn_tick = entity.spawn_tick;
+        // The authority fires and simulates a projectile in the same tick, so
+        // it is one tick old on its spawn tick. Real ticks even for homing,
+        // whose drawn flight is capped: the lifetime ends when it ends.
+        if (entity.spawn_tick != 0u && local_tick >= entity.spawn_tick) {
+            predicted->lifetime_elapsed_ticks =
+                local_tick - entity.spawn_tick + 1u;
+        }
         if (predicted->projectile_template_id == 0u ||
             predicted->collider_template_id == 0u) {
             const auto replicated = std::find_if(
@@ -9075,6 +9090,8 @@ void KernelEngine::predict_local_projectile(const KernelPlayerInput& input) {
         glm::vec3{0.0f, 0.0f, 0.0f},
         false,
         false,
+        0,
+        projectile_template->projectile_type == ProjectileType::kStandard,
     });
 }
 
@@ -9770,6 +9787,8 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
             return !projectile.locally_terminated;
         });
     for (PredictedProjectile& projectile : predicted_projectiles_) {
+        // Counted on after it ends too: that is what times its retention.
+        projectile.lifetime_elapsed_ticks += 1;
         if (projectile.locally_terminated) {
             continue;
         }
@@ -10029,14 +10048,34 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
 
         projectile.position = next_position;
         projectile.velocity = next_velocity;
+        // Ended here, on this client's own timeline, the tick the authority
+        // ends it -- not a round trip later when its despawn arrives. Hidden
+        // rather than erased, the way a wall hit is: the despawn still has to
+        // find it, or it would be held for the world timeline and the snapshot
+        // copy drawn in its place.
+        if (projectile.ends_on_lifetime && projectile.max_lifetime_ticks > 0u &&
+            projectile.lifetime_elapsed_ticks >= projectile.max_lifetime_ticks) {
+            projectile.locally_terminated = true;
+        }
     }
+    const std::uint32_t ended_retention_ticks =
+        fixed_delta_seconds > 0.0f
+            ? static_cast<std::uint32_t>(std::ceil(
+                  kPredictedProjectileEndedRetentionSeconds / fixed_delta_seconds))
+            : 0u;
     predicted_projectiles_.erase(
         std::remove_if(
             predicted_projectiles_.begin(),
             predicted_projectiles_.end(),
-            [](const PredictedProjectile& projectile) {
+            [ended_retention_ticks](const PredictedProjectile& projectile) {
+                if (projectile.max_lifetime_ticks == 0u) {
+                    return false;
+                }
+                if (projectile.ends_on_lifetime) {
+                    return projectile.lifetime_elapsed_ticks >=
+                           projectile.max_lifetime_ticks + ended_retention_ticks;
+                }
                 return !projectile.locally_terminated &&
-                       projectile.max_lifetime_ticks > 0u &&
                        projectile.age_ticks >= projectile.max_lifetime_ticks;
             }),
         predicted_projectiles_.end());
