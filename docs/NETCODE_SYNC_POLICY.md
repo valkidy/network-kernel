@@ -277,6 +277,89 @@ sound
 The server performs authoritative hit detection, including lag compensation
 when available, and sends the resulting gameplay events.
 
+## Render Clock and AI Movement Intent (Next)
+
+Status: the next piece of work after the endings above are validated in play.
+The render clock comes first; AI movement intent only if measurement still
+calls for it afterwards.
+
+### Two kinds of waiting for snapshots
+
+```text
+One entity missing from snapshots, the stream still arriving:
+    the send set had no slot for it. Handled: starved actors are drawn from
+    their own samples, knockback flights and thrown props from their anchors.
+
+The whole stream late by more than the interpolation delay:
+    network jitter, loss, a biased clock-offset estimate, a server hitch.
+    Not handled.
+```
+
+The second stalls everything at once. `client_render_server_time_us` clamps
+the render instant to the newest buffered snapshot, and every world-timeline
+consumer reads that one instant: interpolation, knockback flights, thrown-prop
+anchors, and the endings held back for it. Anchored motion needs no new samples
+to be drawn, but it still asks the render clock what time it is, so it stops
+with everything else and jumps when the next snapshot arrives (measured on a
+thrown prop: held at 24.0 m, then 27.2 m in one frame).
+
+### Planned: let the one render clock run ahead, bounded
+
+```text
+1. Let the shared render instant pass the newest snapshot by at most a cap
+   (start from the 0.25 s actors are already extrapolated for). Everything
+   that can advance without samples keeps moving: anchors, knockback flights,
+   predicted projectiles, actor extrapolation, and held-back endings are
+   released on the same clock.
+2. When snapshots resume, never step the clock backwards: run it slightly
+   slow until the buffer is ahead of it again.
+3. Size the interpolation delay from measured arrival jitter (jitter_us)
+   instead of a fixed two snapshot intervals.
+```
+
+It has to be the one clock. Advancing a single consumer on its own breaks
+ordering: a thrown bottle given its own unclamped time flies past the point
+where its destroy -- still waiting on the clamped clock -- removes it.
+
+Client only; no ABI or packet change.
+
+### Planned, gated: AI movement intent
+
+Replicate what an agent is doing (route, destination, speed) instead of where
+it is, so the client moves it between samples. Gates, in order:
+
+```text
+1. In-play validation shows the remaining jitter is actor motion, not stalls.
+2. A benchmark measures drawn-versus-true position per distance band at
+   40 / 80 / 200 moving, turning agents.
+3. The cheap fixes are tried first: Hermite interpolation across a gap using
+   both samples' velocities (client only), and a larger per-player snapshot
+   budget (already server-selectable).
+```
+
+Scope, which is why it is gated: the kernel has no notion of intent -- routes
+live in `game_server` (`patrol_navigation`, `patrol_director`, the chaser) and
+the kernel sees one move input per agent per tick. It needs a new C API for
+`game_server` to hand intent to the kernel (ABI bump, both export lists, the
+Unity managed mirrors), controller changes, a packet schema bump, and
+client-side route following. Order by how rarely intent changes: patrol
+routes, then sentries, chasers last.
+
+What it does and does not buy:
+
+```text
+With the clock above, intent makes a late stream mostly invisible: an agent
+keeps walking its route. Without it, intent still stalls like everything else.
+
+A change inside a late window -- a turn, a hit, a death -- arrives already in
+the past and becomes a correction instead of a stall. Intent travels on the
+reliable channel, so under packet loss head-of-line blocking can make that
+correction later than a snapshot would have been.
+
+The interpolation delay stops being a hard requirement and becomes a buffer
+that trades latency for fewer corrections.
+```
+
 ## Homing Projectiles (Deferred)
 
 Status: deferred until a homing weapon is designed and equipped. The
