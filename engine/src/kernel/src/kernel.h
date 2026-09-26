@@ -806,10 +806,12 @@ private:
     // The render transform of a prop in flight, evaluated from its throw
     // anchor rather than read from the snapshot. False when the prop is not in
     // flight, has no anchor, or its template names no throw trajectory -- the
-    // caller then falls back to the replicated sample.
+    // caller then falls back to the replicated sample. The render instant is a
+    // server time, not a tick, so the prop moves every frame rather than once
+    // per server tick.
     bool thrown_prop_render_transform(
         const ClientReplicatedEntity& replicated,
-        std::uint32_t render_tick,
+        std::uint64_t render_server_time_us,
         glm::vec3* out_position,
         glm::vec3* out_velocity) const;
     void handle_client_prop_state_change_batch(

@@ -3073,6 +3073,117 @@ void thrown_prop_renders_its_trajectory_while_snapshots_omit_it() {
     require(std::fabs(states[0].position.y) < 0.001f);
 }
 
+// The trajectory is evaluated at the render instant itself, not at the whole
+// server tick that instant falls in. Frames render faster than the server
+// ticks, so a tick-quantised evaluation holds the prop still for several
+// frames and then jumps a full tick of flight -- at throw speed that step is
+// the visible jitter. Every other entity interpolates with a continuous alpha;
+// a prop in flight has to be just as continuous.
+void thrown_prop_trajectory_advances_between_server_ticks() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    network_example::KernelEngine client(config);
+    client.reset_runtime_state(KernelMode_Client);
+    // A synced clock is what lets the render instant land between ticks at
+    // all; without it the target is derived from the newest snapshot tick.
+    client.has_client_clock_sync_ = true;
+    client.client_clock_offset_us_ = 0;
+
+    constexpr std::uint32_t kTrajectoryTemplateId = 21;
+    constexpr std::uint32_t kEntityTemplateId = 7;
+    constexpr std::uint32_t kAnchorTick = 10;
+    const glm::vec3 anchor_position{0.0f, 1.0f, 0.0f};
+    const glm::vec3 anchor_velocity{24.0f, 6.0f, 0.0f};
+    const glm::vec3 gravity{0.0f, -9.81f, 0.0f};
+
+    network_example::RuntimeProjectileTemplate trajectory{};
+    trajectory.projectile_template_id = kTrajectoryTemplateId;
+    trajectory.motion_model = network_example::ProjectileMotionModel::kParabolic;
+    trajectory.sync_mode =
+        network_example::ProjectileSyncMode::kLocalPredictedDeterministic;
+    trajectory.speed = 24.0f;
+    trajectory.gravity = gravity;
+    client.catalog_runtime_.projectile_templates.push_back(trajectory);
+
+    KernelEntityTemplateDefinition entity_template{};
+    entity_template.struct_size = sizeof(entity_template);
+    entity_template.entity_template_id = kEntityTemplateId;
+    entity_template.entity_type =
+        static_cast<std::uint16_t>(network_example::EntityType::kProp);
+    entity_template.prop.struct_size = sizeof(entity_template.prop);
+    entity_template.prop.throw_trajectory_projectile_template_id =
+        kTrajectoryTemplateId;
+    client.entity_templates_.push_back(entity_template);
+
+    network_example::EntitySpawnPacket spawn{};
+    spawn.net_id = 51;
+    spawn.entity_type = network_example::EntityType::kProp;
+    spawn.server_tick = kAnchorTick;
+    spawn.position = anchor_position;
+    spawn.entity_template_id = kEntityTemplateId;
+    spawn.item_template_id = 13;
+    spawn.item_instance_id = 1001;
+    spawn.world_item_mode = KernelWorldItemMode_InFlight;
+    client.handle_client_spawn(spawn);
+
+    network_example::PropStateChangeBatchPacket throw_batch{};
+    throw_batch.server_tick = kAnchorTick;
+    network_example::PropStateChangeRecord throw_record{};
+    throw_record.net_id = 51;
+    throw_record.changed_fields = network_example::kPropStateChangeMode |
+        network_example::kPropStateChangeTransform |
+        network_example::kPropStateChangeVelocity;
+    throw_record.world_mode = KernelWorldItemMode_InFlight;
+    throw_record.position = anchor_position;
+    throw_record.rotation = glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
+    throw_record.velocity = anchor_velocity;
+    throw_batch.records.push_back(throw_record);
+    client.handle_client_prop_state_change_batch(throw_batch);
+
+    for (std::uint32_t tick = kAnchorTick; tick <= 40; ++tick) {
+        network_example::WorldSnapshot omitted;
+        omitted.header.server_tick = tick;
+        client.handle_client_snapshot(omitted);
+    }
+
+    // 30 Hz ticks, 15 Hz snapshots: the interpolation delay is 4 ticks. These
+    // three render instants all resolve inside server tick 38 (1266666us to
+    // 1300000us), 10ms apart -- three frames of a 100 fps client.
+    const double tick_seconds = 1.0 / 30.0;
+    const double interpolation_delay_seconds = 4.0 * tick_seconds;
+    const double anchor_seconds = kAnchorTick * tick_seconds;
+    const std::array<std::uint64_t, 3> render_times_us{
+        1405000, 1415000, 1425000};
+
+    std::array<RenderEntityState, 4> states{};
+    float previous_x = -1.0f;
+    for (const std::uint64_t render_time_us : render_times_us) {
+        const std::uint32_t count = client.get_render_states_at_time(
+            render_time_us,
+            states.data(),
+            static_cast<std::uint32_t>(states.size()));
+        require(count == 1);
+        require(states[0].net_id == 51);
+        require(states[0].status == RenderEntityStatus_Predicted);
+        const double elapsed = render_time_us / 1000000.0 -
+            interpolation_delay_seconds - anchor_seconds;
+        const float expected_x = anchor_position.x +
+            anchor_velocity.x * static_cast<float>(elapsed);
+        const float expected_y = anchor_position.y +
+            anchor_velocity.y * static_cast<float>(elapsed) +
+            0.5f * gravity.y * static_cast<float>(elapsed * elapsed);
+        // 10ms of flight at 24 m/s is 0.24m, so a tick-quantised render fails
+        // this by up to a whole tick's 0.8m and the strict ordering by 0.24m.
+        require(std::fabs(states[0].position.x - expected_x) < 0.001f);
+        require(std::fabs(states[0].position.y - expected_y) < 0.001f);
+        require(states[0].position.x > previous_x);
+        previous_x = states[0].position.x;
+    }
+}
+
 void destroyed_tombstone_blocks_older_snapshot_render() {
     KernelConfig config{};
     config.mode = KernelMode_Client;
@@ -5355,6 +5466,7 @@ int main() {
     budget_omitted_projectile_snapshot_does_not_delete_bound_prediction();
     reliable_prop_state_overrides_older_snapshot_and_survives_omission();
     thrown_prop_renders_its_trajectory_while_snapshots_omit_it();
+    thrown_prop_trajectory_advances_between_server_ticks();
     pure_prop_render_uses_entity_template_as_template_id();
     destroyed_tombstone_blocks_older_snapshot_render();
     out_of_range_tombstone_does_not_fail_client_prediction();

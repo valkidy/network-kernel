@@ -11745,7 +11745,7 @@ void KernelEngine::handle_client_prop_state_change_batch(
 
 bool KernelEngine::thrown_prop_render_transform(
     const ClientReplicatedEntity& replicated,
-    std::uint32_t render_tick,
+    std::uint64_t render_server_time_us,
     glm::vec3* out_position,
     glm::vec3* out_velocity) const {
     if (out_position == nullptr || out_velocity == nullptr ||
@@ -11766,15 +11766,20 @@ bool KernelEngine::thrown_prop_render_transform(
     if (trajectory == nullptr) {
         return false;
     }
-    // Signed: the render instant sits an interpolation delay behind the server,
-    // so the first frames after a throw are still earlier than the anchor. The
-    // curve is only run forwards -- backwards would draw the prop somewhere it
-    // was never thrown from.
-    const std::int32_t elapsed_ticks =
-        static_cast<std::int32_t>(render_tick - replicated.thrown_anchor_tick);
-    const float elapsed_seconds = elapsed_ticks <= 0
+    // The render instant sits an interpolation delay behind the server, so the
+    // first frames after a throw are still earlier than the anchor. The curve
+    // is only run forwards -- backwards would draw the prop somewhere it was
+    // never thrown from. It is measured in microseconds, not whole ticks: a
+    // tick-quantised elapsed time holds the prop for every frame inside a tick
+    // and then jumps a full tick of flight, which at throw speed is the jitter.
+    const std::uint64_t anchor_time_us = tick_time_us(
+        replicated.thrown_anchor_tick,
+        tick_loop_.fixed_delta_seconds());
+    const float elapsed_seconds = render_server_time_us <= anchor_time_us
         ? 0.0f
-        : static_cast<float>(elapsed_ticks) * tick_loop_.fixed_delta_seconds();
+        : static_cast<float>(
+              static_cast<double>(render_server_time_us - anchor_time_us) /
+              1000000.0);
     // The same evaluator the server steps the prop with, over the same motion
     // model and gravity -- both read from the trajectory projectile the item's
     // throw policy names, which the client already holds in the synced catalog.
@@ -12115,6 +12120,11 @@ void KernelEngine::rebuild_render_states_from_snapshot(
     current_render_time_us_ =
         tick_time_us(snapshot.header.server_tick, tick_loop_.fixed_delta_seconds());
     has_client_render_time_ = true;
+    // The snapshot header's tick is floored to a whole tick; a prop in flight
+    // is evaluated at the unrounded instant the interpolation landed on, so it
+    // moves every frame the way an interpolated entity does.
+    std::uint64_t thrown_render_time_us = current_render_time_us_;
+    client_render_server_time_us(client_render_time_us, &thrown_render_time_us);
     std::unordered_set<NetId> rendered_entities;
     for (const PredictedProjectile& projectile : predicted_projectiles_) {
         if (projectile.net_id != 0) {
@@ -12189,7 +12199,7 @@ void KernelEngine::rebuild_render_states_from_snapshot(
         glm::vec3 thrown_velocity{0.0f, 0.0f, 0.0f};
         if (thrown_prop_render_transform(
                 *replicated,
-                snapshot.header.server_tick,
+                thrown_render_time_us,
                 &thrown_position,
                 &thrown_velocity)) {
             render_entity.position = thrown_position;
@@ -12260,7 +12270,7 @@ void KernelEngine::rebuild_render_states_from_snapshot(
         glm::vec3 velocity{0.0f, 0.0f, 0.0f};
         const bool thrown = thrown_prop_render_transform(
             entity,
-            snapshot.header.server_tick,
+            thrown_render_time_us,
             &position,
             &velocity);
         render_states_.push_back(RenderEntityState{
