@@ -138,6 +138,39 @@ glm::vec3 projectile_velocity_at(
     const glm::vec3& gravity,
     float elapsed_seconds);
 
+// Where an actor under an ImpulseLockout is `elapsed_seconds` after a sample
+// of it at `origin` moving at `velocity`, until something stops it. While the
+// lockout stands the movement step keeps the horizontal velocity it was given
+// and an airborne actor adds gravity before it moves -- semi-implicit Euler --
+// so the height after n ticks is vy*n*dt + g*dt^2*n(n+1)/2, not the textbook
+// parabola. This is that sum with n = t/dt, exact on every tick boundary and
+// continuous between them. It knows nothing about the ground; the caller
+// floors it.
+glm::vec3 knockback_flight_position_at(
+    const glm::vec3& origin,
+    const glm::vec3& velocity,
+    float gravity_y,
+    float fixed_delta_seconds,
+    float elapsed_seconds);
+
+glm::vec3 knockback_flight_velocity_at(
+    const glm::vec3& velocity,
+    float gravity_y,
+    float elapsed_seconds);
+
+// How many ticks after a sample the flight still belongs to the lockout: the
+// tick it comes back down to floor_y if it lands first, since the authority
+// releases on the first landing after the arming tick, else the last tick
+// before the lockout expires. A flight that starts on the floor -- a flat
+// knockback -- does not land and slides out the whole lockout.
+std::uint32_t knockback_flight_ticks(
+    const glm::vec3& position,
+    const glm::vec3& velocity,
+    float gravity_y,
+    float floor_y,
+    float fixed_delta_seconds,
+    std::uint32_t lockout_ticks);
+
 bool spawn_action_graph_projectile(
     World& world,
     std::uint32_t projectile_template_id,

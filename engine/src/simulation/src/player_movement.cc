@@ -740,4 +740,57 @@ void simulate_velocity_movement(World& world, float fixed_delta_seconds) {
     }
 }
 
+glm::vec3 knockback_flight_position_at(
+    const glm::vec3& origin,
+    const glm::vec3& velocity,
+    float gravity_y,
+    float fixed_delta_seconds,
+    float elapsed_seconds) {
+    return glm::vec3{
+        origin.x + velocity.x * elapsed_seconds,
+        origin.y + velocity.y * elapsed_seconds +
+            0.5f * gravity_y *
+                (elapsed_seconds * elapsed_seconds +
+                 elapsed_seconds * fixed_delta_seconds),
+        origin.z + velocity.z * elapsed_seconds};
+}
+
+std::uint32_t knockback_flight_ticks(
+    const glm::vec3& position,
+    const glm::vec3& velocity,
+    float gravity_y,
+    float floor_y,
+    float fixed_delta_seconds,
+    std::uint32_t lockout_ticks) {
+    if (lockout_ticks == 0u) {
+        return 0u;
+    }
+    if (gravity_y < 0.0f && fixed_delta_seconds > 0.0f) {
+        float before = position.y;
+        for (std::uint32_t elapsed = 1u; elapsed < lockout_ticks; ++elapsed) {
+            const float at = knockback_flight_position_at(
+                position,
+                velocity,
+                gravity_y,
+                fixed_delta_seconds,
+                static_cast<float>(elapsed) * fixed_delta_seconds).y;
+            if (before > floor_y && at <= floor_y) {
+                return elapsed;
+            }
+            before = at;
+        }
+    }
+    return lockout_ticks - 1u;
+}
+
+glm::vec3 knockback_flight_velocity_at(
+    const glm::vec3& velocity,
+    float gravity_y,
+    float elapsed_seconds) {
+    return glm::vec3{
+        velocity.x,
+        velocity.y + gravity_y * elapsed_seconds,
+        velocity.z};
+}
+
 }  // namespace network_example

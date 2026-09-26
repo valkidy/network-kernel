@@ -50,6 +50,7 @@ struct InventorySnapshotPagePacket;
 struct InventorySnapshotRequestPacket;
 struct LocalActionResultBatchPacket;
 struct LocomotionStepBatchPacket;
+struct ActorImpulseBatchPacket;
 struct ProjectileSpawnBatchPacket;
 struct RemoteActionPresentationBatchPacket;
 struct WelcomePacket;
@@ -57,6 +58,20 @@ struct WelcomePacket;
 namespace simulation {
 class Dispatcher;
 }  // namespace simulation
+
+// A remote actor's knockback as its ActorImpulseRecord announced it: the
+// authoritative state at the end of `tick`, and the flight that follows from
+// it. end_tick is when the authority hands the actor back to its controller --
+// the lockout's expiry, or the tick the flight comes back down to floor_y if
+// that is sooner.
+struct RemoteKnockbackAnchor {
+    std::uint32_t tick = 0;
+    std::uint32_t end_tick = 0;
+    glm::vec3 position{0.0f};
+    glm::vec3 velocity{0.0f};
+    float gravity_y = 0.0f;
+    float floor_y = 0.0f;
+};
 
 class KernelEngine {
 public:
@@ -67,6 +82,9 @@ public:
     ItemStore& item_store() { return item_store_; }
     const ItemStore& item_store() const { return item_store_; }
     void queue_prop_state_change(NetId net_id);
+    // An actor was knocked back this tick. floor_y is where it stood when
+    // struck; the rest of its anchor is read at the end of the tick.
+    void queue_actor_impulse(NetId net_id, float floor_y);
     bool claim_scope_transfer(
         KernelItemInstanceId item_instance_id,
         NetId prop_entity_id);
@@ -816,11 +834,13 @@ private:
         glm::vec3* out_velocity) const;
     void handle_client_prop_state_change_batch(
         const PropStateChangeBatchPacket& packet);
+    void handle_client_actor_impulse_batch(const ActorImpulseBatchPacket& packet);
     void request_inventory_snapshot(
         KernelInventoryContainerId container_id,
         std::uint64_t client_revision);
     void broadcast_reliable_event(const KernelEvent& event);
     void flush_prop_state_changes();
+    void flush_actor_impulses();
     bool make_prop_state_change_record(
         NetId net_id,
         PropStateChangeRecord* out_record) const;
@@ -954,6 +974,7 @@ private:
     std::vector<ClientReplicatedEntity> client_replicated_entities_;
     std::unordered_set<NetId> client_metadata_timeout_reported_entities_;
     std::unordered_map<NetId, ClientEntityTombstone> client_despawned_entities_;
+    std::unordered_map<NetId, RemoteKnockbackAnchor> client_knockback_anchors_;
     std::vector<PendingPredictionInput> pending_prediction_inputs_;
     KernelPlayerInput latest_client_input_{};
     std::deque<KernelPlayerInput> pending_client_action_intents_;
@@ -995,6 +1016,8 @@ private:
         client_inventory_resync_pending_;
     std::unordered_map<NetId, StatusEffectState> client_status_effect_states_;
     std::vector<NetId> pending_prop_state_changes_;
+    // net_id -> floor_y, first impulse of the tick wins the floor.
+    std::vector<std::pair<NetId, float>> pending_actor_impulses_;
     std::unordered_set<KernelItemInstanceId> claimed_item_instances_;
     std::unordered_set<NetId> claimed_prop_entities_;
     std::vector<KernelDebugInfo> debug_records_;

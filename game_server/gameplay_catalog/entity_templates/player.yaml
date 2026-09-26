@@ -45,14 +45,14 @@ weapon_slots:
   - 7
   - 0
 active_weapon_slot: 0
-inventory_slot_capacity: 8
+inventory_slot_capacity: 16
 inventory_slots:
   # - item_template: fungible_potion
   #  quantity: 5
   # - item_template: stateful_potion
   #  quantity: 1
-  - item_template: fungible_glyph_bottle
-    quantity: 10
+  # - item_template: fungible_glyph_bottle
+  #  quantity: 10
   - item_template: fungible_shockwave_bottle
     quantity: 3
   - item_template: fungible_frag_grenade_bottle

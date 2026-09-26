@@ -276,10 +276,60 @@ void an_impulse_lockout_block_survives_a_round_trip() {
         &bad_decoded));
 }
 
+// A knockback anchor is the one record of the tick an actor was struck, so it
+// has to come back exactly: the flight replayed from it is only as good as
+// these floats.
+void an_actor_impulse_batch_survives_a_round_trip() {
+    network_example::ActorImpulseBatchPacket batch;
+    batch.server_tick = 4321;
+    network_example::ActorImpulseRecord record;
+    record.net_id = 77;
+    record.position = glm::vec3{1.5f, 0.25f, -3.0f};
+    record.velocity = glm::vec3{12.0f, 5.0f, -0.5f};
+    record.gravity_y = -9.81f;
+    record.floor_y = 0.25f;
+    record.lockout_ticks = 40;
+    batch.records.push_back(record);
+    network_example::ActorImpulseRecord second = record;
+    second.net_id = 78;
+    second.velocity = glm::vec3{-8.0f, 0.0f, 2.0f};
+    batch.records.push_back(second);
+
+    const std::vector<std::uint8_t> encoded =
+        network_example::encode_actor_impulse_batch_packet(batch, 9);
+    // 28 header + 6 batch header + 38 per record.
+    require(encoded.size() == 28u + 6u + 2u * 38u);
+    network_example::ActorImpulseBatchPacket decoded;
+    require(network_example::decode_actor_impulse_batch_packet(
+        encoded.data(), encoded.size(), &decoded));
+    require(decoded.server_tick == 4321u);
+    require(decoded.records.size() == 2u);
+    require(decoded.records[0].net_id == 77u);
+    require(decoded.records[0].position == record.position);
+    require(decoded.records[0].velocity == record.velocity);
+    require(decoded.records[0].gravity_y == record.gravity_y);
+    require(decoded.records[0].floor_y == record.floor_y);
+    require(decoded.records[0].lockout_ticks == 40u);
+    require(decoded.records[1].net_id == 78u);
+    require(decoded.records[1].velocity == second.velocity);
+
+    // Not mistaken for its neighbour on the reliable-event channel, which the
+    // client tries first.
+    network_example::PropStateChangeBatchPacket prop_state;
+    require(!network_example::decode_prop_state_change_batch_packet(
+        encoded.data(), encoded.size(), &prop_state));
+
+    // A record with no lockout left is not a flight; the encoder refuses it.
+    network_example::ActorImpulseBatchPacket expired = batch;
+    expired.records[1].lockout_ticks = 0;
+    require(network_example::encode_actor_impulse_batch_packet(expired).empty());
+}
+
 int main() {
     // Ahead of everything else: main() carries a long-standing abort part way
     // down, and anything below it never runs in a build where assert() is live.
     the_estimator_agrees_with_the_encoder();
+    an_actor_impulse_batch_survives_a_round_trip();
     an_impulse_lockout_block_survives_a_round_trip();
     an_agent_record_survives_a_round_trip();
 
