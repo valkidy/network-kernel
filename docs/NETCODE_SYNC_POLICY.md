@@ -109,6 +109,58 @@ deterministic local presentation simulation from spawn metadata. In that mode,
 the reliable spawn/despawn stream owns lifecycle while compact low-frequency
 projectile snapshots remain optional correction data.
 
+### Starved actors
+
+A snapshot is a send set, not the world. Past the budget most actors are left
+out of most snapshots (measured at 80 acting agents: half of every agent's
+snapshot intervals, even within 10 m), so interpolating between the two
+buffered snapshots around the render time has nothing to say about them.
+
+Remote actors are therefore drawn from their own samples:
+
+```text
+1. Find the actor's own previous and next sample anywhere in the buffer.
+2. Both known:
+       interpolate position, rotation and velocity across the gap;
+       keep flags, hp and the action timeline from the older sample
+       until the last snapshot interval before the newer one.
+3. Only the previous sample known:
+       carry it along its last horizontal velocity for at most 0.25 s,
+       then hold. Never extrapolate vertically or while dead.
+4. Only a newer sample known:
+       the actor just became relevant; draw it at that sample.
+```
+
+Props and projectiles keep the pairwise result: a prop's moves are pickups and
+placements, which interpolating across a gap would draw as a slide.
+
+### Knockback anchors
+
+While an `ImpulseLockout` stands, the authority ignores the actor's controller:
+horizontal velocity carries and gravity pulls until the actor lands or the
+lockout expires. The state at the end of the tick it was struck is therefore
+the whole flight, and it is the tick the send set is least likely to cover.
+
+```text
+Server, the tick an impulse arms a lockout:
+    ActorImpulseBatch on the reliable-event channel, relevance-filtered,
+    never sent to the actor's own owner:
+        position, velocity, gravity, height it was struck from,
+        lockout ticks remaining.
+
+Client:
+    replay the flight with knockback_flight_position_at
+        (the solver's per-tick sum, exact on every tick);
+    end it with knockback_flight_ticks
+        (first landing, or the lockout ceiling for a flat slide);
+    re-base on any later in-flight snapshot sample and bend toward it,
+        so a collision the replay cannot know is absorbed, not snapped;
+    after the flight, hold where it came down until a later sample arrives.
+```
+
+The owner predicts its own knockback from the lockout block in its own
+snapshot record instead.
+
 ## Local-Owned Deterministic Projectiles
 
 Rocket and grenade projectiles are deterministic projectiles.
@@ -198,6 +250,49 @@ sound
 
 The server performs authoritative hit detection, including lag compensation
 when available, and sends the resulting gameplay events.
+
+## Homing Projectiles (Deferred)
+
+Status: deferred until a homing weapon is designed and equipped. The
+`homing_missile` projectile, weapon, and fire/reload actions are authored, but
+no player or agent loadout uses them, so the work below cannot be validated in
+play yet.
+
+Current behavior, which is known to jitter under crowd load:
+
+```text
+Server:
+    boost straight for boost_ticks, then lock the nearest valid target in the
+    lock cone, turn at most max_turn_degrees_per_tick toward it, accelerate to
+    max_speed, and fly straight once the target is lost.
+
+Client:
+    projectile_position_at has no homing branch, so a remote homing projectile
+    is drawn as a straight line from its spawn record and pulled onto the real
+    path only by hybrid snapshot corrections (straight-line extrapolation,
+    capped at 0.2 s). Projectiles carry 1/8 of an actor's send weight, so in a
+    crowd a correction can be up to a second apart: straight, then a snap.
+```
+
+Planned when the weapon exists, following the knockback anchor pattern:
+
+```text
+1. Server sends a reliable guidance record only when the guidance phase
+   changes (lock-on, target lost, retarget): projectile, tick, phase,
+   target net_id, position, velocity. Two or three per missile.
+2. Client steers between records with the server's own turn-rate and
+   acceleration rules, shared as a simulation function like
+   knockback_flight_position_at, toward the target's position.
+3. Hybrid snapshot corrections and the existing correction offset absorb
+   the remaining error.
+4. Packet schema bump; server and client rebuilt together.
+```
+
+Known limit to design around: the replay cannot be exact. A remote homing
+projectile is fast-forwarded to the present while a remote target is drawn
+about one interpolation delay in the past, so steering toward the drawn target
+aims at the wrong instant. A local-player target is predicted in the present
+and lines up, which is also the case players notice most.
 
 ## Physics Projectiles
 
