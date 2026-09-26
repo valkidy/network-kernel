@@ -270,6 +270,26 @@ void an_anchored_prop_in_flight_leaves_the_send_set() {
         entity, ne::PropWorldMode{ne::PropMode::kInFlight});
     world.registry().get_or_emplace<ne::Velocity>(entity).linear =
         glm::vec3{12.0f, 6.0f, 0.0f};
+    // Thrown the way begin_thrown_prop_motion throws it: on the trajectory the
+    // template names, which the server has to hold to know the client can
+    // draw the same curve.
+    ne::RuntimeProjectileTemplate trajectory{};
+    trajectory.projectile_template_id = kTrajectoryTemplateId;
+    trajectory.projectile_type = ne::ProjectileType::kStandard;
+    trajectory.motion_model = ne::ProjectileMotionModel::kParabolic;
+    trajectory.speed = 24.0f;
+    trajectory.gravity = glm::vec3{0.0f, -9.81f, 0.0f};
+    world.set_projectile_templates({trajectory});
+    world.registry().emplace_or_replace<ne::ThrownPropMotion>(
+        entity,
+        ne::ThrownPropMotion{
+            ne::ProjectileMotionModel::kParabolic,
+            0u,
+            glm::vec3{3.0f, 1.0f, 0.0f},
+            glm::vec3{12.0f, 6.0f, 0.0f},
+            glm::vec3{0.0f, -9.81f, 0.0f},
+            glm::vec3{3.0f, 1.0f, 0.0f},
+        });
 
     ne::KernelEngine::PeerSession session{1, player, 0, true, {}};
     std::uint32_t time_ms = 0;

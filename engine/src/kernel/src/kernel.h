@@ -532,6 +532,12 @@ private:
         glm::vec3 correction_offset{0.0f, 0.0f, 0.0f};
         bool bound = false;
         bool locally_terminated = false;
+        // Ticks since the authority's spawn tick, counted the way it counts
+        // them. age_ticks cannot stand in: a snapshot re-bases the flight and
+        // restarts it. Only a standard projectile ends on it; an area effect
+        // and a beam have their lifetimes kept by other systems.
+        std::uint32_t lifetime_elapsed_ticks = 0;
+        bool ends_on_lifetime = false;
     };
 
     struct VisionRuntimeState {
@@ -771,6 +777,9 @@ private:
     bool client_render_server_time_us(
         std::uint64_t client_render_time_us,
         std::uint64_t* out_server_time_us) const;
+    std::uint64_t render_target_server_time_us(
+        std::uint64_t client_render_time_us) const;
+    void advance_render_clock(std::uint64_t client_render_time_us);
     bool build_interpolated_snapshot(
         std::uint64_t client_render_time_us,
         WorldSnapshot* out_snapshot) const;
@@ -858,6 +867,9 @@ private:
     bool is_prop_in_flight_on_client(const ClientReplicatedEntity& entity) const;
     void release_deferred_flight_despawns();
     bool is_anchored_in_flight_prop(NetId net_id) const;
+    std::uint32_t prop_throw_trajectory_template_id(
+        std::uint32_t entity_template_id,
+        std::uint32_t item_template_id) const;
     void request_inventory_snapshot(
         KernelInventoryContainerId container_id,
         std::uint64_t client_revision);
@@ -1002,6 +1014,19 @@ private:
     // The unrounded server instant the last render pass drew the world
     // timeline at; valid once has_client_render_time_ is set.
     std::uint64_t render_server_time_us_ = 0;
+    // The world timeline's own clock, for a client with clock sync. It moves at
+    // the rate real time does, bent by at most a tenth toward the target the
+    // clock-sync estimate asks for, so a late snapshot stream no longer stops
+    // the world at the newest snapshot and an offset correction no longer runs
+    // it backwards. It may run past the newest snapshot by a bounded overrun.
+    struct RenderClock {
+        std::uint64_t render_us = 0;
+        std::uint64_t last_client_time_us = 0;
+        bool has = false;
+        bool held = false;
+        std::uint64_t held_since_client_time_us = 0;
+    };
+    RenderClock render_clock_{};
     std::vector<PendingPredictionInput> pending_prediction_inputs_;
     KernelPlayerInput latest_client_input_{};
     std::deque<KernelPlayerInput> pending_client_action_intents_;

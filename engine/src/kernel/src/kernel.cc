@@ -320,6 +320,11 @@ constexpr std::uint32_t kMaxCompensationWindowUs = 100000u;
 constexpr std::uint64_t kClockSyncIntervalUs = 1000000u;
 constexpr double kClientClockOffsetSmoothingFactor = 0.25;
 constexpr float kMaxHomingVisualExtrapolationSeconds = 0.2f;
+// How long a predicted projectile that ended on its lifetime stays hidden before
+// it is forgotten. The despawn normally takes it first, a round trip after the
+// end; this is only for the one it never comes for -- a deterministic
+// projectile that left relevance keeps flying here and has no other ending.
+constexpr float kPredictedProjectileEndedRetentionSeconds = 1.0f;
 // How far past its newest sample a remote actor is carried along its last
 // velocity before it is held. The send set starves actors for several
 // snapshots at a time once a crowd outgrows the budget (measured at 80 acting
@@ -328,6 +333,18 @@ constexpr float kMaxHomingVisualExtrapolationSeconds = 0.2f;
 // worth less than the jump it would save: a quarter second at run speed is a
 // metre and a quarter, and an agent that turned inside it lands that far off.
 constexpr float kMaxRemoteActorExtrapolationSeconds = 0.25f;
+// How far the world timeline may run past the newest snapshot when the stream
+// is late. Everything drawn there has a way to carry on -- a remote actor is
+// extrapolated for the same quarter second, a knockback or a thrown prop
+// follows its curve -- and past it they would all be guessing.
+constexpr float kRenderClockOverrunCapSeconds = kMaxRemoteActorExtrapolationSeconds;
+// How far behind its target the render clock has to be before it speeds up,
+// and how far off before it gives up bending and jumps. The rates are the
+// bend: a tenth either way is not something the eye picks up.
+constexpr std::uint32_t kRenderClockCatchUpThresholdTicks = 1u;
+constexpr double kRenderClockCatchUpRate = 1.1;
+constexpr double kRenderClockSlowDownRate = 0.9;
+constexpr std::uint64_t kRenderClockHardResetUs = 1000000u;
 constexpr float kDefaultEntityRelevanceDistanceMeters = 40.0f;
 // The radius an entity has to pass to STOP being relevant, as opposed to the
 // one it has to pass to start. Leaving costs a reliable despawn and returning
@@ -3728,6 +3745,7 @@ std::uint32_t KernelEngine::get_render_states_at_time(
     if (out_states == nullptr || max_states == 0) {
         return 0;
     }
+    advance_render_clock(client_render_time_us);
     rebuild_render_states_at_time(client_render_time_us);
     const std::uint32_t count =
         std::min(max_states, static_cast<std::uint32_t>(render_states_.size()));
@@ -6044,6 +6062,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     prediction_failed_ = false;
     has_client_clock_sync_ = false;
     has_client_render_time_ = false;
+    render_clock_ = RenderClock{};
     has_remote_presentation_sequence_ = false;
     running_ = true;
 }
@@ -7190,6 +7209,9 @@ void KernelEngine::handle_client_projectile_spawn_batch(
                     glm::vec3{0.0f, 0.0f, 0.0f},
                     false,
                     false,
+                    0,
+                    projectile_template->projectile_type ==
+                        ProjectileType::kStandard,
                 });
             }
 
@@ -7674,6 +7696,7 @@ void KernelEngine::clear_client_session() {
     has_predicted_local_entity_ = false;
     has_client_clock_sync_ = false;
     has_client_render_time_ = false;
+    render_clock_ = RenderClock{};
     current_render_time_us_ = 0;
     render_states_.clear();
 }
@@ -8779,6 +8802,13 @@ void KernelEngine::reconcile_predicted_projectiles(const WorldSnapshot& snapshot
         predicted->initial_velocity = entity.velocity;
         predicted->age_ticks = authoritative_age_ticks;
         predicted->spawn_tick = entity.spawn_tick;
+        // The authority fires and simulates a projectile in the same tick, so
+        // it is one tick old on its spawn tick. Real ticks even for homing,
+        // whose drawn flight is capped: the lifetime ends when it ends.
+        if (entity.spawn_tick != 0u && local_tick >= entity.spawn_tick) {
+            predicted->lifetime_elapsed_ticks =
+                local_tick - entity.spawn_tick + 1u;
+        }
         if (predicted->projectile_template_id == 0u ||
             predicted->collider_template_id == 0u) {
             const auto replicated = std::find_if(
@@ -9075,6 +9105,8 @@ void KernelEngine::predict_local_projectile(const KernelPlayerInput& input) {
         glm::vec3{0.0f, 0.0f, 0.0f},
         false,
         false,
+        0,
+        projectile_template->projectile_type == ProjectileType::kStandard,
     });
 }
 
@@ -9181,7 +9213,38 @@ bool KernelEngine::client_render_server_time_us(
             fixed_delta_seconds);
         return true;
     }
+    const std::uint64_t oldest_time_us = tick_time_us(
+        client_snapshot_buffer_.front().header.server_tick,
+        fixed_delta_seconds);
+    // The render clock is advanced once per render pass, before anything reads
+    // it, and everything that draws the world timeline reads the same value:
+    // the interpolation, the flight curves, the held-back endings and the
+    // skeleton pose. It is not clamped to the newest snapshot -- running past
+    // it is the point -- only kept off the far side of the oldest one.
+    if (render_clock_.has) {
+        *out_server_time_us = std::max(render_clock_.render_us, oldest_time_us);
+        return true;
+    }
 
+    // Report the instant the snapshot interpolation will actually land on, ends
+    // included: build_interpolated_snapshot_for_server_time clamps to the
+    // buffer rather than extrapolating, and the skeleton pose has to be sampled
+    // at the same instant the root ends up at, not the one we asked for.
+    *out_server_time_us = std::clamp(
+        render_target_server_time_us(client_render_time_us),
+        oldest_time_us,
+        tick_time_us(
+            client_snapshot_buffer_.back().header.server_tick,
+            fixed_delta_seconds));
+    return true;
+}
+
+// Where the world timeline should be drawn: an interpolation delay behind the
+// server's present as the clock-sync estimate has it, or, with no estimate yet,
+// behind the newest snapshot. Needs at least one snapshot in the buffer.
+std::uint64_t KernelEngine::render_target_server_time_us(
+    std::uint64_t client_render_time_us) const {
+    const float fixed_delta_seconds = tick_loop_.fixed_delta_seconds();
     const std::uint64_t interpolation_delay_us =
         tick_time_us(
             tick_loop_.snapshot_interval_ticks() * 2u,
@@ -9218,19 +9281,93 @@ bool KernelEngine::client_render_server_time_us(
         target_server_time_us =
             tick_time_us(target_tick, fixed_delta_seconds);
     }
-    // Report the instant the snapshot interpolation will actually land on, ends
-    // included: build_interpolated_snapshot_for_server_time clamps to the
-    // buffer rather than extrapolating, and the skeleton pose has to be sampled
-    // at the same instant the root ends up at, not the one we asked for.
-    *out_server_time_us = std::clamp(
-        target_server_time_us,
-        tick_time_us(
-            client_snapshot_buffer_.front().header.server_tick,
-            fixed_delta_seconds),
-        tick_time_us(
-            client_snapshot_buffer_.back().header.server_tick,
-            fixed_delta_seconds));
-    return true;
+    return target_server_time_us;
+}
+
+// Advanced only from the render calls the host makes, never from the rebuilds a
+// packet handler triggers: those run off client_local_time_us_, which the host's
+// presentation clock is not guaranteed to match, and two time bases feeding one
+// clock would stall it or lurch it. Those rebuilds read the clock as it stands.
+void KernelEngine::advance_render_clock(std::uint64_t client_render_time_us) {
+    // Only a client with a clock-sync estimate has a present to run toward. A
+    // listen server's loopback stream is never late, and without an estimate
+    // the target is the newest snapshot, which a clock cannot run past.
+    if (!has_client_clock_sync_ || config_.mode == KernelMode_ListenServer ||
+        client_snapshot_buffer_.size() < 2u) {
+        return;
+    }
+    const float fixed_delta_seconds = tick_loop_.fixed_delta_seconds();
+    const std::uint64_t oldest_time_us = tick_time_us(
+        client_snapshot_buffer_.front().header.server_tick,
+        fixed_delta_seconds);
+    const std::uint64_t newest_time_us = tick_time_us(
+        client_snapshot_buffer_.back().header.server_tick,
+        fixed_delta_seconds);
+    const std::uint64_t ceiling_us = newest_time_us +
+        static_cast<std::uint64_t>(kRenderClockOverrunCapSeconds * 1000000.0f);
+    const std::uint64_t target_us =
+        render_target_server_time_us(client_render_time_us);
+    RenderClock& clock = render_clock_;
+    if (!clock.has) {
+        clock.render_us = std::clamp(target_us, oldest_time_us, newest_time_us);
+        clock.last_client_time_us = client_render_time_us;
+        clock.has = true;
+        return;
+    }
+    // Several passes can render the same frame -- render states, then the
+    // skeleton pose -- and a caller may hand in an earlier time; neither moves
+    // the clock.
+    if (client_render_time_us <= clock.last_client_time_us) {
+        return;
+    }
+    const std::uint64_t elapsed_us =
+        client_render_time_us - clock.last_client_time_us;
+    clock.last_client_time_us = client_render_time_us;
+
+    // Held at the overrun cap: logged once, with how long, when it lets go.
+    const auto note_held = [&clock, client_render_time_us](bool held) {
+        if (held && !clock.held) {
+            clock.held_since_client_time_us = client_render_time_us;
+        } else if (!held && clock.held) {
+            spdlog::info(
+                "render clock held {} ms past the newest snapshot",
+                (client_render_time_us - clock.held_since_client_time_us) / 1000u);
+        }
+        clock.held = held;
+    };
+    const std::int64_t behind_us = static_cast<std::int64_t>(target_us) -
+        static_cast<std::int64_t>(clock.render_us);
+    const std::uint64_t distance_us = static_cast<std::uint64_t>(
+        behind_us < 0 ? -behind_us : behind_us);
+    if (distance_us > kRenderClockHardResetUs) {
+        // Too far to bend back without a visible drift lasting seconds: a
+        // reconnect, a long stall, a debugger. Jump, forward or back -- though
+        // a stall still pins it at the cap, where there is nothing to jump to.
+        const std::uint64_t reset_us =
+            std::clamp(target_us, oldest_time_us, ceiling_us);
+        if (reset_us != clock.render_us) {
+            spdlog::info(
+                "render clock reset: {} ms {} its target",
+                distance_us / 1000u,
+                behind_us > 0 ? "behind" : "ahead of");
+            clock.render_us = reset_us;
+        }
+        note_held(target_us > ceiling_us);
+        return;
+    }
+    double rate = 1.0;
+    if (behind_us > static_cast<std::int64_t>(tick_time_us(
+                        kRenderClockCatchUpThresholdTicks, fixed_delta_seconds))) {
+        rate = kRenderClockCatchUpRate;
+    } else if (behind_us < 0) {
+        rate = kRenderClockSlowDownRate;
+    }
+    const std::uint64_t advanced_us = clock.render_us +
+        static_cast<std::uint64_t>(static_cast<double>(elapsed_us) * rate);
+    // Held at the ceiling, never pushed back by it: the ceiling only moves
+    // forward while the buffer lives.
+    clock.render_us = std::max(clock.render_us, std::min(advanced_us, ceiling_us));
+    note_held(advanced_us > ceiling_us);
 }
 
 bool KernelEngine::build_interpolated_snapshot(
@@ -9770,6 +9907,8 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
             return !projectile.locally_terminated;
         });
     for (PredictedProjectile& projectile : predicted_projectiles_) {
+        // Counted on after it ends too: that is what times its retention.
+        projectile.lifetime_elapsed_ticks += 1;
         if (projectile.locally_terminated) {
             continue;
         }
@@ -10029,14 +10168,34 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
 
         projectile.position = next_position;
         projectile.velocity = next_velocity;
+        // Ended here, on this client's own timeline, the tick the authority
+        // ends it -- not a round trip later when its despawn arrives. Hidden
+        // rather than erased, the way a wall hit is: the despawn still has to
+        // find it, or it would be held for the world timeline and the snapshot
+        // copy drawn in its place.
+        if (projectile.ends_on_lifetime && projectile.max_lifetime_ticks > 0u &&
+            projectile.lifetime_elapsed_ticks >= projectile.max_lifetime_ticks) {
+            projectile.locally_terminated = true;
+        }
     }
+    const std::uint32_t ended_retention_ticks =
+        fixed_delta_seconds > 0.0f
+            ? static_cast<std::uint32_t>(std::ceil(
+                  kPredictedProjectileEndedRetentionSeconds / fixed_delta_seconds))
+            : 0u;
     predicted_projectiles_.erase(
         std::remove_if(
             predicted_projectiles_.begin(),
             predicted_projectiles_.end(),
-            [](const PredictedProjectile& projectile) {
+            [ended_retention_ticks](const PredictedProjectile& projectile) {
+                if (projectile.max_lifetime_ticks == 0u) {
+                    return false;
+                }
+                if (projectile.ends_on_lifetime) {
+                    return projectile.lifetime_elapsed_ticks >=
+                           projectile.max_lifetime_ticks + ended_retention_ticks;
+                }
                 return !projectile.locally_terminated &&
-                       projectile.max_lifetime_ticks > 0u &&
                        projectile.age_ticks >= projectile.max_lifetime_ticks;
             }),
         predicted_projectiles_.end());
@@ -11511,8 +11670,13 @@ void KernelEngine::sync_session_relevance(
         if (is_own_player) {
             send_status_effect_state(session, entity->net_id);
         }
+        // Neither kind of prop is in the snapshot, so the state the session
+        // would otherwise never see comes with the spawn. For one in flight
+        // that is its throw record, as of now: the client anchors its curve on
+        // it, exactly as the thrower's client did on the one that started it.
         if (entity->type == EntityType::kProp &&
-            is_dormant_placed_prop(entity->net_id)) {
+            (is_dormant_placed_prop(entity->net_id) ||
+             is_anchored_in_flight_prop(entity->net_id))) {
             PropStateChangeBatchPacket prop_state{};
             prop_state.server_tick = tick_loop_.current_tick();
             PropStateChangeRecord record{};
@@ -11601,24 +11765,66 @@ bool KernelEngine::is_dormant_placed_prop(NetId net_id) const {
         glm::length(world_.registry().get<Velocity>(*entity).linear) <= 0.001f;
 }
 
+// The trajectory a thrown prop flies on, resolved the same way on both ends
+// from what both ends hold: the prop's item, if it is one, and its entity
+// template. An item thrown whole flies on its item template's trajectory --
+// that is where the catalog puts it (`throw.trajectory_projectile`), and no
+// shipped entity template has a `throw:` block. Only a prop that is not an item
+// falls back to its entity template's. An item thrown by consuming it spawns a
+// new prop and launches it with an impulse, which is not a trajectory at all;
+// zero says there is nothing to draw it from.
+std::uint32_t KernelEngine::prop_throw_trajectory_template_id(
+    std::uint32_t entity_template_id,
+    std::uint32_t item_template_id) const {
+    if (item_template_id != 0u) {
+        const auto item_template = std::find_if(
+            item_templates_.begin(),
+            item_templates_.end(),
+            [item_template_id](const KernelItemTemplateDefinition& candidate) {
+                return candidate.item_template_id == item_template_id;
+            });
+        if (item_template != item_templates_.end()) {
+            return item_template->throw_policy.mode ==
+                    KernelItemThrowMode_IdentityPreserving
+                ? item_template->throw_policy.trajectory_projectile_template_id
+                : 0u;
+        }
+    }
+    const KernelEntityTemplateDefinition* entity_template =
+        find_entity_template(entity_templates_, entity_template_id);
+    return entity_template == nullptr
+        ? 0u
+        : entity_template->prop.throw_trajectory_projectile_template_id;
+}
+
 // A prop in flight whose client draws it from its throw anchor: the prop-state
 // record that started the flight already told the client everything, and every
 // later change re-anchors it the same way. A snapshot record of it would be a
 // sample the render pass throws away, bought with a slot an actor could use.
+// Only when the flight really is that trajectory: the motion the prop carries
+// has to be the one the client will evaluate, or leaving the samples out would
+// leave it drawing a curve the prop is not on.
 bool KernelEngine::is_anchored_in_flight_prop(NetId net_id) const {
     const std::optional<entt::entity> entity = world_.find_entity(net_id);
     if (!entity.has_value() ||
-        !world_.registry().all_of<EntityKind, PropWorldMode, EntityTemplateRef>(
-            *entity) ||
+        !world_.registry().all_of<EntityKind, PropWorldMode, EntityTemplateRef,
+                                  ThrownPropMotion>(*entity) ||
         world_.registry().get<EntityKind>(*entity).type != EntityType::kProp ||
         world_.registry().get<PropWorldMode>(*entity).mode != PropMode::kInFlight) {
         return false;
     }
-    const KernelEntityTemplateDefinition* entity_template = find_entity_template(
-        entity_templates_,
-        world_.registry().get<EntityTemplateRef>(*entity).entity_template_id);
-    return entity_template != nullptr &&
-        entity_template->prop.throw_trajectory_projectile_template_id != 0u;
+    const ItemTemplateRef* item =
+        world_.registry().try_get<ItemTemplateRef>(*entity);
+    const std::uint32_t trajectory_id = prop_throw_trajectory_template_id(
+        world_.registry().get<EntityTemplateRef>(*entity).entity_template_id,
+        item == nullptr ? 0u : item->item_template_id);
+    const RuntimeProjectileTemplate* trajectory =
+        trajectory_id == 0u ? nullptr : world_.find_projectile_template(trajectory_id);
+    const ThrownPropMotion& motion =
+        world_.registry().get<ThrownPropMotion>(*entity);
+    return trajectory != nullptr &&
+        trajectory->motion_model == motion.motion_model &&
+        trajectory->gravity == motion.gravity;
 }
 
 void KernelEngine::send_entity_spawn(PeerId peer, const EntitySnapshot& entity) {
@@ -12241,15 +12447,13 @@ bool KernelEngine::thrown_prop_render_transform(
             : replicated.world_item_mode != KernelWorldItemMode_InFlight) {
         return false;
     }
-    const KernelEntityTemplateDefinition* entity_template =
-        find_entity_template(entity_templates_, replicated.entity_template_id);
-    if (entity_template == nullptr ||
-        entity_template->prop.throw_trajectory_projectile_template_id == 0u) {
+    const std::uint32_t trajectory_id = prop_throw_trajectory_template_id(
+        replicated.entity_template_id, replicated.item_template_id);
+    if (trajectory_id == 0u) {
         return false;
     }
     const RuntimeProjectileTemplate* trajectory =
-        catalog_runtime_.find_projectile_template(
-            entity_template->prop.throw_trajectory_projectile_template_id);
+        catalog_runtime_.find_projectile_template(trajectory_id);
     if (trajectory == nullptr) {
         return false;
     }
@@ -12431,6 +12635,7 @@ std::size_t KernelEngine::skeleton_pose_history_capacity() const {
 
 void KernelEngine::rebuild_skeleton_presentation_at_time(
     std::uint64_t client_render_time_us) {
+    advance_render_clock(client_render_time_us);
     rebuild_render_states_at_time(client_render_time_us);
     skeleton_presentation_poses_.clear();
     // The pose has to be evaluated at the instant the roots just rebuilt were,
@@ -12613,6 +12818,15 @@ void KernelEngine::rebuild_render_states_from_snapshot(
     std::uint64_t thrown_render_time_us = current_render_time_us_;
     client_render_server_time_us(client_render_time_us, &thrown_render_time_us);
     render_server_time_us_ = thrown_render_time_us;
+    // Past the newest snapshot the header stays on the newest tick, but the
+    // events released on the render instant have to keep pace with everything
+    // else drawn there. The same floor to a whole tick as before.
+    if (render_clock_.has) {
+        current_render_time_us_ = tick_time_us(
+            tick_for_time_us(
+                render_server_time_us_, tick_loop_.fixed_delta_seconds()),
+            tick_loop_.fixed_delta_seconds());
+    }
     release_deferred_flight_despawns();
     // A server-only projectile lives on the world timeline like everything
     // else drawn from snapshots, but its reliable spawn made it drawable the
