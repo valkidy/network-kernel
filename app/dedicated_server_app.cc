@@ -1,5 +1,6 @@
 #include "dedicated_server_app.h"
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -31,6 +32,90 @@ std::uint64_t catalog_bundle_chunk_count(std::uint64_t bundle_size) {
 std::uint64_t estimated_catalog_sync_protocol_bytes(std::uint64_t bundle_size) {
     return bundle_size + kCatalogSyncFixedProtocolBytes +
            catalog_bundle_chunk_count(bundle_size) * kCatalogChunkProtocolBytes;
+}
+
+// Whether the loop below actually holds its tick rate, reported once per
+// window. Without it a server that cannot keep up is invisible from the server
+// side: the loop rebases its schedule without a word, and all anyone sees is
+// the client-side symptom -- the interpolation delay collapsing into stepped
+// motion -- which looks exactly like a snapshot starved of slots.
+//
+// Work is split three ways because each half has a different owner: the
+// kernel's update, the event drain (which logs every event on this thread), and
+// the game server's own tick.
+class TickCadenceReport {
+public:
+    static constexpr std::uint32_t kWindowTicks = 150;
+
+    void record(
+        double kernel_us,
+        double events_us,
+        double game_us,
+        std::uint32_t event_count,
+        bool late,
+        bool rebased) {
+        if (window_start_ == std::chrono::steady_clock::time_point{}) {
+            window_start_ = std::chrono::steady_clock::now();
+            return;
+        }
+        const double work_us = kernel_us + events_us + game_us;
+        ++ticks_;
+        kernel_us_ += kernel_us;
+        events_us_ += events_us;
+        game_us_ += game_us;
+        work_max_us_ = std::max(work_max_us_, work_us);
+        events_ += event_count;
+        late_ += late ? 1u : 0u;
+        rebased_ += rebased ? 1u : 0u;
+        if (ticks_ >= kWindowTicks) {
+            flush();
+        }
+    }
+
+private:
+    void flush() {
+        const auto now = std::chrono::steady_clock::now();
+        const double wall_seconds =
+            std::chrono::duration<double>(now - window_start_).count();
+        const double ticks = static_cast<double>(ticks_);
+        const auto level = late_ > 0u || rebased_ > 0u
+            ? spdlog::level::warn
+            : spdlog::level::info;
+        spdlog::log(
+            level,
+            "tick cadence: rate={:.2f} Hz work avg={:.0f} us max={:.0f} us "
+            "(kernel {:.0f} / events {:.0f} / game {:.0f} us avg) events={} "
+            "late={} rebased={}",
+            wall_seconds > 0.0 ? ticks / wall_seconds : 0.0,
+            (kernel_us_ + events_us_ + game_us_) / ticks,
+            work_max_us_,
+            kernel_us_ / ticks,
+            events_us_ / ticks,
+            game_us_ / ticks,
+            events_,
+            late_,
+            rebased_);
+        // Windows abut, so the rate spans every tick's full period rather than
+        // one fewer than the window holds.
+        *this = TickCadenceReport{};
+        window_start_ = now;
+    }
+
+    std::chrono::steady_clock::time_point window_start_{};
+    std::uint32_t ticks_ = 0;
+    double kernel_us_ = 0.0;
+    double events_us_ = 0.0;
+    double game_us_ = 0.0;
+    double work_max_us_ = 0.0;
+    std::uint64_t events_ = 0;
+    std::uint32_t late_ = 0;
+    std::uint32_t rebased_ = 0;
+};
+
+double micros_between(
+    std::chrono::steady_clock::time_point start,
+    std::chrono::steady_clock::time_point end) {
+    return std::chrono::duration<double, std::micro>(end - start).count();
 }
 
 KernelConfig default_config(const TickConfig& tick) {
@@ -318,8 +403,11 @@ int RunDedicatedServer(
     // the schedule is rebased instead of spiralling.
     const auto resync_threshold = tick_period * 5;
     auto next_tick_deadline = std::chrono::steady_clock::now();
+    TickCadenceReport cadence;
     while (true) {
+        const auto kernel_start = std::chrono::steady_clock::now();
         Kernel_Update(kernel, kDeltaSeconds);
+        const auto events_start = std::chrono::steady_clock::now();
 
         std::array<KernelEvent, 32> events{};
         const std::uint32_t event_count =
@@ -334,15 +422,25 @@ int RunDedicatedServer(
                 events[index].code);
             game_server.handle_event(events[index]);
         }
+        const auto game_start = std::chrono::steady_clock::now();
         game_server.tick(kDeltaSeconds);
 
         next_tick_deadline += tick_period;
         const auto now = std::chrono::steady_clock::now();
-        if (now < next_tick_deadline) {
+        const bool late = now >= next_tick_deadline;
+        const bool rebased = now - next_tick_deadline > resync_threshold;
+        if (!late) {
             std::this_thread::sleep_until(next_tick_deadline);
-        } else if (now - next_tick_deadline > resync_threshold) {
+        } else if (rebased) {
             next_tick_deadline = now;
         }
+        cadence.record(
+            micros_between(kernel_start, events_start),
+            micros_between(events_start, game_start),
+            micros_between(game_start, now),
+            event_count,
+            late,
+            rebased);
     }
 
     Kernel_Destroy(kernel);
