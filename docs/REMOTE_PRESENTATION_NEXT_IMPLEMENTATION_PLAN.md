@@ -204,6 +204,32 @@ interpolation_delay = clamp(1 interval + k * jitter_us, 2 intervals, 4 intervals
 - 若 Unity 動畫有自己依時間推進的部分（例如用 `Time.time` 驅動），
   放慢或加速時可能與 kernel 的畫面時間不同步。需要到 Unity 端確認。
 
+### 4.8 實作結果（第一階段，`claude/render-clock`）
+
+- `RenderClock` 只在 client 有 clock sync 時啟用。listen server 的 loopback
+  不會遲到；沒有 clock sync 時，目標就是「最新 snapshot − 延遲」，時鐘本來就
+  無法超前，所以這兩種情況維持舊的行為，既有測試不受影響。
+- **只由 host 的繪製呼叫推進時鐘**，也就是 `get_render_states_at_time` 和
+  skeleton presentation。封包處理函式觸發的內部重建用的是 `client_local_time_us_`，
+  但 Unity 傳進來的是 `NetworkPresentationClock` 自己累加的時間，兩者不保證相同。
+  如果兩種時間基準都去推進同一個時鐘，時鐘會停住或突然跳動。所以內部重建只
+  讀時鐘目前的值。
+- hard reset 可以往前或往後跳。因為門檻是 1 秒，只有重連或長時間暫停才會
+  觸發往後跳。串流中斷期間，時鐘會停在上限，這時不算 reset，也不寫 log。
+- log：時鐘被上限擋住的期間結束時，寫一行 `render clock held N ms past the newest snapshot`；
+  發生 hard reset 時寫一行。都是 info 等級，每次事件只寫一次。
+- `current_render_time_us_` 改成由時鐘推導，仍取整到 tick。依畫面時間釋放的
+  事件，在超前期間也會照常釋放。
+- 測試：`render_clock_test` 共 5 項，包含計畫的 1–4 項，另加「依畫面時間釋放的
+  事件在超前期間照常釋放」。咬合檢查做了四種：overrun 上限設為 0、停用時鐘、
+  不放慢、`current_render_time_us_` 改回用 header tick，四種都會讓測試失敗。
+- 動態內插延遲（第二階段）還沒做，等 G0 的 `jitter_us` 量測。
+
+**§4.2 的表格有一處與實際不符：** 遠端腿部重建（`update_follower_locomotion`）
+推進到的是**最新 snapshot 的 tick**，不讀畫面時鐘。所以超前期間，root 會繼續
+外推，腿的姿勢卻停在最後一個 tick，可能看到滑步。這要在 Unity 確認：如果明顯，
+再考慮讓腿部重建也跟著外推，或在超前期間暫停步伐動畫。
+
 ---
 
 ## 5. W2 — 戰鬥事件依畫面時間釋放（對應討論中的第 8 項）
@@ -247,6 +273,22 @@ presentation_time_us = tick_time_us(event.tick)
   來源，再決定是否要讓自己的 HP 顯示也依畫面時間生效。
 - Unity 是否有邏輯依賴戰鬥事件「立即」抵達，例如擊殺訊息或任務進度？
   這類邏輯應該改成依賴權威狀態，而不是呈現事件。
+
+**查證結果（2026-09-26，unity-network-example `main`，package `6fa82940403c`）：**
+
+- **Unity 目前沒有 HP 顯示。** `Assets/Scripts` 裡沒有任何地方讀 `hp`、
+  `max_hp` 或 `HealthChanged`。所以「HP 條比揮擊早掉」目前不會發生。
+  如果之後加了 HP 條，要讓它依畫面時間生效。
+- Unity 讀取戰鬥事件的只有兩處：
+  1. `NetworkRenderStateApplier.ApplyKernelEvents`：本地玩家收到自己的
+     `DamageApplied` 時，播放受擊動作。W2 之後，受擊者不是發起者，所以這個
+     事件會延到畫面時間才出現，受擊動作剛好會和敵人的揮擊對齊。這正是
+     W2 想要的效果。
+  2. `LocalAgentPerception.CountDamage`：local agent 用 `DamageApplied` 更新
+     `LastDamagedTime`，這是 AI 的決策輸入。W2 之後，agent 對受傷的反應會
+     晚約 133 ms。這屬於「依賴事件立即抵達」的邏輯；要嘛接受這個延遲，
+     要嘛改成讀權威狀態。
+- `FireConfirmed`、`HitConfirmed`、`Explosion` 在 Unity 裡目前沒有使用者。
 
 ### 5.5 測試
 
