@@ -11511,8 +11511,13 @@ void KernelEngine::sync_session_relevance(
         if (is_own_player) {
             send_status_effect_state(session, entity->net_id);
         }
+        // Neither kind of prop is in the snapshot, so the state the session
+        // would otherwise never see comes with the spawn. For one in flight
+        // that is its throw record, as of now: the client anchors its curve on
+        // it, exactly as the thrower's client did on the one that started it.
         if (entity->type == EntityType::kProp &&
-            is_dormant_placed_prop(entity->net_id)) {
+            (is_dormant_placed_prop(entity->net_id) ||
+             is_anchored_in_flight_prop(entity->net_id))) {
             PropStateChangeBatchPacket prop_state{};
             prop_state.server_tick = tick_loop_.current_tick();
             PropStateChangeRecord record{};

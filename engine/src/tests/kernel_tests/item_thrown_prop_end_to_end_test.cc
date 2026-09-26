@@ -56,6 +56,9 @@ constexpr std::uint32_t kTrajectoryTemplateId = 7;
 constexpr std::uint32_t kBottleEntityTemplateId = 200;
 constexpr std::uint32_t kBottleItemTemplateId = 10;
 constexpr ne::PeerId kPeer = 1;
+// A second player, far away when the bottle is thrown: it starts seeing the
+// bottle only once it is in the air.
+constexpr ne::PeerId kObserverPeer = 2;
 
 ne::LoopbackTransport* attach_loopback(
     ne::KernelEngine* engine,
@@ -70,9 +73,15 @@ ne::LoopbackTransport* attach_loopback(
     return loopback;
 }
 
-void shuttle(ne::LoopbackTransport* from, ne::LoopbackTransport* to) {
+// The server's outgoing traffic, each packet to the client of the peer it was
+// addressed to.
+void shuttle(
+    ne::LoopbackTransport* from,
+    ne::LoopbackTransport* thrower,
+    ne::LoopbackTransport* observer) {
     ne::TransportEvent event;
     while (from->PollClientEvent(event)) {
+        ne::LoopbackTransport* to = event.peer == kObserverPeer ? observer : thrower;
         require(to->SendClient(
             event.peer,
             event.payload.data(),
@@ -157,10 +166,19 @@ int main() {
     ne::LoopbackTransport* client_link =
         attach_loopback(&client, KernelMode_Client, 7796);
     install_catalog(&client);
+    ne::KernelEngine observer(client_config);
+    ne::LoopbackTransport* observer_link =
+        attach_loopback(&observer, KernelMode_Client, 7797);
+    install_catalog(&observer);
 
     const ne::NetId player = server.world_.spawn_player(kPeer, glm::vec3{0.0f});
     server.peer_sessions_.push_back(
         ne::KernelEngine::PeerSession{kPeer, player, 0, true, {}});
+    // Well past the relevance radius.
+    const ne::NetId observer_player =
+        server.world_.spawn_player(kObserverPeer, glm::vec3{0.0f, 0.0f, -90.0f});
+    server.peer_sessions_.push_back(
+        ne::KernelEngine::PeerSession{kObserverPeer, observer_player, 0, true, {}});
     KernelInventoryContainerId container = 0;
     require(server.server_create_inventory_container(player, 2, &container));
     KernelItemInstanceId stack = 0;
@@ -169,14 +187,17 @@ int main() {
 
     const auto step = [&]() {
         server.simulate_tick();
-        shuttle(server_link, client_link);
+        shuttle(server_link, client_link, observer_link);
         client.poll_transport();
+        observer.poll_transport();
     };
     for (int index = 0; index < 8; ++index) {
         step();
     }
     client.local_player_net_id_ = player;
     client.local_client_peer_id_ = kPeer;
+    observer.local_player_net_id_ = observer_player;
+    observer.local_client_peer_id_ = kObserverPeer;
 
     KernelGameplayRequest throw_request{};
     throw_request.struct_size = sizeof(throw_request);
@@ -203,13 +224,16 @@ int main() {
     require(server.is_anchored_in_flight_prop(bottle));
 
     step();
-    const auto replicated = [&]() -> const ne::KernelEngine::ClientReplicatedEntity* {
+    const auto replicated_on = [&](const ne::KernelEngine& engine)
+        -> const ne::KernelEngine::ClientReplicatedEntity* {
         for (const ne::KernelEngine::ClientReplicatedEntity& entity :
-             client.client_replicated_entities_) {
+             engine.client_replicated_entities_) {
             if (entity.net_id == bottle) return &entity;
         }
         return nullptr;
     };
+    const auto replicated = [&]() { return replicated_on(client); };
+    require(replicated_on(observer) == nullptr);
     require(replicated() != nullptr);
     require(replicated()->has_thrown_anchor);
 
@@ -260,6 +284,54 @@ int main() {
     // The render instant trails by the interpolation delay; most of the frames
     // above are past the throw, and they have to be for this to prove anything.
     require(compared_with_authority >= 6);
+
+    // The observer walks up to the bottle while it is still in the air. It was
+    // never sent the record that started the flight, and the server has stopped
+    // sampling the bottle for everyone, so the spawn alone would leave it frozen
+    // where it appeared until it lands. It has to be handed the flight with it.
+    {
+        const glm::vec3 bottle_now =
+            server.world_.registry().get<ne::Transform>(thrown).position;
+        server.world_.registry().get<ne::Transform>(
+            *server.world_.find_entity(observer_player)).position =
+            glm::vec3{bottle_now.x, 0.0f, bottle_now.z - 5.0f};
+    }
+    for (int index = 0; index < 4 && replicated_on(observer) == nullptr; ++index) {
+        step();
+    }
+    require(replicated_on(observer) != nullptr);
+    require(replicated_on(observer)->has_thrown_anchor);
+    int observer_compared = 0;
+    for (int frame = 0; frame < 12; ++frame) {
+        step();
+        const std::uint32_t count = observer.get_render_states_at_time(
+            1000000, states.data(), static_cast<std::uint32_t>(states.size()));
+        const RenderEntityState* drawn = nullptr;
+        for (std::uint32_t index = 0; index < count; ++index) {
+            if (states[index].net_id == bottle) drawn = &states[index];
+        }
+        require(drawn != nullptr);
+        const ne::KernelEngine::ClientReplicatedEntity& seen = *replicated_on(observer);
+        const double render_seconds =
+            static_cast<double>(observer.render_server_time_us_) / 1000000.0;
+        const double anchor_seconds =
+            static_cast<double>(seen.thrown_anchor_tick) * static_cast<double>(dt);
+        if (render_seconds > anchor_seconds) {
+            const double flight_start_seconds =
+                static_cast<double>(throw_tick - 1u) * static_cast<double>(dt);
+            const glm::vec3 authority = ne::projectile_position_at(
+                motion.spawn_position,
+                motion.initial_velocity,
+                motion.motion_model,
+                motion.gravity,
+                static_cast<float>(render_seconds - flight_start_seconds));
+            require(glm::length(
+                        glm::vec3{drawn->position.x, drawn->position.y, drawn->position.z} -
+                        authority) < 0.05f);
+            ++observer_compared;
+        }
+    }
+    require(observer_compared >= 6);
 
     // A prop flying some other way -- launched by an impulse, which moves it on
     // the linear model -- is not on the curve the client would draw, so it keeps
