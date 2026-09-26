@@ -123,6 +123,44 @@ package builder script:
 - Native C++/ABI changes are out of scope for package-builder work. If a task
   requires ABI changes, use `unity-plugin-plan-guideline` first.
 
+## Known Bazel Output-Base Recovery
+
+If a Bazel step fails with this exact error:
+
+```text
+Every .bzl file must have a corresponding package, but '@@rules_cc//cc:defs.bzl' does not have one.
+```
+
+treat it as a corrupted Bazel output base, not as a missing repository `BUILD`
+file. The usual failure mode is `/private/tmp/bazel-network-example` retaining
+an incomplete `external/rules_cc` checkout while Bazel's download marker says
+the repository is ready.
+
+Use the following recovery before retrying the original package-builder command:
+
+1. Stop the Bazel server for the exact output base:
+
+   ```bash
+   bazel --output_base=/private/tmp/bazel-network-example shutdown
+   ```
+
+2. Move the confirmed-corrupt output base to a timestamped backup rather than
+   deleting it, then let Bazel recreate the canonical path:
+
+   ```bash
+   backup_path="/private/tmp/bazel-network-example-corrupt-$(date +%Y%m%d-%H%M%S)"
+   test ! -e "$backup_path"
+   mv /private/tmp/bazel-network-example "$backup_path"
+   ```
+
+3. Rerun the bundled package-builder entry point unchanged. Do not add a
+   placeholder `BUILD` file under `external/rules_cc`; the repository is
+   managed by Bazel and must be re-fetched into the clean output base.
+
+If `OUTPUT_BASE` is explicitly set, substitute that exact path in all three
+commands and verify it is the intended Bazel cache before moving it. Preserve
+the backup until the retry completes successfully.
+
 ## Script Contract
 
 The script supports:
