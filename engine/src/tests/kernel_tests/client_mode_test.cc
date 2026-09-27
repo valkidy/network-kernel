@@ -944,6 +944,11 @@ void render_states_at_time_interpolates_and_clamps() {
     engine.reset_runtime_state(KernelMode_Client);
     engine.has_client_clock_sync_ = true;
     engine.client_clock_offset_us_ = 0;
+    // What is drawn at a given instant, asked out of order. The render clock
+    // (W1) picks that instant from frame to frame and never runs backwards,
+    // so with it the earlier query below would draw the later one again;
+    // the clock has render_clock_test.
+    engine.render_clock_enabled_ = false;
     engine.handle_client_spawn(network_example::EntitySpawnPacket{
         42,
         network_example::EntityType::kActor,
