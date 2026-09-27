@@ -2033,6 +2033,8 @@ bool KernelEngine::prepare_prediction_physics() {
     prediction_physics_world_ = std::move(world);
     prediction_proxy_collider_ids_.clear();
     prediction_obstacle_collider_ids_.clear();
+    prediction_local_hitbox_collider_id_ = 0u;
+    prediction_local_hitbox_template_id_ = 0u;
     prediction_limb_collider_ids_.clear();
     next_prediction_proxy_collider_id_ = 0xc0000000u;
     return true;
@@ -6006,6 +6008,8 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     physics_entity_collider_ids_.clear();
     prediction_proxy_collider_ids_.clear();
     prediction_obstacle_collider_ids_.clear();
+    prediction_local_hitbox_collider_id_ = 0u;
+    prediction_local_hitbox_template_id_ = 0u;
     history_buffer_ = HistoryBuffer(history_frame_count(config_.tick));
     damage_pipeline_.clear();
     next_action_graph_sequence_ = 1;
@@ -7744,6 +7748,8 @@ void KernelEngine::clear_client_session() {
         }
     }
     prediction_obstacle_collider_ids_.clear();
+    prediction_local_hitbox_collider_id_ = 0u;
+    prediction_local_hitbox_template_id_ = 0u;
     while (!prediction_limb_collider_ids_.empty()) {
         remove_prediction_limb_proxies(
             prediction_limb_collider_ids_.begin()->first);
@@ -10494,6 +10500,88 @@ void KernelEngine::append_predicted_projectile_render_states() {
     }
 }
 
+bool KernelEngine::sync_prediction_local_hitbox() {
+    // The local player's own hit volume, where this tick predicts it. Other
+    // actors are put in by sync_client_render_colliders at drawn time, but
+    // this one is drawn ahead of the authority, on the same timeline as every
+    // projectile the client flies, so a projectile flown at it meets it at the
+    // tick the authority will.
+    const auto remove = [this]() {
+        if (prediction_local_hitbox_collider_id_ != 0u &&
+            prediction_physics_world_ != nullptr) {
+            prediction_physics_world_->remove_object(
+                prediction_local_hitbox_collider_id_);
+        }
+        prediction_local_hitbox_collider_id_ = 0u;
+        prediction_local_hitbox_template_id_ = 0u;
+        return false;
+    };
+    if (prediction_physics_world_ == nullptr || !has_predicted_local_entity_ ||
+        local_player_net_id_ == 0u ||
+        // The authority's projectiles pass the dead.
+        (predicted_local_entity_.flags & kVisualFlagDead) != 0u) {
+        return remove();
+    }
+    const auto replicated = std::find_if(
+        client_replicated_entities_.begin(),
+        client_replicated_entities_.end(),
+        [this](const ClientReplicatedEntity& candidate) {
+            return candidate.net_id == local_player_net_id_;
+        });
+    const KernelColliderTemplateDefinition* collider_template =
+        replicated == client_replicated_entities_.end()
+            ? nullptr
+            : find_collider_template(
+                  collider_templates_, replicated->collider_template_id);
+    if (collider_template == nullptr ||
+        (collider_template->purpose_flags & KernelColliderPurpose_Hit) == 0u) {
+        return remove();
+    }
+    const ColliderShapeType shape_type =
+        to_collider_shape_type(collider_template->shape_type);
+    if (shape_type == ColliderShapeType::kSegment ||
+        shape_type == ColliderShapeType::kCone) {
+        return remove();
+    }
+    const glm::quat rotation = predicted_local_entity_.rotation;
+    const glm::vec3 center = predicted_local_entity_.position +
+        rotation * from_kernel_vec3(collider_template->center);
+    if (prediction_local_hitbox_collider_id_ != 0u &&
+        prediction_local_hitbox_template_id_ == collider_template->template_id &&
+        prediction_physics_world_->set_object_transform(
+            prediction_local_hitbox_collider_id_, center, rotation)) {
+        return true;
+    }
+    if (prediction_local_hitbox_collider_id_ == 0u) {
+        prediction_local_hitbox_collider_id_ = next_prediction_proxy_collider_id_++;
+    }
+    physics::CollisionObjectDescriptor object{};
+    object.identity.entity_net_id = local_player_net_id_;
+    object.identity.collider_id = prediction_local_hitbox_collider_id_;
+    // As sync_client_render_colliders files other actors: every query that
+    // must not see the local player -- its movement, its own shots, its
+    // throws -- already leaves out kDamageable or ignores its net id.
+    object.identity.kind = physics::CollisionObjectKind::kActorHitbox;
+    object.identity.layer = physics::CollisionLayer::kDamageable;
+    object.identity.gameplay_category = collider_template->layer_mask;
+    object.shape.type = shape_type == ColliderShapeType::kSphere
+        ? physics::CollisionShapeType::kSphere
+        : shape_type == ColliderShapeType::kCapsule
+            ? physics::CollisionShapeType::kCapsule
+            : physics::CollisionShapeType::kBox;
+    object.shape.half_extents = collider_template_half_extents(*collider_template);
+    object.shape.radius = collider_template_radius(*collider_template);
+    object.position = center;
+    object.rotation = rotation;
+    std::string error;
+    if (!prediction_physics_world_->upsert_object(object, &error)) {
+        spdlog::error("failed to update the local prediction hitbox: {}", error);
+        return remove();
+    }
+    prediction_local_hitbox_template_id_ = collider_template->template_id;
+    return true;
+}
+
 void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
     const auto cost_start = std::chrono::steady_clock::now();
     const bool had_projectiles = std::any_of(
@@ -10517,6 +10605,8 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
                   static_cast<double>(actor_hit_confirm_us) /
                   (static_cast<double>(fixed_delta_seconds) * 1000000.0)))
             : 0u;
+    const bool local_hitbox_present =
+        had_projectiles && sync_prediction_local_hitbox();
     for (PredictedProjectile& projectile : predicted_projectiles_) {
         // Counted on after it ends too: that is what times its retention.
         projectile.lifetime_elapsed_ticks += 1;
@@ -10614,28 +10704,51 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
                     // draws, and only one the authority destroys on its first
                     // hit. It keeps flying underneath (see the reveal above);
                     // the damage stays the authority's.
+                    //
+                    // Everyone else's -- an agent's, another player's -- is
+                    // tried against the local player alone. Those are flown on
+                    // the prediction timeline too, the one the local player is
+                    // drawn on, so the two meet at the tick the authority's
+                    // meet; the other actors are drawn in the past and would
+                    // put the hit in the wrong place.
                     const std::uint32_t actor_hit_mask =
                         projectile_template->mechanics.collision_mask &
                         (KERNEL_COLLISION_MASK_ACTOR | KERNEL_COLLISION_LAYER_LIMB);
+                    const bool own_projectile =
+                        local_client_peer_id_ != 0u &&
+                        projectile.owner_peer == local_client_peer_id_;
                     if (!projectile.hidden_by_actor_hit &&
                         !projectile.actor_hit_prediction_spent &&
                         actor_hit_mask != 0u &&
                         local_client_peer_id_ != 0u &&
-                        projectile.owner_peer == local_client_peer_id_ &&
+                        (own_projectile || local_hitbox_present) &&
                         projectile_template->mechanics.projectile_type ==
                             KernelProjectileType_Standard &&
                         projectile_template->mechanics.hit_response ==
                             KernelProjectileHitResponse_Destroy) {
                         physics::CollisionQueryFilter actor_filter =
                             collision_filter_from_mask(actor_hit_mask);
-                        actor_filter.ignored_entity_net_id = local_player_net_id_;
-                        const std::vector<physics::CollisionHit> actor_hits =
+                        if (own_projectile) {
+                            actor_filter.ignored_entity_net_id = local_player_net_id_;
+                        }
+                        std::vector<physics::CollisionHit> actor_hits =
                             query_projectile_collision_hits(
                                 *prediction_physics_world_,
                                 collision_spec,
                                 projectile.position,
                                 next_position,
                                 actor_filter);
+                        if (!own_projectile) {
+                            actor_hits.erase(
+                                std::remove_if(
+                                    actor_hits.begin(),
+                                    actor_hits.end(),
+                                    [this](const physics::CollisionHit& hit) {
+                                        return hit.identity.entity_net_id !=
+                                            local_player_net_id_;
+                                    }),
+                                actor_hits.end());
+                        }
                         if (!actor_hits.empty() &&
                             (hits.empty() ||
                              actor_hits.front().distance < hits.front().distance)) {
