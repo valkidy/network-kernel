@@ -7267,6 +7267,13 @@ void KernelEngine::handle_client_projectile_spawn_batch(
             } else if (has_predicted_projectile_net_id(record.projectile_net_id)) {
                 continue;
             } else {
+                if (local_client_peer_id_ != 0u &&
+                    record.owner_peer == local_client_peer_id_) {
+                    report_own_throw_blast(
+                        record.projectile_net_id,
+                        projectile_template->projectile_template_id,
+                        record.spawn_position);
+                }
                 const glm::vec3 spawn_position = record.spawn_position;
                 const glm::vec3 initial_velocity = record.initial_velocity;
                 predicted_projectiles_.push_back(PredictedProjectile{
@@ -7664,6 +7671,7 @@ void KernelEngine::handle_client_despawn(const EntityDespawnPacket& packet) {
     remove_prediction_limb_proxies(packet.net_id);
     // Its view goes with this despawn (Unity finds it by net id), wherever the
     // prediction had drawn it.
+    report_own_throw_end(packet.net_id);
     std::erase_if(predicted_throws_, [&packet](const PredictedThrow& predicted_throw) {
         return predicted_throw.net_id == packet.net_id;
     });
@@ -10194,6 +10202,109 @@ bool KernelEngine::predicted_throw_position(
     return true;
 }
 
+// W6 follow-up: how long an own bottle sits where this client saw it land
+// before the authority's end reaches it -- the despawn, and the blast its
+// impact spawns -- and how far the authority's blast is from that landing.
+// The number that decides whether the blast is worth predicting. One line per
+// throw; throws are rare. Only with network stats on.
+void KernelEngine::report_own_throw_end(NetId net_id) {
+    if (net_id == 0u || !network_stats_enabled()) {
+        return;
+    }
+    const auto predicted_throw = std::find_if(
+        predicted_throws_.begin(),
+        predicted_throws_.end(),
+        [net_id](const PredictedThrow& candidate) {
+            return candidate.net_id == net_id;
+        });
+    if (predicted_throw == predicted_throws_.end()) {
+        return;
+    }
+    if (predicted_throw->landed) {
+        spdlog::info(
+            "own throw {}: despawn arrived {} ms after its predicted landing",
+            net_id,
+            client_local_time_us_ > predicted_throw->landed_client_us
+                ? (client_local_time_us_ - predicted_throw->landed_client_us) / 1000u
+                : 0u);
+    } else {
+        spdlog::info(
+            "own throw {}: despawn arrived with no predicted landing, {} ms after release",
+            net_id,
+            (client_local_time_us_ - predicted_throw->submitted_client_us) / 1000u);
+    }
+    recent_own_throw_end_ = RecentOwnThrowEnd{
+        true,
+        net_id,
+        predicted_throw->landed,
+        predicted_throw->blast_reported,
+        predicted_throw->landed_position,
+        predicted_throw->landed_client_us,
+        client_local_time_us_,
+    };
+}
+
+void KernelEngine::report_own_throw_blast(
+    NetId blast_net_id,
+    std::uint32_t projectile_template_id,
+    const glm::vec3& spawn_position) {
+    if (!network_stats_enabled()) {
+        return;
+    }
+    // The blast may come before the despawn or after it. Before: the throw
+    // is still predicted, and the one it belongs to is the latest landing not
+    // yet matched. After: the throw just ended, within a second.
+    constexpr std::uint64_t kRecentEndUs = 1000000u;
+    NetId throw_net_id = 0u;
+    bool landed = false;
+    glm::vec3 landed_position{0.0f};
+    std::uint64_t landed_client_us = 0u;
+    PredictedThrow* latest = nullptr;
+    for (PredictedThrow& candidate : predicted_throws_) {
+        if (candidate.landed && !candidate.blast_reported &&
+            (latest == nullptr ||
+             candidate.landed_client_us > latest->landed_client_us)) {
+            latest = &candidate;
+        }
+    }
+    if (latest != nullptr) {
+        latest->blast_reported = true;
+        throw_net_id = latest->net_id;
+        landed = true;
+        landed_position = latest->landed_position;
+        landed_client_us = latest->landed_client_us;
+    } else if (recent_own_throw_end_.valid &&
+               !recent_own_throw_end_.blast_reported &&
+               client_local_time_us_ <
+                   recent_own_throw_end_.ended_client_us + kRecentEndUs) {
+        recent_own_throw_end_.blast_reported = true;
+        throw_net_id = recent_own_throw_end_.net_id;
+        landed = recent_own_throw_end_.landed;
+        landed_position = recent_own_throw_end_.landed_position;
+        landed_client_us = recent_own_throw_end_.landed_client_us;
+    } else {
+        return;
+    }
+    if (!landed) {
+        spdlog::info(
+            "own throw {}: blast {} (projectile template {}) arrived with no predicted landing",
+            throw_net_id,
+            blast_net_id,
+            projectile_template_id);
+        return;
+    }
+    spdlog::info(
+        "own throw {}: blast {} (projectile template {}) arrived {} ms after its "
+        "predicted landing, {:.2f} m from it",
+        throw_net_id,
+        blast_net_id,
+        projectile_template_id,
+        client_local_time_us_ > landed_client_us
+            ? (client_local_time_us_ - landed_client_us) / 1000u
+            : 0u,
+        glm::length(spawn_position - landed_position));
+}
+
 void KernelEngine::advance_predicted_throws(float fixed_delta_seconds) {
     if (config_.mode != KernelMode_Client || predicted_throws_.empty() ||
         fixed_delta_seconds <= 0.0f) {
@@ -10290,6 +10401,16 @@ void KernelEngine::advance_predicted_throws(float fixed_delta_seconds) {
                             static_cast<std::uint64_t>(
                                 static_cast<double>(step_us) *
                                 std::clamp(hit.distance / length, 0.0f, 1.0f));
+                        // Swept up to now, so the landing is at most this far
+                        // in the past on the prediction timeline.
+                        const std::uint64_t landed_ago_us =
+                            now_us > predicted_throw->landed_us
+                                ? now_us - predicted_throw->landed_us
+                                : 0u;
+                        predicted_throw->landed_client_us =
+                            client_local_time_us_ > landed_ago_us
+                                ? client_local_time_us_ - landed_ago_us
+                                : 0u;
                         break;
                     }
                 }

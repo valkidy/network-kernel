@@ -571,10 +571,27 @@ private:
         bool landed = false;
         std::uint64_t landed_us = 0;
         glm::vec3 landed_position{0.0f, 0.0f, 0.0f};
+        // Client local time the landing was on screen; for the gap log.
+        std::uint64_t landed_client_us = 0;
+        // Whether the authority's blast has been matched to this landing.
+        bool blast_reported = false;
         std::uint64_t swept_until_us = 0;
         // Whether the curve has been re-based on the authority's anchor.
         bool anchored = false;
         glm::vec3 correction_offset{0.0f, 0.0f, 0.0f};
+    };
+
+    // An own throw whose prop the authority has removed, kept briefly so a
+    // blast arriving after the despawn can still be matched to its landing
+    // for the gap log (W6 follow-up measurement).
+    struct RecentOwnThrowEnd {
+        bool valid = false;
+        NetId net_id = 0;
+        bool landed = false;
+        bool blast_reported = false;
+        glm::vec3 landed_position{0.0f, 0.0f, 0.0f};
+        std::uint64_t landed_client_us = 0;
+        std::uint64_t ended_client_us = 0;
     };
 
     struct VisionRuntimeState {
@@ -764,6 +781,11 @@ private:
     void release_presentable_events();
     void release_remote_action_presentation_events();
     void report_remote_presentation_stale_diagnostics();
+    void report_own_throw_end(NetId net_id);
+    void report_own_throw_blast(
+        NetId blast_net_id,
+        std::uint32_t projectile_template_id,
+        const glm::vec3& spawn_position);
     void broadcast_combat_events(std::size_t first_event, std::size_t last_event);
     void advance_predicted_projectile_corrections(float delta_seconds);
     // W6: a throw this client makes is drawn on its own timeline -- the one
@@ -1070,6 +1092,7 @@ private:
     std::vector<PendingRemotePresentation>
         pending_remote_action_presentation_events_;
     RemotePresentationStaleDiagnostics remote_presentation_stale_diagnostics_;
+    RecentOwnThrowEnd recent_own_throw_end_;
     std::vector<RemotePresentationDedup> remote_presentation_dedup_;
     std::vector<RenderEntityState> render_states_;
     std::vector<SkeletonPresentationPose> skeleton_presentation_poses_;
