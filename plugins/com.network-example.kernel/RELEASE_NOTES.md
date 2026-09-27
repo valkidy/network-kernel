@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- updates native plugins with log capture and projectile presentation improvements
+
+
+0.7.0 release notes:
+
 - updates native plugins with late-spawn prediction recovery and own-throw timeline presentation
 
 
