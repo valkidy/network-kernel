@@ -5,6 +5,7 @@
 // The death is reported by hand (health set to zero, EntityDied handed to the
 // game server) rather than dealt through damage: that the kernel reports
 // EntityDied for a real kill is entity_lifecycle_system_test's to show.
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -165,11 +166,23 @@ int main() {
             bundle.data(),
             static_cast<std::uint32_t>(bundle.size()),
             "gameplay_catalog.yaml");
-    // The shipped values, straight from gameplay_catalog.yaml.
-    require(config.player.respawn.delay_seconds == 4.0f);
-    require(config.player.respawn.height_offset_meters == 5.0f);
-    require(config.player.respawn.invulnerable_seconds == 2.0f);
+    // The shipped rule: a respawn for everyone, as often as it takes. The
+    // delay and height are tuning (the height went 5 -> 50 m in b7b9498), so
+    // the checks below read them from the config instead of pinning them.
+    const float delay_seconds = config.player.respawn.delay_seconds;
+    const float height_offset = config.player.respawn.height_offset_meters;
+    require(delay_seconds > 0.0f);
+    require(height_offset > 0.0f);
+    require(config.player.respawn.invulnerable_seconds > 0.0f);
     require(config.player.respawn.team_revive_times == -1);
+    const auto player_template = std::find_if(
+        config.actor_templates.begin(),
+        config.actor_templates.end(),
+        [](const network_example::game_server::ActorTemplateConfig& candidate) {
+            return candidate.name == "player";
+        });
+    require(player_template != config.actor_templates.end());
+    require(!player_template->inventory_slots.empty());
     // One revive, so the second death is the one that sticks.
     config.player.respawn.team_revive_times = 1;
 
@@ -182,8 +195,9 @@ int main() {
     require(std::fabs(alive.position.y) < 0.1f);
     require(alive.hp == alive.max_hp);
     require(alive.max_hp == 1000u);
+    // One occupied slot per authored slot.
     const std::uint32_t starting_items = harness.inventory_items();
-    require(starting_items == 5u);
+    require(starting_items == player_template->inventory_slots.size());
 
     // Spend the inventory, then die.
     require(Kernel_ServerClearInventoryContainer(
@@ -194,12 +208,12 @@ int main() {
 
     KernelServerEntityState revived{};
     const std::uint32_t frames = harness.frames_until_revived(300u, &revived);
-    // 4 s at 30 Hz; the death is resolved on the first tick after it.
-    require(frames == 120u);
+    // The delay at 30 Hz; the death is resolved on the first tick after it.
+    require(frames == static_cast<std::uint32_t>(std::lround(delay_seconds * 30.0f)));
     require(revived.hp == 1000u);
-    // Open sky over the flat test map: the whole five metres.
-    require(revived.position.y > body_y + 4.99f);
-    require(revived.position.y < body_y + 5.01f);
+    // Open sky over the flat test map: the whole offset.
+    require(revived.position.y > body_y + height_offset - 0.01f);
+    require(revived.position.y < body_y + height_offset + 0.01f);
     require(harness.inventory_items() == starting_items);
 
     // The pool of one is spent: this death stays.

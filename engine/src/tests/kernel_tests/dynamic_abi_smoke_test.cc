@@ -867,7 +867,23 @@ int main() {
         }
     }
     game_server_tick(game_server, 1.0f / 30.0f);
-    assert(game_server_get_enemy_count(game_server) == 2);
+    // The shipped mission places gingerbread nests, which are props; the
+    // agents are what a nest puts out once its spawner's interval is up (8 s
+    // as authored). Counts and intervals are tuning, so wait for any.
+    for (int frame = 0; frame < 30 * 20 &&
+                        game_server_get_enemy_count(game_server) == 0u;
+         ++frame) {
+        game_server_tick(game_server, 1.0f / 30.0f);
+        kernel_update(kernel, 1.0f / 30.0f);
+        event_count = kernel_poll_events(
+            kernel,
+            events.data(),
+            static_cast<std::uint32_t>(events.size()));
+        for (std::uint32_t index = 0; index < event_count; ++index) {
+            game_server_handle_event(game_server, &events[index]);
+        }
+    }
+    require(game_server_get_enemy_count(game_server) > 0u);
     game_server_despawn_all(game_server, KernelDespawnReason_Destroyed);
     game_server_tick(game_server, 1.0f / 30.0f);
     assert(game_server_get_enemy_count(game_server) == 0);
