@@ -115,6 +115,7 @@
 
 #define KERNEL_BUILD_INFO_TEXT_SIZE 128u
 #define KERNEL_LAN_DISCOVERY_TEXT_SIZE 128u
+#define KERNEL_LOG_MESSAGE_TEXT_SIZE 512u
 #define KERNEL_LAN_DISCOVERY_DEFAULT_PORT 47777u
 #define KERNEL_GAMEPLAY_CATALOG_ENTRY_PATH_SIZE 128u
 #define KERNEL_GAMEPLAY_CATALOG_CONTENT_NAMESPACE_SIZE 64u
@@ -218,6 +219,9 @@
 #define KERNEL_CAPABILITY_SERVER_ENTITY_MOVEMENT_MASK_WRITE UINT64_C(0x0000200000000000)
 #define KERNEL_CAPABILITY_SERVER_ENTITY_REVIVE UINT64_C(0x0000400000000000)
 #define KERNEL_CAPABILITY_SERVER_INVENTORY_CLEAR UINT64_C(0x0000800000000000)
+/* Kernel_PollLogMessages. Additive within ABI 93: check this flag, not the
+ * version, before calling it. */
+#define KERNEL_CAPABILITY_LOG_CAPTURE UINT64_C(0x0001000000000000)
 
 #define KERNEL_SKELETON_RENDER_STATUS_SUCCESS UINT32_C(0)
 #define KERNEL_SKELETON_RENDER_STATUS_INSUFFICIENT_CAPACITY UINT32_C(1)
@@ -2236,6 +2240,30 @@ typedef struct KernelEntityLifecycleEvent {
     uint16_t actor_type;
     uint32_t owner_peer;
 } KernelEntityLifecycleEvent;
+
+/* spdlog's levels, in its order. */
+typedef enum KernelLogLevel {
+    KernelLogLevel_Trace = 0,
+    KernelLogLevel_Debug = 1,
+    KernelLogLevel_Info = 2,
+    KernelLogLevel_Warn = 3,
+    KernelLogLevel_Error = 4,
+    KernelLogLevel_Critical = 5,
+} KernelLogLevel;
+
+typedef struct KernelLogMessage {
+    uint32_t level; /* KernelLogLevel */
+    /* Bytes of text before the terminator. A longer line is cut to
+     * KERNEL_LOG_MESSAGE_TEXT_SIZE - 1 bytes and sets `truncated`. */
+    uint32_t length;
+    uint32_t truncated;
+    uint32_t reserved;
+    /* Counts every line captured since the first poll, so a gap between two
+     * consecutive messages is the number dropped between them. */
+    uint64_t sequence;
+    /* The line as the kernel wrote it, UTF-8, without timestamp or level. */
+    char text[KERNEL_LOG_MESSAGE_TEXT_SIZE];
+} KernelLogMessage;
 
 #ifdef __cplusplus
 }

@@ -157,6 +157,10 @@ int main() {
         load_symbol<bool(KernelBuildInfo*, std::uint32_t)>(
             library,
             "Kernel_GetBuildInfo");
+    auto* kernel_poll_log_messages =
+        load_symbol<std::uint32_t(KernelLogMessage*, std::uint32_t)>(
+            library,
+            "Kernel_PollLogMessages");
     auto* kernel_create =
         load_symbol<KernelHandle*(const KernelConfig*)>(library, "Kernel_Create");
     auto* kernel_destroy =
@@ -521,6 +525,13 @@ int main() {
     KernelAbiInfo abi_info{};
     assert(kernel_get_abi_info(&abi_info, sizeof(abi_info)));
     assert(abi_info.abi_version == KERNEL_ABI_VERSION);
+    require((abi_info.capability_flags & KERNEL_CAPABILITY_LOG_CAPTURE) != 0);
+    {
+        // A null buffer copies nothing but still starts capture.
+        require(kernel_poll_log_messages(nullptr, 4u) == 0u);
+        KernelLogMessage messages[4]{};
+        require(kernel_poll_log_messages(messages, 4u) <= 4u);
+    }
     assert(abi_info.kernel_config_size == sizeof(KernelConfig));
     assert(abi_info.player_input_size == sizeof(KernelPlayerInput));
     assert(abi_info.render_entity_state_size == sizeof(RenderEntityState));
