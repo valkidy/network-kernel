@@ -297,6 +297,12 @@ cc_test(
 )
 
 cc_test(
+    name = "predicted_projectile_actor_hit_test",
+    srcs = ["predicted_projectile_actor_hit_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
+cc_test(
     name = "predicted_projectile_lifetime_test",
     srcs = ["predicted_projectile_lifetime_test.cc"],
     deps = ["//engine/src/kernel:kernel"],
