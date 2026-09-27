@@ -716,6 +716,66 @@ snapshot 之後，又從那一刻重新飛了一整段壽命。
 大：會動到投擲請求流程、封包格式、client 的預測與對應邏輯，以及 a 的規則。
 建議獨立一單。
 
+### 9.4 確認結果（2026-09-27，讀程式碼）
+
+**對應預測物和權威 prop：不用改封包格式。**
+- 玩家實際在丟的瓶子（shockwave、frag、glyph、magic 等）全部是
+  `identity_preserving`，只有 `grenade_consumable` 是 `consume_and_spawn`。
+  9.1 說 fungible bottle 屬於 ConsumeAndSpawn 是錯的。
+- `identity_preserving` 的投擲把 prop 的 net_id 填進回覆的 `prop_entity_id`
+  （`item_gameplay_system.cc`），回覆以 reliable 送回發出請求的 client，帶著
+  `request_id`。`request_id` 由呼叫端決定，Unity 的 `ItemPropRequestSender`
+  從 1 遞增、不為 0。
+- `consume_and_spawn` 的 prop 由 action graph 事後生成，回覆沒有 net_id；
+  W6 先不涵蓋。
+
+**從身後飛出：會，主因是畫面時間軸，不是 server 的起點。**
+- server 在收到請求的 poll 立刻處理，起點是當時玩家位置 + 1 m；移動輸入在
+  下一個 tick 才套用，沒有輸入緩衝，所以起點只比 client 按下時晚約 1 tick
+  （5 m/s 時約 0.17 m）。
+- 丟出的 prop 沒有「自己的」特例，跟別人的一樣用畫面時間（落後約 133 ms）
+  從錨點推算；自己的玩家則畫在預測的「現在」。瓶子出現時玩家已經往前走了
+  約「速度 ×（RTT + 133 ms）」：本機約 0.7 m、50 ms RTT 約 0.9 m、100 ms 約 1.2 m。
+
+### 9.5 實作（`claude/w6-local-throw-prediction`）
+
+client（`kernel.cc`，`PredictedThrow`）：
+- `submit_gameplay_request` 送出背包的 identity-preserving 投擲時，立刻在
+  預測時間軸（`prediction_timeline_now_us`：最新預測 tick + 本幀外插，
+  最多一個 tick，與本地玩家相同）上從「預測的玩家位置 + 1 m」開始飛，
+  用同一個軌跡 template 的速度、模型和重力。
+- 回覆到達：被拒絕就移除；成功就記下 prop 的 net_id，並改用
+  `entity_id_for_net_id(prop)`，也就是 prop 之後自己會用的 view key。
+- 權威錨點到達：改用錨點的起點、初速和 tick，原本畫的位置差成為修正量，
+  以 50 ms 半衰期衰減。
+- 在權威的飛行結束到達前，每個固定 tick 用預測物理世界（地形、障礙物、
+  畫面上的其他 actor）檢查軌跡，撞到就停在撞擊點。
+- 配對到的 prop 在預測期間不由世界時間軸畫。prop 的 despawn 立刻套用
+  （不延後），預測一起移除；Unity 依 net_id 找到的就是預測的 view，碎裂
+  發生在畫面上的落點。飛行結束後、世界時間軸也到達結束 tick 時交還給 prop。
+- 沒有回覆 2 秒逾時；存活超過 10 秒也移除。
+
+server（`systems.cc`）：
+- 飛行中的 prop 碰撞時，事件的 `owner_peer` 用投擲者的 peer，所以爆炸
+  屬於投擲者，client 立刻畫（`before_its_spawn` 對自己的 projectile 不延後）。
+  instigator 仍是 0，範圍效果不依 owner 過濾，所以投擲者和同 peer 的旁人
+  照樣會被炸到（`thrown_bottle_self_hit_test` 的旁人檢查仍通過）。
+- 影響：projectile 之間的互動規則會跳過同 owner 的 projectile，爆炸現在
+  和投擲者自己的 projectile 屬於同一個 owner。
+
+Unity（尚未改，`NetworkRenderStateApplier.ShouldRender`）：
+- 非 projectile 的 render state 需要 `net_id != 0` 才會畫。預測的瓶子在
+  回覆到達前 net_id 為 0，所以要加上「`status == Predicted` 且
+  `entity_id != 0` 也畫」。沒有這行時，瓶子在回覆到達（約一個 RTT）後才
+  出現，但之後仍畫在自己的時間軸上。
+
+版本：沒有 ABI、封包或 snapshot schema 變動；但 server 的爆炸歸屬和
+client 的畫法要一起更新（舊 client 遇到新 server，會在瓶子落地前就畫出爆炸）。
+
+測試：`own_throw_prediction_test`（送出即畫、接上錨點後與 server 同一時刻
+位置一致且只畫一次、本地落地判定、拒絕、逾時、despawn 立刻套用），
+`thrown_bottle_self_hit_test` 新增爆炸歸屬檢查。
+
 ---
 
 ## 10. G1 / G2 — AI 意圖同步之前的量測與便宜方案

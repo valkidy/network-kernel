@@ -548,6 +548,35 @@ private:
         bool actor_hit_prediction_spent = false;
     };
 
+    // One throw this client requested, from the request until the prop it
+    // became is gone or back on the world timeline. Times are microseconds on
+    // the prediction timeline (prediction_timeline_now_us), which counts in
+    // server ticks as the prediction does.
+    struct PredictedThrow {
+        std::uint64_t request_id = 0;
+        // Its own until the outcome names the prop; then the prop's, so that
+        // the view Unity keeps for it is the one the prop is drawn in when
+        // it is handed back.
+        std::uint64_t entity_id = 0;
+        NetId net_id = 0;
+        std::uint32_t item_template_id = 0;
+        ProjectileMotionModel motion_model = ProjectileMotionModel::kParabolic;
+        glm::vec3 gravity{0.0f, 0.0f, 0.0f};
+        glm::vec3 origin{0.0f, 0.0f, 0.0f};
+        glm::vec3 velocity{0.0f, 0.0f, 0.0f};
+        std::uint64_t start_us = 0;
+        std::uint64_t submitted_client_us = 0;
+        // Where this client saw it strike, until the authority says where
+        // the flight ended.
+        bool landed = false;
+        std::uint64_t landed_us = 0;
+        glm::vec3 landed_position{0.0f, 0.0f, 0.0f};
+        std::uint64_t swept_until_us = 0;
+        // Whether the curve has been re-based on the authority's anchor.
+        bool anchored = false;
+        glm::vec3 correction_offset{0.0f, 0.0f, 0.0f};
+    };
+
     struct VisionRuntimeState {
         KernelVisionStateView view{};
         bool has_last_seen_target = false;
@@ -706,6 +735,20 @@ private:
     void release_remote_action_presentation_events();
     void broadcast_combat_events(std::size_t first_event, std::size_t last_event);
     void advance_predicted_projectile_corrections(float delta_seconds);
+    // W6: a throw this client makes is drawn on its own timeline -- the one
+    // its player is drawn on -- from the moment it is requested, not a round
+    // trip and an interpolation delay later on the world timeline.
+    std::uint64_t prediction_timeline_now_us() const;
+    void begin_predicted_throw(const KernelGameplayRequest& request);
+    void handle_predicted_throw_outcome(const KernelGameplayRequestOutcome& outcome);
+    void advance_predicted_throws(float fixed_delta_seconds);
+    bool predicted_throw_position(
+        const PredictedThrow& predicted_throw,
+        std::uint64_t time_us,
+        glm::vec3* out_position,
+        glm::vec3* out_velocity) const;
+    void append_predicted_throw_render_states();
+    bool is_predicted_throw_net_id(NetId net_id) const;
     void advance_local_presentation(float delta_seconds);
     glm::vec3 predicted_local_simulation_position(
         std::uint64_t client_time_us) const;
@@ -1016,7 +1059,9 @@ private:
     std::vector<PeerSession> peer_sessions_;
     PeerSession local_listen_session_;
     std::vector<ClientReplicatedEntity> client_replicated_entities_;
-    std::unordered_set<NetId> client_metadata_timeout_reported_entities_;
+    // Entities a snapshot named before their spawn arrived, with the tick they
+    // were first found waiting. Erased when the metadata arrives.
+    std::unordered_map<NetId, std::uint32_t> client_metadata_timeout_reported_entities_;
     std::unordered_map<NetId, ClientEntityTombstone> client_despawned_entities_;
     std::unordered_map<NetId, RemoteKnockbackAnchor> client_knockback_anchors_;
     std::vector<DeferredDespawn> deferred_flight_despawns_;
@@ -1049,6 +1094,7 @@ private:
     PeerId latest_client_input_peer_ = 0;
     bool has_latest_client_input_ = false;
     std::vector<PredictedProjectile> predicted_projectiles_;
+    std::vector<PredictedThrow> predicted_throws_;
     bool predicted_projectile_collision_warning_emitted_ = false;
     std::unordered_map<std::uint32_t, OutstandingPredictedAction>
         outstanding_predicted_actions_;

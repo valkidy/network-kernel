@@ -2002,6 +2002,26 @@ void CollisionTriggerSystem::update(
             view.get<ActionGraphCollisionBinding>(entity);
         glm::vec3 collision_direction =
             normalized_direction_or_zero(view.get<Velocity>(entity).linear);
+        // Whose throw this is. A prop out of an inventory is nobody's, so what
+        // its collision sets off -- a bottle's blast -- was nobody's too, and
+        // the thrower's client drew that blast on the world timeline, well
+        // after the bottle it predicts had landed (W6). Only the owner changes:
+        // the instigator stays zero, so the blast still hits its thrower.
+        PeerId collision_owner_peer = identity.owner_peer;
+        if (const ThrownPropMotion* motion =
+                engine.world_.registry().try_get<ThrownPropMotion>(entity);
+            motion != nullptr && motion->thrower_net_id != 0u) {
+            if (const std::optional<entt::entity> thrower =
+                    engine.world_.find_entity(motion->thrower_net_id);
+                thrower.has_value() &&
+                engine.world_.registry().all_of<NetworkIdentity>(*thrower)) {
+                const PeerId thrower_peer =
+                    engine.world_.registry().get<NetworkIdentity>(*thrower).owner_peer;
+                if (thrower_peer != 0u) {
+                    collision_owner_peer = thrower_peer;
+                }
+            }
+        }
         if (const ThrownPropMotion* motion =
                 engine.world_.registry().try_get<ThrownPropMotion>(entity)) {
             const Transform& transform =
@@ -2142,7 +2162,7 @@ void CollisionTriggerSystem::update(
                     entered_collisions.push_back(CollisionFact{
                         identity.net_id,
                         hit.identity.entity_net_id,
-                        identity.owner_peer,
+                        collision_owner_peer,
                         hit.position,
                         collision_direction == glm::vec3{0.0f}
                             ? hit.normal
@@ -2177,7 +2197,7 @@ void CollisionTriggerSystem::update(
             entered_collisions.push_back(CollisionFact{
                 identity.net_id,
                 0u,
-                identity.owner_peer,
+                collision_owner_peer,
                 static_contact->first.position,
                 collision_direction == glm::vec3{0.0f}
                     ? static_contact->first.normal
