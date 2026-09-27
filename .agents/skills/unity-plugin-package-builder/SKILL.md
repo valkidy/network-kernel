@@ -224,7 +224,9 @@ Default behavior:
 
 Auto commit details:
 
-- Commit message is `feat: bump Unity package to <package.json version>`.
+- The script currently uses `feat: bump Unity package to <package.json version>`
+  for its automatic commit. Independently, always generate the user-facing
+  commit message below after successful build/package completion.
 - Release notes use a single cumulative file. The newest block is inserted at
   the top:
 
@@ -246,6 +248,43 @@ Auto commit details:
   lists the blocking paths. It does not stage unrelated files.
 - Use `--auto-commit off` when validating or packing without changing release
   notes or creating a commit.
+
+## Required Completion Commit Message
+
+After every successful build/package request, always end the final response
+with one copyable, single-line commit message, even when the user did not ask
+for it or automatic commit was skipped or disabled. Generating this message
+does not create or amend a Git commit. Do not generate a success message for a
+failed workflow or a verify-only request.
+
+Use this exact format (no space after the colon):
+
+```text
+(feat|chroe):bump Unity package to $A, ABI $B, GameServer ABI $C, $D exports, $E
+```
+
+- Choose `feat` for new functionality or API additions; choose `chroe` for
+  rebuilds, packaging refreshes, and maintenance. Preserve the user-requested
+  spelling `chroe`; do not substitute `chore` or print the literal alternatives.
+- `$A`: the actual version in `plugins/com.network-example.kernel/package.json`.
+- `$B`: the current `KERNEL_ABI_VERSION`, verified against the managed
+  `KernelConstants.AbiVersion`.
+- `$C`: the current `GAME_SERVER_ABI_VERSION`, verified against the managed
+  `GameServerConstants.AbiVersion`.
+- `$D`: the number of distinct native entry points declared by C# P/Invoke in
+  `Runtime/Core/KernelNative.cs` and `Runtime/Core/GameServerNative.cs`. Count
+  each export once, using an explicit `DllImport.EntryPoint` when present and
+  otherwise the extern method name. Do not count managed wrappers or use the
+  builder's `exports=N` verification subset (historically 56) as the C# total.
+- `$E`: a concise English description of the actual changes in this package,
+  inferred from the relevant diff and release notes. Use an imperative phrase
+  such as `rebuild Unity native plugins from the latest integrated revision`.
+  Do not claim new behavior for a rebuild-only change.
+
+Read values from the current run and source files; never reuse example values
+or a previous run's numbers without checking. The wording `bump Unity package
+to` is required even when the package version stays the same. Keep build and
+Unity smoke limitations in the completion report, outside the commit message.
 
 ## Reporting
 
@@ -286,3 +325,5 @@ one blank line after it, and report:
 - Release-note path and auto-commit result when finalization runs.
 - Gameplay catalog bundle resource path and bundle artifact paths when staging
   or packing runs.
+- The single-line message from **Required Completion Commit Message**, as the
+  final item in the response.
