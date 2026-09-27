@@ -39,6 +39,12 @@ namespace network_example {
 namespace {
 
 constexpr std::uint32_t kClientSnapshotMetadataGraceTicks = 2;
+// How long an actor may be named by snapshots without its spawn before the
+// prediction gives up. The spawn is reliable, so it does arrive: a lost packet
+// comes back a round trip or two later, and under 100 ms of lag and 1% loss
+// that happened within a minute of play -- the 2-tick grace above used to fail
+// the whole session on it. Only something that never arrives is a fault.
+constexpr std::uint32_t kClientActorMetadataFailTicks = 150;
 constexpr bool kDropStaleClientSnapshotsMissingMetadata = true;
 constexpr std::uint64_t kLocalActionResultTimeoutUs = UINT64_C(1000000);
 constexpr std::uint64_t kInputIntentTimeoutUs = UINT64_C(250000);
@@ -8224,7 +8230,7 @@ void KernelEngine::diagnose_client_snapshot_metadata_waits() {
                     }
                     missing_metadata = true;
                     if (client_metadata_timeout_reported_entities_
-                            .insert(entity.net_id)
+                            .try_emplace(entity.net_id, snapshot.header.server_tick)
                             .second) {
                         if (network_stats_enabled()) {
                             ++network_stats_.replication_metadata_timeout_count;
@@ -8248,11 +8254,25 @@ void KernelEngine::diagnose_client_snapshot_metadata_waits() {
                 return false;
             }),
         client_snapshot_buffer_.end());
-    if (session_rules_.actor_blocking_mode ==
-            KernelActorBlockingMode_Predicted &&
-        !client_metadata_timeout_reported_entities_.empty()) {
-        fail_client_prediction(
-            "remote actor movement metadata timed out before prediction acceptance");
+    // Waiting is not a failure: the stale snapshots are dropped above, and an
+    // actor with no metadata yet simply has no movement proxy
+    // (sync_prediction_actor_proxies). Only an actor whose spawn has not come
+    // in kClientActorMetadataFailTicks means something is broken.
+    if (session_rules_.actor_blocking_mode != KernelActorBlockingMode_Predicted) {
+        return;
+    }
+    for (const auto& [net_id, first_tick] : client_metadata_timeout_reported_entities_) {
+        if (latest_tick <= first_tick ||
+            latest_tick - first_tick <= kClientActorMetadataFailTicks) {
+            continue;
+        }
+        const EntitySnapshot* entity =
+            find_snapshot_entity(latest_client_snapshot_, net_id);
+        if (entity != nullptr && entity->type == EntityType::kActor) {
+            fail_client_prediction(
+                "remote actor movement metadata never arrived");
+            return;
+        }
     }
 }
 
@@ -8356,9 +8376,12 @@ bool KernelEngine::sync_prediction_actor_proxies(
             [&entity](const ClientReplicatedEntity& candidate) {
                 return candidate.net_id == entity.net_id;
             });
+        // Its spawn has not arrived yet -- a lost reliable packet on its way
+        // back. No proxy until it does; failing the step here ended the whole
+        // prediction session on one dropped packet.
         if (replicated == client_replicated_entities_.end() ||
             replicated->actor_template_id == 0u) {
-            return false;
+            continue;
         }
         const auto entity_template = std::find_if(
             entity_templates_.begin(),
