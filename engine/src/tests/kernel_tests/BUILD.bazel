@@ -297,6 +297,12 @@ cc_test(
 )
 
 cc_test(
+    name = "predicted_projectile_actor_hit_test",
+    srcs = ["predicted_projectile_actor_hit_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
+cc_test(
     name = "predicted_projectile_lifetime_test",
     srcs = ["predicted_projectile_lifetime_test.cc"],
     deps = ["//engine/src/kernel:kernel"],
@@ -317,6 +323,12 @@ cc_test(
 cc_test(
     name = "combat_event_delivery_end_to_end_test",
     srcs = ["combat_event_delivery_end_to_end_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
+cc_binary(
+    name = "remote_actor_error_bench",
+    srcs = ["remote_actor_error_bench.cc"],
     deps = ["//engine/src/kernel:kernel"],
 )
 

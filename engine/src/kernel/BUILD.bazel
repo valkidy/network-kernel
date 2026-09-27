@@ -85,9 +85,21 @@ base_version="$$(tr -d '[:space:]' < $(location :VERSION))"
 if [ -z "$$base_version" ]; then
   base_version="0.0.0"
 fi
-commit_count="$$(git rev-list --count HEAD 2>/dev/null || echo 0)"
-git_commit="$$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
-build_timestamp="$$(git show -s --format=%ct HEAD 2>/dev/null || echo unknown)"
+# Prefer the stamped values from tools/workspace_status.sh: stable-status.txt
+# is an input of this action, so a new HEAD reruns it. Asking git directly is
+# invisible to the action cache and served a stale commit until `bazel clean`;
+# it stays only as the fallback for hosts without a status command (Windows).
+stamped() {
+  sed -n "s/^$$1 //p" bazel-out/stable-status.txt 2>/dev/null
+}
+commit_count="$$(stamped STABLE_GIT_COMMIT_COUNT)"
+git_commit="$$(stamped STABLE_GIT_COMMIT)"
+build_timestamp="$$(stamped STABLE_GIT_COMMIT_TIMESTAMP)"
+if [ -z "$$git_commit" ]; then
+  commit_count="$$(git rev-list --count HEAD 2>/dev/null || echo 0)"
+  git_commit="$$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+  build_timestamp="$$(git show -s --format=%ct HEAD 2>/dev/null || echo unknown)"
+fi
 module_version="$${base_version}+r$${commit_count}"
 {
   printf '#ifndef KERNEL_SRC_BUILD_INFO_MACROS_H_\\n'
@@ -99,6 +111,7 @@ module_version="$${base_version}+r$${commit_count}"
 } > "$@"
 """,
     local = True,
+    stamp = 1,
 )
 
 cc_library(

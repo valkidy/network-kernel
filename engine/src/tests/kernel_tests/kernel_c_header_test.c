@@ -6,8 +6,12 @@
 #include "kernel/public/kernel_api.h"
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 92u,
-    "revive: Kernel_ServerReviveEntity brings a dead entity back in one call");
+    KERNEL_ABI_VERSION == 93u,
+    "knockdown: KernelEntityTemplateDefinition gained knockdown_recovery_ticks");
+_Static_assert(
+    offsetof(KernelEntityTemplateDefinition, knockdown_recovery_ticks) >
+        offsetof(KernelEntityTemplateDefinition, death_policy),
+    "the knockdown recovery is appended to KernelEntityTemplateDefinition");
 _Static_assert(
     sizeof(KernelServerReviveInfo) == 16u,
     "a managed mirror of the revive arguments must match this layout");

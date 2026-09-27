@@ -1755,6 +1755,72 @@ void reconcile_replays_an_authoritative_knockback() {
     require(unaware.predicted_local_entity_.velocity.x < 0.1f);
 }
 
+// A knockback that lands turns into the player's knockdown recovery on the
+// client exactly as on the authority: rooted from the landing for the authored
+// ticks, whatever the stick says, then free. Released on landing instead, the
+// prediction walked away while the authority held the body down, and every
+// snapshot dragged it back.
+void predicted_knockdown_holds_the_local_player_down() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    network_example::KernelEngine engine(config);
+    prepare_character_prediction(&engine);
+    for (KernelEntityTemplateDefinition& authored : engine.entity_templates_) {
+        if (authored.actor_template_id == 1u) authored.knockdown_recovery_ticks = 21u;
+    }
+    require(engine.local_knockdown_recovery_ticks() == 21u);
+
+    // Thrown: a little off the ground, carrying 6 m/s sideways.
+    engine.predicted_character_state_.position = glm::vec3{0.0f, 0.4f, 0.0f};
+    engine.predicted_character_state_.velocity = glm::vec3{6.0f, 0.0f, 0.0f};
+    engine.predicted_character_state_.ground_state =
+        network_example::physics::CharacterGroundState::kAirborne;
+    engine.predicted_impulse_lockout_armed_tick_ = 0u;
+    engine.predicted_impulse_lockout_until_tick_ = 60u;
+    // Pushing the other way the whole time.
+    KernelPlayerInput input{};
+    input.move.x = -1.0f;
+
+    std::uint32_t tick = 1u;
+    for (; tick < 30u && !engine.predicted_impulse_lockout_recovering_; ++tick) {
+        require(engine.step_local_character_prediction(input, tick));
+    }
+    require(engine.predicted_impulse_lockout_recovering_);
+    const std::uint32_t landed = tick - 1u;
+    require(engine.predicted_impulse_lockout_until_tick_ == landed + 21u);
+    // It flew before it came down: this is a knockback, not a stand.
+    const glm::vec3 down = engine.predicted_character_state_.position;
+    require(down.x > 0.5f);
+
+    for (; tick < landed + 21u; ++tick) {
+        require(engine.step_local_character_prediction(input, tick));
+        require(engine.predicted_impulse_lockout_recovering_);
+        require(std::abs(engine.predicted_character_state_.position.x - down.x) < 0.01f);
+    }
+    // Up again: the stick moves it.
+    for (int step = 0; step < 10; ++step, ++tick) {
+        require(engine.step_local_character_prediction(input, tick));
+    }
+    require(!(tick < engine.predicted_impulse_lockout_until_tick_));
+    require(engine.predicted_character_state_.position.x < down.x - 0.5f);
+
+    // And the authority's word carries it, for a replay that starts inside one.
+    network_example::EntitySnapshot getting_up;
+    getting_up.has_impulse_lockout = true;
+    getting_up.impulse_lockout_armed_tick = 90u;
+    getting_up.impulse_lockout_until_tick = 120u;
+    getting_up.impulse_lockout_recovering = true;
+    engine.predicted_impulse_lockout_armed_tick_ = 0u;
+    engine.predicted_impulse_lockout_until_tick_ = 0u;
+    engine.predicted_impulse_lockout_recovering_ = false;
+    engine.adopt_authoritative_impulse_lockout(getting_up, 100u);
+    require(engine.predicted_impulse_lockout_recovering_);
+    require(engine.predicted_impulse_lockout_until_tick_ == 120u);
+}
+
 // The client arms a lockout of its own for an impulse it predicts -- its own
 // rocket at its feet -- before the authority has simulated it. A snapshot older
 // than that must not clear it; one that has seen it has the final word.
@@ -5469,6 +5535,7 @@ int main() {
     local_presentation_does_not_lead_a_blocked_character();
     reconcile_replays_an_authoritative_knockback();
     authoritative_lockout_respects_a_newer_local_one();
+    predicted_knockdown_holds_the_local_player_down();
     late_snapshot_is_stored_but_not_used_for_reconciliation();
     server_accepts_matching_handshake_versions();
     server_rejects_mismatched_snapshot_schema_before_welcome();

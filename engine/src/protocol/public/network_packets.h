@@ -259,6 +259,33 @@ bool decode_snapshot_packet(
 // server can report what it will cost per client, not so that it can be dialled.
 constexpr std::size_t kSnapshotSendBudgetBytes = 1200;
 
+// How many snapshot packets one interval may use, each an independent snapshot
+// of the same tick within kSnapshotSendBudgetBytes. The budget above bounds a
+// packet, not an interval: a crowd needs more agents per interval than one MTU
+// holds, and an agent left out of even one send set is extrapolated and then
+// snapped back. Measured with remote_actor_error_bench (plan doc section 10.6):
+// four packets keep the near and mid bands of 200 fighting agents as clean as
+// an unlimited budget, at about 580 kbit/s for that crowd. Only as many packets
+// as the send set fills are sent, so a quiet scene still costs one.
+//
+// Independent, not fragments: each decodes on its own, so a lost one costs
+// only the agents in it, and the client merges whatever arrives for a tick.
+constexpr std::size_t kSnapshotMaxPacketsPerInterval = 4;
+
+// The byte budget build_snapshot_send_set fills for `packet_count` packets:
+// every packet after the first spends its own header and section preamble.
+std::size_t snapshot_send_set_budget(std::size_t packet_count);
+
+// Splits a send set into snapshots of the same header that each encode within
+// `packet_budget` bytes. Everything that is not an agent goes first -- the
+// receiving player's own record, projectiles, props -- so the state a client
+// reconciles against rides the first packet; agents fill the rest in order.
+// A set that fits comes back as one snapshot, and an empty one as one empty
+// snapshot, since the header alone is what a client acknowledges input by.
+std::vector<WorldSnapshot> split_snapshot_for_packets(
+    const WorldSnapshot& snapshot,
+    std::size_t packet_budget);
+
 // Encoded size of a locomotion step batch carrying `record_count` records,
 // including the packet header. Kept beside the encoder for the same reason the
 // snapshot estimators are: a sender that budgets against a number the encoder

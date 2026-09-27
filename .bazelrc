@@ -15,6 +15,13 @@ build --jobs 128
 build --define='absl=1'  # for gtest
 build --enable_platform_specific_config
 
+# Stamp git build info (//engine/src/kernel:build_info_macros). The path must
+# contain a slash: Bazel normalizes "./x" to "x", which /bin/sh then looks up
+# on PATH. Windows hosts run it through cmd.exe, so they keep the genrule's
+# direct-git fallback.
+build:macos --workspace_status_command=tools/workspace_status.sh
+build:linux --workspace_status_command=tools/workspace_status.sh
+
 # Enable stack traces
 test --test_env="GTEST_INSTALL_FAILURE_SIGNAL_HANDLER=1"
 

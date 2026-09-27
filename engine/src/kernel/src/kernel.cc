@@ -26,6 +26,7 @@
 #include "protocol/public/session_packets.h"
 #include "protocol/public/sha256.h"
 #include "simulation/public/action_graph.h"
+#include "simulation/public/collision_filter.h"
 #include "simulation/public/movement_solver.h"
 #include "simulation/src/command_dispatcher.h"
 #include "simulation/src/systems.h"
@@ -325,6 +326,11 @@ constexpr float kMaxHomingVisualExtrapolationSeconds = 0.2f;
 // end; this is only for the one it never comes for -- a deterministic
 // projectile that left relevance keeps flying here and has no other ending.
 constexpr float kPredictedProjectileEndedRetentionSeconds = 1.0f;
+// A predicted projectile hidden in another actor waits a round trip plus this
+// for the despawn, and never longer than the cap, before it is shown again.
+// The margin covers a snapshot interval at 15 Hz and some jitter.
+constexpr std::uint64_t kPredictedActorHitConfirmMarginUs = 150000u;
+constexpr std::uint64_t kPredictedActorHitConfirmMaxUs = 600000u;
 // How far past its newest sample a remote actor is carried along its last
 // velocity before it is held. The send set starves actors for several
 // snapshots at a time once a crowd outgrows the budget (measured at 80 acting
@@ -1091,6 +1097,25 @@ const EntitySnapshot* find_snapshot_entity(
         return nullptr;
     }
     return &(*found);
+}
+
+// Folds one packet of a tick into what has arrived of it so far. The same net
+// id in both is the same record twice -- a repeated packet -- and the newer
+// copy stands; the header is the tick's and is shared by every packet of it.
+void merge_snapshot_part(const WorldSnapshot& part, WorldSnapshot* into) {
+    for (const EntitySnapshot& entity : part.entities) {
+        const auto existing = std::find_if(
+            into->entities.begin(),
+            into->entities.end(),
+            [&entity](const EntitySnapshot& candidate) {
+                return candidate.net_id == entity.net_id;
+            });
+        if (existing != into->entities.end()) {
+            *existing = entity;
+        } else {
+            into->entities.push_back(entity);
+        }
+    }
 }
 
 constexpr std::uint32_t kKernelServerEntityStateBaseSize =
@@ -2975,6 +3000,8 @@ bool KernelEngine::load_gameplay_catalog(
             entity_template.ai.struct_size < sizeof(KernelEntityAiDefinition) ||
             entity_template.ai.controller_type > KernelAiControllerType_Chaser ||
             !stagger_profile_is_authorable(entity_template) ||
+            entity_template.knockdown_recovery_ticks >
+                KERNEL_MAX_KNOCKDOWN_RECOVERY_TICKS ||
             entity_template.death_policy > KernelDeathPolicy_Dormant) {
             return false;
         }
@@ -4969,8 +4996,19 @@ void KernelEngine::sync_client_render_colliders() {
                 collider_template->template_id,
                 collider);
         }
+        // Another actor's hit volume goes in too, where this frame draws it:
+        // the one place a predicted projectile can learn it struck someone
+        // before the despawn comes back a round trip later. Drawn time, not
+        // the latest snapshot, because that is what the player aimed at, and
+        // what the authority rewinds to for the first stretch of the flight
+        // (resolve_projectile_historical_hit). Never our own: the authority
+        // ignores the shooter, and the local player is predicted anyway.
+        const bool prediction_actor_hitbox =
+            entity_type == EntityType::kActor &&
+            state.net_id != local_player_net_id_ &&
+            (state.visual_flags & kVisualFlagDead) == 0u;
         if (prediction_physics_world_ == nullptr ||
-            entity_type != EntityType::kProp ||
+            (entity_type != EntityType::kProp && !prediction_actor_hitbox) ||
             state.item_instance_id != 0u ||
             state.net_id == 0u ||
             (collider.purpose_flags & KernelColliderPurpose_Hit) == 0u ||
@@ -4990,8 +5028,15 @@ void KernelEngine::sync_client_render_colliders() {
         physics::CollisionObjectDescriptor object{};
         object.identity.entity_net_id = state.net_id;
         object.identity.collider_id = proxy->second;
-        object.identity.kind = physics::CollisionObjectKind::kStaticObstacle;
-        object.identity.layer = physics::CollisionLayer::kStaticObstacle;
+        // The kind and layer push_collider_into_physics gives the same
+        // collider on the authority, so the authority's filter reads it the
+        // same way. A movement query never asks for kDamageable.
+        object.identity.kind = prediction_actor_hitbox
+            ? physics::CollisionObjectKind::kActorHitbox
+            : physics::CollisionObjectKind::kStaticObstacle;
+        object.identity.layer = prediction_actor_hitbox
+            ? physics::CollisionLayer::kDamageable
+            : physics::CollisionLayer::kStaticObstacle;
         object.identity.gameplay_category = collider.layer_mask;
         object.shape.type = collider.shape_type == ColliderShapeType::kSphere
             ? physics::CollisionShapeType::kSphere
@@ -6022,6 +6067,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     predicted_character_tick_ = 0;
     predicted_impulse_lockout_until_tick_ = 0u;
     predicted_impulse_lockout_armed_tick_ = 0u;
+    predicted_impulse_lockout_recovering_ = false;
     predicted_action_buttons_ = 0u;
     predicted_action_binding_id_ = 0u;
     predicted_action_weapon_id_ = 0u;
@@ -7684,6 +7730,7 @@ void KernelEngine::clear_client_session() {
     predicted_character_tick_ = 0;
     predicted_impulse_lockout_until_tick_ = 0u;
     predicted_impulse_lockout_armed_tick_ = 0u;
+    predicted_impulse_lockout_recovering_ = false;
     local_presentation_position_ = glm::vec3{0.0f, 0.0f, 0.0f};
     local_presentation_velocity_ = glm::vec3{0.0f, 0.0f, 0.0f};
     predicted_local_motion_velocity_ = glm::vec3{0.0f, 0.0f, 0.0f};
@@ -7858,9 +7905,19 @@ void KernelEngine::handle_client_snapshot(WorldSnapshot snapshot) {
         store_client_snapshot(std::move(snapshot));
         return;
     }
-    latest_client_snapshot_ = snapshot;
+    // A tick can arrive in several packets (kSnapshotMaxPacketsPerInterval),
+    // each a snapshot of part of it. Another part of the newest tick joins it
+    // rather than replacing it, and everything below that reads a single
+    // packet's worth -- the replicated entities, the own player's record, the
+    // projectiles -- reads just this part, so no part is applied twice.
+    if (has_client_snapshot_ &&
+        snapshot.header.server_tick == latest_client_snapshot_.header.server_tick) {
+        merge_snapshot_part(snapshot, &latest_client_snapshot_);
+    } else {
+        latest_client_snapshot_ = snapshot;
+    }
     has_client_snapshot_ = true;
-    for (const EntitySnapshot& entity : latest_client_snapshot_.entities) {
+    for (const EntitySnapshot& entity : snapshot.entities) {
         const auto replicated = std::find_if(
             client_replicated_entities_.begin(),
             client_replicated_entities_.end(),
@@ -7885,6 +7942,7 @@ void KernelEngine::handle_client_snapshot(WorldSnapshot snapshot) {
         replicated->snapshot_tick = latest_client_snapshot_.header.server_tick;
         replicated->active = true;
     }
+    const WorldSnapshot part = snapshot;
     store_client_snapshot(std::move(snapshot));
     // Nothing is ever rendered before the oldest buffered snapshot, so a
     // flight that ended before it can no longer be drawn.
@@ -7898,13 +7956,14 @@ void KernelEngine::handle_client_snapshot(WorldSnapshot snapshot) {
     diagnose_client_snapshot_metadata_waits();
     // Ahead of the prediction_failed_ return: the magazine the server reports is
     // true whether or not this client can still predict movement.
-    apply_authoritative_local_weapon(latest_client_snapshot_);
+    apply_authoritative_local_weapon(part);
     if (prediction_failed_) {
         return;
     }
+    // Rebuilt from scratch, so from the whole tick so far.
     sync_client_vision_states_from_snapshot(latest_client_snapshot_);
-    reconcile_local_prediction(latest_client_snapshot_);
-    reconcile_predicted_projectiles(latest_client_snapshot_);
+    reconcile_local_prediction(part);
+    reconcile_predicted_projectiles(part);
 }
 
 void KernelEngine::sync_client_vision_states_from_snapshot(
@@ -8028,7 +8087,8 @@ void KernelEngine::store_client_snapshot(WorldSnapshot snapshot) {
             return buffered.header.server_tick == snapshot.header.server_tick;
         });
     if (existing != client_snapshot_buffer_.end()) {
-        *existing = std::move(snapshot);
+        // Another packet of the same tick; a repeat of one merges to itself.
+        merge_snapshot_part(snapshot, &*existing);
     } else {
         client_snapshot_buffer_.push_back(std::move(snapshot));
     }
@@ -8398,10 +8458,12 @@ bool KernelEngine::step_local_character_prediction(
     const bool impulse_locked =
         prediction_tick < predicted_impulse_lockout_until_tick_;
     const glm::vec3 desired_horizontal = impulse_locked
-        ? glm::vec3{
-              predicted_character_state_.velocity.x,
-              0.0f,
-              predicted_character_state_.velocity.z}
+        ? (predicted_impulse_lockout_recovering_
+               ? glm::vec3{0.0f}
+               : glm::vec3{
+                     predicted_character_state_.velocity.x,
+                     0.0f,
+                     predicted_character_state_.velocity.z})
         : movement_solver::input_move_to_world(input) *
               local_player_move_speed_meters_per_second_;
     std::string error;
@@ -8424,11 +8486,19 @@ bool KernelEngine::step_local_character_prediction(
     // Same rule as the authority: the landing release cannot fire on the tick
     // the impulse armed, or a flat knockback on a grounded actor releases
     // before it has held anything off.
-    if (impulse_locked &&
+    // And the same knockdown: a landing the player is authored to stay down
+    // after turns the lockout into its recovery rather than ending it.
+    if (impulse_locked && !predicted_impulse_lockout_recovering_ &&
         prediction_tick > predicted_impulse_lockout_armed_tick_ &&
         predicted_character_state_.ground_state ==
             physics::CharacterGroundState::kGrounded) {
-        predicted_impulse_lockout_until_tick_ = 0u;
+        const std::uint32_t recovery_ticks = local_knockdown_recovery_ticks();
+        if (recovery_ticks > 0u) {
+            predicted_impulse_lockout_recovering_ = true;
+            predicted_impulse_lockout_until_tick_ = prediction_tick + recovery_ticks;
+        } else {
+            predicted_impulse_lockout_until_tick_ = 0u;
+        }
     }
     predicted_character_tick_ = prediction_tick;
     predicted_local_entity_.position = predicted_character_state_.position;
@@ -8594,6 +8664,30 @@ void KernelEngine::drop_predicted_ammo_spends(
 // impulse the authority has not simulated yet, and is left standing. One armed
 // at or before that tick the authority has seen, so the snapshot's word on it
 // is final: absent means it already ended.
+// The local player's authored knockdown recovery, read from the template the
+// server said it is -- the same template the authority applied.
+std::uint32_t KernelEngine::local_knockdown_recovery_ticks() const {
+    const auto replicated = std::find_if(
+        client_replicated_entities_.begin(),
+        client_replicated_entities_.end(),
+        [this](const ClientReplicatedEntity& entity) {
+            return entity.net_id == local_player_net_id_;
+        });
+    if (replicated == client_replicated_entities_.end() ||
+        replicated->actor_template_id == 0u) {
+        return 0u;
+    }
+    const auto authored = std::find_if(
+        entity_templates_.begin(),
+        entity_templates_.end(),
+        [&replicated](const KernelEntityTemplateDefinition& candidate) {
+            return candidate.actor_template_id == replicated->actor_template_id;
+        });
+    return authored == entity_templates_.end()
+        ? 0u
+        : authored->knockdown_recovery_ticks;
+}
+
 void KernelEngine::adopt_authoritative_impulse_lockout(
     const EntitySnapshot& authoritative,
     std::uint32_t snapshot_tick) {
@@ -8605,12 +8699,15 @@ void KernelEngine::adopt_authoritative_impulse_lockout(
                 authoritative.impulse_lockout_until_tick;
             predicted_impulse_lockout_armed_tick_ =
                 authoritative.impulse_lockout_armed_tick;
+            predicted_impulse_lockout_recovering_ =
+                authoritative.impulse_lockout_recovering;
         }
         return;
     }
     if (predicted_impulse_lockout_armed_tick_ <= snapshot_tick) {
         predicted_impulse_lockout_until_tick_ = 0u;
         predicted_impulse_lockout_armed_tick_ = 0u;
+        predicted_impulse_lockout_recovering_ = false;
     }
 }
 
@@ -9867,7 +9964,7 @@ void KernelEngine::append_predicted_projectile_render_states() {
             return !projectile.locally_terminated;
         });
     for (const PredictedProjectile& projectile : predicted_projectiles_) {
-        if (projectile.locally_terminated) {
+        if (projectile.locally_terminated || projectile.hidden_by_actor_hit) {
             continue;
         }
         const glm::vec3 render_position =
@@ -9908,11 +10005,34 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
         [](const PredictedProjectile& projectile) {
             return !projectile.locally_terminated;
         });
+    // How long a projectile hidden in another actor waits for the authority to
+    // agree. The despawn trails the local hit by up to a round trip -- this
+    // client flies its own shots ahead of the authority -- plus a snapshot
+    // interval and some jitter. Past that the authority missed.
+    const std::uint64_t actor_hit_confirm_us =
+        std::min<std::uint64_t>(
+            (network_stats_.rtt_us != 0u ? network_stats_.rtt_us : 100000u) +
+                kPredictedActorHitConfirmMarginUs,
+            kPredictedActorHitConfirmMaxUs);
+    const std::uint32_t actor_hit_confirm_ticks =
+        fixed_delta_seconds > 0.0f
+            ? static_cast<std::uint32_t>(std::ceil(
+                  static_cast<double>(actor_hit_confirm_us) /
+                  (static_cast<double>(fixed_delta_seconds) * 1000000.0)))
+            : 0u;
     for (PredictedProjectile& projectile : predicted_projectiles_) {
         // Counted on after it ends too: that is what times its retention.
         projectile.lifetime_elapsed_ticks += 1;
         if (projectile.locally_terminated) {
             continue;
+        }
+        // No despawn came: the authority's copy flew on. Shown again where it
+        // has got to, and not hidden a second time -- that would blink it on
+        // every actor it grazes after the one it was wrong about.
+        if (projectile.hidden_by_actor_hit &&
+            projectile.lifetime_elapsed_ticks >= projectile.actor_hit_reveal_tick) {
+            projectile.hidden_by_actor_hit = false;
+            projectile.actor_hit_prediction_spent = true;
         }
         projectile.age_ticks += 1;
         const float projectile_age_duration =
@@ -9990,6 +10110,44 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
                             projectile.position,
                             next_position,
                             filter);
+                    // Into another actor before anything in the world: hidden
+                    // there, where the player sees it strike, instead of
+                    // flying on through the body until the despawn comes back.
+                    // Only our own shot, which is fired at what this client
+                    // draws, and only one the authority destroys on its first
+                    // hit. It keeps flying underneath (see the reveal above);
+                    // the damage stays the authority's.
+                    const std::uint32_t actor_hit_mask =
+                        projectile_template->mechanics.collision_mask &
+                        (KERNEL_COLLISION_MASK_ACTOR | KERNEL_COLLISION_LAYER_LIMB);
+                    if (!projectile.hidden_by_actor_hit &&
+                        !projectile.actor_hit_prediction_spent &&
+                        actor_hit_mask != 0u &&
+                        local_client_peer_id_ != 0u &&
+                        projectile.owner_peer == local_client_peer_id_ &&
+                        projectile_template->mechanics.projectile_type ==
+                            KernelProjectileType_Standard &&
+                        projectile_template->mechanics.hit_response ==
+                            KernelProjectileHitResponse_Destroy) {
+                        physics::CollisionQueryFilter actor_filter =
+                            collision_filter_from_mask(actor_hit_mask);
+                        actor_filter.ignored_entity_net_id = local_player_net_id_;
+                        const std::vector<physics::CollisionHit> actor_hits =
+                            query_projectile_collision_hits(
+                                *prediction_physics_world_,
+                                collision_spec,
+                                projectile.position,
+                                next_position,
+                                actor_filter);
+                        if (!actor_hits.empty() &&
+                            (hits.empty() ||
+                             actor_hits.front().distance < hits.front().distance)) {
+                            projectile.hidden_by_actor_hit = true;
+                            projectile.actor_hit_reveal_tick =
+                                projectile.lifetime_elapsed_ticks +
+                                actor_hit_confirm_ticks;
+                        }
+                    }
                     if (!hits.empty()) {
                         // Unless the template opts in, the authority does not
                         // let an area effect touch whoever fired it:
@@ -10129,6 +10287,8 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
                                             action.impulse_lockout_ticks;
                                         predicted_impulse_lockout_armed_tick_ =
                                             predicted_character_tick_;
+                                        predicted_impulse_lockout_recovering_ =
+                                            false;
                                     }
                                     break;
                                 }
@@ -11162,6 +11322,9 @@ WorldSnapshot KernelEngine::build_relevant_snapshot(
                 entity.has_owner_weapon_state && entity.net_id == session.player;
             filtered_entity.has_impulse_lockout =
                 entity.has_impulse_lockout && entity.net_id == session.player;
+            filtered_entity.impulse_lockout_recovering =
+                filtered_entity.has_impulse_lockout &&
+                entity.impulse_lockout_recovering;
             filtered.entities.push_back(filtered_entity);
         }
     }
@@ -13064,21 +13227,24 @@ void KernelEngine::publish_snapshot() {
         const WorldSnapshot send_snapshot = build_snapshot_send_set(
             local_listen_session_,
             peer_snapshot,
-            kSnapshotSendBudgetBytes);
-        const std::vector<std::uint8_t> packet =
-            encode_snapshot_packet(send_snapshot, next_packet_sequence_++);
-        if (!listen_server_transport_->Send(
-                kLocalListenPeerId,
-                packet.data(),
-                static_cast<std::uint32_t>(packet.size()),
-                SendMode::kUnreliable,
-                ChannelId::kSnapshot)) {
-            push_event(KernelEventType_Error, 0, kLocalListenPeerId, 7);
-        } else {
-            record_sent_packet(
-                static_cast<std::uint32_t>(packet.size()),
-                SendMode::kUnreliable,
-                ChannelId::kSnapshot);
+            snapshot_send_set_budget(kSnapshotMaxPacketsPerInterval));
+        for (const WorldSnapshot& part :
+             split_snapshot_for_packets(send_snapshot, kSnapshotSendBudgetBytes)) {
+            const std::vector<std::uint8_t> packet =
+                encode_snapshot_packet(part, next_packet_sequence_++);
+            if (!listen_server_transport_->Send(
+                    kLocalListenPeerId,
+                    packet.data(),
+                    static_cast<std::uint32_t>(packet.size()),
+                    SendMode::kUnreliable,
+                    ChannelId::kSnapshot)) {
+                push_event(KernelEventType_Error, 0, kLocalListenPeerId, 7);
+            } else {
+                record_sent_packet(
+                    static_cast<std::uint32_t>(packet.size()),
+                    SendMode::kUnreliable,
+                    ChannelId::kSnapshot);
+            }
         }
     }
 
@@ -13091,24 +13257,29 @@ void KernelEngine::publish_snapshot() {
                 build_relevant_snapshot(session, server_time_ms);
             sync_session_relevance(&session, peer_snapshot);
             drop_unannounced_entities(session, &peer_snapshot);
+            // One send set for the interval, over as many independent
+            // packets as it fills (kSnapshotMaxPacketsPerInterval).
             const WorldSnapshot send_snapshot = build_snapshot_send_set(
                 session,
                 peer_snapshot,
-                kSnapshotSendBudgetBytes);
-            const std::vector<std::uint8_t> packet =
-                encode_snapshot_packet(send_snapshot, next_packet_sequence_++);
-            if (!transport_->Send(
-                    session.peer,
-                    packet.data(),
-                    static_cast<std::uint32_t>(packet.size()),
-                    SendMode::kUnreliable,
-                    ChannelId::kSnapshot)) {
-                push_event(KernelEventType_Error, 0, session.peer, 7);
-            } else {
-                record_sent_packet(
-                    static_cast<std::uint32_t>(packet.size()),
-                    SendMode::kUnreliable,
-                    ChannelId::kSnapshot);
+                snapshot_send_set_budget(kSnapshotMaxPacketsPerInterval));
+            for (const WorldSnapshot& part :
+                 split_snapshot_for_packets(send_snapshot, kSnapshotSendBudgetBytes)) {
+                const std::vector<std::uint8_t> packet =
+                    encode_snapshot_packet(part, next_packet_sequence_++);
+                if (!transport_->Send(
+                        session.peer,
+                        packet.data(),
+                        static_cast<std::uint32_t>(packet.size()),
+                        SendMode::kUnreliable,
+                        ChannelId::kSnapshot)) {
+                    push_event(KernelEventType_Error, 0, session.peer, 7);
+                } else {
+                    record_sent_packet(
+                        static_cast<std::uint32_t>(packet.size()),
+                        SendMode::kUnreliable,
+                        ChannelId::kSnapshot);
+                }
             }
         }
     }

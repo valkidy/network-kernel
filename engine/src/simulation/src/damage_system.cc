@@ -112,6 +112,18 @@ void apply_stagger_profile(
     }
 }
 
+void apply_knockdown_profile(
+    World& world,
+    entt::entity entity,
+    const KernelEntityTemplateDefinition& entity_template) {
+    if (entity_template.knockdown_recovery_ticks > 0u) {
+        world.registry().emplace_or_replace<KnockdownProfile>(
+            entity, KnockdownProfile{entity_template.knockdown_recovery_ticks});
+    } else {
+        world.registry().remove<KnockdownProfile>(entity);
+    }
+}
+
 void clear_stagger(World& world, entt::entity entity) {
     world.registry().remove<StaggerState>(entity);
     if (ReplicationState* replication =

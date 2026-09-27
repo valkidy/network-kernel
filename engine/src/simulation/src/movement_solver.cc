@@ -105,8 +105,27 @@ bool step_character(
     if (!physics_world.move_character(request, &result, error)) {
         return false;
     }
+    // Vertical speed is what the move actually made good, where that is less.
+    // Jolt hands back the velocity it was given, whatever blocked it, and off
+    // walkable ground the next step adds gravity to that -- so a character held
+    // in place gained 9.81 m/s every second it stood there. It happens wherever
+    // the "ground" Jolt reports is not a floor: two gingerbread released on the
+    // same spot report each other as ground, with a horizontal normal, and were
+    // measured at -327 m/s after 33 s standing at y = 0. A ceiling stops a rise
+    // the same way. Only ever toward zero: a step up or a snap down moves the
+    // body further than its velocity did, and that is not speed.
+    glm::vec3 resolved_velocity = result.linear_velocity;
+    if (fixed_delta_seconds > 0.0f) {
+        const float made_good =
+            (result.position.y - state->position.y) / fixed_delta_seconds;
+        if (resolved_velocity.y < 0.0f && made_good > resolved_velocity.y) {
+            resolved_velocity.y = std::min(0.0f, made_good);
+        } else if (resolved_velocity.y > 0.0f && made_good < resolved_velocity.y) {
+            resolved_velocity.y = std::max(0.0f, made_good);
+        }
+    }
     state->position = result.position;
-    state->velocity = result.linear_velocity;
+    state->velocity = resolved_velocity;
     state->ground_state = result.ground_state;
     state->ground_normal = result.ground_normal;
     state->supporting_identity = result.supporting_identity;

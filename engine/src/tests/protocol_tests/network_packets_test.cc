@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
@@ -176,7 +177,9 @@ void an_agent_record_survives_a_round_trip() {
     agent.action_phase = KernelActionPhase_Active;
 
     network_example::WorldSnapshot snapshot;
-    snapshot.header.server_tick = 5;
+    // After the action started, as every snapshot is: the start tick travels
+    // as its low 16 bits and is recovered against this one.
+    snapshot.header.server_tick = 1000;
     snapshot.entities.push_back(agent);
     const std::vector<std::uint8_t> packet =
         network_example::encode_snapshot_packet(snapshot, 9);
@@ -189,7 +192,9 @@ void an_agent_record_survives_a_round_trip() {
     require(out.net_id == agent.net_id);
     require(out.type == network_example::EntityType::kActor);
     require(out.actor_type == network_example::ActorType::kAgent);
-    // Position is still a full trio of floats, so it is exact.
+    // Alone in its section, the agent is the section's anchor, so its offset
+    // is zero and the position comes back exactly. The quantised case is
+    // compact_agent_positions_are_measured_from_an_anchor.
     require(out.position == agent.position);
     // Velocity is i16 at 1/256 m/s, so a step is under 4 mm/s.
     require(glm::length(out.velocity - agent.velocity) < 0.005f);
@@ -216,8 +221,244 @@ void an_agent_record_survives_a_round_trip() {
     idle.action_start_tick = 0;
     idle.action_commit_count = 0;
     idle.action_phase = KernelActionPhase_None;
-    require(network_example::estimate_snapshot_entity_size(idle) == 32u);
-    require(network_example::estimate_snapshot_entity_size(agent) == 52u);
+    // net_id 4242 is a two-byte varint: 2 + 22, and 11 more for the timeline.
+    require(network_example::estimate_snapshot_entity_size(idle) == 24u);
+    require(network_example::estimate_snapshot_entity_size(agent) == 35u);
+}
+
+network_example::EntitySnapshot agent_at(network_example::NetId net_id, glm::vec3 position) {
+    network_example::EntitySnapshot agent;
+    agent.net_id = net_id;
+    agent.type = network_example::EntityType::kActor;
+    agent.actor_type = network_example::ActorType::kAgent;
+    agent.position = position;
+    return agent;
+}
+
+const network_example::EntitySnapshot* find_decoded(
+    const network_example::WorldSnapshot& snapshot,
+    network_example::NetId net_id) {
+    for (const network_example::EntitySnapshot& entity : snapshot.entities) {
+        if (entity.net_id == net_id) return &entity;
+    }
+    return nullptr;
+}
+
+network_example::WorldSnapshot round_trip(const network_example::WorldSnapshot& snapshot) {
+    const std::vector<std::uint8_t> packet =
+        network_example::encode_snapshot_packet(snapshot, 3);
+    require(packet.size() == network_example::estimate_snapshot_packet_size(snapshot));
+    network_example::WorldSnapshot decoded;
+    require(network_example::decode_snapshot_packet(
+        packet.data(), packet.size(), &decoded));
+    require(decoded.entities.size() == snapshot.entities.size());
+    return decoded;
+}
+
+// Several agents share one anchor, so each position is an i16 offset at
+// 1/256 m: back within half a step on each axis, net ids of every varint width
+// included.
+void compact_agent_positions_are_measured_from_an_anchor() {
+    network_example::WorldSnapshot snapshot;
+    snapshot.header.server_tick = 300;
+    snapshot.entities.push_back(agent_at(1, glm::vec3{-39.9f, 0.0f, 12.3456f}));
+    snapshot.entities.push_back(agent_at(127, glm::vec3{0.001f, 2.5f, -37.777f}));
+    snapshot.entities.push_back(agent_at(128, glm::vec3{38.2f, -1.25f, 0.5f}));
+    snapshot.entities.push_back(agent_at(300000, glm::vec3{5.0f, 0.3f, 39.99f}));
+    snapshot.entities.push_back(agent_at(0xFFFFFFFFu, glm::vec3{-10.0f, 1.0f, -10.0f}));
+    const network_example::WorldSnapshot decoded = round_trip(snapshot);
+    for (const network_example::EntitySnapshot& sent : snapshot.entities) {
+        const network_example::EntitySnapshot* out = find_decoded(decoded, sent.net_id);
+        require(out != nullptr);
+        const glm::vec3 error = glm::abs(out->position - sent.position);
+        require(std::max({error.x, error.y, error.z}) <= 0.5f / 256.0f + 1e-5f);
+    }
+    // One byte for ids under 128, three at 300000, five for the largest.
+    require(network_example::estimate_snapshot_entity_size(snapshot.entities[1]) == 23u);
+    require(network_example::estimate_snapshot_entity_size(snapshot.entities[2]) == 24u);
+    require(network_example::estimate_snapshot_entity_size(snapshot.entities[3]) == 25u);
+    require(network_example::estimate_snapshot_entity_size(snapshot.entities[4]) == 27u);
+}
+
+// Agents spread wider than the i16 range fall back to floats for the whole
+// section; the positions survive exactly, at 6 B an agent over the estimate.
+void a_section_too_wide_for_offsets_sends_floats() {
+    network_example::WorldSnapshot snapshot;
+    snapshot.entities.push_back(agent_at(10, glm::vec3{-200.125f, 0.0f, 0.0f}));
+    snapshot.entities.push_back(agent_at(11, glm::vec3{200.5f, 0.0f, 0.0f}));
+    const std::vector<std::uint8_t> packet =
+        network_example::encode_snapshot_packet(snapshot, 3);
+    require(packet.size() ==
+            network_example::estimate_snapshot_packet_size(snapshot) + 2u * 6u);
+    network_example::WorldSnapshot decoded;
+    require(network_example::decode_snapshot_packet(
+        packet.data(), packet.size(), &decoded));
+    require(find_decoded(decoded, 10)->position == snapshot.entities[0].position);
+    require(find_decoded(decoded, 11)->position == snapshot.entities[1].position);
+}
+
+// The narrow timeline takes what fits; what does not goes in the full form.
+void an_agent_timeline_widens_only_when_it_must() {
+    const auto acting = [](network_example::NetId net_id,
+                           std::uint32_t template_id,
+                           std::uint32_t start_tick,
+                           std::uint32_t commit_count) {
+        network_example::EntitySnapshot agent = agent_at(net_id, glm::vec3{0.0f});
+        agent.action_template_id = template_id;
+        agent.action_instance_id = 0xDEADBEEFu;
+        agent.action_start_tick = start_tick;
+        agent.action_commit_count = commit_count;
+        agent.action_phase = KernelActionPhase_Recovery;
+        return agent;
+    };
+    network_example::WorldSnapshot snapshot;
+    // Past 65536, so the low 16 bits alone are ambiguous without the tick.
+    snapshot.header.server_tick = 200000;
+    snapshot.entities.push_back(acting(1, 1002, 199990, 3));         // narrow
+    snapshot.entities.push_back(acting(2, 1002, 134465, 65535));     // narrow, both at the edge
+    snapshot.entities.push_back(acting(3, 70000, 199990, 3));        // template too wide
+    snapshot.entities.push_back(acting(4, 1002, 199990, 70000));     // commits too many
+    const network_example::WorldSnapshot decoded = round_trip(snapshot);
+    for (const network_example::EntitySnapshot& sent : snapshot.entities) {
+        const network_example::EntitySnapshot* out = find_decoded(decoded, sent.net_id);
+        require(out != nullptr);
+        require(out->action_template_id == sent.action_template_id);
+        require(out->action_instance_id == sent.action_instance_id);
+        require(out->action_start_tick == sent.action_start_tick);
+        require(out->action_commit_count == sent.action_commit_count);
+        require(out->action_phase == sent.action_phase);
+    }
+    require(network_example::estimate_snapshot_entity_size(snapshot.entities[0]) == 1u + 22u + 11u);
+    require(network_example::estimate_snapshot_entity_size(snapshot.entities[2]) == 1u + 22u + 20u);
+    require(network_example::estimate_snapshot_entity_size(snapshot.entities[3]) == 1u + 22u + 20u);
+
+    // A start tick the low bits cannot name -- more than 65535 ticks back, or
+    // ahead of the snapshot -- is only known to the encoder, which widens it:
+    // 9 B over the estimate, and still exact.
+    network_example::WorldSnapshot stale;
+    stale.header.server_tick = 200000;
+    stale.entities.push_back(acting(5, 1002, 100, 3));
+    stale.entities.push_back(acting(6, 1002, 200005, 3));
+    const std::vector<std::uint8_t> packet =
+        network_example::encode_snapshot_packet(stale, 3);
+    require(packet.size() ==
+            network_example::estimate_snapshot_packet_size(stale) + 2u * 9u);
+    network_example::WorldSnapshot out;
+    require(network_example::decode_snapshot_packet(packet.data(), packet.size(), &out));
+    require(find_decoded(out, 5)->action_start_tick == 100u);
+    require(find_decoded(out, 6)->action_start_tick == 200005u);
+}
+
+// A record flag the decoder does not know, or the wide bit without a
+// timeline, drops the packet rather than misreading what follows.
+void an_agent_record_with_unknown_flags_is_refused() {
+    network_example::WorldSnapshot snapshot;
+    snapshot.entities.push_back(agent_at(9, glm::vec3{1.0f}));
+    const std::vector<std::uint8_t> packet =
+        network_example::encode_snapshot_packet(snapshot, 3);
+    // Snapshot header 16, the empty actor section's header 4, the agent
+    // section's header 4 and preamble 13, the one-byte net id: then its flags.
+    const std::size_t flags_at =
+        network_example::kPacketHeaderSize + 16u + 4u + 4u + 13u + 1u;
+    require(flags_at < packet.size());
+    require(packet[flags_at] == 0u);
+    // The payload is CRC-checked, so an edited byte has to be resealed, or the
+    // refusal below would be the CRC's and prove nothing about the flags.
+    const auto resealed = [&packet](std::size_t at, std::uint8_t value) {
+        std::vector<std::uint8_t> edited = packet;
+        edited[at] = value;
+        network_example::PacketHeader header;
+        require(network_example::decode_packet_header(
+            edited.data(), edited.size(), &header));
+        header.payload_crc = network_example::compute_payload_crc(
+            edited.data() + network_example::kPacketHeaderSize,
+            edited.size() - network_example::kPacketHeaderSize);
+        const network_example::EncodedPacketHeader encoded =
+            network_example::encode_packet_header(header);
+        std::copy(encoded.begin(), encoded.end(), edited.begin());
+        return edited;
+    };
+    network_example::WorldSnapshot out;
+    const std::vector<std::uint8_t> control = resealed(flags_at, 0u);
+    require(network_example::decode_snapshot_packet(control.data(), control.size(), &out));
+    for (const std::uint8_t bad : {std::uint8_t{0x04}, std::uint8_t{0x02}}) {
+        const std::vector<std::uint8_t> corrupted = resealed(flags_at, bad);
+        require(!network_example::decode_snapshot_packet(
+            corrupted.data(), corrupted.size(), &out));
+    }
+}
+
+// A send set for several packets comes apart into independent snapshots of
+// the same tick, each within the packet budget, each entity in exactly one,
+// and everything but agents -- the state a client reconciles against -- first.
+void a_send_set_splits_into_independent_packets() {
+    network_example::WorldSnapshot send;
+    send.header.server_tick = 77;
+    send.header.last_processed_input_seq = 12;
+    for (network_example::NetId id = 100; id < 250; ++id) {
+        network_example::EntitySnapshot agent =
+            agent_at(id, glm::vec3{static_cast<float>(id % 30), 0.0f, 1.0f});
+        if (id % 3 == 0) {
+            agent.action_template_id = 1002;
+            agent.action_start_tick = 70;
+            agent.action_phase = KernelActionPhase_Active;
+        }
+        send.entities.push_back(agent);
+    }
+    network_example::EntitySnapshot player;
+    player.net_id = 5;
+    player.type = network_example::EntityType::kActor;
+    player.actor_type = network_example::ActorType::kPlayer;
+    player.has_authoritative_movement_state = true;
+    send.entities.push_back(player);
+    network_example::EntitySnapshot projectile;
+    projectile.net_id = 6;
+    projectile.type = network_example::EntityType::kProjectile;
+    send.entities.push_back(projectile);
+
+    const std::size_t budget = network_example::kSnapshotSendBudgetBytes;
+    const std::vector<network_example::WorldSnapshot> packets =
+        network_example::split_snapshot_for_packets(send, budget);
+    require(packets.size() == 4u);
+    std::size_t total = 0;
+    for (const network_example::WorldSnapshot& packet : packets) {
+        require(packet.header.server_tick == 77u);
+        require(packet.header.last_processed_input_seq == 12u);
+        const std::vector<std::uint8_t> bytes =
+            network_example::encode_snapshot_packet(packet, 1);
+        require(bytes.size() <= budget);
+        network_example::WorldSnapshot decoded;
+        require(network_example::decode_snapshot_packet(bytes.data(), bytes.size(), &decoded));
+        total += decoded.entities.size();
+    }
+    require(total == send.entities.size());
+    for (const network_example::EntitySnapshot& sent : send.entities) {
+        std::size_t seen = 0;
+        for (const network_example::WorldSnapshot& packet : packets) {
+            seen += find_decoded(packet, sent.net_id) != nullptr ? 1u : 0u;
+        }
+        require(seen == 1u);
+    }
+    require(find_decoded(packets.front(), 5) != nullptr);
+    require(find_decoded(packets.front(), 6) != nullptr);
+    // What build_snapshot_send_set is handed for four packets packs into four.
+    require(network_example::snapshot_send_set_budget(1) == budget);
+    require(network_example::estimate_snapshot_packet_size(send) <=
+            network_example::snapshot_send_set_budget(4));
+
+    // A set that fits is one packet, unchanged; an empty one is still one,
+    // because the header alone acknowledges input.
+    network_example::WorldSnapshot small;
+    small.header.server_tick = 3;
+    small.entities.push_back(agent_at(1, glm::vec3{0.0f}));
+    require(network_example::split_snapshot_for_packets(small, budget).size() == 1u);
+    network_example::WorldSnapshot empty;
+    empty.header.server_tick = 4;
+    const std::vector<network_example::WorldSnapshot> none =
+        network_example::split_snapshot_for_packets(empty, budget);
+    require(none.size() == 1u);
+    require(none.front().header.server_tick == 4u);
+    require(none.front().entities.empty());
 }
 
 }  // namespace
@@ -332,6 +573,11 @@ int main() {
     an_actor_impulse_batch_survives_a_round_trip();
     an_impulse_lockout_block_survives_a_round_trip();
     an_agent_record_survives_a_round_trip();
+    compact_agent_positions_are_measured_from_an_anchor();
+    a_section_too_wide_for_offsets_sends_floats();
+    an_agent_timeline_widens_only_when_it_must();
+    an_agent_record_with_unknown_flags_is_refused();
+    a_send_set_splits_into_independent_packets();
 
     // Replicated locomotion steps. A step is 22 bytes of payload: the entity,
     // which leg, how many ticks ago the swing began, and where it lands. No

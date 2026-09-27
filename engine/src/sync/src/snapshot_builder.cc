@@ -91,6 +91,7 @@ WorldSnapshot build_world_snapshot(
             entity_snapshot.has_impulse_lockout = true;
             entity_snapshot.impulse_lockout_until_tick = lockout->until_tick;
             entity_snapshot.impulse_lockout_armed_tick = lockout->armed_tick;
+            entity_snapshot.impulse_lockout_recovering = lockout->recovering;
         }
         if (world.registry().all_of<WeaponState>(entity)) {
             const WeaponState& weapon = world.registry().get<WeaponState>(entity);

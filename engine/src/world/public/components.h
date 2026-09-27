@@ -162,6 +162,16 @@ struct ImpulseLockout {
     // lockout before it held anything off -- which is exactly the long, flat
     // knockback the split strength form exists to author.
     std::uint32_t armed_tick = 0;
+    // The knockback has landed and this is the actor getting up: its
+    // KnockdownProfile's recovery, run on the same lockout so the same refusals
+    // hold. Rooted rather than carrying velocity, and only the tick count ends
+    // it -- it is already on the ground.
+    bool recovering = false;
+};
+
+// Authored per actor. Absent, a knockback releases the actor the tick it lands.
+struct KnockdownProfile {
+    std::uint32_t recovery_ticks = 0;
 };
 
 // A damage hit's stagger contribution when the hit did not author one: the
