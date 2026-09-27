@@ -24,7 +24,7 @@ namespace NetworkExample.Kernel.Editor
             KernelAbi.ValidateNativeAbi();
             GameServerAbi.ValidateNativeAbi();
             KernelAbiInfo info = KernelAbi.GetInfo();
-            Require(KernelConstants.AbiVersion == 92, "Managed kernel ABI version was not v92.");
+            Require(KernelConstants.AbiVersion == 93, "Managed kernel ABI version was not v93.");
             Require(
                 KernelLocalWeaponState.StructSize == 20 &&
                 info.local_weapon_state_size == KernelLocalWeaponState.StructSize,
@@ -143,6 +143,11 @@ namespace NetworkExample.Kernel.Editor
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelEntityTemplateDefinition>("death_policy") >
                     (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelEntityTemplateDefinition>("stagger_immunity_ticks"),
                 "Kernel death policy is not appended in native order, or the revive info layout drifted.");
+            Require(
+                KernelConstants.MaxKnockdownRecoveryTicks == 300U &&
+                (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelEntityTemplateDefinition>("knockdown_recovery_ticks") ==
+                    (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelEntityTemplateDefinition>("death_policy") + sizeof(uint),
+                "Kernel knockdown recovery ABI mismatch.");
             RequireLANDiscovery();
             byte[] catalogBundleBytes = LoadGameplayCatalogBundleBytes();
 

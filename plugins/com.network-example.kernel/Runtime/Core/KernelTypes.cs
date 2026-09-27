@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 92;
+        public const uint AbiVersion = 93;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int GameplayCatalogEntryPathSize = 128;
@@ -29,6 +29,7 @@ namespace NetworkExample.Kernel
         public const int MaxPortableStateFields = 8;
         public const uint MaxImpulseLockoutTicks = 300U;
         public const uint MaxStaggerTicks = 300U;
+        public const uint MaxKnockdownRecoveryTicks = 300U;
         public const uint ImpulseStrengthModeRadial = 0U;
         public const uint ImpulseStrengthModeSplit = 1U;
         public const byte DebugWildcardU8 = 0xff;
@@ -2385,6 +2386,8 @@ namespace NetworkExample.Kernel
         public uint stagger_immunity_ticks;
         // A KernelDeathPolicy.
         public uint death_policy;
+        // Ticks to remain rooted and refuse new actions after knockback lands.
+        public uint knockdown_recovery_ticks;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelEntityTemplateDefinition>();
     }
