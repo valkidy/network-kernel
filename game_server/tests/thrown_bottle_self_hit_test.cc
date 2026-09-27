@@ -89,6 +89,10 @@ struct ThrowResult {
     std::uint16_t thrower_hp_after = 0;
     std::uint16_t bystander_hp_before = 0;
     std::uint16_t bystander_hp_after = 0;
+    // Every projectile seen while the bottle was out -- the blast -- and
+    // whether all of them were the thrower's.
+    int projectiles_seen = 0;
+    bool all_owned_by_thrower = true;
 };
 
 // Throws one `item_name` from the origin along `direction` and runs `ticks`.
@@ -157,8 +161,19 @@ ThrowResult throw_once(
     require(outcomes[0].status == KernelGameplayRequestStatus_Committed);
     require(outcomes[0].prop_entity_id != 0u);
 
+    std::vector<KernelServerEntityState> states(64);
     for (int tick = 0; tick < ticks; ++tick) {
         Kernel_Update(kernel, kTickSeconds);
+        for (KernelServerEntityState& state : states) {
+            state.struct_size = sizeof(KernelServerEntityState);
+        }
+        const std::uint32_t count = Kernel_ServerQueryEntities(
+            kernel, 0u, states.data(), static_cast<std::uint32_t>(states.size()));
+        for (std::uint32_t index = 0; index < count && index < states.size(); ++index) {
+            if (states[index].entity_type != KernelEntityType_Projectile) continue;
+            ++result.projectiles_seen;
+            if (states[index].owner_peer != kPeer) result.all_owned_by_thrower = false;
+        }
     }
     result.thrower_hp_after = hp_of(kernel, thrower);
     result.bystander_hp_after = bystander == 0 ? 0 : hp_of(kernel, bystander);
@@ -197,6 +212,12 @@ int main() {
     require(frag.bystander_hp_after < frag.bystander_hp_before);
     // The claim: the thrower was not the one it went off on.
     require(frag.thrower_hp_after == frag.thrower_hp_before);
+    // W6: the blast is the thrower's, so their client draws it on the timeline
+    // it draws its own bottle on, not an interpolation delay later. Owning it
+    // takes nothing away from who it hits -- the bystander above shares the
+    // thrower's peer and was still hurt.
+    require(frag.projectiles_seen > 0);
+    require(frag.all_owned_by_thrower);
 
     // A rising throw leaves the hitbox cleanly too.
     const float up = 30.0f * 3.14159265f / 180.0f;

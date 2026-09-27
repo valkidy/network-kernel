@@ -331,6 +331,15 @@ constexpr float kPredictedProjectileEndedRetentionSeconds = 1.0f;
 // The margin covers a snapshot interval at 15 Hz and some jitter.
 constexpr std::uint64_t kPredictedActorHitConfirmMarginUs = 150000u;
 constexpr std::uint64_t kPredictedActorHitConfirmMaxUs = 600000u;
+// Where a throw leaves the thrower: item_gameplay_system's kThrowMuzzleOffset,
+// which the authority adds to the thrower's position. The two must agree, or
+// the predicted flight starts somewhere the authority's never does.
+constexpr glm::vec3 kPredictedThrowMuzzleOffset{0.0f, 1.0f, 0.0f};
+// A throw whose outcome never comes is forgotten after this.
+constexpr std::uint64_t kPredictedThrowOutcomeTimeoutUs = 2000000u;
+// Nothing thrown flies this long; a prediction still up after it has lost its
+// prop somewhere, and is dropped rather than drawn forever.
+constexpr std::uint64_t kPredictedThrowMaxLifetimeUs = 10000000u;
 // How far past its newest sample a remote actor is carried along its last
 // velocity before it is held. The send set starves actors for several
 // snapshots at a time once a crowd outgrows the budget (measured at 80 acting
@@ -5239,6 +5248,7 @@ bool KernelEngine::submit_gameplay_request(
         static_cast<std::uint32_t>(packet.size()),
         SendMode::kReliable,
         ChannelId::kReliableEvent);
+    begin_predicted_throw(request);
     return true;
 }
 
@@ -6031,6 +6041,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     latest_client_input_peer_ = 0;
     has_latest_client_input_ = false;
     predicted_projectiles_.clear();
+    predicted_throws_.clear();
     predicted_projectile_collision_warning_emitted_ = false;
     outstanding_predicted_actions_.clear();
     applied_local_action_results_.clear();
@@ -6658,6 +6669,7 @@ void KernelEngine::handle_client_reliable_event(const TransportEvent& transport_
             transport_event.payload.size(),
             &gameplay_outcome)) {
         record_packet_deserialization_cost(elapsed_cost_us(decode_start));
+        handle_predicted_throw_outcome(gameplay_outcome);
         pending_gameplay_request_outcomes_.push_back(gameplay_outcome);
         return;
     }
@@ -7566,8 +7578,10 @@ void KernelEngine::handle_client_despawn(const EntityDespawnPacket& packet) {
             [&packet](const ClientReplicatedEntity& entity) {
                 return entity.net_id == packet.net_id;
             });
+        // A prop this client threw ends on its timeline, where it is drawn.
         const bool on_world_timeline = drawn != client_replicated_entities_.end() &&
             !has_predicted_projectile_net_id(packet.net_id) &&
+            !is_predicted_throw_net_id(packet.net_id) &&
             (is_prop_in_flight_on_client(*drawn) ||
              (drawn->type == EntityType::kProjectile && drawn->has_spawn_tick &&
               (local_client_peer_id_ == 0u ||
@@ -7621,6 +7635,11 @@ void KernelEngine::handle_client_despawn(const EntityDespawnPacket& packet) {
         prediction_obstacle_collider_ids_.erase(obstacle);
     }
     remove_prediction_limb_proxies(packet.net_id);
+    // Its view goes with this despawn (Unity finds it by net id), wherever the
+    // prediction had drawn it.
+    std::erase_if(predicted_throws_, [&packet](const PredictedThrow& predicted_throw) {
+        return predicted_throw.net_id == packet.net_id;
+    });
     client_metadata_timeout_reported_entities_.erase(packet.net_id);
     predicted_projectiles_.erase(
         std::remove_if(
@@ -7657,6 +7676,7 @@ void KernelEngine::handle_client_despawn(const EntityDespawnPacket& packet) {
 void KernelEngine::clear_client_action_sync_state() {
     pending_prediction_inputs_.clear();
     predicted_projectiles_.clear();
+    predicted_throws_.clear();
     outstanding_predicted_actions_.clear();
     applied_local_action_results_.clear();
     predicted_ammo_spends_.clear();
@@ -9839,6 +9859,323 @@ void KernelEngine::advance_predicted_projectile_corrections(
     for (PredictedProjectile& projectile : predicted_projectiles_) {
         decay_offset(&projectile.correction_offset);
     }
+    for (PredictedThrow& predicted_throw : predicted_throws_) {
+        decay_offset(&predicted_throw.correction_offset);
+    }
+}
+
+// The instant the local player is drawn at, in server-tick microseconds: the
+// newest prediction tick, carried on by the frame time since it was stepped
+// and no further than one tick -- predicted_local_simulation_position's rule,
+// so that a throw leaves the hand it is drawn in.
+std::uint64_t KernelEngine::prediction_timeline_now_us() const {
+    const float fixed_delta_seconds = tick_loop_.fixed_delta_seconds();
+    const std::uint64_t since_step_us =
+        client_local_time_us_ > predicted_local_state_time_us_
+            ? client_local_time_us_ - predicted_local_state_time_us_
+            : 0u;
+    return tick_time_us(predicted_character_tick_, fixed_delta_seconds) +
+        std::min<std::uint64_t>(
+            since_step_us, tick_time_us(1u, fixed_delta_seconds));
+}
+
+void KernelEngine::begin_predicted_throw(const KernelGameplayRequest& request) {
+    // Only a throw out of this player's own inventory: a carried prop is
+    // already on screen, and a consume-and-spawn throw's prop is made by a
+    // graph the outcome does not name.
+    if (config_.mode != KernelMode_Client ||
+        request.domain_action != KernelDomainAction_Throw ||
+        request.request_id == 0u || request.target_net_id != 0u ||
+        !has_predicted_local_entity_ ||
+        request.instigator_net_id != local_player_net_id_) {
+        return;
+    }
+    const ItemInstanceRecord* item =
+        item_store_.find_item(request.selected_item_instance_id);
+    if (item == nullptr ||
+        item->residency.kind != KernelItemResidency_Inventory) {
+        return;
+    }
+    // Zero unless the item's throw policy is identity preserving.
+    const std::uint32_t trajectory_id =
+        prop_throw_trajectory_template_id(0u, item->item_template_id);
+    const RuntimeProjectileTemplate* trajectory = trajectory_id == 0u
+        ? nullptr
+        : catalog_runtime_.find_projectile_template(trajectory_id);
+    // The authority's begin_thrown_prop_motion accepts the same and no more.
+    if (trajectory == nullptr ||
+        trajectory->projectile_type != ProjectileType::kStandard ||
+        (trajectory->motion_model != ProjectileMotionModel::kLinear &&
+         trajectory->motion_model != ProjectileMotionModel::kParabolic) ||
+        !std::isfinite(trajectory->speed) || trajectory->speed <= 0.0f) {
+        return;
+    }
+    glm::vec3 direction{
+        request.throw_direction.x,
+        request.throw_direction.y,
+        request.throw_direction.z};
+    if (!std::isfinite(direction.x) || !std::isfinite(direction.y) ||
+        !std::isfinite(direction.z) || glm::dot(direction, direction) == 0.0f) {
+        return;
+    }
+    direction = glm::normalize(direction);
+    PredictedThrow predicted_throw;
+    predicted_throw.request_id = request.request_id;
+    predicted_throw.entity_id = allocate_predicted_entity_id();
+    predicted_throw.item_template_id = item->item_template_id;
+    predicted_throw.motion_model = trajectory->motion_model;
+    predicted_throw.gravity = trajectory->gravity;
+    predicted_throw.origin =
+        predicted_local_simulation_position(client_local_time_us_) +
+        kPredictedThrowMuzzleOffset;
+    predicted_throw.velocity = direction * trajectory->speed;
+    predicted_throw.start_us = prediction_timeline_now_us();
+    predicted_throw.swept_until_us = predicted_throw.start_us;
+    predicted_throw.submitted_client_us = client_local_time_us_;
+    predicted_throws_.push_back(predicted_throw);
+}
+
+void KernelEngine::handle_predicted_throw_outcome(
+    const KernelGameplayRequestOutcome& outcome) {
+    const auto predicted_throw = std::find_if(
+        predicted_throws_.begin(),
+        predicted_throws_.end(),
+        [&outcome](const PredictedThrow& candidate) {
+            return candidate.request_id == outcome.request_id;
+        });
+    if (predicted_throw == predicted_throws_.end()) {
+        return;
+    }
+    if (outcome.status != KernelGameplayRequestStatus_Committed ||
+        outcome.prop_entity_id == 0u) {
+        predicted_throws_.erase(predicted_throw);
+        return;
+    }
+    predicted_throw->net_id = outcome.prop_entity_id;
+    // From here on it is drawn in the view the prop itself will have.
+    predicted_throw->entity_id = entity_id_for_net_id(outcome.prop_entity_id);
+}
+
+bool KernelEngine::is_predicted_throw_net_id(NetId net_id) const {
+    return net_id != 0u &&
+        std::any_of(
+            predicted_throws_.begin(),
+            predicted_throws_.end(),
+            [net_id](const PredictedThrow& predicted_throw) {
+                return predicted_throw.net_id == net_id;
+            });
+}
+
+// Where the throw is at time_us on the prediction timeline: on the curve this
+// client started, or -- once re-based -- on the authority's anchor, which the
+// world timeline draws the same curve from, only later. Held where it ended:
+// the authority's flight end when that is known, else where this client saw
+// it strike.
+bool KernelEngine::predicted_throw_position(
+    const PredictedThrow& predicted_throw,
+    std::uint64_t time_us,
+    glm::vec3* out_position,
+    glm::vec3* out_velocity) const {
+    const float fixed_delta_seconds = tick_loop_.fixed_delta_seconds();
+    const ClientReplicatedEntity* prop = nullptr;
+    if (predicted_throw.anchored) {
+        const auto found = std::find_if(
+            client_replicated_entities_.begin(),
+            client_replicated_entities_.end(),
+            [&predicted_throw](const ClientReplicatedEntity& candidate) {
+                return candidate.net_id == predicted_throw.net_id;
+            });
+        if (found != client_replicated_entities_.end() && found->has_thrown_anchor) {
+            prop = &*found;
+        }
+    }
+    const glm::vec3 base_position =
+        prop != nullptr ? prop->thrown_anchor_position : predicted_throw.origin;
+    const glm::vec3 base_velocity =
+        prop != nullptr ? prop->thrown_anchor_velocity : predicted_throw.velocity;
+    const std::uint64_t base_us = prop != nullptr
+        ? tick_time_us(prop->thrown_anchor_tick, fixed_delta_seconds)
+        : predicted_throw.start_us;
+    std::uint64_t at_us = std::max(time_us, base_us);
+    bool ended = false;
+    if (prop != nullptr && prop->has_thrown_flight_end) {
+        const std::uint64_t end_us =
+            tick_time_us(prop->thrown_flight_end_tick, fixed_delta_seconds);
+        if (at_us >= end_us) {
+            at_us = std::max(end_us, base_us);
+            ended = true;
+        }
+    } else if (predicted_throw.landed && at_us >= predicted_throw.landed_us) {
+        *out_position = predicted_throw.landed_position;
+        *out_velocity = glm::vec3{0.0f, 0.0f, 0.0f};
+        return true;
+    }
+    const float elapsed_seconds = static_cast<float>(
+        static_cast<double>(at_us - base_us) / 1000000.0);
+    *out_position = projectile_position_at(
+        base_position,
+        base_velocity,
+        predicted_throw.motion_model,
+        predicted_throw.gravity,
+        elapsed_seconds);
+    *out_velocity = ended
+        ? glm::vec3{0.0f, 0.0f, 0.0f}
+        : projectile_velocity_at(
+              base_velocity,
+              predicted_throw.motion_model,
+              predicted_throw.gravity,
+              elapsed_seconds);
+    return true;
+}
+
+void KernelEngine::advance_predicted_throws(float fixed_delta_seconds) {
+    if (config_.mode != KernelMode_Client || predicted_throws_.empty() ||
+        fixed_delta_seconds <= 0.0f) {
+        return;
+    }
+    const std::uint64_t now_us = prediction_timeline_now_us();
+    const std::uint64_t step_us = tick_time_us(1u, fixed_delta_seconds);
+    for (auto predicted_throw = predicted_throws_.begin();
+         predicted_throw != predicted_throws_.end();) {
+        const auto prop = predicted_throw->net_id == 0u
+            ? client_replicated_entities_.end()
+            : std::find_if(
+                  client_replicated_entities_.begin(),
+                  client_replicated_entities_.end(),
+                  [&predicted_throw](const ClientReplicatedEntity& candidate) {
+                      return candidate.net_id == predicted_throw->net_id;
+                  });
+        const bool known = prop != client_replicated_entities_.end();
+        const std::uint64_t alive_us =
+            client_local_time_us_ - predicted_throw->submitted_client_us;
+        // No outcome, a prop that is gone, or one that has flown too long.
+        if ((predicted_throw->net_id == 0u &&
+             alive_us > kPredictedThrowOutcomeTimeoutUs) ||
+            alive_us > kPredictedThrowMaxLifetimeUs) {
+            predicted_throw = predicted_throws_.erase(predicted_throw);
+            continue;
+        }
+        // The flight is over, and the world timeline -- which draws the prop
+        // from here on -- has reached its end too: hand the prop back.
+        if (known && prop->has_thrown_flight_end && has_client_render_time_ &&
+            render_server_time_us_ >= tick_time_us(
+                prop->thrown_flight_end_tick, fixed_delta_seconds)) {
+            predicted_throw = predicted_throws_.erase(predicted_throw);
+            continue;
+        }
+        // The authority's anchor has arrived: from now on the curve is its
+        // curve, and whatever this client drew differently is walked off.
+        if (known && prop->has_thrown_anchor && !predicted_throw->anchored) {
+            glm::vec3 before{0.0f};
+            glm::vec3 unused{0.0f};
+            predicted_throw_position(*predicted_throw, now_us, &before, &unused);
+            before += predicted_throw->correction_offset;
+            predicted_throw->anchored = true;
+            predicted_throw->landed = false;
+            predicted_throw->swept_until_us = std::max(
+                tick_time_us(prop->thrown_anchor_tick, fixed_delta_seconds),
+                now_us > step_us ? now_us - step_us : 0u);
+            glm::vec3 after{0.0f};
+            predicted_throw_position(*predicted_throw, now_us, &after, &unused);
+            predicted_throw->correction_offset = before - after;
+        }
+        // Until the authority says where the flight ended, sweep it against
+        // the world this client can see -- terrain, obstacles and the actors
+        // drawn there -- and hold it where it strikes, rather than letting it
+        // fall through the floor for a round trip.
+        const bool authority_ended = known && prop->has_thrown_flight_end;
+        if (!authority_ended && !predicted_throw->landed &&
+            prediction_physics_world_ != nullptr) {
+            physics::CollisionQueryFilter filter{};
+            filter.collision_mask =
+                physics::collision_layer_bit(physics::CollisionLayer::kTerrain) |
+                physics::collision_layer_bit(physics::CollisionLayer::kStaticObstacle) |
+                physics::collision_layer_bit(physics::CollisionLayer::kDamageable);
+            filter.object_kind_mask =
+                (1u << static_cast<std::uint32_t>(physics::CollisionObjectKind::kTerrain)) |
+                (1u << static_cast<std::uint32_t>(physics::CollisionObjectKind::kStaticObstacle)) |
+                (1u << static_cast<std::uint32_t>(physics::CollisionObjectKind::kActorHitbox));
+            filter.gameplay_category_mask = 0xFFFFFFFFu;
+            filter.ignored_entity_net_id = local_player_net_id_;
+            while (predicted_throw->swept_until_us + step_us <= now_us) {
+                glm::vec3 from{0.0f};
+                glm::vec3 to{0.0f};
+                glm::vec3 unused{0.0f};
+                predicted_throw_position(
+                    *predicted_throw, predicted_throw->swept_until_us, &from, &unused);
+                predicted_throw_position(
+                    *predicted_throw,
+                    predicted_throw->swept_until_us + step_us,
+                    &to,
+                    &unused);
+                const glm::vec3 segment = to - from;
+                const float length = glm::length(segment);
+                physics::CollisionHit hit{};
+                if (length > 1e-5f) {
+                    physics::RayCastRequest ray{};
+                    ray.origin = from;
+                    ray.direction = segment / length;
+                    ray.max_distance = length;
+                    ray.filter = filter;
+                    if (prediction_physics_world_->ray_cast_closest(ray, &hit)) {
+                        predicted_throw->landed = true;
+                        predicted_throw->landed_position = hit.position;
+                        predicted_throw->landed_us = predicted_throw->swept_until_us +
+                            static_cast<std::uint64_t>(
+                                static_cast<double>(step_us) *
+                                std::clamp(hit.distance / length, 0.0f, 1.0f));
+                        break;
+                    }
+                }
+                predicted_throw->swept_until_us += step_us;
+            }
+        }
+        ++predicted_throw;
+    }
+}
+
+void KernelEngine::append_predicted_throw_render_states() {
+    if (predicted_throws_.empty()) {
+        return;
+    }
+    const std::uint64_t now_us = prediction_timeline_now_us();
+    for (const PredictedThrow& predicted_throw : predicted_throws_) {
+        glm::vec3 position{0.0f};
+        glm::vec3 velocity{0.0f};
+        if (!predicted_throw_position(predicted_throw, now_us, &position, &velocity)) {
+            continue;
+        }
+        const auto prop = std::find_if(
+            client_replicated_entities_.begin(),
+            client_replicated_entities_.end(),
+            [&predicted_throw](const ClientReplicatedEntity& candidate) {
+                return predicted_throw.net_id != 0u &&
+                    candidate.net_id == predicted_throw.net_id;
+            });
+        RenderEntityState state{};
+        state.entity_id = predicted_throw.entity_id;
+        state.net_id = predicted_throw.net_id;
+        state.entity_type = static_cast<std::uint16_t>(EntityType::kProp);
+        state.actor_type = static_cast<std::uint16_t>(ActorType::kUnknown);
+        state.owner_peer = local_client_peer_id_;
+        state.position = to_kernel_vec3(position + predicted_throw.correction_offset);
+        state.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+        state.velocity = to_kernel_vec3(velocity);
+        state.visual_flags = glm::length(velocity) > 0.001f ? kVisualFlagMoving : 0u;
+        state.status = RenderEntityStatus_Predicted;
+        // An item's prop is drawn by its item template, as
+        // rebuild_render_states_from_snapshot draws the prop itself.
+        state.template_id = predicted_throw.item_template_id;
+        // No collider: a prediction must not become an obstacle in the world
+        // it is swept against, nor in the one the player walks in.
+        state.collider_template_id = 0u;
+        state.action.struct_size = sizeof(KernelActionRuntimeView);
+        state.aim_direction = KernelVec3{1.0f, 0.0f, 0.0f};
+        state.item_instance_id =
+            prop != client_replicated_entities_.end() ? prop->item_instance_id : 0u;
+        state.world_item_mode = KernelWorldItemMode_InFlight;
+        render_states_.push_back(state);
+    }
 }
 
 glm::vec3 KernelEngine::predicted_local_simulation_position(
@@ -11053,6 +11390,7 @@ void KernelEngine::simulate_tick() {
     const std::size_t queue_depth = command_queue_.size();
     const std::size_t processed_command_count = drain_simulation_commands();
     advance_predicted_projectiles(fixed_delta);
+    advance_predicted_throws(fixed_delta);
     for (const QueuedInput& pending_input : pending_inputs_) {
         if (pending_input.controlled_net_id != 0) {
             continue;
@@ -12968,6 +13306,7 @@ void KernelEngine::rebuild_render_states_from_snapshot(
     render_states_.clear();
     append_predicted_local_render_state();
     append_predicted_projectile_render_states();
+    append_predicted_throw_render_states();
 
     WorldSnapshot render_snapshot;
     const WorldSnapshot& snapshot =
@@ -13011,6 +13350,13 @@ void KernelEngine::rebuild_render_states_from_snapshot(
             rendered_entities.insert(projectile.net_id);
         }
     }
+    // A prop this client threw is drawn by its prediction until the world
+    // timeline has caught up with the end of its flight.
+    for (const PredictedThrow& predicted_throw : predicted_throws_) {
+        if (predicted_throw.net_id != 0u) {
+            rendered_entities.insert(predicted_throw.net_id);
+        }
+    }
     for (const EntitySnapshot& entity : snapshot.entities) {
         if (has_predicted_local_entity_ && entity.net_id == local_player_net_id_) {
             continue;
@@ -13020,7 +13366,8 @@ void KernelEngine::rebuild_render_states_from_snapshot(
                 snapshot.header.server_tick)) {
             continue;
         }
-        if (has_predicted_projectile_net_id(entity.net_id)) {
+        if (has_predicted_projectile_net_id(entity.net_id) ||
+            is_predicted_throw_net_id(entity.net_id)) {
             rendered_entities.insert(entity.net_id);
             continue;
         }

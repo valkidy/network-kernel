@@ -181,6 +181,14 @@ Thrown prop or server-only projectile, destroyed or expired:
 Server-only projectile spawned (a bottle's blast, a remote melee hit):
     not drawn until the render instant reaches its spawn tick.
     The local player's own are drawn at once.
+
+Exception -- a prop this client threw (W6):
+    drawn on the prediction timeline, the one the local player is drawn on,
+    from the request until the world timeline has reached the end of its
+    flight. Its landing, its despawn and its blast end there too: what this
+    client predicts ends on this client's timeline. The blast counts as the
+    thrower's own because the server gives a thrown prop's collision the
+    thrower's peer.
 ```
 
 A thrown prop the client can anchor is also left out of the snapshot send set
