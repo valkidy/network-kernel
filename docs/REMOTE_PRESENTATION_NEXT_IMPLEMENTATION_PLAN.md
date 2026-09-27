@@ -568,6 +568,33 @@ remote presentation 通道（`HitReaction`、狀態效果等）的預設值：
 ### 8.4 做法
 
 G0 時先觀察「穿過 agent」在實際遊玩中是否明顯，再決定要不要做。
+（2026-09-27：實測回報火箭打中 agent 後延遲消失，決定實作。）
+
+### 8.5 實作結果（`claude/w5-predicted-actor-hit`）
+
+- 碰撞體來源：`sync_client_render_colliders` 把其他 actor 的 hit collider，
+  以「畫面時刻」的位置放進預測物理世界，kind / layer 與 server 的
+  `push_collider_into_physics` 相同（`kActorHitbox` / `kDamageable`）。
+  沿用 prop 障礙物的 `prediction_obstacle_collider_ids_`，清理路徑共用。
+  不放自己、不放帶 dead flag 的 actor。移動查詢不含 `kDamageable`，
+  所以不影響本地移動預測。
+- 沒有用 `prediction_proxy_collider_ids_`：proxy 是「最新 snapshot + 最多
+  3 tick 外插」的位置，不是玩家瞄準時看到的位置。
+- 判定：只限自己射出、`Standard`、`hit_response = Destroy` 的 projectile。
+  filter 用 server 同一個 `collision_filter_from_mask`（取 template mask 的
+  actor / limb 部分），忽略自己。actor 比地形或障礙物近才算。
+- 命中後隱藏，但繼續在背景飛。等待 despawn 的時間是
+  RTT（沒有量測值時用 100 ms）+ 150 ms，上限 600 ms。
+  逾時沒收到 despawn，就在當時位置重新顯示，而且這顆不再預測 actor 命中，
+  避免一路閃爍。
+- 8.3 的誤差比原先估計小，但不是零：server 回溯上限是 100 ms
+  （`kMaxCompensationWindowUs`），client 畫面落後約 RTT/2 + 133 ms。
+  以目標移動量計算，誤差約為「RTT + 33 ms」內 actor 走的距離：
+  站著不動的目標沒有誤差；4.6 m/s 行走、RTT 100 ms 時約 0.6 m。
+  這種誤判由上面的重新顯示處理。
+- 未涵蓋：AI 的 deterministic projectile 打中本地玩家（例如 mage 的榴彈），
+  以及其他玩家的 projectile。
+- 測試：`predicted_projectile_actor_hit_test`。
 
 ---
 

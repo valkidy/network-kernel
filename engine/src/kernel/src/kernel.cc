@@ -26,6 +26,7 @@
 #include "protocol/public/session_packets.h"
 #include "protocol/public/sha256.h"
 #include "simulation/public/action_graph.h"
+#include "simulation/public/collision_filter.h"
 #include "simulation/public/movement_solver.h"
 #include "simulation/src/command_dispatcher.h"
 #include "simulation/src/systems.h"
@@ -325,6 +326,11 @@ constexpr float kMaxHomingVisualExtrapolationSeconds = 0.2f;
 // end; this is only for the one it never comes for -- a deterministic
 // projectile that left relevance keeps flying here and has no other ending.
 constexpr float kPredictedProjectileEndedRetentionSeconds = 1.0f;
+// A predicted projectile hidden in another actor waits a round trip plus this
+// for the despawn, and never longer than the cap, before it is shown again.
+// The margin covers a snapshot interval at 15 Hz and some jitter.
+constexpr std::uint64_t kPredictedActorHitConfirmMarginUs = 150000u;
+constexpr std::uint64_t kPredictedActorHitConfirmMaxUs = 600000u;
 // How far past its newest sample a remote actor is carried along its last
 // velocity before it is held. The send set starves actors for several
 // snapshots at a time once a crowd outgrows the budget (measured at 80 acting
@@ -4971,8 +4977,19 @@ void KernelEngine::sync_client_render_colliders() {
                 collider_template->template_id,
                 collider);
         }
+        // Another actor's hit volume goes in too, where this frame draws it:
+        // the one place a predicted projectile can learn it struck someone
+        // before the despawn comes back a round trip later. Drawn time, not
+        // the latest snapshot, because that is what the player aimed at, and
+        // what the authority rewinds to for the first stretch of the flight
+        // (resolve_projectile_historical_hit). Never our own: the authority
+        // ignores the shooter, and the local player is predicted anyway.
+        const bool prediction_actor_hitbox =
+            entity_type == EntityType::kActor &&
+            state.net_id != local_player_net_id_ &&
+            (state.visual_flags & kVisualFlagDead) == 0u;
         if (prediction_physics_world_ == nullptr ||
-            entity_type != EntityType::kProp ||
+            (entity_type != EntityType::kProp && !prediction_actor_hitbox) ||
             state.item_instance_id != 0u ||
             state.net_id == 0u ||
             (collider.purpose_flags & KernelColliderPurpose_Hit) == 0u ||
@@ -4992,8 +5009,15 @@ void KernelEngine::sync_client_render_colliders() {
         physics::CollisionObjectDescriptor object{};
         object.identity.entity_net_id = state.net_id;
         object.identity.collider_id = proxy->second;
-        object.identity.kind = physics::CollisionObjectKind::kStaticObstacle;
-        object.identity.layer = physics::CollisionLayer::kStaticObstacle;
+        // The kind and layer push_collider_into_physics gives the same
+        // collider on the authority, so the authority's filter reads it the
+        // same way. A movement query never asks for kDamageable.
+        object.identity.kind = prediction_actor_hitbox
+            ? physics::CollisionObjectKind::kActorHitbox
+            : physics::CollisionObjectKind::kStaticObstacle;
+        object.identity.layer = prediction_actor_hitbox
+            ? physics::CollisionLayer::kDamageable
+            : physics::CollisionLayer::kStaticObstacle;
         object.identity.gameplay_category = collider.layer_mask;
         object.shape.type = collider.shape_type == ColliderShapeType::kSphere
             ? physics::CollisionShapeType::kSphere
@@ -9908,7 +9932,7 @@ void KernelEngine::append_predicted_projectile_render_states() {
             return !projectile.locally_terminated;
         });
     for (const PredictedProjectile& projectile : predicted_projectiles_) {
-        if (projectile.locally_terminated) {
+        if (projectile.locally_terminated || projectile.hidden_by_actor_hit) {
             continue;
         }
         const glm::vec3 render_position =
@@ -9949,11 +9973,34 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
         [](const PredictedProjectile& projectile) {
             return !projectile.locally_terminated;
         });
+    // How long a projectile hidden in another actor waits for the authority to
+    // agree. The despawn trails the local hit by up to a round trip -- this
+    // client flies its own shots ahead of the authority -- plus a snapshot
+    // interval and some jitter. Past that the authority missed.
+    const std::uint64_t actor_hit_confirm_us =
+        std::min<std::uint64_t>(
+            (network_stats_.rtt_us != 0u ? network_stats_.rtt_us : 100000u) +
+                kPredictedActorHitConfirmMarginUs,
+            kPredictedActorHitConfirmMaxUs);
+    const std::uint32_t actor_hit_confirm_ticks =
+        fixed_delta_seconds > 0.0f
+            ? static_cast<std::uint32_t>(std::ceil(
+                  static_cast<double>(actor_hit_confirm_us) /
+                  (static_cast<double>(fixed_delta_seconds) * 1000000.0)))
+            : 0u;
     for (PredictedProjectile& projectile : predicted_projectiles_) {
         // Counted on after it ends too: that is what times its retention.
         projectile.lifetime_elapsed_ticks += 1;
         if (projectile.locally_terminated) {
             continue;
+        }
+        // No despawn came: the authority's copy flew on. Shown again where it
+        // has got to, and not hidden a second time -- that would blink it on
+        // every actor it grazes after the one it was wrong about.
+        if (projectile.hidden_by_actor_hit &&
+            projectile.lifetime_elapsed_ticks >= projectile.actor_hit_reveal_tick) {
+            projectile.hidden_by_actor_hit = false;
+            projectile.actor_hit_prediction_spent = true;
         }
         projectile.age_ticks += 1;
         const float projectile_age_duration =
@@ -10031,6 +10078,44 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
                             projectile.position,
                             next_position,
                             filter);
+                    // Into another actor before anything in the world: hidden
+                    // there, where the player sees it strike, instead of
+                    // flying on through the body until the despawn comes back.
+                    // Only our own shot, which is fired at what this client
+                    // draws, and only one the authority destroys on its first
+                    // hit. It keeps flying underneath (see the reveal above);
+                    // the damage stays the authority's.
+                    const std::uint32_t actor_hit_mask =
+                        projectile_template->mechanics.collision_mask &
+                        (KERNEL_COLLISION_MASK_ACTOR | KERNEL_COLLISION_LAYER_LIMB);
+                    if (!projectile.hidden_by_actor_hit &&
+                        !projectile.actor_hit_prediction_spent &&
+                        actor_hit_mask != 0u &&
+                        local_client_peer_id_ != 0u &&
+                        projectile.owner_peer == local_client_peer_id_ &&
+                        projectile_template->mechanics.projectile_type ==
+                            KernelProjectileType_Standard &&
+                        projectile_template->mechanics.hit_response ==
+                            KernelProjectileHitResponse_Destroy) {
+                        physics::CollisionQueryFilter actor_filter =
+                            collision_filter_from_mask(actor_hit_mask);
+                        actor_filter.ignored_entity_net_id = local_player_net_id_;
+                        const std::vector<physics::CollisionHit> actor_hits =
+                            query_projectile_collision_hits(
+                                *prediction_physics_world_,
+                                collision_spec,
+                                projectile.position,
+                                next_position,
+                                actor_filter);
+                        if (!actor_hits.empty() &&
+                            (hits.empty() ||
+                             actor_hits.front().distance < hits.front().distance)) {
+                            projectile.hidden_by_actor_hit = true;
+                            projectile.actor_hit_reveal_tick =
+                                projectile.lifetime_elapsed_ticks +
+                                actor_hit_confirm_ticks;
+                        }
+                    }
                     if (!hits.empty()) {
                         // Unless the template opts in, the authority does not
                         // let an area effect touch whoever fired it:

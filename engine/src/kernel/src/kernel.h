@@ -538,6 +538,14 @@ private:
         // and a beam have their lifetimes kept by other systems.
         std::uint32_t lifetime_elapsed_ticks = 0;
         bool ends_on_lifetime = false;
+        // Hidden because it went into another actor's drawn hit volume, and
+        // still flown underneath: until lifetime_elapsed_ticks reaches this,
+        // the authority's despawn is expected. If it has not come by then the
+        // authority saw a miss, and the projectile is shown again where it
+        // has flown to since.
+        bool hidden_by_actor_hit = false;
+        std::uint32_t actor_hit_reveal_tick = 0;
+        bool actor_hit_prediction_spent = false;
     };
 
     struct VisionRuntimeState {
@@ -1123,6 +1131,8 @@ private:
     std::unordered_set<std::uint32_t> physics_entity_collider_ids_;
     std::unique_ptr<physics::PhysicsWorld> prediction_physics_world_;
     std::unordered_map<NetId, std::uint32_t> prediction_proxy_collider_ids_;
+    // Props as static obstacles and other actors' hit volumes, both where the
+    // render pass drew them. One map, since a net id is one or the other.
     std::unordered_map<NetId, std::uint32_t> prediction_obstacle_collider_ids_;
     // One proxy per bone, unlike the two maps above which are one per entity: a
     // rig contributes a dozen bodies. Their ids cannot come from the collider
