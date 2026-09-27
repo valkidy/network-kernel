@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- updates native plugins with late-spawn prediction recovery and own-throw timeline presentation
+
+
+0.7.0 release notes:
+
 - aligns Unity bindings with kernel ABI 93 and knockdown recovery
 - updates native plugins and gameplay catalog bundle
 
