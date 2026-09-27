@@ -171,8 +171,9 @@ int main() {
         const network_example::Velocity& authority_velocity =
             server.world_.registry().get<network_example::Velocity>(*entity);
 
-        // Position is still three floats on the wire, so it survives exactly.
-        require(replicated->position == authority.position);
+        // Position is an i16 offset at 1/256 m from the section's anchor: half
+        // a step on each axis at most, sqrt(3) / 512 m in all.
+        require(glm::length(replicated->position - authority.position) < 0.0034f);
         // Velocity is i16 at 1/256 m/s.
         require(
             glm::length(replicated->velocity - authority_velocity.linear) < 0.005f);
