@@ -796,6 +796,38 @@ client 的畫法要一起更新（舊 client 遇到新 server，會在瓶子落�
 位置一致且只畫一次、本地落地判定、拒絕、逾時、despawn 立刻套用），
 `thrown_bottle_self_hit_test` 新增爆炸歸屬檢查。
 
+
+### 9.6 延伸評估與量測（`claude/w6-blast-gap-stats`）
+
+W6 留下三項延伸，讀程式碼後（2026-09-28）：
+
+| 項目 | 目前遊戲會發生嗎 | 原因 |
+|---|---|---|
+| 丟出手上拿著的 prop | 不會 | Unity 只送 Use / Throw / Pickup，沒有 Carry；撿起來直接進背包 |
+| `consume_and_spawn` 投擲 | 不會 | 只有 `grenade_consumable`，不在玩家初始背包，也沒有其他地方引用 |
+| 爆炸預測 | 會 | 瓶子在預測落點停住，等 server 的 despawn 和爆炸（約 RTT + 輸入延遲）才炸 |
+
+爆炸預測需要：從 item → prop template → 碰撞 trigger 的 action graph 參數找出爆炸
+template、在落點本地生成、用「自己的 + 同 template + 未配對 + 靠近落點」配對
+server 的爆炸（它的 action_instance_id 無法預測）、落點誤判時的處理，以及 Unity
+碎裂效果的同步。先量停頓再決定要不要做。
+
+量測（client，network stats 開啟時，每次投擲寫 log）：
+
+```
+own throw 214: despawn arrived 183 ms after its predicted landing
+own throw 214: blast 801 (projectile template 7) arrived 183 ms after its predicted landing, 0.50 m from it
+own throw 215: despawn arrived with no predicted landing, 466 ms after release
+```
+
+- 時間從預測落地「在畫面上發生」的 client 時間算起（偵測時往回推到落點所在時刻）。
+- 爆炸比 despawn 早到或晚到都能配對；同一次落地只配對一個爆炸。
+- 「with no predicted landing」表示 client 沒掃到撞擊（例如撞到畫面上沒有的東西），
+  這種情況爆炸預測也幫不上忙。
+- 距離是 server 爆炸生成點到預測落點的距離，用來估計落點誤判的程度。
+- 已知誤差：玩家自己射出、會在撞擊時生成爆炸的 projectile（例如火箭），如果在
+  投擲落地後 1 秒內炸開，可能被算到這次投擲上；log 裡的 template id 可以分辨。
+
 ---
 
 ## 10. G1 / G2 — AI 意圖同步之前的量測與便宜方案
