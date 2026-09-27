@@ -192,6 +192,7 @@ struct Band {
 
 struct Result {
     std::array<Band, 3> bands;
+    std::size_t bytes_sent = 0;
     double lag_sum_ms = 0.0;
     std::size_t lag_frames = 0;
     double agents_per_snapshot = 0.0;
@@ -208,12 +209,16 @@ double percentile(std::vector<double> values, double fraction) {
 // two snapshot intervals, by skewing the client's clock-sync estimate.
 // snapshot_rate is the kernel's snapshot_rate: at 30 Hz the interpolation
 // delay, two intervals, halves too, so extra_delay_ms is what puts it back.
+// packets > 1 is option B: one send set built for that many packets, split
+// into independent packets of at most budget_bytes, each with its own header,
+// its own delay and its own chance of loss, merged again on the client.
 Result run(
     std::size_t agent_count,
     std::size_t budget_bytes,
     bool acting,
     double extra_delay_ms = 0.0,
-    std::uint32_t snapshot_rate = 15) {
+    std::uint32_t snapshot_rate = 15,
+    std::size_t packets = 1) {
     Result result;
     std::vector<Agent> agents(agent_count);
 
@@ -274,26 +279,34 @@ Result run(
             }
             const ne::WorldSnapshot relevant = server.build_relevant_snapshot(
                 session, static_cast<std::uint32_t>(t * 1000.0));
-            ne::WorldSnapshot send =
-                server.build_snapshot_send_set(session, relevant, budget_bytes);
+            const std::size_t base = ne::estimate_snapshot_base_packet_size();
+            ne::WorldSnapshot send = server.build_snapshot_send_set(
+                session, relevant,
+                budget_bytes == ne::kSnapshotSendBudgetBytes
+                    ? ne::snapshot_send_set_budget(packets)
+                    : packets * budget_bytes - (packets - 1) * base);
             send.header.server_tick = tick;
             for (const ne::EntitySnapshot& entity : send.entities) {
                 if (entity.actor_type == ne::ActorType::kAgent) ++packed_total;
             }
             ++snapshots;
-            const double delay_ms =
-                kLatencyMs + kJitterMs * (2.0 * unit(random) - 1.0);
-            if (unit(random) < kLoss) continue;
-            // What the client decodes, quantisation included.
-            const std::vector<std::uint8_t> packet =
-                ne::encode_snapshot_packet(send, ++sequence);
-            ne::WorldSnapshot decoded;
-            if (!ne::decode_snapshot_packet(packet.data(), packet.size(), &decoded)) {
-                ++result.decode_failures;
-                decoded = send;
+            for (ne::WorldSnapshot& piece :
+                 ne::split_snapshot_for_packets(send, budget_bytes)) {
+                const double delay_ms =
+                    kLatencyMs + kJitterMs * (2.0 * unit(random) - 1.0);
+                // What the client decodes, quantisation included.
+                const std::vector<std::uint8_t> packet =
+                    ne::encode_snapshot_packet(piece, ++sequence);
+                result.bytes_sent += packet.size();
+                if (unit(random) < kLoss) continue;
+                ne::WorldSnapshot decoded;
+                if (!ne::decode_snapshot_packet(packet.data(), packet.size(), &decoded)) {
+                    ++result.decode_failures;
+                    decoded = piece;
+                }
+                decoded.header.server_tick = tick;
+                arrivals.push_back(Arrival{t + delay_ms / 1000.0, std::move(decoded)});
             }
-            decoded.header.server_tick = tick;
-            arrivals.push_back(Arrival{t + delay_ms / 1000.0, std::move(decoded)});
         }
         result.agents_per_snapshot =
             static_cast<double>(packed_total) / static_cast<double>(snapshots);
@@ -324,6 +337,7 @@ Result run(
     std::size_t next = 0;
     for (double now = 0.0; now < kRunSeconds - 0.5; now += kFrameSeconds) {
         while (next < arrivals.size() && arrivals[next].at_seconds <= now) {
+            // Another packet of a tick already here is merged into it.
             client.store_client_snapshot(std::move(arrivals[next].snapshot));
             ++next;
         }
@@ -391,8 +405,9 @@ Result run(
 
 void print(std::size_t agent_count, const char* budget, const Result& result) {
     static const char* const kBandNames[3] = {"near", "mid", "far"};
-    std::printf("  %3zu agents, %-9s  %5.1f agents/snapshot  lag %3.0f ms%s\n",
+    std::printf("  %3zu agents, %-9s  %5.1f agents/snapshot  %4.0f kbit/s  lag %3.0f ms%s\n",
                 agent_count, budget, result.agents_per_snapshot,
+                static_cast<double>(result.bytes_sent) * 8.0 / 1000.0 / kRunSeconds,
                 result.lag_sum_ms / static_cast<double>(std::max<std::size_t>(1, result.lag_frames)),
                 result.decode_failures > 0 ? "  (some sent undecoded)" : "");
     for (std::size_t band = 0; band < 3; ++band) {
@@ -463,6 +478,20 @@ int main() {
         std::printf("%s\n", acting ? "agents mid-action" : "agents idle");
         for (const std::size_t count : {80u, 200u}) {
             print(count, "30 Hz", run(count, kLiveBudgetBytes, acting, 67.0, 30));
+        }
+    }
+    // Option B on top of the compact record: N independent 1200 B packets a
+    // snapshot, for the 200-agent fight.
+    std::printf("\nB: independent 1200 B packets per snapshot\n");
+    for (const bool acting : {true, false}) {
+        std::printf("%s\n", acting ? "agents mid-action" : "agents idle");
+        for (const std::size_t count : {200u}) {
+            for (const std::size_t packets : {1u, 2u, 3u, 4u, 5u}) {
+                char label[32];
+                std::snprintf(label, sizeof(label), "%zu packets", packets);
+                print(count, label,
+                      run(count, kLiveBudgetBytes, acting, 0.0, 15, packets));
+            }
         }
     }
     return 0;

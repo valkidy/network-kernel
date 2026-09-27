@@ -1135,6 +1135,45 @@ std::size_t estimate_snapshot_entity_size(const EntitySnapshot& entity) {
     }
 }
 
+std::size_t snapshot_send_set_budget(std::size_t packet_count) {
+    const std::size_t packets = std::max<std::size_t>(1u, packet_count);
+    return packets * kSnapshotSendBudgetBytes -
+        (packets - 1u) * estimate_snapshot_base_packet_size();
+}
+
+std::vector<WorldSnapshot> split_snapshot_for_packets(
+    const WorldSnapshot& snapshot,
+    std::size_t packet_budget) {
+    std::vector<const EntitySnapshot*> ordered;
+    ordered.reserve(snapshot.entities.size());
+    for (const EntitySnapshot& entity : snapshot.entities) {
+        if (snapshot_section_type(entity) != SnapshotSectionType::kActorAgent) {
+            ordered.push_back(&entity);
+        }
+    }
+    for (const EntitySnapshot& entity : snapshot.entities) {
+        if (snapshot_section_type(entity) == SnapshotSectionType::kActorAgent) {
+            ordered.push_back(&entity);
+        }
+    }
+    std::vector<WorldSnapshot> packets(1);
+    packets.back().header = snapshot.header;
+    std::size_t packet_bytes = estimate_snapshot_base_packet_size();
+    for (const EntitySnapshot* entity : ordered) {
+        const std::size_t size = estimate_snapshot_entity_size(*entity);
+        // One entity larger than a whole packet still has to go somewhere; it
+        // goes alone rather than being dropped.
+        if (packet_bytes + size > packet_budget && !packets.back().entities.empty()) {
+            packets.emplace_back();
+            packets.back().header = snapshot.header;
+            packet_bytes = estimate_snapshot_base_packet_size();
+        }
+        packets.back().entities.push_back(*entity);
+        packet_bytes += size;
+    }
+    return packets;
+}
+
 std::size_t estimate_snapshot_packet_size(const WorldSnapshot& snapshot) {
     std::size_t size = estimate_snapshot_base_packet_size();
     for (const EntitySnapshot& entity : snapshot.entities) {

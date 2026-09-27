@@ -47,8 +47,11 @@ void require_impl(bool condition, const char* expression, int line) {
 
 #define require(condition) require_impl((condition), #condition, __LINE__)
 
-constexpr std::size_t kAgentCount = 40;
-// Comfortably more than the spawn quota needs to introduce forty agents at
+// More than one 1200 B packet holds (about 44 idle agents), so every
+// snapshot of the crowd is split across packets and merged again on the client
+// (kSnapshotMaxPacketsPerInterval); four hold them all.
+constexpr std::size_t kAgentCount = 150;
+// Comfortably more than the spawn quota needs to introduce the crowd at
 // sixteen a snapshot, and more than the send set needs to reach all of them.
 constexpr std::size_t kSnapshots = 30;
 
@@ -124,7 +127,9 @@ int main() {
         // given a facing and a velocity so that the fields the agent record
         // quantises are not all zero on the wire.
         const float angle = static_cast<float>(index) * 0.618f;
-        const float radius = 2.0f + static_cast<float>(index) * 0.8f;
+        // Inside the 40 m relevance sphere, which nothing beyond is sent from.
+        const float radius = 2.0f + static_cast<float>(index) * 36.0f /
+            static_cast<float>(kAgentCount);
         const network_example::NetId agent = server.world_.spawn_enemy(glm::vec3{
             radius * std::cos(angle), 0.0f, radius * std::sin(angle)});
         const std::optional<entt::entity> entity =
@@ -153,6 +158,24 @@ int main() {
     // snapshot out of it rather than silently rejecting every packet.
     require(packets > kSnapshots);
     require(client.has_client_snapshot_);
+
+    // The newest tick came in several packets, and all of them are in the one
+    // snapshot the client interpolates from -- not only the last to arrive.
+    // The replicated entities below would not show that: each packet updates
+    // its own agents whether or not the packets are merged.
+    const auto holds_every_agent = [&agents](const network_example::WorldSnapshot& snapshot) {
+        return std::all_of(agents.begin(), agents.end(), [&snapshot](network_example::NetId agent) {
+            return std::any_of(
+                snapshot.entities.begin(),
+                snapshot.entities.end(),
+                [agent](const network_example::EntitySnapshot& entity) {
+                    return entity.net_id == agent;
+                });
+        });
+    };
+    require(holds_every_agent(client.latest_client_snapshot_));
+    require(!client.client_snapshot_buffer_.empty());
+    require(holds_every_agent(client.client_snapshot_buffer_.back()));
 
     // Every agent reached the client -- spawned over the reliable channel under
     // the introduction quota, then positioned by the agent section.

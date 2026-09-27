@@ -1099,6 +1099,25 @@ const EntitySnapshot* find_snapshot_entity(
     return &(*found);
 }
 
+// Folds one packet of a tick into what has arrived of it so far. The same net
+// id in both is the same record twice -- a repeated packet -- and the newer
+// copy stands; the header is the tick's and is shared by every packet of it.
+void merge_snapshot_part(const WorldSnapshot& part, WorldSnapshot* into) {
+    for (const EntitySnapshot& entity : part.entities) {
+        const auto existing = std::find_if(
+            into->entities.begin(),
+            into->entities.end(),
+            [&entity](const EntitySnapshot& candidate) {
+                return candidate.net_id == entity.net_id;
+            });
+        if (existing != into->entities.end()) {
+            *existing = entity;
+        } else {
+            into->entities.push_back(entity);
+        }
+    }
+}
+
 constexpr std::uint32_t kKernelServerEntityStateBaseSize =
     offsetof(KernelServerEntityState, active_weapon_slot);
 
@@ -7886,9 +7905,19 @@ void KernelEngine::handle_client_snapshot(WorldSnapshot snapshot) {
         store_client_snapshot(std::move(snapshot));
         return;
     }
-    latest_client_snapshot_ = snapshot;
+    // A tick can arrive in several packets (kSnapshotMaxPacketsPerInterval),
+    // each a snapshot of part of it. Another part of the newest tick joins it
+    // rather than replacing it, and everything below that reads a single
+    // packet's worth -- the replicated entities, the own player's record, the
+    // projectiles -- reads just this part, so no part is applied twice.
+    if (has_client_snapshot_ &&
+        snapshot.header.server_tick == latest_client_snapshot_.header.server_tick) {
+        merge_snapshot_part(snapshot, &latest_client_snapshot_);
+    } else {
+        latest_client_snapshot_ = snapshot;
+    }
     has_client_snapshot_ = true;
-    for (const EntitySnapshot& entity : latest_client_snapshot_.entities) {
+    for (const EntitySnapshot& entity : snapshot.entities) {
         const auto replicated = std::find_if(
             client_replicated_entities_.begin(),
             client_replicated_entities_.end(),
@@ -7913,6 +7942,7 @@ void KernelEngine::handle_client_snapshot(WorldSnapshot snapshot) {
         replicated->snapshot_tick = latest_client_snapshot_.header.server_tick;
         replicated->active = true;
     }
+    const WorldSnapshot part = snapshot;
     store_client_snapshot(std::move(snapshot));
     // Nothing is ever rendered before the oldest buffered snapshot, so a
     // flight that ended before it can no longer be drawn.
@@ -7926,13 +7956,14 @@ void KernelEngine::handle_client_snapshot(WorldSnapshot snapshot) {
     diagnose_client_snapshot_metadata_waits();
     // Ahead of the prediction_failed_ return: the magazine the server reports is
     // true whether or not this client can still predict movement.
-    apply_authoritative_local_weapon(latest_client_snapshot_);
+    apply_authoritative_local_weapon(part);
     if (prediction_failed_) {
         return;
     }
+    // Rebuilt from scratch, so from the whole tick so far.
     sync_client_vision_states_from_snapshot(latest_client_snapshot_);
-    reconcile_local_prediction(latest_client_snapshot_);
-    reconcile_predicted_projectiles(latest_client_snapshot_);
+    reconcile_local_prediction(part);
+    reconcile_predicted_projectiles(part);
 }
 
 void KernelEngine::sync_client_vision_states_from_snapshot(
@@ -8056,7 +8087,8 @@ void KernelEngine::store_client_snapshot(WorldSnapshot snapshot) {
             return buffered.header.server_tick == snapshot.header.server_tick;
         });
     if (existing != client_snapshot_buffer_.end()) {
-        *existing = std::move(snapshot);
+        // Another packet of the same tick; a repeat of one merges to itself.
+        merge_snapshot_part(snapshot, &*existing);
     } else {
         client_snapshot_buffer_.push_back(std::move(snapshot));
     }
@@ -13195,21 +13227,24 @@ void KernelEngine::publish_snapshot() {
         const WorldSnapshot send_snapshot = build_snapshot_send_set(
             local_listen_session_,
             peer_snapshot,
-            kSnapshotSendBudgetBytes);
-        const std::vector<std::uint8_t> packet =
-            encode_snapshot_packet(send_snapshot, next_packet_sequence_++);
-        if (!listen_server_transport_->Send(
-                kLocalListenPeerId,
-                packet.data(),
-                static_cast<std::uint32_t>(packet.size()),
-                SendMode::kUnreliable,
-                ChannelId::kSnapshot)) {
-            push_event(KernelEventType_Error, 0, kLocalListenPeerId, 7);
-        } else {
-            record_sent_packet(
-                static_cast<std::uint32_t>(packet.size()),
-                SendMode::kUnreliable,
-                ChannelId::kSnapshot);
+            snapshot_send_set_budget(kSnapshotMaxPacketsPerInterval));
+        for (const WorldSnapshot& part :
+             split_snapshot_for_packets(send_snapshot, kSnapshotSendBudgetBytes)) {
+            const std::vector<std::uint8_t> packet =
+                encode_snapshot_packet(part, next_packet_sequence_++);
+            if (!listen_server_transport_->Send(
+                    kLocalListenPeerId,
+                    packet.data(),
+                    static_cast<std::uint32_t>(packet.size()),
+                    SendMode::kUnreliable,
+                    ChannelId::kSnapshot)) {
+                push_event(KernelEventType_Error, 0, kLocalListenPeerId, 7);
+            } else {
+                record_sent_packet(
+                    static_cast<std::uint32_t>(packet.size()),
+                    SendMode::kUnreliable,
+                    ChannelId::kSnapshot);
+            }
         }
     }
 
@@ -13222,24 +13257,29 @@ void KernelEngine::publish_snapshot() {
                 build_relevant_snapshot(session, server_time_ms);
             sync_session_relevance(&session, peer_snapshot);
             drop_unannounced_entities(session, &peer_snapshot);
+            // One send set for the interval, over as many independent
+            // packets as it fills (kSnapshotMaxPacketsPerInterval).
             const WorldSnapshot send_snapshot = build_snapshot_send_set(
                 session,
                 peer_snapshot,
-                kSnapshotSendBudgetBytes);
-            const std::vector<std::uint8_t> packet =
-                encode_snapshot_packet(send_snapshot, next_packet_sequence_++);
-            if (!transport_->Send(
-                    session.peer,
-                    packet.data(),
-                    static_cast<std::uint32_t>(packet.size()),
-                    SendMode::kUnreliable,
-                    ChannelId::kSnapshot)) {
-                push_event(KernelEventType_Error, 0, session.peer, 7);
-            } else {
-                record_sent_packet(
-                    static_cast<std::uint32_t>(packet.size()),
-                    SendMode::kUnreliable,
-                    ChannelId::kSnapshot);
+                snapshot_send_set_budget(kSnapshotMaxPacketsPerInterval));
+            for (const WorldSnapshot& part :
+                 split_snapshot_for_packets(send_snapshot, kSnapshotSendBudgetBytes)) {
+                const std::vector<std::uint8_t> packet =
+                    encode_snapshot_packet(part, next_packet_sequence_++);
+                if (!transport_->Send(
+                        session.peer,
+                        packet.data(),
+                        static_cast<std::uint32_t>(packet.size()),
+                        SendMode::kUnreliable,
+                        ChannelId::kSnapshot)) {
+                    push_event(KernelEventType_Error, 0, session.peer, 7);
+                } else {
+                    record_sent_packet(
+                        static_cast<std::uint32_t>(packet.size()),
+                        SendMode::kUnreliable,
+                        ChannelId::kSnapshot);
+                }
             }
         }
     }
