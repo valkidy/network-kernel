@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- refreshes native plugin builds from the latest integrated revision
+
+
+0.7.0 release notes:
+
 - updates native plugins with log capture and projectile presentation improvements
 
 
