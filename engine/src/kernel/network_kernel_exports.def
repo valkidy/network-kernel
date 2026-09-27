@@ -4,6 +4,7 @@ EXPORTS
     Kernel_Destroy
     Kernel_GetAbiInfo
     Kernel_GetBuildInfo
+    Kernel_PollLogMessages
     Kernel_GetLocalPlayerInfo
     Kernel_GetLocalWeaponState
     Kernel_LANDiscovery_Create

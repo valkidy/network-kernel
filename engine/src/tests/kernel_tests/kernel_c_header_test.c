@@ -9,6 +9,9 @@ _Static_assert(
     KERNEL_ABI_VERSION == 93u,
     "knockdown: KernelEntityTemplateDefinition gained knockdown_recovery_ticks");
 _Static_assert(
+    sizeof(KernelLogMessage) == 24u + KERNEL_LOG_MESSAGE_TEXT_SIZE,
+    "a managed mirror of a log line must match this layout");
+_Static_assert(
     offsetof(KernelEntityTemplateDefinition, knockdown_recovery_ticks) >
         offsetof(KernelEntityTemplateDefinition, death_policy),
     "the knockdown recovery is appended to KernelEntityTemplateDefinition");

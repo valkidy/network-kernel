@@ -10,6 +10,7 @@
 #include "kernel/src/build_info.h"
 #include "kernel/src/kernel.h"
 #include "kernel/src/lan_discovery.h"
+#include "kernel/src/log_capture.h"
 
 struct KernelHandle {
     std::unique_ptr<network_example::KernelEngine> engine;
@@ -262,6 +263,7 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             KERNEL_CAPABILITY_SERVER_ENTITY_MOVEMENT_MASK_WRITE |
             KERNEL_CAPABILITY_SERVER_ENTITY_REVIVE |
             KERNEL_CAPABILITY_SERVER_INVENTORY_CLEAR |
+            KERNEL_CAPABILITY_LOG_CAPTURE |
             KERNEL_CAPABILITY_SERVER_ENTITY_QUERY |
             KERNEL_CAPABILITY_SERVER_RELEVANCE_FILTER |
             KERNEL_CAPABILITY_LAG_COMPENSATED_PROJECTILE |
@@ -291,6 +293,14 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             KERNEL_CAPABILITY_SKELETON_BIND_POSE |
             KERNEL_CAPABILITY_LOCAL_WEAPON_STATE;
         return true;
+    });
+}
+
+uint32_t Kernel_PollLogMessages(
+    KernelLogMessage* out_messages,
+    uint32_t max_messages) {
+    return abi_call("Kernel_PollLogMessages", 0u, [&]() {
+        return network_example::process_log_capture().drain(out_messages, max_messages);
     });
 }
 

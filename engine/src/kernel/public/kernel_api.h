@@ -28,6 +28,22 @@ typedef uint64_t KernelRpcRequestId;
 
 bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size);
 bool Kernel_GetBuildInfo(KernelBuildInfo* out_info, uint32_t out_info_size);
+/*
+ * Hands over what the kernel logged, for a host whose stdout goes nowhere --
+ * the Unity Editor's does not reach Editor.log. Process-wide, not per handle:
+ * every kernel and game server in this library logs through one logger.
+ *
+ * The first call starts capture and returns nothing captured before it, so a
+ * host should call it once before Kernel_Create. Capture keeps the newest
+ * lines, up to a fixed count; older ones are dropped and show as a gap in
+ * KernelLogMessage::sequence. Lines still go to stdout as before.
+ *
+ * Copies up to max_messages lines, oldest first, and returns how many. Safe to
+ * call from any thread, though a host normally drains it once per frame.
+ */
+uint32_t Kernel_PollLogMessages(
+    KernelLogMessage* out_messages,
+    uint32_t max_messages);
 bool Kernel_GetLocalPlayerInfo(
     KernelHandle* kernel,
     KernelLocalPlayerInfo* out_info);
