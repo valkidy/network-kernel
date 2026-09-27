@@ -327,6 +327,12 @@ cc_test(
 )
 
 cc_binary(
+    name = "remote_actor_error_bench",
+    srcs = ["remote_actor_error_bench.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
+cc_binary(
     name = "render_clock_bench",
     srcs = ["render_clock_bench.cc"],
     deps = ["//engine/src/kernel:kernel"],
