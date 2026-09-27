@@ -19,18 +19,37 @@ constexpr std::size_t kSnapshotSectionHeaderPayloadSize = 4;
 // Sections present in every snapshot; the beam section is optional on top.
 constexpr std::uint16_t kSnapshotSectionCount = 5;
 constexpr std::size_t kActorSnapshotBasePayloadSize = 52;
-// net_id 4 + record flags 1 + position 12 + velocity 6 + facing 2 + aim 3 +
-// animation state 2 + visual flags 2.
+// record flags 1 + position 6 + velocity 6 + facing 2 + aim 3 +
+// animation state 2 + visual flags 2, after a varint net_id of 1-5 bytes.
 //
 // An agent is an actor that is never the receiving session's own player, which
 // removes most of what the shared actor record spends its bytes on. Its type
 // and actor type are implied by the section. Its facing is a quaternion holding
 // one live axis -- it stands on the ground -- so a turn in a u16 says the same
-// thing in an eighth of the space, and the aim vector goes the same way. Only
-// position stays a full trio of floats, because narrowing it needs a bounded
-// range to quantise against and that is a separate decision.
-constexpr std::size_t kAgentSnapshotBasePayloadSize = 32;
+// thing in an eighth of the space, and the aim vector goes the same way.
+//
+// Agents are what a crowded snapshot runs out of room for, so every byte here
+// is a share of an agent more per packet (remote_actor_error_bench, plan doc
+// section 10.4). The net_id is a varint: ids are handed out from 1 upwards, so
+// they take two or three bytes rather than four, and the size still follows
+// from the id alone, which the send budget needs. The position is three i16
+// against an anchor the section carries once (see AgentPositionFrame).
+constexpr std::size_t kAgentSnapshotBasePayloadSize = 22;
+// The agent section's preamble, once per snapshot whether or not it holds an
+// agent, so the base size stays one number: position anchor 12 + mode 1.
+constexpr std::size_t kAgentSectionPreamblePayloadSize = 13;
+// 1/256 m a step: at most 2 mm of rounding on each axis (3.4 mm in all), and
+// +-128 m around the anchor, which covers the 80 m a relevance sphere spans
+// several times over.
+constexpr float kAgentPositionWireScale = 256.0f;
 constexpr std::size_t kActorActionTimelinePayloadSize = 20;
+// An agent's action timeline, narrowed: template u16 2 + instance u32 4 +
+// start tick's low 16 bits 2 + commit count u16 2 + phase u8 1. The start tick
+// is recovered against the snapshot's own tick, which it never runs ahead of --
+// an action starts on the tick it is begun -- so the low bits name it for 65536
+// ticks, half an hour at 30 Hz. Anything that does not fit is sent in the full
+// 20 B form under kAgentSnapshotHasWideActionTimeline instead.
+constexpr std::size_t kAgentActionTimelinePayloadSize = 11;
 constexpr std::size_t kActorOwnerPeerPayloadSize = 4;
 constexpr std::size_t kActorRotationPayloadSize = 16;
 constexpr std::size_t kActorHealthPayloadSize = 4;
@@ -216,6 +235,18 @@ enum class SnapshotSectionType : std::uint16_t {
 
 enum AgentSnapshotRecordFlag : std::uint8_t {
     kAgentSnapshotHasActionTimeline = 1u << 0,
+    // Only with the timeline: it is in the full 20 B form.
+    kAgentSnapshotHasWideActionTimeline = 1u << 1,
+};
+constexpr std::uint8_t kAgentSnapshotKnownRecordFlags =
+    kAgentSnapshotHasActionTimeline | kAgentSnapshotHasWideActionTimeline;
+
+enum AgentPositionMode : std::uint8_t {
+    kAgentPositionCompact = 0,
+    // The section's agents span more than the i16 range: full floats, and the
+    // packet is 6 B an agent larger than its estimate. A relevance sphere
+    // cannot get there; this is so that an unusual one still decodes.
+    kAgentPositionFull = 1,
 };
 
 enum ActorSnapshotRecordFlag : std::uint16_t {
@@ -262,13 +293,112 @@ std::uint16_t actor_record_flags(const EntitySnapshot& entity) {
     return flags;
 }
 
+// What the send budget can see from the entity alone. The encoder may add
+// kAgentSnapshotHasWideActionTimeline for a start tick out of reach of the
+// snapshot's (agent_timeline_is_wide).
 std::uint8_t agent_record_flags(const EntitySnapshot& entity) {
     std::uint8_t flags = 0;
     if (entity.action_template_id != 0u ||
         entity.action_phase != KernelActionPhase_None) {
         flags |= kAgentSnapshotHasActionTimeline;
+        if (entity.action_template_id > 0xFFFFu ||
+            entity.action_commit_count > 0xFFFFu) {
+            flags |= kAgentSnapshotHasWideActionTimeline;
+        }
     }
     return flags;
+}
+
+bool agent_timeline_is_wide(
+    const EntitySnapshot& entity,
+    std::uint32_t snapshot_tick) {
+    return entity.action_start_tick > snapshot_tick ||
+        snapshot_tick - entity.action_start_tick > 0xFFFFu;
+}
+
+std::uint32_t agent_start_tick_from_wire(
+    std::uint16_t low_bits,
+    std::uint32_t snapshot_tick) {
+    const std::uint16_t back = static_cast<std::uint16_t>(
+        static_cast<std::uint16_t>(snapshot_tick) - low_bits);
+    return snapshot_tick >= back ? snapshot_tick - back : 0u;
+}
+
+std::size_t varint_size(std::uint32_t value) {
+    std::size_t size = 1;
+    while (value >= 0x80u) {
+        value >>= 7;
+        ++size;
+    }
+    return size;
+}
+
+void write_varint(protocol_internal::PacketWriter& payload, std::uint32_t value) {
+    while (value >= 0x80u) {
+        payload.write_u8(static_cast<std::uint8_t>(value | 0x80u));
+        value >>= 7;
+    }
+    payload.write_u8(static_cast<std::uint8_t>(value));
+}
+
+bool read_varint(protocol_internal::PacketReader& reader, std::uint32_t* out_value) {
+    std::uint32_t value = 0;
+    for (std::uint32_t shift = 0; shift < 35u; shift += 7u) {
+        std::uint8_t byte = 0;
+        if (!reader.read_u8(&byte)) {
+            return false;
+        }
+        // The fifth byte holds the top four bits of a u32 and nothing more.
+        if (shift == 28u && (byte & 0xF0u) != 0u) {
+            return false;
+        }
+        value |= static_cast<std::uint32_t>(byte & 0x7Fu) << shift;
+        if ((byte & 0x80u) == 0u) {
+            *out_value = value;
+            return true;
+        }
+    }
+    return false;
+}
+
+// The point the agent section's positions are measured from: the middle of
+// their bounding box, so a section spanning up to 256 m on each axis fits.
+struct AgentPositionFrame {
+    glm::vec3 anchor{0.0f};
+    std::uint8_t mode = kAgentPositionCompact;
+};
+
+std::int16_t agent_offset_to_wire(float offset_meters) {
+    return static_cast<std::int16_t>(
+        std::lround(offset_meters * kAgentPositionWireScale));
+}
+
+AgentPositionFrame agent_position_frame(
+    const std::vector<const EntitySnapshot*>& agents) {
+    AgentPositionFrame frame;
+    if (agents.empty()) {
+        return frame;
+    }
+    glm::vec3 low = agents.front()->position;
+    glm::vec3 high = low;
+    for (const EntitySnapshot* agent : agents) {
+        low = glm::min(low, agent->position);
+        high = glm::max(high, agent->position);
+    }
+    frame.anchor = (low + high) * 0.5f;
+    for (const EntitySnapshot* agent : agents) {
+        const glm::vec3 offset =
+            (agent->position - frame.anchor) * kAgentPositionWireScale;
+        for (int axis = 0; axis < 3; ++axis) {
+            if (!std::isfinite(offset[axis]) ||
+                std::lround(offset[axis]) < -32768 ||
+                std::lround(offset[axis]) > 32767) {
+                frame.mode = kAgentPositionFull;
+                return frame;
+            }
+        }
+    }
+    return frame;
 }
 
 bool is_hybrid_correction_projectile(const EntitySnapshot& entity) {
@@ -451,8 +581,18 @@ std::vector<std::uint8_t> encode_snapshot_packet(
             section_entities(snapshot, section_type);
         payload.write_u16(static_cast<std::uint16_t>(section_type));
         payload.write_u16(static_cast<std::uint16_t>(entities.size()));
+        AgentPositionFrame agent_frame;
+        if (section_type == SnapshotSectionType::kActorAgent) {
+            agent_frame = agent_position_frame(entities);
+            payload.write_vec3(agent_frame.anchor);
+            payload.write_u8(agent_frame.mode);
+        }
         for (const EntitySnapshot* entity : entities) {
-            payload.write_u32(entity->net_id);
+            if (section_type == SnapshotSectionType::kActorAgent) {
+                write_varint(payload, entity->net_id);
+            } else {
+                payload.write_u32(entity->net_id);
+            }
             switch (section_type) {
                 case SnapshotSectionType::kActor: {
                     const std::uint16_t record_flags = actor_record_flags(*entity);
@@ -500,9 +640,23 @@ std::vector<std::uint8_t> encode_snapshot_packet(
                     break;
                 }
                 case SnapshotSectionType::kActorAgent: {
-                    const std::uint8_t record_flags = agent_record_flags(*entity);
+                    std::uint8_t record_flags = agent_record_flags(*entity);
+                    if ((record_flags & kAgentSnapshotHasActionTimeline) != 0u &&
+                        agent_timeline_is_wide(*entity, snapshot.header.server_tick)) {
+                        record_flags |= kAgentSnapshotHasWideActionTimeline;
+                    }
                     payload.write_u8(record_flags);
-                    payload.write_vec3(entity->position);
+                    if (agent_frame.mode == kAgentPositionCompact) {
+                        const glm::vec3 offset = entity->position - agent_frame.anchor;
+                        payload.write_u16(static_cast<std::uint16_t>(
+                            agent_offset_to_wire(offset.x)));
+                        payload.write_u16(static_cast<std::uint16_t>(
+                            agent_offset_to_wire(offset.y)));
+                        payload.write_u16(static_cast<std::uint16_t>(
+                            agent_offset_to_wire(offset.z)));
+                    } else {
+                        payload.write_vec3(entity->position);
+                    }
                     payload.write_u16(velocity_to_wire(entity->velocity.x));
                     payload.write_u16(velocity_to_wire(entity->velocity.y));
                     payload.write_u16(velocity_to_wire(entity->velocity.z));
@@ -520,13 +674,22 @@ std::vector<std::uint8_t> encode_snapshot_packet(
                             : 0.0f)));
                     payload.write_u16(entity->state);
                     payload.write_u16(static_cast<std::uint16_t>(entity->flags));
-                    if ((record_flags & kAgentSnapshotHasActionTimeline) != 0u) {
+                    if ((record_flags & kAgentSnapshotHasWideActionTimeline) != 0u) {
                         payload.write_u32(entity->action_template_id);
                         payload.write_u32(entity->action_instance_id);
                         payload.write_u32(entity->action_start_tick);
                         payload.write_u32(entity->action_commit_count);
                         payload.write_u16(entity->action_phase);
                         payload.write_u16(0u);
+                    } else if ((record_flags & kAgentSnapshotHasActionTimeline) != 0u) {
+                        payload.write_u16(
+                            static_cast<std::uint16_t>(entity->action_template_id));
+                        payload.write_u32(entity->action_instance_id);
+                        payload.write_u16(
+                            static_cast<std::uint16_t>(entity->action_start_tick));
+                        payload.write_u16(
+                            static_cast<std::uint16_t>(entity->action_commit_count));
+                        payload.write_u8(entity->action_phase);
                     }
                     break;
                 }
@@ -620,9 +783,19 @@ bool decode_snapshot_packet(
         }
         const SnapshotSectionType section_type =
             static_cast<SnapshotSectionType>(raw_section_type);
+        AgentPositionFrame agent_frame;
+        if (section_type == SnapshotSectionType::kActorAgent) {
+            if (!reader.read_vec3(&agent_frame.anchor) ||
+                !reader.read_u8(&agent_frame.mode) ||
+                agent_frame.mode > kAgentPositionFull) {
+                return false;
+            }
+        }
         for (std::uint16_t index = 0; index < entity_count; ++index) {
             EntitySnapshot entity;
-            if (!reader.read_u32(&entity.net_id)) {
+            if (section_type == SnapshotSectionType::kActorAgent
+                    ? !read_varint(reader, &entity.net_id)
+                    : !reader.read_u32(&entity.net_id)) {
                 return false;
             }
             switch (section_type) {
@@ -721,8 +894,30 @@ bool decode_snapshot_packet(
                     std::uint8_t aim_pitch = 0;
                     std::uint16_t visual_flags = 0;
                     if (!reader.read_u8(&record_flags) ||
-                        !reader.read_vec3(&entity.position) ||
-                        !reader.read_u16(&velocity_x) ||
+                        (record_flags & ~kAgentSnapshotKnownRecordFlags) != 0u ||
+                        ((record_flags & kAgentSnapshotHasWideActionTimeline) != 0u &&
+                         (record_flags & kAgentSnapshotHasActionTimeline) == 0u)) {
+                        return false;
+                    }
+                    if (agent_frame.mode == kAgentPositionCompact) {
+                        std::uint16_t offset_x = 0;
+                        std::uint16_t offset_y = 0;
+                        std::uint16_t offset_z = 0;
+                        if (!reader.read_u16(&offset_x) ||
+                            !reader.read_u16(&offset_y) ||
+                            !reader.read_u16(&offset_z)) {
+                            return false;
+                        }
+                        entity.position = agent_frame.anchor +
+                            glm::vec3{
+                                static_cast<float>(static_cast<std::int16_t>(offset_x)),
+                                static_cast<float>(static_cast<std::int16_t>(offset_y)),
+                                static_cast<float>(static_cast<std::int16_t>(offset_z))} /
+                                kAgentPositionWireScale;
+                    } else if (!reader.read_vec3(&entity.position)) {
+                        return false;
+                    }
+                    if (!reader.read_u16(&velocity_x) ||
                         !reader.read_u16(&velocity_y) ||
                         !reader.read_u16(&velocity_z) ||
                         !reader.read_u16(&facing_yaw) ||
@@ -749,7 +944,7 @@ bool decode_snapshot_packet(
                         std::sin(aim_pitch_radians),
                         aim_cos_pitch * std::sin(aim_yaw_radians)};
                     entity.flags = visual_flags;
-                    if ((record_flags & kAgentSnapshotHasActionTimeline) != 0u) {
+                    if ((record_flags & kAgentSnapshotHasWideActionTimeline) != 0u) {
                         std::uint16_t action_phase = 0;
                         std::uint16_t padding = 0;
                         if (!reader.read_u32(&entity.action_template_id) ||
@@ -764,6 +959,24 @@ bool decode_snapshot_packet(
                         }
                         entity.action_phase =
                             static_cast<std::uint8_t>(action_phase);
+                    } else if ((record_flags & kAgentSnapshotHasActionTimeline) != 0u) {
+                        std::uint16_t template_id = 0;
+                        std::uint16_t start_low_bits = 0;
+                        std::uint16_t commit_count = 0;
+                        std::uint8_t action_phase = 0;
+                        if (!reader.read_u16(&template_id) ||
+                            !reader.read_u32(&entity.action_instance_id) ||
+                            !reader.read_u16(&start_low_bits) ||
+                            !reader.read_u16(&commit_count) ||
+                            !reader.read_u8(&action_phase) ||
+                            action_phase > KernelActionPhase_Recovery) {
+                            return false;
+                        }
+                        entity.action_template_id = template_id;
+                        entity.action_start_tick = agent_start_tick_from_wire(
+                            start_low_bits, snapshot.header.server_tick);
+                        entity.action_commit_count = commit_count;
+                        entity.action_phase = action_phase;
                     }
                     break;
                 }
@@ -849,7 +1062,8 @@ std::size_t estimate_locomotion_step_batch_size(std::size_t record_count) {
 
 std::size_t estimate_snapshot_base_packet_size() {
     return kPacketHeaderSize + kSnapshotHeaderPayloadSize +
-           kSnapshotSectionCount * kSnapshotSectionHeaderPayloadSize;
+           kSnapshotSectionCount * kSnapshotSectionHeaderPayloadSize +
+           kAgentSectionPreamblePayloadSize;
 }
 
 std::size_t estimate_snapshot_entity_size(EntityType type) {
@@ -893,12 +1107,15 @@ std::size_t estimate_snapshot_entity_size(const EntitySnapshot& entity) {
                      kActorSnapshotHasImpulseLockout) != 0u
                         ? kActorImpulseLockoutPayloadSize
                         : 0u);
-        case SnapshotSectionType::kActorAgent:
-            return kAgentSnapshotBasePayloadSize +
-                   ((agent_record_flags(entity) &
-                     kAgentSnapshotHasActionTimeline) != 0u
+        case SnapshotSectionType::kActorAgent: {
+            const std::uint8_t flags = agent_record_flags(entity);
+            return varint_size(entity.net_id) + kAgentSnapshotBasePayloadSize +
+                   ((flags & kAgentSnapshotHasWideActionTimeline) != 0u
                         ? kActorActionTimelinePayloadSize
-                        : 0u);
+                        : (flags & kAgentSnapshotHasActionTimeline) != 0u
+                            ? kAgentActionTimelinePayloadSize
+                            : 0u);
+        }
         case SnapshotSectionType::kProjectileCompact:
             return kProjectileCompactSnapshotPayloadSize;
         case SnapshotSectionType::kProjectileBeam:

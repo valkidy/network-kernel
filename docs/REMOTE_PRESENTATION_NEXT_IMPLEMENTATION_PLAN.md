@@ -846,6 +846,23 @@ bench 以「等效預算」模擬（格數與縮小後相同），中距離帶�
 - 改動範圍：只有 snapshot 編碼、解碼和大小估計，snapshot schema 升版；
   C ABI、client 的內插與 Unity 都不受影響。
 
+### 10.5 方案 D 實作結果（`claude/compact-agent-record`，snapshot schema 24）
+
+- agent 紀錄：net_id 改 varint（1–5 B，大小只看 net_id 本身，估計仍精確）；
+  位置改 3 × i16，每格 1/256 m，相對於 agent 區段的錨點（邊界框中心），
+  每軸誤差最多約 2 mm（合計 3.4 mm）；閒置時其餘 22 B。
+- 區段前導：錨點 12 B + 模式 1 B，每包固定送（併入 base 大小）。跨度超過
+  ±128 m 時整個區段退回 float，實際大小比估計多 6 B/agent；40 m relevance 下不會發生。
+- 動作時間軸 11 B：template u16、instance u32、start_tick 低 16 位元（以 snapshot
+  tick 還原）、commit u16、phase u8。template 或 commit 超出 u16 時送原本的 20 B
+  格式；start_tick 早於 snapshot 超過 65535 tick 或晚於 snapshot 時，編碼端也改送
+  20 B（這種情況大小比估計多 9 B）。
+- 實際格數（bench 用真實編碼）：閒置 32 → **44**，動作中 19 → **30**。
+  長時間遊玩後 net_id 超過 16383 時 varint 變 3 B，閒置約 41 格。
+- 誤差（中距離帶，p90 / 跳動 / 停住）：80 隻動作中 0.02 m / 14.5 / 0.2%
+  （原本 0.07 m / 37 / 1.3%）；遠距離帶停住 25% → 2.4%。與 §10.4 的模擬一致，
+  §10.4 的模擬段落已從 bench 移除。
+
 ---
 
 ## 11. W7 — AI 移動意圖同步

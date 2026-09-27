@@ -465,36 +465,5 @@ int main() {
             print(count, "30 Hz", run(count, kLiveBudgetBytes, acting, 67.0, 30));
         }
     }
-    // Option D: the same 1200 B, smaller agent records. The send set is
-    // emulated rather than re-encoded -- the budget is raised by what the
-    // extra slots cost at today's record size, so it packs as many agents as
-    // the smaller records would. About 1030 B of a snapshot goes to agents.
-    //   position only   i16 x3 against an anchor: idle 26 B, acting 46 B
-    //   full            + net_id delta, compact action timeline: 24 / 34 B
-    std::printf("\nsmaller agent records in the same 1200 B (emulated slots)\n");
-    struct Compact {
-        const char* label;
-        std::size_t idle_slots;
-        std::size_t acting_slots;
-    };
-    const Compact compacts[] = {
-        {"pos only", 39, 22},
-        {"full D", 42, 30},
-    };
-    for (const bool acting : {false, true}) {
-        std::printf("%s\n", acting ? "agents mid-action" : "agents idle");
-        const std::size_t live_slots = acting ? 19 : 32;
-        const std::size_t record_bytes = acting ? 52 : 32;
-        for (const std::size_t count : {80u, 200u}) {
-            for (const Compact& compact : compacts) {
-                const std::size_t slots =
-                    acting ? compact.acting_slots : compact.idle_slots;
-                print(count, compact.label,
-                      run(count,
-                          kLiveBudgetBytes + (slots - live_slots) * record_bytes,
-                          acting));
-            }
-        }
-    }
     return 0;
 }
