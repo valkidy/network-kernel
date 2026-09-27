@@ -29,7 +29,9 @@
 #include <entt/entt.hpp>
 #include <glm/glm.hpp>
 
+#include "kernel/public/kernel_api.h"
 #include "physics/public/physics_world.h"
+#include "protocol/public/network_packets.h"
 #include "simulation/public/simulation.h"
 #include "transport/public/loopback_transport.h"
 #include "world/public/components.h"
@@ -322,8 +324,8 @@ void a_throw_is_drawn_on_the_throwers_timeline() {
 // sees it strike rather than drawing it through the wall for a round trip --
 // and still does once the curve is re-based on the throw record. Here only the
 // client has the wall, so the server's bottle flies on and no end ever comes.
-void a_throw_stops_where_the_client_sees_it_strike() {
-    Game game;
+// A wall 6 m ahead that only the client has.
+float add_client_wall(Game& game) {
     game.client.prediction_physics_world_ =
         std::make_unique<ne::physics::PhysicsWorld>(ne::physics::PhysicsWorldConfig{});
     const float wall_x = kPlayerAt.x + 6.0f;
@@ -337,6 +339,12 @@ void a_throw_stops_where_the_client_sees_it_strike() {
     wall.rotation = glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
     std::string error;
     require(game.client.prediction_physics_world_->upsert_object(wall, &error));
+    return wall_x;
+}
+
+void a_throw_stops_where_the_client_sees_it_strike() {
+    Game game;
+    const float wall_x = add_client_wall(game);
 
     require(game.client.submit_gameplay_request(game.throw_request(3, 1)));
     // 24 m/s: through where the wall is inside a few ticks, then on for many.
@@ -391,6 +399,110 @@ void an_unanswered_throw_times_out() {
     require(game.client.predicted_throws_.empty());
 }
 
+
+std::vector<std::string> own_throw_lines() {
+    std::vector<std::string> lines;
+    KernelLogMessage messages[16]{};
+    std::uint32_t count = 0u;
+    while ((count = Kernel_PollLogMessages(messages, 16u)) > 0u) {
+        for (std::uint32_t index = 0u; index < count; ++index) {
+            const std::string text = messages[index].text;
+            if (text.rfind("own throw ", 0) == 0) {
+                lines.push_back(text);
+            }
+        }
+    }
+    return lines;
+}
+
+// Throws until the client has it land on its wall, then runs `extra` ticks.
+// Returns the index of the landed throw.
+void land_on_the_wall(Game& game, std::uint64_t request_id) {
+    require(game.client.submit_gameplay_request(game.throw_request(request_id, 1)));
+    for (int frame = 0; frame < 20; ++frame) {
+        game.step();
+        const auto& throws = game.client.predicted_throws_;
+        if (!throws.empty() && throws.back().landed) {
+            // Seen at this tick, landed somewhere inside the tick before it:
+            // dated back to then, not to when the sweep noticed.
+            require(throws.back().landed_client_us < game.client.client_local_time_us_);
+            require(throws.back().landed_client_us + game.tick_us >
+                game.client.client_local_time_us_);
+            return;
+        }
+    }
+    require(false);
+}
+
+void own_blast(Game& game, ne::NetId blast, const glm::vec3& at) {
+    ne::ProjectileSpawnBatchPacket packet{};
+    packet.server_tick = game.server.current_tick();
+    packet.catalog_hash = game.client.catalog_hash_;
+    ne::ProjectileSpawnGroup group{};
+    group.projectile_template_id = kTrajectoryTemplateId;
+    ne::ProjectileSpawnRecord record{};
+    record.projectile_net_id = blast;
+    record.owner_peer = kPeer;
+    record.action_instance_id = 4000u + blast;
+    record.spawn_position = at;
+    group.records.push_back(record);
+    packet.groups.push_back(group);
+    game.client.handle_client_projectile_spawn_batch(packet);
+}
+
+std::string expect_ms(std::uint64_t from_us, std::uint64_t to_us) {
+    return std::to_string((to_us - from_us) / 1000u) + " ms after its predicted landing";
+}
+
+// W6 follow-up measurement: how long a bottle sits where the client saw it
+// land before the authority's despawn and blast reach it, and how far that
+// blast is from the landing. Logged whichever of the two arrives first.
+void the_wait_after_a_predicted_landing_is_logged() {
+    require(Kernel_PollLogMessages(nullptr, 0u) == 0u);  // start capture
+    own_throw_lines();
+    Game game;
+    add_client_wall(game);
+
+    // Despawn first, then the blast.
+    land_on_the_wall(game, 11);
+    const ne::KernelEngine::PredictedThrow first = game.client.predicted_throws_.back();
+    for (int frame = 0; frame < 4; ++frame) {
+        game.step();
+    }
+    ne::EntityLifecycleSystem{}.destroy_entity(
+        game.server, first.net_id, KernelDespawnReason_Destroyed);
+    game.step();
+    require(game.client.predicted_throws_.empty());
+    const std::uint64_t despawned_us = game.client.client_local_time_us_;
+    own_blast(game, 801, first.landed_position + glm::vec3{0.5f, 0.0f, 0.0f});
+    std::vector<std::string> lines = own_throw_lines();
+    require(lines.size() == 2u);
+    const std::string id = "own throw " + std::to_string(first.net_id) + ": ";
+    require(lines[0] == id + "despawn arrived " + expect_ms(first.landed_client_us, despawned_us));
+    require(lines[1].rfind(id + "blast 801 (projectile template ", 0) == 0);
+    require(lines[1].find(expect_ms(first.landed_client_us, despawned_us) + ", 0.50 m from it") !=
+        std::string::npos);
+
+    // A second blast is not pinned on the same landing.
+    own_blast(game, 802, first.landed_position);
+    require(own_throw_lines().empty());
+
+    // The blast first, while the throw is still predicted.
+    land_on_the_wall(game, 12);
+    const ne::KernelEngine::PredictedThrow second = game.client.predicted_throws_.back();
+    game.step();
+    own_blast(game, 803, second.landed_position);
+    lines = own_throw_lines();
+    require(lines.size() == 1u);
+    require(lines[0].find("own throw " + std::to_string(second.net_id) + ": blast 803") == 0u);
+    require(lines[0].find(
+        expect_ms(second.landed_client_us, game.client.client_local_time_us_) +
+        ", 0.00 m from it") != std::string::npos);
+    // Nor a second blast on this one.
+    own_blast(game, 804, second.landed_position);
+    require(own_throw_lines().empty());
+}
+
 }  // namespace
 
 int main() {
@@ -398,6 +510,7 @@ int main() {
     a_throw_stops_where_the_client_sees_it_strike();
     a_refused_throw_is_taken_back();
     an_unanswered_throw_times_out();
+    the_wait_after_a_predicted_landing_is_logged();
     std::printf("own_throw_prediction_test: PASS\n");
     return 0;
 }

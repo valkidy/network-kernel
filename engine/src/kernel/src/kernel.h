@@ -571,10 +571,27 @@ private:
         bool landed = false;
         std::uint64_t landed_us = 0;
         glm::vec3 landed_position{0.0f, 0.0f, 0.0f};
+        // Client local time the landing was on screen; for the gap log.
+        std::uint64_t landed_client_us = 0;
+        // Whether the authority's blast has been matched to this landing.
+        bool blast_reported = false;
         std::uint64_t swept_until_us = 0;
         // Whether the curve has been re-based on the authority's anchor.
         bool anchored = false;
         glm::vec3 correction_offset{0.0f, 0.0f, 0.0f};
+    };
+
+    // An own throw whose prop the authority has removed, kept briefly so a
+    // blast arriving after the despawn can still be matched to its landing
+    // for the gap log (W6 follow-up measurement).
+    struct RecentOwnThrowEnd {
+        bool valid = false;
+        NetId net_id = 0;
+        bool landed = false;
+        bool blast_reported = false;
+        glm::vec3 landed_position{0.0f, 0.0f, 0.0f};
+        std::uint64_t landed_client_us = 0;
+        std::uint64_t ended_client_us = 0;
     };
 
     struct VisionRuntimeState {
@@ -638,6 +655,36 @@ private:
         std::uint32_t batch_server_tick = 0;
         std::uint32_t expire_tick = 0;
         KernelRemoteActionPresentationEvent event{};
+        // Client local time the batch arrived, for the stale diagnostics.
+        std::uint64_t received_client_us = 0;
+    };
+
+    // Why remote presentation records go stale (W4). Counted per window and
+    // written to the log once a window that dropped anything closes; the
+    // public KernelNetworkStats only carries the total.
+    struct RemotePresentationStaleDiagnostics {
+        static constexpr std::size_t kEventTypes = 8;
+        std::uint64_t window_start_us = 0;
+        bool window_started = false;
+        // Dropped on arrival: the newest snapshot was already past expiry.
+        std::array<std::uint32_t, kEventTypes> arrival_dropped{};
+        std::uint32_t arrival_max_late_ticks = 0;
+        // How far the batch's own tick trailed the newest snapshot.
+        std::uint32_t arrival_max_batch_age_ticks = 0;
+        // Dropped while waiting for render time to reach them.
+        std::array<std::uint32_t, kEventTypes> pending_dropped{};
+        std::uint32_t pending_max_late_ticks = 0;
+        std::uint64_t pending_max_wait_us = 0;
+        // Released in time, and the smallest margin any had left.
+        std::uint32_t released = 0;
+        std::uint32_t released_min_margin_ticks = UINT32_MAX;
+        // How unevenly the host drains: the widest gap between two releases
+        // in client time, and the largest render-time step between them.
+        bool has_last_release = false;
+        std::uint64_t last_release_client_us = 0;
+        std::uint64_t last_release_render_server_us = 0;
+        std::uint64_t release_max_gap_us = 0;
+        std::uint64_t release_max_render_step_us = 0;
     };
 
     struct RemotePresentationDedup {
@@ -733,6 +780,12 @@ private:
         std::size_t processed_command_count);
     void release_presentable_events();
     void release_remote_action_presentation_events();
+    void report_remote_presentation_stale_diagnostics();
+    void report_own_throw_end(NetId net_id);
+    void report_own_throw_blast(
+        NetId blast_net_id,
+        std::uint32_t projectile_template_id,
+        const glm::vec3& spawn_position);
     void broadcast_combat_events(std::size_t first_event, std::size_t last_event);
     void advance_predicted_projectile_corrections(float delta_seconds);
     // W6: a throw this client makes is drawn on its own timeline -- the one
@@ -1008,6 +1061,7 @@ private:
     std::uint32_t collider_template_id_for_actor_template(
         std::uint32_t actor_template_id) const;
     void sync_client_render_colliders();
+    bool sync_prediction_local_hitbox();
     void sync_client_vision_states_from_snapshot(const WorldSnapshot& snapshot);
     void update_vision_states(float delta_seconds);
 
@@ -1037,6 +1091,8 @@ private:
         pending_server_remote_presentations_;
     std::vector<PendingRemotePresentation>
         pending_remote_action_presentation_events_;
+    RemotePresentationStaleDiagnostics remote_presentation_stale_diagnostics_;
+    RecentOwnThrowEnd recent_own_throw_end_;
     std::vector<RemotePresentationDedup> remote_presentation_dedup_;
     std::vector<RenderEntityState> render_states_;
     std::vector<SkeletonPresentationPose> skeleton_presentation_poses_;
@@ -1180,6 +1236,10 @@ private:
     // Props as static obstacles and other actors' hit volumes, both where the
     // render pass drew them. One map, since a net id is one or the other.
     std::unordered_map<NetId, std::uint32_t> prediction_obstacle_collider_ids_;
+    // The local player's hit volume in the prediction world, at its predicted
+    // position; 0 while absent. See sync_prediction_local_hitbox.
+    std::uint32_t prediction_local_hitbox_collider_id_ = 0;
+    std::uint32_t prediction_local_hitbox_template_id_ = 0;
     // One proxy per bone, unlike the two maps above which are one per entity: a
     // rig contributes a dozen bodies. Their ids cannot come from the collider
     // registry, which the render pass clears and refills every frame -- the ids

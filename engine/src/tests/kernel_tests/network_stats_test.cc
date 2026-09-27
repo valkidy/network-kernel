@@ -177,8 +177,10 @@ void owner_results_bypass_drop_and_remote_budget_prefers_priority() {
     KernelConfig config{};
     config.mode = KernelMode_DedicatedServer;
     config.network_stats.action_packet_budget_bytes = 56u;
-    config.network_stats.remote_presentation_client_budget_bytes_per_second = 64u;
-    config.network_stats.remote_presentation_server_budget_bytes_per_second = 64u;
+    // Room for one record and not two: a 36 B batch header and 32 B records.
+    // (64 held one when records were 20 B; they grew for status effects.)
+    config.network_stats.remote_presentation_client_budget_bytes_per_second = 80u;
+    config.network_stats.remote_presentation_server_budget_bytes_per_second = 80u;
     network_example::KernelEngine server(config);
     server.reset_runtime_state(KernelMode_DedicatedServer);
     auto loopback = std::make_unique<network_example::LoopbackTransport>();
@@ -390,9 +392,11 @@ TrafficRow simulate_traffic(
                     (peer_offset + commit + second * commits_per_second) % peers;
                 const std::uint64_t available =
                     std::min(client_tokens[peer], server_tokens);
+                // The kernel's charge: a 36 B batch, 32 B a record
+                // (kActionBatchFixedBytes, kRemotePresentationRecordBytes).
                 const std::uint32_t budget_records = available <= 36u
                     ? 0u
-                    : static_cast<std::uint32_t>((available - 36u) / 28u);
+                    : static_cast<std::uint32_t>((available - 36u) / 32u);
                 const std::uint32_t sent_records = std::min(
                     32u,
                     std::min(records_per_observer, budget_records));

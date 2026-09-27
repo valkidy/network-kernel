@@ -57,6 +57,12 @@ network_example::game_server::GameServerGameplayConfig single_spawn_gameplay_con
     rule.tick_interval = 1;
     config.world_rule_spawns.push_back(rule);
     config.preload_director_template_ids.push_back(rule.director_template_id);
+    // The reload walk below times an empty magazine and a reload against a
+    // stretch of frames where the grunt must not be reloading. The catalog's
+    // spammer is tuning (3 rounds since 4973234, when it reloads nearly
+    // nonstop), so the magazine is pinned here like the agent is.
+    config.weapons.definitions[network_example::game_server::kWeaponSpammer]
+        .magazine_size = 120;
     return config;
 }
 
@@ -194,7 +200,10 @@ int main() {
     network_example::game_server::GameServer unstarted_game_server(
         unstarted_kernel,
         single_spawn_gameplay_config());
-    assert(!unstarted_game_server.preload_directors());
+    // Preloading only checks the configured templates since the directors
+    // moved into game_server (5ff45bd); it no longer creates a kernel entity,
+    // so an unstarted kernel does not fail it. Ticking still puts out nothing.
+    assert(unstarted_game_server.preload_directors());
     unstarted_game_server.tick(1.0f / 30.0f);
     assert(unstarted_game_server.agent_runtime_manager().agent_count() == 0);
     Kernel_Destroy(unstarted_kernel);
@@ -214,14 +223,26 @@ int main() {
     handle_pending_events(kernel, &game_server);
     run_server_frames(kernel, &game_server, 3);
     require(game_server.agent_runtime_manager().agent_count() == 1);
+    // Spawned 6 m in front of the player, it sees them on its first
+    // perception tick and is alerted from then on (alert_ticks = 3).
+    require(game_server.agent_runtime_manager().agents()[0].sentry.state ==
+            network_example::game_server::AgentSentryState::kAlert);
     std::array<KernelServerEntityState, 8> director_states{};
-    require(query_directors(kernel, &director_states) == 1);
+    // A director is game_server's alone since 5ff45bd: no kernel entity.
+    require(query_directors(kernel, &director_states) == 0);
 
     std::array<KernelServerEntityState, 8> enemy_states{};
     std::uint32_t agent_count = query_enemies(kernel, &enemy_states);
     require(agent_count == 1);
     const std::uint32_t enemy_net_id = enemy_states[0].net_id;
-    require(enemy_states[0].ammo[0] == 120);
+    // The grunt's spammer as this config sets it (see above).
+    const KernelWeaponMechanicsDefinition& authored_spammer =
+        gameplay_config.weapons
+            .definitions[network_example::game_server::kWeaponSpammer];
+    const std::uint16_t spammer_magazine =
+        static_cast<std::uint16_t>(authored_spammer.magazine_size);
+    require(spammer_magazine > 0u);
+    require(enemy_states[0].ammo[0] == spammer_magazine);
     require(
         enemy_states[0].reserve_magazines[0] ==
         kMaxReserveMagazines);
@@ -233,10 +254,10 @@ int main() {
         network_example::game_server::kWeaponSpammer,
         &enemy_weapon));
     require(enemy_weapon.weapon_id == network_example::game_server::kWeaponSpammer);
-    require(enemy_weapon.damage == 1);
+    require(enemy_weapon.damage == authored_spammer.damage);
     require(enemy_weapon.fire_action_template_id != 0);
     require(enemy_weapon.reload_action_template_id != 0);
-    require(enemy_weapon.magazine_size == 120);
+    require(enemy_weapon.magazine_size == spammer_magazine);
     KernelWeaponMechanicsDefinition unavailable_enemy_weapon{};
     unavailable_enemy_weapon.struct_size = sizeof(unavailable_enemy_weapon);
     require(!Kernel_ServerGetEntityWeaponMechanics(
@@ -288,8 +309,9 @@ int main() {
 
     Kernel_Update(kernel, 1.0f / 30.0f);
     game_server.tick(1.0f / 30.0f);
+    // Three ticks alerted: attacking.
     require(game_server.agent_runtime_manager().agents()[0].sentry.state ==
-            network_example::game_server::AgentSentryState::kAlert);
+            network_example::game_server::AgentSentryState::kAttack);
     std::array<KernelServerEntityState, 8> projectile_states{};
     std::uint32_t projectile_count = query_projectiles(kernel, &projectile_states);
     require(projectile_count == 0);
@@ -325,7 +347,7 @@ int main() {
             saw_spammer_reload = true;
         }
         if (saw_spammer_reload && enemy_state.is_reloading == 0u &&
-            enemy_state.ammo[0] == 120 &&
+            enemy_state.ammo[0] == spammer_magazine &&
             enemy_state.reserve_magazines[0] ==
                 kMaxReserveMagazines - 1u) {
             saw_spammer_reloaded = true;
@@ -498,8 +520,9 @@ int main() {
     network_example::game_server::GameServer multiple_director_game_server(
         multiple_director_kernel,
         multiple_director_gameplay_config);
+    // Both are accepted; neither becomes a kernel entity (5ff45bd).
     require(multiple_director_game_server.preload_directors());
-    require(query_directors(multiple_director_kernel, &director_states) == 2u);
+    require(query_directors(multiple_director_kernel, &director_states) == 0u);
     multiple_director_game_server.agent_runtime_manager().despawn_all(
         KernelDespawnReason_Destroyed);
     Kernel_Update(multiple_director_kernel, 1.0f / 30.0f);

@@ -2033,6 +2033,8 @@ bool KernelEngine::prepare_prediction_physics() {
     prediction_physics_world_ = std::move(world);
     prediction_proxy_collider_ids_.clear();
     prediction_obstacle_collider_ids_.clear();
+    prediction_local_hitbox_collider_id_ = 0u;
+    prediction_local_hitbox_template_id_ = 0u;
     prediction_limb_collider_ids_.clear();
     next_prediction_proxy_collider_id_ = 0xc0000000u;
     return true;
@@ -6006,6 +6008,8 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     physics_entity_collider_ids_.clear();
     prediction_proxy_collider_ids_.clear();
     prediction_obstacle_collider_ids_.clear();
+    prediction_local_hitbox_collider_id_ = 0u;
+    prediction_local_hitbox_template_id_ = 0u;
     history_buffer_ = HistoryBuffer(history_frame_count(config_.tick));
     damage_pipeline_.clear();
     next_action_graph_sequence_ = 1;
@@ -7022,6 +7026,22 @@ void KernelEngine::handle_client_remote_action_presentation(
             if (network_stats_enabled()) {
                 network_stats_.remote_presentation_stale_dropped +=
                     event.commit_count;
+                RemotePresentationStaleDiagnostics& diagnostics =
+                    remote_presentation_stale_diagnostics_;
+                const std::uint32_t snapshot_tick =
+                    latest_client_snapshot_.header.server_tick;
+                diagnostics.arrival_dropped[std::min<std::size_t>(
+                    event.event_type,
+                    RemotePresentationStaleDiagnostics::kEventTypes - 1u)] +=
+                    event.commit_count;
+                diagnostics.arrival_max_late_ticks = std::max(
+                    diagnostics.arrival_max_late_ticks,
+                    snapshot_tick - (event_tick + expiry_ticks));
+                if (snapshot_tick > packet.server_tick) {
+                    diagnostics.arrival_max_batch_age_ticks = std::max(
+                        diagnostics.arrival_max_batch_age_ticks,
+                        snapshot_tick - packet.server_tick);
+                }
             }
             continue;
         }
@@ -7116,7 +7136,8 @@ void KernelEngine::handle_client_remote_action_presentation(
                     PendingRemotePresentation{
                         packet.server_tick,
                         event_tick + expiry_ticks,
-                        range});
+                        range,
+                        client_local_time_us_});
             }
         };
         for (std::uint32_t offset = 0; offset < event.commit_count; ++offset) {
@@ -7246,6 +7267,13 @@ void KernelEngine::handle_client_projectile_spawn_batch(
             } else if (has_predicted_projectile_net_id(record.projectile_net_id)) {
                 continue;
             } else {
+                if (local_client_peer_id_ != 0u &&
+                    record.owner_peer == local_client_peer_id_) {
+                    report_own_throw_blast(
+                        record.projectile_net_id,
+                        projectile_template->projectile_template_id,
+                        record.spawn_position);
+                }
                 const glm::vec3 spawn_position = record.spawn_position;
                 const glm::vec3 initial_velocity = record.initial_velocity;
                 predicted_projectiles_.push_back(PredictedProjectile{
@@ -7643,6 +7671,7 @@ void KernelEngine::handle_client_despawn(const EntityDespawnPacket& packet) {
     remove_prediction_limb_proxies(packet.net_id);
     // Its view goes with this despawn (Unity finds it by net id), wherever the
     // prediction had drawn it.
+    report_own_throw_end(packet.net_id);
     std::erase_if(predicted_throws_, [&packet](const PredictedThrow& predicted_throw) {
         return predicted_throw.net_id == packet.net_id;
     });
@@ -7727,6 +7756,8 @@ void KernelEngine::clear_client_session() {
         }
     }
     prediction_obstacle_collider_ids_.clear();
+    prediction_local_hitbox_collider_id_ = 0u;
+    prediction_local_hitbox_template_id_ = 0u;
     while (!prediction_limb_collider_ids_.empty()) {
         remove_prediction_limb_proxies(
             prediction_limb_collider_ids_.begin()->first);
@@ -7829,11 +7860,6 @@ void KernelEngine::release_remote_action_presentation_events() {
             }
         }
     }
-    if (pending_remote_action_presentation_events_.empty()) {
-        return;
-    }
-    std::vector<PendingRemotePresentation> still_pending;
-    still_pending.reserve(pending_remote_action_presentation_events_.size());
     const std::uint64_t render_server_time_us =
         client_clock_offset_us_ >= 0
             ? current_render_time_us_ +
@@ -7843,6 +7869,35 @@ void KernelEngine::release_remote_action_presentation_events() {
                   ? current_render_time_us_ -
                         static_cast<std::uint64_t>(-client_clock_offset_us_)
                   : 0u;
+    const bool diagnose = network_stats_enabled();
+    RemotePresentationStaleDiagnostics& diagnostics =
+        remote_presentation_stale_diagnostics_;
+    if (diagnose && has_client_render_time_) {
+        if (diagnostics.has_last_release) {
+            if (client_local_time_us_ > diagnostics.last_release_client_us) {
+                diagnostics.release_max_gap_us = std::max(
+                    diagnostics.release_max_gap_us,
+                    client_local_time_us_ - diagnostics.last_release_client_us);
+            }
+            if (render_server_time_us > diagnostics.last_release_render_server_us) {
+                diagnostics.release_max_render_step_us = std::max(
+                    diagnostics.release_max_render_step_us,
+                    render_server_time_us -
+                        diagnostics.last_release_render_server_us);
+            }
+        }
+        diagnostics.has_last_release = true;
+        diagnostics.last_release_client_us = client_local_time_us_;
+        diagnostics.last_release_render_server_us = render_server_time_us;
+    }
+    if (diagnose) {
+        report_remote_presentation_stale_diagnostics();
+    }
+    if (pending_remote_action_presentation_events_.empty()) {
+        return;
+    }
+    std::vector<PendingRemotePresentation> still_pending;
+    still_pending.reserve(pending_remote_action_presentation_events_.size());
     for (const PendingRemotePresentation& pending :
          pending_remote_action_presentation_events_) {
         const std::uint64_t tick_duration_us = std::max<std::uint64_t>(
@@ -7851,9 +7906,21 @@ void KernelEngine::release_remote_action_presentation_events() {
         const std::uint32_t render_tick = static_cast<std::uint32_t>(
             render_server_time_us / tick_duration_us);
         if (has_client_render_time_ && render_tick > pending.expire_tick) {
-            if (network_stats_enabled()) {
+            if (diagnose) {
                 network_stats_.remote_presentation_stale_dropped +=
                     pending.event.commit_count;
+                diagnostics.pending_dropped[std::min<std::size_t>(
+                    pending.event.event_type,
+                    RemotePresentationStaleDiagnostics::kEventTypes - 1u)] +=
+                    pending.event.commit_count;
+                diagnostics.pending_max_late_ticks = std::max(
+                    diagnostics.pending_max_late_ticks,
+                    render_tick - pending.expire_tick);
+                if (client_local_time_us_ > pending.received_client_us) {
+                    diagnostics.pending_max_wait_us = std::max(
+                        diagnostics.pending_max_wait_us,
+                        client_local_time_us_ - pending.received_client_us);
+                }
             }
             continue;
         }
@@ -7865,11 +7932,95 @@ void KernelEngine::release_remote_action_presentation_events() {
             tick_time_us(event_tick, tick_loop_.fixed_delta_seconds());
         if (!has_client_render_time_ || event_time_us <= render_server_time_us) {
             remote_action_presentation_events_.push_back(pending.event);
+            if (diagnose && has_client_render_time_) {
+                diagnostics.released += pending.event.commit_count;
+                diagnostics.released_min_margin_ticks = std::min(
+                    diagnostics.released_min_margin_ticks,
+                    pending.expire_tick - render_tick);
+            }
         } else {
             still_pending.push_back(pending);
         }
     }
     pending_remote_action_presentation_events_ = std::move(still_pending);
+}
+
+void KernelEngine::report_remote_presentation_stale_diagnostics() {
+    // Long enough that one line covers a fight, short enough to place it.
+    constexpr std::uint64_t kWindowUs = 5000000u;
+    RemotePresentationStaleDiagnostics& diagnostics =
+        remote_presentation_stale_diagnostics_;
+    const std::uint64_t now_us = client_local_time_us_;
+    if (!diagnostics.window_started) {
+        diagnostics.window_started = true;
+        diagnostics.window_start_us = now_us;
+        return;
+    }
+    if (now_us < diagnostics.window_start_us + kWindowUs) {
+        return;
+    }
+    static constexpr std::array<const char*, RemotePresentationStaleDiagnostics::kEventTypes>
+        kTypeNames{
+            "fire", "cast", "reload", "hit",
+            "death", "status_applied", "status_removed", "status_updated"};
+    auto by_type = [](const std::array<std::uint32_t, RemotePresentationStaleDiagnostics::kEventTypes>&
+                          counts,
+                      std::uint32_t* total) {
+        std::string text;
+        *total = 0u;
+        for (std::size_t type = 0; type < counts.size(); ++type) {
+            if (counts[type] == 0u) {
+                continue;
+            }
+            *total += counts[type];
+            if (!text.empty()) {
+                text += ' ';
+            }
+            text += fmt::format("{}={}", kTypeNames[type], counts[type]);
+        }
+        return text;
+    };
+    std::uint32_t arrival_total = 0u;
+    std::uint32_t pending_total = 0u;
+    const std::string arrival_types =
+        by_type(diagnostics.arrival_dropped, &arrival_total);
+    const std::string pending_types =
+        by_type(diagnostics.pending_dropped, &pending_total);
+    if (arrival_total + pending_total > 0u) {
+        const std::uint32_t expiry_ticks = std::max(
+            1u,
+            (config_.tick.server_tick_rate *
+                 config_.network_stats.remote_presentation_expiry_ms +
+             999u) /
+                1000u);
+        spdlog::info(
+            "remote presentation stale over {:.1f}s (expiry {} ticks): "
+            "arrival {} [{}] late<={}t batch_age<={}t | "
+            "pending {} [{}] late<={}t waited<={}ms | "
+            "released {} min_margin={}t | "
+            "release gap<={}ms render_step<={}ms",
+            static_cast<double>(now_us - diagnostics.window_start_us) / 1000000.0,
+            expiry_ticks,
+            arrival_total,
+            arrival_types,
+            diagnostics.arrival_max_late_ticks,
+            diagnostics.arrival_max_batch_age_ticks,
+            pending_total,
+            pending_types,
+            diagnostics.pending_max_late_ticks,
+            diagnostics.pending_max_wait_us / 1000u,
+            diagnostics.released,
+            diagnostics.released == 0u ? 0u : diagnostics.released_min_margin_ticks,
+            diagnostics.release_max_gap_us / 1000u,
+            diagnostics.release_max_render_step_us / 1000u);
+    }
+    RemotePresentationStaleDiagnostics next;
+    next.window_started = true;
+    next.window_start_us = now_us;
+    next.has_last_release = diagnostics.has_last_release;
+    next.last_release_client_us = diagnostics.last_release_client_us;
+    next.last_release_render_server_us = diagnostics.last_release_render_server_us;
+    diagnostics = next;
 }
 
 void KernelEngine::poll_client_transport() {
@@ -10051,6 +10202,109 @@ bool KernelEngine::predicted_throw_position(
     return true;
 }
 
+// W6 follow-up: how long an own bottle sits where this client saw it land
+// before the authority's end reaches it -- the despawn, and the blast its
+// impact spawns -- and how far the authority's blast is from that landing.
+// The number that decides whether the blast is worth predicting. One line per
+// throw; throws are rare. Only with network stats on.
+void KernelEngine::report_own_throw_end(NetId net_id) {
+    if (net_id == 0u || !network_stats_enabled()) {
+        return;
+    }
+    const auto predicted_throw = std::find_if(
+        predicted_throws_.begin(),
+        predicted_throws_.end(),
+        [net_id](const PredictedThrow& candidate) {
+            return candidate.net_id == net_id;
+        });
+    if (predicted_throw == predicted_throws_.end()) {
+        return;
+    }
+    if (predicted_throw->landed) {
+        spdlog::info(
+            "own throw {}: despawn arrived {} ms after its predicted landing",
+            net_id,
+            client_local_time_us_ > predicted_throw->landed_client_us
+                ? (client_local_time_us_ - predicted_throw->landed_client_us) / 1000u
+                : 0u);
+    } else {
+        spdlog::info(
+            "own throw {}: despawn arrived with no predicted landing, {} ms after release",
+            net_id,
+            (client_local_time_us_ - predicted_throw->submitted_client_us) / 1000u);
+    }
+    recent_own_throw_end_ = RecentOwnThrowEnd{
+        true,
+        net_id,
+        predicted_throw->landed,
+        predicted_throw->blast_reported,
+        predicted_throw->landed_position,
+        predicted_throw->landed_client_us,
+        client_local_time_us_,
+    };
+}
+
+void KernelEngine::report_own_throw_blast(
+    NetId blast_net_id,
+    std::uint32_t projectile_template_id,
+    const glm::vec3& spawn_position) {
+    if (!network_stats_enabled()) {
+        return;
+    }
+    // The blast may come before the despawn or after it. Before: the throw
+    // is still predicted, and the one it belongs to is the latest landing not
+    // yet matched. After: the throw just ended, within a second.
+    constexpr std::uint64_t kRecentEndUs = 1000000u;
+    NetId throw_net_id = 0u;
+    bool landed = false;
+    glm::vec3 landed_position{0.0f};
+    std::uint64_t landed_client_us = 0u;
+    PredictedThrow* latest = nullptr;
+    for (PredictedThrow& candidate : predicted_throws_) {
+        if (candidate.landed && !candidate.blast_reported &&
+            (latest == nullptr ||
+             candidate.landed_client_us > latest->landed_client_us)) {
+            latest = &candidate;
+        }
+    }
+    if (latest != nullptr) {
+        latest->blast_reported = true;
+        throw_net_id = latest->net_id;
+        landed = true;
+        landed_position = latest->landed_position;
+        landed_client_us = latest->landed_client_us;
+    } else if (recent_own_throw_end_.valid &&
+               !recent_own_throw_end_.blast_reported &&
+               client_local_time_us_ <
+                   recent_own_throw_end_.ended_client_us + kRecentEndUs) {
+        recent_own_throw_end_.blast_reported = true;
+        throw_net_id = recent_own_throw_end_.net_id;
+        landed = recent_own_throw_end_.landed;
+        landed_position = recent_own_throw_end_.landed_position;
+        landed_client_us = recent_own_throw_end_.landed_client_us;
+    } else {
+        return;
+    }
+    if (!landed) {
+        spdlog::info(
+            "own throw {}: blast {} (projectile template {}) arrived with no predicted landing",
+            throw_net_id,
+            blast_net_id,
+            projectile_template_id);
+        return;
+    }
+    spdlog::info(
+        "own throw {}: blast {} (projectile template {}) arrived {} ms after its "
+        "predicted landing, {:.2f} m from it",
+        throw_net_id,
+        blast_net_id,
+        projectile_template_id,
+        client_local_time_us_ > landed_client_us
+            ? (client_local_time_us_ - landed_client_us) / 1000u
+            : 0u,
+        glm::length(spawn_position - landed_position));
+}
+
 void KernelEngine::advance_predicted_throws(float fixed_delta_seconds) {
     if (config_.mode != KernelMode_Client || predicted_throws_.empty() ||
         fixed_delta_seconds <= 0.0f) {
@@ -10147,6 +10401,16 @@ void KernelEngine::advance_predicted_throws(float fixed_delta_seconds) {
                             static_cast<std::uint64_t>(
                                 static_cast<double>(step_us) *
                                 std::clamp(hit.distance / length, 0.0f, 1.0f));
+                        // Swept up to now, so the landing is at most this far
+                        // in the past on the prediction timeline.
+                        const std::uint64_t landed_ago_us =
+                            now_us > predicted_throw->landed_us
+                                ? now_us - predicted_throw->landed_us
+                                : 0u;
+                        predicted_throw->landed_client_us =
+                            client_local_time_us_ > landed_ago_us
+                                ? client_local_time_us_ - landed_ago_us
+                                : 0u;
                         break;
                     }
                 }
@@ -10357,6 +10621,88 @@ void KernelEngine::append_predicted_projectile_render_states() {
     }
 }
 
+bool KernelEngine::sync_prediction_local_hitbox() {
+    // The local player's own hit volume, where this tick predicts it. Other
+    // actors are put in by sync_client_render_colliders at drawn time, but
+    // this one is drawn ahead of the authority, on the same timeline as every
+    // projectile the client flies, so a projectile flown at it meets it at the
+    // tick the authority will.
+    const auto remove = [this]() {
+        if (prediction_local_hitbox_collider_id_ != 0u &&
+            prediction_physics_world_ != nullptr) {
+            prediction_physics_world_->remove_object(
+                prediction_local_hitbox_collider_id_);
+        }
+        prediction_local_hitbox_collider_id_ = 0u;
+        prediction_local_hitbox_template_id_ = 0u;
+        return false;
+    };
+    if (prediction_physics_world_ == nullptr || !has_predicted_local_entity_ ||
+        local_player_net_id_ == 0u ||
+        // The authority's projectiles pass the dead.
+        (predicted_local_entity_.flags & kVisualFlagDead) != 0u) {
+        return remove();
+    }
+    const auto replicated = std::find_if(
+        client_replicated_entities_.begin(),
+        client_replicated_entities_.end(),
+        [this](const ClientReplicatedEntity& candidate) {
+            return candidate.net_id == local_player_net_id_;
+        });
+    const KernelColliderTemplateDefinition* collider_template =
+        replicated == client_replicated_entities_.end()
+            ? nullptr
+            : find_collider_template(
+                  collider_templates_, replicated->collider_template_id);
+    if (collider_template == nullptr ||
+        (collider_template->purpose_flags & KernelColliderPurpose_Hit) == 0u) {
+        return remove();
+    }
+    const ColliderShapeType shape_type =
+        to_collider_shape_type(collider_template->shape_type);
+    if (shape_type == ColliderShapeType::kSegment ||
+        shape_type == ColliderShapeType::kCone) {
+        return remove();
+    }
+    const glm::quat rotation = predicted_local_entity_.rotation;
+    const glm::vec3 center = predicted_local_entity_.position +
+        rotation * from_kernel_vec3(collider_template->center);
+    if (prediction_local_hitbox_collider_id_ != 0u &&
+        prediction_local_hitbox_template_id_ == collider_template->template_id &&
+        prediction_physics_world_->set_object_transform(
+            prediction_local_hitbox_collider_id_, center, rotation)) {
+        return true;
+    }
+    if (prediction_local_hitbox_collider_id_ == 0u) {
+        prediction_local_hitbox_collider_id_ = next_prediction_proxy_collider_id_++;
+    }
+    physics::CollisionObjectDescriptor object{};
+    object.identity.entity_net_id = local_player_net_id_;
+    object.identity.collider_id = prediction_local_hitbox_collider_id_;
+    // As sync_client_render_colliders files other actors: every query that
+    // must not see the local player -- its movement, its own shots, its
+    // throws -- already leaves out kDamageable or ignores its net id.
+    object.identity.kind = physics::CollisionObjectKind::kActorHitbox;
+    object.identity.layer = physics::CollisionLayer::kDamageable;
+    object.identity.gameplay_category = collider_template->layer_mask;
+    object.shape.type = shape_type == ColliderShapeType::kSphere
+        ? physics::CollisionShapeType::kSphere
+        : shape_type == ColliderShapeType::kCapsule
+            ? physics::CollisionShapeType::kCapsule
+            : physics::CollisionShapeType::kBox;
+    object.shape.half_extents = collider_template_half_extents(*collider_template);
+    object.shape.radius = collider_template_radius(*collider_template);
+    object.position = center;
+    object.rotation = rotation;
+    std::string error;
+    if (!prediction_physics_world_->upsert_object(object, &error)) {
+        spdlog::error("failed to update the local prediction hitbox: {}", error);
+        return remove();
+    }
+    prediction_local_hitbox_template_id_ = collider_template->template_id;
+    return true;
+}
+
 void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
     const auto cost_start = std::chrono::steady_clock::now();
     const bool had_projectiles = std::any_of(
@@ -10380,6 +10726,8 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
                   static_cast<double>(actor_hit_confirm_us) /
                   (static_cast<double>(fixed_delta_seconds) * 1000000.0)))
             : 0u;
+    const bool local_hitbox_present =
+        had_projectiles && sync_prediction_local_hitbox();
     for (PredictedProjectile& projectile : predicted_projectiles_) {
         // Counted on after it ends too: that is what times its retention.
         projectile.lifetime_elapsed_ticks += 1;
@@ -10477,28 +10825,51 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
                     // draws, and only one the authority destroys on its first
                     // hit. It keeps flying underneath (see the reveal above);
                     // the damage stays the authority's.
+                    //
+                    // Everyone else's -- an agent's, another player's -- is
+                    // tried against the local player alone. Those are flown on
+                    // the prediction timeline too, the one the local player is
+                    // drawn on, so the two meet at the tick the authority's
+                    // meet; the other actors are drawn in the past and would
+                    // put the hit in the wrong place.
                     const std::uint32_t actor_hit_mask =
                         projectile_template->mechanics.collision_mask &
                         (KERNEL_COLLISION_MASK_ACTOR | KERNEL_COLLISION_LAYER_LIMB);
+                    const bool own_projectile =
+                        local_client_peer_id_ != 0u &&
+                        projectile.owner_peer == local_client_peer_id_;
                     if (!projectile.hidden_by_actor_hit &&
                         !projectile.actor_hit_prediction_spent &&
                         actor_hit_mask != 0u &&
                         local_client_peer_id_ != 0u &&
-                        projectile.owner_peer == local_client_peer_id_ &&
+                        (own_projectile || local_hitbox_present) &&
                         projectile_template->mechanics.projectile_type ==
                             KernelProjectileType_Standard &&
                         projectile_template->mechanics.hit_response ==
                             KernelProjectileHitResponse_Destroy) {
                         physics::CollisionQueryFilter actor_filter =
                             collision_filter_from_mask(actor_hit_mask);
-                        actor_filter.ignored_entity_net_id = local_player_net_id_;
-                        const std::vector<physics::CollisionHit> actor_hits =
+                        if (own_projectile) {
+                            actor_filter.ignored_entity_net_id = local_player_net_id_;
+                        }
+                        std::vector<physics::CollisionHit> actor_hits =
                             query_projectile_collision_hits(
                                 *prediction_physics_world_,
                                 collision_spec,
                                 projectile.position,
                                 next_position,
                                 actor_filter);
+                        if (!own_projectile) {
+                            actor_hits.erase(
+                                std::remove_if(
+                                    actor_hits.begin(),
+                                    actor_hits.end(),
+                                    [this](const physics::CollisionHit& hit) {
+                                        return hit.identity.entity_net_id !=
+                                            local_player_net_id_;
+                                    }),
+                                actor_hits.end());
+                        }
                         if (!actor_hits.empty() &&
                             (hits.empty() ||
                              actor_hits.front().distance < hits.front().distance)) {
