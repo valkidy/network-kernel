@@ -3384,7 +3384,7 @@ void out_of_range_tombstone_does_not_fail_client_prediction() {
     require(client.prediction_proxy_collider_ids_.empty());
 }
 
-void out_of_range_reentry_without_metadata_still_fails_prediction() {
+void out_of_range_reentry_without_metadata_eventually_fails_prediction() {
     KernelConfig config{};
     config.mode = KernelMode_Client;
     config.tick.server_tick_rate = 30;
@@ -3414,6 +3414,17 @@ void out_of_range_reentry_without_metadata_still_fails_prediction() {
     client.client_snapshot_buffer_.push_back(reentered);
     client.has_client_snapshot_ = true;
     client.latest_client_snapshot_.header.server_tick = 16;
+    client.diagnose_client_snapshot_metadata_waits();
+
+    // A re-entry's spawn can be lost and resent like any other, so three ticks
+    // without it is still waiting, not a failure (metadata_wait_test).
+    require(!client.prediction_failed_);
+    require(client.client_metadata_timeout_reported_entities_.contains(21));
+
+    // Still named by the newest snapshot long after, with nothing arrived:
+    // that is a fault, and the prediction still gives up on it.
+    client.latest_client_snapshot_ = reentered;
+    client.latest_client_snapshot_.header.server_tick = 13 + 151;
     client.diagnose_client_snapshot_metadata_waits();
 
     require(client.prediction_failed_);
@@ -5558,7 +5569,7 @@ int main() {
     pure_prop_render_uses_entity_template_as_template_id();
     destroyed_tombstone_blocks_older_snapshot_render();
     out_of_range_tombstone_does_not_fail_client_prediction();
-    out_of_range_reentry_without_metadata_still_fails_prediction();
+    out_of_range_reentry_without_metadata_eventually_fails_prediction();
     stale_render_state_marks_status_and_hp_unknown();
     actor_template_update_rebinds_cached_snapshot_debug_metadata();
     predicted_local_render_state_uses_reliable_actor_template_metadata();

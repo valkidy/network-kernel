@@ -1059,7 +1059,9 @@ private:
     std::vector<PeerSession> peer_sessions_;
     PeerSession local_listen_session_;
     std::vector<ClientReplicatedEntity> client_replicated_entities_;
-    std::unordered_set<NetId> client_metadata_timeout_reported_entities_;
+    // Entities a snapshot named before their spawn arrived, with the tick they
+    // were first found waiting. Erased when the metadata arrives.
+    std::unordered_map<NetId, std::uint32_t> client_metadata_timeout_reported_entities_;
     std::unordered_map<NetId, ClientEntityTombstone> client_despawned_entities_;
     std::unordered_map<NetId, RemoteKnockbackAnchor> client_knockback_anchors_;
     std::vector<DeferredDespawn> deferred_flight_despawns_;
