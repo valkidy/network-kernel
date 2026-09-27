@@ -19,6 +19,38 @@ struct GnsEndpoint {
 };
 
 bool parse_gns_address(const char* address, GnsEndpoint* out_endpoint);
+
+// Simulated network conditions for everything this process sends, for testing
+// presentation against a late, jittery, lossy stream (the render clock, W1).
+// Read from the environment when GameNetworkingSockets is initialised; set on
+// the dedicated server, they shape the stream every client receives:
+//
+//   NETWORK_KERNEL_FAKE_LAG_MS         fixed delay, whole milliseconds
+//   NETWORK_KERNEL_FAKE_JITTER_MS      mean extra delay per packet
+//                                      (exponentially distributed)
+//   NETWORK_KERNEL_FAKE_JITTER_MAX_MS  cap on that extra delay; four times the
+//                                      mean when unset
+//   NETWORK_KERNEL_FAKE_LOSS_PCT       share of packets dropped, 0-100
+//
+// Unset, empty, or not a number in range: that condition is off. Jitter never
+// reorders packets in GameNetworkingSockets -- it clumps them -- so a late
+// packet holds back the ones behind it, which is what a late stream looks like.
+struct GnsFakeNetworkConditions {
+    int lag_ms = 0;
+    float jitter_mean_ms = 0.0f;
+    float jitter_max_ms = 0.0f;
+    float loss_pct = 0.0f;
+
+    bool any() const {
+        return lag_ms > 0 || jitter_mean_ms > 0.0f || loss_pct > 0.0f;
+    }
+};
+
+GnsFakeNetworkConditions parse_gns_fake_network_conditions(
+    const char* lag_ms,
+    const char* jitter_mean_ms,
+    const char* jitter_max_ms,
+    const char* loss_pct);
 std::vector<std::uint8_t> encode_gns_payload(
     ChannelId channel,
     SendMode mode,
