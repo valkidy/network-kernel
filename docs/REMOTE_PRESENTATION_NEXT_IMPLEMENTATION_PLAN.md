@@ -331,8 +331,49 @@ G0 的四次實測都沒有網路延遲，所以改用 kernel 內的 bench 評�
 畫面時間必須在目標的 1 ms 以內。舊寫法會讓這項測試失敗。
 
 **還沒驗證的部分：** 腿部滑步（§4.8），以及 `render clock held` 的 log 會不會出現在
-Unity Console。這兩項都要在 Unity 裡開網路延遲才能看，但目前遊戲用的
-GameNetworkingSockets transport 還沒開放模擬延遲的設定。
+Unity Console。這兩項都要在 Unity 裡開網路延遲才能看。GameNetworkingSockets transport
+原本沒有開放模擬延遲的設定，後來以環境變數加上（`93eeb7c`），結果見 §4.10。
+
+### 4.10 Unity 實測：模擬網路延遲（2026-09-27）
+
+**設定：** 在 dedicated server 設定 `NETWORK_KERNEL_FAKE_LAG_MS=100`、
+`NETWORK_KERNEL_FAKE_JITTER_MS=25`、`NETWORK_KERNEL_FAKE_LOSS_PCT=1`，只作用在
+server → client 方向。client 用 Unity package `cf90dc9`，包含 `a2121e3` 和之前所有的修正。
+
+server log 的 `git_commit` 欄位仍然顯示 `4fcc491`，但 server 印出了模擬網路的設定行，
+代表執行的是新版程式碼，只是這個標記沒有更新（`bazel run` 沒有重新產生它）。
+**判斷 server 版本時不能依賴這個欄位。**
+
+**結果（約 121 秒，遠端物件最多 46 個）：**
+
+| 項目 | 結果 |
+|---|---|
+| 網路（`[G0]`） | rtt 中位數 167 ms、最高 367 ms；jitter 中位數 33 ms、最高 233 ms；掉包最高 3.4% |
+| **整體停住** | **0 次** |
+| 個別物件停住 | 每幀平均 0.01 個 |
+| 大跳動 | 1 次 |
+| server | 30 Hz、`late=0`，最慢 8 ms |
+| `presStaleDropped` / `presBudgetDropped` | 平均每秒約 1.7 筆 / 0 |
+
+bench（§4.9）在相近的條件（100 ± 50 ms、1% 掉包）下，舊時鐘有 39% 的幀是整體停住；
+這次實測是 0，**§4.6 的驗收條件在遊戲中也達成了。**
+
+**剩下的現象，都不屬於 W1：**
+
+- **唯一一次跳動：** 一隻 template 32 的 agent 一次移動 4.24 m，當時速度 2.25 m/s，
+  等於約 1.9 秒沒收到樣本。牠的位置很可能在 relevance 範圍邊緣（約 40 m）；遠處的
+  agent 分到的 snapshot 次數少，樣本斷掉超過 0.25 秒的外推上限就會停住，下一個樣本到
+  時再跳過去。這是 snapshot 預算的問題（G2），不是時鐘的問題。
+- **個別物件停住：** 最長約 1.2–1.3 秒（template 32 和 28），中位數 50–70 ms。原因應該
+  和上一項相同，或是 §3.1 記錄的 template 28 卡住問題。
+
+**還沒解決：**
+
+- **kernel 的 log 送不到 Unity：** Editor.log 裡完全沒有 kernel 的 spdlog 輸出，kernel
+  也沒有提供 log 回呼的 API，所以 client 端的 `render clock held` / `render clock reset`
+  在 Unity 裡看不到。要讓 Unity 看得到，需要在 `KernelNetworkStats` 加計數，或新增 log
+  回呼 API，兩者都會改動 ABI。既然整體停住已經是 0，這件事不急。
+- **腿部滑步（§4.8）：** 從 log 無法判斷，還需要目測。
 
 ---
 
