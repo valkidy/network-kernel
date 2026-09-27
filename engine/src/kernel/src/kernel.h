@@ -1039,6 +1039,7 @@ private:
     std::uint32_t collider_template_id_for_actor_template(
         std::uint32_t actor_template_id) const;
     void sync_client_render_colliders();
+    bool sync_prediction_local_hitbox();
     void sync_client_vision_states_from_snapshot(const WorldSnapshot& snapshot);
     void update_vision_states(float delta_seconds);
 
@@ -1212,6 +1213,10 @@ private:
     // Props as static obstacles and other actors' hit volumes, both where the
     // render pass drew them. One map, since a net id is one or the other.
     std::unordered_map<NetId, std::uint32_t> prediction_obstacle_collider_ids_;
+    // The local player's hit volume in the prediction world, at its predicted
+    // position; 0 while absent. See sync_prediction_local_hitbox.
+    std::uint32_t prediction_local_hitbox_collider_id_ = 0;
+    std::uint32_t prediction_local_hitbox_template_id_ = 0;
     // One proxy per bone, unlike the two maps above which are one per entity: a
     // rig contributes a dozen bodies. Their ids cannot come from the collider
     // registry, which the render pass clears and refills every frame -- the ids

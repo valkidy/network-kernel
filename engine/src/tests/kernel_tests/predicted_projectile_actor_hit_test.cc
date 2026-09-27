@@ -48,12 +48,15 @@ constexpr std::uint32_t kRocketTemplateId = 31;
 constexpr std::uint32_t kRocketColliderId = 90;
 constexpr std::uint32_t kActorHitColliderId = 22;
 constexpr std::uint32_t kCrateColliderId = 23;
+constexpr std::uint32_t kPlayerHitColliderId = 24;
 constexpr std::uint32_t kLifetimeTicks = 90;
 constexpr std::uint32_t kSpawnTick = 10;
 constexpr ne::NetId kRocket = 61;
 constexpr ne::NetId kLocalPlayer = 5;
 constexpr ne::PeerId kLocalPeer = 2;
 constexpr ne::PeerId kOtherPeer = 3;
+// An agent's: the server's.
+constexpr ne::PeerId kServerPeer = 0;
 constexpr std::uint32_t kActionInstance = 7;
 const glm::vec3 kSpawnPosition{0.0f, 1.0f, 0.0f};
 // 0.67 m a tick: several ticks to reach each actor, and one tick never steps
@@ -132,6 +135,33 @@ struct Client {
         crate_collider.shape_params = KernelVec4{0.1f, 1.0f, 1.0f, 0.0f};
         crate_collider.purpose_flags = KernelColliderPurpose_Hit;
         engine.collider_templates_.push_back(crate_collider);
+
+        // player_hit_aabb.
+        KernelColliderTemplateDefinition player_collider{};
+        player_collider.struct_size = sizeof(player_collider);
+        player_collider.template_id = kPlayerHitColliderId;
+        player_collider.shape_type = KernelColliderShapeType_Aabb;
+        player_collider.center = KernelVec3{0.0f, 0.9f, 0.0f};
+        player_collider.shape_params = KernelVec4{0.35f, 0.9f, 0.35f, 0.0f};
+        player_collider.purpose_flags = KernelColliderPurpose_Hit;
+        player_collider.layer_mask = KERNEL_COLLISION_LAYER_PLAYER_SIDE;
+        engine.collider_templates_.push_back(player_collider);
+    }
+
+    // The local player, predicted standing at x on the axis the shots fly.
+    void place_local_player(float x, bool dead = false) {
+        if (!engine.has_predicted_local_entity_) {
+            ne::KernelEngine::ClientReplicatedEntity replicated{};
+            replicated.net_id = kLocalPlayer;
+            replicated.type = ne::EntityType::kActor;
+            replicated.actor_type = ne::ActorType::kPlayer;
+            replicated.collider_template_id = kPlayerHitColliderId;
+            engine.client_replicated_entities_.push_back(replicated);
+            engine.has_predicted_local_entity_ = true;
+            engine.predicted_local_entity_.net_id = kLocalPlayer;
+        }
+        engine.predicted_local_entity_.position = glm::vec3{x, 0.0f, 0.0f};
+        engine.predicted_local_entity_.flags = dead ? ne::kVisualFlagDead : 0u;
     }
 
     static KernelConfig make_config() {
@@ -350,6 +380,103 @@ void actor_hit_volume_is_not_movement_geometry() {
     require(!client.engine.prediction_obstacle_collider_ids_.contains(40));
 }
 
+
+// An agent's shot flown at the local player: both are on the prediction
+// timeline, so it is hidden on the step that carries it into the player's
+// predicted box -- near face at 5 - 0.35 -- where the authority will hit, not
+// a round trip later when the despawn gets back.
+void incoming_shot_is_hidden_where_it_enters_the_local_player() {
+    Client client;
+    client.place_local_player(5.0f);
+    client.spawn_rocket(kServerPeer);
+    bool hidden = false;
+    for (int step = 0; step < 20 && !hidden; ++step) {
+        const float before = client.rocket_x();
+        client.step({});
+        hidden = !client.drawn();
+        if (hidden) {
+            require(before < 4.65f);
+            require(client.rocket_x() >= 4.65f - 0.1f);
+        }
+    }
+    require(hidden);
+    // Bound, as the first snapshot carrying it binds it in play; an unbound
+    // one's despawn waits for the world timeline, which is older behaviour.
+    for (auto& projectile : client.engine.predicted_projectiles_) {
+        projectile.bound = true;
+    }
+    ne::EntityDespawnPacket despawn{};
+    despawn.net_id = kRocket;
+    despawn.server_tick = kSpawnTick + 8u;
+    despawn.reason = KernelDespawnReason_Destroyed;
+    client.engine.handle_client_despawn(despawn);
+    require(!client.exists());
+}
+
+// The box goes where the player is predicted this tick: a player who has
+// stepped out of the line lets the shot by, and one who steps into it is hit.
+void incoming_shot_follows_the_predicted_player() {
+    Client client;
+    client.place_local_player(5.0f);
+    client.spawn_rocket(kOtherPeer);
+    client.engine.predicted_local_entity_.position = glm::vec3{5.0f, 0.0f, 3.0f};
+    while (client.rocket_x() < 7.0f) {
+        client.step({});
+        require(client.drawn());
+    }
+    client.engine.predicted_local_entity_.position = glm::vec3{9.0f, 0.0f, 0.0f};
+    bool hidden = false;
+    for (int step = 0; step < 10 && !hidden; ++step) {
+        client.step({});
+        hidden = !client.drawn();
+    }
+    require(hidden);
+    require(client.rocket_x() >= 8.65f - 0.1f && client.rocket_x() < 9.5f);
+}
+
+// The authority's shots pass the dead; and an incoming shot is tried against
+// the local player alone, never an actor drawn in the past.
+void incoming_shot_passes_the_dead_player_and_other_actors() {
+    Client client;
+    client.place_local_player(6.0f, true);
+    client.spawn_rocket(kServerPeer);
+    const std::vector<Actor> actors{{40, 3.0f}};
+    while (client.rocket_x() < 8.0f) {
+        client.step(actors);
+        require(client.drawn());
+    }
+    require(client.engine.prediction_local_hitbox_collider_id_ == 0u);
+
+    // Alive this time, behind the same actor: flown through the actor, hidden
+    // in the player.
+    Client alive;
+    alive.place_local_player(10.0f);
+    alive.spawn_rocket(kServerPeer);
+    while (alive.rocket_x() < 9.0f) {
+        alive.step(actors);
+        require(alive.drawn());
+    }
+    bool hidden = false;
+    for (int step = 0; step < 5 && !hidden; ++step) {
+        alive.step(actors);
+        hidden = !alive.drawn();
+    }
+    require(hidden);
+}
+
+// The local box is now in the prediction world, and our own shot still flies
+// out through it: the authority never lets a shooter's shot hit the shooter.
+void own_shot_ignores_the_local_box() {
+    Client client;
+    client.place_local_player(0.0f);
+    client.spawn_rocket(kLocalPeer);
+    while (client.rocket_x() < 3.0f) {
+        client.step({});
+        require(client.drawn());
+    }
+    require(client.engine.prediction_local_hitbox_collider_id_ != 0u);
+}
+
 }  // namespace
 
 int main() {
@@ -359,6 +486,10 @@ int main() {
     dead_actors_and_the_local_player_are_not_hit();
     a_wall_in_front_of_the_actor_ends_it();
     actor_hit_volume_is_not_movement_geometry();
+    incoming_shot_is_hidden_where_it_enters_the_local_player();
+    incoming_shot_follows_the_predicted_player();
+    incoming_shot_passes_the_dead_player_and_other_actors();
+    own_shot_ignores_the_local_box();
     std::puts("predicted_projectile_actor_hit_test passed");
     return 0;
 }

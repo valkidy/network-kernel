@@ -593,8 +593,28 @@ G0 時先觀察「穿過 agent」在實際遊玩中是否明顯，再決定要�
   站著不動的目標沒有誤差；4.6 m/s 行走、RTT 100 ms 時約 0.6 m。
   這種誤判由上面的重新顯示處理。
 - 未涵蓋：AI 的 deterministic projectile 打中本地玩家（例如 mage 的榴彈），
-  以及其他玩家的 projectile。
+  以及其他玩家的 projectile。（已由 8.6 補上打中本地玩家的部分。）
 - 測試：`predicted_projectile_actor_hit_test`。
+
+### 8.6 延伸：別人的 projectile 打中本地玩家（`claude/w5-incoming-projectile-hit`）
+
+- **為什麼可以準：** AI 和其他玩家的 deterministic projectile 在 client 上也放在
+  `predicted_projectiles_`，`reconcile_predicted_projectiles` 把它們推到
+  `local_prediction_server_tick`，也就是本地玩家所在的預測時間軸。兩者外推到同一個
+  tick，server 在那個 tick 用玩家當時的位置判定（AI 的 projectile 不做回溯），
+  所以沒有 8.3 那種時間軸錯開的誤差，只剩本地移動預測本身的誤差。
+- **碰撞體：** `sync_prediction_local_hitbox` 每個預測 tick 把本地玩家的 hit
+  collider 放在 `predicted_local_entity_` 的位置，kind / layer 與其他 actor 相同
+  （`kActorHitbox` / `kDamageable`）。本地玩家死亡、沒有預測實體或 template 不是
+  hit 用途時移除。會碰到它的其他查詢都已排除本地玩家：移動不查 `kDamageable`，
+  自己的 projectile 與投擲的落地掃描都設了 `ignored_entity_net_id`。
+- **判定：** 不是自己射出的 `Standard` + `Destroy` projectile，查詢結果只保留本地
+  玩家；畫在過去的其他 actor 一律不算。隱藏、重新顯示的規則與 8.5 相同。
+- **已知限制：** 還沒被 snapshot bind 的 projectile（生成後第一個 snapshot 之前），
+  它的 despawn 會被當成世界時間軸物件延後處理；它已經隱藏，所以畫面上沒有差別。
+- 測試：`predicted_projectile_actor_hit_test` 新增 4 個情境（命中位置、跟著預測位置
+  移動、死亡與擋在前面的其他 actor、自己的 projectile 不受本地 hitbox 影響）。
+  咬合檢查：拿掉「只保留本地玩家」的過濾，或不放本地 hitbox，都會失敗。
 
 ---
 
