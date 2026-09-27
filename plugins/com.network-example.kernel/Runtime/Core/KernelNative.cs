@@ -19,6 +19,12 @@ namespace NetworkExample.Kernel
             out KernelBuildInfo outInfo,
             uint outInfoSize);
 
+        // Process-wide, not per handle; outMessages is KernelLogMessage[maxMessages].
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern uint Kernel_PollLogMessages(
+            IntPtr outMessages,
+            uint maxMessages);
+
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         [return: MarshalAs(UnmanagedType.I1)]
         internal static extern bool Kernel_GetLocalPlayerInfo(

@@ -148,6 +148,19 @@ namespace NetworkExample.Kernel.Editor
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelEntityTemplateDefinition>("knockdown_recovery_ticks") ==
                     (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelEntityTemplateDefinition>("death_policy") + sizeof(uint),
                 "Kernel knockdown recovery ABI mismatch.");
+            Require(
+                KernelConstants.CapabilityLogCapture == 0x0001000000000000UL &&
+                KernelLogLevel.Critical == (KernelLogLevel)5 &&
+                KernelConstants.LogMessageTextSize == 512 &&
+                System.Runtime.InteropServices.Marshal.SizeOf<KernelLogMessage>() == 536 &&
+                (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelLogMessage>("sequence") == 16 &&
+                (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelLogMessage>("text") == 24,
+                "Kernel log capture ABI mismatch.");
+            Require(KernelLog.IsSupported, "Kernel log capture capability is missing.");
+            KernelLog.StartCapture();
+            Require(
+                KernelLog.Poll(new KernelLogLine[4]) <= 4,
+                "Kernel_PollLogMessages returned more lines than asked for.");
             RequireLANDiscovery();
             byte[] catalogBundleBytes = LoadGameplayCatalogBundleBytes();
 

@@ -8,6 +8,7 @@ namespace NetworkExample.Kernel
         public const uint AbiVersion = 93;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
+        public const int LogMessageTextSize = 512;
         public const int GameplayCatalogEntryPathSize = 128;
         public const int GameplayCatalogContentNamespaceSize = 64;
         public const int GameplayCatalogSha256Size = 32;
@@ -111,6 +112,8 @@ namespace NetworkExample.Kernel
         public const ulong CapabilityServerEntityMovementMaskWrite = 0x0000200000000000UL;
         public const ulong CapabilityServerEntityRevive = 0x0000400000000000UL;
         public const ulong CapabilityServerInventoryClear = 0x0000800000000000UL;
+        // Kernel_PollLogMessages; additive within ABI 93, so check the flag.
+        public const ulong CapabilityLogCapture = 0x0001000000000000UL;
 
         // KernelLocalWeaponState.flags.
         public const byte LocalWeaponStateFlagReloading = 0x01;
@@ -281,6 +284,17 @@ namespace NetworkExample.Kernel
         Active = 0,
         Predicted = 1,
         Stale = 2,
+    }
+
+    // spdlog's levels, in its order.
+    public enum KernelLogLevel
+    {
+        Trace = 0,
+        Debug = 1,
+        Info = 2,
+        Warn = 3,
+        Error = 4,
+        Critical = 5,
     }
 
     public enum KernelEntityLifecycleEventType
@@ -2415,5 +2429,22 @@ namespace NetworkExample.Kernel
         public KernelEntityType entity_type;
         public KernelActorType actor_type;
         public uint owner_peer;
+    }
+
+    /// <summary>
+    /// One captured line as the native side lays it out (536 bytes). Read it
+    /// through <see cref="KernelLog.Poll"/>; this mirror exists for layout
+    /// checks and for callers that marshal their own buffers.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelLogMessage
+    {
+        public KernelLogLevel level;
+        public uint length;
+        public uint truncated;
+        public uint reserved;
+        public ulong sequence;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = KernelConstants.LogMessageTextSize)]
+        public byte[] text;
     }
 }
