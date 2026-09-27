@@ -725,6 +725,7 @@ private:
         std::vector<std::uint8_t> scene,
         const KernelStaticCollisionSceneConfig& config);
     void diagnose_client_snapshot_metadata_waits();
+    std::uint32_t local_knockdown_recovery_ticks() const;
     void adopt_authoritative_impulse_lockout(
         const EntitySnapshot& authoritative,
         std::uint32_t snapshot_tick);
@@ -1153,6 +1154,10 @@ private:
     // drift and get yanked back at reconciliation.
     std::uint32_t predicted_impulse_lockout_until_tick_ = 0;
     std::uint32_t predicted_impulse_lockout_armed_tick_ = 0;
+    // The predicted lockout is the local player getting up after a knockback
+    // that landed: rooted, released only by the count. The twin of
+    // ImpulseLockout::recovering.
+    bool predicted_impulse_lockout_recovering_ = false;
     std::uint32_t predicted_action_buttons_ = 0;
     std::uint16_t predicted_action_binding_id_ = 0;
     std::uint8_t predicted_action_weapon_id_ = 0;

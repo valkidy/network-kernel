@@ -2975,6 +2975,8 @@ bool KernelEngine::load_gameplay_catalog(
             entity_template.ai.struct_size < sizeof(KernelEntityAiDefinition) ||
             entity_template.ai.controller_type > KernelAiControllerType_Chaser ||
             !stagger_profile_is_authorable(entity_template) ||
+            entity_template.knockdown_recovery_ticks >
+                KERNEL_MAX_KNOCKDOWN_RECOVERY_TICKS ||
             entity_template.death_policy > KernelDeathPolicy_Dormant) {
             return false;
         }
@@ -6022,6 +6024,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     predicted_character_tick_ = 0;
     predicted_impulse_lockout_until_tick_ = 0u;
     predicted_impulse_lockout_armed_tick_ = 0u;
+    predicted_impulse_lockout_recovering_ = false;
     predicted_action_buttons_ = 0u;
     predicted_action_binding_id_ = 0u;
     predicted_action_weapon_id_ = 0u;
@@ -7684,6 +7687,7 @@ void KernelEngine::clear_client_session() {
     predicted_character_tick_ = 0;
     predicted_impulse_lockout_until_tick_ = 0u;
     predicted_impulse_lockout_armed_tick_ = 0u;
+    predicted_impulse_lockout_recovering_ = false;
     local_presentation_position_ = glm::vec3{0.0f, 0.0f, 0.0f};
     local_presentation_velocity_ = glm::vec3{0.0f, 0.0f, 0.0f};
     predicted_local_motion_velocity_ = glm::vec3{0.0f, 0.0f, 0.0f};
@@ -8398,10 +8402,12 @@ bool KernelEngine::step_local_character_prediction(
     const bool impulse_locked =
         prediction_tick < predicted_impulse_lockout_until_tick_;
     const glm::vec3 desired_horizontal = impulse_locked
-        ? glm::vec3{
-              predicted_character_state_.velocity.x,
-              0.0f,
-              predicted_character_state_.velocity.z}
+        ? (predicted_impulse_lockout_recovering_
+               ? glm::vec3{0.0f}
+               : glm::vec3{
+                     predicted_character_state_.velocity.x,
+                     0.0f,
+                     predicted_character_state_.velocity.z})
         : movement_solver::input_move_to_world(input) *
               local_player_move_speed_meters_per_second_;
     std::string error;
@@ -8424,11 +8430,19 @@ bool KernelEngine::step_local_character_prediction(
     // Same rule as the authority: the landing release cannot fire on the tick
     // the impulse armed, or a flat knockback on a grounded actor releases
     // before it has held anything off.
-    if (impulse_locked &&
+    // And the same knockdown: a landing the player is authored to stay down
+    // after turns the lockout into its recovery rather than ending it.
+    if (impulse_locked && !predicted_impulse_lockout_recovering_ &&
         prediction_tick > predicted_impulse_lockout_armed_tick_ &&
         predicted_character_state_.ground_state ==
             physics::CharacterGroundState::kGrounded) {
-        predicted_impulse_lockout_until_tick_ = 0u;
+        const std::uint32_t recovery_ticks = local_knockdown_recovery_ticks();
+        if (recovery_ticks > 0u) {
+            predicted_impulse_lockout_recovering_ = true;
+            predicted_impulse_lockout_until_tick_ = prediction_tick + recovery_ticks;
+        } else {
+            predicted_impulse_lockout_until_tick_ = 0u;
+        }
     }
     predicted_character_tick_ = prediction_tick;
     predicted_local_entity_.position = predicted_character_state_.position;
@@ -8594,6 +8608,30 @@ void KernelEngine::drop_predicted_ammo_spends(
 // impulse the authority has not simulated yet, and is left standing. One armed
 // at or before that tick the authority has seen, so the snapshot's word on it
 // is final: absent means it already ended.
+// The local player's authored knockdown recovery, read from the template the
+// server said it is -- the same template the authority applied.
+std::uint32_t KernelEngine::local_knockdown_recovery_ticks() const {
+    const auto replicated = std::find_if(
+        client_replicated_entities_.begin(),
+        client_replicated_entities_.end(),
+        [this](const ClientReplicatedEntity& entity) {
+            return entity.net_id == local_player_net_id_;
+        });
+    if (replicated == client_replicated_entities_.end() ||
+        replicated->actor_template_id == 0u) {
+        return 0u;
+    }
+    const auto authored = std::find_if(
+        entity_templates_.begin(),
+        entity_templates_.end(),
+        [&replicated](const KernelEntityTemplateDefinition& candidate) {
+            return candidate.actor_template_id == replicated->actor_template_id;
+        });
+    return authored == entity_templates_.end()
+        ? 0u
+        : authored->knockdown_recovery_ticks;
+}
+
 void KernelEngine::adopt_authoritative_impulse_lockout(
     const EntitySnapshot& authoritative,
     std::uint32_t snapshot_tick) {
@@ -8605,12 +8643,15 @@ void KernelEngine::adopt_authoritative_impulse_lockout(
                 authoritative.impulse_lockout_until_tick;
             predicted_impulse_lockout_armed_tick_ =
                 authoritative.impulse_lockout_armed_tick;
+            predicted_impulse_lockout_recovering_ =
+                authoritative.impulse_lockout_recovering;
         }
         return;
     }
     if (predicted_impulse_lockout_armed_tick_ <= snapshot_tick) {
         predicted_impulse_lockout_until_tick_ = 0u;
         predicted_impulse_lockout_armed_tick_ = 0u;
+        predicted_impulse_lockout_recovering_ = false;
     }
 }
 
@@ -10129,6 +10170,8 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
                                             action.impulse_lockout_ticks;
                                         predicted_impulse_lockout_armed_tick_ =
                                             predicted_character_tick_;
+                                        predicted_impulse_lockout_recovering_ =
+                                            false;
                                     }
                                     break;
                                 }
@@ -11162,6 +11205,9 @@ WorldSnapshot KernelEngine::build_relevant_snapshot(
                 entity.has_owner_weapon_state && entity.net_id == session.player;
             filtered_entity.has_impulse_lockout =
                 entity.has_impulse_lockout && entity.net_id == session.player;
+            filtered_entity.impulse_lockout_recovering =
+                filtered_entity.has_impulse_lockout &&
+                entity.impulse_lockout_recovering;
             filtered.entities.push_back(filtered_entity);
         }
     }

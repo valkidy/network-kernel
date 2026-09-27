@@ -293,6 +293,7 @@ void hash_actor_template(
     hash_scalar(hash, actor_template.stagger.decay_delay_ticks);
     hash_scalar(hash, actor_template.stagger.duration_ticks);
     hash_scalar(hash, actor_template.stagger.immunity_ticks);
+    hash_scalar(hash, actor_template.knockdown_recovery_ticks);
     hash_scalar(hash, actor_template.death_policy);
     hash_scalar(hash, actor_template.movement_collision_mask);
     hash_scalar(hash, actor_template.weapon_slot_count);
@@ -3490,6 +3491,7 @@ ActorTemplateConfig actor_template_from_yaml(
             "health",
             "impulse_resistance",
             "stagger",
+            "knockdown",
             "death_policy",
             "movement",
             "hitbox",
@@ -3582,6 +3584,20 @@ ActorTemplateConfig actor_template_from_yaml(
         if (stagger["immunity_ticks"]) {
             config.immunity_ticks = stagger["immunity_ticks"].as<std::uint32_t>();
         }
+    }
+    if (const YAML::Node knockdown = node["knockdown"]) {
+        reject_unknown_keys(
+            knockdown,
+            {"recovery_ticks"},
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR);
+        if (!knockdown["recovery_ticks"]) {
+            throw std::runtime_error(
+                "actor knockdown requires recovery_ticks: " + actor_template.name);
+        }
+        actor_template.knockdown_recovery_ticks =
+            knockdown["recovery_ticks"].as<std::uint32_t>();
     }
 
     const YAML::Node health = node["health"];
@@ -8192,6 +8208,12 @@ std::vector<std::string> validate_gameplay_config(
                 "stagger threshold, per_damage and decay_per_tick must be finite and non-negative, and a positive threshold needs duration_ticks and immunity_ticks within KERNEL_MAX_STAGGER_TICKS: " +
                 entity_template.name);
         }
+        if (entity_template.knockdown_recovery_ticks >
+            KERNEL_MAX_KNOCKDOWN_RECOVERY_TICKS) {
+            errors.push_back(
+                "knockdown recovery_ticks must be within KERNEL_MAX_KNOCKDOWN_RECOVERY_TICKS: " +
+                entity_template.name);
+        }
         if (entity_template.entity_type != KernelEntityType_Prop &&
             (entity_template.prop.lifetime_ticks != 0u ||
              entity_template.prop.population_group_id != 0u)) {
@@ -8736,6 +8758,8 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
         entity_template.stagger_ticks = authored_template.stagger.duration_ticks;
         entity_template.stagger_immunity_ticks =
             authored_template.stagger.immunity_ticks;
+        entity_template.knockdown_recovery_ticks =
+            authored_template.knockdown_recovery_ticks;
         entity_template.death_policy = authored_template.death_policy;
         entity_template.activated_trigger = compile_action_trigger_binding(
             authored_template.activated_trigger,

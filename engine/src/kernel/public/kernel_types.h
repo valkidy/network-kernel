@@ -5,6 +5,12 @@
 #include <stdint.h>
 
 /*
+ * 93: KernelEntityTemplateDefinition gained knockdown_recovery_ticks, appended:
+ *     how long a knockback that lands keeps the actor down -- rooted, and
+ *     refusing new actions as the knockback did -- before it may move again.
+ *     Zero, the default, releases on landing as before. Snapshot schema 23
+ *     carries whether an own player's impulse lockout is that recovery, which
+ *     the client's prediction needs to hold still through it.
  * 90: hit stagger. KernelEventType_Staggered, KERNEL_VISUAL_FLAG_STAGGERED
  *     and the Staggered / KnockedBack local action result reasons were added.
  *     KernelActionDefinition and KernelActionTriggerDefinition gained
@@ -99,7 +105,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 92u
+#define KERNEL_ABI_VERSION 93u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -723,6 +729,10 @@ typedef enum KernelActionConditionType {
 /* Ceiling on an actor's stagger duration_ticks and immunity_ticks, for the
  * same reason and checked by the same two parties as the lockout above. */
 #define KERNEL_MAX_STAGGER_TICKS 300u
+
+/* Ceiling on an actor's knockdown recovery_ticks, checked by the same two
+ * parties. */
+#define KERNEL_MAX_KNOCKDOWN_RECOVERY_TICKS 300u
 
 /* How apply_impulse reads impulse_strength / impulse_strength_vertical.
  * RADIAL: the historical single-scalar form, delta = normalize(dir) * strength.
@@ -2201,6 +2211,9 @@ struct KernelEntityTemplateDefinition {
     uint32_t stagger_immunity_ticks;
     /* A KernelDeathPolicy. */
     uint32_t death_policy;
+    /* Ticks a knockback that lands keeps the actor down: rooted, and refusing
+     * new actions, from the landing. Zero releases on landing. */
+    uint32_t knockdown_recovery_ticks;
 };
 
 typedef struct KernelEvent {

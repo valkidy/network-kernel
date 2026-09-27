@@ -72,6 +72,9 @@ struct EntitySnapshot {
     bool has_impulse_lockout = false;
     std::uint32_t impulse_lockout_until_tick = 0;
     std::uint32_t impulse_lockout_armed_tick = 0;
+    // The lockout is the actor getting up after a knockback that landed:
+    // rooted, not carrying velocity. Meaningless without has_impulse_lockout.
+    bool impulse_lockout_recovering = false;
     // The weapon the player is holding, for the one client that holds it. Like
     // movement state, the builder fills it for every armed actor and
     // build_relevant_snapshot keeps it only on the receiving session's own
