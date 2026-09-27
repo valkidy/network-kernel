@@ -12,6 +12,10 @@ _Static_assert(
     sizeof(KernelLogMessage) == 24u + KERNEL_LOG_MESSAGE_TEXT_SIZE,
     "a managed mirror of a log line must match this layout");
 _Static_assert(
+    offsetof(KernelLogMessage, sequence) == 16u &&
+        offsetof(KernelLogMessage, text) == 24u,
+    "Unity's KernelLogBridge reads a log line at these fixed offsets");
+_Static_assert(
     offsetof(KernelEntityTemplateDefinition, knockdown_recovery_ticks) >
         offsetof(KernelEntityTemplateDefinition, death_policy),
     "the knockdown recovery is appended to KernelEntityTemplateDefinition");
