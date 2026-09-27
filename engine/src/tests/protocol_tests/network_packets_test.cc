@@ -388,6 +388,79 @@ void an_agent_record_with_unknown_flags_is_refused() {
     }
 }
 
+// A send set for several packets comes apart into independent snapshots of
+// the same tick, each within the packet budget, each entity in exactly one,
+// and everything but agents -- the state a client reconciles against -- first.
+void a_send_set_splits_into_independent_packets() {
+    network_example::WorldSnapshot send;
+    send.header.server_tick = 77;
+    send.header.last_processed_input_seq = 12;
+    for (network_example::NetId id = 100; id < 250; ++id) {
+        network_example::EntitySnapshot agent =
+            agent_at(id, glm::vec3{static_cast<float>(id % 30), 0.0f, 1.0f});
+        if (id % 3 == 0) {
+            agent.action_template_id = 1002;
+            agent.action_start_tick = 70;
+            agent.action_phase = KernelActionPhase_Active;
+        }
+        send.entities.push_back(agent);
+    }
+    network_example::EntitySnapshot player;
+    player.net_id = 5;
+    player.type = network_example::EntityType::kActor;
+    player.actor_type = network_example::ActorType::kPlayer;
+    player.has_authoritative_movement_state = true;
+    send.entities.push_back(player);
+    network_example::EntitySnapshot projectile;
+    projectile.net_id = 6;
+    projectile.type = network_example::EntityType::kProjectile;
+    send.entities.push_back(projectile);
+
+    const std::size_t budget = network_example::kSnapshotSendBudgetBytes;
+    const std::vector<network_example::WorldSnapshot> packets =
+        network_example::split_snapshot_for_packets(send, budget);
+    require(packets.size() == 4u);
+    std::size_t total = 0;
+    for (const network_example::WorldSnapshot& packet : packets) {
+        require(packet.header.server_tick == 77u);
+        require(packet.header.last_processed_input_seq == 12u);
+        const std::vector<std::uint8_t> bytes =
+            network_example::encode_snapshot_packet(packet, 1);
+        require(bytes.size() <= budget);
+        network_example::WorldSnapshot decoded;
+        require(network_example::decode_snapshot_packet(bytes.data(), bytes.size(), &decoded));
+        total += decoded.entities.size();
+    }
+    require(total == send.entities.size());
+    for (const network_example::EntitySnapshot& sent : send.entities) {
+        std::size_t seen = 0;
+        for (const network_example::WorldSnapshot& packet : packets) {
+            seen += find_decoded(packet, sent.net_id) != nullptr ? 1u : 0u;
+        }
+        require(seen == 1u);
+    }
+    require(find_decoded(packets.front(), 5) != nullptr);
+    require(find_decoded(packets.front(), 6) != nullptr);
+    // What build_snapshot_send_set is handed for four packets packs into four.
+    require(network_example::snapshot_send_set_budget(1) == budget);
+    require(network_example::estimate_snapshot_packet_size(send) <=
+            network_example::snapshot_send_set_budget(4));
+
+    // A set that fits is one packet, unchanged; an empty one is still one,
+    // because the header alone acknowledges input.
+    network_example::WorldSnapshot small;
+    small.header.server_tick = 3;
+    small.entities.push_back(agent_at(1, glm::vec3{0.0f}));
+    require(network_example::split_snapshot_for_packets(small, budget).size() == 1u);
+    network_example::WorldSnapshot empty;
+    empty.header.server_tick = 4;
+    const std::vector<network_example::WorldSnapshot> none =
+        network_example::split_snapshot_for_packets(empty, budget);
+    require(none.size() == 1u);
+    require(none.front().header.server_tick == 4u);
+    require(none.front().entities.empty());
+}
+
 }  // namespace
 
 // The own player's knockback lockout rides an 8 B block of its own, so a client
@@ -504,6 +577,7 @@ int main() {
     a_section_too_wide_for_offsets_sends_floats();
     an_agent_timeline_widens_only_when_it_must();
     an_agent_record_with_unknown_flags_is_refused();
+    a_send_set_splits_into_independent_packets();
 
     // Replicated locomotion steps. A step is 22 bytes of payload: the entity,
     // which leg, how many ticks ago the swing began, and where it lands. No
