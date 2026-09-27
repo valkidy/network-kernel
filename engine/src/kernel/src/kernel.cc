@@ -338,10 +338,9 @@ constexpr float kMaxRemoteActorExtrapolationSeconds = 0.25f;
 // extrapolated for the same quarter second, a knockback or a thrown prop
 // follows its curve -- and past it they would all be guessing.
 constexpr float kRenderClockOverrunCapSeconds = kMaxRemoteActorExtrapolationSeconds;
-// How far behind its target the render clock has to be before it speeds up,
-// and how far off before it gives up bending and jumps. The rates are the
-// bend: a tenth either way is not something the eye picks up.
-constexpr std::uint32_t kRenderClockCatchUpThresholdTicks = 1u;
+// How far the render clock may bend toward its target -- a tenth either way is
+// not something the eye picks up -- and how far off it gives up bending and
+// jumps.
 constexpr double kRenderClockCatchUpRate = 1.1;
 constexpr double kRenderClockSlowDownRate = 0.9;
 constexpr std::uint64_t kRenderClockHardResetUs = 1000000u;
@@ -9292,7 +9291,8 @@ void KernelEngine::advance_render_clock(std::uint64_t client_render_time_us) {
     // Only a client with a clock-sync estimate has a present to run toward. A
     // listen server's loopback stream is never late, and without an estimate
     // the target is the newest snapshot, which a clock cannot run past.
-    if (!has_client_clock_sync_ || config_.mode == KernelMode_ListenServer ||
+    if (!render_clock_enabled_ || !has_client_clock_sync_ ||
+        config_.mode == KernelMode_ListenServer ||
         client_snapshot_buffer_.size() < 2u) {
         return;
     }
@@ -9355,15 +9355,17 @@ void KernelEngine::advance_render_clock(std::uint64_t client_render_time_us) {
         note_held(target_us > ceiling_us);
         return;
     }
-    double rate = 1.0;
-    if (behind_us > static_cast<std::int64_t>(tick_time_us(
-                        kRenderClockCatchUpThresholdTicks, fixed_delta_seconds))) {
-        rate = kRenderClockCatchUpRate;
-    } else if (behind_us < 0) {
-        rate = kRenderClockSlowDownRate;
-    }
-    const std::uint64_t advanced_us = clock.render_us +
-        static_cast<std::uint64_t>(static_cast<double>(elapsed_us) * rate);
+    // Aimed at the target itself: the step is whatever lands on it, bent no
+    // further than the rates allow from real time. Comparing the clock before
+    // this step with the target after it held it one frame ahead forever, and a
+    // dead band around the target let it settle anywhere inside it.
+    const double elapsed = static_cast<double>(elapsed_us);
+    const double step_us = std::clamp(
+        static_cast<double>(behind_us),
+        elapsed * kRenderClockSlowDownRate,
+        elapsed * kRenderClockCatchUpRate);
+    const std::uint64_t advanced_us =
+        clock.render_us + static_cast<std::uint64_t>(step_us);
     // Held at the ceiling, never pushed back by it: the ceiling only moves
     // forward while the buffer lives.
     clock.render_us = std::max(clock.render_us, std::min(advanced_us, ceiling_us));

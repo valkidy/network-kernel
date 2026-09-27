@@ -1027,6 +1027,11 @@ private:
         std::uint64_t held_since_client_time_us = 0;
     };
     RenderClock render_clock_{};
+    // Off draws the world timeline the way it was drawn before the render
+    // clock: recomputed every frame and clamped to the newest snapshot. Only
+    // render_clock_bench turns it off, to measure one against the other on the
+    // same stream.
+    bool render_clock_enabled_ = true;
     std::vector<PendingPredictionInput> pending_prediction_inputs_;
     KernelPlayerInput latest_client_input_{};
     std::deque<KernelPlayerInput> pending_client_action_intents_;

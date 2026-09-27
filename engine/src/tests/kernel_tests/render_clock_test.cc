@@ -209,6 +209,30 @@ struct Client {
 // newest snapshot to the overrun cap instead of stopping where it was, and when
 // the stream comes back it is caught up gently: no frame moves it further than
 // its own speed allows, give or take the catch-up rate.
+// On a steady stream the clock sits on its target -- the interpolation delay
+// behind the server -- not a frame off it. It used to weigh the clock before a
+// step against the target after it, and held a frame ahead for good: an
+// interpolation delay one frame short of the one configured. Started a frame
+// ahead of its target on purpose, and a tick behind, it settles on it both
+// times.
+void the_clock_settles_on_its_target() {
+    for (const std::int64_t start_offset_us : {16667LL, -33333LL}) {
+        Client client;
+        client.start();
+        client.engine.render_clock_.render_us = static_cast<std::uint64_t>(
+            static_cast<std::int64_t>(client.target()) + start_offset_us);
+        for (int frame = 0; frame < 60; ++frame) {
+            client.frame();
+        }
+        for (int frame = 0; frame < 30; ++frame) {
+            client.frame();
+            require(std::llabs(
+                        static_cast<long long>(client.engine.render_server_time_us_) -
+                        static_cast<long long>(client.target())) <= 1000);
+        }
+    }
+}
+
 void a_late_stream_does_not_stop_and_jump_the_world() {
     Client client;
     client.start();
@@ -385,6 +409,7 @@ void held_events_are_released_while_the_clock_overruns() {
 }  // namespace
 
 int main() {
+    the_clock_settles_on_its_target();
     a_late_stream_does_not_stop_and_jump_the_world();
     an_offset_correction_backwards_slows_the_world_down();
     a_long_outage_holds_at_the_cap_and_resumes_forward();
