@@ -231,6 +231,10 @@ struct ActorTemplateConfig {
     float movement_max_yaw_degrees_per_second = 0.0f;
     float impulse_resistance = 0.0f;
     StaggerConfig stagger{};
+    // actor `knockdown:` block. Ticks a knockback that lands keeps the actor
+    // down -- rooted, refusing new actions -- before it may move again. Zero
+    // (absent) releases it on landing.
+    std::uint32_t knockdown_recovery_ticks = 0;
     // A KernelDeathPolicy; Default leaves it to the kernel (players dormant).
     std::uint32_t death_policy = KernelDeathPolicy_Default;
     // KERNEL_MOVEMENT_LAYER_* bits; 0 keeps the engine default.

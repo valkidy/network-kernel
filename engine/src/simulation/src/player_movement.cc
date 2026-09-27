@@ -335,6 +335,10 @@ void simulate_actor_movement(
             // death clears the knockback that killed it. Gravity still runs, so
             // a body killed in the air comes down where it will revive from.
             desired_horizontal = glm::vec3{0.0f};
+        } else if (impulse_locked && impulse_lockout->recovering) {
+            // Down after a knockback that landed: rooted until it is up again,
+            // however the controller is steering.
+            desired_horizontal = glm::vec3{0.0f};
         } else if (impulse_locked) {
             // nothing: the seeded current-velocity horizontal stands
         } else if (is_staggered(world, entity, current_tick)) {
@@ -615,13 +619,28 @@ void simulate_actor_movement(
         // count is only the ceiling for a knockback that never lands -- and a
         // flat knockback on a grounded actor is precisely that, which is why
         // the landing release cannot fire on the arming tick.
-        if (const ImpulseLockout* lockout =
+        //
+        // Unless the actor is authored to stay down: then landing turns the
+        // lockout into its recovery instead -- rooted, still refusing new
+        // actions, for recovery_ticks from here -- and only the count ends it.
+        // Without that the controller had it walking the tick after it came
+        // down, while the client was still playing it falling flat, which
+        // reads as a body sliding along the ground.
+        if (ImpulseLockout* lockout =
                 world.registry().try_get<ImpulseLockout>(result.entity);
-            lockout != nullptr &&
-            (current_tick >= lockout->until_tick ||
-             (result.movement.landed_this_tick &&
-              current_tick > lockout->armed_tick))) {
-            world.registry().remove<ImpulseLockout>(result.entity);
+            lockout != nullptr) {
+            const bool landed_from_it = !lockout->recovering &&
+                result.movement.landed_this_tick &&
+                current_tick > lockout->armed_tick;
+            const KnockdownProfile* knockdown =
+                world.registry().try_get<KnockdownProfile>(result.entity);
+            if (landed_from_it && knockdown != nullptr &&
+                knockdown->recovery_ticks > 0u) {
+                lockout->recovering = true;
+                lockout->until_tick = current_tick + knockdown->recovery_ticks;
+            } else if (current_tick >= lockout->until_tick || landed_from_it) {
+                world.registry().remove<ImpulseLockout>(result.entity);
+            }
         }
         if (result.physics_finalized &&
             physics_finalized_actor_net_ids != nullptr) {

@@ -226,6 +226,9 @@ enum ActorSnapshotRecordFlag : std::uint16_t {
     kActorSnapshotHasMovementState = 1u << 4,
     kActorSnapshotHasWeaponState = 1u << 5,
     kActorSnapshotHasImpulseLockout = 1u << 6,
+    // Schema 23. Only with kActorSnapshotHasImpulseLockout: that lockout is the
+    // actor's knockdown recovery.
+    kActorSnapshotImpulseLockoutRecovering = 1u << 7,
 };
 
 bool is_actor_entity_type(EntityType type) {
@@ -252,6 +255,9 @@ std::uint16_t actor_record_flags(const EntitySnapshot& entity) {
     }
     if (entity.has_impulse_lockout) {
         flags |= kActorSnapshotHasImpulseLockout;
+        if (entity.impulse_lockout_recovering) {
+            flags |= kActorSnapshotImpulseLockoutRecovering;
+        }
     }
     return flags;
 }
@@ -697,6 +703,11 @@ bool decode_snapshot_packet(
                             return false;
                         }
                         entity.has_impulse_lockout = true;
+                        entity.impulse_lockout_recovering =
+                            (record_flags & kActorSnapshotImpulseLockoutRecovering) != 0u;
+                    } else if (
+                        (record_flags & kActorSnapshotImpulseLockoutRecovering) != 0u) {
+                        return false;
                     }
                     break;
                 }

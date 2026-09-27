@@ -1692,6 +1692,7 @@ bool EntityLifecycleSystem::create_entity(
             *entity,
             ImpulseResistance{entity_template->impulse_resistance});
         apply_stagger_profile(engine.world_, *entity, *entity_template);
+        apply_knockdown_profile(engine.world_, *entity, *entity_template);
         registry.emplace_or_replace<DeathBehavior>(
             *entity,
             DeathBehavior{static_cast<DeathPolicy>(entity_template->death_policy)});
@@ -2672,6 +2673,8 @@ bool EntityStateSystem::set_actor_template(
         // A player is spawned bare and only ever gets its template here, so
         // anything per-template that combat reads has to be applied here too.
         apply_stagger_profile(
+            engine.world_, *entity, *authored_entity_template);
+        apply_knockdown_profile(
             engine.world_, *entity, *authored_entity_template);
         movement.ground_state = MovementState::GroundState::kAirborne;
         movement.has_last_queried_position = false;

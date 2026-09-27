@@ -14,6 +14,13 @@ stagger:
   decay_delay_ticks: 20
   duration_ticks: 15
   immunity_ticks: 45
+# Down after a knockback that lands, before it may move or act again. Matched
+# to the client's impact-falling-flat clip: 28 frames at 30 fps, started 0.2 s
+# before touchdown (NetworkActorView.launchLandingLeadSeconds), leaves ~0.73 s
+# on the ground -- 21 ticks. Absent, the controller had it walking the tick it
+# landed while the clip still showed it falling flat: a body sliding.
+knockdown:
+  recovery_ticks: 21
 movement:
   controller: character
   # Quicker and lighter than the warrior: this one closes fast and pecks.

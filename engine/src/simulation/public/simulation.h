@@ -457,6 +457,11 @@ bool is_staggered(const World& world, entt::entity entity, std::uint32_t current
 // template authors none. Both ways an actor gets a template call this: the
 // entity-create path and set_actor_template, which is the only one a player
 // ever goes through.
+// Puts the template's knockdown recovery on an actor, or takes it off.
+void apply_knockdown_profile(
+    World& world,
+    entt::entity entity,
+    const KernelEntityTemplateDefinition& entity_template);
 void apply_stagger_profile(
     World& world,
     entt::entity entity,
