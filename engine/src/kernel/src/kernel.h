@@ -638,6 +638,36 @@ private:
         std::uint32_t batch_server_tick = 0;
         std::uint32_t expire_tick = 0;
         KernelRemoteActionPresentationEvent event{};
+        // Client local time the batch arrived, for the stale diagnostics.
+        std::uint64_t received_client_us = 0;
+    };
+
+    // Why remote presentation records go stale (W4). Counted per window and
+    // written to the log once a window that dropped anything closes; the
+    // public KernelNetworkStats only carries the total.
+    struct RemotePresentationStaleDiagnostics {
+        static constexpr std::size_t kEventTypes = 8;
+        std::uint64_t window_start_us = 0;
+        bool window_started = false;
+        // Dropped on arrival: the newest snapshot was already past expiry.
+        std::array<std::uint32_t, kEventTypes> arrival_dropped{};
+        std::uint32_t arrival_max_late_ticks = 0;
+        // How far the batch's own tick trailed the newest snapshot.
+        std::uint32_t arrival_max_batch_age_ticks = 0;
+        // Dropped while waiting for render time to reach them.
+        std::array<std::uint32_t, kEventTypes> pending_dropped{};
+        std::uint32_t pending_max_late_ticks = 0;
+        std::uint64_t pending_max_wait_us = 0;
+        // Released in time, and the smallest margin any had left.
+        std::uint32_t released = 0;
+        std::uint32_t released_min_margin_ticks = UINT32_MAX;
+        // How unevenly the host drains: the widest gap between two releases
+        // in client time, and the largest render-time step between them.
+        bool has_last_release = false;
+        std::uint64_t last_release_client_us = 0;
+        std::uint64_t last_release_render_server_us = 0;
+        std::uint64_t release_max_gap_us = 0;
+        std::uint64_t release_max_render_step_us = 0;
     };
 
     struct RemotePresentationDedup {
@@ -733,6 +763,7 @@ private:
         std::size_t processed_command_count);
     void release_presentable_events();
     void release_remote_action_presentation_events();
+    void report_remote_presentation_stale_diagnostics();
     void broadcast_combat_events(std::size_t first_event, std::size_t last_event);
     void advance_predicted_projectile_corrections(float delta_seconds);
     // W6: a throw this client makes is drawn on its own timeline -- the one
@@ -1037,6 +1068,7 @@ private:
         pending_server_remote_presentations_;
     std::vector<PendingRemotePresentation>
         pending_remote_action_presentation_events_;
+    RemotePresentationStaleDiagnostics remote_presentation_stale_diagnostics_;
     std::vector<RemotePresentationDedup> remote_presentation_dedup_;
     std::vector<RenderEntityState> render_states_;
     std::vector<SkeletonPresentationPose> skeleton_presentation_poses_;

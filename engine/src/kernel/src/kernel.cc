@@ -7022,6 +7022,22 @@ void KernelEngine::handle_client_remote_action_presentation(
             if (network_stats_enabled()) {
                 network_stats_.remote_presentation_stale_dropped +=
                     event.commit_count;
+                RemotePresentationStaleDiagnostics& diagnostics =
+                    remote_presentation_stale_diagnostics_;
+                const std::uint32_t snapshot_tick =
+                    latest_client_snapshot_.header.server_tick;
+                diagnostics.arrival_dropped[std::min<std::size_t>(
+                    event.event_type,
+                    RemotePresentationStaleDiagnostics::kEventTypes - 1u)] +=
+                    event.commit_count;
+                diagnostics.arrival_max_late_ticks = std::max(
+                    diagnostics.arrival_max_late_ticks,
+                    snapshot_tick - (event_tick + expiry_ticks));
+                if (snapshot_tick > packet.server_tick) {
+                    diagnostics.arrival_max_batch_age_ticks = std::max(
+                        diagnostics.arrival_max_batch_age_ticks,
+                        snapshot_tick - packet.server_tick);
+                }
             }
             continue;
         }
@@ -7116,7 +7132,8 @@ void KernelEngine::handle_client_remote_action_presentation(
                     PendingRemotePresentation{
                         packet.server_tick,
                         event_tick + expiry_ticks,
-                        range});
+                        range,
+                        client_local_time_us_});
             }
         };
         for (std::uint32_t offset = 0; offset < event.commit_count; ++offset) {
@@ -7829,11 +7846,6 @@ void KernelEngine::release_remote_action_presentation_events() {
             }
         }
     }
-    if (pending_remote_action_presentation_events_.empty()) {
-        return;
-    }
-    std::vector<PendingRemotePresentation> still_pending;
-    still_pending.reserve(pending_remote_action_presentation_events_.size());
     const std::uint64_t render_server_time_us =
         client_clock_offset_us_ >= 0
             ? current_render_time_us_ +
@@ -7843,6 +7855,35 @@ void KernelEngine::release_remote_action_presentation_events() {
                   ? current_render_time_us_ -
                         static_cast<std::uint64_t>(-client_clock_offset_us_)
                   : 0u;
+    const bool diagnose = network_stats_enabled();
+    RemotePresentationStaleDiagnostics& diagnostics =
+        remote_presentation_stale_diagnostics_;
+    if (diagnose && has_client_render_time_) {
+        if (diagnostics.has_last_release) {
+            if (client_local_time_us_ > diagnostics.last_release_client_us) {
+                diagnostics.release_max_gap_us = std::max(
+                    diagnostics.release_max_gap_us,
+                    client_local_time_us_ - diagnostics.last_release_client_us);
+            }
+            if (render_server_time_us > diagnostics.last_release_render_server_us) {
+                diagnostics.release_max_render_step_us = std::max(
+                    diagnostics.release_max_render_step_us,
+                    render_server_time_us -
+                        diagnostics.last_release_render_server_us);
+            }
+        }
+        diagnostics.has_last_release = true;
+        diagnostics.last_release_client_us = client_local_time_us_;
+        diagnostics.last_release_render_server_us = render_server_time_us;
+    }
+    if (diagnose) {
+        report_remote_presentation_stale_diagnostics();
+    }
+    if (pending_remote_action_presentation_events_.empty()) {
+        return;
+    }
+    std::vector<PendingRemotePresentation> still_pending;
+    still_pending.reserve(pending_remote_action_presentation_events_.size());
     for (const PendingRemotePresentation& pending :
          pending_remote_action_presentation_events_) {
         const std::uint64_t tick_duration_us = std::max<std::uint64_t>(
@@ -7851,9 +7892,21 @@ void KernelEngine::release_remote_action_presentation_events() {
         const std::uint32_t render_tick = static_cast<std::uint32_t>(
             render_server_time_us / tick_duration_us);
         if (has_client_render_time_ && render_tick > pending.expire_tick) {
-            if (network_stats_enabled()) {
+            if (diagnose) {
                 network_stats_.remote_presentation_stale_dropped +=
                     pending.event.commit_count;
+                diagnostics.pending_dropped[std::min<std::size_t>(
+                    pending.event.event_type,
+                    RemotePresentationStaleDiagnostics::kEventTypes - 1u)] +=
+                    pending.event.commit_count;
+                diagnostics.pending_max_late_ticks = std::max(
+                    diagnostics.pending_max_late_ticks,
+                    render_tick - pending.expire_tick);
+                if (client_local_time_us_ > pending.received_client_us) {
+                    diagnostics.pending_max_wait_us = std::max(
+                        diagnostics.pending_max_wait_us,
+                        client_local_time_us_ - pending.received_client_us);
+                }
             }
             continue;
         }
@@ -7865,11 +7918,95 @@ void KernelEngine::release_remote_action_presentation_events() {
             tick_time_us(event_tick, tick_loop_.fixed_delta_seconds());
         if (!has_client_render_time_ || event_time_us <= render_server_time_us) {
             remote_action_presentation_events_.push_back(pending.event);
+            if (diagnose && has_client_render_time_) {
+                diagnostics.released += pending.event.commit_count;
+                diagnostics.released_min_margin_ticks = std::min(
+                    diagnostics.released_min_margin_ticks,
+                    pending.expire_tick - render_tick);
+            }
         } else {
             still_pending.push_back(pending);
         }
     }
     pending_remote_action_presentation_events_ = std::move(still_pending);
+}
+
+void KernelEngine::report_remote_presentation_stale_diagnostics() {
+    // Long enough that one line covers a fight, short enough to place it.
+    constexpr std::uint64_t kWindowUs = 5000000u;
+    RemotePresentationStaleDiagnostics& diagnostics =
+        remote_presentation_stale_diagnostics_;
+    const std::uint64_t now_us = client_local_time_us_;
+    if (!diagnostics.window_started) {
+        diagnostics.window_started = true;
+        diagnostics.window_start_us = now_us;
+        return;
+    }
+    if (now_us < diagnostics.window_start_us + kWindowUs) {
+        return;
+    }
+    static constexpr std::array<const char*, RemotePresentationStaleDiagnostics::kEventTypes>
+        kTypeNames{
+            "fire", "cast", "reload", "hit",
+            "death", "status_applied", "status_removed", "status_updated"};
+    auto by_type = [](const std::array<std::uint32_t, RemotePresentationStaleDiagnostics::kEventTypes>&
+                          counts,
+                      std::uint32_t* total) {
+        std::string text;
+        *total = 0u;
+        for (std::size_t type = 0; type < counts.size(); ++type) {
+            if (counts[type] == 0u) {
+                continue;
+            }
+            *total += counts[type];
+            if (!text.empty()) {
+                text += ' ';
+            }
+            text += fmt::format("{}={}", kTypeNames[type], counts[type]);
+        }
+        return text;
+    };
+    std::uint32_t arrival_total = 0u;
+    std::uint32_t pending_total = 0u;
+    const std::string arrival_types =
+        by_type(diagnostics.arrival_dropped, &arrival_total);
+    const std::string pending_types =
+        by_type(diagnostics.pending_dropped, &pending_total);
+    if (arrival_total + pending_total > 0u) {
+        const std::uint32_t expiry_ticks = std::max(
+            1u,
+            (config_.tick.server_tick_rate *
+                 config_.network_stats.remote_presentation_expiry_ms +
+             999u) /
+                1000u);
+        spdlog::info(
+            "remote presentation stale over {:.1f}s (expiry {} ticks): "
+            "arrival {} [{}] late<={}t batch_age<={}t | "
+            "pending {} [{}] late<={}t waited<={}ms | "
+            "released {} min_margin={}t | "
+            "release gap<={}ms render_step<={}ms",
+            static_cast<double>(now_us - diagnostics.window_start_us) / 1000000.0,
+            expiry_ticks,
+            arrival_total,
+            arrival_types,
+            diagnostics.arrival_max_late_ticks,
+            diagnostics.arrival_max_batch_age_ticks,
+            pending_total,
+            pending_types,
+            diagnostics.pending_max_late_ticks,
+            diagnostics.pending_max_wait_us / 1000u,
+            diagnostics.released,
+            diagnostics.released == 0u ? 0u : diagnostics.released_min_margin_ticks,
+            diagnostics.release_max_gap_us / 1000u,
+            diagnostics.release_max_render_step_us / 1000u);
+    }
+    RemotePresentationStaleDiagnostics next;
+    next.window_started = true;
+    next.window_start_us = now_us;
+    next.has_last_release = diagnostics.has_last_release;
+    next.last_release_client_us = diagnostics.last_release_client_us;
+    next.last_release_render_server_us = diagnostics.last_release_render_server_us;
+    diagnostics = next;
 }
 
 void KernelEngine::poll_client_transport() {

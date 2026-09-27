@@ -249,6 +249,15 @@ cc_test(
 )
 
 cc_test(
+    name = "remote_presentation_stale_diagnostics_test",
+    srcs = ["remote_presentation_stale_diagnostics_test.cc"],
+    deps = [
+        "//engine/src/kernel:kernel",
+        "//engine/src/transport:transport",
+    ],
+)
+
+cc_test(
     name = "network_stats_test",
     srcs = ["network_stats_test.cc"],
     deps = [
