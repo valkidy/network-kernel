@@ -1,10 +1,48 @@
 #include <array>
+#include <cstdio>
+#include <cstdlib>
 #include <cassert>
 #include <vector>
 
 #include "transport/public/gns_transport.h"
 
+namespace {
+
+// assert is compiled out under -c opt; these checks have to run there too.
+void require_impl(bool condition, const char* expression, int line) {
+    if (condition) return;
+    std::fprintf(stderr, "require failed at line %d: %s\n", line, expression);
+    std::abort();
+}
+#define require(condition) require_impl((condition), #condition, __LINE__)
+
+void fake_network_conditions_parse_or_stay_off() {
+    using network_example::parse_gns_fake_network_conditions;
+    const auto off = parse_gns_fake_network_conditions(nullptr, nullptr, nullptr, nullptr);
+    require(!off.any());
+
+    const auto full = parse_gns_fake_network_conditions("100", "25", "80", "1.5");
+    require(full.any());
+    require(full.lag_ms == 100);
+    require(full.jitter_mean_ms == 25.0f);
+    require(full.jitter_max_ms == 80.0f);
+    require(full.loss_pct == 1.5f);
+
+    // No cap given: four times the mean.
+    const auto uncapped = parse_gns_fake_network_conditions(nullptr, "25", nullptr, nullptr);
+    require(uncapped.any());
+    require(uncapped.jitter_max_ms == 100.0f);
+
+    // Anything that is not a number in range is off, never a guess.
+    const auto junk = parse_gns_fake_network_conditions("100ms", "-5", "", "101");
+    require(!junk.any());
+    require(parse_gns_fake_network_conditions("", nullptr, nullptr, nullptr).lag_ms == 0);
+}
+
+}  // namespace
+
 int main() {
+    fake_network_conditions_parse_or_stay_off();
     network_example::GnsEndpoint endpoint;
     assert(network_example::parse_gns_address("127.0.0.1:7777", &endpoint));
     assert(endpoint.host == "127.0.0.1");

@@ -314,6 +314,18 @@ cc_test(
     deps = ["//engine/src/kernel:kernel"],
 )
 
+cc_test(
+    name = "combat_event_delivery_end_to_end_test",
+    srcs = ["combat_event_delivery_end_to_end_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
+cc_binary(
+    name = "render_clock_bench",
+    srcs = ["render_clock_bench.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
 cc_binary(
     name = "snapshot_bandwidth_benchmark",
     srcs = ["snapshot_bandwidth_benchmark.cc"],

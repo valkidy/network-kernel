@@ -338,10 +338,9 @@ constexpr float kMaxRemoteActorExtrapolationSeconds = 0.25f;
 // extrapolated for the same quarter second, a knockback or a thrown prop
 // follows its curve -- and past it they would all be guessing.
 constexpr float kRenderClockOverrunCapSeconds = kMaxRemoteActorExtrapolationSeconds;
-// How far behind its target the render clock has to be before it speeds up,
-// and how far off before it gives up bending and jumps. The rates are the
-// bend: a tenth either way is not something the eye picks up.
-constexpr std::uint32_t kRenderClockCatchUpThresholdTicks = 1u;
+// How far the render clock may bend toward its target -- a tenth either way is
+// not something the eye picks up -- and how far off it gives up bending and
+// jumps.
 constexpr double kRenderClockCatchUpRate = 1.1;
 constexpr double kRenderClockSlowDownRate = 0.9;
 constexpr std::uint64_t kRenderClockHardResetUs = 1000000u;
@@ -9292,7 +9291,8 @@ void KernelEngine::advance_render_clock(std::uint64_t client_render_time_us) {
     // Only a client with a clock-sync estimate has a present to run toward. A
     // listen server's loopback stream is never late, and without an estimate
     // the target is the newest snapshot, which a clock cannot run past.
-    if (!has_client_clock_sync_ || config_.mode == KernelMode_ListenServer ||
+    if (!render_clock_enabled_ || !has_client_clock_sync_ ||
+        config_.mode == KernelMode_ListenServer ||
         client_snapshot_buffer_.size() < 2u) {
         return;
     }
@@ -9355,15 +9355,17 @@ void KernelEngine::advance_render_clock(std::uint64_t client_render_time_us) {
         note_held(target_us > ceiling_us);
         return;
     }
-    double rate = 1.0;
-    if (behind_us > static_cast<std::int64_t>(tick_time_us(
-                        kRenderClockCatchUpThresholdTicks, fixed_delta_seconds))) {
-        rate = kRenderClockCatchUpRate;
-    } else if (behind_us < 0) {
-        rate = kRenderClockSlowDownRate;
-    }
-    const std::uint64_t advanced_us = clock.render_us +
-        static_cast<std::uint64_t>(static_cast<double>(elapsed_us) * rate);
+    // Aimed at the target itself: the step is whatever lands on it, bent no
+    // further than the rates allow from real time. Comparing the clock before
+    // this step with the target after it held it one frame ahead forever, and a
+    // dead band around the target let it settle anywhere inside it.
+    const double elapsed = static_cast<double>(elapsed_us);
+    const double step_us = std::clamp(
+        static_cast<double>(behind_us),
+        elapsed * kRenderClockSlowDownRate,
+        elapsed * kRenderClockCatchUpRate);
+    const std::uint64_t advanced_us =
+        clock.render_us + static_cast<std::uint64_t>(step_us);
     // Held at the ceiling, never pushed back by it: the ceiling only moves
     // forward while the buffer lives.
     clock.render_us = std::max(clock.render_us, std::min(advanced_us, ceiling_us));
@@ -14280,6 +14282,21 @@ void KernelEngine::flush_remote_action_presentation(
     }
 }
 
+// A combat event is a presentation cue, sent to whoever can see it and timed
+// to the timeline they see it on. Its subject is net_id -- the one who fired,
+// or the one who was hit -- and peer_id is the peer whose action it was.
+//
+// Who: a session hears of it if it can see the subject, if the subject is its
+// own player, or if it is the one who acted. One far from both hears nothing:
+// it has nothing to draw it on, and the channel is reliable, so every event
+// sent to it costs the same as one that matters.
+//
+// When: the one who acted is looking at their own action, predicted now, so
+// theirs is presented the moment it arrives. Everyone else sees the action on
+// the world timeline, an interpolation delay behind the server, so theirs waits
+// for the world to be drawn at its tick -- or a hit lands before the swing that
+// dealt it. An event already timed keeps its time: a rewound hitscan hit is
+// stamped with the instant its shooter saw.
 void KernelEngine::broadcast_combat_events(
     std::size_t first_event,
     std::size_t last_event) {
@@ -14292,7 +14309,24 @@ void KernelEngine::broadcast_combat_events(
         if (!is_authoritative_combat_event(event.type)) {
             continue;
         }
-        broadcast_reliable_event(event);
+        for (const PeerSession& session : peer_sessions_) {
+            if (!session.welcomed) {
+                continue;
+            }
+            const bool acted = event.peer_id != 0u && event.peer_id == session.peer;
+            if (!acted && event.net_id != session.player &&
+                !session.relevant_entities.contains(event.net_id)) {
+                continue;
+            }
+            KernelEvent sent = event;
+            if (acted) {
+                sent.presentation_time_us = 0u;
+            } else if (sent.presentation_time_us == 0u) {
+                sent.presentation_time_us =
+                    tick_time_us(event.tick, tick_loop_.fixed_delta_seconds());
+            }
+            send_reliable_event(session.peer, sent);
+        }
     }
 }
 

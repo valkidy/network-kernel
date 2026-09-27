@@ -1,7 +1,10 @@
 #include "transport/public/gns_transport.h"
 
+#include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <optional>
 #include <utility>
 
 #include <steam/isteamnetworkingutils.h>
@@ -42,7 +45,69 @@ int send_flags_for_mode(SendMode mode) {
                : k_nSteamNetworkingSend_UnreliableNoDelay;
 }
 
+// A number in [0, max], or nothing: unset, empty, trailing junk or out of
+// range all read as "off" rather than as a guess.
+std::optional<double> parse_bounded(const char* text, double max) {
+    if (text == nullptr || *text == '\0') return std::nullopt;
+    char* end = nullptr;
+    const double value = std::strtod(text, &end);
+    if (end == text || *end != '\0' || !std::isfinite(value) || value < 0.0 ||
+        value > max) {
+        return std::nullopt;
+    }
+    return value;
+}
+
+void apply_fake_network_conditions(const GnsFakeNetworkConditions& conditions) {
+    if (!conditions.any()) return;
+    ISteamNetworkingUtils* utils = SteamNetworkingUtils();
+    utils->SetGlobalConfigValueInt32(
+        k_ESteamNetworkingConfig_FakePacketLag_Send, conditions.lag_ms);
+    utils->SetGlobalConfigValueFloat(
+        k_ESteamNetworkingConfig_FakePacketLoss_Send, conditions.loss_pct);
+    utils->SetGlobalConfigValueFloat(
+        k_ESteamNetworkingConfig_FakePacketJitter_Send_Avg,
+        conditions.jitter_mean_ms);
+    utils->SetGlobalConfigValueFloat(
+        k_ESteamNetworkingConfig_FakePacketJitter_Send_Max,
+        conditions.jitter_max_ms);
+    utils->SetGlobalConfigValueFloat(
+        k_ESteamNetworkingConfig_FakePacketJitter_Send_Pct,
+        conditions.jitter_mean_ms > 0.0f ? 100.0f : 0.0f);
+    // Loud on purpose: a process left with these set looks like a bad network.
+    std::fprintf(
+        stderr,
+        "[network_kernel] simulated network on send: lag %d ms, jitter mean %.1f ms "
+        "max %.1f ms, loss %.1f%%\n",
+        conditions.lag_ms,
+        conditions.jitter_mean_ms,
+        conditions.jitter_max_ms,
+        conditions.loss_pct);
+}
+
 }  // namespace
+
+GnsFakeNetworkConditions parse_gns_fake_network_conditions(
+    const char* lag_ms,
+    const char* jitter_mean_ms,
+    const char* jitter_max_ms,
+    const char* loss_pct) {
+    GnsFakeNetworkConditions conditions;
+    if (const auto lag = parse_bounded(lag_ms, 10000.0)) {
+        conditions.lag_ms = static_cast<int>(*lag);
+    }
+    if (const auto mean = parse_bounded(jitter_mean_ms, 10000.0)) {
+        conditions.jitter_mean_ms = static_cast<float>(*mean);
+        const auto max = parse_bounded(jitter_max_ms, 10000.0);
+        conditions.jitter_max_ms = max.has_value()
+            ? static_cast<float>(*max)
+            : conditions.jitter_mean_ms * 4.0f;
+    }
+    if (const auto loss = parse_bounded(loss_pct, 100.0)) {
+        conditions.loss_pct = static_cast<float>(*loss);
+    }
+    return conditions;
+}
 
 bool parse_gns_address(const char* address, GnsEndpoint* out_endpoint) {
     if (address == nullptr || out_endpoint == nullptr) {
@@ -274,6 +339,11 @@ bool GnsTransport::initialize_gns() {
     SteamNetworkingUtils()->SetGlobalConfigValueInt32(
         k_ESteamNetworkingConfig_IP_AllowWithoutAuth,
         1);
+    apply_fake_network_conditions(parse_gns_fake_network_conditions(
+        std::getenv("NETWORK_KERNEL_FAKE_LAG_MS"),
+        std::getenv("NETWORK_KERNEL_FAKE_JITTER_MS"),
+        std::getenv("NETWORK_KERNEL_FAKE_JITTER_MAX_MS"),
+        std::getenv("NETWORK_KERNEL_FAKE_LOSS_PCT")));
     return true;
 }
 

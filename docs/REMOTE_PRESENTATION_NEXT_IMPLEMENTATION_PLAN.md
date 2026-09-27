@@ -81,6 +81,57 @@ W6：獨立一單，時機由內容需求決定
 
 **過關條件：** 列出剩下的現象，並依第 2 節的順序調整優先權。
 
+### 3.1 量測結果（2026-09-26 至 09-27）
+
+**量測工具：** Unity 端的 `RemotePresentationProbe`（unity-network-example `a742b2c`）
+每秒輸出一行 `[G0]`，後面接著 `[G0 frozen]`（停住最久的物件）和 `[G0 jump]`（跳動
+明細）。只統計遠端物件。判斷「應該在動」時只看水平速度，原因見下面的 template 28。
+
+四次測試都是本機連線：rtt 固定 33.3 ms（等於一個 tick 的量測精度）、jitter 0、
+沒有掉包。**所以 W1 要處理的「串流整體遲到」一次都沒有出現過，W1 還沒有被評估。**
+
+| 次序 | 版本 | 長度 / 遠端物件 | 主要結果 |
+|---|---|---|---|
+| 1 | package `9111ac9`（修正前的基準） | 98 秒 / 最多 69 個 | 除了剛連上時，沒有整體停住。瓶子每次投擲都會跳 7–14 m。個別物件停住的數字很大，但主要是探測程式碼被垂直速度誤導 |
+| 2 | 同上 | 240 個時間窗 | 出現一次 3.6 秒的整體停住（client 幀率正常，是串流中斷；當時沒有 server log，原因不明，之後沒再出現）。發現 template 28 的速度問題 |
+| 3 | 同上，有 server log | 126 秒 / 最多 69 個 | server 30 Hz、`late=0`、最慢 9.1 ms。用 net_id 對照 server log，確認跳動的都是玩家自己丟的瓶子 → 找到 a/b 從未生效的原因 |
+| 4 | server `4fcc491`（包含 `6e4431e`） | 60 秒 / 最多 64 個 | 瓶子跳動 0 次、整體停住 0 次；個別物件停住平均每幀 0.1 個（上一次是 0.85）；大跳動 1 次（template 28） |
+
+**找到並已修正的問題：**
+
+- **a/b 在遊戲中從未生效**：a/b 讀的是 entity template 的投擲軌跡，但 catalog 把軌跡
+  放在 item template 上。修正於 `78a8f23`；另外修正飛行途中才進入 relevance 範圍的
+  prop 拿不到 anchor 的問題（`4e89f2c`）。見 §1。
+- **projectile 撞到東西後還停留約 1.5 秒**：其實是 `rocket_explosion`（area effect，
+  壽命 45 tick）在 Unity 裡借用了 projectile 的 placeholder 外觀，kernel 的行為正確。
+  Unity 端暫時改用 `Projectile_FireFloor`（unity-network-example `3568216`），正式的
+  爆炸外觀還沒做。
+
+**找到、但還沒處理的問題：**
+
+- **template 28 的 agent**：站在地面上（有 Grounded 旗標、y = 0），垂直速度卻持續
+  累加重力，數值剛好是 −9.81 × 停住的秒數，最多到 −128 m/s；好幾隻會疊在同一個
+  座標上。這是 server 模擬或 AI 的問題。步驟 1 的外推只用水平分量，所以畫面上看
+  不出來，但 **G2 的 Hermite 內插會用到這個速度，要在 G2 之前修掉。**
+- **template 32 的 agent**：回報的水平速度大於 0.5 m/s，卻最長停了 8 秒。很可能也是
+  在 server 端卡住，可以和 template 28 一起查。
+- **擊退落地時的修正**：速度約 15 m/s 的擊退飛行，落地時會被拉回 0.4–0.6 m。量不大，
+  需要更多樣本。
+- **Stale 的 actor**：每隔約 8 秒出現一次 8–16 個，每次只持續一兩幀。時間點和 nest
+  每 8 秒生成一批 agent 對得上，是新 agent 的第一個樣本還沒到，屬於正常現象。
+
+**W4：** 四次測試中 `presBudgetDropped` 都是 0，預算夠用。`presStaleDropped` 平均每秒
+約 2.7 筆，偶爾一次爆量約 25 筆（像是一次範圍攻擊打中很多隻）。本機沒有網路延遲
+也會過期，比較像 server 端排隊太久，需要再查。
+
+**W5：** 沒有觀察到「穿過 agent」的報告，還無法判斷是否值得做。
+
+**補充事實：** 只有玩家會丟瓶子，AI agent 和 local agent 都不會。ConsumeAndSpawn 生成
+的 prop 在 server log 裡記為 `peer=0`，那是因為新生成的 prop 屬於 server，不代表是誰丟的。
+
+**優先順序的調整：** a/b 的修正和 W2 / W3 已經完成。W1 必須在有網路延遲的條件下
+重新評估。template 28 的問題排在 G2 之前。
+
 ---
 
 ## 4. W1 — 共用畫面時鐘
@@ -134,7 +185,7 @@ W6：獨立一單，時機由內容需求決定
 | 參數 | 初始值 | 依據 |
 |---|---|---|
 | `overrun_cap` | 0.25 s | 與 actor 外推上限 `kMaxRemoteActorExtrapolationSeconds` 一致 |
-| `catch_up_threshold` | 1 個 tick | 避免在目標附近來回振盪 |
+| `catch_up_threshold` | ~~1 個 tick~~（已移除，見 §4.9） | 改成每一步直接瞄準目標，不會衝過頭，也就不需要門檻 |
 | rate 範圍 | 0.9–1.1 | 肉眼不易察覺的速度變化 |
 | `hard_reset_threshold` | 1 s | 斷線重連、長時間暫停 |
 
@@ -231,6 +282,58 @@ interpolation_delay = clamp(1 interval + k * jitter_us, 2 intervals, 4 intervals
 外推，腿的姿勢卻停在最後一個 tick，可能看到滑步。這要在 Unity 確認：如果明顯，
 再考慮讓腿部重建也跟著外推，或在超前期間暫停步伐動畫。
 
+### 4.9 評估：`render_clock_bench`（2026-09-27）
+
+G0 的四次實測都沒有網路延遲，所以改用 kernel 內的 bench 評估。設定如下：
+- 一個遠端 actor 以 3 m/s 繞半徑 10 m 的圓移動；snapshot 每秒 15 個；
+- 單程延遲在 [延遲 − jitter, 延遲 + jitter] 之間均勻分布，另有掉包；
+- 畫面以 60 fps 繪製，clock sync 精確；
+- 每種網路條件的 60 秒輸入完全相同，分別用舊的時鐘（每幀重算，再限制在最新
+  snapshot 以內）和新的畫面時鐘各跑一次。
+
+指令：`bazel run -c opt //engine/src/tests/kernel_tests:render_clock_bench`
+
+| 網路 | 時鐘 | 整體停住 | 最長停住 | 最大單步 | 跳動 | 平均 lag |
+|---|---|---|---|---|---|---|
+| 本機 / LAN 20 ± 5 ms | 舊 | 0% | 0 | 0.05 m | 0 | 133 ms |
+| | 新 | 0% | 0 | 0.05 m | 0 | 133 ms |
+| 50 ± 25 ms、1% 掉包 | 舊 | 0.7% | 100 ms | 0.35 m | 5 | 134 ms |
+| | 新 | 0% | 0 | 0.05 m | 0 | 133 ms |
+| 100 ± 50 ms、1% 掉包 | 舊 | **39.2%** | 150 ms | 0.50 m | **289** | 148 ms |
+| | 新 | 0% | 0 | 0.05 m | 0 | 133 ms |
+| 150 ± 75 ms、2% 掉包 | 舊 | **68.5%** | 233 ms | 0.80 m | **565** | 184 ms |
+| | 新 | 0.03% | 17 ms | 0.06 m | 0 | 133 ms |
+| 50 ± 25 ms，每 10 秒中斷 400 ms | 舊 | 3.2% | 367 ms | 1.15 m | 5 | 139 ms |
+| | 新 | 1.0% | 117 ms | 0.08 m | 0 | 140 ms |
+| 50 ± 25 ms，每 10 秒中斷 1.5 秒 | 舊 | 13.0% | 1483 ms | 4.46 m | 5 | 230 ms |
+| | 新 | 10.8% | 1233 ms | 3.73 m | 5 | 200 ms |
+
+一步約 5 cm（3 m/s × 1/60 秒）；「跳動」指單步超過正常的三倍。兩種時鐘都沒有
+出現畫面時間倒退。
+
+**判讀：**
+
+- **§4.6 的驗收條件在 bench 上達成：** 在 100 ± 50 ms、1% 掉包下，整體停住從
+  39% 降到 0，最大跳動從 0.50 m 降到 0.05 m。沒有延遲時兩者相同，沒有退化。
+- **中斷時間在 0.25 s 以內會被完全遮住；** 超過時，時鐘停在上限，恢復後用 1.1 倍速
+  追回，不會跳。中斷 400 ms 時最長只停 117 ms，最大單步 0.08 m。
+- **超過 1 秒的中斷兩者都會跳**（hard reset）。以 1.1 倍速追回 1.2 秒要花 12 秒，
+  直接跳過去比較合理。這種情況要從串流本身處理，不是畫面時鐘的範圍。
+- 誤差欄位（畫出的位置與同一時刻真實位置的差距）在所有情況都在 3 cm 以內，所以
+  沒有列出：路徑是平滑的圓，外推和內插都很準。bench 量的是停住和跳動，不是轉彎時的
+  誤差，後者屬於 G1 的範圍。
+
+**bench 找到並修正的問題：** `advance_render_clock` 原本拿推進前的時鐘，和推進後的
+目標比較，所以串流穩定時時鐘會一直停在目標前面一幀，實際的內插延遲變成 117 ms
+（少了一幀）。另外，「落後超過 1 tick 才加速」的門檻形成一個 0–33 ms 的死區，時鐘
+會停在死區裡的任何位置。改成每一步直接瞄準目標，步距限制在真實時間的
+0.9–1.1 倍之間，門檻因此移除。`render_clock_test` 新增了一項測試：串流穩定時，
+畫面時間必須在目標的 1 ms 以內。舊寫法會讓這項測試失敗。
+
+**還沒驗證的部分：** 腿部滑步（§4.8），以及 `render clock held` 的 log 會不會出現在
+Unity Console。這兩項都要在 Unity 裡開網路延遲才能看，但目前遊戲用的
+GameNetworkingSockets transport 還沒開放模擬延遲的設定。
+
 ---
 
 ## 5. W2 — 戰鬥事件依畫面時間釋放（對應討論中的第 8 項）
@@ -300,6 +403,39 @@ presentation_time_us = tick_time_us(event.tick)
 ### 5.6 版本影響
 
 無，欄位已存在於 reliable event 封包中。
+
+---
+
+### 5.7 實作結果（`claude/combat-event-timing`，與 W3 一起）
+
+**§5.1 的前提有誤。** `HitConfirmed` 和 `DamageApplied` 其實有設定
+`presentation_time_us`（在 simulation 層的 `damage_system.cc` 設為 `hit_time_us`；
+先前只搜尋了 kernel.cc）。多數傷害來源的 `hit_time_us` 是命中當下的 server 時間
+（projectile、範圍攻擊、beam、action graph，包含 AI 近戰），hitscan 則是射擊者
+開火時看到的時間。所以受害者端的 hit 和 damage 本來就會延到畫面時間，local agent
+的 `LastDamagedTime` 也早已是延後的。
+
+用端對端測試（`combat_event_delivery_end_to_end_test`，一個 server 加上射擊者、
+受害者、遠處旁觀者三個 client）量到的實際現況：
+
+| 事件 | 射擊者（自己） | 受害者 | 遠處旁觀者 |
+|---|---|---|---|
+| `FireConfirmed` | 立即 | **立即**（比畫面上的動作早約 100 ms） | **有收到** |
+| `HitConfirmed` / `DamageApplied` | **延到畫面時間**（命中提示晚約 133 ms） | 延到畫面時間 | **有收到** |
+
+**改動：** `broadcast_combat_events` 改成逐一 session 判斷。
+
+- 送給誰（W3）：事件的主體（`net_id`）在這個 session 的 relevance 範圍內、主體是
+  這個 session 的玩家，或這個 session 就是發起者（`peer_id`），才會送出。
+- 什麼時候出現（W2）：發起者自己的事件，`presentation_time_us` 設為 0，立即出現；
+  其他人收到的事件如果原本是 0，就填入事件 tick 的時間。已經有值的保留原值
+  （hitscan 的回溯時間）。
+- `Explosion` 列在廣播清單中，但沒有任何地方會產生這種事件，未處理。
+
+**Unity 端影響：** 用到這些事件的只有兩處，都是 `DamageApplied`：本地玩家的受擊
+動作，以及 local agent 的 `LastDamagedTime`。兩者對受害者來說原本就已經延後，
+所以行為不變。已確認接受這個延遲：它讓 local agent 和一般玩家在同一個時間點
+得知自己被打。
 
 ---
 
