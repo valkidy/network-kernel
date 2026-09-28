@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include <iterator>
+#include <optional>
 
 #include "physics/public/physics_world.h"
 #include "simulation/public/action_graph.h"
@@ -223,6 +224,95 @@ glm::vec3 compensated_projectile_origin(
     }
     const glm::vec3 muzzle_offset = glm::vec3{0.0f, 1.0f, 0.0f} - shooter_hitbox.center;
     return historical_shooter->center + muzzle_offset;
+}
+
+// Where a targeted strike lands, or nothing if the aim does not reach one.
+//
+// Two rays. The first follows the aim up to max_range and stops on the first
+// actor, terrain or static obstacle -- the actor tested where the shooter saw
+// it (the rewound frame) when there is one, the world as it is otherwise, and
+// the nearer of the two wins so a wall still hides whoever stands behind it.
+// Aiming at nothing within range is a refusal, not a point at the end of the
+// ray: a strike lands under what the reticle is on, or not at all. The second
+// ray drops from that point onto terrain or a static obstacle, passing
+// through actors, so aiming at someone lands at their feet.
+std::optional<glm::vec3> resolve_strike_target(
+    World& world,
+    const HistoryFrame* rewind_frame,
+    NetId shooter_net_id,
+    const glm::vec3& origin,
+    const glm::vec3& direction,
+    float max_range) {
+    const physics::PhysicsWorld* collision_world = world.collision_world();
+    if (collision_world == nullptr || max_range <= 0.0f) {
+        return std::nullopt;
+    }
+    constexpr std::uint32_t kGroundMask =
+        KERNEL_COLLISION_LAYER_TERRAIN | KERNEL_COLLISION_LAYER_STATIC_OBSTACLE;
+
+    bool found = false;
+    float nearest = max_range;
+    glm::vec3 point{0.0f};
+    // Off the surface the first ray met, so the drop starts in the open: back
+    // along a wall's normal, just above a floor.
+    glm::vec3 lift{0.0f};
+
+    physics::RayCastRequest world_ray{};
+    world_ray.origin = origin;
+    world_ray.direction = direction;
+    world_ray.max_distance = max_range;
+    world_ray.filter = collision_filter_from_mask(kGroundMask);
+    world_ray.filter.ignored_entity_net_id = shooter_net_id;
+    physics::CollisionHit world_hit{};
+    if (collision_world->ray_cast_closest(world_ray, &world_hit)) {
+        found = true;
+        nearest = world_hit.distance;
+        point = world_hit.position;
+        lift = world_hit.normal * 0.1f;
+    }
+
+    if (rewind_frame != nullptr) {
+        HistoricalHitResult actor_hit;
+        if (raycast_history_frame(
+                *rewind_frame,
+                origin,
+                direction,
+                max_range,
+                shooter_net_id,
+                &actor_hit) &&
+            actor_hit.distance < nearest) {
+            found = true;
+            nearest = actor_hit.distance;
+            point = actor_hit.impact_position;
+            lift = glm::vec3{0.0f};
+        }
+    } else {
+        physics::RayCastRequest actor_ray = world_ray;
+        actor_ray.filter = collision_filter_from_mask(KERNEL_COLLISION_MASK_ACTOR);
+        actor_ray.filter.ignored_entity_net_id = shooter_net_id;
+        physics::CollisionHit actor_hit{};
+        if (collision_world->ray_cast_closest(actor_ray, &actor_hit) &&
+            actor_hit.distance < nearest) {
+            found = true;
+            nearest = actor_hit.distance;
+            point = actor_hit.position;
+            lift = glm::vec3{0.0f};
+        }
+    }
+    if (!found) {
+        return std::nullopt;
+    }
+
+    physics::RayCastRequest drop{};
+    drop.origin = point + lift + glm::vec3{0.0f, 0.05f, 0.0f};
+    drop.direction = glm::vec3{0.0f, -1.0f, 0.0f};
+    drop.max_distance = max_range;
+    drop.filter = collision_filter_from_mask(kGroundMask);
+    physics::CollisionHit ground{};
+    if (!collision_world->ray_cast_closest(drop, &ground)) {
+        return std::nullopt;
+    }
+    return ground.position;
 }
 
 void apply_hitscan_damage(
@@ -803,6 +893,31 @@ void simulate_weapons(
                     KernelLocalActionResultReason_EffectFailed);
                 break;
             }
+            // A strike that finds nowhere to land is refused here, before
+            // any ammunition or cooldown is spent on it.
+            const RuntimeProjectileTemplate* strike_template = nullptr;
+            std::optional<glm::vec3> strike_target;
+            if (definition->mode == WeaponFireMode::kTargetedStrike) {
+                strike_template = world.find_projectile_template(
+                    definition->projectile_template_id);
+                if (strike_template != nullptr) {
+                    strike_target = resolve_strike_target(
+                        world,
+                        context.rewind_frame,
+                        player_identity.net_id,
+                        projectile_launch_position(
+                            player_view.get<Transform>(player_entity)),
+                        input_aim_to_world(queued_input.input),
+                        definition->max_range);
+                }
+                if (!strike_target.has_value()) {
+                    push_action_outcome(
+                        commit,
+                        ActionOutcomeType::Corrected,
+                        KernelLocalActionResultReason_EffectFailed);
+                    break;
+                }
+            }
             weapon.ammo[slot] = static_cast<std::uint16_t>(
                 weapon.ammo[slot] - ammo_cost);
             weapon.next_primary_commit_tick[slot] =
@@ -877,6 +992,19 @@ void simulate_weapons(
                     queued_input.input.action_intent.action_instance_id,
                     damage_pipeline,
                     context.action_graph_batches);
+            } else if (definition->mode == WeaponFireMode::kTargetedStrike) {
+                (void)spawn_projectile_at(
+                    world,
+                    *strike_template,
+                    queued_input.owner_peer,
+                    player_identity.net_id,
+                    definition->id,
+                    queued_input.input.action_intent.action_instance_id,
+                    *strike_target,
+                    direction,
+                    current_tick,
+                    context.fixed_delta_seconds,
+                    events);
             } else if (definition->mode == WeaponFireMode::kProjectile) {
                 const RuntimeProjectileTemplate* projectile_template =
                     world.find_projectile_template(definition->projectile_template_id);

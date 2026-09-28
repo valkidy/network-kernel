@@ -652,14 +652,19 @@ bool validate_weapon_mechanics(
     if (weapon.struct_size < sizeof(KernelWeaponMechanicsDefinition) ||
         weapon.magazine_size == 0 ||
         (weapon.fire_mode != KernelWeaponFireMode_Projectile &&
+         weapon.fire_mode != KernelWeaponFireMode_TargetedStrike &&
          weapon.damage == 0) ||
         weapon.fire_action_template_id == 0u ||
         weapon.reload_action_template_id == 0u ||
-        weapon.fire_mode > KernelWeaponFireMode_Melee) {
+        weapon.fire_mode > KernelWeaponFireMode_TargetedStrike) {
         return false;
     }
     if (weapon.fire_mode == KernelWeaponFireMode_Projectile) {
         return weapon.projectile_template_id != 0;
+    }
+    // Mirrors validate_weapon_mechanics on the kernel side.
+    if (weapon.fire_mode == KernelWeaponFireMode_TargetedStrike) {
+        return weapon.projectile_template_id != 0 && weapon.max_range > 0.0f;
     }
     // A melee weapon's reach is the cone on the collider template it names, so
     // it is deliberately not held to max_range the way the other instant modes
@@ -2326,6 +2331,31 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
                 : 1;
         weapon.pellet_spread =
             node["burst_spread_degrees"] ? node["burst_spread_degrees"].as<float>() : 0.0f;
+        return weapon;
+    }
+    if (type == "targeted_strike") {
+        if (node["projectile"] || node["area_effect"] || node["beam"]) {
+            throw std::runtime_error(
+                "targeted_strike weapons must use projectile_template, not "
+                "inline mechanics");
+        }
+        if (!node["projectile_template"]) {
+            throw std::runtime_error(
+                "targeted_strike weapon requires projectile_template");
+        }
+        if (!node["max_range"]) {
+            throw std::runtime_error(
+                "targeted_strike weapon requires max_range: the farthest "
+                "point it may be aimed at");
+        }
+        KernelWeaponMechanicsDefinition weapon{};
+        weapon.struct_size = sizeof(KernelWeaponMechanicsDefinition);
+        weapon.weapon_id = id;
+        weapon.fire_mode = KernelWeaponFireMode_TargetedStrike;
+        weapon.magazine_size = magazine_size;
+        weapon.reserve_magazines = reserve_magazines;
+        weapon.max_range = node["max_range"].as<float>();
+        weapon.pellet_count = 1;
         return weapon;
     }
     if (type == "melee") {
@@ -6804,6 +6834,38 @@ void apply_weapon_template_references(
             continue;
         }
 
+        if (type == "targeted_strike") {
+            ProjectileTemplateConfig* strike_template =
+                projectile_template_from_ref(
+                    document["projectile_template"],
+                    projectile_templates);
+            const KernelProjectileMechanicsDefinition& mechanics =
+                strike_template->definition.mechanics;
+            // It appears at a point only the server resolves, so there is
+            // nothing a client could predict; and a beam is anchored to its
+            // shooter, not to a point.
+            if (mechanics.projectile_type == KernelProjectileType_Beam) {
+                throw std::runtime_error(
+                    "targeted_strike cannot land a beam: " + file);
+            }
+            if (mechanics.sync_mode != KernelProjectileSyncMode_ServerSnapshotOnly) {
+                throw std::runtime_error(
+                    "targeted_strike projectile_template needs sync_mode "
+                    "server_snapshot_only: " + file);
+            }
+            KernelWeaponMechanicsDefinition& weapon =
+                weapons->definitions[weapon_id];
+            strike_template->definition.weapon_id = weapon_id;
+            weapon.projectile_template_id =
+                strike_template->definition.projectile_template_id;
+            weapon.damage = mechanics.damage;
+            weapon.collision_mask = mechanics.collision_mask;
+            weapons->projectile_sync_modes[weapon_id] = mechanics.sync_mode;
+            weapons->collider_template_ids[weapon_id] =
+                mechanics.collider_template_id;
+            continue;
+        }
+
         if (type == "projectile" || type == "area_effect" || type == "beam") {
             ProjectileTemplateConfig* projectile_template =
                 projectile_template_from_ref(
@@ -8809,7 +8871,8 @@ std::vector<std::string> validate_gameplay_config(
         }
         const KernelWeaponMechanicsDefinition& weapon =
             config.weapons.definitions[id];
-        if (weapon.fire_mode == KernelWeaponFireMode_Projectile &&
+        if ((weapon.fire_mode == KernelWeaponFireMode_Projectile ||
+             weapon.fire_mode == KernelWeaponFireMode_TargetedStrike) &&
             std::find(
                 projectile_template_ids.begin(),
                 projectile_template_ids.end(),

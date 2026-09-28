@@ -1572,6 +1572,9 @@ WeaponFireMode to_weapon_fire_mode(std::uint8_t fire_mode) {
     if (fire_mode == KernelWeaponFireMode_Melee) {
         return WeaponFireMode::kMelee;
     }
+    if (fire_mode == KernelWeaponFireMode_TargetedStrike) {
+        return WeaponFireMode::kTargetedStrike;
+    }
     return WeaponFireMode::kHitscan;
 }
 
@@ -1883,16 +1886,23 @@ bool validate_weapon_mechanics(const KernelWeaponMechanicsDefinition& definition
     if (definition.struct_size < sizeof(KernelWeaponMechanicsDefinition) ||
         definition.magazine_size == 0 ||
         (definition.fire_mode != KernelWeaponFireMode_Projectile &&
+         definition.fire_mode != KernelWeaponFireMode_TargetedStrike &&
          definition.damage == 0) ||
         definition.fire_action_template_id == 0u ||
         definition.reload_action_template_id == 0u) {
         return false;
     }
-    if (definition.fire_mode > KernelWeaponFireMode_Melee) {
+    if (definition.fire_mode > KernelWeaponFireMode_TargetedStrike) {
         return false;
     }
     if (definition.fire_mode == KernelWeaponFireMode_Projectile) {
         return definition.projectile_template_id != 0;
+    }
+    // What lands usually deals no damage itself -- a marker whose expiry, or
+    // a meteor whose impact, does -- so damage is not required here either.
+    if (definition.fire_mode == KernelWeaponFireMode_TargetedStrike) {
+        return definition.projectile_template_id != 0 &&
+               definition.max_range > 0.0f;
     }
     // A melee weapon's reach is the cone on its collider template, so it is
     // deliberately not held to max_range the way the other instant modes are:

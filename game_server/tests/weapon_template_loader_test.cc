@@ -1180,6 +1180,84 @@ void descent_launch_is_authored() {
     assert(muzzle_failed);
 }
 
+// weapon_type: targeted_strike lands its projectile template on a point. It
+// needs a max_range, and what it lands must be something only the server
+// places: server_snapshot_only, and not a beam.
+void targeted_strike_weapon_is_authored() {
+    const std::string marker =
+        "id: 40\nname: strike_marker\ntype: standard\n"
+        "collider_template: projectile_sphere\n"
+        "damage: 0\ndamage_shape: none\n"
+        "speed: 0.0\ncollision_mask: none\n"
+        "lifetime_ticks: 20\n";
+    const std::string meteor =
+        "id: 41\nname: meteor_body\ntype: standard\n"
+        "collider_template: projectile_sphere\n"
+        "damage: 0\ndamage_shape: none\n"
+        "collision_mask: terrain | static_obstacle\n"
+        "lifetime_ticks: 18\n"
+        "launch:\n  type: descent\n  elevation_degrees: [75, 85]\n"
+        "  height: 40.0\n  fall_ticks: 15\n";
+    const auto strike_dir = [&](const char* name,
+                                const std::string& marker_sync,
+                                const std::string& weapon_body) {
+        const std::filesystem::path dir = tmp_dir(name);
+        write_valid_templates(dir);
+        write_file(
+            dir.parent_path() / "projectile_templates" / "strike_marker.yaml",
+            marker + marker_sync);
+        write_file(
+            dir.parent_path() / "projectile_templates" / "meteor_body.yaml",
+            meteor);
+        write_file(
+            dir / "rocket.yaml",
+            "id: 3\nname: Meteor Staff\nweapon_type: targeted_strike\n"
+            "magazine_size: 2\nfire_action_template: rocket_fire\n" +
+                weapon_body);
+        return dir;
+    };
+
+    const network_example::game_server::GameServerGameplayConfig config =
+        network_example::game_server::load_gameplay_config_from_weapon_template_directory(
+            strike_dir(
+                "strike_marker_weapon",
+                "sync_mode: server_snapshot_only\n",
+                "max_range: 35.0\nprojectile_template: strike_marker\n")
+                .string());
+    const KernelWeaponMechanicsDefinition& weapon = config.weapons.definitions[3];
+    assert(config.weapons.configured[3]);
+    assert(weapon.fire_mode == KernelWeaponFireMode_TargetedStrike);
+    assert(weapon.max_range == 35.0f);
+    assert(weapon.projectile_template_id == 40u);
+
+    // A descent template may be landed directly; the muzzle rule does not
+    // apply to a weapon that never fires from the muzzle.
+    const network_example::game_server::GameServerGameplayConfig direct =
+        network_example::game_server::load_gameplay_config_from_weapon_template_directory(
+            strike_dir(
+                "strike_meteor_weapon",
+                "sync_mode: server_snapshot_only\n",
+                "max_range: 35.0\nprojectile_template: meteor_body\n")
+                .string());
+    assert(direct.weapons.definitions[3].projectile_template_id == 41u);
+
+    const bool no_range = load_fails(strike_dir(
+        "strike_no_range",
+        "sync_mode: server_snapshot_only\n",
+        "projectile_template: strike_marker\n"));
+    assert(no_range);
+    const bool predicted = load_fails(strike_dir(
+        "strike_predicted_marker",
+        "sync_mode: hybrid_deterministic_then_snapshot\n",
+        "max_range: 35.0\nprojectile_template: strike_marker\n"));
+    assert(predicted);
+    const bool beam = load_fails(strike_dir(
+        "strike_beam",
+        "sync_mode: server_snapshot_only\n",
+        "max_range: 35.0\nprojectile_template: beam_rifle_beam\n"));
+    assert(beam);
+}
+
 void area_effect_speed_is_authored() {
     const std::filesystem::path default_dir = tmp_dir("area_speed_default");
     write_valid_templates(default_dir);
@@ -1571,6 +1649,7 @@ int main() {
     stationary_marker_loads_only_when_inert();
     area_effect_rejects_on_expired();
     descent_launch_is_authored();
+    targeted_strike_weapon_is_authored();
     subject_direction_needs_a_projectile_that_travels();
     area_effect_motion_collision_mask_is_authored();
     catalog_file_loads_colliders();

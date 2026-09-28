@@ -1182,6 +1182,33 @@ std::uint64_t projectile_launch_seed(
     return seed;
 }
 
+bool spawn_projectile_at(
+    World& world,
+    const RuntimeProjectileTemplate& projectile_template,
+    PeerId owner_peer,
+    NetId shooter_net_id,
+    std::uint8_t weapon_id,
+    std::uint32_t action_instance_id,
+    const glm::vec3& position,
+    const glm::vec3& direction,
+    std::uint32_t current_tick,
+    float fixed_delta_seconds,
+    std::vector<KernelEvent>* events) {
+    return spawn_projectile_from_template(
+        world,
+        projectile_template,
+        owner_peer,
+        shooter_net_id,
+        weapon_id,
+        action_instance_id,
+        position,
+        direction,
+        current_tick,
+        fixed_delta_seconds,
+        events,
+        nullptr);
+}
+
 ProjectileLaunch descent_launch(
     const RuntimeProjectileTemplate& projectile_template,
     const glm::vec3& target,

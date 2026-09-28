@@ -14,6 +14,8 @@
  *     speed 0 as a marker (collision mask none, linear, no gravity): it holds
  *     its place and fires on_expired there. Every managed mirror must add the
  *     block, or the nested layout of KernelProjectileTemplateDefinition shifts.
+ *     KernelWeaponFireMode gained _TargetedStrike, whose max_range is the
+ *     farthest point it may be aimed at.
  * 93: KernelEntityTemplateDefinition gained knockdown_recovery_ticks, appended:
  *     how long a knockback that lands keeps the actor down -- rooted, and
  *     refusing new actions as the knockback did -- before it may move again.
@@ -1002,6 +1004,14 @@ typedef enum KernelWeaponFireMode {
      * entities, no spawn packets, and no snapshot records.
      */
     KernelWeaponFireMode_Melee = 3,
+    /*
+     * Lands its projectile template on a point instead of launching it from
+     * the muzzle. The point is resolved on the server from the aim: the first
+     * actor, terrain or static obstacle within max_range, then the ground
+     * under it. If either step finds nothing, the shot is refused and costs
+     * no ammunition. Never predicted by the client.
+     */
+    KernelWeaponFireMode_TargetedStrike = 4,
 } KernelWeaponFireMode;
 
 typedef enum KernelProjectileMotionModel {

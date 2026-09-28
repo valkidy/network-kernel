@@ -199,6 +199,22 @@ ProjectileLaunch descent_launch(
     float fixed_delta_seconds,
     const physics::PhysicsWorld* ground);
 
+// Spawns `projectile_template` at `position` facing `direction`, applying its
+// launch rule, and reports the spawn in `events`. For callers that decided the
+// point themselves, such as a targeted strike's resolved landing point.
+bool spawn_projectile_at(
+    World& world,
+    const RuntimeProjectileTemplate& projectile_template,
+    PeerId owner_peer,
+    NetId shooter_net_id,
+    std::uint8_t weapon_id,
+    std::uint32_t action_instance_id,
+    const glm::vec3& position,
+    const glm::vec3& direction,
+    std::uint32_t current_tick,
+    float fixed_delta_seconds,
+    std::vector<KernelEvent>* events);
+
 bool spawn_action_graph_projectile(
     World& world,
     std::uint32_t projectile_template_id,

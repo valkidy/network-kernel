@@ -280,6 +280,8 @@ enum class WeaponFireMode : std::uint8_t {
     // Instant like kHitscan, but an overlap against a shaped volume rather
     // than a ray, and it spawns nothing.
     kMelee = 3,
+    // Lands its projectile on a point resolved from the aim, not the muzzle.
+    kTargetedStrike = 4,
 };
 
 enum class ProjectileMotionModel : std::uint8_t {
