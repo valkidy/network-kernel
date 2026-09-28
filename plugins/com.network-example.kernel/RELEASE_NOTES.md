@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- aligns Unity bindings with kernel ABI 94 for targeted strikes, projectile launch and replication, and repeated spawns
+
+
+0.7.0 release notes:
+
 - refreshes native plugin builds from the latest integrated revision
 
 

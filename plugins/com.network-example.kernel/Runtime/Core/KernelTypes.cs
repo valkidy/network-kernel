@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 93;
+        public const uint AbiVersion = 94;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int LogMessageTextSize = 512;
@@ -27,6 +27,7 @@ namespace NetworkExample.Kernel
         public const int MaxFootholdCandidates = 8;
         public const int MaxSkeletonColliders = 16;
         public const int MaxActionGraphActions = 8;
+        public const uint MaxActionRepeat = 16U;
         public const int MaxPortableStateFields = 8;
         public const uint MaxImpulseLockoutTicks = 300U;
         public const uint MaxStaggerTicks = 300U;
@@ -540,6 +541,7 @@ namespace NetworkExample.Kernel
         Shotgun = 1,
         Projectile = 2,
         Melee = 3,
+        TargetedStrike = 4,
     }
 
     public enum KernelProjectileMotionModel : byte
@@ -1030,6 +1032,14 @@ namespace NetworkExample.Kernel
         // meter this hit adds, including an explicit 0 that never staggers.
         public uint damage_stagger_authored;
         public float damage_stagger;
+
+        // spawn_projectile only; zero preserves the template lifetime and single spawn.
+        public uint spawn_lifetime_ticks;
+        public byte repeat_count_min;
+        public byte repeat_count_max;
+        public ushort reserved3;
+        public float repeat_scatter_radius;
+        public uint repeat_stagger_lifetime_ticks;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelActionDefinition>();
     }
@@ -2089,6 +2099,34 @@ namespace NetworkExample.Kernel
         public static uint StructSize => (uint)Marshal.SizeOf<KernelHomingMechanicsDefinition>();
     }
 
+    public enum KernelProjectileReplication : byte
+    {
+        Replicated = 0,
+        Derived = 1,
+    }
+
+    public enum KernelProjectileLaunchType : byte
+    {
+        None = 0,
+        Descent = 1,
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelProjectileLaunchDefinition
+    {
+        // A zero struct_size preserves the authored spawn position and speed.
+        public uint struct_size;
+        public byte launch_type;
+        public byte reserved0;
+        public ushort reserved1;
+        public float elevation_min_degrees;
+        public float elevation_max_degrees;
+        public float height;
+        public uint fall_ticks;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelProjectileLaunchDefinition>();
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     public struct KernelProjectileMechanicsDefinition
     {
@@ -2112,8 +2150,10 @@ namespace NetworkExample.Kernel
         public KernelActionTriggerDefinition projectile_impact_trigger;
         public KernelActionTriggerDefinition expired_trigger;
         public byte collision_query_mode;
-        public byte reserved0;
+        // KernelProjectileReplication; zero keeps the projectile replicated.
+        public byte replication;
         public ushort reserved1;
+        public KernelProjectileLaunchDefinition launch;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelProjectileMechanicsDefinition>();
     }

@@ -24,7 +24,7 @@ namespace NetworkExample.Kernel.Editor
             KernelAbi.ValidateNativeAbi();
             GameServerAbi.ValidateNativeAbi();
             KernelAbiInfo info = KernelAbi.GetInfo();
-            Require(KernelConstants.AbiVersion == 93, "Managed kernel ABI version was not v93.");
+            Require(KernelConstants.AbiVersion == 94, "Managed kernel ABI version was not v94.");
             Require(
                 KernelLocalWeaponState.StructSize == 20 &&
                 info.local_weapon_state_size == KernelLocalWeaponState.StructSize,
@@ -123,7 +123,7 @@ namespace NetworkExample.Kernel.Editor
                 KernelConstants.MaxStaggerTicks == 300U,
                 "Kernel hit stagger ABI mismatch.");
             Require(
-                System.Runtime.InteropServices.Marshal.SizeOf<KernelActionTriggerDefinition>() == 764 &&
+                System.Runtime.InteropServices.Marshal.SizeOf<KernelActionTriggerDefinition>() == 892 &&
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("damage_stagger") >
                     (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("impulse_strength_vertical") &&
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelEntityTemplateDefinition>("stagger_immunity_ticks") >
@@ -161,6 +161,18 @@ namespace NetworkExample.Kernel.Editor
             Require(
                 KernelLog.Poll(new KernelLogLine[4]) <= 4,
                 "Kernel_PollLogMessages returned more lines than asked for.");
+            Require(
+                KernelConstants.MaxActionRepeat == 16U &&
+                KernelWeaponFireMode.TargetedStrike == (KernelWeaponFireMode)4 &&
+                KernelProjectileReplication.Derived == (KernelProjectileReplication)1 &&
+                KernelProjectileLaunchType.Descent == (KernelProjectileLaunchType)1 &&
+                KernelProjectileLaunchDefinition.StructSize == 24 &&
+                KernelActionDefinition.StructSize == 100 &&
+                (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("spawn_lifetime_ticks") == 84 &&
+                (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelProjectileLaunchDefinition>("fall_ticks") == 20 &&
+                (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelProjectileMechanicsDefinition>("launch") ==
+                    (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelProjectileMechanicsDefinition>("collision_query_mode") + 4,
+                "Kernel targeted strike ABI mismatch.");
             RequireLANDiscovery();
             byte[] catalogBundleBytes = LoadGameplayCatalogBundleBytes();
 
