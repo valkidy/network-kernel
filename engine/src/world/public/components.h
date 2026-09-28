@@ -537,6 +537,12 @@ struct ProjectileState {
     glm::vec3 spawn_direction{1.0f, 0.0f, 0.0f};
     // Carried into the provenance of its triggers; see ActionExecutionProvenance.
     std::uint32_t launch_salt = 0;
+    // Copied from the template at spawn so relevance can skip it cheaply.
+    bool derived = false;
+    // Non-zero once a root has expired and is held for its derived chain:
+    // the tick it is finally destroyed on. Held, it hits nothing and fires
+    // nothing more.
+    std::uint32_t hold_until_tick = 0;
 };
 
 struct ThrownPropMotion {
@@ -902,6 +908,13 @@ struct RuntimeProjectileTemplate {
     float homing_max_turn_degrees_per_tick = 0.0f;
     float homing_acceleration = 0.0f;
     float homing_max_speed = 0.0f;
+    // Never sent to clients; see KernelProjectileReplication.
+    bool derived = false;
+    // How long the derived projectiles this one spawns, and theirs in turn,
+    // can outlive its own expiry. Computed from the catalog when templates
+    // are installed, not authored. A replicated root that has any is held
+    // this much longer after it expires, so a client can still be handed it.
+    std::uint32_t derived_chain_ticks = 0;
     ProjectileLaunchType launch_type = ProjectileLaunchType::kNone;
     float launch_elevation_min_degrees = 0.0f;
     float launch_elevation_max_degrees = 0.0f;

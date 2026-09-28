@@ -12,3 +12,5 @@ damage_behavior:
   damage_interval_ticks: 2
   falloff: linear
 collision_mask: hostile_side
+# Never sent: clients derive it from the marker at the root of its chain.
+replication: derived

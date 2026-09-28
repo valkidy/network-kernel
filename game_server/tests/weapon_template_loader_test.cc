@@ -1365,6 +1365,99 @@ void spawn_repeat_is_authored() {
     assert(repeated_damage_failed);
 }
 
+// replication: derived is only accepted where a client can derive it: below a
+// stationary marker a targeted_strike weapon lands, ending on the static
+// world. The accepted chain is the control for each refusal.
+void derived_replication_is_authored() {
+    const std::string marker =
+        "id: 40\nname: strike_marker\ntype: standard\n"
+        "collider_template: projectile_sphere\n"
+        "damage: 0\ndamage_shape: none\n"
+        "speed: 0.0\ncollision_mask: none\n"
+        "sync_mode: server_snapshot_only\n"
+        "lifetime_ticks: 20\n"
+        "triggers:\n"
+        "  on_expired:\n"
+        "    action_graph: action_spawn_projectile_at_impact\n"
+        "    parameters:\n"
+        "      template: meteor_body\n"
+        "      position: event.position\n"
+        "      direction: event.direction\n";
+    const std::string meteor_head =
+        "id: 41\nname: meteor_body\ntype: standard\n"
+        "collider_template: projectile_sphere\n"
+        "damage: 0\ndamage_shape: none\n"
+        "lifetime_ticks: 18\n"
+        "launch:\n  type: descent\n  elevation_degrees: 80\n"
+        "  height: 40.0\n  fall_ticks: 15\n";
+    const auto chain_dir = [&](const char* name,
+                               const std::string& meteor_tail,
+                               const std::string& weapon_template) {
+        const std::filesystem::path dir = tmp_dir(name);
+        write_valid_templates(dir);
+        write_file(
+            dir.parent_path() / "projectile_templates" / "strike_marker.yaml",
+            marker);
+        write_file(
+            dir.parent_path() / "projectile_templates" / "meteor_body.yaml",
+            meteor_head + meteor_tail);
+        write_file(
+            dir / "rocket.yaml",
+            "id: 3\nname: Meteor Staff\nweapon_type: targeted_strike\n"
+            "magazine_size: 2\nmax_range: 35.0\n"
+            "fire_action_template: rocket_fire\n"
+            "projectile_template: " + weapon_template + "\n");
+        return dir;
+    };
+
+    const network_example::game_server::GameServerGameplayConfig config =
+        network_example::game_server::load_gameplay_config_from_weapon_template_directory(
+            chain_dir(
+                "derived_valid",
+                "collision_mask: terrain | static_obstacle\nreplication: derived\n",
+                "strike_marker")
+                .string());
+    assert(projectile_mechanics(config, 41).replication ==
+           KernelProjectileReplication_Derived);
+    assert(projectile_mechanics(config, 40).replication ==
+           KernelProjectileReplication_Replicated);
+
+    // Its end would depend on actors only the server sees move.
+    const bool hits_actors = load_fails(chain_dir(
+        "derived_hits_actors",
+        "collision_mask: terrain | hostile_side\nreplication: derived\n",
+        "strike_marker"));
+    assert(hits_actors);
+    // Fired directly, it has no root for a client to hold.
+    const bool fired_directly = load_fails(chain_dir(
+        "derived_fired_directly",
+        "collision_mask: terrain | static_obstacle\nreplication: derived\n",
+        "meteor_body"));
+    assert(fired_directly);
+    const bool bad_value = load_fails(chain_dir(
+        "derived_bad_value",
+        "collision_mask: terrain | static_obstacle\nreplication: sometimes\n",
+        "strike_marker"));
+    assert(bad_value);
+
+    // A rocket is not a root: its impact point is decided in flight.
+    const std::filesystem::path rocket_dir = chain_dir(
+        "derived_under_rocket",
+        "collision_mask: terrain | static_obstacle\n",
+        "strike_marker");
+    write_file(
+        rocket_dir.parent_path() / "projectile_templates" / "rocket_explosion.yaml",
+        "id: 8\nname: rocket_explosion\nkind: area_effect\n"
+        "collider_template: area_effect_sphere\n"
+        "damage: 45\nlifetime_ticks: 45\n"
+        "damage_behavior:\n  type: area_interval\n"
+        "  damage_interval_ticks: 45\n  falloff: linear\n"
+        "collision_mask: damageable\n"
+        "replication: derived\n");
+    const bool under_rocket = load_fails(rocket_dir);
+    assert(under_rocket);
+}
+
 void area_effect_speed_is_authored() {
     const std::filesystem::path default_dir = tmp_dir("area_speed_default");
     write_valid_templates(default_dir);
@@ -1758,6 +1851,7 @@ int main() {
     descent_launch_is_authored();
     targeted_strike_weapon_is_authored();
     spawn_repeat_is_authored();
+    derived_replication_is_authored();
     subject_direction_needs_a_projectile_that_travels();
     area_effect_motion_collision_mask_is_authored();
     catalog_file_loads_colliders();

@@ -93,8 +93,10 @@ struct Storm {
     std::vector<glm::vec3> meteor_velocities;
 };
 
-Storm run_storm(std::uint32_t action_instance_id) {
-    network_example::World world;
+// Storm marker -> repeated fuses -> descending meteors. `derived` marks the
+// fuse and meteor as never sent, which is what makes the marker a root.
+std::vector<network_example::RuntimeProjectileTemplate> storm_templates(
+    bool derived) {
     network_example::RuntimeProjectileTemplate storm =
         marker_template(kStormTemplate, 1);
     storm.expired_binding = storm_binding();
@@ -115,7 +117,14 @@ Storm run_storm(std::uint32_t action_instance_id) {
     meteor.launch_elevation_max_degrees = 85.0f;
     meteor.launch_height = 40.0f;
     meteor.launch_fall_ticks = 15;
-    world.set_projectile_templates({storm, fuse, meteor});
+    fuse.derived = derived;
+    meteor.derived = derived;
+    return {storm, fuse, meteor};
+}
+
+Storm run_storm(std::uint32_t action_instance_id) {
+    network_example::World world;
+    world.set_projectile_templates(storm_templates(false));
 
     require(network_example::spawn_action_graph_projectile(
         world, kStormTemplate, 1, 77, action_instance_id, kCenter,
@@ -245,6 +254,98 @@ void repeat_limits_are_enforced() {
     require(!network_example::spawn_repeat_is_authorable(damage));
 }
 
+std::uint32_t storm_root(network_example::World& world) {
+    require(network_example::spawn_action_graph_projectile(
+        world, kStormTemplate, 1, 77, 5001, kCenter,
+        glm::vec3{0.0f, 0.0f, 1.0f}, 0, kTickSeconds));
+    auto view = world.registry()
+                    .view<network_example::NetworkIdentity,
+                          network_example::ProjectileState>();
+    for (const entt::entity entity : view) {
+        if (view.get<network_example::ProjectileState>(entity)
+                .projectile_template_id == kStormTemplate) {
+            return view.get<network_example::NetworkIdentity>(entity).net_id;
+        }
+    }
+    require(false);
+    return 0;
+}
+
+std::size_t count_template(
+    network_example::World& world,
+    std::uint32_t projectile_template_id) {
+    std::size_t count = 0;
+    auto view = world.registry().view<network_example::ProjectileState>();
+    for (const entt::entity entity : view) {
+        if (view.get<network_example::ProjectileState>(entity)
+                .projectile_template_id == projectile_template_id) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+// The chain a root starts is as long as its longest derived path: fuse 10 +
+// stagger 60, then a meteor that lives 20. Replicated descendants add
+// nothing, so the same templates without the flag give no chain at all.
+void derived_chain_covers_the_longest_path() {
+    network_example::World derived_world;
+    derived_world.set_projectile_templates(storm_templates(true));
+    require(derived_world.find_projectile_template(kStormTemplate)
+                ->derived_chain_ticks == kFuseLifetime + kStaggerWindow + 20u);
+    require(derived_world.find_projectile_template(kFuseTemplate)
+                ->derived_chain_ticks == 20u);
+    require(derived_world.find_projectile_template(kMeteorTemplate)
+                ->derived_chain_ticks == 0u);
+
+    network_example::World sent_world;
+    sent_world.set_projectile_templates(storm_templates(false));
+    require(sent_world.find_projectile_template(kStormTemplate)
+                ->derived_chain_ticks == 0u);
+}
+
+// The root expires on tick 1 and starts its chain, but stays until the chain
+// is over -- 90 ticks -- and is gone the tick after. Without derived
+// descendants it goes as soon as it expires.
+void root_is_held_until_its_chain_ends() {
+    network_example::World world;
+    world.set_projectile_templates(storm_templates(true));
+    const std::uint32_t root = storm_root(world);
+    std::vector<KernelEvent> events;
+    std::uint32_t gone = 0;
+    for (std::uint32_t tick = 1; tick <= 100 && gone == 0; ++tick) {
+        network_example::simulate_projectiles(world, kTickSeconds, tick, &events);
+        if (tick == 1) {
+            require(count_template(world, kFuseTemplate) >= 10u);
+        }
+        if (!world.find_entity(root).has_value()) {
+            gone = tick;
+        }
+    }
+    require(gone == 1u + kFuseLifetime + kStaggerWindow + 20u + 1u);
+
+    network_example::World control;
+    control.set_projectile_templates(storm_templates(false));
+    const std::uint32_t sent_root = storm_root(control);
+    network_example::simulate_projectiles(control, kTickSeconds, 1, &events);
+    require(!control.find_entity(sent_root).has_value());
+}
+
+// If the root's chain cannot start -- here the dedup ledger is full, so its
+// batch is refused -- the root is removed on the spot rather than held, which
+// is how a client learns the chain was called off.
+void root_whose_chain_fails_is_not_held() {
+    network_example::World world;
+    world.set_projectile_templates(storm_templates(true));
+    const std::uint32_t root = storm_root(world);
+    require(world.reserve_action_graph_batch_capacity(
+        network_example::World::kActionGraphDedupCapacity));
+    std::vector<KernelEvent> events;
+    network_example::simulate_projectiles(world, kTickSeconds, 1, &events);
+    require(count_template(world, kFuseTemplate) == 0u);
+    require(!world.find_entity(root).has_value());
+}
+
 }  // namespace
 
 int main() {
@@ -252,6 +353,9 @@ int main() {
     each_fuse_drops_its_own_meteor();
     repeat_is_deterministic_per_event();
     repeat_limits_are_enforced();
+    derived_chain_covers_the_longest_path();
+    root_is_held_until_its_chain_ends();
+    root_whose_chain_fails_is_not_held();
     std::printf("action_repeat_test passed\n");
     return 0;
 }

@@ -28,3 +28,5 @@ triggers:
       template: meteor_blast
       position: event.position
       direction: event.direction
+# Never sent: clients derive it from the marker at the root of its chain.
+replication: derived

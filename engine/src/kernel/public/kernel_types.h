@@ -21,7 +21,9 @@
  *     KERNEL_MAX_ACTION_REPEAT times, scattered and staggered. All zero, the
  *     default, is the single spawn it always was. KernelActionDefinition is
  *     embedded in every trigger definition, so every managed mirror of those
- *     shifts.
+ *     shifts. KernelProjectileMechanicsDefinition's reserved0 became
+ *     `replication` (KernelProjectileReplication); zero is replicated, as
+ *     every projectile was.
  * 93: KernelEntityTemplateDefinition gained knockdown_recovery_ticks, appended:
  *     how long a knockback that lands keeps the actor down -- rooted, and
  *     refusing new actions as the knockback did -- before it may move again.
@@ -1622,6 +1624,18 @@ typedef struct KernelBeamMechanicsDefinition {
     uint32_t collision_mask;
 } KernelBeamMechanicsDefinition;
 
+/*
+ * Whether a projectile is sent to clients. A derived projectile never is: it
+ * only ever descends from a replicated stationary marker a targeted strike
+ * landed, through spawns whose every choice is seeded, so a client holding
+ * that marker derives it -- position, timing and all -- by running the same
+ * simulation. The server still simulates it and deals its damage.
+ */
+typedef enum KernelProjectileReplication {
+    KernelProjectileReplication_Replicated = 0,
+    KernelProjectileReplication_Derived = 1,
+} KernelProjectileReplication;
+
 typedef enum KernelProjectileLaunchType {
     KernelProjectileLaunchType_None = 0,
     KernelProjectileLaunchType_Descent = 1,
@@ -1672,7 +1686,10 @@ typedef struct KernelProjectileMechanicsDefinition {
     KernelActionTriggerDefinition projectile_impact_trigger;
     KernelActionTriggerDefinition expired_trigger;
     uint8_t collision_query_mode;
-    uint8_t reserved0;
+    /* KernelProjectileReplication. Was reserved0 before ABI 94: zero, the
+     * default, is replicated, so the layout and every older catalog are
+     * unchanged. */
+    uint8_t replication;
     uint16_t reserved1;
     KernelProjectileLaunchDefinition launch;
 } KernelProjectileMechanicsDefinition;

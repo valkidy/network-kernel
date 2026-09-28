@@ -1549,6 +1549,8 @@ RuntimeProjectileTemplate to_runtime_projectile_template(
         mechanics.homing.max_turn_degrees_per_tick;
     projectile_template.homing_acceleration = mechanics.homing.acceleration;
     projectile_template.homing_max_speed = mechanics.homing.max_speed;
+    projectile_template.derived =
+        mechanics.replication == KernelProjectileReplication_Derived;
     if (mechanics.launch.struct_size != 0u &&
         mechanics.launch.launch_type == KernelProjectileLaunchType_Descent) {
         projectile_template.launch_type = ProjectileLaunchType::kDescent;
@@ -1847,6 +1849,16 @@ bool validate_projectile_mechanics(
     // nothing else -- nothing to hit, no gravity to fall by, no guidance --
     // so a template that merely forgot its speed still fails to load.
     if (!validate_launch_mechanics(mechanics)) {
+        return false;
+    }
+    // A derived projectile is never sent, so nothing about it may depend on
+    // what only the server sees move: no guidance, no beam anchored to a
+    // shooter, and no prediction to reconcile.
+    if (mechanics.replication > KernelProjectileReplication_Derived ||
+        (mechanics.replication == KernelProjectileReplication_Derived &&
+         (mechanics.sync_mode != KernelProjectileSyncMode_ServerSnapshotOnly ||
+          mechanics.projectile_type == KernelProjectileType_Beam ||
+          mechanics.motion_model == KernelProjectileMotionModel_Homing))) {
         return false;
     }
     const bool derived_speed = mechanics.launch.struct_size != 0u;
@@ -3812,6 +3824,7 @@ bool KernelEngine::load_gameplay_catalog(
     if (!item_store_.set_templates(item_templates_, &item_validation_error)) {
         return false;
     }
+    compute_derived_chain_ticks(&runtime_projectile_templates);
     catalog_runtime_.projectile_templates = std::move(runtime_projectile_templates);
     catalog_runtime_.action_templates = std::move(runtime_action_templates);
     catalog_runtime_.status_effect_templates =
@@ -12093,6 +12106,16 @@ void KernelEngine::simulate_tick() {
     tick_loop_.advance_tick();
 }
 
+bool KernelEngine::is_derived_projectile(NetId net_id) const {
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (!entity.has_value()) {
+        return false;
+    }
+    const ProjectileState* projectile =
+        world_.registry().try_get<ProjectileState>(*entity);
+    return projectile != nullptr && projectile->derived;
+}
+
 WorldSnapshot KernelEngine::build_relevant_snapshot(
     const PeerSession& session,
     std::uint32_t server_time_ms) const {
@@ -12109,6 +12132,11 @@ WorldSnapshot KernelEngine::build_relevant_snapshot(
     filtered.entities.reserve(full_snapshot.entities.size());
     for (const EntitySnapshot& entity : full_snapshot.entities) {
         if (is_actor_pending_first_physics(entity.net_id)) {
+            continue;
+        }
+        // Derived projectiles are never introduced to anyone: every client
+        // derives them from the root it was sent.
+        if (entity.type == EntityType::kProjectile && is_derived_projectile(entity.net_id)) {
             continue;
         }
         if (is_entity_relevant_to_session(session, entity, player_entity)) {

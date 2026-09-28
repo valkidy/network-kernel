@@ -241,6 +241,7 @@ void hash_projectile_template(
     hash_scalar(hash, mechanics.beam.damage_per_tick);
     hash_scalar(hash, mechanics.beam.lifetime_ticks);
     hash_scalar(hash, mechanics.beam.collision_mask);
+    hash_scalar(hash, mechanics.replication);
     hash_scalar(hash, mechanics.launch.struct_size);
     hash_scalar(hash, mechanics.launch.launch_type);
     hash_float(hash, mechanics.launch.elevation_min_degrees);
@@ -5691,6 +5692,7 @@ ProjectileTemplateConfig projectile_template_from_yaml(
             "homing",
             "beam",
             "launch",
+            "replication",
         },
         path,
         source_kind,
@@ -5720,6 +5722,18 @@ ProjectileTemplateConfig projectile_template_from_yaml(
                                 : (node["type"] ? node["type"] : node["kind"]));
     mechanics.collider_template_id =
         collider_template_id_from_ref(node["collider_template"], colliders);
+    if (node["replication"]) {
+        const std::string replication = node["replication"].as<std::string>();
+        if (replication == "derived") {
+            mechanics.replication = KernelProjectileReplication_Derived;
+        } else if (replication != "replicated") {
+            throw std::runtime_error(
+                "replication must be replicated or derived: " +
+                projectile_template.name);
+        }
+    }
+    const bool derived =
+        mechanics.replication == KernelProjectileReplication_Derived;
     const std::uint32_t static_collision_mask =
         KERNEL_COLLISION_MASK_ACTOR | KERNEL_COLLISION_MASK_STATIC_WORLD;
     mechanics.collision_mask = collision_mask_from_yaml(
@@ -5828,6 +5842,12 @@ ProjectileTemplateConfig projectile_template_from_yaml(
                 "launch is only supported on standard projectiles: " +
                 projectile_template.name);
         }
+        if (derived && node["sync_mode"] &&
+            node["sync_mode"].as<std::string>() != "server_snapshot_only") {
+            throw std::runtime_error(
+                "a derived projectile needs sync_mode server_snapshot_only: " +
+                projectile_template.name);
+        }
         mechanics.motion_model = KernelProjectileMotionModel_Linear;
         // A field that travels -- a tornado rather than a blast. Zero is the
         // standing behaviour: the effect sits where it was spawned. Read here
@@ -5912,9 +5932,33 @@ ProjectileTemplateConfig projectile_template_from_yaml(
     // A launch rule starts the projectile somewhere only the server decides,
     // so there is nothing for a client to predict: it defaults to, and only
     // accepts, server_snapshot_only.
-    mechanics.sync_mode = launch && !node["sync_mode"]
+    mechanics.sync_mode = (launch || derived) && !node["sync_mode"]
         ? static_cast<std::uint8_t>(KernelProjectileSyncMode_ServerSnapshotOnly)
         : projectile_sync_mode_from_yaml(node["sync_mode"]);
+    // A derived projectile is drawn from a path every client works out for
+    // itself, so what ends it must be something every client has: the static
+    // world, never an actor that moves only on the server.
+    if (derived) {
+        if (mechanics.sync_mode != KernelProjectileSyncMode_ServerSnapshotOnly) {
+            throw std::runtime_error(
+                "a derived projectile needs sync_mode server_snapshot_only: " +
+                projectile_template.name);
+        }
+        if (mechanics.projectile_type == KernelProjectileType_Beam ||
+            mechanics.motion_model == KernelProjectileMotionModel_Homing) {
+            throw std::runtime_error(
+                "a derived projectile cannot be a beam or homing: " +
+                projectile_template.name);
+        }
+        if ((mechanics.collision_mask &
+             ~(KERNEL_COLLISION_LAYER_TERRAIN |
+               KERNEL_COLLISION_LAYER_STATIC_OBSTACLE)) != 0u) {
+            throw std::runtime_error(
+                "a derived projectile may only collide with terrain and "
+                "static obstacles: " +
+                projectile_template.name);
+        }
+    }
     mechanics.hit_response = hit_response_from_yaml(node["hit_response"]);
     mechanics.damage_shape = damage_shape_from_yaml(node["damage_shape"]);
     mechanics.damage = node["damage"].as<std::uint16_t>();
@@ -8472,6 +8516,129 @@ std::uint8_t active_weapon_id(const ActorTemplateConfig& actor_template) {
         actor_template.weapon_ids[actor_template.active_weapon_slot]);
 }
 
+// Where derived projectiles may come from and what they may lead to. A client
+// derives a chain from its root, so the root must be something it is sent
+// and whose every input it holds: a stationary marker a targeted strike
+// landed (spawned with no launch salt). Below the root everything is derived
+// and ends on the static world, so no link depends on an actor.
+void validate_derived_projectiles(
+    const GameServerGameplayConfig& config,
+    std::vector<std::string>* errors) {
+    const auto find = [&config](std::uint32_t id) -> const ProjectileTemplateConfig* {
+        for (const ProjectileTemplateConfig& candidate : config.projectile_templates) {
+            if (candidate.definition.projectile_template_id == id) {
+                return &candidate;
+            }
+        }
+        return nullptr;
+    };
+    const auto is_derived = [](const ProjectileTemplateConfig& projectile) {
+        return projectile.definition.mechanics.replication ==
+            KernelProjectileReplication_Derived;
+    };
+    std::vector<std::uint32_t> strike_roots;
+    for (std::size_t id = 0; id < config.weapons.definitions.size(); ++id) {
+        if (!config.weapons.configured[id]) {
+            continue;
+        }
+        const KernelWeaponMechanicsDefinition& weapon = config.weapons.definitions[id];
+        const ProjectileTemplateConfig* fired = find(weapon.projectile_template_id);
+        if (fired != nullptr && is_derived(*fired)) {
+            errors->push_back(
+                "a weapon cannot fire a derived projectile; it needs a "
+                "replicated root: " + fired->name);
+        }
+        if (weapon.fire_mode == KernelWeaponFireMode_TargetedStrike) {
+            strike_roots.push_back(weapon.projectile_template_id);
+        }
+    }
+
+    for (const ProjectileTemplateConfig& parent : config.projectile_templates) {
+        const KernelProjectileMechanicsDefinition& mechanics =
+            parent.definition.mechanics;
+        const bool parent_derived = is_derived(parent);
+        const bool strike_root =
+            std::find(strike_roots.begin(), strike_roots.end(),
+                      parent.definition.projectile_template_id) !=
+                strike_roots.end() &&
+            is_stationary_marker(mechanics);
+        for (const KernelActionTriggerDefinition* trigger :
+             {&mechanics.expired_trigger, &mechanics.projectile_impact_trigger}) {
+            const bool impact = trigger == &mechanics.projectile_impact_trigger;
+            for (std::uint32_t index = 0;
+                 index < trigger->action_count &&
+                 index < KERNEL_MAX_ACTION_GRAPH_ACTIONS;
+                 ++index) {
+                const KernelActionDefinition& action = trigger->actions[index];
+                if (action.action_type !=
+                    KernelEntityTriggerActionType_SpawnProjectile) {
+                    continue;
+                }
+                const ProjectileTemplateConfig* child =
+                    find(action.spawn_projectile_template_id);
+                if (child == nullptr) {
+                    continue;
+                }
+                if (parent_derived && !is_derived(*child)) {
+                    errors->push_back(
+                        "a derived projectile may only spawn derived ones: " +
+                        parent.name + " -> " + child->name);
+                }
+                if (!is_derived(*child)) {
+                    continue;
+                }
+                if (!parent_derived && !strike_root) {
+                    errors->push_back(
+                        "a derived projectile must descend from a stationary "
+                        "marker a targeted_strike weapon lands: " +
+                        parent.name + " -> " + child->name);
+                }
+                // An area effect's impact fires once per target it finds --
+                // a fact only the server has.
+                if (impact && mechanics.projectile_type ==
+                                  KernelProjectileType_AreaEffect) {
+                    errors->push_back(
+                        "an area effect's impact cannot spawn a derived "
+                        "projectile: " + parent.name + " -> " + child->name);
+                }
+            }
+        }
+    }
+
+    // Entity and item triggers are not a root anyone derives from.
+    const auto binds_derived = [&](const TriggerBindingConfig& binding) {
+        for (const auto& parameter : binding.parameters) {
+            for (const ProjectileTemplateConfig& candidate :
+                 config.projectile_templates) {
+                if (is_derived(candidate) && parameter.second == candidate.name) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+    for (const EntityTemplateConfig& entity : config.entity_templates) {
+        for (const TriggerBindingConfig* binding : {
+                 &entity.activated_trigger,
+                 &entity.collision_trigger,
+                 &entity.health_depleted_trigger,
+                 &entity.destroy_entity_trigger,
+             }) {
+            if (binds_derived(*binding)) {
+                errors->push_back(
+                    "an entity trigger cannot spawn a derived projectile: " +
+                    entity.name);
+            }
+        }
+    }
+    for (const ItemTemplateConfig& item : config.item_templates) {
+        if (binds_derived(item.item_used_trigger)) {
+            errors->push_back(
+                "an item trigger cannot spawn a derived projectile: " + item.name);
+        }
+    }
+}
+
 std::vector<std::string> validate_gameplay_config(
     const GameServerGameplayConfig& config) {
     std::vector<std::string> errors;
@@ -8980,6 +9147,7 @@ std::vector<std::string> validate_gameplay_config(
                 "projectile weapon must reference a valid projectile template");
         }
     }
+    validate_derived_projectiles(config, &errors);
     return errors;
 }
 

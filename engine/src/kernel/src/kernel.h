@@ -350,6 +350,8 @@ public:
     bool server_get_projectile_launch_position(
         NetId net_id,
         KernelVec3* out_position) const;
+    // Whether a server-side projectile is derived, and so never sent.
+    bool is_derived_projectile(NetId net_id) const;
     bool server_get_entity_aim_point(
         NetId net_id,
         KernelVec3* out_position) const;

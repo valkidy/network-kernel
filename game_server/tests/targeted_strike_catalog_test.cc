@@ -334,6 +334,9 @@ void meteor_staff_refuses_the_sky(const Catalog& catalog) {
 
 // Meteor Storm Staff at the ground by the grunt: 10-15 fuses around the aim
 // point, as many meteors, the grunt hit more than once, the bystander never.
+// The storm marker is the root of a derived chain, so it outlives its own
+// 10-tick expiry until the chain is over: fuse 10 + stagger 60, meteor 18,
+// blast 2 -- 90 ticks -- and goes on the tick after.
 void meteor_storm_scatters_around_the_aim(const Catalog& catalog) {
     Arena arena;
     open_arena(catalog, kMeteorStormStaff, 7893, &arena);
@@ -344,6 +347,8 @@ void meteor_storm_scatters_around_the_aim(const Catalog& catalog) {
     arena.fire(kMeteorStormStaff, aim);
 
     std::size_t most_resting = 0;
+    std::uint32_t root = 0;
+    int root_last_seen = -1;
     std::vector<std::uint32_t> meteors;
     int hits = 0;
     std::uint16_t hp = target.hp;
@@ -352,6 +357,13 @@ void meteor_storm_scatters_around_the_aim(const Catalog& catalog) {
         arena.tick();
         std::size_t resting = 0;
         for (const KernelServerEntityState& projectile : projectiles(arena.kernel)) {
+            if (tick == 1 && speed(projectile) < 1e-3f) {
+                root = projectile.net_id;
+            }
+            if (projectile.net_id == root) {
+                root_last_seen = tick;
+                continue;
+            }
             if (speed(projectile) < 1e-3f) {
                 ++resting;
                 farthest_mark = std::max(
@@ -375,9 +387,13 @@ void meteor_storm_scatters_around_the_aim(const Catalog& catalog) {
     }
     std::printf(
         "meteor_storm: %zu fuses, %zu meteors, farthest mark %.2f m, "
-        "grunt hit %d times (%u -> %u hp)\n",
+        "grunt hit %d times (%u -> %u hp), root held to +%d\n",
         most_resting, meteors.size(), farthest_mark, hits,
-        static_cast<unsigned>(target.hp), static_cast<unsigned>(hp));
+        static_cast<unsigned>(target.hp), static_cast<unsigned>(hp),
+        root_last_seen);
+    require(root != 0);
+    // Expires on 10, held 90, destroyed on the tick after: last seen ~100.
+    require(root_last_seen >= 99 && root_last_seen <= 103);
     require(most_resting >= 10 && most_resting <= 15);
     require(meteors.size() == most_resting);
     require(farthest_mark <= 6.3f);

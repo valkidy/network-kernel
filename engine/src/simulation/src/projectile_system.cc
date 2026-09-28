@@ -111,6 +111,7 @@ bool spawn_projectile_from_template(
                               : projectile_template.lifetime_ticks) +
         extra_lifetime_ticks;
     projectile.launch_salt = launch_salt;
+    projectile.derived = projectile_template.derived;
     projectile.spawn_position = start;
     projectile.initial_velocity = velocity;
     projectile.gravity = projectile_template.gravity;
@@ -753,11 +754,15 @@ void queue_projectile_trigger(
     });
 }
 
+// `committed_subjects`, when given, receives the subject of every batch that
+// committed or had already committed -- so a caller can tell which of the
+// triggers it queued actually took effect.
 void execute_queued_trigger_events(
     World& world,
     std::vector<ActionGraphQueuedTrigger>* trigger_events,
     float fixed_delta_seconds,
-    std::vector<KernelEvent>* events) {
+    std::vector<KernelEvent>* events,
+    std::vector<NetId>* committed_subjects = nullptr) {
     if (trigger_events == nullptr) {
         return;
     }
@@ -775,12 +780,17 @@ void execute_queued_trigger_events(
             batch.event.type,
             batch.sequence,
         };
-        if (batch.provenance.request_id == 0u ||
-            world.action_graph_batch_processed(
+        if (batch.provenance.request_id == 0u) {
+            continue;
+        }
+        if (world.action_graph_batch_processed(
                 dedup_key.requester_peer,
                 dedup_key.request_id,
                 dedup_key.event_type,
                 dedup_key.sequence)) {
+            if (committed_subjects != nullptr) {
+                committed_subjects->push_back(batch.event.subject);
+            }
             continue;
         }
         const bool valid = std::all_of(
@@ -834,6 +844,9 @@ void execute_queued_trigger_events(
         if (committed) {
             world.commit_action_graph_batch(
                 dedup_key, batch.provenance.server_tick);
+            if (committed_subjects != nullptr) {
+                committed_subjects->push_back(batch.event.subject);
+            }
         } else {
             world.cancel_action_graph_batch(dedup_key);
         }
@@ -1385,6 +1398,7 @@ void simulate_projectiles(
         active_damage_pipeline = &local_damage_pipeline;
     }
     std::vector<NetId> projectiles_to_destroy;
+    std::vector<NetId> held_roots;
     std::vector<ActionGraphQueuedTrigger> trigger_events;
 
     auto view = world.registry().view<NetworkIdentity, Transform, Velocity, ProjectileState, ProjectileTag>();
@@ -1518,6 +1532,15 @@ void simulate_projectiles(
         const Transform& transform = hit_view.get<Transform>(entity);
         ProjectileState& projectile = hit_view.get<ProjectileState>(entity);
 
+        // A root held for its derived chain has already expired: it hits
+        // nothing and fires nothing more, and goes when the chain is over.
+        if (projectile.hold_until_tick != 0u) {
+            if (current_tick >= projectile.hold_until_tick) {
+                push_unique_net_id(&projectiles_to_destroy, identity.net_id);
+            }
+            continue;
+        }
+
         physics::CollisionQueryFilter filter =
             collision_filter_from_mask(projectile.collision_mask);
         filter.ignored_entity_net_id = projectile.shooter_net_id;
@@ -1578,11 +1601,33 @@ void simulate_projectiles(
             0,
             false,
             &trigger_events);
+        // A replicated root whose expiry starts a derived chain stays until
+        // the chain is over, so a client coming into range mid-chain is still
+        // handed it and can derive the rest. Only its own spawn is ever sent.
+        const RuntimeProjectileTemplate* expired_template =
+            world.find_projectile_template(projectile.projectile_template_id);
+        if (!projectile.derived && expired_template != nullptr &&
+            expired_template->derived_chain_ticks > 0u) {
+            projectile.hold_until_tick =
+                current_tick + expired_template->derived_chain_ticks + 1u;
+            held_roots.push_back(identity.net_id);
+            continue;
+        }
         push_unique_net_id(&projectiles_to_destroy, identity.net_id);
     }
 
+    std::vector<NetId> committed_subjects;
     execute_queued_trigger_events(
-        world, &trigger_events, fixed_delta_seconds, events);
+        world, &trigger_events, fixed_delta_seconds, events, &committed_subjects);
+    // A root whose chain did not start is removed now rather than held: a
+    // client reads a root that goes before its chain could have ended as the
+    // chain being called off.
+    for (const NetId root : held_roots) {
+        if (std::find(committed_subjects.begin(), committed_subjects.end(), root) ==
+            committed_subjects.end()) {
+            push_unique_net_id(&projectiles_to_destroy, root);
+        }
+    }
 
     std::sort(projectiles_to_destroy.begin(), projectiles_to_destroy.end());
     projectiles_to_destroy.erase(
