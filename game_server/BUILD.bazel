@@ -186,6 +186,18 @@ cc_test(
     ],
 )
 
+cc_test(
+    name = "targeted_strike_catalog_test",
+    srcs = ["tests/targeted_strike_catalog_test.cc"],
+    data = [
+        "//game_server/gameplay_catalog_bundle:bundle",
+    ],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
 # Reports timings, so it is a manual benchmark rather than a CI gate: a
 # wall-clock bound would be flaky and host-dependent.
 cc_test(

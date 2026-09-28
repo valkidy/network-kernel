@@ -1,0 +1,18 @@
+# Sky Laser's aim mark: half a second of warning before the beam lands.
+id: 23
+name: sky_laser_marker
+type: standard
+collider_template: projectile_sphere
+damage: 0
+damage_shape: none
+speed: 0.0
+collision_mask: none
+sync_mode: server_snapshot_only
+lifetime_ticks: 15
+triggers:
+  on_expired:
+    action_graph: action_spawn_projectile_at_expired
+    parameters:
+      template: sky_laser_body
+      position: event.position
+      direction: event.direction

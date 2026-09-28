@@ -1,0 +1,12 @@
+# The on_expired counterpart of action_spawn_projectile_at_impact: a projectile
+# that runs out spawns another where it stood. A marker's delay ends here.
+id: action_spawn_projectile_at_expired
+parameters:
+  template: null
+  position: null
+  direction: null
+actions:
+  - type: spawn_projectile
+    projectile_template: params.template
+    position: params.position
+    direction: params.direction

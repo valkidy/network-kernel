@@ -80,6 +80,7 @@ GameplayCatalogRuntime& World::mutable_owned_catalog() {
 void World::set_projectile_templates(
     const std::vector<RuntimeProjectileTemplate>& projectile_templates) {
     mutable_owned_catalog().projectile_templates = projectile_templates;
+    compute_derived_chain_ticks(&mutable_owned_catalog().projectile_templates);
 }
 
 const RuntimeProjectileTemplate* World::find_projectile_template(
@@ -469,6 +470,102 @@ entt::entity World::create_networked_entity(
     registry_.emplace<Transform>(entity, Transform{position, glm::quat{1.0f, 0.0f, 0.0f, 0.0f}});
     entities_by_net_id_[net_id] = entity;
     return entity;
+}
+
+namespace {
+
+// The projectile template a spawn action names: bound as a literal, or left
+// to the graph parameter's default.
+std::uint32_t spawned_template_id(
+    const CompiledActionGraphBinding& binding,
+    const std::string& parameter) {
+    for (const ActionGraphParameterBinding& bound : binding.parameters) {
+        if (bound.name != parameter) {
+            continue;
+        }
+        if (const auto* value =
+                std::get_if<ActionGraphParameterValue>(&bound.expression)) {
+            if (const auto* id = std::get_if<ProjectileTemplateIdValue>(value)) {
+                return id->value;
+            }
+        }
+    }
+    for (const ActionGraphParameterDefinition& definition :
+         binding.graph.parameters) {
+        if (definition.name == parameter) {
+            if (const auto* id = std::get_if<ProjectileTemplateIdValue>(
+                    &definition.default_value)) {
+                return id->value;
+            }
+        }
+    }
+    return 0;
+}
+
+const RuntimeProjectileTemplate* find_template(
+    const std::vector<RuntimeProjectileTemplate>& templates,
+    std::uint32_t projectile_template_id) {
+    for (const RuntimeProjectileTemplate& candidate : templates) {
+        if (candidate.projectile_template_id == projectile_template_id) {
+            return &candidate;
+        }
+    }
+    return nullptr;
+}
+
+// Bounded, so a cycle the loader failed to refuse cannot recurse forever.
+constexpr std::uint32_t kMaxDerivedChainDepth = 16;
+
+std::uint32_t derived_chain_ticks(
+    const std::vector<RuntimeProjectileTemplate>& templates,
+    const RuntimeProjectileTemplate& projectile_template,
+    std::uint32_t depth) {
+    if (depth >= kMaxDerivedChainDepth) {
+        return 0;
+    }
+    std::uint32_t longest = 0;
+    for (const std::optional<CompiledActionGraphBinding>* binding : {
+             &projectile_template.expired_binding,
+             &projectile_template.projectile_impact_binding,
+         }) {
+        if (!binding->has_value()) {
+            continue;
+        }
+        for (const ActionGraphAction& action : (*binding)->graph.actions) {
+            const auto* spawn = std::get_if<ActionSpawnProjectileDefinition>(&action);
+            if (spawn == nullptr) {
+                continue;
+            }
+            const RuntimeProjectileTemplate* child = find_template(
+                templates,
+                spawned_template_id(**binding, spawn->projectile_template_parameter));
+            if (child == nullptr || !child->derived) {
+                continue;
+            }
+            const std::uint32_t life =
+                (spawn->lifetime_ticks != 0u ? spawn->lifetime_ticks
+                                             : child->lifetime_ticks) +
+                (spawn->repeat_count_max != 0u
+                     ? spawn->repeat_stagger_lifetime_ticks
+                     : 0u);
+            longest = std::max(
+                longest, life + derived_chain_ticks(templates, *child, depth + 1));
+        }
+    }
+    return longest;
+}
+
+}  // namespace
+
+void compute_derived_chain_ticks(
+    std::vector<RuntimeProjectileTemplate>* projectile_templates) {
+    if (projectile_templates == nullptr) {
+        return;
+    }
+    for (RuntimeProjectileTemplate& projectile_template : *projectile_templates) {
+        projectile_template.derived_chain_ticks =
+            derived_chain_ticks(*projectile_templates, projectile_template, 0);
+    }
 }
 
 }  // namespace network_example

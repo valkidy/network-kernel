@@ -52,7 +52,10 @@ bool spawn_projectile_from_template(
     std::uint32_t current_tick,
     float fixed_delta_seconds,
     std::vector<KernelEvent>* events,
-    std::uint32_t* out_entity_type) {
+    std::uint32_t* out_entity_type,
+    std::uint32_t lifetime_ticks = 0,
+    std::uint32_t extra_lifetime_ticks = 0,
+    std::uint32_t launch_salt = 0) {
     const std::uint8_t weapon_id =
         projectile_template.weapon_id == 0 ? source_weapon_id
                                            : projectile_template.weapon_id;
@@ -61,12 +64,27 @@ bool spawn_projectile_from_template(
     // zero, so a blast still spawns exactly as motionless as before, while a
     // template that authors one travels like anything else. The weapon-fired
     // path never had the special case to begin with.
-    const glm::vec3 velocity =
+    glm::vec3 start = position;
+    glm::vec3 velocity =
         normalized_or(direction, glm::vec3{1.0f, 0.0f, 0.0f}) *
         projectile_template.speed;
+    if (projectile_template.launch_type == ProjectileLaunchType::kDescent) {
+        const ProjectileLaunch launch = descent_launch(
+            projectile_template,
+            position,
+            projectile_launch_seed(
+                shooter_net_id,
+                action_instance_id,
+                projectile_template.projectile_template_id,
+                launch_salt),
+            fixed_delta_seconds,
+            world.collision_world());
+        start = launch.origin;
+        velocity = launch.velocity;
+    }
     const NetId projectile_net_id = world.spawn_projectile(
         owner_peer,
-        position,
+        start,
         velocity);
     const auto projectile_entity = world.find_entity(projectile_net_id);
     if (!projectile_entity.has_value()) {
@@ -88,11 +106,19 @@ bool spawn_projectile_from_template(
     projectile.has_collision_geometry = projectile_template.has_collision_geometry;
     projectile.collision_mask = projectile_template.collision_mask;
     projectile.max_hit_count = std::max(1u, projectile_template.max_hit_count);
-    projectile.max_lifetime_ticks = projectile_template.lifetime_ticks;
-    projectile.spawn_position = position;
+    projectile.max_lifetime_ticks =
+        (lifetime_ticks != 0u ? lifetime_ticks
+                              : projectile_template.lifetime_ticks) +
+        extra_lifetime_ticks;
+    projectile.launch_salt = launch_salt;
+    projectile.derived = projectile_template.derived;
+    projectile.spawn_position = start;
     projectile.initial_velocity = velocity;
     projectile.gravity = projectile_template.gravity;
-    projectile.previous_position = position;
+    projectile.previous_position = start;
+    // A descent falls along its own path, not the heading it was handed.
+    projectile.spawn_direction = normalized_or(
+        velocity, normalized_or(direction, glm::vec3{1.0f, 0.0f, 0.0f}));
     if (projectile_template.projectile_impact_binding.has_value()) {
         world.registry().emplace<OnProjectileImpactTriggerTag>(
             *projectile_entity);
@@ -117,7 +143,9 @@ bool spawn_projectile_from_template(
                 projectile_template.damage_interval_ticks == 0
                     ? 1u
                     : projectile_template.damage_interval_ticks,
-                current_tick + std::max(1u, projectile_template.lifetime_ticks),
+                // The resolved lifetime, so a graph's override and stagger
+                // reach an area effect as they reach anything else.
+                current_tick + std::max(1u, projectile.max_lifetime_ticks),
                 weapon_id,
                 projectile_template.collision_mask,
                 projectile_template.damage_falloff,
@@ -707,29 +735,34 @@ void queue_projectile_trigger(
         // asking for.
         normalized_or(projectile.initial_velocity, glm::vec3{0.0f}),
     };
+    ActionExecutionProvenance provenance{
+        trigger_request_id(current_tick, identity.net_id, event_type, sequence),
+        projectile.action_instance_id,
+        current_tick,
+        projectile.shooter_net_id,
+        identity.owner_peer,
+        projectile.weapon_id,
+        ActionAuthoritySource::kAuthoritativeSimulation,
+    };
+    provenance.launch_salt = projectile.launch_salt;
     trigger_events->push_back(ActionGraphQueuedTrigger{
         std::move(*binding),
         identity.net_id,
         event,
-        ActionExecutionProvenance{
-            trigger_request_id(
-                current_tick, identity.net_id, event_type, sequence),
-            projectile.action_instance_id,
-            current_tick,
-            projectile.shooter_net_id,
-            identity.owner_peer,
-            projectile.weapon_id,
-            ActionAuthoritySource::kAuthoritativeSimulation,
-        },
+        provenance,
         sequence,
     });
 }
 
+// `committed_subjects`, when given, receives the subject of every batch that
+// committed or had already committed -- so a caller can tell which of the
+// triggers it queued actually took effect.
 void execute_queued_trigger_events(
     World& world,
     std::vector<ActionGraphQueuedTrigger>* trigger_events,
     float fixed_delta_seconds,
-    std::vector<KernelEvent>* events) {
+    std::vector<KernelEvent>* events,
+    std::vector<NetId>* committed_subjects = nullptr) {
     if (trigger_events == nullptr) {
         return;
     }
@@ -747,12 +780,17 @@ void execute_queued_trigger_events(
             batch.event.type,
             batch.sequence,
         };
-        if (batch.provenance.request_id == 0u ||
-            world.action_graph_batch_processed(
+        if (batch.provenance.request_id == 0u) {
+            continue;
+        }
+        if (world.action_graph_batch_processed(
                 dedup_key.requester_peer,
                 dedup_key.request_id,
                 dedup_key.event_type,
                 dedup_key.sequence)) {
+            if (committed_subjects != nullptr) {
+                committed_subjects->push_back(batch.event.subject);
+            }
             continue;
         }
         const bool valid = std::all_of(
@@ -795,7 +833,10 @@ void execute_queued_trigger_events(
                 command->provenance.server_tick,
                 fixed_delta_seconds,
                 events,
-                nullptr)) {
+                nullptr,
+                command->lifetime_ticks,
+                command->extra_lifetime_ticks,
+                command->provenance.launch_salt)) {
                 committed = false;
                 break;
             }
@@ -803,6 +844,9 @@ void execute_queued_trigger_events(
         if (committed) {
             world.commit_action_graph_batch(
                 dedup_key, batch.provenance.server_tick);
+            if (committed_subjects != nullptr) {
+                committed_subjects->push_back(batch.event.subject);
+            }
         } else {
             world.cancel_action_graph_batch(dedup_key);
         }
@@ -1143,6 +1187,108 @@ void process_projectile_interactions(
 
 }  // namespace
 
+std::uint64_t projectile_launch_seed(
+    NetId instigator,
+    std::uint32_t action_instance_id,
+    std::uint32_t projectile_template_id,
+    std::uint32_t salt) {
+    // splitmix64's finalizer, applied once per 64-bit word of input.
+    const auto mix = [](std::uint64_t value) {
+        value += 0x9E3779B97F4A7C15ull;
+        value = (value ^ (value >> 30)) * 0xBF58476D1CE4E5B9ull;
+        value = (value ^ (value >> 27)) * 0x94D049BB133111EBull;
+        return value ^ (value >> 31);
+    };
+    std::uint64_t seed = mix(
+        (static_cast<std::uint64_t>(instigator) << 32) | action_instance_id);
+    seed = mix(
+        seed ^
+        ((static_cast<std::uint64_t>(projectile_template_id) << 32) | salt));
+    return seed;
+}
+
+bool spawn_projectile_at(
+    World& world,
+    const RuntimeProjectileTemplate& projectile_template,
+    PeerId owner_peer,
+    NetId shooter_net_id,
+    std::uint8_t weapon_id,
+    std::uint32_t action_instance_id,
+    const glm::vec3& position,
+    const glm::vec3& direction,
+    std::uint32_t current_tick,
+    float fixed_delta_seconds,
+    std::vector<KernelEvent>* events) {
+    return spawn_projectile_from_template(
+        world,
+        projectile_template,
+        owner_peer,
+        shooter_net_id,
+        weapon_id,
+        action_instance_id,
+        position,
+        direction,
+        current_tick,
+        fixed_delta_seconds,
+        events,
+        nullptr);
+}
+
+ProjectileLaunch descent_launch(
+    const RuntimeProjectileTemplate& projectile_template,
+    const glm::vec3& target,
+    std::uint64_t seed,
+    float fixed_delta_seconds,
+    const physics::PhysicsWorld* ground) {
+    const float height = projectile_template.launch_height;
+    // Land on whatever is under the target within the fall height, probing
+    // from as high as the fall starts: at these elevations the path is close
+    // to vertical, so the first surface under that point is the one the fall
+    // would meet anyway -- a hill above the target, or a roof over it.
+    glm::vec3 landing = target;
+    if (ground != nullptr && height > 0.0f) {
+        physics::RayCastRequest probe{};
+        probe.origin = target + glm::vec3{0.0f, height, 0.0f};
+        probe.direction = glm::vec3{0.0f, -1.0f, 0.0f};
+        probe.max_distance = height * 2.0f;
+        probe.filter = collision_filter_from_mask(
+            KERNEL_COLLISION_LAYER_TERRAIN |
+            KERNEL_COLLISION_LAYER_STATIC_OBSTACLE);
+        physics::CollisionHit hit{};
+        if (ground->ray_cast_closest(probe, &hit)) {
+            landing = hit.position;
+        }
+    }
+
+    // Two separate 24-bit fields of the seed as fractions in [0, 1): exact in
+    // a float, and the same on every platform. The top one picks the
+    // elevation, the next one the azimuth.
+    const float fraction =
+        static_cast<float>(seed >> 40) * (1.0f / 16777216.0f);
+    const float turn =
+        static_cast<float>((seed >> 16) & 0xFFFFFFu) * (1.0f / 16777216.0f);
+    const float elevation = glm::radians(
+        projectile_template.launch_elevation_min_degrees +
+        (projectile_template.launch_elevation_max_degrees -
+         projectile_template.launch_elevation_min_degrees) *
+            fraction);
+    const float azimuth = turn * 6.28318530717958647692f;
+    const glm::vec3 across{std::cos(azimuth), 0.0f, std::sin(azimuth)};
+    const glm::vec3 travel = across * std::cos(elevation) -
+        glm::vec3{0.0f, std::sin(elevation), 0.0f};
+    const float path_length = height / std::sin(elevation);
+    const float fall_seconds =
+        static_cast<float>(projectile_template.launch_fall_ticks) *
+        fixed_delta_seconds;
+
+    ProjectileLaunch launch;
+    launch.origin = landing - travel * path_length;
+    launch.velocity = fall_seconds > 0.0f
+        ? travel * (path_length / fall_seconds)
+        : glm::vec3{0.0f};
+    return launch;
+}
+
 bool spawn_action_graph_projectile(
     World& world,
     std::uint32_t projectile_template_id,
@@ -1152,11 +1298,22 @@ bool spawn_action_graph_projectile(
     const glm::vec3& position,
     const glm::vec3& direction,
     std::uint32_t current_tick,
-    float fixed_delta_seconds) {
+    float fixed_delta_seconds,
+    std::uint32_t lifetime_ticks,
+    std::uint32_t extra_lifetime_ticks,
+    std::uint32_t launch_salt) {
     const RuntimeProjectileTemplate* projectile_template =
         world.find_projectile_template(projectile_template_id);
+    // Speed 0 on a standard projectile is a marker, which the catalog only
+    // admits with nothing to hit; anything else still needs to travel.
+    const bool stationary_marker = projectile_template != nullptr &&
+        projectile_template->speed == 0.0f &&
+        projectile_template->collision_mask == KERNEL_COLLISION_MASK_NONE;
+    const bool derived_speed = projectile_template != nullptr &&
+        projectile_template->launch_type != ProjectileLaunchType::kNone;
     if (projectile_template == nullptr ||
         (projectile_template->projectile_type != ProjectileType::kAreaEffect &&
+         !stationary_marker && !derived_speed &&
          (!std::isfinite(projectile_template->speed) ||
           projectile_template->speed <= 0.0f))) {
         return false;
@@ -1173,7 +1330,10 @@ bool spawn_action_graph_projectile(
         current_tick,
         fixed_delta_seconds,
         nullptr,
-        nullptr);
+        nullptr,
+        lifetime_ticks,
+        extra_lifetime_ticks,
+        launch_salt);
 }
 
 glm::vec3 projectile_position_at(
@@ -1238,6 +1398,7 @@ void simulate_projectiles(
         active_damage_pipeline = &local_damage_pipeline;
     }
     std::vector<NetId> projectiles_to_destroy;
+    std::vector<NetId> held_roots;
     std::vector<ActionGraphQueuedTrigger> trigger_events;
 
     auto view = world.registry().view<NetworkIdentity, Transform, Velocity, ProjectileState, ProjectileTag>();
@@ -1371,12 +1532,25 @@ void simulate_projectiles(
         const Transform& transform = hit_view.get<Transform>(entity);
         ProjectileState& projectile = hit_view.get<ProjectileState>(entity);
 
+        // A root held for its derived chain has already expired: it hits
+        // nothing and fires nothing more, and goes when the chain is over.
+        if (projectile.hold_until_tick != 0u) {
+            if (current_tick >= projectile.hold_until_tick) {
+                push_unique_net_id(&projectiles_to_destroy, identity.net_id);
+            }
+            continue;
+        }
+
         physics::CollisionQueryFilter filter =
             collision_filter_from_mask(projectile.collision_mask);
         filter.ignored_entity_net_id = projectile.shooter_net_id;
         const physics::PhysicsWorld* collision_world = world.collision_world();
+        // A mask of none is a marker that only exists to expire: it has
+        // nothing to hit, so it runs no query rather than one that matches
+        // nothing.
         const std::vector<physics::CollisionHit> hits =
-            collision_world == nullptr
+            collision_world == nullptr ||
+                    projectile.collision_mask == KERNEL_COLLISION_MASK_NONE
                 ? std::vector<physics::CollisionHit>{}
                 : query_projectile_collision_hits(
                       *collision_world,
@@ -1422,16 +1596,38 @@ void simulate_projectiles(
             transform.position,
             normalized_or(
                 transform.position - projectile.previous_position,
-                glm::vec3{1.0f, 0.0f, 0.0f}),
+                projectile.spawn_direction),
             current_tick,
             0,
             false,
             &trigger_events);
+        // A replicated root whose expiry starts a derived chain stays until
+        // the chain is over, so a client coming into range mid-chain is still
+        // handed it and can derive the rest. Only its own spawn is ever sent.
+        const RuntimeProjectileTemplate* expired_template =
+            world.find_projectile_template(projectile.projectile_template_id);
+        if (!projectile.derived && expired_template != nullptr &&
+            expired_template->derived_chain_ticks > 0u) {
+            projectile.hold_until_tick =
+                current_tick + expired_template->derived_chain_ticks + 1u;
+            held_roots.push_back(identity.net_id);
+            continue;
+        }
         push_unique_net_id(&projectiles_to_destroy, identity.net_id);
     }
 
+    std::vector<NetId> committed_subjects;
     execute_queued_trigger_events(
-        world, &trigger_events, fixed_delta_seconds, events);
+        world, &trigger_events, fixed_delta_seconds, events, &committed_subjects);
+    // A root whose chain did not start is removed now rather than held: a
+    // client reads a root that goes before its chain could have ended as the
+    // chain being called off.
+    for (const NetId root : held_roots) {
+        if (std::find(committed_subjects.begin(), committed_subjects.end(), root) ==
+            committed_subjects.end()) {
+            push_unique_net_id(&projectiles_to_destroy, root);
+        }
+    }
 
     std::sort(projectiles_to_destroy.begin(), projectiles_to_destroy.end());
     projectiles_to_destroy.erase(

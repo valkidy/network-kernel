@@ -1,0 +1,12 @@
+# Lands a meteor under whatever the reticle is on, up to 35 m away. Aiming at
+# nothing in range -- the sky, or ground beyond 35 m -- is refused and costs
+# no charge.
+id: 13
+name: Meteor Staff
+weapon_type: targeted_strike
+magazine_size: 3
+reserve_magazines: 6
+max_range: 35.0
+fire_action_template: meteor_staff_cast
+reload_action_template: meteor_staff_reload
+projectile_template: meteor_marker

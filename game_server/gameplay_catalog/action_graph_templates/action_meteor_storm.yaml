@@ -1,0 +1,19 @@
+# One event, a spread of fuses: 10-15 of them within 6 m of the event, each
+# living 10 ticks plus a share of a 60-tick window, so they expire one after
+# another rather than together. The spread is seeded from the caster, the cast
+# and the iteration, so one cast always produces the same storm.
+id: action_meteor_storm
+parameters:
+  template: null
+  position: null
+  direction: null
+actions:
+  - type: spawn_projectile
+    projectile_template: params.template
+    position: params.position
+    direction: params.direction
+    lifetime_ticks: 10
+    repeat:
+      count: [10, 15]
+      scatter_radius: 6.0
+      stagger_lifetime_ticks: 60

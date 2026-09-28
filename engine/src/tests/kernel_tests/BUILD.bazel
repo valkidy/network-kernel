@@ -351,6 +351,12 @@ cc_test(
 )
 
 cc_test(
+    name = "derived_replication_end_to_end_test",
+    srcs = ["derived_replication_end_to_end_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
+cc_test(
     name = "combat_event_delivery_end_to_end_test",
     srcs = ["combat_event_delivery_end_to_end_test.cc"],
     deps = ["//engine/src/kernel:kernel"],

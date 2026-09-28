@@ -130,6 +130,31 @@ void one_window_names_both_drop_points() {
     require(drain_stale_lines().empty());
 }
 
+// The render time is the server's clock already, and the client's clock
+// offset has nothing to add to it. With a server that had run 46 s before the
+// client started, adding it put every record 1393 ticks past expiry: all were
+// dropped on their first release and none was ever shown.
+void a_late_joining_client_still_releases_on_time() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30u;
+    config.tick.snapshot_rate = 15u;
+    Engine client(config);
+    client.reset_runtime_state(KernelMode_Client);
+    client.has_client_render_time_ = true;
+    client.client_clock_offset_us_ = 46437000;  // server time - client time
+    client.pending_remote_action_presentation_events_.push_back(
+        Engine::PendingRemotePresentation{
+            1520u, 1528u, event_of(KernelRemoteActionPresentationEventType_HitReaction), 0u});
+    release_at(client, 3000000u, 1510u);  // drawn before it: waits
+    require(client.remote_action_presentation_events_.empty());
+    require(client.pending_remote_action_presentation_events_.size() == 1u);
+    release_at(client, 3400000u, 1522u);  // drawn past it, inside expiry
+    require(client.remote_action_presentation_events_.size() == 1u);
+    require(client.pending_remote_action_presentation_events_.empty());
+    require(client.network_stats_.remote_presentation_stale_dropped == 0u);
+}
+
 void stats_off_logs_nothing() {
     KernelConfig config{};
     config.mode = KernelMode_Client;
@@ -153,6 +178,7 @@ void stats_off_logs_nothing() {
 int main() {
     require(Kernel_PollLogMessages(nullptr, 0u) == 0u);  // start capture
     one_window_names_both_drop_points();
+    a_late_joining_client_still_releases_on_time();
     stats_off_logs_nothing();
     std::printf("remote_presentation_stale_diagnostics_test passed\n");
     return 0;

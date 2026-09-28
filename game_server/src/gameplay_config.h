@@ -359,6 +359,13 @@ struct ActionGraphActionConfig {
     std::string item_template_ref;
     std::uint32_t quantity = 0;
     std::uint32_t condition_type = KernelActionConditionType_Always;
+    // spawn_projectile only. Literals authored on the graph action; see
+    // KernelActionDefinition for what they mean.
+    std::uint32_t spawn_lifetime_ticks = 0;
+    std::uint32_t repeat_count_min = 0;
+    std::uint32_t repeat_count_max = 0;
+    float repeat_scatter_radius = 0.0f;
+    std::uint32_t repeat_stagger_lifetime_ticks = 0;
 };
 
 struct ActionGraphTemplateConfig {

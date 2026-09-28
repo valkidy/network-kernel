@@ -1,12 +1,14 @@
 #include "game_server/src/gameplay_config.h"
 
 #include <cassert>
+#include <cstdio>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <limits>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -305,10 +307,12 @@ void valid_repo_templates_load_all_slots() {
             storage.definition.projectile_templates[index];
         if (projectile_template.weapon_id == network_example::game_server::kWeaponSpammer ||
             projectile_template.weapon_id ==
-                network_example::game_server::kWeaponGrenade ||
-            projectile_template.weapon_id ==
                 network_example::game_server::kWeaponHomingMissile) {
             assert(projectile_template.mechanics.collider_template_id == 7);
+        }
+        // The grenade shell has been a box (projectile_aabb) since ca61488.
+        if (projectile_template.weapon_id == network_example::game_server::kWeaponGrenade) {
+            assert(projectile_template.mechanics.collider_template_id == 16);
         }
         if (projectile_template.weapon_id == network_example::game_server::kWeaponRocket) {
             assert(projectile_template.mechanics.collider_template_id == 3);
@@ -333,7 +337,7 @@ void valid_repo_templates_load_all_slots() {
     assert(config.weapons.definitions[network_example::game_server::kWeaponSpammer]
                .damage == 1);
     assert(config.weapons.definitions[network_example::game_server::kWeaponSpammer]
-               .magazine_size == 120);
+               .magazine_size == 3);
     assert(config.weapons.definitions[network_example::game_server::kWeaponSpammer]
                .reserve_magazines == kMaxReserveMagazines);
     assert(config.weapons.definitions[network_example::game_server::kWeaponSpammer]
@@ -360,7 +364,7 @@ void valid_repo_templates_load_all_slots() {
            "Grenade Launcher");
     assert(config.weapons.projectile_sync_modes
                [network_example::game_server::kWeaponRocket] ==
-           KernelProjectileSyncMode_ServerSnapshotOnly);
+           KernelProjectileSyncMode_HybridDeterministicThenSnapshot);
     assert(config.weapons.projectile_sync_modes
                [network_example::game_server::kWeaponHomingMissile] ==
            KernelProjectileSyncMode_HybridDeterministicThenSnapshot);
@@ -370,19 +374,42 @@ void valid_repo_templates_load_all_slots() {
            "Beam Rifle");
     assert(config.weapons.names[network_example::game_server::kWeaponHomingMissile] ==
            "Homing Missile");
-    assert(config.action_templates.size() == 9);
+    // Every action template on disk, plus the catalog's shared reload. Counted
+    // rather than hardcoded: the directory grows with every weapon.
+    std::size_t action_template_files = 0;
+    for (const std::filesystem::directory_entry& entry :
+         std::filesystem::directory_iterator(
+             runfiles_root() / "game_server" / "gameplay_catalog" /
+             "action_templates")) {
+        if (entry.is_regular_file() && entry.path().extension() == ".yaml") {
+            ++action_template_files;
+        }
+    }
+    assert(action_template_files > 0);
+    assert(config.action_templates.size() == action_template_files + 1);
     assert(config.weapons.definitions[network_example::game_server::kWeaponRifle]
                .fire_action_template_id == 4096);
     assert(config.weapons.definitions[network_example::game_server::kWeaponRocket]
                .fire_action_template_id == 4099);
     assert(config.weapons.definitions[network_example::game_server::kWeaponBeamRifle]
                .fire_action_template_id == 4101);
-    assert(storage.definition.action_template_count == 9);
-    assert(config.action_templates[3].definition.commit_offset_ticks == 3);
-    assert(config.action_templates[3].definition.commit_interval_ticks == 30);
-    assert(config.action_templates[5].definition.trigger_mode ==
-           KernelActionTriggerMode_Hold);
-    assert(config.action_templates[5].definition.hold_input_timeout_ticks == 6);
+    assert(storage.definition.action_template_count ==
+           config.action_templates.size());
+    // By id, not by index: the load order follows the enumerated files.
+    const auto action_by_id = [&config](std::uint32_t action_template_id)
+        -> const KernelActionTemplateDefinition& {
+        for (const network_example::game_server::ActionTemplateConfig& action :
+             config.action_templates) {
+            if (action.definition.action_template_id == action_template_id) {
+                return action.definition;
+            }
+        }
+        std::abort();
+    };
+    assert(action_by_id(4099).commit_offset_ticks == 3);
+    assert(action_by_id(4099).commit_interval_ticks == 30);
+    assert(action_by_id(4101).trigger_mode == KernelActionTriggerMode_Hold);
+    assert(action_by_id(4101).hold_input_timeout_ticks == 6);
     network_example::game_server::GameServerGameplayConfig changed_action = config;
     ++changed_action.action_templates[0].definition.commit_interval_ticks;
     assert(network_example::game_server::compute_gameplay_catalog_hash(changed_action) !=
@@ -406,7 +433,7 @@ void valid_repo_templates_load_all_slots() {
         if (collider.definition.template_id == 7) {
             found_sphere = true;
             assert(collider.definition.shape_type == KernelColliderShapeType_Sphere);
-            assert(collider.definition.shape_params.x == 0.2f);
+            assert(collider.definition.shape_params.x == 0.5f);
         }
         if (collider.definition.template_id == 8) {
             found_beam = true;
@@ -451,7 +478,7 @@ void invalid_templates_are_rejected() {
     write_file(
         legacy_dir / "rifle.yaml",
         "id: 0\nname: Rifle\nweapon_type: hitscan\nmagazine_size: 30\n"
-        "damage: 25\ncooldown_ticks: 3\nmax_range: 100.0\n"
+        "cooldown_ticks: 3\nmax_range: 100.0\n"
         "segment_collider: rifle_segment\n");
     try {
         (void)network_example::game_server::
@@ -993,6 +1020,469 @@ void subject_direction_needs_a_projectile_that_travels() {
     assert(load_fails(still_dir));
 }
 
+// Speed 0 is a marker: something that holds a place and fires on_expired
+// there. It loads only when it cannot do anything else, so each rejection
+// below differs from the accepted template by one field.
+void stationary_marker_loads_only_when_inert() {
+    const std::string marker =
+        "id: 40\nname: strike_marker\ntype: standard\n"
+        "collider_template: projectile_sphere\n"
+        "damage: 0\ndamage_shape: none\n"
+        "sync_mode: server_snapshot_only\n"
+        "lifetime_ticks: 20\n";
+    const std::string expired_trigger =
+        "triggers:\n"
+        "  on_expired:\n"
+        "    action_graph: action_spawn_projectile_at_impact\n"
+        "    parameters:\n"
+        "      template: rocket_explosion\n"
+        "      position: event.position\n"
+        "      direction: event.direction\n";
+    const auto marker_dir = [&](const char* name, const std::string& extra) {
+        const std::filesystem::path dir = tmp_dir(name);
+        write_valid_templates(dir);
+        write_file(
+            dir.parent_path() / "projectile_templates" / "strike_marker.yaml",
+            marker + extra + expired_trigger);
+        return dir;
+    };
+
+    const network_example::game_server::GameServerGameplayConfig config =
+        network_example::game_server::load_gameplay_config_from_weapon_template_directory(
+            marker_dir("marker_inert", "speed: 0.0\ncollision_mask: none\n")
+                .string());
+    const KernelProjectileMechanicsDefinition& mechanics =
+        projectile_mechanics(config, 40);
+    assert(mechanics.speed == 0.0f);
+    assert(mechanics.collision_mask == KERNEL_COLLISION_MASK_NONE);
+    assert(mechanics.expired_trigger.action_count == 1u);
+
+    const bool hits_terrain = load_fails(marker_dir(
+        "marker_hits_terrain", "speed: 0.0\ncollision_mask: terrain\n"));
+    assert(hits_terrain);
+    const bool falls = load_fails(marker_dir(
+        "marker_falls",
+        "speed: 0.0\ncollision_mask: none\n"
+        "gravity: {x: 0.0, y: -9.8, z: 0.0}\n"));
+    assert(falls);
+    const bool backwards = load_fails(marker_dir(
+        "marker_negative_speed", "speed: -1.0\ncollision_mask: none\n"));
+    assert(backwards);
+}
+
+// An area effect expires without queuing a trigger, so on_expired on one used
+// to load and never fire.
+void area_effect_rejects_on_expired() {
+    const std::string area_template =
+        "id: 4\nname: fire_floor_area\ntype: area_effect\n"
+        "collider_template: area_effect_sphere\n"
+        "damage: 12\n"
+        "lifetime_ticks: 6\n"
+        "damage_behavior:\n"
+        "  type: area_interval\n"
+        "  damage_interval_ticks: 2\n"
+        "  falloff: none\n"
+        "collision_mask: hostile_side\n";
+    const auto binding = [](const char* trigger) {
+        return std::string("triggers:\n  ") + trigger +
+            ":\n"
+            "    action_graph: action_spawn_projectile_at_impact\n"
+            "    parameters:\n"
+            "      template: rocket_explosion\n"
+            "      position: event.position\n"
+            "      direction: event.direction\n";
+    };
+
+    const std::filesystem::path impact_dir = tmp_dir("area_on_impact");
+    write_valid_templates(impact_dir);
+    write_file(
+        impact_dir.parent_path() / "projectile_templates" / "fire_floor_area.yaml",
+        area_template + binding("on_projectile_impact"));
+    const bool impact_failed = load_fails(impact_dir);
+    assert(!impact_failed);
+
+    const std::filesystem::path expired_dir = tmp_dir("area_on_expired");
+    write_valid_templates(expired_dir);
+    write_file(
+        expired_dir.parent_path() / "projectile_templates" / "fire_floor_area.yaml",
+        area_template + binding("on_expired"));
+    const bool expired_failed = load_fails(expired_dir);
+    assert(expired_failed);
+}
+
+// launch: descent derives start and speed from a landing target. Each rejected
+// variant below differs from the accepted one by one line.
+void descent_launch_is_authored() {
+    const std::string head =
+        "id: 41\nname: meteor_body\ntype: standard\n"
+        "collider_template: projectile_sphere\n"
+        "damage: 0\ndamage_shape: none\n"
+        "collision_mask: terrain | static_obstacle\n";
+    const std::string launch =
+        "launch:\n"
+        "  type: descent\n"
+        "  elevation_degrees: [75, 85]\n"
+        "  height: 40.0\n"
+        "  fall_ticks: 15\n";
+    const auto meteor_dir = [&](const char* name, const std::string& body) {
+        const std::filesystem::path dir = tmp_dir(name);
+        write_valid_templates(dir);
+        write_file(
+            dir.parent_path() / "projectile_templates" / "meteor_body.yaml",
+            head + body);
+        return dir;
+    };
+
+    const network_example::game_server::GameServerGameplayConfig config =
+        network_example::game_server::load_gameplay_config_from_weapon_template_directory(
+            meteor_dir("descent_valid", "lifetime_ticks: 18\n" + launch)
+                .string());
+    const KernelProjectileMechanicsDefinition& mechanics =
+        projectile_mechanics(config, 41);
+    assert(mechanics.launch.struct_size == sizeof(KernelProjectileLaunchDefinition));
+    assert(mechanics.launch.launch_type == KernelProjectileLaunchType_Descent);
+    assert(mechanics.launch.elevation_min_degrees == 75.0f);
+    assert(mechanics.launch.elevation_max_degrees == 85.0f);
+    assert(mechanics.launch.height == 40.0f);
+    assert(mechanics.launch.fall_ticks == 15u);
+    assert(mechanics.speed == 0.0f);
+    // Not authored, and nothing else is accepted.
+    assert(mechanics.sync_mode == KernelProjectileSyncMode_ServerSnapshotOnly);
+
+    const network_example::game_server::GameServerGameplayConfig fixed =
+        network_example::game_server::load_gameplay_config_from_weapon_template_directory(
+            meteor_dir(
+                "descent_fixed_elevation",
+                "lifetime_ticks: 18\n"
+                "launch:\n  type: descent\n  elevation_degrees: 80\n"
+                "  height: 40.0\n  fall_ticks: 15\n")
+                .string());
+    assert(projectile_mechanics(fixed, 41).launch.elevation_min_degrees == 80.0f);
+    assert(projectile_mechanics(fixed, 41).launch.elevation_max_degrees == 80.0f);
+
+    struct Rejected {
+        const char* name;
+        std::string body;
+    };
+    const std::vector<Rejected> rejected = {
+        {"descent_with_speed", "lifetime_ticks: 18\nspeed: 30.0\n" + launch},
+        {"descent_lifetime_short", "lifetime_ticks: 15\n" + launch},
+        {"descent_predicted",
+         "lifetime_ticks: 18\nsync_mode: hybrid_deterministic_then_snapshot\n" +
+             launch},
+        {"descent_parabolic", "lifetime_ticks: 18\nmovement_model: parabolic\n" +
+             launch},
+        {"descent_reversed_range",
+         "lifetime_ticks: 18\nlaunch:\n  type: descent\n"
+         "  elevation_degrees: [85, 75]\n  height: 40.0\n  fall_ticks: 15\n"},
+        {"descent_flat",
+         "lifetime_ticks: 18\nlaunch:\n  type: descent\n"
+         "  elevation_degrees: 0\n  height: 40.0\n  fall_ticks: 15\n"},
+        {"descent_no_height",
+         "lifetime_ticks: 18\nlaunch:\n  type: descent\n"
+         "  elevation_degrees: 80\n  fall_ticks: 15\n"},
+        {"descent_unknown_type",
+         "lifetime_ticks: 18\nlaunch:\n  type: orbit\n"
+         "  elevation_degrees: 80\n  height: 40.0\n  fall_ticks: 15\n"},
+    };
+    for (const Rejected& variant : rejected) {
+        const bool failed = load_fails(meteor_dir(variant.name, variant.body));
+        if (!failed) {
+            std::fprintf(stderr, "descent variant loaded: %s\n", variant.name);
+        }
+        assert(failed);
+    }
+
+    // A muzzle-fired weapon would drop the projectile onto its own shooter.
+    const std::filesystem::path weapon_dir =
+        meteor_dir("descent_on_muzzle_weapon", "lifetime_ticks: 18\n" + launch);
+    write_file(
+        weapon_dir / "rocket.yaml",
+        "id: 3\nname: Rocket\nweapon_type: projectile\nmagazine_size: 6\n"
+        "fire_action_template: rocket_fire\n"
+        "projectile_template: meteor_body\n");
+    const bool muzzle_failed = load_fails(weapon_dir);
+    assert(muzzle_failed);
+}
+
+// weapon_type: targeted_strike lands its projectile template on a point. It
+// needs a max_range, and what it lands must be something only the server
+// places: server_snapshot_only, and not a beam.
+void targeted_strike_weapon_is_authored() {
+    const std::string marker =
+        "id: 40\nname: strike_marker\ntype: standard\n"
+        "collider_template: projectile_sphere\n"
+        "damage: 0\ndamage_shape: none\n"
+        "speed: 0.0\ncollision_mask: none\n"
+        "lifetime_ticks: 20\n";
+    const std::string meteor =
+        "id: 41\nname: meteor_body\ntype: standard\n"
+        "collider_template: projectile_sphere\n"
+        "damage: 0\ndamage_shape: none\n"
+        "collision_mask: terrain | static_obstacle\n"
+        "lifetime_ticks: 18\n"
+        "launch:\n  type: descent\n  elevation_degrees: [75, 85]\n"
+        "  height: 40.0\n  fall_ticks: 15\n";
+    const auto strike_dir = [&](const char* name,
+                                const std::string& marker_sync,
+                                const std::string& weapon_body) {
+        const std::filesystem::path dir = tmp_dir(name);
+        write_valid_templates(dir);
+        write_file(
+            dir.parent_path() / "projectile_templates" / "strike_marker.yaml",
+            marker + marker_sync);
+        write_file(
+            dir.parent_path() / "projectile_templates" / "meteor_body.yaml",
+            meteor);
+        write_file(
+            dir / "rocket.yaml",
+            "id: 3\nname: Meteor Staff\nweapon_type: targeted_strike\n"
+            "magazine_size: 2\nfire_action_template: rocket_fire\n" +
+                weapon_body);
+        return dir;
+    };
+
+    const network_example::game_server::GameServerGameplayConfig config =
+        network_example::game_server::load_gameplay_config_from_weapon_template_directory(
+            strike_dir(
+                "strike_marker_weapon",
+                "sync_mode: server_snapshot_only\n",
+                "max_range: 35.0\nprojectile_template: strike_marker\n")
+                .string());
+    const KernelWeaponMechanicsDefinition& weapon = config.weapons.definitions[3];
+    assert(config.weapons.configured[3]);
+    assert(weapon.fire_mode == KernelWeaponFireMode_TargetedStrike);
+    assert(weapon.max_range == 35.0f);
+    assert(weapon.projectile_template_id == 40u);
+
+    // A descent template may be landed directly; the muzzle rule does not
+    // apply to a weapon that never fires from the muzzle.
+    const network_example::game_server::GameServerGameplayConfig direct =
+        network_example::game_server::load_gameplay_config_from_weapon_template_directory(
+            strike_dir(
+                "strike_meteor_weapon",
+                "sync_mode: server_snapshot_only\n",
+                "max_range: 35.0\nprojectile_template: meteor_body\n")
+                .string());
+    assert(direct.weapons.definitions[3].projectile_template_id == 41u);
+
+    const bool no_range = load_fails(strike_dir(
+        "strike_no_range",
+        "sync_mode: server_snapshot_only\n",
+        "projectile_template: strike_marker\n"));
+    assert(no_range);
+    const bool predicted = load_fails(strike_dir(
+        "strike_predicted_marker",
+        "sync_mode: hybrid_deterministic_then_snapshot\n",
+        "max_range: 35.0\nprojectile_template: strike_marker\n"));
+    assert(predicted);
+    const bool beam = load_fails(strike_dir(
+        "strike_beam",
+        "sync_mode: server_snapshot_only\n",
+        "max_range: 35.0\nprojectile_template: beam_rifle_beam\n"));
+    assert(beam);
+}
+
+// repeat and lifetime_ticks on a spawn_projectile graph action reach the
+// compiled trigger; out-of-range repeats and misplaced keys are refused.
+void spawn_repeat_is_authored() {
+    const std::string marker =
+        "id: 40\nname: storm_marker\ntype: standard\n"
+        "collider_template: projectile_sphere\n"
+        "damage: 0\ndamage_shape: none\n"
+        "speed: 0.0\ncollision_mask: none\n"
+        "sync_mode: server_snapshot_only\n"
+        "lifetime_ticks: 20\n"
+        "triggers:\n"
+        "  on_expired:\n"
+        "    action_graph: action_meteor_storm\n"
+        "    parameters:\n"
+        "      template: rocket_explosion\n"
+        "      position: event.position\n"
+        "      direction: event.direction\n";
+    const auto storm_dir = [&](const char* name, const std::string& action) {
+        const std::filesystem::path dir = tmp_dir(name);
+        write_valid_templates(dir);
+        write_file(
+            dir.parent_path() / "projectile_templates" / "storm_marker.yaml",
+            marker);
+        write_file(
+            dir.parent_path() / "action_graph_templates" /
+                "action_meteor_storm.yaml",
+            "id: action_meteor_storm\n"
+            "parameters:\n"
+            "  template: null\n"
+            "  position: null\n"
+            "  direction: null\n"
+            "actions:\n" + action);
+        return dir;
+    };
+    const std::string spawn =
+        "  - type: spawn_projectile\n"
+        "    projectile_template: params.template\n"
+        "    position: params.position\n"
+        "    direction: params.direction\n";
+
+    const network_example::game_server::GameServerGameplayConfig config =
+        network_example::game_server::load_gameplay_config_from_weapon_template_directory(
+            storm_dir(
+                "repeat_valid",
+                spawn +
+                    "    lifetime_ticks: 10\n"
+                    "    repeat:\n"
+                    "      count: [10, 15]\n"
+                    "      scatter_radius: 6.0\n"
+                    "      stagger_lifetime_ticks: 60\n")
+                .string());
+    const KernelActionDefinition& action =
+        projectile_mechanics(config, 40).expired_trigger.actions[0];
+    assert(action.spawn_lifetime_ticks == 10u);
+    assert(action.repeat_count_min == 10u);
+    assert(action.repeat_count_max == 15u);
+    assert(action.repeat_scatter_radius == 6.0f);
+    assert(action.repeat_stagger_lifetime_ticks == 60u);
+
+    struct Rejected {
+        const char* name;
+        std::string action;
+    };
+    const std::vector<Rejected> rejected = {
+        {"repeat_over_cap", spawn + "    repeat:\n      count: 17\n"},
+        {"repeat_reversed", spawn + "    repeat:\n      count: [5, 4]\n"},
+        {"repeat_zero", spawn + "    repeat:\n      count: 0\n"},
+        {"repeat_no_count", spawn + "    repeat:\n      scatter_radius: 2.0\n"},
+        {"repeat_negative_scatter",
+         spawn + "    repeat:\n      count: 3\n      scatter_radius: -1.0\n"},
+        {"spawn_lifetime_zero", spawn + "    lifetime_ticks: 0\n"},
+    };
+    for (const Rejected& variant : rejected) {
+        const bool failed = load_fails(storm_dir(variant.name, variant.action));
+        if (!failed) {
+            std::fprintf(stderr, "repeat variant loaded: %s\n", variant.name);
+        }
+        assert(failed);
+    }
+
+    // On any other action it is refused, not ignored. The graph is unbound,
+    // so the only thing that can fail it is the key; the same graph without
+    // the key is the control.
+    const auto damage_graph_dir = [&](const char* name, const std::string& extra) {
+        const std::filesystem::path dir = tmp_dir(name);
+        write_valid_templates(dir);
+        write_file(
+            dir.parent_path() / "action_graph_templates" /
+                "action_repeat_damage.yaml",
+            "id: action_repeat_damage\n"
+            "parameters:\n"
+            "  target: null\n"
+            "  amount: 1\n"
+            "actions:\n"
+            "  - type: apply_damage\n"
+            "    target: params.target\n"
+            "    amount: params.amount\n" + extra);
+        return dir;
+    };
+    const bool plain_damage_failed =
+        load_fails(damage_graph_dir("damage_graph_plain", ""));
+    assert(!plain_damage_failed);
+    const bool repeated_damage_failed = load_fails(damage_graph_dir(
+        "damage_graph_repeat", "    repeat:\n      count: 3\n"));
+    assert(repeated_damage_failed);
+}
+
+// replication: derived is only accepted where a client can derive it: below a
+// stationary marker a targeted_strike weapon lands, ending on the static
+// world. The accepted chain is the control for each refusal.
+void derived_replication_is_authored() {
+    const std::string marker =
+        "id: 40\nname: strike_marker\ntype: standard\n"
+        "collider_template: projectile_sphere\n"
+        "damage: 0\ndamage_shape: none\n"
+        "speed: 0.0\ncollision_mask: none\n"
+        "sync_mode: server_snapshot_only\n"
+        "lifetime_ticks: 20\n"
+        "triggers:\n"
+        "  on_expired:\n"
+        "    action_graph: action_spawn_projectile_at_impact\n"
+        "    parameters:\n"
+        "      template: meteor_body\n"
+        "      position: event.position\n"
+        "      direction: event.direction\n";
+    const std::string meteor_head =
+        "id: 41\nname: meteor_body\ntype: standard\n"
+        "collider_template: projectile_sphere\n"
+        "damage: 0\ndamage_shape: none\n"
+        "lifetime_ticks: 18\n"
+        "launch:\n  type: descent\n  elevation_degrees: 80\n"
+        "  height: 40.0\n  fall_ticks: 15\n";
+    const auto chain_dir = [&](const char* name,
+                               const std::string& meteor_tail,
+                               const std::string& weapon_template) {
+        const std::filesystem::path dir = tmp_dir(name);
+        write_valid_templates(dir);
+        write_file(
+            dir.parent_path() / "projectile_templates" / "strike_marker.yaml",
+            marker);
+        write_file(
+            dir.parent_path() / "projectile_templates" / "meteor_body.yaml",
+            meteor_head + meteor_tail);
+        write_file(
+            dir / "rocket.yaml",
+            "id: 3\nname: Meteor Staff\nweapon_type: targeted_strike\n"
+            "magazine_size: 2\nmax_range: 35.0\n"
+            "fire_action_template: rocket_fire\n"
+            "projectile_template: " + weapon_template + "\n");
+        return dir;
+    };
+
+    const network_example::game_server::GameServerGameplayConfig config =
+        network_example::game_server::load_gameplay_config_from_weapon_template_directory(
+            chain_dir(
+                "derived_valid",
+                "collision_mask: terrain | static_obstacle\nreplication: derived\n",
+                "strike_marker")
+                .string());
+    assert(projectile_mechanics(config, 41).replication ==
+           KernelProjectileReplication_Derived);
+    assert(projectile_mechanics(config, 40).replication ==
+           KernelProjectileReplication_Replicated);
+
+    // Its end would depend on actors only the server sees move.
+    const bool hits_actors = load_fails(chain_dir(
+        "derived_hits_actors",
+        "collision_mask: terrain | hostile_side\nreplication: derived\n",
+        "strike_marker"));
+    assert(hits_actors);
+    // Fired directly, it has no root for a client to hold.
+    const bool fired_directly = load_fails(chain_dir(
+        "derived_fired_directly",
+        "collision_mask: terrain | static_obstacle\nreplication: derived\n",
+        "meteor_body"));
+    assert(fired_directly);
+    const bool bad_value = load_fails(chain_dir(
+        "derived_bad_value",
+        "collision_mask: terrain | static_obstacle\nreplication: sometimes\n",
+        "strike_marker"));
+    assert(bad_value);
+
+    // A rocket is not a root: its impact point is decided in flight.
+    const std::filesystem::path rocket_dir = chain_dir(
+        "derived_under_rocket",
+        "collision_mask: terrain | static_obstacle\n",
+        "strike_marker");
+    write_file(
+        rocket_dir.parent_path() / "projectile_templates" / "rocket_explosion.yaml",
+        "id: 8\nname: rocket_explosion\nkind: area_effect\n"
+        "collider_template: area_effect_sphere\n"
+        "damage: 45\nlifetime_ticks: 45\n"
+        "damage_behavior:\n  type: area_interval\n"
+        "  damage_interval_ticks: 45\n  falloff: linear\n"
+        "collision_mask: damageable\n"
+        "replication: derived\n");
+    const bool under_rocket = load_fails(rocket_dir);
+    assert(under_rocket);
+}
+
 void area_effect_speed_is_authored() {
     const std::filesystem::path default_dir = tmp_dir("area_speed_default");
     write_valid_templates(default_dir);
@@ -1186,9 +1676,19 @@ void catalog_file_loads_colliders() {
     const network_example::game_server::GameServerGameplayConfig config =
         network_example::game_server::load_gameplay_config_from_catalog_file(
             catalog_file.string());
-    assert(config.weapons.catalog_version == 8);
+    assert(config.weapons.catalog_version == 16);
     assert(config.weapons.catalog_hash != 0);
-    assert(config.colliders.templates.size() == 12);
+    // Every collider_templates/*.yaml; counted, since the directory grows.
+    std::size_t collider_files = 0;
+    for (const std::filesystem::directory_entry& entry :
+         std::filesystem::directory_iterator(
+             catalog_file.parent_path() / "collider_templates")) {
+        if (entry.is_regular_file() && entry.path().extension() == ".yaml") {
+            ++collider_files;
+        }
+    }
+    assert(collider_files > 0);
+    assert(config.colliders.templates.size() == collider_files);
     assert(config.colliders.bindings.empty());
 }
 
@@ -1279,13 +1779,19 @@ void weapons_name_their_own_reload_action() {
     assert(reload_offset_of(
                reload_of(network_example::game_server::kWeaponHomingMissile)) == 60);
 
-    // Distinct templates, and none of them the catalog's shared fallback.
+    // Distinct templates, and none of them the catalog's shared fallback --
+    // except the grunts' claw (10) and slam (11), which name `shared_reload`
+    // themselves: a bottomless AI weapon has no reload of its own to author.
     assert(reload_of(network_example::game_server::kWeaponRifle) !=
            reload_of(network_example::game_server::kWeaponShotgun));
     for (std::size_t id = 0; id < config.weapons.definitions.size(); ++id) {
-        if (config.weapons.configured[id]) {
-            assert(config.weapons.definitions[id].reload_action_template_id != 4199u);
+        if (!config.weapons.configured[id]) {
+            continue;
         }
+        const bool names_shared_reload = id == 10u || id == 11u;
+        assert(
+            (config.weapons.definitions[id].reload_action_template_id == 4199u) ==
+            names_shared_reload);
     }
 }
 
@@ -1334,7 +1840,7 @@ void damage_is_authored_once_per_projectile_template() {
     // the weapon definition mirrors it rather than authoring a second one.
     const KernelProjectileMechanicsDefinition& rifle_shot =
         projectile_mechanics(config, 10);
-    assert(rifle_shot.damage == 25);
+    assert(rifle_shot.damage == 45);
     assert(config.weapons.definitions[network_example::game_server::kWeaponRifle]
                .damage == rifle_shot.damage);
     const KernelProjectileMechanicsDefinition& shotgun_shot =
@@ -1381,6 +1887,12 @@ int main() {
     area_effect_sync_mode_is_authored_not_forced();
     area_effect_hit_instigator_is_authored();
     area_effect_speed_is_authored();
+    stationary_marker_loads_only_when_inert();
+    area_effect_rejects_on_expired();
+    descent_launch_is_authored();
+    targeted_strike_weapon_is_authored();
+    spawn_repeat_is_authored();
+    derived_replication_is_authored();
     subject_direction_needs_a_projectile_that_travels();
     area_effect_motion_collision_mask_is_authored();
     catalog_file_loads_colliders();

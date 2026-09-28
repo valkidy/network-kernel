@@ -118,6 +118,7 @@ cc_library(
     name = "kernel",
     srcs = [
         "src/build_info.cc",
+        "src/derived_chain_presenter.cc",
         "src/kernel.cc",
         "src/kernel_api.cc",
         "src/kernel_rpc.cc",
@@ -136,6 +137,7 @@ cc_library(
     hdrs = [
         ":build_info_macros",
         "src/build_info.h",
+        "src/derived_chain_presenter.h",
         "src/kernel.h",
         "src/kernel_api_internal.h",
         "src/kernel_rpc_dev_handlers.h",

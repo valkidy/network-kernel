@@ -1,0 +1,20 @@
+# Meteor Staff's landing mark. It sits where the staff resolved the strike for
+# its 20-tick lifetime -- the telegraph every client sees -- then expires into
+# the meteor. Speed 0 with nothing to hit is what makes it a marker.
+id: 18
+name: meteor_marker
+type: standard
+collider_template: projectile_sphere
+damage: 0
+damage_shape: none
+speed: 0.0
+collision_mask: none
+sync_mode: server_snapshot_only
+lifetime_ticks: 20
+triggers:
+  on_expired:
+    action_graph: action_spawn_projectile_at_expired
+    parameters:
+      template: meteor_body
+      position: event.position
+      direction: event.direction

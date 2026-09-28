@@ -1,0 +1,11 @@
+# One storm per press, five seconds apart.
+id: 4121
+name: meteor_storm_cast
+trigger_mode: press
+flags: [cancel_on_death, cancel_on_weapon_change, cancel_before_first_commit]
+ammo_cost_per_commit: 1
+commit_offset_ticks: 0
+commit_interval_ticks: 150
+max_commit_count: 1
+recovery_ticks: 15
+hold_input_timeout_ticks: 0
