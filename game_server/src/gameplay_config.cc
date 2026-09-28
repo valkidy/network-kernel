@@ -139,6 +139,18 @@ std::uint32_t stable_channel_id(std::string_view value) {
     return hash == 0u ? 1u : hash;
 }
 
+// A standard projectile that does not move: it holds a place and fires
+// on_expired there. Only accepted when it can do nothing else, so a template
+// that merely forgot its speed still fails. The kernel checks the same rule.
+bool is_stationary_marker(const KernelProjectileMechanicsDefinition& mechanics) {
+    return mechanics.projectile_type == KernelProjectileType_Standard &&
+        mechanics.speed == 0.0f &&
+        mechanics.collision_mask == KERNEL_COLLISION_MASK_NONE &&
+        mechanics.motion_model == KernelProjectileMotionModel_Linear &&
+        mechanics.gravity.x == 0.0f && mechanics.gravity.y == 0.0f &&
+        mechanics.gravity.z == 0.0f;
+}
+
 void hash_weapon(std::uint64_t* hash, const KernelWeaponMechanicsDefinition& weapon) {
     hash_scalar(hash, weapon.weapon_id);
     hash_scalar(hash, weapon.fire_mode);
@@ -5608,6 +5620,14 @@ ProjectileTemplateConfig projectile_template_from_yaml(
                     overridden + ": " + projectile_template.name);
             }
         }
+        // An area effect expires in simulate_area_effects, which queues no
+        // trigger, so a binding here loaded cleanly and never fired. A delay
+        // that ends in on_expired belongs on a stationary standard marker.
+        if (triggers && triggers["on_expired"]) {
+            throw std::runtime_error(
+                "on_expired is not supported on area_effect projectiles: " +
+                projectile_template.name);
+        }
         mechanics.motion_model = KernelProjectileMotionModel_Linear;
         // A field that travels -- a tornado rather than a blast. Zero is the
         // standing behaviour: the effect sits where it was spawned. Read here
@@ -5695,6 +5715,14 @@ ProjectileTemplateConfig projectile_template_from_yaml(
     mechanics.speed = node["speed"].as<float>();
     mechanics.lifetime_ticks = node["lifetime_ticks"].as<std::uint32_t>();
     mechanics.gravity = vec3_from_yaml(node["gravity"]);
+    if (mechanics.projectile_type == KernelProjectileType_Standard &&
+        !(mechanics.speed > 0.0f) && !is_stationary_marker(mechanics)) {
+        throw std::runtime_error(
+            "standard projectile speed must be positive; speed 0 is only "
+            "accepted for a marker with collision_mask: none, linear motion "
+            "and no gravity: " +
+            projectile_template.name);
+    }
     mechanics.max_hit_count =
         node["max_hit_count"] ? node["max_hit_count"].as<std::uint32_t>() : 1u;
 
@@ -6056,14 +6084,12 @@ void compile_projectile_trigger_binding(
                         throw std::runtime_error(
                             "apply_impulse projectile trigger direction must be event.direction, event.subject_direction, or a direction vec3 default");
                     }
-                    // A field that never moves has no heading to report, and
+                    // Something that never moves -- a resting area effect or a
+                    // marker -- has no heading to report, and
                     // the runtime would hand the graph a zero vector that fails
                     // the whole batch. Refusing it here is the reason the
                     // runtime never has to deal with that.
                     if (direction == "event.subject_direction" &&
-                        projectile_template->definition.mechanics
-                                .projectile_type ==
-                            KernelProjectileType_AreaEffect &&
                         projectile_template->definition.mechanics.speed <= 0.0f) {
                         throw std::runtime_error(
                             "event.subject_direction needs a projectile that travels: " +
@@ -8593,7 +8619,7 @@ std::vector<std::string> validate_gameplay_config(
                 collider_template_ids.end(),
                 mechanics.collider_template_id) == collider_template_ids.end() ||
             (mechanics.projectile_type == KernelProjectileType_Standard &&
-             (mechanics.speed <= 0.0f ||
+             ((mechanics.speed <= 0.0f && !is_stationary_marker(mechanics)) ||
               mechanics.lifetime_ticks == 0 ||
               mechanics.max_hit_count == 0)) ||
             (mechanics.projectile_type == KernelProjectileType_AreaEffect &&

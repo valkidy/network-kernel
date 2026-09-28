@@ -993,6 +993,96 @@ void subject_direction_needs_a_projectile_that_travels() {
     assert(load_fails(still_dir));
 }
 
+// Speed 0 is a marker: something that holds a place and fires on_expired
+// there. It loads only when it cannot do anything else, so each rejection
+// below differs from the accepted template by one field.
+void stationary_marker_loads_only_when_inert() {
+    const std::string marker =
+        "id: 40\nname: strike_marker\ntype: standard\n"
+        "collider_template: projectile_sphere\n"
+        "damage: 0\ndamage_shape: none\n"
+        "sync_mode: server_snapshot_only\n"
+        "lifetime_ticks: 20\n";
+    const std::string expired_trigger =
+        "triggers:\n"
+        "  on_expired:\n"
+        "    action_graph: action_spawn_projectile_at_impact\n"
+        "    parameters:\n"
+        "      template: rocket_explosion\n"
+        "      position: event.position\n"
+        "      direction: event.direction\n";
+    const auto marker_dir = [&](const char* name, const std::string& extra) {
+        const std::filesystem::path dir = tmp_dir(name);
+        write_valid_templates(dir);
+        write_file(
+            dir.parent_path() / "projectile_templates" / "strike_marker.yaml",
+            marker + extra + expired_trigger);
+        return dir;
+    };
+
+    const network_example::game_server::GameServerGameplayConfig config =
+        network_example::game_server::load_gameplay_config_from_weapon_template_directory(
+            marker_dir("marker_inert", "speed: 0.0\ncollision_mask: none\n")
+                .string());
+    const KernelProjectileMechanicsDefinition& mechanics =
+        projectile_mechanics(config, 40);
+    assert(mechanics.speed == 0.0f);
+    assert(mechanics.collision_mask == KERNEL_COLLISION_MASK_NONE);
+    assert(mechanics.expired_trigger.action_count == 1u);
+
+    const bool hits_terrain = load_fails(marker_dir(
+        "marker_hits_terrain", "speed: 0.0\ncollision_mask: terrain\n"));
+    assert(hits_terrain);
+    const bool falls = load_fails(marker_dir(
+        "marker_falls",
+        "speed: 0.0\ncollision_mask: none\n"
+        "gravity: {x: 0.0, y: -9.8, z: 0.0}\n"));
+    assert(falls);
+    const bool backwards = load_fails(marker_dir(
+        "marker_negative_speed", "speed: -1.0\ncollision_mask: none\n"));
+    assert(backwards);
+}
+
+// An area effect expires without queuing a trigger, so on_expired on one used
+// to load and never fire.
+void area_effect_rejects_on_expired() {
+    const std::string area_template =
+        "id: 4\nname: fire_floor_area\ntype: area_effect\n"
+        "collider_template: area_effect_sphere\n"
+        "damage: 12\n"
+        "lifetime_ticks: 6\n"
+        "damage_behavior:\n"
+        "  type: area_interval\n"
+        "  damage_interval_ticks: 2\n"
+        "  falloff: none\n"
+        "collision_mask: hostile_side\n";
+    const auto binding = [](const char* trigger) {
+        return std::string("triggers:\n  ") + trigger +
+            ":\n"
+            "    action_graph: action_spawn_projectile_at_impact\n"
+            "    parameters:\n"
+            "      template: rocket_explosion\n"
+            "      position: event.position\n"
+            "      direction: event.direction\n";
+    };
+
+    const std::filesystem::path impact_dir = tmp_dir("area_on_impact");
+    write_valid_templates(impact_dir);
+    write_file(
+        impact_dir.parent_path() / "projectile_templates" / "fire_floor_area.yaml",
+        area_template + binding("on_projectile_impact"));
+    const bool impact_failed = load_fails(impact_dir);
+    assert(!impact_failed);
+
+    const std::filesystem::path expired_dir = tmp_dir("area_on_expired");
+    write_valid_templates(expired_dir);
+    write_file(
+        expired_dir.parent_path() / "projectile_templates" / "fire_floor_area.yaml",
+        area_template + binding("on_expired"));
+    const bool expired_failed = load_fails(expired_dir);
+    assert(expired_failed);
+}
+
 void area_effect_speed_is_authored() {
     const std::filesystem::path default_dir = tmp_dir("area_speed_default");
     write_valid_templates(default_dir);
@@ -1381,6 +1471,8 @@ int main() {
     area_effect_sync_mode_is_authored_not_forced();
     area_effect_hit_instigator_is_authored();
     area_effect_speed_is_authored();
+    stationary_marker_loads_only_when_inert();
+    area_effect_rejects_on_expired();
     subject_direction_needs_a_projectile_that_travels();
     area_effect_motion_collision_mask_is_authored();
     catalog_file_loads_colliders();

@@ -93,6 +93,8 @@ bool spawn_projectile_from_template(
     projectile.initial_velocity = velocity;
     projectile.gravity = projectile_template.gravity;
     projectile.previous_position = position;
+    projectile.spawn_direction =
+        normalized_or(direction, glm::vec3{1.0f, 0.0f, 0.0f});
     if (projectile_template.projectile_impact_binding.has_value()) {
         world.registry().emplace<OnProjectileImpactTriggerTag>(
             *projectile_entity);
@@ -1155,8 +1157,14 @@ bool spawn_action_graph_projectile(
     float fixed_delta_seconds) {
     const RuntimeProjectileTemplate* projectile_template =
         world.find_projectile_template(projectile_template_id);
+    // Speed 0 on a standard projectile is a marker, which the catalog only
+    // admits with nothing to hit; anything else still needs to travel.
+    const bool stationary_marker = projectile_template != nullptr &&
+        projectile_template->speed == 0.0f &&
+        projectile_template->collision_mask == KERNEL_COLLISION_MASK_NONE;
     if (projectile_template == nullptr ||
         (projectile_template->projectile_type != ProjectileType::kAreaEffect &&
+         !stationary_marker &&
          (!std::isfinite(projectile_template->speed) ||
           projectile_template->speed <= 0.0f))) {
         return false;
@@ -1375,8 +1383,12 @@ void simulate_projectiles(
             collision_filter_from_mask(projectile.collision_mask);
         filter.ignored_entity_net_id = projectile.shooter_net_id;
         const physics::PhysicsWorld* collision_world = world.collision_world();
+        // A mask of none is a marker that only exists to expire: it has
+        // nothing to hit, so it runs no query rather than one that matches
+        // nothing.
         const std::vector<physics::CollisionHit> hits =
-            collision_world == nullptr
+            collision_world == nullptr ||
+                    projectile.collision_mask == KERNEL_COLLISION_MASK_NONE
                 ? std::vector<physics::CollisionHit>{}
                 : query_projectile_collision_hits(
                       *collision_world,
@@ -1422,7 +1434,7 @@ void simulate_projectiles(
             transform.position,
             normalized_or(
                 transform.position - projectile.previous_position,
-                glm::vec3{1.0f, 0.0f, 0.0f}),
+                projectile.spawn_direction),
             current_tick,
             0,
             false,

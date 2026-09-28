@@ -488,6 +488,7 @@ NetId fire_projectile(
     PeerId shooter_peer_id,
     std::uint32_t action_instance_id,
     const glm::vec3& origin,
+    const glm::vec3& direction,
     const glm::vec3& velocity,
     float fixed_delta_seconds,
     std::uint32_t age_ticks,
@@ -544,6 +545,8 @@ NetId fire_projectile(
         projectile_state.initial_velocity = velocity;
         projectile_state.gravity = projectile_template.gravity;
         projectile_state.previous_position = current_position;
+        projectile_state.spawn_direction =
+            normalized_or(direction, glm::vec3{1.0f, 0.0f, 0.0f});
         if (projectile_template.projectile_impact_binding.has_value()) {
             world.registry().emplace<OnProjectileImpactTriggerTag>(
                 *projectile_entity);
@@ -924,6 +927,7 @@ void simulate_weapons(
                         queued_input.owner_peer,
                         queued_input.input.action_intent.action_instance_id,
                         compensated_origin,
+                        projectile_direction,
                         velocity,
                         context.fixed_delta_seconds,
                         elapsed_ticks,

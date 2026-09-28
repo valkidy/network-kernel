@@ -521,6 +521,10 @@ struct ProjectileState {
     // snapshots plus render-side correction after a physics module exists.
     glm::vec3 gravity{0.0f, 0.0f, 0.0f};
     glm::vec3 previous_position{0.0f, 0.0f, 0.0f};
+    // The unit direction it was spawned facing. Travel reports its own heading,
+    // but a stationary marker has no travel and a zero initial_velocity, so
+    // without this its on_expired would point wherever the fallback does.
+    glm::vec3 spawn_direction{1.0f, 0.0f, 0.0f};
 };
 
 struct ThrownPropMotion {

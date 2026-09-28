@@ -1796,8 +1796,18 @@ bool validate_projectile_mechanics(
     if ((mechanics.collision_mask & ~supported_collision_mask) != 0u) {
         return false;
     }
+    // A standard projectile that does not move is a marker: it exists to hold
+    // a place and fire on_expired there. It is only accepted when it can do
+    // nothing else -- nothing to hit, no gravity to fall by, no guidance --
+    // so a template that merely forgot its speed still fails to load.
+    const bool stationary_marker = mechanics.speed == 0.0f &&
+        mechanics.collision_mask == KERNEL_COLLISION_MASK_NONE &&
+        mechanics.motion_model == KernelProjectileMotionModel_Linear &&
+        mechanics.gravity.x == 0.0f && mechanics.gravity.y == 0.0f &&
+        mechanics.gravity.z == 0.0f;
     if (mechanics.projectile_type == KernelProjectileType_Standard &&
-        (mechanics.speed <= 0.0f || mechanics.lifetime_ticks == 0u)) {
+        ((mechanics.speed <= 0.0f && !stationary_marker) ||
+         mechanics.lifetime_ticks == 0u)) {
         return false;
     }
     if (mechanics.motion_model == KernelProjectileMotionModel_Homing) {
