@@ -296,6 +296,40 @@ Put the damage on the impact effect, not on the falling body. Also keep actors
 out of the body's `collision_mask`: then its path depends only on the static
 world, which is what lets clients derive it later.
 
+### replication: derived
+
+Everything below a targeted strike's marker can be left off the wire.
+`replication: derived` on a template means the server never sends it: no
+spawn, no snapshot record and no despawn for it. The server still simulates it
+and deals its damage. Each client re-runs the chain from the marker it was
+sent, using the same code, the same catalog and the same static world, and
+draws the result.
+
+```yaml
+replication: derived        # default: replicated
+```
+
+A derived template is accepted only where a client can reproduce it:
+
+- It must descend from a stationary marker that a `targeted_strike` weapon
+  lands. That marker is the chain's root and stays replicated.
+- A derived template may spawn only derived templates. An area effect's
+  `on_projectile_impact` may not spawn one, because it fires once per target
+  and only the server knows the targets.
+- A standard projectile may collide only with `terrain | static_obstacle`. It
+  must be `server_snapshot_only`, and it cannot be a beam or homing.
+- No weapon fires one directly, and no entity or item trigger spawns one.
+
+The server keeps the root (hidden) after it expires, until the whole chain
+has run out, so a player who arrives mid-storm is still sent the root and can
+catch up. If the root's chain fails to start on the server, the root is
+removed at once and clients draw nothing under it.
+
+A stationary marker is also never written into snapshots; the client draws it
+from its spawn record. The Meteor Storm Staff costs clients one spawn and one
+despawn per cast, instead of about 46 of each plus snapshot records every
+interval.
+
 ### type: area_effect
 
 Adds a damage-over-time block. `speed` is optional here and defaults to `0`,
