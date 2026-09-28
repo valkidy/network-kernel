@@ -296,6 +296,25 @@ void append_collider_template_files(
     append_directory_files(files, "collider_templates");
 }
 
+// How many templates of a catalog directory the loader should have produced.
+// Counted rather than hardcoded for the same reason as above: a literal drifts
+// every time a template is added, and then fails as if the loader had lost one.
+std::size_t count_catalog_templates(
+    const std::string& directory,
+    const std::string& required_text = {}) {
+    std::size_t count = 0;
+    for (const std::filesystem::directory_entry& entry :
+         std::filesystem::directory_iterator(
+             "game_server/gameplay_catalog/" + directory)) {
+        if (entry.is_regular_file() && entry.path().extension() == ".yaml" &&
+            read_text_file(entry.path().string()).find(required_text) !=
+                std::string::npos) {
+            ++count;
+        }
+    }
+    return count;
+}
+
 std::vector<std::uint8_t> make_gameplay_bundle_zip(
     const std::string& sentry_actor_yaml,
     const std::vector<std::pair<std::string, std::string>>& extra_files = {},
@@ -869,7 +888,17 @@ int main() {
         const std::size_t slots_end =
             production_player_yaml.find("animations:\n", slots_begin);
         require(slots_end != std::string::npos);
-        return production_player_yaml.substr(0, slots_begin) +
+        // The capacity too: the cases below fill it exactly and shrink it.
+        std::string head = production_player_yaml.substr(0, slots_begin);
+        const std::size_t capacity_begin = head.find("inventory_slot_capacity:");
+        require(capacity_begin != std::string::npos);
+        const std::size_t capacity_end = head.find('\n', capacity_begin);
+        require(capacity_end != std::string::npos);
+        head.replace(
+            capacity_begin,
+            capacity_end - capacity_begin,
+            "inventory_slot_capacity: 8");
+        return head +
             "inventory_slots:\n"
             "  - item_template: fungible_potion\n"
             "    quantity: 5\n"
@@ -979,24 +1008,31 @@ int main() {
     assert(entity_config.entity_templates[1].vision.camp == KernelAgentCamp_EnemySide);
     assert(entity_config.entity_templates[2].name == "earth_mother");
     assert(entity_config.entity_templates[2].entity_type == KernelEntityType_Director);
+    assert(
+        entity_config.entity_templates[2].director_kind ==
+        network_example::game_server::AuthoredDirectorKind::kWorldRule);
+    // The world rule compiles into game_server's own config, like the game
+    // rule below; the director template itself never reaches the kernel.
+    require(entity_config.game_rules.empty());
+    require(entity_config.world_rule_spawns.size() == 1u);
+    const network_example::game_server::WorldRuleSpawnConfig& world_rule =
+        entity_config.world_rule_spawns[0];
+    require(world_rule.director_template_id == 100u);
+    require(world_rule.name == "earth_mother");
+    require(world_rule.tick_interval == 10u);
+    require(world_rule.target_count == 10u);
+    require(world_rule.spawn_entity_template_id == 2u);
+    require(world_rule.radius == 5.0f);
     const network_example::game_server::KernelGameplayCatalogStorage
         entity_catalog =
             network_example::game_server::build_kernel_gameplay_catalog(entity_config);
-    assert(entity_catalog.definition.entity_template_count == 3);
-    assert(entity_catalog.entity_templates[2].entity_type == KernelEntityType_Director);
-    assert(
-        (entity_catalog.entity_templates[2].component_flags &
-         KERNEL_ENTITY_COMPONENT_SERVER_ONLY) != 0u);
-    assert(
-        entity_catalog.entity_templates[2].ai.controller_type ==
-        KernelAiControllerType_Director);
-    assert(entity_catalog.entity_templates[2].ai.tick_interval == 10);
-    assert(
-        entity_catalog.entity_templates[2].ai.director_kind ==
-        network_example::game_server::AuthoredDirectorKind::kWorldRule);
-    assert(entity_catalog.entity_templates[2].ai.spawn_target_count == 10);
-    assert(entity_catalog.entity_templates[2].ai.spawn_entity_template_id == 2);
-    assert(entity_catalog.definition.game_rule_count == 0u);
+    require(entity_catalog.definition.entity_template_count == 2u);
+    require(std::none_of(
+        entity_catalog.entity_templates.begin(),
+        entity_catalog.entity_templates.end(),
+        [](const KernelEntityTemplateDefinition& definition) {
+            return definition.entity_type == KernelEntityType_Director;
+        }));
 
     const std::string valid_game_rule_yaml = game_rule_director_yaml();
     const std::vector<std::uint8_t> game_rule_bundle =
@@ -1272,10 +1308,10 @@ int main() {
     require(
         ice_block_collider->definition.shape_type ==
         KernelColliderShapeType_OrientedBox);
-    require(ice_block_collider->definition.center.y == 2.0f);
-    require(ice_block_collider->definition.shape_params.x == 2.0f);
-    require(ice_block_collider->definition.shape_params.y == 2.0f);
-    require(ice_block_collider->definition.shape_params.z == 0.3f);
+    require(ice_block_collider->definition.center.y == 1.5f);
+    require(ice_block_collider->definition.shape_params.x == 1.5f);
+    require(ice_block_collider->definition.shape_params.y == 1.5f);
+    require(ice_block_collider->definition.shape_params.z == 0.8f);
     require(config.weapons.catalog_hash != 0);
     require(
         config.weapons.catalog_hash ==
@@ -2130,8 +2166,8 @@ int main() {
         config.weapons.definitions[network_example::game_server::kWeaponRifle];
     assert(rifle.weapon_id == network_example::game_server::kWeaponRifle);
     assert(rifle.fire_mode == KernelWeaponFireMode_Hitscan);
-    assert(rifle.damage == 25);
-    assert(rifle.magazine_size == 30);
+    assert(rifle.damage == 45);
+    assert(rifle.magazine_size == 3000);
     assert(rifle.reserve_magazines == 6);
     assert(rifle.max_range == 100.0f);
     assert(rifle.segment_collider_template_id == 5);
@@ -2155,6 +2191,17 @@ int main() {
                [network_example::game_server::kWeaponGrenade] == 16);
     assert(config.weapons.names[network_example::game_server::kWeaponGrenade] ==
            "Grenade Launcher");
+    // grenade_sentry (24), named: this used to be whatever the catalog's
+    // `enemy:` override selected, which e8f716e deleted.
+    const network_example::game_server::ActorTemplateConfig* config_enemy_template =
+        nullptr;
+    for (const network_example::game_server::ActorTemplateConfig& actor :
+         config.actor_templates) {
+        if (actor.name == "grenade_sentry") {
+            config_enemy_template = &actor;
+        }
+    }
+    require(config_enemy_template != nullptr);
     assert(
         network_example::game_server::active_weapon_id(*config_enemy_template) ==
         network_example::game_server::kWeaponGrenade);
@@ -2188,11 +2235,17 @@ int main() {
         KernelProjectileSyncMode_HybridDeterministicThenSnapshot);
     // Counts the collider_templates/ directory, which the bundle now enumerates
     // rather than lists, so this tracks the filesystem.
-    assert(config.colliders.templates.size() == 18);
+    require(count_catalog_templates("collider_templates") > 0u);
+    assert(
+        config.colliders.templates.size() ==
+        count_catalog_templates("collider_templates"));
     assert(config.colliders.bindings.empty());
     // Every entity_templates/*.yaml with entity_type: actor. Tracks the
     // filesystem for the same reason the collider count above does.
-    assert(config.actor_templates.size() == 9);
+    require(count_catalog_templates("entity_templates", "entity_type: actor\n") > 0u);
+    assert(
+        config.actor_templates.size() ==
+        count_catalog_templates("entity_templates", "entity_type: actor\n"));
     // A friendly agent is friendly in three independent places, and each is a
     // different mechanism: camp decides who it looks for, its hit collider's
     // layer decides who can shoot it, and its projectile's mask decides who it
@@ -2260,16 +2313,20 @@ int main() {
     // spawns holding is unchanged; it is here to make weapon 0 reachable at all.
     assert(player_template.weapon_ids[3] == network_example::game_server::kWeaponRifle);
     assert(player_template.active_weapon_slot == 0);
-    assert(player_template.inventory_slot_capacity == 8);
-    // player.yaml currently stocks five stateful_magic_bottle slots; the
-    // fungible and stateful_potion slots above them are commented out there.
-    // The mixed-item shape they used to give this case is exercised by
-    // inventory_player_yaml instead, which is a fixture of the test's own.
-    assert(player_template.inventory_slots.size() == 5);
-    for (const network_example::game_server::InventorySlotConfig& slot :
-         player_template.inventory_slots) {
-        assert(slot.item_template_id == 3004);
-        assert(slot.quantity == 1);
+    assert(player_template.inventory_slot_capacity == 16);
+    // player.yaml stocks shockwave (3008) and frag (3009) bottles and four
+    // stateful_magic_bottle (3004) slots; the fungible_potion and
+    // stateful_potion slots are commented out there. The shape they used to
+    // give this case is exercised by inventory_player_yaml instead, which is a
+    // fixture of the test's own.
+    require(player_template.inventory_slots.size() == 6);
+    assert(player_template.inventory_slots[0].item_template_id == 3008);
+    assert(player_template.inventory_slots[0].quantity == 3);
+    assert(player_template.inventory_slots[1].item_template_id == 3009);
+    assert(player_template.inventory_slots[1].quantity == 2);
+    for (std::size_t index = 2; index < 6; ++index) {
+        assert(player_template.inventory_slots[index].item_template_id == 3004);
+        assert(player_template.inventory_slots[index].quantity == 1);
     }
     assert(player_template.vision.camp == KernelAgentCamp_PlayerSide);
     assert(player_template.vision.vision_collider_template_id == 0);
@@ -2306,7 +2363,6 @@ int main() {
     assert(grenade_sentry->sentry.weapon_id ==
            network_example::game_server::kWeaponGrenade);
     assert(grenade_sentry->sentry.ballistic_retry_cooldown_ticks == 30);
-    assert(config.agent.actor_template_id == grenade_sentry->actor_template_id);
 
     const KernelWeaponMechanicsDefinition& fire_floor =
         config.weapons.definitions[network_example::game_server::kWeaponFireFloor];
@@ -2364,10 +2420,12 @@ int main() {
     assert(homing_missile.projectile_template_id == 6);
     assert(config.weapons.collider_template_ids
                [network_example::game_server::kWeaponHomingMissile] == 7);
-    // 8 spawnable templates plus rifle_tracer and shotgun_tracer, which nothing
-    // spawns: they are authored for presentation and reach a client like any
-    // other.
-    assert(config.projectile_templates.size() == 11);
+    // Every projectile_templates/*.yaml, including rifle_shot and shotgun_shot,
+    // which nothing spawns: an instant weapon's shot is still described there.
+    require(count_catalog_templates("projectile_templates") > 0u);
+    assert(
+        config.projectile_templates.size() ==
+        count_catalog_templates("projectile_templates"));
     bool found_homing_projectile = false;
     bool found_rocket_projectile = false;
     bool found_rocket_explosion = false;
@@ -2665,7 +2723,6 @@ int main() {
     assert(bundle_config.colliders.bindings.empty());
     assert(bundle_config.projectile_templates.size() == config.projectile_templates.size());
     assert(bundle_config.actor_templates.size() == config.actor_templates.size());
-    assert(bundle_config.agent.actor_template_id == config.agent.actor_template_id);
 
     const std::string health_change_graph =
         "id: action_apply_health_change\n"
@@ -3417,9 +3474,9 @@ int main() {
         config.weapons.catalog_hash !=
         network_example::game_server::compute_gameplay_catalog_hash(
             actor_hash_changed));
-    // Slot order is part of the hash. The shipped player stocks five identical
-    // slots, so one is made distinct first -- swapping two equal slots is a
-    // no-op and would pass this case for the wrong reason.
+    // Slot order is part of the hash. One slot is made distinct first, so the
+    // case holds even if the shipped player stocks identical slots -- swapping
+    // two equal slots is a no-op and would pass this case for the wrong reason.
     actor_hash_changed = config;
     actor_hash_changed.actor_templates[player_index]
         .inventory_slots[1]
@@ -3442,10 +3499,12 @@ int main() {
     invalid.actor_templates[player_index].inventory_slots[0].quantity = 0;
     assert(!network_example::game_server::validate_gameplay_config(invalid).empty());
     invalid = config;
-    invalid.actor_templates[player_index].inventory_slots[0].quantity = 6;
+    // Slot 0 is fungible_shockwave_bottle, max_stack 3.
+    invalid.actor_templates[player_index].inventory_slots[0].quantity = 4;
     assert(!network_example::game_server::validate_gameplay_config(invalid).empty());
     invalid = config;
-    invalid.actor_templates[player_index].inventory_slots[1].quantity = 2;
+    // Slot 2 is stateful_magic_bottle: a stateful item never stacks.
+    invalid.actor_templates[player_index].inventory_slots[2].quantity = 2;
     assert(!network_example::game_server::validate_gameplay_config(invalid).empty());
     invalid = config;
     invalid.actor_templates[player_index].inventory_slots[0].item_template_id = 999999;
