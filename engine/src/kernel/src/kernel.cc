@@ -1549,6 +1549,18 @@ RuntimeProjectileTemplate to_runtime_projectile_template(
         mechanics.homing.max_turn_degrees_per_tick;
     projectile_template.homing_acceleration = mechanics.homing.acceleration;
     projectile_template.homing_max_speed = mechanics.homing.max_speed;
+    projectile_template.derived =
+        mechanics.replication == KernelProjectileReplication_Derived;
+    if (mechanics.launch.struct_size != 0u &&
+        mechanics.launch.launch_type == KernelProjectileLaunchType_Descent) {
+        projectile_template.launch_type = ProjectileLaunchType::kDescent;
+        projectile_template.launch_elevation_min_degrees =
+            mechanics.launch.elevation_min_degrees;
+        projectile_template.launch_elevation_max_degrees =
+            mechanics.launch.elevation_max_degrees;
+        projectile_template.launch_height = mechanics.launch.height;
+        projectile_template.launch_fall_ticks = mechanics.launch.fall_ticks;
+    }
     return projectile_template;
 }
 
@@ -1561,6 +1573,9 @@ WeaponFireMode to_weapon_fire_mode(std::uint8_t fire_mode) {
     }
     if (fire_mode == KernelWeaponFireMode_Melee) {
         return WeaponFireMode::kMelee;
+    }
+    if (fire_mode == KernelWeaponFireMode_TargetedStrike) {
+        return WeaponFireMode::kTargetedStrike;
     }
     return WeaponFireMode::kHitscan;
 }
@@ -1657,6 +1672,36 @@ bool validate_homing_mechanics(const KernelHomingMechanicsDefinition& homing) {
            homing.max_speed > 0.0f;
 }
 
+// The descent rule derives its speed, so it is only sound on a straight line
+// with nothing pulling it off course, and only when the server alone decides
+// where it starts. Its lifetime must outlast the fall by at least a tick: the
+// target sits on the ground, and the tick after it arrives is the one whose
+// sweep crosses the surface.
+bool validate_launch_mechanics(
+    const KernelProjectileMechanicsDefinition& mechanics) {
+    const KernelProjectileLaunchDefinition& launch = mechanics.launch;
+    if (launch.struct_size == 0u) {
+        return true;
+    }
+    const auto finite = [](float value) { return std::isfinite(value); };
+    return launch.struct_size >= sizeof(KernelProjectileLaunchDefinition) &&
+        launch.launch_type == KernelProjectileLaunchType_Descent &&
+        mechanics.projectile_type == KernelProjectileType_Standard &&
+        mechanics.motion_model == KernelProjectileMotionModel_Linear &&
+        mechanics.sync_mode == KernelProjectileSyncMode_ServerSnapshotOnly &&
+        mechanics.speed == 0.0f &&
+        mechanics.gravity.x == 0.0f && mechanics.gravity.y == 0.0f &&
+        mechanics.gravity.z == 0.0f &&
+        finite(launch.elevation_min_degrees) &&
+        finite(launch.elevation_max_degrees) &&
+        launch.elevation_min_degrees > 0.0f &&
+        launch.elevation_min_degrees <= launch.elevation_max_degrees &&
+        launch.elevation_max_degrees <= 90.0f &&
+        finite(launch.height) && launch.height > 0.0f &&
+        launch.fall_ticks > 0u &&
+        mechanics.lifetime_ticks > launch.fall_ticks;
+}
+
 bool validate_area_effect_mechanics(
     const KernelAreaEffectMechanicsDefinition& area_effect) {
     return area_effect.struct_size >= sizeof(KernelAreaEffectMechanicsDefinition) &&
@@ -1720,6 +1765,9 @@ bool validate_projectile_mechanics(
                 action.damage_stagger = trigger.damage_stagger;
             } else {
                 action = trigger.actions[index];
+            }
+            if (!spawn_repeat_is_authorable(action)) {
+                return false;
             }
             if (action.action_type == KernelEntityTriggerActionType_SpawnProjectile) {
                 if (action.spawn_projectile_template_id == 0u ||
@@ -1796,8 +1844,32 @@ bool validate_projectile_mechanics(
     if ((mechanics.collision_mask & ~supported_collision_mask) != 0u) {
         return false;
     }
+    // A standard projectile that does not move is a marker: it exists to hold
+    // a place and fire on_expired there. It is only accepted when it can do
+    // nothing else -- nothing to hit, no gravity to fall by, no guidance --
+    // so a template that merely forgot its speed still fails to load.
+    if (!validate_launch_mechanics(mechanics)) {
+        return false;
+    }
+    // A derived projectile is never sent, so nothing about it may depend on
+    // what only the server sees move: no guidance, no beam anchored to a
+    // shooter, and no prediction to reconcile.
+    if (mechanics.replication > KernelProjectileReplication_Derived ||
+        (mechanics.replication == KernelProjectileReplication_Derived &&
+         (mechanics.sync_mode != KernelProjectileSyncMode_ServerSnapshotOnly ||
+          mechanics.projectile_type == KernelProjectileType_Beam ||
+          mechanics.motion_model == KernelProjectileMotionModel_Homing))) {
+        return false;
+    }
+    const bool derived_speed = mechanics.launch.struct_size != 0u;
+    const bool stationary_marker = mechanics.speed == 0.0f &&
+        mechanics.collision_mask == KERNEL_COLLISION_MASK_NONE &&
+        mechanics.motion_model == KernelProjectileMotionModel_Linear &&
+        mechanics.gravity.x == 0.0f && mechanics.gravity.y == 0.0f &&
+        mechanics.gravity.z == 0.0f;
     if (mechanics.projectile_type == KernelProjectileType_Standard &&
-        (mechanics.speed <= 0.0f || mechanics.lifetime_ticks == 0u)) {
+        ((mechanics.speed <= 0.0f && !stationary_marker && !derived_speed) ||
+         mechanics.lifetime_ticks == 0u)) {
         return false;
     }
     if (mechanics.motion_model == KernelProjectileMotionModel_Homing) {
@@ -1829,16 +1901,23 @@ bool validate_weapon_mechanics(const KernelWeaponMechanicsDefinition& definition
     if (definition.struct_size < sizeof(KernelWeaponMechanicsDefinition) ||
         definition.magazine_size == 0 ||
         (definition.fire_mode != KernelWeaponFireMode_Projectile &&
+         definition.fire_mode != KernelWeaponFireMode_TargetedStrike &&
          definition.damage == 0) ||
         definition.fire_action_template_id == 0u ||
         definition.reload_action_template_id == 0u) {
         return false;
     }
-    if (definition.fire_mode > KernelWeaponFireMode_Melee) {
+    if (definition.fire_mode > KernelWeaponFireMode_TargetedStrike) {
         return false;
     }
     if (definition.fire_mode == KernelWeaponFireMode_Projectile) {
         return definition.projectile_template_id != 0;
+    }
+    // What lands usually deals no damage itself -- a marker whose expiry, or
+    // a meteor whose impact, does -- so damage is not required here either.
+    if (definition.fire_mode == KernelWeaponFireMode_TargetedStrike) {
+        return definition.projectile_template_id != 0 &&
+               definition.max_range > 0.0f;
     }
     // A melee weapon's reach is the cone on its collider template, so it is
     // deliberately not held to max_range the way the other instant modes are:
@@ -3312,7 +3391,8 @@ bool KernelEngine::load_gameplay_catalog(
                         action.position_source !=
                             KernelEventVec3Source_Position ||
                         action.direction_source !=
-                            KernelEventVec3Source_Direction) {
+                            KernelEventVec3Source_Direction ||
+                        !spawn_repeat_is_authorable(action)) {
                         return false;
                     }
                     continue;
@@ -3744,6 +3824,7 @@ bool KernelEngine::load_gameplay_catalog(
     if (!item_store_.set_templates(item_templates_, &item_validation_error)) {
         return false;
     }
+    compute_derived_chain_ticks(&runtime_projectile_templates);
     catalog_runtime_.projectile_templates = std::move(runtime_projectile_templates);
     catalog_runtime_.action_templates = std::move(runtime_action_templates);
     catalog_runtime_.status_effect_templates =
@@ -6039,6 +6120,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     peer_sessions_.clear();
     local_listen_session_ = PeerSession{};
     client_replicated_entities_.clear();
+    derived_chains_.clear();
     client_metadata_timeout_reported_entities_.clear();
     client_despawned_entities_.clear();
     client_knockback_anchors_.clear();
@@ -7246,6 +7328,21 @@ void KernelEngine::handle_client_projectile_spawn_batch(
                 replicated->has_spawn_tick = true;
             }
             client_metadata_timeout_reported_entities_.erase(record.projectile_net_id);
+            // A root of a derived chain: everything under it is derived here
+            // rather than sent.
+            if (projectile_template->derived_chain_ticks > 0u) {
+                derived_chains_.add_root(
+                    DerivedChainRoot{
+                        record.projectile_net_id,
+                        projectile_template->projectile_template_id,
+                        record.owner_peer,
+                        record.owner_net_id,
+                        record.action_instance_id,
+                        record.spawn_position,
+                        packet.server_tick,
+                    },
+                    &catalog_runtime_);
+            }
             if (projectile_template->sync_mode ==
                 ProjectileSyncMode::kServerSnapshotOnly) {
                 continue;
@@ -7627,6 +7724,13 @@ void KernelEngine::handle_client_despawn(const EntityDespawnPacket& packet) {
         }
     }
     client_status_effect_states_.erase(packet.net_id);
+    // A held root that goes before its chain could have ended was called off,
+    // or left range; either way nothing under it should be drawn. At the
+    // natural end the chain has already run out on its own.
+    const std::uint32_t chain_end = derived_chains_.natural_end_tick(packet.net_id);
+    if (chain_end != 0u && packet.server_tick < chain_end) {
+        derived_chains_.remove_root(packet.net_id);
+    }
     client_despawned_entities_[packet.net_id] = ClientEntityTombstone{
         packet.server_tick,
         packet.reason,
@@ -7770,6 +7874,7 @@ void KernelEngine::clear_client_session() {
     lifecycle_events_.clear();
     client_snapshot_buffer_.clear();
     client_replicated_entities_.clear();
+    derived_chains_.clear();
     client_metadata_timeout_reported_entities_.clear();
     client_despawned_entities_.clear();
     client_knockback_anchors_.clear();
@@ -12025,6 +12130,34 @@ void KernelEngine::simulate_tick() {
     tick_loop_.advance_tick();
 }
 
+bool KernelEngine::is_stationary_marker_projectile(NetId net_id) const {
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (!entity.has_value()) {
+        return false;
+    }
+    const ProjectileState* projectile =
+        world_.registry().try_get<ProjectileState>(*entity);
+    if (projectile == nullptr) {
+        return false;
+    }
+    const RuntimeProjectileTemplate* projectile_template =
+        catalog_runtime_.find_projectile_template(projectile->projectile_template_id);
+    return projectile_template != nullptr &&
+        projectile_template->projectile_type == ProjectileType::kStandard &&
+        projectile_template->speed == 0.0f &&
+        projectile_template->collision_mask == KERNEL_COLLISION_MASK_NONE;
+}
+
+bool KernelEngine::is_derived_projectile(NetId net_id) const {
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (!entity.has_value()) {
+        return false;
+    }
+    const ProjectileState* projectile =
+        world_.registry().try_get<ProjectileState>(*entity);
+    return projectile != nullptr && projectile->derived;
+}
+
 WorldSnapshot KernelEngine::build_relevant_snapshot(
     const PeerSession& session,
     std::uint32_t server_time_ms) const {
@@ -12041,6 +12174,11 @@ WorldSnapshot KernelEngine::build_relevant_snapshot(
     filtered.entities.reserve(full_snapshot.entities.size());
     for (const EntitySnapshot& entity : full_snapshot.entities) {
         if (is_actor_pending_first_physics(entity.net_id)) {
+            continue;
+        }
+        // Derived projectiles are never introduced to anyone: every client
+        // derives them from the root it was sent.
+        if (entity.type == EntityType::kProjectile && is_derived_projectile(entity.net_id)) {
             continue;
         }
         if (is_entity_relevant_to_session(session, entity, player_entity)) {
@@ -12081,6 +12219,12 @@ WorldSnapshot KernelEngine::build_snapshot_send_set(
             if (entity.type == EntityType::kProp &&
                 (is_dormant_placed_prop(entity.net_id) ||
                  is_anchored_in_flight_prop(entity.net_id))) {
+                return std::nullopt;
+            }
+            // A marker never moves: its spawn record says all there is to
+            // say, and the client draws it from that.
+            if (entity.type == EntityType::kProjectile &&
+                is_stationary_marker_projectile(entity.net_id)) {
                 return std::nullopt;
             }
             if (entity.type != EntityType::kProjectile) {
@@ -13887,6 +14031,29 @@ void KernelEngine::rebuild_render_states_from_snapshot(
         if (before_its_spawn(entity)) {
             continue;
         }
+        // A stationary marker is sent once and never again, so it is always
+        // here rather than in the snapshot -- and its spawn record is exact.
+        // It shows for its own lifetime only: a root held past that for its
+        // derived chain is still needed, but no longer drawn.
+        bool exact_marker = false;
+        if (entity.type == EntityType::kProjectile) {
+            const RuntimeProjectileTemplate* marker_template =
+                catalog_runtime_.find_projectile_template(
+                    entity.projectile_template_id);
+            if (marker_template != nullptr &&
+                marker_template->projectile_type == ProjectileType::kStandard &&
+                marker_template->speed == 0.0f &&
+                marker_template->collision_mask == KERNEL_COLLISION_MASK_NONE) {
+                exact_marker = true;
+                if (entity.has_spawn_tick &&
+                    render_server_time_us_ >=
+                        tick_time_us(
+                            entity.spawn_tick + marker_template->lifetime_ticks,
+                            tick_loop_.fixed_delta_seconds())) {
+                    continue;
+                }
+            }
+        }
         const std::uint32_t collider_template_id =
             entity.type == EntityType::kActor
                 ? collider_template_id_for_actor_template(entity.actor_template_id)
@@ -13918,7 +14085,9 @@ void KernelEngine::rebuild_render_states_from_snapshot(
             entity.hp_known ? 0u : kVisualFlagHpUnknown,
             0,
             0,
-            thrown ? RenderEntityStatus_Predicted : RenderEntityStatus_Stale,
+            exact_marker ? RenderEntityStatus_Active
+            : thrown     ? RenderEntityStatus_Predicted
+                         : RenderEntityStatus_Stale,
             render_template_id(entity),
             collider_template_id,
             KernelActionRuntimeView{sizeof(KernelActionRuntimeView)},
@@ -13933,6 +14102,23 @@ void KernelEngine::rebuild_render_states_from_snapshot(
             render_states_.back().world_item_mode = KernelWorldItemMode_InFlight;
             render_states_.back().carrier_entity_id = 0u;
         }
+    }
+
+    // The derived chains, stepped to the render instant and drawn there.
+    const float fixed_delta = tick_loop_.fixed_delta_seconds();
+    if (fixed_delta > 0.0f) {
+        derived_chains_.advance_to_tick(
+            static_cast<std::uint32_t>(
+                static_cast<double>(render_server_time_us_) /
+                (static_cast<double>(fixed_delta) * 1000000.0)),
+            fixed_delta,
+            prediction_physics_world_ != nullptr ? prediction_physics_world_.get()
+                                                 : world_.collision_world());
+        derived_chains_.append_render_states(
+            render_server_time_us_,
+            fixed_delta,
+            [this]() { return allocate_predicted_entity_id(); },
+            &render_states_);
     }
 }
 

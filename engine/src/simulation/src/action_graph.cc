@@ -1,5 +1,7 @@
 #include "simulation/public/action_graph.h"
 
+#include "simulation/public/simulation.h"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -9,6 +11,77 @@
 
 namespace network_example {
 namespace {
+
+// Tells one iteration of one repeated action apart from every other launch
+// under the same parent salt.
+std::uint32_t repeat_salt(
+    std::uint32_t parent_salt,
+    std::uint32_t action_index,
+    std::uint32_t iteration) {
+    return static_cast<std::uint32_t>(
+        projectile_launch_seed(parent_salt, action_index, iteration, 0x52455054u));
+}
+
+// A repeated spawn_projectile, unrolled into its commands. Everything picked
+// here is a pure function of the provenance and the iteration -- the count
+// and the stagger in integers -- so the same event yields the same spread on
+// any machine that runs this.
+void append_repeated_spawns(
+    const ActionSpawnProjectileDefinition& spawn,
+    std::uint32_t projectile_template_id,
+    const glm::vec3& position,
+    const glm::vec3& direction,
+    const ActionExecutionProvenance& provenance,
+    std::vector<ActionGraphCommand>* commands) {
+    constexpr std::uint32_t kCountSlot = 0xFFFFFFFFu;
+    const std::uint32_t span =
+        spawn.repeat_count_max - spawn.repeat_count_min + 1u;
+    const std::uint64_t count_seed = projectile_launch_seed(
+        provenance.instigator,
+        provenance.action_instance_id,
+        projectile_template_id,
+        repeat_salt(provenance.launch_salt, spawn.action_index, kCountSlot));
+    const std::uint32_t count = std::min<std::uint32_t>(
+        spawn.repeat_count_min + static_cast<std::uint32_t>(count_seed % span),
+        KERNEL_MAX_ACTION_REPEAT);
+    const std::uint32_t window = spawn.repeat_stagger_lifetime_ticks;
+    for (std::uint32_t iteration = 0; iteration < count; ++iteration) {
+        ActionExecutionProvenance iteration_provenance = provenance;
+        iteration_provenance.launch_salt =
+            repeat_salt(provenance.launch_salt, spawn.action_index, iteration);
+        const std::uint64_t seed = projectile_launch_seed(
+            provenance.instigator,
+            provenance.action_instance_id,
+            projectile_template_id,
+            iteration_provenance.launch_salt);
+        // Uniform over the disc: the radius goes as the square root of a
+        // uniform draw. Two separate 24-bit fields of the seed.
+        const float radial =
+            static_cast<float>(seed >> 40) * (1.0f / 16777216.0f);
+        const float turn =
+            static_cast<float>((seed >> 16) & 0xFFFFFFu) * (1.0f / 16777216.0f);
+        const float radius = spawn.repeat_scatter_radius * std::sqrt(radial);
+        const float angle = turn * 6.28318530717958647692f;
+        ActionSpawnProjectileCommand command{
+            projectile_template_id,
+            position + glm::vec3{
+                radius * std::cos(angle), 0.0f, radius * std::sin(angle)},
+            direction,
+            iteration_provenance};
+        command.lifetime_ticks = spawn.lifetime_ticks;
+        // Stratified: iteration i lands in the i-th of `count` equal slices of
+        // the window, somewhere inside it. The expiries therefore come in
+        // iteration order and never bunch up.
+        if (window > 0u) {
+            command.extra_lifetime_ticks = static_cast<std::uint32_t>(
+                (static_cast<std::uint64_t>(iteration) * window +
+                 seed % window) /
+                count);
+        }
+        commands->push_back(command);
+    }
+}
+
 
 enum class ParameterType : std::uint8_t {
     kUnknown,
@@ -317,12 +390,20 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
             binding.graph.parameters.push_back({template_name, std::monostate{}});
             binding.graph.parameters.push_back({position_name, std::monostate{}});
             binding.graph.parameters.push_back({direction_name, std::monostate{}});
-            binding.graph.actions.push_back(ActionSpawnProjectileDefinition{
+            ActionSpawnProjectileDefinition spawn{
                 template_name,
                 position_name,
                 direction_name,
                 *condition,
-            });
+            };
+            spawn.lifetime_ticks = action.spawn_lifetime_ticks;
+            spawn.repeat_count_min = action.repeat_count_min;
+            spawn.repeat_count_max = action.repeat_count_max;
+            spawn.repeat_scatter_radius = action.repeat_scatter_radius;
+            spawn.repeat_stagger_lifetime_ticks =
+                action.repeat_stagger_lifetime_ticks;
+            spawn.action_index = static_cast<std::uint32_t>(index);
+            binding.graph.actions.push_back(std::move(spawn));
             binding.parameters.push_back({
                 template_name,
                 ActionGraphParameterValue{ProjectileTemplateIdValue{
@@ -843,12 +924,24 @@ bool evaluate_action_graph(
                 !std::holds_alternative<glm::vec3>(*direction_value)) {
                 return fail(error, "spawn_projectile action input type mismatch");
             }
-            commands->push_back(ActionSpawnProjectileCommand{
-                std::get<ProjectileTemplateIdValue>(*template_value).value,
-                std::get<glm::vec3>(*position_value),
-                std::get<glm::vec3>(*direction_value),
+            const std::uint32_t projectile_template_id =
+                std::get<ProjectileTemplateIdValue>(*template_value).value;
+            const glm::vec3 position = std::get<glm::vec3>(*position_value);
+            const glm::vec3 direction = std::get<glm::vec3>(*direction_value);
+            if (spawn->repeat_count_max == 0u) {
+                ActionSpawnProjectileCommand command{
+                    projectile_template_id, position, direction, provenance};
+                command.lifetime_ticks = spawn->lifetime_ticks;
+                commands->push_back(command);
+                continue;
+            }
+            append_repeated_spawns(
+                *spawn,
+                projectile_template_id,
+                position,
+                direction,
                 provenance,
-            });
+                commands);
             continue;
         }
 

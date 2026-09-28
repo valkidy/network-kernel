@@ -5,6 +5,25 @@
 #include <stdint.h>
 
 /*
+ * 94: targeted strikes. KernelProjectileMechanicsDefinition gained `launch`,
+ *     appended: a rule that derives where a projectile starts and how fast
+ *     it goes from the point it is spawned at. A zero struct_size, the
+ *     default, is no rule, so every catalog authored before this behaves as
+ *     it did. The descent rule reads the spawn point as a landing target and
+ *     starts the projectile above it. A standard projectile may now author
+ *     speed 0 as a marker (collision mask none, linear, no gravity): it holds
+ *     its place and fires on_expired there. Every managed mirror must add the
+ *     block, or the nested layout of KernelProjectileTemplateDefinition shifts.
+ *     KernelWeaponFireMode gained _TargetedStrike, whose max_range is the
+ *     farthest point it may be aimed at. KernelActionDefinition gained
+ *     spawn_lifetime_ticks and the repeat_* fields, appended: a spawn_projectile
+ *     action may override the spawned lifetime and repeat itself up to
+ *     KERNEL_MAX_ACTION_REPEAT times, scattered and staggered. All zero, the
+ *     default, is the single spawn it always was. KernelActionDefinition is
+ *     embedded in every trigger definition, so every managed mirror of those
+ *     shifts. KernelProjectileMechanicsDefinition's reserved0 became
+ *     `replication` (KernelProjectileReplication); zero is replicated, as
+ *     every projectile was.
  * 93: KernelEntityTemplateDefinition gained knockdown_recovery_ticks, appended:
  *     how long a knockback that lands keeps the actor down -- rooted, and
  *     refusing new actions as the knockback did -- before it may move again.
@@ -105,7 +124,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 93u
+#define KERNEL_ABI_VERSION 94u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -723,6 +742,9 @@ typedef enum KernelActionConditionType {
 
 #define KERNEL_MAX_ACTION_GRAPH_ACTIONS 8
 
+/* How many projectiles one repeated spawn_projectile action may spawn. */
+#define KERNEL_MAX_ACTION_REPEAT 16u
+
 /* Ceiling on apply_impulse's impulse_lockout_ticks. Ten seconds at the 30 Hz
  * server tick -- far past any knockback, but low enough that a typo cannot
  * hand an actor's movement away indefinitely. The catalog loader and the
@@ -775,6 +797,25 @@ typedef struct KernelActionDefinition {
      * this hit adds, including an explicit 0.0 that never staggers. */
     uint32_t damage_stagger_authored;
     float damage_stagger;
+    /*
+     * spawn_projectile only; zero on every other action.
+     *
+     * spawn_lifetime_ticks replaces the spawned template's lifetime; zero
+     * keeps it. repeat_count_max zero is a single spawn. Otherwise the action
+     * spawns a count picked in [repeat_count_min, repeat_count_max], at most
+     * KERNEL_MAX_ACTION_REPEAT: each lands within repeat_scatter_radius of the
+     * event position, uniformly over the disc, and each lives an extra
+     * repeat_stagger_lifetime_ticks spread evenly across the count, so their
+     * expiries arrive in order over that window. The picks are seeded from
+     * the instigator, the action instance and the iteration, so the same
+     * event always produces the same spread.
+     */
+    uint32_t spawn_lifetime_ticks;
+    uint8_t repeat_count_min;
+    uint8_t repeat_count_max;
+    uint16_t reserved3;
+    float repeat_scatter_radius;
+    uint32_t repeat_stagger_lifetime_ticks;
 } KernelActionDefinition;
 
 typedef struct KernelActionTriggerDefinition {
@@ -993,6 +1034,14 @@ typedef enum KernelWeaponFireMode {
      * entities, no spawn packets, and no snapshot records.
      */
     KernelWeaponFireMode_Melee = 3,
+    /*
+     * Lands its projectile template on a point instead of launching it from
+     * the muzzle. The point is resolved on the server from the aim: the first
+     * actor, terrain or static obstacle within max_range, then the ground
+     * under it. If either step finds nothing, the shot is refused and costs
+     * no ammunition. Never predicted by the client.
+     */
+    KernelWeaponFireMode_TargetedStrike = 4,
 } KernelWeaponFireMode;
 
 typedef enum KernelProjectileMotionModel {
@@ -1575,6 +1624,47 @@ typedef struct KernelBeamMechanicsDefinition {
     uint32_t collision_mask;
 } KernelBeamMechanicsDefinition;
 
+/*
+ * Whether a projectile is sent to clients. A derived projectile never is: it
+ * only ever descends from a replicated stationary marker a targeted strike
+ * landed, through spawns whose every choice is seeded, so a client holding
+ * that marker derives it -- position, timing and all -- by running the same
+ * simulation. The server still simulates it and deals its damage.
+ */
+typedef enum KernelProjectileReplication {
+    KernelProjectileReplication_Replicated = 0,
+    KernelProjectileReplication_Derived = 1,
+} KernelProjectileReplication;
+
+typedef enum KernelProjectileLaunchType {
+    KernelProjectileLaunchType_None = 0,
+    KernelProjectileLaunchType_Descent = 1,
+} KernelProjectileLaunchType;
+
+/*
+ * Derives a projectile's start and velocity from the point it is spawned at.
+ * A zero struct_size is no rule: the spawn point is the start and `speed` is
+ * authored.
+ *
+ * Descent reads the spawn point as the landing target. The projectile starts
+ * `height` metres above it, from an azimuth and at an elevation in
+ * [elevation_min_degrees, elevation_max_degrees] both picked by a seed of the
+ * instigator, action instance, template and launch salt -- never by the spawn
+ * direction -- and reaches the target in a straight line after fall_ticks
+ * ticks. Its speed is derived, so `speed` stays zero, and only
+ * server_snapshot_only is accepted: the start depends on server-side ground.
+ */
+typedef struct KernelProjectileLaunchDefinition {
+    uint32_t struct_size;
+    uint8_t launch_type;
+    uint8_t reserved0;
+    uint16_t reserved1;
+    float elevation_min_degrees;
+    float elevation_max_degrees;
+    float height;
+    uint32_t fall_ticks;
+} KernelProjectileLaunchDefinition;
+
 typedef struct KernelProjectileMechanicsDefinition {
     uint32_t struct_size;
     uint8_t projectile_type;
@@ -1596,8 +1686,12 @@ typedef struct KernelProjectileMechanicsDefinition {
     KernelActionTriggerDefinition projectile_impact_trigger;
     KernelActionTriggerDefinition expired_trigger;
     uint8_t collision_query_mode;
-    uint8_t reserved0;
+    /* KernelProjectileReplication. Was reserved0 before ABI 94: zero, the
+     * default, is replicated, so the layout and every older catalog are
+     * unchanged. */
+    uint8_t replication;
     uint16_t reserved1;
+    KernelProjectileLaunchDefinition launch;
 } KernelProjectileMechanicsDefinition;
 
 typedef struct KernelProjectileTemplateDefinition {

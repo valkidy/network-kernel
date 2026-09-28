@@ -831,7 +831,10 @@ bool execute_action_graph_commands(
                     projectile->position,
                     projectile->direction,
                     projectile->provenance.server_tick,
-                    engine.fixed_delta_seconds())) {
+                    engine.fixed_delta_seconds(),
+                    projectile->lifetime_ticks,
+                    projectile->extra_lifetime_ticks,
+                    projectile->provenance.launch_salt)) {
                 return false;
             }
             continue;

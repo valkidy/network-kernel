@@ -280,12 +280,22 @@ enum class WeaponFireMode : std::uint8_t {
     // Instant like kHitscan, but an overlap against a shaped volume rather
     // than a ray, and it spawns nothing.
     kMelee = 3,
+    // Lands its projectile on a point resolved from the aim, not the muzzle.
+    kTargetedStrike = 4,
 };
 
 enum class ProjectileMotionModel : std::uint8_t {
     kLinear = 0,
     kParabolic = 1,
     kHoming = 2,
+};
+
+// How a projectile's start and velocity are derived from where it is spawned.
+// kNone: the spawn point is the start and speed is authored. kDescent: the
+// spawn point is a landing target the projectile falls onto from above.
+enum class ProjectileLaunchType : std::uint8_t {
+    kNone = 0,
+    kDescent = 1,
 };
 
 enum class ProjectileSyncMode : std::uint8_t {
@@ -521,6 +531,18 @@ struct ProjectileState {
     // snapshots plus render-side correction after a physics module exists.
     glm::vec3 gravity{0.0f, 0.0f, 0.0f};
     glm::vec3 previous_position{0.0f, 0.0f, 0.0f};
+    // The unit direction it was spawned facing. Travel reports its own heading,
+    // but a stationary marker has no travel and a zero initial_velocity, so
+    // without this its on_expired would point wherever the fallback does.
+    glm::vec3 spawn_direction{1.0f, 0.0f, 0.0f};
+    // Carried into the provenance of its triggers; see ActionExecutionProvenance.
+    std::uint32_t launch_salt = 0;
+    // Copied from the template at spawn so relevance can skip it cheaply.
+    bool derived = false;
+    // Non-zero once a root has expired and is held for its derived chain:
+    // the tick it is finally destroyed on. Held, it hits nothing and fires
+    // nothing more.
+    std::uint32_t hold_until_tick = 0;
 };
 
 struct ThrownPropMotion {
@@ -612,6 +634,10 @@ struct ActionExecutionProvenance {
         ActionAuthoritySource::kAuthoritativeSimulation;
     PeerId requester_peer = 0;
     std::uint32_t status_instance_id = 0;
+    // Tells apart launches that share an instigator and action instance --
+    // the iterations of a repeated spawn, and whatever each of them later
+    // spawns in turn -- so their seeded picks differ. Zero for a single spawn.
+    std::uint32_t launch_salt = 0;
 };
 
 struct EntityIdValue {
@@ -693,6 +719,16 @@ struct ActionSpawnProjectileDefinition {
     std::string position_parameter;
     std::string direction_parameter;
     ActionConditionType condition = ActionConditionType::kAlways;
+    // Zero keeps the spawned template's lifetime.
+    std::uint32_t lifetime_ticks = 0;
+    // repeat_count_max zero is one spawn; see KernelActionDefinition.
+    std::uint32_t repeat_count_min = 0;
+    std::uint32_t repeat_count_max = 0;
+    float repeat_scatter_radius = 0.0f;
+    std::uint32_t repeat_stagger_lifetime_ticks = 0;
+    // Where the action sits in its graph, so two repeated actions in one
+    // graph draw different spreads.
+    std::uint32_t action_index = 0;
 };
 
 struct ActionApplyDamageDefinition {
@@ -872,6 +908,18 @@ struct RuntimeProjectileTemplate {
     float homing_max_turn_degrees_per_tick = 0.0f;
     float homing_acceleration = 0.0f;
     float homing_max_speed = 0.0f;
+    // Never sent to clients; see KernelProjectileReplication.
+    bool derived = false;
+    // How long the derived projectiles this one spawns, and theirs in turn,
+    // can outlive its own expiry. Computed from the catalog when templates
+    // are installed, not authored. A replicated root that has any is held
+    // this much longer after it expires, so a client can still be handed it.
+    std::uint32_t derived_chain_ticks = 0;
+    ProjectileLaunchType launch_type = ProjectileLaunchType::kNone;
+    float launch_elevation_min_degrees = 0.0f;
+    float launch_elevation_max_degrees = 0.0f;
+    float launch_height = 0.0f;
+    std::uint32_t launch_fall_ticks = 0;
 };
 
 /*

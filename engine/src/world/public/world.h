@@ -223,6 +223,15 @@ private:
     std::uint32_t next_status_instance_id_ = 1;
 };
 
+// Fills in every template's derived_chain_ticks: the longest a chain of
+// derived projectiles it spawns can run past its own expiry -- each spawn's
+// lifetime (its override, or the spawned template's own) plus its repeat
+// stagger, plus whatever that one spawns in turn. Only derived descendants
+// count; a replicated one is sent on its own. Called wherever templates are
+// installed, so the server's hold and a client's expectation agree.
+void compute_derived_chain_ticks(
+    std::vector<RuntimeProjectileTemplate>* projectile_templates);
+
 }  // namespace network_example
 
 #endif  // WORLD_PUBLIC_WORLD_H_

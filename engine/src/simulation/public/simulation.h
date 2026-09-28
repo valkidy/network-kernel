@@ -171,6 +171,52 @@ std::uint32_t knockback_flight_ticks(
     float fixed_delta_seconds,
     std::uint32_t lockout_ticks);
 
+// Where a launch rule starts a projectile, and how fast.
+struct ProjectileLaunch {
+    glm::vec3 origin{0.0f};
+    glm::vec3 velocity{0.0f};
+};
+
+// Mixes the facts that identify one launch into a seed. Integers only, so the
+// same inputs give the same seed on every platform.
+std::uint64_t projectile_launch_seed(
+    NetId instigator,
+    std::uint32_t action_instance_id,
+    std::uint32_t projectile_template_id,
+    std::uint32_t salt);
+
+// The descent rule: falls onto `target` from `launch_height` above it, from an
+// azimuth and at an elevation (within the template's range) both picked by
+// `seed`, arriving after `launch_fall_ticks`. Nothing else steers it -- in
+// particular not the spawn direction -- so anyone holding the target and the
+// seed derives the same path. `target` is first dropped onto the ground under
+// it when `ground` is given and has any (terrain or static obstacle) within
+// the fall height; otherwise it is used as is.
+ProjectileLaunch descent_launch(
+    const RuntimeProjectileTemplate& projectile_template,
+    const glm::vec3& target,
+    std::uint64_t seed,
+    float fixed_delta_seconds,
+    const physics::PhysicsWorld* ground);
+
+// Spawns `projectile_template` at `position` facing `direction`, applying its
+// launch rule, and reports the spawn in `events`. For callers that decided the
+// point themselves, such as a targeted strike's resolved landing point.
+bool spawn_projectile_at(
+    World& world,
+    const RuntimeProjectileTemplate& projectile_template,
+    PeerId owner_peer,
+    NetId shooter_net_id,
+    std::uint8_t weapon_id,
+    std::uint32_t action_instance_id,
+    const glm::vec3& position,
+    const glm::vec3& direction,
+    std::uint32_t current_tick,
+    float fixed_delta_seconds,
+    std::vector<KernelEvent>* events);
+
+// lifetime_ticks zero keeps the template's; extra_lifetime_ticks is added
+// either way. launch_salt is the command's provenance salt.
 bool spawn_action_graph_projectile(
     World& world,
     std::uint32_t projectile_template_id,
@@ -180,7 +226,10 @@ bool spawn_action_graph_projectile(
     const glm::vec3& position,
     const glm::vec3& direction,
     std::uint32_t current_tick,
-    float fixed_delta_seconds);
+    float fixed_delta_seconds,
+    std::uint32_t lifetime_ticks = 0,
+    std::uint32_t extra_lifetime_ticks = 0,
+    std::uint32_t launch_salt = 0);
 
 std::vector<physics::CollisionHit> query_projectile_collision_hits(
     const physics::PhysicsWorld& collision_world,

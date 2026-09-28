@@ -1,0 +1,22 @@
+# One meteor's landing mark inside a storm. The storm graph sets its lifetime
+# (10 ticks plus its share of the stagger), so the value here is only what it
+# would live if spawned any other way.
+id: 22
+name: meteor_storm_fuse
+type: standard
+collider_template: projectile_sphere
+damage: 0
+damage_shape: none
+speed: 0.0
+collision_mask: none
+sync_mode: server_snapshot_only
+lifetime_ticks: 10
+triggers:
+  on_expired:
+    action_graph: action_spawn_projectile_at_expired
+    parameters:
+      template: meteor_body
+      position: event.position
+      direction: event.direction
+# Never sent: clients derive it from the marker at the root of its chain.
+replication: derived

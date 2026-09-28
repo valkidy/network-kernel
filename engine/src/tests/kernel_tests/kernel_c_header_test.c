@@ -6,8 +6,12 @@
 #include "kernel/public/kernel_api.h"
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 93u,
-    "knockdown: KernelEntityTemplateDefinition gained knockdown_recovery_ticks");
+    KERNEL_ABI_VERSION == 94u,
+    "targeted strike: KernelProjectileMechanicsDefinition gained launch");
+_Static_assert(
+    offsetof(KernelProjectileMechanicsDefinition, launch) >
+        offsetof(KernelProjectileMechanicsDefinition, collision_query_mode),
+    "launch is appended after every field that existed before ABI 94");
 _Static_assert(
     sizeof(KernelLogMessage) == 24u + KERNEL_LOG_MESSAGE_TEXT_SIZE,
     "a managed mirror of a log line must match this layout");
@@ -98,8 +102,17 @@ _Static_assert(
         offsetof(KernelSkeletonBindingDefinition, processing_order),
     "stance crouch is appended to the skeleton binding ABI");
 _Static_assert(
-    sizeof(KernelActionTriggerDefinition) == 764u,
-    "KernelActionTriggerDefinition ABI size");
+    sizeof(KernelActionDefinition) == 84u + 16u,
+    "KernelActionDefinition ABI size: 84 bytes before ABI 94 plus the "
+    "16-byte spawn lifetime and repeat block");
+_Static_assert(
+    sizeof(KernelActionTriggerDefinition) == 764u + 8u * 16u,
+    "KernelActionTriggerDefinition ABI size: its eight actions each grew by "
+    "the ABI 94 repeat block");
+_Static_assert(
+    offsetof(KernelActionDefinition, spawn_lifetime_ticks) >
+        offsetof(KernelActionDefinition, damage_stagger),
+    "spawn lifetime and repeat are appended to KernelActionDefinition");
 _Static_assert(
     offsetof(KernelActionDefinition, impulse_strength_vertical) >
         offsetof(KernelActionDefinition, impulse_lockout_ticks),

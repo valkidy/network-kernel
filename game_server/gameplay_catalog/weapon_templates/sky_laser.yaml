@@ -1,0 +1,10 @@
+# Half a second after the press, a beam stands on the aimed point for 1.5 s.
+id: 15
+name: Sky Laser
+weapon_type: targeted_strike
+magazine_size: 4
+reserve_magazines: 4
+max_range: 40.0
+fire_action_template: sky_laser_fire
+reload_action_template: sky_laser_reload
+projectile_template: sky_laser_marker

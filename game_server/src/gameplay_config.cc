@@ -139,6 +139,18 @@ std::uint32_t stable_channel_id(std::string_view value) {
     return hash == 0u ? 1u : hash;
 }
 
+// A standard projectile that does not move: it holds a place and fires
+// on_expired there. Only accepted when it can do nothing else, so a template
+// that merely forgot its speed still fails. The kernel checks the same rule.
+bool is_stationary_marker(const KernelProjectileMechanicsDefinition& mechanics) {
+    return mechanics.projectile_type == KernelProjectileType_Standard &&
+        mechanics.speed == 0.0f &&
+        mechanics.collision_mask == KERNEL_COLLISION_MASK_NONE &&
+        mechanics.motion_model == KernelProjectileMotionModel_Linear &&
+        mechanics.gravity.x == 0.0f && mechanics.gravity.y == 0.0f &&
+        mechanics.gravity.z == 0.0f;
+}
+
 void hash_weapon(std::uint64_t* hash, const KernelWeaponMechanicsDefinition& weapon) {
     hash_scalar(hash, weapon.weapon_id);
     hash_scalar(hash, weapon.fire_mode);
@@ -229,6 +241,13 @@ void hash_projectile_template(
     hash_scalar(hash, mechanics.beam.damage_per_tick);
     hash_scalar(hash, mechanics.beam.lifetime_ticks);
     hash_scalar(hash, mechanics.beam.collision_mask);
+    hash_scalar(hash, mechanics.replication);
+    hash_scalar(hash, mechanics.launch.struct_size);
+    hash_scalar(hash, mechanics.launch.launch_type);
+    hash_float(hash, mechanics.launch.elevation_min_degrees);
+    hash_float(hash, mechanics.launch.elevation_max_degrees);
+    hash_float(hash, mechanics.launch.height);
+    hash_scalar(hash, mechanics.launch.fall_ticks);
     for (const KernelActionTriggerDefinition* trigger : {
              &mechanics.projectile_impact_trigger,
              &mechanics.expired_trigger,
@@ -250,6 +269,11 @@ void hash_projectile_template(
             hash_scalar(hash, action.impulse_strength_vertical);
             hash_scalar(hash, action.damage_stagger_authored);
             hash_scalar(hash, action.damage_stagger);
+            hash_scalar(hash, action.spawn_lifetime_ticks);
+            hash_scalar(hash, action.repeat_count_min);
+            hash_scalar(hash, action.repeat_count_max);
+            hash_float(hash, action.repeat_scatter_radius);
+            hash_scalar(hash, action.repeat_stagger_lifetime_ticks);
             hash_scalar(hash, action.condition_type);
         }
     }
@@ -634,14 +658,19 @@ bool validate_weapon_mechanics(
     if (weapon.struct_size < sizeof(KernelWeaponMechanicsDefinition) ||
         weapon.magazine_size == 0 ||
         (weapon.fire_mode != KernelWeaponFireMode_Projectile &&
+         weapon.fire_mode != KernelWeaponFireMode_TargetedStrike &&
          weapon.damage == 0) ||
         weapon.fire_action_template_id == 0u ||
         weapon.reload_action_template_id == 0u ||
-        weapon.fire_mode > KernelWeaponFireMode_Melee) {
+        weapon.fire_mode > KernelWeaponFireMode_TargetedStrike) {
         return false;
     }
     if (weapon.fire_mode == KernelWeaponFireMode_Projectile) {
         return weapon.projectile_template_id != 0;
+    }
+    // Mirrors validate_weapon_mechanics on the kernel side.
+    if (weapon.fire_mode == KernelWeaponFireMode_TargetedStrike) {
+        return weapon.projectile_template_id != 0 && weapon.max_range > 0.0f;
     }
     // A melee weapon's reach is the cone on the collider template it names, so
     // it is deliberately not held to max_range the way the other instant modes
@@ -1710,6 +1739,70 @@ std::string parameter_reference_from_yaml(
     return value.substr(kPrefix.size());
 }
 
+// `lifetime_ticks` and `repeat:` on a spawn_projectile graph action.
+void read_spawn_repeat(
+    const YAML::Node& action,
+    ActionGraphActionConfig* compiled_action,
+    const std::string& path,
+    std::uint32_t source_kind) {
+    if (action["lifetime_ticks"]) {
+        compiled_action->spawn_lifetime_ticks =
+            action["lifetime_ticks"].as<std::uint32_t>();
+        if (compiled_action->spawn_lifetime_ticks == 0u) {
+            throw std::runtime_error(
+                "spawn_projectile lifetime_ticks must be at least 1: " + path);
+        }
+    }
+    const YAML::Node repeat = action["repeat"];
+    if (!repeat) {
+        return;
+    }
+    reject_unknown_keys(
+        repeat,
+        {"count", "scatter_radius", "stagger_lifetime_ticks"},
+        path,
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_UNKNOWN);
+    // One number is an exact count; a pair is a range picked per event.
+    const YAML::Node count = repeat["count"];
+    if (!count) {
+        throw std::runtime_error("spawn_projectile repeat needs count: " + path);
+    }
+    if (count.IsSequence()) {
+        if (count.size() != 2u) {
+            throw std::runtime_error(
+                "spawn_projectile repeat count must be one number or "
+                "[min, max]: " + path);
+        }
+        compiled_action->repeat_count_min = count[0].as<std::uint32_t>();
+        compiled_action->repeat_count_max = count[1].as<std::uint32_t>();
+    } else {
+        compiled_action->repeat_count_min = count.as<std::uint32_t>();
+        compiled_action->repeat_count_max = compiled_action->repeat_count_min;
+    }
+    if (compiled_action->repeat_count_min < 1u ||
+        compiled_action->repeat_count_min > compiled_action->repeat_count_max ||
+        compiled_action->repeat_count_max > KERNEL_MAX_ACTION_REPEAT) {
+        throw std::runtime_error(
+            "spawn_projectile repeat count must satisfy 1 <= min <= max <= " +
+            std::to_string(KERNEL_MAX_ACTION_REPEAT) + ": " + path);
+    }
+    if (repeat["scatter_radius"]) {
+        compiled_action->repeat_scatter_radius =
+            repeat["scatter_radius"].as<float>();
+        if (!std::isfinite(compiled_action->repeat_scatter_radius) ||
+            compiled_action->repeat_scatter_radius < 0.0f) {
+            throw std::runtime_error(
+                "spawn_projectile repeat scatter_radius must be finite and "
+                "non-negative: " + path);
+        }
+    }
+    if (repeat["stagger_lifetime_ticks"]) {
+        compiled_action->repeat_stagger_lifetime_ticks =
+            repeat["stagger_lifetime_ticks"].as<std::uint32_t>();
+    }
+}
+
 ActionGraphTemplateConfig action_graph_template_from_yaml(
     const YAML::Node& node,
     const std::string& path,
@@ -1788,6 +1881,8 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 "item_template",
                 "quantity",
                 "when",
+                "lifetime_ticks",
+                "repeat",
             },
             path,
             source_kind,
@@ -1812,6 +1907,12 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                     path);
             }
         }
+        if ((action["repeat"] || action["lifetime_ticks"]) &&
+            compiled_action.action_type != "spawn_projectile") {
+            throw std::runtime_error(
+                "repeat and lifetime_ticks are only supported on "
+                "spawn_projectile: " + path);
+        }
         if (action["when"]) {
             const std::string condition = action["when"].as<std::string>();
             if (condition != "event.has_target") {
@@ -1832,6 +1933,7 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
             compiled_action.projectile_template_parameter =
                 parameter_reference_from_yaml(
                     action["projectile_template"], "projectile_template");
+            read_spawn_repeat(action, &compiled_action, path, source_kind);
             compiled_action.position_parameter =
                 parameter_reference_from_yaml(action["position"], "position");
             compiled_action.direction_parameter =
@@ -2308,6 +2410,31 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
                 : 1;
         weapon.pellet_spread =
             node["burst_spread_degrees"] ? node["burst_spread_degrees"].as<float>() : 0.0f;
+        return weapon;
+    }
+    if (type == "targeted_strike") {
+        if (node["projectile"] || node["area_effect"] || node["beam"]) {
+            throw std::runtime_error(
+                "targeted_strike weapons must use projectile_template, not "
+                "inline mechanics");
+        }
+        if (!node["projectile_template"]) {
+            throw std::runtime_error(
+                "targeted_strike weapon requires projectile_template");
+        }
+        if (!node["max_range"]) {
+            throw std::runtime_error(
+                "targeted_strike weapon requires max_range: the farthest "
+                "point it may be aimed at");
+        }
+        KernelWeaponMechanicsDefinition weapon{};
+        weapon.struct_size = sizeof(KernelWeaponMechanicsDefinition);
+        weapon.weapon_id = id;
+        weapon.fire_mode = KernelWeaponFireMode_TargetedStrike;
+        weapon.magazine_size = magazine_size;
+        weapon.reserve_magazines = reserve_magazines;
+        weapon.max_range = node["max_range"].as<float>();
+        weapon.pellet_count = 1;
         return weapon;
     }
     if (type == "melee") {
@@ -5452,6 +5579,86 @@ void resolve_inventory_item_template_references(
     }
 }
 
+// `launch: {type: descent, ...}` on a standard projectile. Every rule the
+// kernel checks is repeated here so the message names the template.
+void read_projectile_launch(
+    const YAML::Node& launch,
+    KernelProjectileMechanicsDefinition* mechanics,
+    const std::string& name,
+    const std::string& path,
+    std::uint32_t source_kind,
+    std::uint32_t projectile_template_id) {
+    reject_unknown_keys(
+        launch,
+        {"type", "elevation_degrees", "height", "fall_ticks"},
+        path,
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_PROJECTILE,
+        projectile_template_id);
+    const auto fail = [&name](const std::string& reason) {
+        throw std::runtime_error("launch " + reason + ": " + name);
+    };
+    if (!launch["type"] || launch["type"].as<std::string>() != "descent") {
+        fail("type must be descent");
+    }
+    if (mechanics->projectile_type != KernelProjectileType_Standard) {
+        fail("is only supported on standard projectiles");
+    }
+    if (mechanics->motion_model != KernelProjectileMotionModel_Linear) {
+        fail("needs movement_model linear");
+    }
+    if (mechanics->sync_mode != KernelProjectileSyncMode_ServerSnapshotOnly) {
+        fail("needs sync_mode server_snapshot_only");
+    }
+    if (mechanics->gravity.x != 0.0f || mechanics->gravity.y != 0.0f ||
+        mechanics->gravity.z != 0.0f) {
+        fail("does not take gravity");
+    }
+
+    KernelProjectileLaunchDefinition& definition = mechanics->launch;
+    definition = KernelProjectileLaunchDefinition{};
+    definition.struct_size = sizeof(KernelProjectileLaunchDefinition);
+    definition.launch_type = KernelProjectileLaunchType_Descent;
+    // One number is a fixed elevation; a pair is a range picked per launch.
+    const YAML::Node elevation = launch["elevation_degrees"];
+    if (!elevation) {
+        fail("needs elevation_degrees");
+    }
+    if (elevation.IsSequence()) {
+        if (elevation.size() != 2u) {
+            fail("elevation_degrees must be one number or [min, max]");
+        }
+        definition.elevation_min_degrees = elevation[0].as<float>();
+        definition.elevation_max_degrees = elevation[1].as<float>();
+    } else {
+        definition.elevation_min_degrees = elevation.as<float>();
+        definition.elevation_max_degrees = definition.elevation_min_degrees;
+    }
+    if (!std::isfinite(definition.elevation_min_degrees) ||
+        !std::isfinite(definition.elevation_max_degrees) ||
+        !(definition.elevation_min_degrees > 0.0f) ||
+        definition.elevation_min_degrees > definition.elevation_max_degrees ||
+        definition.elevation_max_degrees > 90.0f) {
+        fail("elevation_degrees must satisfy 0 < min <= max <= 90");
+    }
+    if (!launch["height"] || !launch["fall_ticks"]) {
+        fail("needs height and fall_ticks");
+    }
+    definition.height = launch["height"].as<float>();
+    if (!std::isfinite(definition.height) || !(definition.height > 0.0f)) {
+        fail("height must be positive");
+    }
+    definition.fall_ticks = launch["fall_ticks"].as<std::uint32_t>();
+    if (definition.fall_ticks == 0u) {
+        fail("fall_ticks must be at least 1");
+    }
+    // The target sits on the ground; the tick after arrival is the one whose
+    // sweep crosses the surface, so the projectile must still be alive then.
+    if (mechanics->lifetime_ticks <= definition.fall_ticks) {
+        fail("needs lifetime_ticks greater than fall_ticks");
+    }
+}
+
 ProjectileTemplateConfig projectile_template_from_yaml(
     const YAML::Node& node,
     const std::string& path,
@@ -5484,6 +5691,8 @@ ProjectileTemplateConfig projectile_template_from_yaml(
             "triggers",
             "homing",
             "beam",
+            "launch",
+            "replication",
         },
         path,
         source_kind,
@@ -5513,6 +5722,18 @@ ProjectileTemplateConfig projectile_template_from_yaml(
                                 : (node["type"] ? node["type"] : node["kind"]));
     mechanics.collider_template_id =
         collider_template_id_from_ref(node["collider_template"], colliders);
+    if (node["replication"]) {
+        const std::string replication = node["replication"].as<std::string>();
+        if (replication == "derived") {
+            mechanics.replication = KernelProjectileReplication_Derived;
+        } else if (replication != "replicated") {
+            throw std::runtime_error(
+                "replication must be replicated or derived: " +
+                projectile_template.name);
+        }
+    }
+    const bool derived =
+        mechanics.replication == KernelProjectileReplication_Derived;
     const std::uint32_t static_collision_mask =
         KERNEL_COLLISION_MASK_ACTOR | KERNEL_COLLISION_MASK_STATIC_WORLD;
     mechanics.collision_mask = collision_mask_from_yaml(
@@ -5608,6 +5829,25 @@ ProjectileTemplateConfig projectile_template_from_yaml(
                     overridden + ": " + projectile_template.name);
             }
         }
+        // An area effect expires in simulate_area_effects, which queues no
+        // trigger, so a binding here loaded cleanly and never fired. A delay
+        // that ends in on_expired belongs on a stationary standard marker.
+        if (triggers && triggers["on_expired"]) {
+            throw std::runtime_error(
+                "on_expired is not supported on area_effect projectiles: " +
+                projectile_template.name);
+        }
+        if (node["launch"]) {
+            throw std::runtime_error(
+                "launch is only supported on standard projectiles: " +
+                projectile_template.name);
+        }
+        if (derived && node["sync_mode"] &&
+            node["sync_mode"].as<std::string>() != "server_snapshot_only") {
+            throw std::runtime_error(
+                "a derived projectile needs sync_mode server_snapshot_only: " +
+                projectile_template.name);
+        }
         mechanics.motion_model = KernelProjectileMotionModel_Linear;
         // A field that travels -- a tornado rather than a blast. Zero is the
         // standing behaviour: the effect sits where it was spawned. Read here
@@ -5687,14 +5927,67 @@ ProjectileTemplateConfig projectile_template_from_yaml(
             "hit_instigator is only supported on area_effect projectiles: " +
             projectile_template.name);
     }
+    const YAML::Node launch = node["launch"];
     mechanics.motion_model = motion_model_from_yaml(node["movement_model"]);
-    mechanics.sync_mode = projectile_sync_mode_from_yaml(node["sync_mode"]);
+    // A launch rule starts the projectile somewhere only the server decides,
+    // so there is nothing for a client to predict: it defaults to, and only
+    // accepts, server_snapshot_only.
+    mechanics.sync_mode = (launch || derived) && !node["sync_mode"]
+        ? static_cast<std::uint8_t>(KernelProjectileSyncMode_ServerSnapshotOnly)
+        : projectile_sync_mode_from_yaml(node["sync_mode"]);
+    // A derived projectile is drawn from a path every client works out for
+    // itself, so what ends it must be something every client has: the static
+    // world, never an actor that moves only on the server.
+    if (derived) {
+        if (mechanics.sync_mode != KernelProjectileSyncMode_ServerSnapshotOnly) {
+            throw std::runtime_error(
+                "a derived projectile needs sync_mode server_snapshot_only: " +
+                projectile_template.name);
+        }
+        if (mechanics.projectile_type == KernelProjectileType_Beam ||
+            mechanics.motion_model == KernelProjectileMotionModel_Homing) {
+            throw std::runtime_error(
+                "a derived projectile cannot be a beam or homing: " +
+                projectile_template.name);
+        }
+        if ((mechanics.collision_mask &
+             ~(KERNEL_COLLISION_LAYER_TERRAIN |
+               KERNEL_COLLISION_LAYER_STATIC_OBSTACLE)) != 0u) {
+            throw std::runtime_error(
+                "a derived projectile may only collide with terrain and "
+                "static obstacles: " +
+                projectile_template.name);
+        }
+    }
     mechanics.hit_response = hit_response_from_yaml(node["hit_response"]);
     mechanics.damage_shape = damage_shape_from_yaml(node["damage_shape"]);
     mechanics.damage = node["damage"].as<std::uint16_t>();
-    mechanics.speed = node["speed"].as<float>();
+    if (launch && node["speed"]) {
+        throw std::runtime_error(
+            "a projectile with a launch rule derives its speed; do not author "
+            "speed: " +
+            projectile_template.name);
+    }
+    mechanics.speed = launch ? 0.0f : node["speed"].as<float>();
     mechanics.lifetime_ticks = node["lifetime_ticks"].as<std::uint32_t>();
     mechanics.gravity = vec3_from_yaml(node["gravity"]);
+    if (launch) {
+        read_projectile_launch(
+            launch,
+            &mechanics,
+            projectile_template.name,
+            path,
+            source_kind,
+            definition.projectile_template_id);
+    }
+    if (mechanics.projectile_type == KernelProjectileType_Standard && !launch &&
+        !(mechanics.speed > 0.0f) && !is_stationary_marker(mechanics)) {
+        throw std::runtime_error(
+            "standard projectile speed must be positive; speed 0 is only "
+            "accepted for a marker with collision_mask: none, linear motion "
+            "and no gravity: " +
+            projectile_template.name);
+    }
     mechanics.max_hit_count =
         node["max_hit_count"] ? node["max_hit_count"].as<std::uint32_t>() : 1u;
 
@@ -5971,6 +6264,19 @@ void mirror_first_action(KernelActionTriggerDefinition* trigger) {
     trigger->modifier_value = action.modifier_value;
 }
 
+void compile_spawn_repeat(
+    const ActionGraphActionConfig& action,
+    KernelActionDefinition* compiled_action) {
+    compiled_action->spawn_lifetime_ticks = action.spawn_lifetime_ticks;
+    compiled_action->repeat_count_min =
+        static_cast<std::uint8_t>(action.repeat_count_min);
+    compiled_action->repeat_count_max =
+        static_cast<std::uint8_t>(action.repeat_count_max);
+    compiled_action->repeat_scatter_radius = action.repeat_scatter_radius;
+    compiled_action->repeat_stagger_lifetime_ticks =
+        action.repeat_stagger_lifetime_ticks;
+}
+
 void compile_projectile_trigger_binding(
     const ProjectileTriggerBindingConfig& binding,
     bool expired,
@@ -6056,14 +6362,12 @@ void compile_projectile_trigger_binding(
                         throw std::runtime_error(
                             "apply_impulse projectile trigger direction must be event.direction, event.subject_direction, or a direction vec3 default");
                     }
-                    // A field that never moves has no heading to report, and
+                    // Something that never moves -- a resting area effect or a
+                    // marker -- has no heading to report, and
                     // the runtime would hand the graph a zero vector that fails
                     // the whole batch. Refusing it here is the reason the
                     // runtime never has to deal with that.
                     if (direction == "event.subject_direction" &&
-                        projectile_template->definition.mechanics
-                                .projectile_type ==
-                            KernelProjectileType_AreaEffect &&
                         projectile_template->definition.mechanics.speed <= 0.0f) {
                         throw std::runtime_error(
                             "event.subject_direction needs a projectile that travels: " +
@@ -6127,6 +6431,7 @@ void compile_projectile_trigger_binding(
             spawned_projectile->definition.projectile_template_id;
         compiled_action.position_source = KernelEventVec3Source_Position;
         compiled_action.direction_source = KernelEventVec3Source_Direction;
+        compile_spawn_repeat(action, &compiled_action);
     }
     mirror_first_action(&compiled);
 }
@@ -6238,6 +6543,7 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
                 found->definition.projectile_template_id;
             compiled_action.position_source = KernelEventVec3Source_Position;
             compiled_action.direction_source = KernelEventVec3Source_Direction;
+            compile_spawn_repeat(action, &compiled_action);
             continue;
         }
         if (action.action_type == "spawn_entity") {
@@ -6665,6 +6971,38 @@ void apply_weapon_template_references(
             continue;
         }
 
+        if (type == "targeted_strike") {
+            ProjectileTemplateConfig* strike_template =
+                projectile_template_from_ref(
+                    document["projectile_template"],
+                    projectile_templates);
+            const KernelProjectileMechanicsDefinition& mechanics =
+                strike_template->definition.mechanics;
+            // It appears at a point only the server resolves, so there is
+            // nothing a client could predict; and a beam is anchored to its
+            // shooter, not to a point.
+            if (mechanics.projectile_type == KernelProjectileType_Beam) {
+                throw std::runtime_error(
+                    "targeted_strike cannot land a beam: " + file);
+            }
+            if (mechanics.sync_mode != KernelProjectileSyncMode_ServerSnapshotOnly) {
+                throw std::runtime_error(
+                    "targeted_strike projectile_template needs sync_mode "
+                    "server_snapshot_only: " + file);
+            }
+            KernelWeaponMechanicsDefinition& weapon =
+                weapons->definitions[weapon_id];
+            strike_template->definition.weapon_id = weapon_id;
+            weapon.projectile_template_id =
+                strike_template->definition.projectile_template_id;
+            weapon.damage = mechanics.damage;
+            weapon.collision_mask = mechanics.collision_mask;
+            weapons->projectile_sync_modes[weapon_id] = mechanics.sync_mode;
+            weapons->collider_template_ids[weapon_id] =
+                mechanics.collider_template_id;
+            continue;
+        }
+
         if (type == "projectile" || type == "area_effect" || type == "beam") {
             ProjectileTemplateConfig* projectile_template =
                 projectile_template_from_ref(
@@ -6674,6 +7012,14 @@ void apply_weapon_template_references(
                 weapons->definitions[weapon_id];
             const KernelProjectileTemplateDefinition& definition =
                 projectile_template->definition;
+            // A launch rule reads its spawn point as a target, but these
+            // weapons spawn at the muzzle -- the projectile would fall onto
+            // its own shooter. Spawn it from an action graph instead.
+            if (definition.mechanics.launch.struct_size != 0u) {
+                throw std::runtime_error(
+                    "a projectile with a launch rule cannot be fired from "
+                    "the muzzle: " + file);
+            }
             projectile_template->definition.weapon_id = weapon_id;
             weapon.fire_mode = KernelWeaponFireMode_Projectile;
             weapon.projectile_template_id = definition.projectile_template_id;
@@ -7783,6 +8129,11 @@ std::uint64_t compute_gameplay_catalog_hash(
             hash_string(&hash, action.item_template_ref);
             hash_scalar(&hash, action.quantity);
             hash_scalar(&hash, action.condition_type);
+            hash_scalar(&hash, action.spawn_lifetime_ticks);
+            hash_scalar(&hash, action.repeat_count_min);
+            hash_scalar(&hash, action.repeat_count_max);
+            hash_float(&hash, action.repeat_scatter_radius);
+            hash_scalar(&hash, action.repeat_stagger_lifetime_ticks);
         }
     }
     std::vector<StatusEffectTemplateConfig> status_effect_templates =
@@ -8163,6 +8514,129 @@ std::uint8_t active_weapon_id(const ActorTemplateConfig& actor_template) {
     }
     return static_cast<std::uint8_t>(
         actor_template.weapon_ids[actor_template.active_weapon_slot]);
+}
+
+// Where derived projectiles may come from and what they may lead to. A client
+// derives a chain from its root, so the root must be something it is sent
+// and whose every input it holds: a stationary marker a targeted strike
+// landed (spawned with no launch salt). Below the root everything is derived
+// and ends on the static world, so no link depends on an actor.
+void validate_derived_projectiles(
+    const GameServerGameplayConfig& config,
+    std::vector<std::string>* errors) {
+    const auto find = [&config](std::uint32_t id) -> const ProjectileTemplateConfig* {
+        for (const ProjectileTemplateConfig& candidate : config.projectile_templates) {
+            if (candidate.definition.projectile_template_id == id) {
+                return &candidate;
+            }
+        }
+        return nullptr;
+    };
+    const auto is_derived = [](const ProjectileTemplateConfig& projectile) {
+        return projectile.definition.mechanics.replication ==
+            KernelProjectileReplication_Derived;
+    };
+    std::vector<std::uint32_t> strike_roots;
+    for (std::size_t id = 0; id < config.weapons.definitions.size(); ++id) {
+        if (!config.weapons.configured[id]) {
+            continue;
+        }
+        const KernelWeaponMechanicsDefinition& weapon = config.weapons.definitions[id];
+        const ProjectileTemplateConfig* fired = find(weapon.projectile_template_id);
+        if (fired != nullptr && is_derived(*fired)) {
+            errors->push_back(
+                "a weapon cannot fire a derived projectile; it needs a "
+                "replicated root: " + fired->name);
+        }
+        if (weapon.fire_mode == KernelWeaponFireMode_TargetedStrike) {
+            strike_roots.push_back(weapon.projectile_template_id);
+        }
+    }
+
+    for (const ProjectileTemplateConfig& parent : config.projectile_templates) {
+        const KernelProjectileMechanicsDefinition& mechanics =
+            parent.definition.mechanics;
+        const bool parent_derived = is_derived(parent);
+        const bool strike_root =
+            std::find(strike_roots.begin(), strike_roots.end(),
+                      parent.definition.projectile_template_id) !=
+                strike_roots.end() &&
+            is_stationary_marker(mechanics);
+        for (const KernelActionTriggerDefinition* trigger :
+             {&mechanics.expired_trigger, &mechanics.projectile_impact_trigger}) {
+            const bool impact = trigger == &mechanics.projectile_impact_trigger;
+            for (std::uint32_t index = 0;
+                 index < trigger->action_count &&
+                 index < KERNEL_MAX_ACTION_GRAPH_ACTIONS;
+                 ++index) {
+                const KernelActionDefinition& action = trigger->actions[index];
+                if (action.action_type !=
+                    KernelEntityTriggerActionType_SpawnProjectile) {
+                    continue;
+                }
+                const ProjectileTemplateConfig* child =
+                    find(action.spawn_projectile_template_id);
+                if (child == nullptr) {
+                    continue;
+                }
+                if (parent_derived && !is_derived(*child)) {
+                    errors->push_back(
+                        "a derived projectile may only spawn derived ones: " +
+                        parent.name + " -> " + child->name);
+                }
+                if (!is_derived(*child)) {
+                    continue;
+                }
+                if (!parent_derived && !strike_root) {
+                    errors->push_back(
+                        "a derived projectile must descend from a stationary "
+                        "marker a targeted_strike weapon lands: " +
+                        parent.name + " -> " + child->name);
+                }
+                // An area effect's impact fires once per target it finds --
+                // a fact only the server has.
+                if (impact && mechanics.projectile_type ==
+                                  KernelProjectileType_AreaEffect) {
+                    errors->push_back(
+                        "an area effect's impact cannot spawn a derived "
+                        "projectile: " + parent.name + " -> " + child->name);
+                }
+            }
+        }
+    }
+
+    // Entity and item triggers are not a root anyone derives from.
+    const auto binds_derived = [&](const TriggerBindingConfig& binding) {
+        for (const auto& parameter : binding.parameters) {
+            for (const ProjectileTemplateConfig& candidate :
+                 config.projectile_templates) {
+                if (is_derived(candidate) && parameter.second == candidate.name) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+    for (const EntityTemplateConfig& entity : config.entity_templates) {
+        for (const TriggerBindingConfig* binding : {
+                 &entity.activated_trigger,
+                 &entity.collision_trigger,
+                 &entity.health_depleted_trigger,
+                 &entity.destroy_entity_trigger,
+             }) {
+            if (binds_derived(*binding)) {
+                errors->push_back(
+                    "an entity trigger cannot spawn a derived projectile: " +
+                    entity.name);
+            }
+        }
+    }
+    for (const ItemTemplateConfig& item : config.item_templates) {
+        if (binds_derived(item.item_used_trigger)) {
+            errors->push_back(
+                "an item trigger cannot spawn a derived projectile: " + item.name);
+        }
+    }
 }
 
 std::vector<std::string> validate_gameplay_config(
@@ -8593,7 +9067,8 @@ std::vector<std::string> validate_gameplay_config(
                 collider_template_ids.end(),
                 mechanics.collider_template_id) == collider_template_ids.end() ||
             (mechanics.projectile_type == KernelProjectileType_Standard &&
-             (mechanics.speed <= 0.0f ||
+             ((mechanics.speed <= 0.0f && !is_stationary_marker(mechanics) &&
+               mechanics.launch.struct_size == 0u) ||
               mechanics.lifetime_ticks == 0 ||
               mechanics.max_hit_count == 0)) ||
             (mechanics.projectile_type == KernelProjectileType_AreaEffect &&
@@ -8661,7 +9136,8 @@ std::vector<std::string> validate_gameplay_config(
         }
         const KernelWeaponMechanicsDefinition& weapon =
             config.weapons.definitions[id];
-        if (weapon.fire_mode == KernelWeaponFireMode_Projectile &&
+        if ((weapon.fire_mode == KernelWeaponFireMode_Projectile ||
+             weapon.fire_mode == KernelWeaponFireMode_TargetedStrike) &&
             std::find(
                 projectile_template_ids.begin(),
                 projectile_template_ids.end(),
@@ -8671,6 +9147,7 @@ std::vector<std::string> validate_gameplay_config(
                 "projectile weapon must reference a valid projectile template");
         }
     }
+    validate_derived_projectiles(config, &errors);
     return errors;
 }
 

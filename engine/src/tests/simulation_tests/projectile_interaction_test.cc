@@ -825,6 +825,82 @@ void expired_trigger_does_not_reuse_impact_trigger() {
     }
 }
 
+network_example::NetId projectile_with_template(
+    network_example::World& world,
+    std::uint32_t projectile_template_id) {
+    auto view = world.registry()
+                    .view<network_example::NetworkIdentity,
+                          network_example::ProjectileState>();
+    for (const entt::entity entity : view) {
+        if (view.get<network_example::ProjectileState>(entity)
+                .projectile_template_id == projectile_template_id) {
+            return view.get<network_example::NetworkIdentity>(entity).net_id;
+        }
+    }
+    return 0;
+}
+
+// A marker holds its place until its lifetime runs out, then fires on_expired
+// there facing the way it was spawned. Its heading used to come only from how
+// far it moved, so a marker that never moved reported +X whatever it faced --
+// facing +Z here is what tells the two apart.
+void stationary_marker_expires_in_place_facing_its_spawn_direction() {
+    network_example::World world;
+    network_example::RuntimeProjectileTemplate marker;
+    marker.projectile_template_id = 40;
+    marker.projectile_type = network_example::ProjectileType::kStandard;
+    marker.motion_model = network_example::ProjectileMotionModel::kLinear;
+    marker.damage = 0;
+    marker.damage_shape = network_example::ProjectileDamageShape::kNone;
+    marker.speed = 0.0f;
+    marker.lifetime_ticks = 3;
+    marker.collision_mask = KERNEL_COLLISION_MASK_NONE;
+    marker.expired_binding = network_example::compile_spawn_projectile_binding(
+        network_example::TriggerEventType::kExpired, 9);
+    // The same stand-still template with something to hit is not a marker.
+    network_example::RuntimeProjectileTemplate armed = marker;
+    armed.projectile_template_id = 41;
+    armed.collision_mask = network_example::kCollisionMaskDamageable;
+    world.set_projectile_templates({
+        marker,
+        armed,
+        area_effect_template(
+            9, 9, 1.0f, 1, 1, 2, network_example::kCollisionMaskDamageable),
+    });
+
+    const glm::vec3 place{5.0f, 0.0f, 5.0f};
+    const glm::vec3 facing{0.0f, 0.0f, 1.0f};
+    require(network_example::spawn_action_graph_projectile(
+        world, 40, 1, 0, 7001, place, facing, 0, 0.05f));
+    require(!network_example::spawn_action_graph_projectile(
+        world, 41, 1, 0, 7002, place, facing, 0, 0.05f));
+    const network_example::NetId marker_id = projectile_with_template(world, 40);
+    require(marker_id != 0);
+    require(projectile_with_template(world, 41) == 0);
+
+    std::vector<KernelEvent> events;
+    for (std::uint32_t tick = 1; tick <= 2; ++tick) {
+        network_example::simulate_projectiles(world, 0.05f, tick, &events);
+        const auto entity = world.find_entity(marker_id);
+        require(entity.has_value());
+        const glm::vec3 position =
+            world.registry().get<network_example::Transform>(*entity).position;
+        require(glm::length(position - place) < 1e-5f);
+    }
+    require(projectile_with_template(world, 9) == 0);
+
+    network_example::simulate_projectiles(world, 0.05f, 3, &events);
+    require(!world.find_entity(marker_id).has_value());
+    const network_example::NetId spawned = projectile_with_template(world, 9);
+    require(spawned != 0);
+    const auto spawned_entity = world.find_entity(spawned);
+    require(spawned_entity.has_value());
+    const network_example::ProjectileState& spawned_state =
+        world.registry().get<network_example::ProjectileState>(*spawned_entity);
+    require(glm::length(spawned_state.spawn_position - place) < 1e-5f);
+    require(glm::length(spawned_state.spawn_direction - facing) < 1e-5f);
+}
+
 }  // namespace
 
 int main() {
@@ -841,5 +917,6 @@ int main() {
     static_impact_emits_projectile_trigger_once();
     historical_hit_emits_projectile_trigger_once();
     expired_trigger_does_not_reuse_impact_trigger();
+    stationary_marker_expires_in_place_facing_its_spawn_direction();
     return 0;
 }

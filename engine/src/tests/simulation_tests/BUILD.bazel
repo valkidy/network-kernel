@@ -103,6 +103,24 @@ cc_test(
 )
 
 cc_test(
+    name = "descent_launch_test",
+    srcs = ["descent_launch_test.cc"],
+    deps = ["//engine/src/simulation:simulation"],
+)
+
+cc_test(
+    name = "targeted_strike_test",
+    srcs = ["targeted_strike_test.cc"],
+    deps = ["//engine/src/simulation:simulation"],
+)
+
+cc_test(
+    name = "action_repeat_test",
+    srcs = ["action_repeat_test.cc"],
+    deps = ["//engine/src/simulation:simulation"],
+)
+
+cc_test(
     name = "item_system_test",
     srcs = ["item_system_test.cc"],
     deps = ["//engine/src/simulation:simulation"],
