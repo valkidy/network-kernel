@@ -61,12 +61,28 @@ bool spawn_projectile_from_template(
     // zero, so a blast still spawns exactly as motionless as before, while a
     // template that authors one travels like anything else. The weapon-fired
     // path never had the special case to begin with.
-    const glm::vec3 velocity =
+    glm::vec3 start = position;
+    glm::vec3 velocity =
         normalized_or(direction, glm::vec3{1.0f, 0.0f, 0.0f}) *
         projectile_template.speed;
+    if (projectile_template.launch_type == ProjectileLaunchType::kDescent) {
+        const ProjectileLaunch launch = descent_launch(
+            projectile_template,
+            position,
+            direction,
+            projectile_launch_seed(
+                shooter_net_id,
+                action_instance_id,
+                projectile_template.projectile_template_id,
+                0u),
+            fixed_delta_seconds,
+            world.collision_world());
+        start = launch.origin;
+        velocity = launch.velocity;
+    }
     const NetId projectile_net_id = world.spawn_projectile(
         owner_peer,
-        position,
+        start,
         velocity);
     const auto projectile_entity = world.find_entity(projectile_net_id);
     if (!projectile_entity.has_value()) {
@@ -89,12 +105,13 @@ bool spawn_projectile_from_template(
     projectile.collision_mask = projectile_template.collision_mask;
     projectile.max_hit_count = std::max(1u, projectile_template.max_hit_count);
     projectile.max_lifetime_ticks = projectile_template.lifetime_ticks;
-    projectile.spawn_position = position;
+    projectile.spawn_position = start;
     projectile.initial_velocity = velocity;
     projectile.gravity = projectile_template.gravity;
-    projectile.previous_position = position;
-    projectile.spawn_direction =
-        normalized_or(direction, glm::vec3{1.0f, 0.0f, 0.0f});
+    projectile.previous_position = start;
+    // A descent falls along its own path, not the heading it was handed.
+    projectile.spawn_direction = normalized_or(
+        velocity, normalized_or(direction, glm::vec3{1.0f, 0.0f, 0.0f}));
     if (projectile_template.projectile_impact_binding.has_value()) {
         world.registry().emplace<OnProjectileImpactTriggerTag>(
             *projectile_entity);
@@ -1145,6 +1162,79 @@ void process_projectile_interactions(
 
 }  // namespace
 
+std::uint64_t projectile_launch_seed(
+    NetId instigator,
+    std::uint32_t action_instance_id,
+    std::uint32_t projectile_template_id,
+    std::uint32_t salt) {
+    // splitmix64's finalizer, applied once per 64-bit word of input.
+    const auto mix = [](std::uint64_t value) {
+        value += 0x9E3779B97F4A7C15ull;
+        value = (value ^ (value >> 30)) * 0xBF58476D1CE4E5B9ull;
+        value = (value ^ (value >> 27)) * 0x94D049BB133111EBull;
+        return value ^ (value >> 31);
+    };
+    std::uint64_t seed = mix(
+        (static_cast<std::uint64_t>(instigator) << 32) | action_instance_id);
+    seed = mix(
+        seed ^
+        ((static_cast<std::uint64_t>(projectile_template_id) << 32) | salt));
+    return seed;
+}
+
+ProjectileLaunch descent_launch(
+    const RuntimeProjectileTemplate& projectile_template,
+    const glm::vec3& target,
+    const glm::vec3& heading,
+    std::uint64_t seed,
+    float fixed_delta_seconds,
+    const physics::PhysicsWorld* ground) {
+    const float height = projectile_template.launch_height;
+    // Land on whatever is under the target within the fall height, probing
+    // from as high as the fall starts: at these elevations the path is close
+    // to vertical, so the first surface under that point is the one the fall
+    // would meet anyway -- a hill above the target, or a roof over it.
+    glm::vec3 landing = target;
+    if (ground != nullptr && height > 0.0f) {
+        physics::RayCastRequest probe{};
+        probe.origin = target + glm::vec3{0.0f, height, 0.0f};
+        probe.direction = glm::vec3{0.0f, -1.0f, 0.0f};
+        probe.max_distance = height * 2.0f;
+        probe.filter = collision_filter_from_mask(
+            KERNEL_COLLISION_LAYER_TERRAIN |
+            KERNEL_COLLISION_LAYER_STATIC_OBSTACLE);
+        physics::CollisionHit hit{};
+        if (ground->ray_cast_closest(probe, &hit)) {
+            landing = hit.position;
+        }
+    }
+
+    // The top 24 bits of the seed as a fraction in [0, 1): exact in a float,
+    // and the same on every platform.
+    const float fraction =
+        static_cast<float>(seed >> 40) * (1.0f / 16777216.0f);
+    const float elevation = glm::radians(
+        projectile_template.launch_elevation_min_degrees +
+        (projectile_template.launch_elevation_max_degrees -
+         projectile_template.launch_elevation_min_degrees) *
+            fraction);
+    const glm::vec3 across = normalized_or(
+        glm::vec3{heading.x, 0.0f, heading.z}, glm::vec3{1.0f, 0.0f, 0.0f});
+    const glm::vec3 travel = across * std::cos(elevation) -
+        glm::vec3{0.0f, std::sin(elevation), 0.0f};
+    const float path_length = height / std::sin(elevation);
+    const float fall_seconds =
+        static_cast<float>(projectile_template.launch_fall_ticks) *
+        fixed_delta_seconds;
+
+    ProjectileLaunch launch;
+    launch.origin = landing - travel * path_length;
+    launch.velocity = fall_seconds > 0.0f
+        ? travel * (path_length / fall_seconds)
+        : glm::vec3{0.0f};
+    return launch;
+}
+
 bool spawn_action_graph_projectile(
     World& world,
     std::uint32_t projectile_template_id,
@@ -1162,9 +1252,11 @@ bool spawn_action_graph_projectile(
     const bool stationary_marker = projectile_template != nullptr &&
         projectile_template->speed == 0.0f &&
         projectile_template->collision_mask == KERNEL_COLLISION_MASK_NONE;
+    const bool derived_speed = projectile_template != nullptr &&
+        projectile_template->launch_type != ProjectileLaunchType::kNone;
     if (projectile_template == nullptr ||
         (projectile_template->projectile_type != ProjectileType::kAreaEffect &&
-         !stationary_marker &&
+         !stationary_marker && !derived_speed &&
          (!std::isfinite(projectile_template->speed) ||
           projectile_template->speed <= 0.0f))) {
         return false;

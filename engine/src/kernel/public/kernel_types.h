@@ -5,6 +5,15 @@
 #include <stdint.h>
 
 /*
+ * 94: targeted strikes. KernelProjectileMechanicsDefinition gained `launch`,
+ *     appended: a rule that derives where a projectile starts and how fast
+ *     it goes from the point it is spawned at. A zero struct_size, the
+ *     default, is no rule, so every catalog authored before this behaves as
+ *     it did. The descent rule reads the spawn point as a landing target and
+ *     starts the projectile above it. A standard projectile may now author
+ *     speed 0 as a marker (collision mask none, linear, no gravity): it holds
+ *     its place and fires on_expired there. Every managed mirror must add the
+ *     block, or the nested layout of KernelProjectileTemplateDefinition shifts.
  * 93: KernelEntityTemplateDefinition gained knockdown_recovery_ticks, appended:
  *     how long a knockback that lands keeps the actor down -- rooted, and
  *     refusing new actions as the knockback did -- before it may move again.
@@ -105,7 +114,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 93u
+#define KERNEL_ABI_VERSION 94u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -1575,6 +1584,34 @@ typedef struct KernelBeamMechanicsDefinition {
     uint32_t collision_mask;
 } KernelBeamMechanicsDefinition;
 
+typedef enum KernelProjectileLaunchType {
+    KernelProjectileLaunchType_None = 0,
+    KernelProjectileLaunchType_Descent = 1,
+} KernelProjectileLaunchType;
+
+/*
+ * Derives a projectile's start and velocity from the point it is spawned at.
+ * A zero struct_size is no rule: the spawn point is the start and `speed` is
+ * authored.
+ *
+ * Descent reads the spawn point as the landing target. The projectile starts
+ * `height` metres above it, back along its spawn heading at an elevation
+ * picked in [elevation_min_degrees, elevation_max_degrees], and reaches the
+ * target in a straight line after fall_ticks ticks. Its speed is derived, so
+ * `speed` stays zero, and only server_snapshot_only is accepted: the start
+ * depends on server-side ground and a server-picked elevation.
+ */
+typedef struct KernelProjectileLaunchDefinition {
+    uint32_t struct_size;
+    uint8_t launch_type;
+    uint8_t reserved0;
+    uint16_t reserved1;
+    float elevation_min_degrees;
+    float elevation_max_degrees;
+    float height;
+    uint32_t fall_ticks;
+} KernelProjectileLaunchDefinition;
+
 typedef struct KernelProjectileMechanicsDefinition {
     uint32_t struct_size;
     uint8_t projectile_type;
@@ -1598,6 +1635,7 @@ typedef struct KernelProjectileMechanicsDefinition {
     uint8_t collision_query_mode;
     uint8_t reserved0;
     uint16_t reserved1;
+    KernelProjectileLaunchDefinition launch;
 } KernelProjectileMechanicsDefinition;
 
 typedef struct KernelProjectileTemplateDefinition {

@@ -171,6 +171,34 @@ std::uint32_t knockback_flight_ticks(
     float fixed_delta_seconds,
     std::uint32_t lockout_ticks);
 
+// Where a launch rule starts a projectile, and how fast.
+struct ProjectileLaunch {
+    glm::vec3 origin{0.0f};
+    glm::vec3 velocity{0.0f};
+};
+
+// Mixes the facts that identify one launch into a seed. Integers only, so the
+// same inputs give the same seed on every platform.
+std::uint64_t projectile_launch_seed(
+    NetId instigator,
+    std::uint32_t action_instance_id,
+    std::uint32_t projectile_template_id,
+    std::uint32_t salt);
+
+// The descent rule: falls onto `target` from `launch_height` above it, coming
+// from behind along the horizontal part of `heading`, at an elevation `seed`
+// picks within the template's range, arriving after `launch_fall_ticks`.
+// `target` is first dropped onto the ground under it when `ground` is given
+// and has any (terrain or static obstacle) within the fall height; otherwise
+// it is used as is.
+ProjectileLaunch descent_launch(
+    const RuntimeProjectileTemplate& projectile_template,
+    const glm::vec3& target,
+    const glm::vec3& heading,
+    std::uint64_t seed,
+    float fixed_delta_seconds,
+    const physics::PhysicsWorld* ground);
+
 bool spawn_action_graph_projectile(
     World& world,
     std::uint32_t projectile_template_id,

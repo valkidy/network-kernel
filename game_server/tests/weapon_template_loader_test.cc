@@ -1,12 +1,14 @@
 #include "game_server/src/gameplay_config.h"
 
 #include <cassert>
+#include <cstdio>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <limits>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -1083,6 +1085,101 @@ void area_effect_rejects_on_expired() {
     assert(expired_failed);
 }
 
+// launch: descent derives start and speed from a landing target. Each rejected
+// variant below differs from the accepted one by one line.
+void descent_launch_is_authored() {
+    const std::string head =
+        "id: 41\nname: meteor_body\ntype: standard\n"
+        "collider_template: projectile_sphere\n"
+        "damage: 0\ndamage_shape: none\n"
+        "collision_mask: terrain | static_obstacle\n";
+    const std::string launch =
+        "launch:\n"
+        "  type: descent\n"
+        "  elevation_degrees: [75, 85]\n"
+        "  height: 40.0\n"
+        "  fall_ticks: 15\n";
+    const auto meteor_dir = [&](const char* name, const std::string& body) {
+        const std::filesystem::path dir = tmp_dir(name);
+        write_valid_templates(dir);
+        write_file(
+            dir.parent_path() / "projectile_templates" / "meteor_body.yaml",
+            head + body);
+        return dir;
+    };
+
+    const network_example::game_server::GameServerGameplayConfig config =
+        network_example::game_server::load_gameplay_config_from_weapon_template_directory(
+            meteor_dir("descent_valid", "lifetime_ticks: 18\n" + launch)
+                .string());
+    const KernelProjectileMechanicsDefinition& mechanics =
+        projectile_mechanics(config, 41);
+    assert(mechanics.launch.struct_size == sizeof(KernelProjectileLaunchDefinition));
+    assert(mechanics.launch.launch_type == KernelProjectileLaunchType_Descent);
+    assert(mechanics.launch.elevation_min_degrees == 75.0f);
+    assert(mechanics.launch.elevation_max_degrees == 85.0f);
+    assert(mechanics.launch.height == 40.0f);
+    assert(mechanics.launch.fall_ticks == 15u);
+    assert(mechanics.speed == 0.0f);
+    // Not authored, and nothing else is accepted.
+    assert(mechanics.sync_mode == KernelProjectileSyncMode_ServerSnapshotOnly);
+
+    const network_example::game_server::GameServerGameplayConfig fixed =
+        network_example::game_server::load_gameplay_config_from_weapon_template_directory(
+            meteor_dir(
+                "descent_fixed_elevation",
+                "lifetime_ticks: 18\n"
+                "launch:\n  type: descent\n  elevation_degrees: 80\n"
+                "  height: 40.0\n  fall_ticks: 15\n")
+                .string());
+    assert(projectile_mechanics(fixed, 41).launch.elevation_min_degrees == 80.0f);
+    assert(projectile_mechanics(fixed, 41).launch.elevation_max_degrees == 80.0f);
+
+    struct Rejected {
+        const char* name;
+        std::string body;
+    };
+    const std::vector<Rejected> rejected = {
+        {"descent_with_speed", "lifetime_ticks: 18\nspeed: 30.0\n" + launch},
+        {"descent_lifetime_short", "lifetime_ticks: 15\n" + launch},
+        {"descent_predicted",
+         "lifetime_ticks: 18\nsync_mode: hybrid_deterministic_then_snapshot\n" +
+             launch},
+        {"descent_parabolic", "lifetime_ticks: 18\nmovement_model: parabolic\n" +
+             launch},
+        {"descent_reversed_range",
+         "lifetime_ticks: 18\nlaunch:\n  type: descent\n"
+         "  elevation_degrees: [85, 75]\n  height: 40.0\n  fall_ticks: 15\n"},
+        {"descent_flat",
+         "lifetime_ticks: 18\nlaunch:\n  type: descent\n"
+         "  elevation_degrees: 0\n  height: 40.0\n  fall_ticks: 15\n"},
+        {"descent_no_height",
+         "lifetime_ticks: 18\nlaunch:\n  type: descent\n"
+         "  elevation_degrees: 80\n  fall_ticks: 15\n"},
+        {"descent_unknown_type",
+         "lifetime_ticks: 18\nlaunch:\n  type: orbit\n"
+         "  elevation_degrees: 80\n  height: 40.0\n  fall_ticks: 15\n"},
+    };
+    for (const Rejected& variant : rejected) {
+        const bool failed = load_fails(meteor_dir(variant.name, variant.body));
+        if (!failed) {
+            std::fprintf(stderr, "descent variant loaded: %s\n", variant.name);
+        }
+        assert(failed);
+    }
+
+    // A muzzle-fired weapon would drop the projectile onto its own shooter.
+    const std::filesystem::path weapon_dir =
+        meteor_dir("descent_on_muzzle_weapon", "lifetime_ticks: 18\n" + launch);
+    write_file(
+        weapon_dir / "rocket.yaml",
+        "id: 3\nname: Rocket\nweapon_type: projectile\nmagazine_size: 6\n"
+        "fire_action_template: rocket_fire\n"
+        "projectile_template: meteor_body\n");
+    const bool muzzle_failed = load_fails(weapon_dir);
+    assert(muzzle_failed);
+}
+
 void area_effect_speed_is_authored() {
     const std::filesystem::path default_dir = tmp_dir("area_speed_default");
     write_valid_templates(default_dir);
@@ -1473,6 +1570,7 @@ int main() {
     area_effect_speed_is_authored();
     stationary_marker_loads_only_when_inert();
     area_effect_rejects_on_expired();
+    descent_launch_is_authored();
     subject_direction_needs_a_projectile_that_travels();
     area_effect_motion_collision_mask_is_authored();
     catalog_file_loads_colliders();

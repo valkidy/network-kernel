@@ -288,6 +288,14 @@ enum class ProjectileMotionModel : std::uint8_t {
     kHoming = 2,
 };
 
+// How a projectile's start and velocity are derived from where it is spawned.
+// kNone: the spawn point is the start and speed is authored. kDescent: the
+// spawn point is a landing target the projectile falls onto from above.
+enum class ProjectileLaunchType : std::uint8_t {
+    kNone = 0,
+    kDescent = 1,
+};
+
 enum class ProjectileSyncMode : std::uint8_t {
     kLocalPredictedDeterministic = 0,
     kHybridDeterministicThenSnapshot = 1,
@@ -876,6 +884,11 @@ struct RuntimeProjectileTemplate {
     float homing_max_turn_degrees_per_tick = 0.0f;
     float homing_acceleration = 0.0f;
     float homing_max_speed = 0.0f;
+    ProjectileLaunchType launch_type = ProjectileLaunchType::kNone;
+    float launch_elevation_min_degrees = 0.0f;
+    float launch_elevation_max_degrees = 0.0f;
+    float launch_height = 0.0f;
+    std::uint32_t launch_fall_ticks = 0;
 };
 
 /*

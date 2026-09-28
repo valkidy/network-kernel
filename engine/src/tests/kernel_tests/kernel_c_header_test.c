@@ -6,8 +6,12 @@
 #include "kernel/public/kernel_api.h"
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 93u,
-    "knockdown: KernelEntityTemplateDefinition gained knockdown_recovery_ticks");
+    KERNEL_ABI_VERSION == 94u,
+    "targeted strike: KernelProjectileMechanicsDefinition gained launch");
+_Static_assert(
+    offsetof(KernelProjectileMechanicsDefinition, launch) >
+        offsetof(KernelProjectileMechanicsDefinition, collision_query_mode),
+    "launch is appended after every field that existed before ABI 94");
 _Static_assert(
     sizeof(KernelLogMessage) == 24u + KERNEL_LOG_MESSAGE_TEXT_SIZE,
     "a managed mirror of a log line must match this layout");

@@ -1549,6 +1549,16 @@ RuntimeProjectileTemplate to_runtime_projectile_template(
         mechanics.homing.max_turn_degrees_per_tick;
     projectile_template.homing_acceleration = mechanics.homing.acceleration;
     projectile_template.homing_max_speed = mechanics.homing.max_speed;
+    if (mechanics.launch.struct_size != 0u &&
+        mechanics.launch.launch_type == KernelProjectileLaunchType_Descent) {
+        projectile_template.launch_type = ProjectileLaunchType::kDescent;
+        projectile_template.launch_elevation_min_degrees =
+            mechanics.launch.elevation_min_degrees;
+        projectile_template.launch_elevation_max_degrees =
+            mechanics.launch.elevation_max_degrees;
+        projectile_template.launch_height = mechanics.launch.height;
+        projectile_template.launch_fall_ticks = mechanics.launch.fall_ticks;
+    }
     return projectile_template;
 }
 
@@ -1655,6 +1665,36 @@ bool validate_homing_mechanics(const KernelHomingMechanicsDefinition& homing) {
            homing.max_turn_degrees_per_tick > 0.0f &&
            homing.acceleration > 0.0f &&
            homing.max_speed > 0.0f;
+}
+
+// The descent rule derives its speed, so it is only sound on a straight line
+// with nothing pulling it off course, and only when the server alone decides
+// where it starts. Its lifetime must outlast the fall by at least a tick: the
+// target sits on the ground, and the tick after it arrives is the one whose
+// sweep crosses the surface.
+bool validate_launch_mechanics(
+    const KernelProjectileMechanicsDefinition& mechanics) {
+    const KernelProjectileLaunchDefinition& launch = mechanics.launch;
+    if (launch.struct_size == 0u) {
+        return true;
+    }
+    const auto finite = [](float value) { return std::isfinite(value); };
+    return launch.struct_size >= sizeof(KernelProjectileLaunchDefinition) &&
+        launch.launch_type == KernelProjectileLaunchType_Descent &&
+        mechanics.projectile_type == KernelProjectileType_Standard &&
+        mechanics.motion_model == KernelProjectileMotionModel_Linear &&
+        mechanics.sync_mode == KernelProjectileSyncMode_ServerSnapshotOnly &&
+        mechanics.speed == 0.0f &&
+        mechanics.gravity.x == 0.0f && mechanics.gravity.y == 0.0f &&
+        mechanics.gravity.z == 0.0f &&
+        finite(launch.elevation_min_degrees) &&
+        finite(launch.elevation_max_degrees) &&
+        launch.elevation_min_degrees > 0.0f &&
+        launch.elevation_min_degrees <= launch.elevation_max_degrees &&
+        launch.elevation_max_degrees <= 90.0f &&
+        finite(launch.height) && launch.height > 0.0f &&
+        launch.fall_ticks > 0u &&
+        mechanics.lifetime_ticks > launch.fall_ticks;
 }
 
 bool validate_area_effect_mechanics(
@@ -1800,13 +1840,17 @@ bool validate_projectile_mechanics(
     // a place and fire on_expired there. It is only accepted when it can do
     // nothing else -- nothing to hit, no gravity to fall by, no guidance --
     // so a template that merely forgot its speed still fails to load.
+    if (!validate_launch_mechanics(mechanics)) {
+        return false;
+    }
+    const bool derived_speed = mechanics.launch.struct_size != 0u;
     const bool stationary_marker = mechanics.speed == 0.0f &&
         mechanics.collision_mask == KERNEL_COLLISION_MASK_NONE &&
         mechanics.motion_model == KernelProjectileMotionModel_Linear &&
         mechanics.gravity.x == 0.0f && mechanics.gravity.y == 0.0f &&
         mechanics.gravity.z == 0.0f;
     if (mechanics.projectile_type == KernelProjectileType_Standard &&
-        ((mechanics.speed <= 0.0f && !stationary_marker) ||
+        ((mechanics.speed <= 0.0f && !stationary_marker && !derived_speed) ||
          mechanics.lifetime_ticks == 0u)) {
         return false;
     }

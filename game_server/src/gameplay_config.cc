@@ -241,6 +241,12 @@ void hash_projectile_template(
     hash_scalar(hash, mechanics.beam.damage_per_tick);
     hash_scalar(hash, mechanics.beam.lifetime_ticks);
     hash_scalar(hash, mechanics.beam.collision_mask);
+    hash_scalar(hash, mechanics.launch.struct_size);
+    hash_scalar(hash, mechanics.launch.launch_type);
+    hash_float(hash, mechanics.launch.elevation_min_degrees);
+    hash_float(hash, mechanics.launch.elevation_max_degrees);
+    hash_float(hash, mechanics.launch.height);
+    hash_scalar(hash, mechanics.launch.fall_ticks);
     for (const KernelActionTriggerDefinition* trigger : {
              &mechanics.projectile_impact_trigger,
              &mechanics.expired_trigger,
@@ -5464,6 +5470,86 @@ void resolve_inventory_item_template_references(
     }
 }
 
+// `launch: {type: descent, ...}` on a standard projectile. Every rule the
+// kernel checks is repeated here so the message names the template.
+void read_projectile_launch(
+    const YAML::Node& launch,
+    KernelProjectileMechanicsDefinition* mechanics,
+    const std::string& name,
+    const std::string& path,
+    std::uint32_t source_kind,
+    std::uint32_t projectile_template_id) {
+    reject_unknown_keys(
+        launch,
+        {"type", "elevation_degrees", "height", "fall_ticks"},
+        path,
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_PROJECTILE,
+        projectile_template_id);
+    const auto fail = [&name](const std::string& reason) {
+        throw std::runtime_error("launch " + reason + ": " + name);
+    };
+    if (!launch["type"] || launch["type"].as<std::string>() != "descent") {
+        fail("type must be descent");
+    }
+    if (mechanics->projectile_type != KernelProjectileType_Standard) {
+        fail("is only supported on standard projectiles");
+    }
+    if (mechanics->motion_model != KernelProjectileMotionModel_Linear) {
+        fail("needs movement_model linear");
+    }
+    if (mechanics->sync_mode != KernelProjectileSyncMode_ServerSnapshotOnly) {
+        fail("needs sync_mode server_snapshot_only");
+    }
+    if (mechanics->gravity.x != 0.0f || mechanics->gravity.y != 0.0f ||
+        mechanics->gravity.z != 0.0f) {
+        fail("does not take gravity");
+    }
+
+    KernelProjectileLaunchDefinition& definition = mechanics->launch;
+    definition = KernelProjectileLaunchDefinition{};
+    definition.struct_size = sizeof(KernelProjectileLaunchDefinition);
+    definition.launch_type = KernelProjectileLaunchType_Descent;
+    // One number is a fixed elevation; a pair is a range picked per launch.
+    const YAML::Node elevation = launch["elevation_degrees"];
+    if (!elevation) {
+        fail("needs elevation_degrees");
+    }
+    if (elevation.IsSequence()) {
+        if (elevation.size() != 2u) {
+            fail("elevation_degrees must be one number or [min, max]");
+        }
+        definition.elevation_min_degrees = elevation[0].as<float>();
+        definition.elevation_max_degrees = elevation[1].as<float>();
+    } else {
+        definition.elevation_min_degrees = elevation.as<float>();
+        definition.elevation_max_degrees = definition.elevation_min_degrees;
+    }
+    if (!std::isfinite(definition.elevation_min_degrees) ||
+        !std::isfinite(definition.elevation_max_degrees) ||
+        !(definition.elevation_min_degrees > 0.0f) ||
+        definition.elevation_min_degrees > definition.elevation_max_degrees ||
+        definition.elevation_max_degrees > 90.0f) {
+        fail("elevation_degrees must satisfy 0 < min <= max <= 90");
+    }
+    if (!launch["height"] || !launch["fall_ticks"]) {
+        fail("needs height and fall_ticks");
+    }
+    definition.height = launch["height"].as<float>();
+    if (!std::isfinite(definition.height) || !(definition.height > 0.0f)) {
+        fail("height must be positive");
+    }
+    definition.fall_ticks = launch["fall_ticks"].as<std::uint32_t>();
+    if (definition.fall_ticks == 0u) {
+        fail("fall_ticks must be at least 1");
+    }
+    // The target sits on the ground; the tick after arrival is the one whose
+    // sweep crosses the surface, so the projectile must still be alive then.
+    if (mechanics->lifetime_ticks <= definition.fall_ticks) {
+        fail("needs lifetime_ticks greater than fall_ticks");
+    }
+}
+
 ProjectileTemplateConfig projectile_template_from_yaml(
     const YAML::Node& node,
     const std::string& path,
@@ -5496,6 +5582,7 @@ ProjectileTemplateConfig projectile_template_from_yaml(
             "triggers",
             "homing",
             "beam",
+            "launch",
         },
         path,
         source_kind,
@@ -5628,6 +5715,11 @@ ProjectileTemplateConfig projectile_template_from_yaml(
                 "on_expired is not supported on area_effect projectiles: " +
                 projectile_template.name);
         }
+        if (node["launch"]) {
+            throw std::runtime_error(
+                "launch is only supported on standard projectiles: " +
+                projectile_template.name);
+        }
         mechanics.motion_model = KernelProjectileMotionModel_Linear;
         // A field that travels -- a tornado rather than a blast. Zero is the
         // standing behaviour: the effect sits where it was spawned. Read here
@@ -5707,15 +5799,36 @@ ProjectileTemplateConfig projectile_template_from_yaml(
             "hit_instigator is only supported on area_effect projectiles: " +
             projectile_template.name);
     }
+    const YAML::Node launch = node["launch"];
     mechanics.motion_model = motion_model_from_yaml(node["movement_model"]);
-    mechanics.sync_mode = projectile_sync_mode_from_yaml(node["sync_mode"]);
+    // A launch rule starts the projectile somewhere only the server decides,
+    // so there is nothing for a client to predict: it defaults to, and only
+    // accepts, server_snapshot_only.
+    mechanics.sync_mode = launch && !node["sync_mode"]
+        ? static_cast<std::uint8_t>(KernelProjectileSyncMode_ServerSnapshotOnly)
+        : projectile_sync_mode_from_yaml(node["sync_mode"]);
     mechanics.hit_response = hit_response_from_yaml(node["hit_response"]);
     mechanics.damage_shape = damage_shape_from_yaml(node["damage_shape"]);
     mechanics.damage = node["damage"].as<std::uint16_t>();
-    mechanics.speed = node["speed"].as<float>();
+    if (launch && node["speed"]) {
+        throw std::runtime_error(
+            "a projectile with a launch rule derives its speed; do not author "
+            "speed: " +
+            projectile_template.name);
+    }
+    mechanics.speed = launch ? 0.0f : node["speed"].as<float>();
     mechanics.lifetime_ticks = node["lifetime_ticks"].as<std::uint32_t>();
     mechanics.gravity = vec3_from_yaml(node["gravity"]);
-    if (mechanics.projectile_type == KernelProjectileType_Standard &&
+    if (launch) {
+        read_projectile_launch(
+            launch,
+            &mechanics,
+            projectile_template.name,
+            path,
+            source_kind,
+            definition.projectile_template_id);
+    }
+    if (mechanics.projectile_type == KernelProjectileType_Standard && !launch &&
         !(mechanics.speed > 0.0f) && !is_stationary_marker(mechanics)) {
         throw std::runtime_error(
             "standard projectile speed must be positive; speed 0 is only "
@@ -6700,6 +6813,14 @@ void apply_weapon_template_references(
                 weapons->definitions[weapon_id];
             const KernelProjectileTemplateDefinition& definition =
                 projectile_template->definition;
+            // A launch rule reads its spawn point as a target, but these
+            // weapons spawn at the muzzle -- the projectile would fall onto
+            // its own shooter. Spawn it from an action graph instead.
+            if (definition.mechanics.launch.struct_size != 0u) {
+                throw std::runtime_error(
+                    "a projectile with a launch rule cannot be fired from "
+                    "the muzzle: " + file);
+            }
             projectile_template->definition.weapon_id = weapon_id;
             weapon.fire_mode = KernelWeaponFireMode_Projectile;
             weapon.projectile_template_id = definition.projectile_template_id;
@@ -8619,7 +8740,8 @@ std::vector<std::string> validate_gameplay_config(
                 collider_template_ids.end(),
                 mechanics.collider_template_id) == collider_template_ids.end() ||
             (mechanics.projectile_type == KernelProjectileType_Standard &&
-             ((mechanics.speed <= 0.0f && !is_stationary_marker(mechanics)) ||
+             ((mechanics.speed <= 0.0f && !is_stationary_marker(mechanics) &&
+               mechanics.launch.struct_size == 0u) ||
               mechanics.lifetime_ticks == 0 ||
               mechanics.max_hit_count == 0)) ||
             (mechanics.projectile_type == KernelProjectileType_AreaEffect &&
