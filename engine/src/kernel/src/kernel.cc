@@ -7860,15 +7860,12 @@ void KernelEngine::release_remote_action_presentation_events() {
             }
         }
     }
-    const std::uint64_t render_server_time_us =
-        client_clock_offset_us_ >= 0
-            ? current_render_time_us_ +
-                  static_cast<std::uint64_t>(client_clock_offset_us_)
-            : current_render_time_us_ >
-                      static_cast<std::uint64_t>(-client_clock_offset_us_)
-                  ? current_render_time_us_ -
-                        static_cast<std::uint64_t>(-client_clock_offset_us_)
-                  : 0u;
+    // Already the server's clock: rebuild_render_states_at_time sets it from
+    // the drawn snapshot's tick (or the render clock's server time). Adding
+    // the client clock offset on top put it ahead by however long the server
+    // had run before this client started -- 46 s in one play test, so every
+    // record was 1393 ticks past its expiry and none was ever released.
+    const std::uint64_t render_server_time_us = current_render_time_us_;
     const bool diagnose = network_stats_enabled();
     RemotePresentationStaleDiagnostics& diagnostics =
         remote_presentation_stale_diagnostics_;
