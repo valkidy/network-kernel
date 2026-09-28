@@ -1,0 +1,30 @@
+# The meteor itself. Spawned on its landing point, it starts 40 m above it,
+# behind along the caster's heading at 75-85 degrees, and lands in 15 ticks
+# (0.5 s). It hits only the static world: the blast is what hurts, so a meteor
+# whose path crosses an actor still lands where it was aimed.
+id: 19
+name: meteor_body
+type: standard
+collider_template: projectile_sphere
+damage: 0
+damage_shape: none
+collision_mask: terrain | static_obstacle
+lifetime_ticks: 18
+launch:
+  type: descent
+  elevation_degrees: [75, 85]
+  height: 40.0
+  fall_ticks: 15
+triggers:
+  on_projectile_impact:
+    action_graph: action_spawn_projectile_at_impact
+    parameters:
+      template: meteor_blast
+      position: event.position
+      direction: event.direction
+  on_expired:
+    action_graph: action_spawn_projectile_at_expired
+    parameters:
+      template: meteor_blast
+      position: event.position
+      direction: event.direction

@@ -1,0 +1,28 @@
+# The beam's front: straight down from 60 m in 2 ticks. Clients draw the beam
+# from its spawn position to where it lands; the burn does the damage.
+id: 24
+name: sky_laser_body
+type: standard
+collider_template: projectile_sphere
+damage: 0
+damage_shape: none
+collision_mask: terrain | static_obstacle
+lifetime_ticks: 3
+launch:
+  type: descent
+  elevation_degrees: 90
+  height: 60.0
+  fall_ticks: 2
+triggers:
+  on_projectile_impact:
+    action_graph: action_spawn_projectile_at_impact
+    parameters:
+      template: sky_laser_burn
+      position: event.position
+      direction: event.direction
+  on_expired:
+    action_graph: action_spawn_projectile_at_expired
+    parameters:
+      template: sky_laser_burn
+      position: event.position
+      direction: event.direction

@@ -1,0 +1,10 @@
+# Calls 10-15 meteors down within 6 m of the aimed point over two seconds.
+id: 14
+name: Meteor Storm Staff
+weapon_type: targeted_strike
+magazine_size: 1
+reserve_magazines: 4
+max_range: 35.0
+fire_action_template: meteor_storm_cast
+reload_action_template: meteor_staff_reload
+projectile_template: meteor_storm_marker

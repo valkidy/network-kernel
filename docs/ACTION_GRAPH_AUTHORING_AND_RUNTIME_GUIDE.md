@@ -125,6 +125,11 @@ schema 的欄位會在載入階段被拒絕。
 - Area effect projectile 對半徑內每個受影響 target 各發一次
   `on_projectile_impact`：`event.target` 是該 target，`event.direction` 是由爆心
   指向 target 的徑向單位向量。直接命中的 `event.direction` 則是彈道方向。
+- `on_expired` 只有 standard projectile 會觸發。Area effect 到期時由 area effect
+  system 移除，不會觸發 `on_expired`，所以在 area effect 上綁 `on_expired` 會在
+  載入時報錯。要延遲 N ticks 再觸發，請用 `speed: 0` 的 marker（見
+  `WEAPON_AUTHORING_GUIDE.md`）。靜止的 projectile 回報的 `event.direction` 是
+  它生成時的朝向。
 - `on_collision` 不提供 `event.instigator`；需要歸屬資訊的 collision 行為應由
   產生事件的 gameplay system 明確建模，而不是假設 target 是 instigator。
 - Runtime binding validator 會再次執行同一套 schema 驗證，防止無效 ABI input。
@@ -220,6 +225,34 @@ template 沒有 `CancelBeforeFirstCommit` 也不會先打出一次；硬直期�
   `event.direction`。
 - owner、shooter、weapon、action instance 等 attribution 由 execution provenance
   自動向下傳遞，不應重複出現在 YAML parameters。
+
+`spawn_projectile` 可以另外 author 兩個欄位。它們是 graph action 上的常數，不是
+parameter：
+
+```yaml
+- type: spawn_projectile
+  projectile_template: params.template
+  position: params.position
+  direction: params.direction
+  lifetime_ticks: 10              # 取代被生成 template 的 lifetime
+  repeat:
+    count: [10, 15]               # 一個數字 = 固定次數；1 <= min <= max <= 16
+    scatter_radius: 6.0           # 在 event.position 周圍的圓盤內均勻分布
+    stagger_lifetime_ticks: 60    # 每個多活的 ticks，依序分散在這個區間
+```
+
+- `repeat` 會在同一個 batch 內展開成最多 16 個 command
+  （`KERNEL_MAX_ACTION_REPEAT`）。它仍然只佔一個 dedup entry，也仍然是
+  all-or-nothing。
+- 第 i 個的到期時間落在 stagger 區間 `count` 等分中的第 i 段，所以會依序到期，
+  不會擠在一起。
+- 次數和 stagger 只用整數計算；所有隨機選擇都以 instigator、action instance 和
+  launch salt 為 seed，同一個 event 一定產生同樣的分布。
+- 每個 iteration 有自己的 launch salt，並透過 provenance 傳給它之後觸發的
+  projectile。所以引信 i 到期時生成的隕石用的是 salt i，每顆隕石的仰角都不同。
+- 在其他 action 上寫 `repeat` 或 `lifetime_ticks`，或是沒有 `repeat` 卻寫了
+  scatter／stagger，都會在載入時報錯。
+- 範例：`action_meteor_storm`。
 
 ### 4.4 `apply_impulse`
 
@@ -629,8 +662,8 @@ sequence 代表多個不同 collision/impact occurrences。
 
 ## 8. Kernel ABI 與 Compiled Representation
 
-目前 Kernel ABI version 為 82；packet schema version 為 24，snapshot schema
-version 為 19。
+目前 Kernel ABI version 為 94；packet schema version 為 25，snapshot schema
+version 為 25。
 
 ```text
 KernelActionTriggerDefinition
@@ -640,6 +673,8 @@ KernelActionTriggerDefinition
 ```
 
 - `KERNEL_MAX_ACTION_GRAPH_ACTIONS = 8`。
+- `KERNEL_MAX_ACTION_REPEAT = 16`：單一 `spawn_projectile` 最多展開的數量。
+  `KernelActionDefinition` 帶有 `spawn_lifetime_ticks` 和 `repeat_*` 欄位（ABI 94）。
 - `action_count > 0` 時，固定 action array 是權威資料。
 - Legacy scalar fields 暫時保存第一個 action 的 mirror，供過渡相容使用。
 - Runtime compiler 將 ABI definitions 轉換為 `ActionGraphTemplate::actions` vector。

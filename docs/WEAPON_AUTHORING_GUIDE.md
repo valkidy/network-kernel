@@ -72,6 +72,7 @@ projectile_template: smg_shot
 | `projectile` | — |
 | `area_effect` | — |
 | `beam` | — |
+| `targeted_strike` | `max_range` |
 
 **Optional**
 
@@ -85,6 +86,42 @@ projectile_template: smg_shot
 `hitscan` and `shotgun` resolve instantly by raycast and spawn nothing. They
 still name a projectile template, because that is where their damage and target
 mask are authored — and it is also what the client uses to find the tracer art.
+
+### weapon_type: targeted_strike
+
+Lands its projectile template on a point instead of firing it from the muzzle.
+The server resolves the point from the aim, so the client sends nothing new:
+
+1. A ray along the aim, up to `max_range`, stops at the first actor, terrain or
+   static obstacle. An actor is tested where the shooter saw it (lag
+   compensated), and a wall still hides whoever is behind it.
+2. From there, a ray straight down onto terrain or a static obstacle. It passes
+   through actors, so aiming at someone lands at their feet. Aiming at a wall
+   lands at its foot on your side.
+
+If either ray finds nothing, the shot is **refused**. This covers aiming at the
+sky, at ground beyond `max_range`, or at something with no ground under it. A
+refused shot costs no ammunition and starts no cooldown. The client should show
+the reticle as invalid in the same cases, so it runs the same two rays from the
+same point: the actor's position plus 1 m up.
+
+```yaml
+id: 13
+name: Meteor Staff
+weapon_type: targeted_strike
+magazine_size: 3
+max_range: 35.0
+fire_action_template: meteor_staff_cast
+reload_action_template: meteor_staff_reload
+projectile_template: meteor_marker
+```
+
+The projectile template must be `server_snapshot_only` and must not be a beam.
+The strike is never predicted: it appears where only the server decides.
+
+Usually what lands is a **marker** (below) that expires into the real thing, so
+the delay doubles as a telegraph every client sees. A `launch: descent`
+template may also be landed directly.
 
 ## Projectile template
 
@@ -183,6 +220,78 @@ not only setting its camp.
 through every side-layered collider — actors and deployable cover alike. See
 `collider_templates/ice_block_hitbox.yaml`, which hit the same wall from the
 target's end.
+
+### A marker: speed 0
+
+A standard projectile with `speed: 0` is a marker. It holds its place for
+`lifetime_ticks` and then fires `on_expired` there, facing the direction it was
+spawned with. It is accepted only when it can do nothing else:
+`collision_mask: none`, linear motion, and no gravity. A template that simply
+forgot its speed still fails to load.
+
+```yaml
+id: 18
+name: meteor_marker
+type: standard
+collider_template: projectile_sphere
+damage: 0
+damage_shape: none
+speed: 0.0
+collision_mask: none
+sync_mode: server_snapshot_only
+lifetime_ticks: 20          # the delay
+triggers:
+  on_expired:
+    action_graph: action_spawn_projectile_at_expired
+    parameters:
+      template: meteor_body
+      position: event.position
+      direction: event.direction
+```
+
+This is the delay mechanism. An area effect cannot do the same job: it expires
+without firing `on_expired`, so binding `on_expired` on one is a load error.
+
+### launch: descent
+
+The spawn point becomes a landing target. The projectile starts `height` above
+it, back along its spawn heading at an elevation picked in
+`elevation_degrees`, and lands on it in a straight line after `fall_ticks`. The
+target is first dropped onto the terrain or static obstacle under it.
+
+```yaml
+id: 19
+name: meteor_body
+type: standard
+collider_template: projectile_sphere
+damage: 0
+damage_shape: none
+collision_mask: terrain | static_obstacle
+lifetime_ticks: 18          # must exceed fall_ticks
+launch:
+  type: descent
+  elevation_degrees: [75, 85]   # or one number; 0 < min <= max <= 90
+  height: 40.0
+  fall_ticks: 15
+triggers:
+  on_projectile_impact:
+    action_graph: action_spawn_projectile_at_impact
+    parameters: { template: meteor_blast, position: event.position, direction: event.direction }
+```
+
+The speed is derived, so do not author `speed`. The motion is always linear
+with no gravity, and `sync_mode` defaults to (and only accepts)
+`server_snapshot_only`. `lifetime_ticks` must exceed `fall_ticks`: the tick
+after arrival is the one whose sweep meets the ground.
+
+The elevation is seeded from the caster, the cast and the spawn's launch salt,
+so one cast always falls the same way. A launch template cannot be fired from
+the muzzle of an ordinary weapon, because it would fall onto its shooter. Land
+it with `targeted_strike` or an action graph.
+
+Put the damage on the impact effect, not on the falling body. Also keep actors
+out of the body's `collision_mask`: then its path depends only on the static
+world, which is what lets clients derive it later.
 
 ### type: area_effect
 
@@ -352,6 +461,9 @@ refill amount itself is not yet data-driven, so that shape needs an engineer.
 6. Add the weapon id to `weapon_slots` in an `entity_templates/` loadout
 7. Rebuild the catalog bundle and ship the same bundle to client and server
 
+For a targeted strike, steps 1 and 3 become a marker or descent template and
+a cast action. See `meteor_staff`, `meteor_storm_staff` and `sky_laser`.
+
 ## Common load errors
 
 | Message | Cause |
@@ -364,6 +476,12 @@ refill amount itself is not yet data-driven, so that shape needs an engineer.
 | `weapon fire_action_template requires commit_interval_ticks greater than 0` | A fire action needs a real cadence |
 | `unknown projectile_template reference: X` | Name mismatch, or the file is not in `projectile_templates/` |
 | `duplicate projectile template id` | Pick an unused id |
+| `standard projectile speed must be positive; speed 0 is only accepted for a marker...` | A marker needs `collision_mask: none`, linear motion, no gravity |
+| `on_expired is not supported on area_effect projectiles` | Put the delay on a marker |
+| `launch needs lifetime_ticks greater than fall_ticks` | Give the fall one more tick to meet the ground |
+| `a projectile with a launch rule cannot be fired from the muzzle` | Use `targeted_strike` or an action graph |
+| `targeted_strike weapon requires max_range` | It is the farthest aimable point |
+| `targeted_strike projectile_template needs sync_mode server_snapshot_only` | Strikes are never predicted |
 
 Two failures that load cleanly and only show up in play:
 
