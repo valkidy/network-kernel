@@ -268,6 +268,11 @@ void hash_projectile_template(
             hash_scalar(hash, action.impulse_strength_vertical);
             hash_scalar(hash, action.damage_stagger_authored);
             hash_scalar(hash, action.damage_stagger);
+            hash_scalar(hash, action.spawn_lifetime_ticks);
+            hash_scalar(hash, action.repeat_count_min);
+            hash_scalar(hash, action.repeat_count_max);
+            hash_float(hash, action.repeat_scatter_radius);
+            hash_scalar(hash, action.repeat_stagger_lifetime_ticks);
             hash_scalar(hash, action.condition_type);
         }
     }
@@ -1733,6 +1738,70 @@ std::string parameter_reference_from_yaml(
     return value.substr(kPrefix.size());
 }
 
+// `lifetime_ticks` and `repeat:` on a spawn_projectile graph action.
+void read_spawn_repeat(
+    const YAML::Node& action,
+    ActionGraphActionConfig* compiled_action,
+    const std::string& path,
+    std::uint32_t source_kind) {
+    if (action["lifetime_ticks"]) {
+        compiled_action->spawn_lifetime_ticks =
+            action["lifetime_ticks"].as<std::uint32_t>();
+        if (compiled_action->spawn_lifetime_ticks == 0u) {
+            throw std::runtime_error(
+                "spawn_projectile lifetime_ticks must be at least 1: " + path);
+        }
+    }
+    const YAML::Node repeat = action["repeat"];
+    if (!repeat) {
+        return;
+    }
+    reject_unknown_keys(
+        repeat,
+        {"count", "scatter_radius", "stagger_lifetime_ticks"},
+        path,
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_UNKNOWN);
+    // One number is an exact count; a pair is a range picked per event.
+    const YAML::Node count = repeat["count"];
+    if (!count) {
+        throw std::runtime_error("spawn_projectile repeat needs count: " + path);
+    }
+    if (count.IsSequence()) {
+        if (count.size() != 2u) {
+            throw std::runtime_error(
+                "spawn_projectile repeat count must be one number or "
+                "[min, max]: " + path);
+        }
+        compiled_action->repeat_count_min = count[0].as<std::uint32_t>();
+        compiled_action->repeat_count_max = count[1].as<std::uint32_t>();
+    } else {
+        compiled_action->repeat_count_min = count.as<std::uint32_t>();
+        compiled_action->repeat_count_max = compiled_action->repeat_count_min;
+    }
+    if (compiled_action->repeat_count_min < 1u ||
+        compiled_action->repeat_count_min > compiled_action->repeat_count_max ||
+        compiled_action->repeat_count_max > KERNEL_MAX_ACTION_REPEAT) {
+        throw std::runtime_error(
+            "spawn_projectile repeat count must satisfy 1 <= min <= max <= " +
+            std::to_string(KERNEL_MAX_ACTION_REPEAT) + ": " + path);
+    }
+    if (repeat["scatter_radius"]) {
+        compiled_action->repeat_scatter_radius =
+            repeat["scatter_radius"].as<float>();
+        if (!std::isfinite(compiled_action->repeat_scatter_radius) ||
+            compiled_action->repeat_scatter_radius < 0.0f) {
+            throw std::runtime_error(
+                "spawn_projectile repeat scatter_radius must be finite and "
+                "non-negative: " + path);
+        }
+    }
+    if (repeat["stagger_lifetime_ticks"]) {
+        compiled_action->repeat_stagger_lifetime_ticks =
+            repeat["stagger_lifetime_ticks"].as<std::uint32_t>();
+    }
+}
+
 ActionGraphTemplateConfig action_graph_template_from_yaml(
     const YAML::Node& node,
     const std::string& path,
@@ -1811,6 +1880,8 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 "item_template",
                 "quantity",
                 "when",
+                "lifetime_ticks",
+                "repeat",
             },
             path,
             source_kind,
@@ -1835,6 +1906,12 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                     path);
             }
         }
+        if ((action["repeat"] || action["lifetime_ticks"]) &&
+            compiled_action.action_type != "spawn_projectile") {
+            throw std::runtime_error(
+                "repeat and lifetime_ticks are only supported on "
+                "spawn_projectile: " + path);
+        }
         if (action["when"]) {
             const std::string condition = action["when"].as<std::string>();
             if (condition != "event.has_target") {
@@ -1855,6 +1932,7 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
             compiled_action.projectile_template_parameter =
                 parameter_reference_from_yaml(
                     action["projectile_template"], "projectile_template");
+            read_spawn_repeat(action, &compiled_action, path, source_kind);
             compiled_action.position_parameter =
                 parameter_reference_from_yaml(action["position"], "position");
             compiled_action.direction_parameter =
@@ -6142,6 +6220,19 @@ void mirror_first_action(KernelActionTriggerDefinition* trigger) {
     trigger->modifier_value = action.modifier_value;
 }
 
+void compile_spawn_repeat(
+    const ActionGraphActionConfig& action,
+    KernelActionDefinition* compiled_action) {
+    compiled_action->spawn_lifetime_ticks = action.spawn_lifetime_ticks;
+    compiled_action->repeat_count_min =
+        static_cast<std::uint8_t>(action.repeat_count_min);
+    compiled_action->repeat_count_max =
+        static_cast<std::uint8_t>(action.repeat_count_max);
+    compiled_action->repeat_scatter_radius = action.repeat_scatter_radius;
+    compiled_action->repeat_stagger_lifetime_ticks =
+        action.repeat_stagger_lifetime_ticks;
+}
+
 void compile_projectile_trigger_binding(
     const ProjectileTriggerBindingConfig& binding,
     bool expired,
@@ -6296,6 +6387,7 @@ void compile_projectile_trigger_binding(
             spawned_projectile->definition.projectile_template_id;
         compiled_action.position_source = KernelEventVec3Source_Position;
         compiled_action.direction_source = KernelEventVec3Source_Direction;
+        compile_spawn_repeat(action, &compiled_action);
     }
     mirror_first_action(&compiled);
 }
@@ -6407,6 +6499,7 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
                 found->definition.projectile_template_id;
             compiled_action.position_source = KernelEventVec3Source_Position;
             compiled_action.direction_source = KernelEventVec3Source_Direction;
+            compile_spawn_repeat(action, &compiled_action);
             continue;
         }
         if (action.action_type == "spawn_entity") {
@@ -7992,6 +8085,11 @@ std::uint64_t compute_gameplay_catalog_hash(
             hash_string(&hash, action.item_template_ref);
             hash_scalar(&hash, action.quantity);
             hash_scalar(&hash, action.condition_type);
+            hash_scalar(&hash, action.spawn_lifetime_ticks);
+            hash_scalar(&hash, action.repeat_count_min);
+            hash_scalar(&hash, action.repeat_count_max);
+            hash_float(&hash, action.repeat_scatter_radius);
+            hash_scalar(&hash, action.repeat_stagger_lifetime_ticks);
         }
     }
     std::vector<StatusEffectTemplateConfig> status_effect_templates =

@@ -49,6 +49,27 @@ inline bool damage_stagger_is_authorable(const KernelActionDefinition& action) {
         action.damage_stagger_authored, action.damage_stagger);
 }
 
+// A spawn_projectile action's lifetime override and repeat, or their absence
+// on any other action. Without a repeat there is nothing to scatter or
+// stagger, so those must be zero too rather than quietly ignored.
+inline bool spawn_repeat_is_authorable(const KernelActionDefinition& action) {
+    const bool repeat_absent = action.repeat_count_max == 0u &&
+        action.repeat_count_min == 0u &&
+        action.repeat_scatter_radius == 0.0f &&
+        action.repeat_stagger_lifetime_ticks == 0u;
+    if (action.action_type != KernelEntityTriggerActionType_SpawnProjectile) {
+        return repeat_absent && action.spawn_lifetime_ticks == 0u;
+    }
+    if (action.repeat_count_max == 0u) {
+        return repeat_absent;
+    }
+    return action.repeat_count_min >= 1u &&
+        action.repeat_count_min <= action.repeat_count_max &&
+        action.repeat_count_max <= KERNEL_MAX_ACTION_REPEAT &&
+        std::isfinite(action.repeat_scatter_radius) &&
+        action.repeat_scatter_radius >= 0.0f;
+}
+
 // The magnitude an impulse is weighed at against a target's
 // impulse_resistance. Radial mode returns the strength unchanged -- bit for
 // bit -- so no existing template's resistance outcome can move.
@@ -81,6 +102,9 @@ struct ActionSpawnProjectileCommand {
     glm::vec3 position{0.0f};
     glm::vec3 direction{0.0f};
     ActionExecutionProvenance provenance;
+    // Zero keeps the template's lifetime; extra is added either way.
+    std::uint32_t lifetime_ticks = 0;
+    std::uint32_t extra_lifetime_ticks = 0;
 };
 
 struct ActionApplyDamageCommand {

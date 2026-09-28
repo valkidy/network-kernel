@@ -1764,6 +1764,9 @@ bool validate_projectile_mechanics(
             } else {
                 action = trigger.actions[index];
             }
+            if (!spawn_repeat_is_authorable(action)) {
+                return false;
+            }
             if (action.action_type == KernelEntityTriggerActionType_SpawnProjectile) {
                 if (action.spawn_projectile_template_id == 0u ||
                     action.position_source != KernelEventVec3Source_Position ||
@@ -3376,7 +3379,8 @@ bool KernelEngine::load_gameplay_catalog(
                         action.position_source !=
                             KernelEventVec3Source_Position ||
                         action.direction_source !=
-                            KernelEventVec3Source_Direction) {
+                            KernelEventVec3Source_Direction ||
+                        !spawn_repeat_is_authorable(action)) {
                         return false;
                     }
                     continue;

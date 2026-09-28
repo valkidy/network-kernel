@@ -215,6 +215,8 @@ bool spawn_projectile_at(
     float fixed_delta_seconds,
     std::vector<KernelEvent>* events);
 
+// lifetime_ticks zero keeps the template's; extra_lifetime_ticks is added
+// either way. launch_salt is the command's provenance salt.
 bool spawn_action_graph_projectile(
     World& world,
     std::uint32_t projectile_template_id,
@@ -224,7 +226,10 @@ bool spawn_action_graph_projectile(
     const glm::vec3& position,
     const glm::vec3& direction,
     std::uint32_t current_tick,
-    float fixed_delta_seconds);
+    float fixed_delta_seconds,
+    std::uint32_t lifetime_ticks = 0,
+    std::uint32_t extra_lifetime_ticks = 0,
+    std::uint32_t launch_salt = 0);
 
 std::vector<physics::CollisionHit> query_projectile_collision_hits(
     const physics::PhysicsWorld& collision_world,

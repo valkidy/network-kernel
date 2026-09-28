@@ -102,8 +102,17 @@ _Static_assert(
         offsetof(KernelSkeletonBindingDefinition, processing_order),
     "stance crouch is appended to the skeleton binding ABI");
 _Static_assert(
-    sizeof(KernelActionTriggerDefinition) == 764u,
-    "KernelActionTriggerDefinition ABI size");
+    sizeof(KernelActionDefinition) == 84u + 16u,
+    "KernelActionDefinition ABI size: 84 bytes before ABI 94 plus the "
+    "16-byte spawn lifetime and repeat block");
+_Static_assert(
+    sizeof(KernelActionTriggerDefinition) == 764u + 8u * 16u,
+    "KernelActionTriggerDefinition ABI size: its eight actions each grew by "
+    "the ABI 94 repeat block");
+_Static_assert(
+    offsetof(KernelActionDefinition, spawn_lifetime_ticks) >
+        offsetof(KernelActionDefinition, damage_stagger),
+    "spawn lifetime and repeat are appended to KernelActionDefinition");
 _Static_assert(
     offsetof(KernelActionDefinition, impulse_strength_vertical) >
         offsetof(KernelActionDefinition, impulse_lockout_ticks),

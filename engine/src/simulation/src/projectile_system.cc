@@ -52,7 +52,10 @@ bool spawn_projectile_from_template(
     std::uint32_t current_tick,
     float fixed_delta_seconds,
     std::vector<KernelEvent>* events,
-    std::uint32_t* out_entity_type) {
+    std::uint32_t* out_entity_type,
+    std::uint32_t lifetime_ticks = 0,
+    std::uint32_t extra_lifetime_ticks = 0,
+    std::uint32_t launch_salt = 0) {
     const std::uint8_t weapon_id =
         projectile_template.weapon_id == 0 ? source_weapon_id
                                            : projectile_template.weapon_id;
@@ -74,7 +77,7 @@ bool spawn_projectile_from_template(
                 shooter_net_id,
                 action_instance_id,
                 projectile_template.projectile_template_id,
-                0u),
+                launch_salt),
             fixed_delta_seconds,
             world.collision_world());
         start = launch.origin;
@@ -104,7 +107,11 @@ bool spawn_projectile_from_template(
     projectile.has_collision_geometry = projectile_template.has_collision_geometry;
     projectile.collision_mask = projectile_template.collision_mask;
     projectile.max_hit_count = std::max(1u, projectile_template.max_hit_count);
-    projectile.max_lifetime_ticks = projectile_template.lifetime_ticks;
+    projectile.max_lifetime_ticks =
+        (lifetime_ticks != 0u ? lifetime_ticks
+                              : projectile_template.lifetime_ticks) +
+        extra_lifetime_ticks;
+    projectile.launch_salt = launch_salt;
     projectile.spawn_position = start;
     projectile.initial_velocity = velocity;
     projectile.gravity = projectile_template.gravity;
@@ -136,7 +143,9 @@ bool spawn_projectile_from_template(
                 projectile_template.damage_interval_ticks == 0
                     ? 1u
                     : projectile_template.damage_interval_ticks,
-                current_tick + std::max(1u, projectile_template.lifetime_ticks),
+                // The resolved lifetime, so a graph's override and stagger
+                // reach an area effect as they reach anything else.
+                current_tick + std::max(1u, projectile.max_lifetime_ticks),
                 weapon_id,
                 projectile_template.collision_mask,
                 projectile_template.damage_falloff,
@@ -726,20 +735,21 @@ void queue_projectile_trigger(
         // asking for.
         normalized_or(projectile.initial_velocity, glm::vec3{0.0f}),
     };
+    ActionExecutionProvenance provenance{
+        trigger_request_id(current_tick, identity.net_id, event_type, sequence),
+        projectile.action_instance_id,
+        current_tick,
+        projectile.shooter_net_id,
+        identity.owner_peer,
+        projectile.weapon_id,
+        ActionAuthoritySource::kAuthoritativeSimulation,
+    };
+    provenance.launch_salt = projectile.launch_salt;
     trigger_events->push_back(ActionGraphQueuedTrigger{
         std::move(*binding),
         identity.net_id,
         event,
-        ActionExecutionProvenance{
-            trigger_request_id(
-                current_tick, identity.net_id, event_type, sequence),
-            projectile.action_instance_id,
-            current_tick,
-            projectile.shooter_net_id,
-            identity.owner_peer,
-            projectile.weapon_id,
-            ActionAuthoritySource::kAuthoritativeSimulation,
-        },
+        provenance,
         sequence,
     });
 }
@@ -814,7 +824,10 @@ void execute_queued_trigger_events(
                 command->provenance.server_tick,
                 fixed_delta_seconds,
                 events,
-                nullptr)) {
+                nullptr,
+                command->lifetime_ticks,
+                command->extra_lifetime_ticks,
+                command->provenance.launch_salt)) {
                 committed = false;
                 break;
             }
@@ -1271,7 +1284,10 @@ bool spawn_action_graph_projectile(
     const glm::vec3& position,
     const glm::vec3& direction,
     std::uint32_t current_tick,
-    float fixed_delta_seconds) {
+    float fixed_delta_seconds,
+    std::uint32_t lifetime_ticks,
+    std::uint32_t extra_lifetime_ticks,
+    std::uint32_t launch_salt) {
     const RuntimeProjectileTemplate* projectile_template =
         world.find_projectile_template(projectile_template_id);
     // Speed 0 on a standard projectile is a marker, which the catalog only
@@ -1300,7 +1316,10 @@ bool spawn_action_graph_projectile(
         current_tick,
         fixed_delta_seconds,
         nullptr,
-        nullptr);
+        nullptr,
+        lifetime_ticks,
+        extra_lifetime_ticks,
+        launch_salt);
 }
 
 glm::vec3 projectile_position_at(

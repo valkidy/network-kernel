@@ -535,6 +535,8 @@ struct ProjectileState {
     // but a stationary marker has no travel and a zero initial_velocity, so
     // without this its on_expired would point wherever the fallback does.
     glm::vec3 spawn_direction{1.0f, 0.0f, 0.0f};
+    // Carried into the provenance of its triggers; see ActionExecutionProvenance.
+    std::uint32_t launch_salt = 0;
 };
 
 struct ThrownPropMotion {
@@ -626,6 +628,10 @@ struct ActionExecutionProvenance {
         ActionAuthoritySource::kAuthoritativeSimulation;
     PeerId requester_peer = 0;
     std::uint32_t status_instance_id = 0;
+    // Tells apart launches that share an instigator and action instance --
+    // the iterations of a repeated spawn, and whatever each of them later
+    // spawns in turn -- so their seeded picks differ. Zero for a single spawn.
+    std::uint32_t launch_salt = 0;
 };
 
 struct EntityIdValue {
@@ -707,6 +713,16 @@ struct ActionSpawnProjectileDefinition {
     std::string position_parameter;
     std::string direction_parameter;
     ActionConditionType condition = ActionConditionType::kAlways;
+    // Zero keeps the spawned template's lifetime.
+    std::uint32_t lifetime_ticks = 0;
+    // repeat_count_max zero is one spawn; see KernelActionDefinition.
+    std::uint32_t repeat_count_min = 0;
+    std::uint32_t repeat_count_max = 0;
+    float repeat_scatter_radius = 0.0f;
+    std::uint32_t repeat_stagger_lifetime_ticks = 0;
+    // Where the action sits in its graph, so two repeated actions in one
+    // graph draw different spreads.
+    std::uint32_t action_index = 0;
 };
 
 struct ActionApplyDamageDefinition {

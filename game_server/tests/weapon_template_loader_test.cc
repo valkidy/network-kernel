@@ -1258,6 +1258,113 @@ void targeted_strike_weapon_is_authored() {
     assert(beam);
 }
 
+// repeat and lifetime_ticks on a spawn_projectile graph action reach the
+// compiled trigger; out-of-range repeats and misplaced keys are refused.
+void spawn_repeat_is_authored() {
+    const std::string marker =
+        "id: 40\nname: storm_marker\ntype: standard\n"
+        "collider_template: projectile_sphere\n"
+        "damage: 0\ndamage_shape: none\n"
+        "speed: 0.0\ncollision_mask: none\n"
+        "sync_mode: server_snapshot_only\n"
+        "lifetime_ticks: 20\n"
+        "triggers:\n"
+        "  on_expired:\n"
+        "    action_graph: action_meteor_storm\n"
+        "    parameters:\n"
+        "      template: rocket_explosion\n"
+        "      position: event.position\n"
+        "      direction: event.direction\n";
+    const auto storm_dir = [&](const char* name, const std::string& action) {
+        const std::filesystem::path dir = tmp_dir(name);
+        write_valid_templates(dir);
+        write_file(
+            dir.parent_path() / "projectile_templates" / "storm_marker.yaml",
+            marker);
+        write_file(
+            dir.parent_path() / "action_graph_templates" /
+                "action_meteor_storm.yaml",
+            "id: action_meteor_storm\n"
+            "parameters:\n"
+            "  template: null\n"
+            "  position: null\n"
+            "  direction: null\n"
+            "actions:\n" + action);
+        return dir;
+    };
+    const std::string spawn =
+        "  - type: spawn_projectile\n"
+        "    projectile_template: params.template\n"
+        "    position: params.position\n"
+        "    direction: params.direction\n";
+
+    const network_example::game_server::GameServerGameplayConfig config =
+        network_example::game_server::load_gameplay_config_from_weapon_template_directory(
+            storm_dir(
+                "repeat_valid",
+                spawn +
+                    "    lifetime_ticks: 10\n"
+                    "    repeat:\n"
+                    "      count: [10, 15]\n"
+                    "      scatter_radius: 6.0\n"
+                    "      stagger_lifetime_ticks: 60\n")
+                .string());
+    const KernelActionDefinition& action =
+        projectile_mechanics(config, 40).expired_trigger.actions[0];
+    assert(action.spawn_lifetime_ticks == 10u);
+    assert(action.repeat_count_min == 10u);
+    assert(action.repeat_count_max == 15u);
+    assert(action.repeat_scatter_radius == 6.0f);
+    assert(action.repeat_stagger_lifetime_ticks == 60u);
+
+    struct Rejected {
+        const char* name;
+        std::string action;
+    };
+    const std::vector<Rejected> rejected = {
+        {"repeat_over_cap", spawn + "    repeat:\n      count: 17\n"},
+        {"repeat_reversed", spawn + "    repeat:\n      count: [5, 4]\n"},
+        {"repeat_zero", spawn + "    repeat:\n      count: 0\n"},
+        {"repeat_no_count", spawn + "    repeat:\n      scatter_radius: 2.0\n"},
+        {"repeat_negative_scatter",
+         spawn + "    repeat:\n      count: 3\n      scatter_radius: -1.0\n"},
+        {"spawn_lifetime_zero", spawn + "    lifetime_ticks: 0\n"},
+    };
+    for (const Rejected& variant : rejected) {
+        const bool failed = load_fails(storm_dir(variant.name, variant.action));
+        if (!failed) {
+            std::fprintf(stderr, "repeat variant loaded: %s\n", variant.name);
+        }
+        assert(failed);
+    }
+
+    // On any other action it is refused, not ignored. The graph is unbound,
+    // so the only thing that can fail it is the key; the same graph without
+    // the key is the control.
+    const auto damage_graph_dir = [&](const char* name, const std::string& extra) {
+        const std::filesystem::path dir = tmp_dir(name);
+        write_valid_templates(dir);
+        write_file(
+            dir.parent_path() / "action_graph_templates" /
+                "action_repeat_damage.yaml",
+            "id: action_repeat_damage\n"
+            "parameters:\n"
+            "  target: null\n"
+            "  amount: 1\n"
+            "actions:\n"
+            "  - type: apply_damage\n"
+            "    target: params.target\n"
+            "    amount: params.amount\n" + extra);
+        return dir;
+    };
+    const bool plain_damage_failed =
+        load_fails(damage_graph_dir("damage_graph_plain", ""));
+    assert(!plain_damage_failed);
+    const bool repeated_damage_failed = load_fails(damage_graph_dir(
+        "damage_graph_repeat", "    repeat:\n      count: 3\n"));
+    assert(repeated_damage_failed);
+}
+
 void area_effect_speed_is_authored() {
     const std::filesystem::path default_dir = tmp_dir("area_speed_default");
     write_valid_templates(default_dir);
@@ -1650,6 +1757,7 @@ int main() {
     area_effect_rejects_on_expired();
     descent_launch_is_authored();
     targeted_strike_weapon_is_authored();
+    spawn_repeat_is_authored();
     subject_direction_needs_a_projectile_that_travels();
     area_effect_motion_collision_mask_is_authored();
     catalog_file_loads_colliders();

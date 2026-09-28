@@ -15,7 +15,13 @@
  *     its place and fires on_expired there. Every managed mirror must add the
  *     block, or the nested layout of KernelProjectileTemplateDefinition shifts.
  *     KernelWeaponFireMode gained _TargetedStrike, whose max_range is the
- *     farthest point it may be aimed at.
+ *     farthest point it may be aimed at. KernelActionDefinition gained
+ *     spawn_lifetime_ticks and the repeat_* fields, appended: a spawn_projectile
+ *     action may override the spawned lifetime and repeat itself up to
+ *     KERNEL_MAX_ACTION_REPEAT times, scattered and staggered. All zero, the
+ *     default, is the single spawn it always was. KernelActionDefinition is
+ *     embedded in every trigger definition, so every managed mirror of those
+ *     shifts.
  * 93: KernelEntityTemplateDefinition gained knockdown_recovery_ticks, appended:
  *     how long a knockback that lands keeps the actor down -- rooted, and
  *     refusing new actions as the knockback did -- before it may move again.
@@ -734,6 +740,9 @@ typedef enum KernelActionConditionType {
 
 #define KERNEL_MAX_ACTION_GRAPH_ACTIONS 8
 
+/* How many projectiles one repeated spawn_projectile action may spawn. */
+#define KERNEL_MAX_ACTION_REPEAT 16u
+
 /* Ceiling on apply_impulse's impulse_lockout_ticks. Ten seconds at the 30 Hz
  * server tick -- far past any knockback, but low enough that a typo cannot
  * hand an actor's movement away indefinitely. The catalog loader and the
@@ -786,6 +795,25 @@ typedef struct KernelActionDefinition {
      * this hit adds, including an explicit 0.0 that never staggers. */
     uint32_t damage_stagger_authored;
     float damage_stagger;
+    /*
+     * spawn_projectile only; zero on every other action.
+     *
+     * spawn_lifetime_ticks replaces the spawned template's lifetime; zero
+     * keeps it. repeat_count_max zero is a single spawn. Otherwise the action
+     * spawns a count picked in [repeat_count_min, repeat_count_max], at most
+     * KERNEL_MAX_ACTION_REPEAT: each lands within repeat_scatter_radius of the
+     * event position, uniformly over the disc, and each lives an extra
+     * repeat_stagger_lifetime_ticks spread evenly across the count, so their
+     * expiries arrive in order over that window. The picks are seeded from
+     * the instigator, the action instance and the iteration, so the same
+     * event always produces the same spread.
+     */
+    uint32_t spawn_lifetime_ticks;
+    uint8_t repeat_count_min;
+    uint8_t repeat_count_max;
+    uint16_t reserved3;
+    float repeat_scatter_radius;
+    uint32_t repeat_stagger_lifetime_ticks;
 } KernelActionDefinition;
 
 typedef struct KernelActionTriggerDefinition {
