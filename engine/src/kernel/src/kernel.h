@@ -13,6 +13,7 @@
 #include <utility>
 #include <vector>
 
+#include "kernel/src/derived_chain_presenter.h"
 #include "kernel/public/kernel_types.h"
 #include "kernel/src/kernel_api_internal.h"
 #include "kernel/src/kernel_rpc.h"
@@ -352,6 +353,9 @@ public:
         KernelVec3* out_position) const;
     // Whether a server-side projectile is derived, and so never sent.
     bool is_derived_projectile(NetId net_id) const;
+    // Whether a server-side projectile is a stationary marker: it never
+    // moves, so after its spawn record there is nothing to put in a snapshot.
+    bool is_stationary_marker_projectile(NetId net_id) const;
     bool server_get_entity_aim_point(
         NetId net_id,
         KernelVec3* out_position) const;
@@ -1076,6 +1080,9 @@ private:
     // agrees with -- there is only one.
     GameplayCatalogRuntime catalog_runtime_;
     World world_{true, &catalog_runtime_};
+    // Client half: the derived projectiles this client was never sent, re-run
+    // from the roots it was.
+    DerivedChainPresenter derived_chains_;
     HistoryBuffer history_buffer_;
     DamagePipeline damage_pipeline_;
     std::uint32_t next_action_graph_sequence_ = 1;
