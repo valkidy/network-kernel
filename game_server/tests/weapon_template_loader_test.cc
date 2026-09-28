@@ -305,10 +305,12 @@ void valid_repo_templates_load_all_slots() {
             storage.definition.projectile_templates[index];
         if (projectile_template.weapon_id == network_example::game_server::kWeaponSpammer ||
             projectile_template.weapon_id ==
-                network_example::game_server::kWeaponGrenade ||
-            projectile_template.weapon_id ==
                 network_example::game_server::kWeaponHomingMissile) {
             assert(projectile_template.mechanics.collider_template_id == 7);
+        }
+        // The grenade shell has been a box (projectile_aabb) since ca61488.
+        if (projectile_template.weapon_id == network_example::game_server::kWeaponGrenade) {
+            assert(projectile_template.mechanics.collider_template_id == 16);
         }
         if (projectile_template.weapon_id == network_example::game_server::kWeaponRocket) {
             assert(projectile_template.mechanics.collider_template_id == 3);
@@ -333,7 +335,7 @@ void valid_repo_templates_load_all_slots() {
     assert(config.weapons.definitions[network_example::game_server::kWeaponSpammer]
                .damage == 1);
     assert(config.weapons.definitions[network_example::game_server::kWeaponSpammer]
-               .magazine_size == 120);
+               .magazine_size == 3);
     assert(config.weapons.definitions[network_example::game_server::kWeaponSpammer]
                .reserve_magazines == kMaxReserveMagazines);
     assert(config.weapons.definitions[network_example::game_server::kWeaponSpammer]
@@ -360,7 +362,7 @@ void valid_repo_templates_load_all_slots() {
            "Grenade Launcher");
     assert(config.weapons.projectile_sync_modes
                [network_example::game_server::kWeaponRocket] ==
-           KernelProjectileSyncMode_ServerSnapshotOnly);
+           KernelProjectileSyncMode_HybridDeterministicThenSnapshot);
     assert(config.weapons.projectile_sync_modes
                [network_example::game_server::kWeaponHomingMissile] ==
            KernelProjectileSyncMode_HybridDeterministicThenSnapshot);
@@ -370,19 +372,42 @@ void valid_repo_templates_load_all_slots() {
            "Beam Rifle");
     assert(config.weapons.names[network_example::game_server::kWeaponHomingMissile] ==
            "Homing Missile");
-    assert(config.action_templates.size() == 9);
+    // Every action template on disk, plus the catalog's shared reload. Counted
+    // rather than hardcoded: the directory grows with every weapon.
+    std::size_t action_template_files = 0;
+    for (const std::filesystem::directory_entry& entry :
+         std::filesystem::directory_iterator(
+             runfiles_root() / "game_server" / "gameplay_catalog" /
+             "action_templates")) {
+        if (entry.is_regular_file() && entry.path().extension() == ".yaml") {
+            ++action_template_files;
+        }
+    }
+    assert(action_template_files > 0);
+    assert(config.action_templates.size() == action_template_files + 1);
     assert(config.weapons.definitions[network_example::game_server::kWeaponRifle]
                .fire_action_template_id == 4096);
     assert(config.weapons.definitions[network_example::game_server::kWeaponRocket]
                .fire_action_template_id == 4099);
     assert(config.weapons.definitions[network_example::game_server::kWeaponBeamRifle]
                .fire_action_template_id == 4101);
-    assert(storage.definition.action_template_count == 9);
-    assert(config.action_templates[3].definition.commit_offset_ticks == 3);
-    assert(config.action_templates[3].definition.commit_interval_ticks == 30);
-    assert(config.action_templates[5].definition.trigger_mode ==
-           KernelActionTriggerMode_Hold);
-    assert(config.action_templates[5].definition.hold_input_timeout_ticks == 6);
+    assert(storage.definition.action_template_count ==
+           config.action_templates.size());
+    // By id, not by index: the load order follows the enumerated files.
+    const auto action_by_id = [&config](std::uint32_t action_template_id)
+        -> const KernelActionTemplateDefinition& {
+        for (const network_example::game_server::ActionTemplateConfig& action :
+             config.action_templates) {
+            if (action.definition.action_template_id == action_template_id) {
+                return action.definition;
+            }
+        }
+        std::abort();
+    };
+    assert(action_by_id(4099).commit_offset_ticks == 3);
+    assert(action_by_id(4099).commit_interval_ticks == 30);
+    assert(action_by_id(4101).trigger_mode == KernelActionTriggerMode_Hold);
+    assert(action_by_id(4101).hold_input_timeout_ticks == 6);
     network_example::game_server::GameServerGameplayConfig changed_action = config;
     ++changed_action.action_templates[0].definition.commit_interval_ticks;
     assert(network_example::game_server::compute_gameplay_catalog_hash(changed_action) !=
@@ -406,7 +431,7 @@ void valid_repo_templates_load_all_slots() {
         if (collider.definition.template_id == 7) {
             found_sphere = true;
             assert(collider.definition.shape_type == KernelColliderShapeType_Sphere);
-            assert(collider.definition.shape_params.x == 0.2f);
+            assert(collider.definition.shape_params.x == 0.5f);
         }
         if (collider.definition.template_id == 8) {
             found_beam = true;
@@ -451,7 +476,7 @@ void invalid_templates_are_rejected() {
     write_file(
         legacy_dir / "rifle.yaml",
         "id: 0\nname: Rifle\nweapon_type: hitscan\nmagazine_size: 30\n"
-        "damage: 25\ncooldown_ticks: 3\nmax_range: 100.0\n"
+        "cooldown_ticks: 3\nmax_range: 100.0\n"
         "segment_collider: rifle_segment\n");
     try {
         (void)network_example::game_server::
@@ -1186,9 +1211,19 @@ void catalog_file_loads_colliders() {
     const network_example::game_server::GameServerGameplayConfig config =
         network_example::game_server::load_gameplay_config_from_catalog_file(
             catalog_file.string());
-    assert(config.weapons.catalog_version == 8);
+    assert(config.weapons.catalog_version == 16);
     assert(config.weapons.catalog_hash != 0);
-    assert(config.colliders.templates.size() == 12);
+    // Every collider_templates/*.yaml; counted, since the directory grows.
+    std::size_t collider_files = 0;
+    for (const std::filesystem::directory_entry& entry :
+         std::filesystem::directory_iterator(
+             catalog_file.parent_path() / "collider_templates")) {
+        if (entry.is_regular_file() && entry.path().extension() == ".yaml") {
+            ++collider_files;
+        }
+    }
+    assert(collider_files > 0);
+    assert(config.colliders.templates.size() == collider_files);
     assert(config.colliders.bindings.empty());
 }
 
@@ -1279,13 +1314,19 @@ void weapons_name_their_own_reload_action() {
     assert(reload_offset_of(
                reload_of(network_example::game_server::kWeaponHomingMissile)) == 60);
 
-    // Distinct templates, and none of them the catalog's shared fallback.
+    // Distinct templates, and none of them the catalog's shared fallback --
+    // except the grunts' claw (10) and slam (11), which name `shared_reload`
+    // themselves: a bottomless AI weapon has no reload of its own to author.
     assert(reload_of(network_example::game_server::kWeaponRifle) !=
            reload_of(network_example::game_server::kWeaponShotgun));
     for (std::size_t id = 0; id < config.weapons.definitions.size(); ++id) {
-        if (config.weapons.configured[id]) {
-            assert(config.weapons.definitions[id].reload_action_template_id != 4199u);
+        if (!config.weapons.configured[id]) {
+            continue;
         }
+        const bool names_shared_reload = id == 10u || id == 11u;
+        assert(
+            (config.weapons.definitions[id].reload_action_template_id == 4199u) ==
+            names_shared_reload);
     }
 }
 
@@ -1334,7 +1375,7 @@ void damage_is_authored_once_per_projectile_template() {
     // the weapon definition mirrors it rather than authoring a second one.
     const KernelProjectileMechanicsDefinition& rifle_shot =
         projectile_mechanics(config, 10);
-    assert(rifle_shot.damage == 25);
+    assert(rifle_shot.damage == 45);
     assert(config.weapons.definitions[network_example::game_server::kWeaponRifle]
                .damage == rifle_shot.damage);
     const KernelProjectileMechanicsDefinition& shotgun_shot =
