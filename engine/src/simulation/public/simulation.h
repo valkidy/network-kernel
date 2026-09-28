@@ -185,16 +185,16 @@ std::uint64_t projectile_launch_seed(
     std::uint32_t projectile_template_id,
     std::uint32_t salt);
 
-// The descent rule: falls onto `target` from `launch_height` above it, coming
-// from behind along the horizontal part of `heading`, at an elevation `seed`
-// picks within the template's range, arriving after `launch_fall_ticks`.
-// `target` is first dropped onto the ground under it when `ground` is given
-// and has any (terrain or static obstacle) within the fall height; otherwise
-// it is used as is.
+// The descent rule: falls onto `target` from `launch_height` above it, from an
+// azimuth and at an elevation (within the template's range) both picked by
+// `seed`, arriving after `launch_fall_ticks`. Nothing else steers it -- in
+// particular not the spawn direction -- so anyone holding the target and the
+// seed derives the same path. `target` is first dropped onto the ground under
+// it when `ground` is given and has any (terrain or static obstacle) within
+// the fall height; otherwise it is used as is.
 ProjectileLaunch descent_launch(
     const RuntimeProjectileTemplate& projectile_template,
     const glm::vec3& target,
-    const glm::vec3& heading,
     std::uint64_t seed,
     float fixed_delta_seconds,
     const physics::PhysicsWorld* ground);

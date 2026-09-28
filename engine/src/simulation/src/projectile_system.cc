@@ -72,7 +72,6 @@ bool spawn_projectile_from_template(
         const ProjectileLaunch launch = descent_launch(
             projectile_template,
             position,
-            direction,
             projectile_launch_seed(
                 shooter_net_id,
                 action_instance_id,
@@ -1225,7 +1224,6 @@ bool spawn_projectile_at(
 ProjectileLaunch descent_launch(
     const RuntimeProjectileTemplate& projectile_template,
     const glm::vec3& target,
-    const glm::vec3& heading,
     std::uint64_t seed,
     float fixed_delta_seconds,
     const physics::PhysicsWorld* ground) {
@@ -1249,17 +1247,20 @@ ProjectileLaunch descent_launch(
         }
     }
 
-    // The top 24 bits of the seed as a fraction in [0, 1): exact in a float,
-    // and the same on every platform.
+    // Two separate 24-bit fields of the seed as fractions in [0, 1): exact in
+    // a float, and the same on every platform. The top one picks the
+    // elevation, the next one the azimuth.
     const float fraction =
         static_cast<float>(seed >> 40) * (1.0f / 16777216.0f);
+    const float turn =
+        static_cast<float>((seed >> 16) & 0xFFFFFFu) * (1.0f / 16777216.0f);
     const float elevation = glm::radians(
         projectile_template.launch_elevation_min_degrees +
         (projectile_template.launch_elevation_max_degrees -
          projectile_template.launch_elevation_min_degrees) *
             fraction);
-    const glm::vec3 across = normalized_or(
-        glm::vec3{heading.x, 0.0f, heading.z}, glm::vec3{1.0f, 0.0f, 0.0f});
+    const float azimuth = turn * 6.28318530717958647692f;
+    const glm::vec3 across{std::cos(azimuth), 0.0f, std::sin(azimuth)};
     const glm::vec3 travel = across * std::cos(elevation) -
         glm::vec3{0.0f, std::sin(elevation), 0.0f};
     const float path_length = height / std::sin(elevation);

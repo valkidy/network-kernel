@@ -86,10 +86,9 @@ void add_ground(network_example::physics::PhysicsWorld* physics) {
     require(physics->upsert_object(ground, &error));
 }
 
-// At a fixed 80 degrees the start is fully determined: 40 m up, and back along
-// the heading by 40 / tan(80). A heading with a vertical part counts only for
-// its horizontal direction.
-void descent_starts_above_and_behind_and_lands_on_time() {
+// At a fixed 80 degrees the start is 40 m up and 40 / tan(80) out from the
+// target horizontally, in whichever direction the seed picked.
+void descent_starts_above_and_lands_on_time() {
     const network_example::RuntimeProjectileTemplate projectile_template =
         descent_template(80.0f, 80.0f);
     const glm::vec3 target{10.0f, 2.0f, -3.0f};
@@ -97,15 +96,15 @@ void descent_starts_above_and_behind_and_lands_on_time() {
         network_example::descent_launch(
             projectile_template,
             target,
-            glm::vec3{0.0f, -0.9f, 0.3f},
             network_example::projectile_launch_seed(1, 2, 41, 0),
             kTickSeconds,
             nullptr);
-    const float behind = 40.0f / std::tan(glm::radians(80.0f));
-    require(near(
-        launch.origin,
-        glm::vec3{10.0f, 42.0f, -3.0f - behind},
-        1e-3f));
+    const float out = 40.0f / std::tan(glm::radians(80.0f));
+    require(std::fabs(launch.origin.y - 42.0f) < 1e-3f);
+    require(std::fabs(
+                glm::length(glm::vec2{launch.origin.x - target.x,
+                                      launch.origin.z - target.z}) -
+                out) < 1e-3f);
     const glm::vec3 arrival =
         launch.origin + launch.velocity * (15.0f * kTickSeconds);
     require(near(arrival, target, 1e-3f));
@@ -124,8 +123,7 @@ void elevation_is_picked_per_seed_within_the_range() {
             network_example::projectile_launch_seed(7, action, 41, 0);
         const network_example::ProjectileLaunch launch =
             network_example::descent_launch(
-                ranged, glm::vec3{0.0f}, glm::vec3{1.0f, 0.0f, 0.0f}, seed,
-                kTickSeconds, nullptr);
+                ranged, glm::vec3{0.0f}, seed, kTickSeconds, nullptr);
         const float elevation = elevation_degrees(launch.velocity);
         require(elevation >= 75.0f - 1e-3f && elevation <= 85.0f + 1e-3f);
         lowest = std::min(lowest, elevation);
@@ -133,8 +131,7 @@ void elevation_is_picked_per_seed_within_the_range() {
 
         const network_example::ProjectileLaunch again =
             network_example::descent_launch(
-                ranged, glm::vec3{0.0f}, glm::vec3{1.0f, 0.0f, 0.0f}, seed,
-                kTickSeconds, nullptr);
+                ranged, glm::vec3{0.0f}, seed, kTickSeconds, nullptr);
         require(launch.origin == again.origin);
         require(launch.velocity == again.velocity);
     }
@@ -142,6 +139,27 @@ void elevation_is_picked_per_seed_within_the_range() {
     // seed is not reaching the pick.
     require(lowest < 77.0f);
     require(highest > 83.0f);
+}
+
+// The seed picks the azimuth too, independently of the elevation, and nothing
+// else does: 64 seeds come from every quarter of the compass.
+void azimuth_is_picked_per_seed() {
+    const network_example::RuntimeProjectileTemplate projectile_template =
+        descent_template(80.0f, 80.0f);
+    bool quarters[4] = {false, false, false, false};
+    for (std::uint32_t action = 1; action <= 64; ++action) {
+        const network_example::ProjectileLaunch launch =
+            network_example::descent_launch(
+                projectile_template, glm::vec3{0.0f},
+                network_example::projectile_launch_seed(7, action, 41, 0),
+                kTickSeconds, nullptr);
+        // It comes from the origin's side, travelling towards the target.
+        const float angle = std::atan2(launch.origin.z, launch.origin.x);
+        const int quarter = static_cast<int>(
+            std::floor((angle + 3.14159265f) / (3.14159265f / 2.0f))) & 3;
+        quarters[quarter] = true;
+    }
+    require(quarters[0] && quarters[1] && quarters[2] && quarters[3]);
 }
 
 void every_seed_input_changes_the_seed() {
@@ -167,8 +185,7 @@ void target_is_dropped_onto_the_ground_under_it() {
     const glm::vec3 floating{3.0f, 6.0f, 4.0f};
     const network_example::ProjectileLaunch grounded =
         network_example::descent_launch(
-            projectile_template, floating, glm::vec3{1.0f, 0.0f, 0.0f}, seed,
-            kTickSeconds, &physics);
+            projectile_template, floating, seed, kTickSeconds, &physics);
     const glm::vec3 landing =
         grounded.origin + grounded.velocity * (15.0f * kTickSeconds);
     require(near(landing, glm::vec3{3.0f, 1.0f, 4.0f}, 1e-3f));
@@ -176,8 +193,7 @@ void target_is_dropped_onto_the_ground_under_it() {
     const glm::vec3 off_the_edge{300.0f, 6.0f, 4.0f};
     const network_example::ProjectileLaunch unsupported =
         network_example::descent_launch(
-            projectile_template, off_the_edge, glm::vec3{1.0f, 0.0f, 0.0f},
-            seed, kTickSeconds, &physics);
+            projectile_template, off_the_edge, seed, kTickSeconds, &physics);
     require(near(
         unsupported.origin + unsupported.velocity * (15.0f * kTickSeconds),
         off_the_edge,
@@ -252,10 +268,36 @@ void graph_spawned_descent_impacts_the_target() {
     require(near(blast_position, target, 0.05f));
 }
 
+// Two spawns of the same launch -- same instigator, cast and template -- that
+// differ only in the direction they were spawned facing start from the same
+// point. A client that never learns the spawn direction must still derive the
+// same fall.
+void spawn_direction_does_not_steer_the_fall() {
+    const auto start_facing = [](const glm::vec3& direction) {
+        network_example::World world;
+        world.set_projectile_templates({descent_template(75.0f, 85.0f)});
+        require(network_example::spawn_action_graph_projectile(
+            world, 41, 1, 77, 5001, glm::vec3{4.0f, 0.0f, 4.0f}, direction, 0,
+            kTickSeconds));
+        auto view = world.registry().view<network_example::ProjectileState>();
+        for (const entt::entity entity : view) {
+            return view.get<network_example::ProjectileState>(entity).spawn_position;
+        }
+        require(false);
+        return glm::vec3{0.0f};
+    };
+    const glm::vec3 north = start_facing(glm::vec3{0.0f, 0.0f, 1.0f});
+    const glm::vec3 west = start_facing(glm::vec3{-1.0f, 0.0f, 0.0f});
+    require(north == west);
+    require(std::fabs(north.y - 40.0f) < 1e-3f);
+}
+
 }  // namespace
 
 int main() {
-    descent_starts_above_and_behind_and_lands_on_time();
+    descent_starts_above_and_lands_on_time();
+    azimuth_is_picked_per_seed();
+    spawn_direction_does_not_steer_the_fall();
     elevation_is_picked_per_seed_within_the_range();
     every_seed_input_changes_the_seed();
     target_is_dropped_onto_the_ground_under_it();

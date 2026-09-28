@@ -1633,11 +1633,12 @@ typedef enum KernelProjectileLaunchType {
  * authored.
  *
  * Descent reads the spawn point as the landing target. The projectile starts
- * `height` metres above it, back along its spawn heading at an elevation
- * picked in [elevation_min_degrees, elevation_max_degrees], and reaches the
- * target in a straight line after fall_ticks ticks. Its speed is derived, so
- * `speed` stays zero, and only server_snapshot_only is accepted: the start
- * depends on server-side ground and a server-picked elevation.
+ * `height` metres above it, from an azimuth and at an elevation in
+ * [elevation_min_degrees, elevation_max_degrees] both picked by a seed of the
+ * instigator, action instance, template and launch salt -- never by the spawn
+ * direction -- and reaches the target in a straight line after fall_ticks
+ * ticks. Its speed is derived, so `speed` stays zero, and only
+ * server_snapshot_only is accepted: the start depends on server-side ground.
  */
 typedef struct KernelProjectileLaunchDefinition {
     uint32_t struct_size;

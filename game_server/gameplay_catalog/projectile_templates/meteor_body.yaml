@@ -1,5 +1,5 @@
 # The meteor itself. Spawned on its landing point, it starts 40 m above it,
-# behind along the caster's heading at 75-85 degrees, and lands in 15 ticks
+# from a seeded direction at 75-85 degrees, and lands in 15 ticks
 # (0.5 s). It hits only the static world: the blast is what hurts, so a meteor
 # whose path crosses an actor still lands where it was aimed.
 id: 19

@@ -255,9 +255,9 @@ without firing `on_expired`, so binding `on_expired` on one is a load error.
 ### launch: descent
 
 The spawn point becomes a landing target. The projectile starts `height` above
-it, back along its spawn heading at an elevation picked in
-`elevation_degrees`, and lands on it in a straight line after `fall_ticks`. The
-target is first dropped onto the terrain or static obstacle under it.
+it, from a direction and at an elevation (within `elevation_degrees`) that are
+both picked by a seed, and lands on it in a straight line after `fall_ticks`.
+The target is first dropped onto the terrain or static obstacle under it.
 
 ```yaml
 id: 19
@@ -284,8 +284,11 @@ with no gravity, and `sync_mode` defaults to (and only accepts)
 `server_snapshot_only`. `lifetime_ticks` must exceed `fall_ticks`: the tick
 after arrival is the one whose sweep meets the ground.
 
-The elevation is seeded from the caster, the cast and the spawn's launch salt,
-so one cast always falls the same way. A launch template cannot be fired from
+The direction and the elevation are seeded from the caster, the cast, the
+template and the spawn's launch salt, and from nothing else: not the direction
+the projectile was spawned facing. One cast therefore always falls the same
+way, and anyone who knows the target and those four values can derive the
+fall. That is what lets a client draw it without it being sent. A launch template cannot be fired from
 the muzzle of an ordinary weapon, because it would fall onto its shooter. Land
 it with `targeted_strike` or an action graph.
 
