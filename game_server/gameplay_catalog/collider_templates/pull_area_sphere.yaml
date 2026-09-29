@@ -1,0 +1,12 @@
+# The blast volume of pull_blast. An area effect's radius is its collider's
+# radius (kernel.cc derives area_radius from the template), so the reach of
+# the pull is authored here and nowhere else. Same size as the shockwave, so
+# the two grenades cover the same ground from opposite ends.
+id: 32
+name: pull_area_sphere
+shape: sphere
+center: {x: 0.0, y: 0.0, z: 0.0}
+half_extents: {x: 6.0, y: 6.0, z: 6.0}
+radius: 6.0
+purpose: damage
+layer: area_effect
