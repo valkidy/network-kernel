@@ -3,6 +3,11 @@ prop_population_rules:
   - id: 1
     name: temporary_deployable
     max_alive: 256
+  # Tents only. Kept apart from temporary_deployable so a pile of ice blocks
+  # can never evict a tent someone is resting in.
+  - id: 2
+    name: tent
+    max_alive: 4
 action_template_dir: action_templates
 action_graph_template_dir: action_graph_templates
 status_effect_template_dir: status_effect_templates

@@ -1,0 +1,23 @@
+# A tent in flight. It wears the tent's own hitbox, so it sweeps the tent's
+# full volume and comes to rest at the first terrain or static obstacle that
+# volume touches. On a prop, that means perched on top of it, never inside it.
+# There it spawns the tent and destroys itself.
+id: 215
+name: tent_kit_prop
+entity_type: prop
+health:
+  hp: 1
+  max_hp: 1
+physics:
+  collider_template: tent_hitbox
+triggers:
+  on_collision:
+    collision_mask: terrain|static_obstacle
+    action_graph: action_spawn_ice_and_damage_self_at_collision
+    parameters:
+      template: tent
+      position: event.position
+      direction: event.direction
+      owner: self
+      source: self
+      self_damage: 1

@@ -1,0 +1,30 @@
+# A tent: a building a player rests inside.
+#
+# Never thrown itself. tent_kit throws tent_kit_prop, and that prop spawns this
+# one where it lands. The split exists because an item-backed prop may not carry
+# a lifecycle or a population group (gameplay_config.cc), and a tent needs both.
+# It also keeps the tent from being a world item a player could pick back up.
+id: 214
+name: tent
+entity_type: prop
+impulse_resistance: 15.0
+lifecycle:
+  # Three minutes at 30 Hz, from the moment it exists. The first player to go
+  # inside shortens what is left; nothing lengthens it.
+  lifetime_ticks: 5400
+  population_group: tent
+health:
+  hp: 600
+  max_hp: 600
+physics:
+  collider_template: tent_hitbox
+interaction:
+  capabilities: [interactable]
+  # Short on purpose: a tent perched on an ice block (3 m) must be out of reach
+  # from the ground.
+  range: 2.0
+  line_of_sight_required: false
+triggers:
+  on_activated:
+    action_graph: action_noop
+    parameters: {}
