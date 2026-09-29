@@ -6,8 +6,16 @@
 #include "kernel/public/kernel_api.h"
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 94u,
-    "targeted strike: KernelProjectileMechanicsDefinition gained launch");
+    KERNEL_ABI_VERSION == 95u,
+    "apply_pull: KernelActionDefinition gained the pull_* block");
+_Static_assert(
+    offsetof(KernelActionDefinition, pull_mode) >
+        offsetof(KernelActionDefinition, repeat_stagger_lifetime_ticks),
+    "the pull block is appended after every field that existed before ABI 95");
+_Static_assert(
+    KernelEntityTriggerActionType_ApplyPull == 9 &&
+        KernelEventVec3Source_SubjectPosition == 4,
+    "apply_pull and the subject position source are appended enum values");
 _Static_assert(
     offsetof(KernelProjectileMechanicsDefinition, launch) >
         offsetof(KernelProjectileMechanicsDefinition, collision_query_mode),
@@ -102,13 +110,14 @@ _Static_assert(
         offsetof(KernelSkeletonBindingDefinition, processing_order),
     "stance crouch is appended to the skeleton binding ABI");
 _Static_assert(
-    sizeof(KernelActionDefinition) == 84u + 16u,
-    "KernelActionDefinition ABI size: 84 bytes before ABI 94 plus the "
-    "16-byte spawn lifetime and repeat block");
+    sizeof(KernelActionDefinition) == 84u + 16u + 16u,
+    "KernelActionDefinition ABI size: 84 bytes before ABI 94, plus the "
+    "16-byte spawn lifetime and repeat block, plus ABI 95's 16-byte pull "
+    "block");
 _Static_assert(
-    sizeof(KernelActionTriggerDefinition) == 764u + 8u * 16u,
+    sizeof(KernelActionTriggerDefinition) == 764u + 8u * 16u + 8u * 16u,
     "KernelActionTriggerDefinition ABI size: its eight actions each grew by "
-    "the ABI 94 repeat block");
+    "the ABI 94 repeat block and the ABI 95 pull block");
 _Static_assert(
     offsetof(KernelActionDefinition, spawn_lifetime_ticks) >
         offsetof(KernelActionDefinition, damage_stagger),

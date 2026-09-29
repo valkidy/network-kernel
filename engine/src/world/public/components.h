@@ -616,6 +616,11 @@ struct TriggerEvent {
     // template for it. Last so that a producer with nothing to say about it
     // simply leaves it out.
     glm::vec3 subject_direction{0.0f};
+    // Where the subject was when this happened: an area effect's centre, the
+    // point a projectile struck, the attacker a melee swing came from. For an
+    // area effect `position` is where each target was hit; this is the one
+    // point the whole blast shares, which is what apply_pull gathers onto.
+    glm::vec3 subject_position{0.0f};
 };
 
 enum class ActionAuthoritySource : std::uint8_t {
@@ -685,6 +690,7 @@ enum class EventVec3Source : std::uint8_t {
     kPosition,
     kDirection,
     kSubjectDirection,
+    kSubjectPosition,
 };
 
 enum class ActionConditionType : std::uint8_t {
@@ -762,6 +768,22 @@ struct ActionApplyImpulseDefinition {
     ActionConditionType condition = ActionConditionType::kAlways;
 };
 
+// Lands an actor at a destination rather than pushing it: the target's
+// velocity is replaced, not added to. See KernelActionDefinition's pull_*
+// fields for what the numbers mean.
+struct ActionApplyPullDefinition {
+    std::string target_parameter;
+    // A point for KERNEL_PULL_MODE_TO_POINT, a direction for _ALONG.
+    std::string point_parameter;
+    // KERNEL_PULL_MODE_*, spelled as a plain integer for the same reason as
+    // ActionApplyImpulseDefinition::strength_mode; TO_POINT is zero.
+    std::uint32_t mode = 0;
+    float distance = 0.0f;
+    std::uint32_t airtime_ticks = 0;
+    float max_speed = 0.0f;
+    ActionConditionType condition = ActionConditionType::kAlways;
+};
+
 struct ActionApplyStatusDefinition {
     std::string target_parameter;
     std::string status_parameter;
@@ -799,7 +821,8 @@ using ActionGraphAction = std::variant<
     ActionApplyStatusDefinition,
     ActionRemoveStatusDefinition,
     ActionApplySpeedModifierDefinition,
-    ActionSpawnEntityDefinition>;
+    ActionSpawnEntityDefinition,
+    ActionApplyPullDefinition>;
 
 struct ActionGraphTemplate {
     std::string id;

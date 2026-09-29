@@ -527,7 +527,10 @@ void apply_melee_damage(
                     std::nullopt,
                     // Each target gets its own `direction` above; this is the
                     // one vector they share -- the way the swing itself went.
-                    forward},
+                    forward,
+                    // And where it came from, which is what a hook pulls
+                    // its target back to.
+                    origin},
                 ActionExecutionProvenance{
                     (static_cast<std::uint64_t>(current_tick) << 32u) ^
                         (static_cast<std::uint64_t>(shooter_net_id) << 1u) ^

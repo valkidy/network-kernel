@@ -1804,6 +1804,8 @@ bool validate_projectile_mechanics(
                         KERNEL_MAX_IMPULSE_LOCKOUT_TICKS) {
                     return false;
                 }
+            } else if (action.action_type == KernelEntityTriggerActionType_ApplyPull) {
+                if (!pull_action_is_authorable(action)) return false;
             } else {
                 return false;
             }
@@ -3331,6 +3333,18 @@ bool KernelEngine::load_gameplay_catalog(
                            KERNEL_COLLISION_MASK_PROP)) != 0u ||
                         action.impulse_lockout_ticks >
                             KERNEL_MAX_IMPULSE_LOCKOUT_TICKS) {
+                        return false;
+                    }
+                    continue;
+                }
+                if (action.action_type ==
+                    KernelEntityTriggerActionType_ApplyPull) {
+                    // No entity trigger has a subject position to offer: only
+                    // the projectile, area-effect and melee producers fill it.
+                    if (!pull_action_is_authorable(action) ||
+                        (action.pull_mode == KERNEL_PULL_MODE_TO_POINT &&
+                         action.position_source ==
+                             KernelEventVec3Source_SubjectPosition)) {
                         return false;
                     }
                     continue;

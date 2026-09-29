@@ -366,6 +366,14 @@ struct ActionGraphActionConfig {
     std::uint32_t repeat_count_max = 0;
     float repeat_scatter_radius = 0.0f;
     std::uint32_t repeat_stagger_lifetime_ticks = 0;
+    // apply_pull only. The anchor is a graph parameter for TO_POINT, and
+    // direction_parameter is reused for ALONG; the numbers are literals
+    // authored on the action. See KernelActionDefinition's pull_* fields.
+    std::string anchor_parameter;
+    std::uint32_t pull_mode = KERNEL_PULL_MODE_TO_POINT;
+    float pull_distance = 0.0f;
+    std::uint32_t pull_airtime_ticks = 0;
+    float pull_max_speed = 0.0f;
 };
 
 struct ActionGraphTemplateConfig {

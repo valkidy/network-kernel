@@ -219,7 +219,10 @@ void simulate_area_effects(
                         // `direction` above; this is the one vector they all
                         // share -- where the field itself was travelling. Zero
                         // for a field that stays put, which is most of them.
-                        subject_direction},
+                        subject_direction,
+                        // And the one point they share: the field's centre,
+                        // which `position` (where each was hit) is not.
+                        transform.position},
                     ActionExecutionProvenance{
                         (static_cast<std::uint64_t>(current_tick) << 32u) ^
                             (static_cast<std::uint64_t>(identity.net_id) << 1u) ^

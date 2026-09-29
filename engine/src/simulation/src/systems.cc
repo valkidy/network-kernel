@@ -533,6 +533,18 @@ bool execute_action_graph_commands(
             }
             continue;
         }
+        if (const auto* pull = std::get_if<ActionApplyPullCommand>(&command)) {
+            if (!world.find_entity(pull->target).has_value() ||
+                !pull_is_authorable(
+                    pull->mode, pull->distance, pull->airtime_ticks,
+                    pull->max_speed) ||
+                !std::isfinite(pull->point.x) ||
+                !std::isfinite(pull->point.y) ||
+                !std::isfinite(pull->point.z)) {
+                return false;
+            }
+            continue;
+        }
         if (const auto* projectile =
                 std::get_if<ActionSpawnProjectileCommand>(&command)) {
             if (world.find_projectile_template(
@@ -1195,6 +1207,60 @@ bool execute_action_graph_commands(
                 found->multiplier = modifier->value;
             }
             recompute_speed(world, target);
+            continue;
+        }
+        if (const auto* pull = std::get_if<ActionApplyPullCommand>(&command)) {
+            const entt::entity target = *world.find_entity(pull->target);
+            // Actors only: a prop in flight moves in a straight line without
+            // gravity, so there is no airtime that lands it anywhere.
+            if (world.registry().get<EntityKind>(target).type !=
+                EntityType::kActor) {
+                continue;
+            }
+            const glm::vec3 position =
+                world.registry().get<Transform>(target).position;
+            const MovementState* movement_state =
+                world.registry().try_get<MovementState>(target);
+            const glm::vec3 launch = pull_launch_velocity(
+                position,
+                pull_destination(
+                    pull->mode, position, pull->point, pull->distance),
+                pull->airtime_ticks,
+                engine.fixed_delta_seconds(),
+                movement_state != nullptr ? movement_state->gravity.y : -9.81f,
+                pull->max_speed);
+            // Weighed like a split impulse, on its larger axis. The speed is
+            // worked out per target, so a heavy one may shrug off being hauled
+            // across the whole radius and still be moved from close in.
+            const float resistance = world.registry().all_of<ImpulseResistance>(target)
+                ? world.registry().get<ImpulseResistance>(target).value
+                : 0.0f;
+            const float effective_strength = std::max(
+                std::sqrt(launch.x * launch.x + launch.z * launch.z),
+                std::fabs(launch.y));
+            if (!std::isfinite(resistance) || effective_strength <= resistance) {
+                continue;
+            }
+            // Replaced, not added to: what the target was already doing --
+            // running at the thrower, falling, an earlier knockback -- is not
+            // allowed to carry it past where it is being put.
+            world.registry().get_or_emplace<Velocity>(target).linear = launch;
+            // The flight is ticks current+1 .. current+airtime, and a lockout
+            // owns ticks before until_tick, so +1 covers the landing tick
+            // itself. One more for margin: landing releases it anyway.
+            world.registry().emplace_or_replace<ImpulseLockout>(
+                target,
+                ImpulseLockout{
+                    engine.current_tick() + pull->airtime_ticks + 2u,
+                    engine.current_tick()});
+            engine.queue_actor_impulse(pull->target, position.y);
+            MovementState& movement =
+                world.registry().get_or_emplace<MovementState>(target);
+            movement.ground_state = MovementState::GroundState::kAirborne;
+            movement.ground_normal = glm::vec3{0.0f, 1.0f, 0.0f};
+            movement.supporting_entity_net_id = 0u;
+            movement.supporting_collider_id = 0u;
+            movement.has_controller_height = false;
             continue;
         }
         if (const auto* impulse =
