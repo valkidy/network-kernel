@@ -1,7 +1,16 @@
-# A tent in flight. It wears the tent's own hitbox, so it sweeps the tent's
-# full volume and comes to rest at the first terrain or static obstacle that
-# volume touches. On a prop, that means perched on top of it, never inside it.
-# There it spawns the tent and destroys itself.
+# A tent in flight: a bottle, the same size as the ice block's, that unfolds into
+# the tent where it lands -- the ice block's flow, step for step. It spawns the
+# tent at the contact point and destroys itself.
+#
+# What that costs, measured by //game_server:tent_feasibility_probe_test:
+# - On flat ground the tent appears ~0.6 m further along the throw than the
+#   bottle stopped (the contact point is the bottle's leading edge).
+# - Bodies under the landing spot are pushed out by the tent appearing around
+#   them (static-obstacle depenetration), as they are by an ice block.
+# - A bottle that hits a prop's side spawns the tent on that side face, half
+#   inside the prop. static_obstacle in the mask at least stops it at the
+#   surface; with terrain alone it would fly through and the tent would land
+#   wholly inside the prop, which is what the ice bottle does today.
 id: 215
 name: tent_kit_prop
 entity_type: prop
@@ -9,7 +18,7 @@ health:
   hp: 1
   max_hp: 1
 physics:
-  collider_template: tent_hitbox
+  collider_template: collision_damage_prop_hitbox
 triggers:
   on_collision:
     collision_mask: terrain|static_obstacle

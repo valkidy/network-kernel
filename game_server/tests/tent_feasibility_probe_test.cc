@@ -1,24 +1,24 @@
 // The questions the tent design rests on, measured against the shipped
 // catalog rather than argued from the code:
 //
-// tent_kit throws tent_kit_prop, which wears the tent's hitbox, sweeps it in
-// flight, and on landing spawns the tent (a pure prop, so it can carry a
-// lifecycle) at event.position and destroys itself.
+// tent_kit throws tent_kit_prop, a bottle the size of the ice block's, which on
+// landing spawns the tent (a pure prop, so it can carry a lifecycle) at
+// event.position and destroys itself -- the ice block's flow.
 //
-// 1. Landing. Where does the tent end up relative to where the kit came to
+// 1. Landing. Where does the tent end up relative to where the bottle came to
 //    rest -- on flat ground, and thrown at an ice block?
-//    Measured 2026-09-30: event.position is the contact point, not the kit's
-//    rest position. On flat ground the tent appears ~1 m further along the
-//    throw than the kit stopped; thrown at an ice block, the kit stops against
+//    Measured 2026-09-30: event.position is the contact point, not the rest
+//    position. On flat ground the tent appears ~0.6 m further along the throw
+//    (~1 m with a tent-sized kit). Thrown flat at an ice block, the bottle hits
 //    its side and the tent spawns on the side face, half inside the block
-//    (overlap ~2.4 m^3, floating). With a terrain-only landing mask the kit
-//    passes through the block and the tent lands fully inside it.
+//    (overlap ~3.4 m^3). With a terrain-only landing mask -- the ice bottle's --
+//    the bottle flies through and the tent lands wholly inside (~9.2 m^3).
 // 2. Reach. The interaction range is 3D: from the ground 1.8 m from a tent on
-//    the ground, activation commits; 2.8 m from the one stuck on the ice
+//    the ground, activation commits; 2.5 m from the one stuck on the ice
 //    block, it is rejected out of range.
 // 3. Pickup. The tent is not a world item: pickup is rejected.
-// 4. Landing on units. The kit is a moving static obstacle, so it shoves the
-//    bodies ahead of it along the throw; all end outside the tent's footprint.
+// 4. Landing on units. The tent appears around them and depenetration pushes
+//    each out of the nearest face; all end outside its footprint.
 // 5. Occupants. Four players moved to the tent centre under a terrain-only
 //    movement mask stay inside and still; under the default mask all four are
 //    pushed out.
