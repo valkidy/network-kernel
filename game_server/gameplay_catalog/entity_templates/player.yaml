@@ -65,6 +65,9 @@ inventory_slots:
     quantity: 1
   - item_template: stateful_magic_bottle
     quantity: 1
+  # Last, so every slot index above it stays where it was.
+  - item_template: fungible_pull_bottle
+    quantity: 3
 animations:
   idle: 0
   chasing: 1

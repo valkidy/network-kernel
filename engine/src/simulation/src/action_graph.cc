@@ -182,6 +182,13 @@ bool expression_available_for_event(
         event_vec3->source == EventVec3Source::kPosition) {
         return true;
     }
+    if (event_vec3->source == EventVec3Source::kSubjectPosition) {
+        // Filled in by the projectile, area-effect and melee producers only;
+        // anywhere else it would be a zero vector, which reads as the world
+        // origin and would pull a target across the map.
+        return event_type == TriggerEventType::kProjectileImpact ||
+            event_type == TriggerEventType::kExpired;
+    }
     if (event_vec3->source == EventVec3Source::kSubjectDirection) {
         // Only the projectile triggers carry a subject that was going
         // somewhere. The others have a subject that is standing still, or no
@@ -209,6 +216,8 @@ EventVec3Source event_vec3_source_from_kernel(std::uint8_t source) {
             return EventVec3Source::kDirection;
         case KernelEventVec3Source_SubjectDirection:
             return EventVec3Source::kSubjectDirection;
+        case KernelEventVec3Source_SubjectPosition:
+            return EventVec3Source::kSubjectPosition;
         case KernelEventVec3Source_Position:
         default:
             return EventVec3Source::kPosition;
@@ -290,6 +299,8 @@ std::optional<ActionGraphParameterValue> resolve_expression(
             return ActionGraphParameterValue{event.position};
         case EventVec3Source::kSubjectDirection:
             return ActionGraphParameterValue{event.subject_direction};
+        case EventVec3Source::kSubjectPosition:
+            return ActionGraphParameterValue{event.subject_position};
         case EventVec3Source::kDirection:
             break;
     }
@@ -465,6 +476,41 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
                 owner_name,
                 EntityRefExpression{static_cast<EntityRefSource>(
                     action.owner_source)},
+            });
+            continue;
+        }
+        if (action.action_type == KernelEntityTriggerActionType_ApplyPull) {
+            if (!pull_is_authorable(
+                    action.pull_mode,
+                    action.pull_distance,
+                    action.pull_airtime_ticks,
+                    action.pull_max_speed)) {
+                return std::nullopt;
+            }
+            const std::string target_name = "target" + suffix;
+            const std::string point_name = "point" + suffix;
+            binding.graph.parameters.push_back({target_name, std::monostate{}});
+            binding.graph.parameters.push_back({point_name, std::monostate{}});
+            binding.graph.actions.push_back(ActionApplyPullDefinition{
+                target_name,
+                point_name,
+                action.pull_mode,
+                action.pull_distance,
+                action.pull_airtime_ticks,
+                action.pull_max_speed,
+                *condition,
+            });
+            binding.parameters.push_back({
+                target_name,
+                EntityRefExpression{static_cast<EntityRefSource>(
+                    action.target_source)},
+            });
+            binding.parameters.push_back({
+                point_name,
+                EventVec3Expression{event_vec3_source_from_kernel(
+                    action.pull_mode == KERNEL_PULL_MODE_ALONG
+                        ? action.direction_source
+                        : action.position_source)},
             });
             continue;
         }
@@ -791,6 +837,20 @@ bool validate_action_graph_binding(
             }
             continue;
         }
+        if (const auto* pull = std::get_if<ActionApplyPullDefinition>(&action)) {
+            if (!pull_is_authorable(
+                    pull->mode, pull->distance, pull->airtime_ticks,
+                    pull->max_speed)) {
+                return fail(error, "apply_pull distance, airtime or max_speed out of range");
+            }
+            if (!validate_action_parameter(
+                    binding, pull->target_parameter, ParameterType::kEntityId, error) ||
+                !validate_action_parameter(
+                    binding, pull->point_parameter, ParameterType::kVec3, error)) {
+                return false;
+            }
+            continue;
+        }
         const auto* damage = std::get_if<ActionApplyDamageDefinition>(&action);
         const auto* health_change =
             std::get_if<ActionApplyHealthChangeDefinition>(&action);
@@ -995,6 +1055,38 @@ bool evaluate_action_graph(
                 owner,
                 spawn->item_template_id,
                 spawn->quantity,
+                provenance,
+            });
+            continue;
+        }
+
+        if (const auto* pull = std::get_if<ActionApplyPullDefinition>(&action)) {
+            const ActionGraphParameterValue* target_value =
+                find_resolved_parameter(parameters, pull->target_parameter);
+            const ActionGraphParameterValue* point_value =
+                find_resolved_parameter(parameters, pull->point_parameter);
+            if (target_value == nullptr || point_value == nullptr ||
+                !std::holds_alternative<EntityIdValue>(*target_value) ||
+                !std::holds_alternative<glm::vec3>(*point_value)) {
+                return fail(error, "apply_pull action input type mismatch");
+            }
+            const glm::vec3 point = std::get<glm::vec3>(*point_value);
+            if (!std::isfinite(point.x) || !std::isfinite(point.y) ||
+                !std::isfinite(point.z)) {
+                return fail(error, "apply_pull requires a finite point or direction");
+            }
+            const NetId target = std::get<EntityIdValue>(*target_value).value;
+            if (target == 0u) {
+                return fail(error, "apply_pull target must not be null");
+            }
+            commands->push_back(ActionApplyPullCommand{
+                self,
+                target,
+                pull->mode,
+                point,
+                pull->distance,
+                pull->airtime_ticks,
+                pull->max_speed,
                 provenance,
             });
             continue;

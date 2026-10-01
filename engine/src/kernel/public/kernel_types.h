@@ -5,6 +5,16 @@
 #include <stdint.h>
 
 /*
+ * 95: apply_pull. KernelEntityTriggerActionType gained _ApplyPull and
+ *     KernelEventVec3Source gained _SubjectPosition, where the event's subject
+ *     was when it happened (an area effect's centre, a projectile's impact
+ *     point, a melee swing's attacker). KernelActionDefinition gained
+ *     pull_mode, pull_distance, pull_airtime_ticks and pull_max_speed,
+ *     appended, read only by apply_pull; zero on every other action. Unlike
+ *     apply_impulse, which adds a velocity, apply_pull replaces the target's
+ *     velocity with the one that lands it at a destination after
+ *     pull_airtime_ticks. KernelActionDefinition is embedded in every trigger
+ *     definition, so every managed mirror of those shifts.
  * 94: targeted strikes. KernelProjectileMechanicsDefinition gained `launch`,
  *     appended: a rule that derives where a projectile starts and how fast
  *     it goes from the point it is spawned at. A zero struct_size, the
@@ -124,7 +134,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 94u
+#define KERNEL_ABI_VERSION 95u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -698,6 +708,7 @@ typedef enum KernelEntityTriggerActionType {
     KernelEntityTriggerActionType_ApplyStatus = 6,
     KernelEntityTriggerActionType_RemoveStatus = 7,
     KernelEntityTriggerActionType_ApplySpeedModifier = 8,
+    KernelEntityTriggerActionType_ApplyPull = 9,
 } KernelEntityTriggerActionType;
 
 typedef enum KernelStatModifierOperation {
@@ -726,6 +737,10 @@ typedef enum KernelEventVec3Source {
      * area effect's Direction is radial and so differs per target; this is the
      * one value every target of the same event shares. */
     KernelEventVec3Source_SubjectDirection = 3,
+    /* Where the event's subject was when it happened. For an area effect this
+     * is its centre, the one point every target of a blast shares; Position is
+     * where each target was hit. */
+    KernelEventVec3Source_SubjectPosition = 4,
 } KernelEventVec3Source;
 
 KERNEL_RPC_STRUCT(R"json({"type":"KernelVec3"})json")
@@ -767,6 +782,14 @@ typedef enum KernelActionConditionType {
  *         different things; see the authoring guide. */
 #define KERNEL_IMPULSE_STRENGTH_MODE_RADIAL 0u
 #define KERNEL_IMPULSE_STRENGTH_MODE_SPLIT 1u
+
+/* Where apply_pull lands its target, horizontally.
+ * TO_POINT: pull_distance metres from the point position_source names, on the
+ *           side the target is on. Zero gathers everything onto the point.
+ * ALONG:    pull_distance metres (signed) from where the target stands, along
+ *           the horizontal of the vector direction_source names. */
+#define KERNEL_PULL_MODE_TO_POINT 0u
+#define KERNEL_PULL_MODE_ALONG 1u
 
 typedef struct KernelActionDefinition {
     uint8_t action_type;
@@ -816,6 +839,20 @@ typedef struct KernelActionDefinition {
     uint16_t reserved3;
     float repeat_scatter_radius;
     uint32_t repeat_stagger_lifetime_ticks;
+    /*
+     * apply_pull only; zero on every other action.
+     *
+     * pull_mode is a KERNEL_PULL_MODE_*. The target's velocity is replaced
+     * with the one that lands it at the destination pull_airtime_ticks later
+     * (1 .. KERNEL_MAX_IMPULSE_LOCKOUT_TICKS): the vertical part from the
+     * airtime and the target's own gravity, the horizontal part from the
+     * distance to cover, capped at pull_max_speed (> 0) m/s. TO_POINT takes a
+     * non-negative pull_distance; ALONG a signed, non-zero one. Actors only.
+     */
+    uint32_t pull_mode;
+    float pull_distance;
+    uint32_t pull_airtime_ticks;
+    float pull_max_speed;
 } KernelActionDefinition;
 
 typedef struct KernelActionTriggerDefinition {

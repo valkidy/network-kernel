@@ -56,6 +56,24 @@ bool damage_stagger_is_authorable(std::uint32_t authored, float stagger) {
     return authored == 0u || (std::isfinite(stagger) && stagger >= 0.0f);
 }
 
+// Mirrors pull_is_authorable in simulation/public/action_graph.h, which the
+// kernel's trigger validators use; the loader says so first, with a path.
+bool pull_is_authorable(
+    std::uint32_t mode,
+    float distance,
+    std::uint32_t airtime_ticks,
+    float max_speed) {
+    if (!std::isfinite(distance) || !std::isfinite(max_speed) ||
+        max_speed <= 0.0f || airtime_ticks == 0u ||
+        airtime_ticks > KERNEL_MAX_IMPULSE_LOCKOUT_TICKS) {
+        return false;
+    }
+    if (mode == KERNEL_PULL_MODE_TO_POINT) {
+        return distance >= 0.0f;
+    }
+    return mode == KERNEL_PULL_MODE_ALONG && distance != 0.0f;
+}
+
 // Mirrors the kernel's catalog validator; both bound against
 // KERNEL_MAX_STAGGER_TICKS.
 bool stagger_profile_is_authorable(
@@ -274,6 +292,10 @@ void hash_projectile_template(
             hash_scalar(hash, action.repeat_count_max);
             hash_float(hash, action.repeat_scatter_radius);
             hash_scalar(hash, action.repeat_stagger_lifetime_ticks);
+            hash_scalar(hash, action.pull_mode);
+            hash_float(hash, action.pull_distance);
+            hash_scalar(hash, action.pull_airtime_ticks);
+            hash_float(hash, action.pull_max_speed);
             hash_scalar(hash, action.condition_type);
         }
     }
@@ -1883,6 +1905,10 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 "when",
                 "lifetime_ticks",
                 "repeat",
+                "anchor",
+                "distance",
+                "airtime_ticks",
+                "max_speed",
             },
             path,
             source_kind,
@@ -1906,6 +1932,13 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                     "apply_damage stagger must be finite and non-negative: " +
                     path);
             }
+        }
+        if ((action["anchor"] || action["distance"] ||
+             action["airtime_ticks"] || action["max_speed"]) &&
+            compiled_action.action_type != "apply_pull") {
+            throw std::runtime_error(
+                "anchor, distance, airtime_ticks and max_speed are only "
+                "supported on apply_pull: " + path);
         }
         if ((action["repeat"] || action["lifetime_ticks"]) &&
             compiled_action.action_type != "spawn_projectile") {
@@ -2045,6 +2078,56 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 &compiled_action.target_parameter,
                 &compiled_action.strength_parameter,
                 &compiled_action.direction_parameter,
+            };
+        } else if (compiled_action.action_type == "apply_pull") {
+            // One of anchor (land near a point) or direction (move along a
+            // heading); the numbers are literals, like lockout_ticks.
+            if (action["projectile_template"] || action["position"] ||
+                action["owner"] || action["amount"] || action["strength"] ||
+                action["entity_template"] || action["item_template"] ||
+                action["quantity"] || action["lockout_ticks"] ||
+                action["collision_mask"] ||
+                static_cast<bool>(action["anchor"]) ==
+                    static_cast<bool>(action["direction"]) ||
+                !action["airtime_ticks"] || !action["max_speed"] ||
+                (action["direction"] && !action["distance"])) {
+                throw std::runtime_error(
+                    "apply_pull requires target, exactly one of anchor or "
+                    "direction, airtime_ticks and max_speed (and distance "
+                    "with direction): " + path);
+            }
+            compiled_action.target_parameter =
+                parameter_reference_from_yaml(action["target"], "target");
+            if (action["anchor"]) {
+                compiled_action.pull_mode = KERNEL_PULL_MODE_TO_POINT;
+                compiled_action.anchor_parameter =
+                    parameter_reference_from_yaml(action["anchor"], "anchor");
+            } else {
+                compiled_action.pull_mode = KERNEL_PULL_MODE_ALONG;
+                compiled_action.direction_parameter =
+                    parameter_reference_from_yaml(
+                        action["direction"], "direction");
+            }
+            compiled_action.pull_distance =
+                action["distance"] ? action["distance"].as<float>() : 0.0f;
+            compiled_action.pull_airtime_ticks =
+                action["airtime_ticks"].as<std::uint32_t>();
+            compiled_action.pull_max_speed = action["max_speed"].as<float>();
+            if (!pull_is_authorable(
+                    compiled_action.pull_mode,
+                    compiled_action.pull_distance,
+                    compiled_action.pull_airtime_ticks,
+                    compiled_action.pull_max_speed)) {
+                throw std::runtime_error(
+                    "apply_pull needs airtime_ticks in 1.." +
+                    std::to_string(KERNEL_MAX_IMPULSE_LOCKOUT_TICKS) +
+                    ", a positive max_speed, and a non-negative distance "
+                    "with anchor or a non-zero one with direction: " + path);
+            }
+            action_parameters = {
+                &compiled_action.target_parameter,
+                action["anchor"] ? &compiled_action.anchor_parameter
+                                 : &compiled_action.direction_parameter,
             };
         } else if (compiled_action.action_type == "apply_status" ||
                    compiled_action.action_type == "remove_status") {
@@ -6182,6 +6265,12 @@ bool event_expression_available(
         return trigger_name == "on_projectile_impact" ||
             trigger_name == "on_expired";
     }
+    if (expression == "event.subject_position") {
+        // Filled in by the projectile, area-effect and melee producers, which
+        // all run a projectile template's triggers.
+        return trigger_name == "on_projectile_impact" ||
+            trigger_name == "on_expired";
+    }
     return false;
 }
 
@@ -6264,6 +6353,56 @@ void mirror_first_action(KernelActionTriggerDefinition* trigger) {
     trigger->modifier_value = action.modifier_value;
 }
 
+// Both trigger compilers -- projectile and entity -- resolve apply_pull's
+// point the same way. The point has to come from the event: a literal anchor
+// would be a fixed spot in the world, and a literal heading has nothing to be
+// relative to. Whether the event offers the expression at all was already
+// checked against the trigger by validate_trigger_parameters.
+void compile_pull_action(
+    const TriggerBindingConfig& binding,
+    const ActionGraphParameterConfig& point_parameter,
+    const ActionGraphActionConfig& action,
+    KernelActionDefinition* compiled_action) {
+    compiled_action->action_type = KernelEntityTriggerActionType_ApplyPull;
+    compiled_action->pull_mode = action.pull_mode;
+    compiled_action->pull_distance = action.pull_distance;
+    compiled_action->pull_airtime_ticks = action.pull_airtime_ticks;
+    compiled_action->pull_max_speed = action.pull_max_speed;
+    const bool bound = std::any_of(
+        binding.parameters.begin(),
+        binding.parameters.end(),
+        [&](const auto& value) { return value.first == point_parameter.name; });
+    if (!bound && point_parameter.default_vec3.has_value()) {
+        throw std::runtime_error(
+            "apply_pull anchor/direction must bind to an event expression, "
+            "not a vec3 default");
+    }
+    const std::string point = trigger_parameter_value(binding, point_parameter);
+    if (action.pull_mode == KERNEL_PULL_MODE_TO_POINT) {
+        if (point == "event.subject_position") {
+            compiled_action->position_source =
+                KernelEventVec3Source_SubjectPosition;
+        } else if (point == "event.position") {
+            compiled_action->position_source = KernelEventVec3Source_Position;
+        } else {
+            throw std::runtime_error(
+                "apply_pull anchor must be event.subject_position or "
+                "event.position");
+        }
+        return;
+    }
+    if (point == "event.direction") {
+        compiled_action->direction_source = KernelEventVec3Source_Direction;
+    } else if (point == "event.subject_direction") {
+        compiled_action->direction_source =
+            KernelEventVec3Source_SubjectDirection;
+    } else {
+        throw std::runtime_error(
+            "apply_pull direction must be event.direction or "
+            "event.subject_direction");
+    }
+}
+
 void compile_spawn_repeat(
     const ActionGraphActionConfig& action,
     KernelActionDefinition* compiled_action) {
@@ -6326,6 +6465,28 @@ void compile_projectile_trigger_binding(
         const ActionGraphActionConfig& action = graph->actions[index];
         KernelActionDefinition& compiled_action = compiled.actions[index];
         compiled_action.condition_type = action.condition_type;
+        if (action.action_type == "apply_pull") {
+            compiled_action.target_source = entity_ref_source(
+                trigger_parameter_value(
+                    binding, graph_parameter(action.target_parameter)));
+            compile_pull_action(
+                binding,
+                graph_parameter(
+                    action.pull_mode == KERNEL_PULL_MODE_TO_POINT
+                        ? action.anchor_parameter
+                        : action.direction_parameter),
+                action,
+                &compiled_action);
+            // The same refusal apply_impulse makes, for the same reason.
+            if (compiled_action.direction_source ==
+                    KernelEventVec3Source_SubjectDirection &&
+                projectile_template->definition.mechanics.speed <= 0.0f) {
+                throw std::runtime_error(
+                    "event.subject_direction needs a projectile that travels: " +
+                    projectile_template->name);
+            }
+            continue;
+        }
         if (action.action_type == "apply_damage" ||
             action.action_type == "apply_health_change" ||
             action.action_type == "apply_impulse") {
@@ -6645,6 +6806,26 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
             }
             compiled_action.impulse_collision_mask = action.collision_mask;
             compiled_action.impulse_lockout_ticks = action.lockout_ticks;
+            continue;
+        }
+        if (action.action_type == "apply_pull") {
+            if (trigger_name == "on_apply" || trigger_name == "on_tick" ||
+                trigger_name == "on_expire") {
+                throw std::runtime_error(
+                    "apply_pull is not supported in a status lifecycle "
+                    "trigger: " + binding.action_graph_ref);
+            }
+            compiled_action.target_source = entity_ref_source(
+                trigger_parameter_value(
+                    binding, graph_parameter(action.target_parameter)));
+            compile_pull_action(
+                binding,
+                graph_parameter(
+                    action.pull_mode == KERNEL_PULL_MODE_TO_POINT
+                        ? action.anchor_parameter
+                        : action.direction_parameter),
+                action,
+                &compiled_action);
             continue;
         }
         if (action.action_type == "apply_status" ||
@@ -8134,6 +8315,11 @@ std::uint64_t compute_gameplay_catalog_hash(
             hash_scalar(&hash, action.repeat_count_max);
             hash_float(&hash, action.repeat_scatter_radius);
             hash_scalar(&hash, action.repeat_stagger_lifetime_ticks);
+            hash_string(&hash, action.anchor_parameter);
+            hash_scalar(&hash, action.pull_mode);
+            hash_float(&hash, action.pull_distance);
+            hash_scalar(&hash, action.pull_airtime_ticks);
+            hash_float(&hash, action.pull_max_speed);
         }
     }
     std::vector<StatusEffectTemplateConfig> status_effect_templates =

@@ -87,6 +87,8 @@ event.target      = 事件涉及的另一個 entity
 event.position    = authoritative event position
 event.direction   = authoritative event direction
 event.subject_direction = subject 當時的行進方向（只有 projectile trigger 有）
+event.subject_position  = subject 當時的位置（只有 projectile trigger 有）：area effect
+                          是爆心，一般 projectile 是命中/到期點，近戰是攻擊者
 params.*          = binding/default 解析後的 graph parameters
 ```
 
@@ -389,7 +391,61 @@ Authoring 注意：
   兩邊必須一致，否則預測會走開 N ticks 再被 reconciliation 硬拉回來。
 
 目前 projectile-backed triggers 接受 `apply_damage`、`apply_health_change`、
-`apply_impulse` 與 `spawn_projectile` actions。
+`apply_impulse`、`apply_pull` 與 `spawn_projectile` actions。
+
+### 4.5 `apply_pull`
+
+把 actor **送到一個目的地**，而不是推它一下。與 `apply_impulse` 是兩種不同語意：
+
+| | `apply_impulse` | `apply_pull` |
+|---|---|---|
+| 對速度做什麼 | **加上**一個速度增量 | **取代**成算出來的速度 |
+| 作者寫什麼 | 速度（m/s） | 目的地與滯空時間 |
+| 目標原本在跑、在飛 | 會被算進去 | 不影響 |
+| 同一 tick 兩次命中 | 相加 | 後者為準 |
+| 距離 | 不影響速度 | 速度依距離逐一計算 |
+
+兩種寫法，二選一：
+
+```yaml
+# 拉向一點：落在離 anchor distance 公尺處，在目標原本那一側
+- type: apply_pull
+  target: params.target
+  anchor: params.anchor      # binding: event.subject_position 或 event.position
+  distance: 1.0              # >= 0；0 = 拉到點上
+  airtime_ticks: 24          # 1 .. KERNEL_MAX_IMPULSE_LOCKOUT_TICKS
+  max_speed: 12.0            # > 0，水平速度上限（m/s）
+
+# 沿方向移動：從目標所在處沿方向的水平分量移動 distance 公尺
+- type: apply_pull
+  target: params.target
+  direction: params.direction  # binding: event.direction 或 event.subject_direction
+  distance: -3.0               # 有號、不可為 0；負值 = 往反方向（例如拉回攻擊者）
+  airtime_ticks: 20
+  max_speed: 12.0
+```
+
+- `anchor`／`direction` 必須綁定 event expression，不接受 vec3 default：固定的
+  anchor 會是世界上的某個定點，固定的方向則沒有參考對象。
+- `distance`、`airtime_ticks`、`max_speed` 是 action 上的字面值，不是 parameter。
+- 只作用在 actor。Prop 被推動後直線飛行、不受重力，沒有滯空時間能讓它落在目的地。
+- 不接受 `collision_mask`、`lockout_ticks`：lockout 自動設為滯空時間加 2 tick，
+  落地時照常解除，所以擊倒（knockdown）、擋新 action 的規則與擊退相同。
+- Status lifecycle trigger 不接受 `apply_pull`。
+
+Runtime 在 command commit 當下，依目標**當時**的位置算出目的地與速度：
+
+- 垂直速度 = `-g × dt × (N + 0.5) / 2`，g 用目標自己的 gravity。Movement solver
+  是 semi-implicit Euler，且只有「會穿入地面」的那一步才算落地；把零點放在第 N 步
+  中間，落地 tick 就固定是 N，不受浮點誤差影響。`apply_pull_test` 以實際的
+  movement solver 驗證：9 種起點與滯空組合都在第 N tick 落地，誤差 2 cm 內。
+- 水平速度 = 水平位移 ÷ (N × dt)，超過 `max_speed` 時等比縮小，沿同一條線落得比較近。
+- `impulse_resistance` 比較的是算出來的 `max(水平速率, 垂直速率)`。遠處目標需要的
+  速度較大，所以重型目標可能在遠處拉不動、近處拉得動。
+- 同步沿用 `ActorImpulseBatch`（送的是實際速度），不需要新的封包。本地玩家被拉時
+  **沒有 client 預測**，等 authoritative snapshot 修正。
+
+範例：`action_pull_at_target`（吸引手榴彈 `fungible_pull_bottle`）。
 
 Status lifecycle 目前支援的 actions 為 `apply_damage`、health change、status
 apply/remove 與 speed modifier。Lifecycle safety contract 僅允許 `on_apply` 使用
@@ -736,8 +792,14 @@ Catalog load/compile 會拒絕：
 - 未知或不適用於 trigger 的 `event.*` expression。
 - 無效 Entity/Projectile Template reference。
 - Projectile trigger graph 使用 `apply_damage`、`apply_health_change`、
-  `apply_impulse`、`spawn_projectile` 以外的 action。
-- Status lifecycle graph 使用 `apply_impulse`。
+  `apply_impulse`、`apply_pull`、`spawn_projectile` 以外的 action。
+- Status lifecycle graph 使用 `apply_impulse` 或 `apply_pull`。
+- `apply_pull` 同時寫了 `anchor` 與 `direction` 或兩者都沒寫；缺 `airtime_ticks`／
+  `max_speed`；`airtime_ticks` 為 0 或超過上限；`max_speed` 不為正；`anchor` 模式的
+  `distance` 為負，或 `direction` 模式的 `distance` 缺少或為 0。
+- `anchor`／`distance`／`airtime_ticks`／`max_speed` 寫在 `apply_pull` 以外的 action 上。
+- `apply_pull` 的 anchor/direction 用 vec3 default，或綁定到其他 expression；
+  `event.subject_position` 用在 projectile trigger 以外的 trigger。
 - `apply_impulse` 的 `strength`：純量形式非有限或不為正；list 形式不是剛好兩個
   數字、水平為負、任一項非有限，或兩項同時為零。
 - `apply_impulse` 的 `lockout_ticks` 超過 `KERNEL_MAX_IMPULSE_LOCKOUT_TICKS`。

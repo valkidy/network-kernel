@@ -2314,12 +2314,14 @@ int main() {
     assert(player_template.weapon_ids[3] == network_example::game_server::kWeaponRifle);
     assert(player_template.active_weapon_slot == 0);
     assert(player_template.inventory_slot_capacity == 16);
-    // player.yaml stocks shockwave (3008) and frag (3009) bottles and four
-    // stateful_magic_bottle (3004) slots; the fungible_potion and
-    // stateful_potion slots are commented out there. The shape they used to
-    // give this case is exercised by inventory_player_yaml instead, which is a
-    // fixture of the test's own.
-    require(player_template.inventory_slots.size() == 6);
+    // player.yaml stocks shockwave (3008) and frag (3009) bottles, four
+    // stateful_magic_bottle (3004) slots, and pull (3010) bottles last; the
+    // fungible_potion and stateful_potion slots are commented out there. The
+    // shape they used to give this case is exercised by inventory_player_yaml
+    // instead, which is a fixture of the test's own.
+    require(player_template.inventory_slots.size() == 7);
+    require(player_template.inventory_slots[6].item_template_id == 3010);
+    require(player_template.inventory_slots[6].quantity == 3);
     assert(player_template.inventory_slots[0].item_template_id == 3008);
     assert(player_template.inventory_slots[0].quantity == 3);
     assert(player_template.inventory_slots[1].item_template_id == 3009);
@@ -2711,6 +2713,112 @@ int main() {
             std::string(error.what()).find("non-zero pair") != std::string::npos;
     }
     require(empty_pair_rejected);
+
+    // apply_pull, as the shipped pull_blast authors it: the anchor reaches
+    // the kernel as the subject-position source, and the literals as the
+    // pull_* block.
+    {
+        const auto shipped =
+            network_example::game_server::default_game_server_gameplay_config();
+        bool found_pull_blast = false;
+        for (const auto& projectile : shipped.projectile_templates) {
+            if (projectile.name != "pull_blast") continue;
+            found_pull_blast = true;
+            const KernelActionTriggerDefinition& trigger =
+                projectile.definition.mechanics.projectile_impact_trigger;
+            require(trigger.action_count == 2u);
+            const KernelActionDefinition& pull = trigger.actions[1];
+            require(pull.action_type == KernelEntityTriggerActionType_ApplyPull);
+            require(pull.target_source == KernelEntityRefSource_EventTarget);
+            require(pull.pull_mode == KERNEL_PULL_MODE_TO_POINT);
+            require(pull.position_source == KernelEventVec3Source_SubjectPosition);
+            require(pull.pull_distance == 1.0f);
+            require(pull.pull_airtime_ticks == 24u);
+            require(pull.pull_max_speed == 12.0f);
+        }
+        require(found_pull_blast);
+    }
+
+    // What apply_pull refuses at load, each with a file path to name.
+    const auto pull_graph_rejected = [&](const std::string& graph_actions,
+                                         const std::string& expected) {
+        const std::string graph =
+            "id: action_pull_test\n"
+            "parameters:\n"
+            "  target: null\n"
+            "  anchor: null\n"
+            "  direction: null\n"
+            "actions:\n" + graph_actions;
+        const std::string prop =
+            "id: 304\n"
+            "name: pull_test_prop\n"
+            "entity_type: prop\n"
+            "health:\n"
+            "  hp: 3\n"
+            "  max_hp: 3\n"
+            "physics:\n"
+            "  collider_template: rocket_aabb\n"
+            "triggers:\n"
+            "  on_collision:\n"
+            "    action_graph: action_pull_test\n"
+            "    collision_mask: actor\n"
+            "    parameters:\n"
+            "      target: event.target\n"
+            "      anchor: event.subject_position\n"
+            "      direction: event.direction\n";
+        const auto bundle = make_gameplay_bundle_zip(
+            read_text_file("game_server/gameplay_catalog/entity_templates/sentry_grunt.yaml"),
+            {{"action_graph_templates/action_pull_test.yaml", graph},
+             {"entity_templates/pull_test_prop.yaml", prop}});
+        try {
+            (void)network_example::game_server::build_kernel_gameplay_catalog(
+                network_example::game_server::load_gameplay_config_from_bundle_memory(
+                    bundle.data(),
+                    static_cast<std::uint32_t>(bundle.size()),
+                    "gameplay_catalog.yaml"));
+        } catch (const std::exception& error) {
+            if (std::string(error.what()).find(expected) != std::string::npos) {
+                return true;
+            }
+            std::fprintf(stderr, "pull rejection said: %s\n", error.what());
+        }
+        return false;
+    };
+    // Both a point and a heading: which one is it?
+    require(pull_graph_rejected(
+        "  - type: apply_pull\n"
+        "    target: params.target\n"
+        "    anchor: params.anchor\n"
+        "    direction: params.direction\n"
+        "    distance: 1.0\n"
+        "    airtime_ticks: 20\n"
+        "    max_speed: 10.0\n",
+        "exactly one of anchor or direction"));
+    // Moving zero metres along a heading.
+    require(pull_graph_rejected(
+        "  - type: apply_pull\n"
+        "    target: params.target\n"
+        "    direction: params.direction\n"
+        "    distance: 0.0\n"
+        "    airtime_ticks: 20\n"
+        "    max_speed: 10.0\n",
+        "non-zero one with direction"));
+    // A pull-only field on another action is a typo, not a no-op.
+    require(pull_graph_rejected(
+        "  - type: apply_impulse\n"
+        "    target: params.target\n"
+        "    strength: 5.0\n"
+        "    direction: params.direction\n"
+        "    distance: 1.0\n",
+        "only supported on apply_pull"));
+    // A collision has no subject position; it would read as the world origin.
+    require(pull_graph_rejected(
+        "  - type: apply_pull\n"
+        "    target: params.target\n"
+        "    anchor: params.anchor\n"
+        "    airtime_ticks: 20\n"
+        "    max_speed: 10.0\n",
+        "event.subject_position"));
 
     const std::vector<std::uint8_t> gameplay_bundle = make_gameplay_bundle_zip();
     const network_example::game_server::GameServerGameplayConfig bundle_config =
