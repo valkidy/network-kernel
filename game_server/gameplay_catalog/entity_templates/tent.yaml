@@ -20,9 +20,10 @@ physics:
   collider_template: tent_hitbox
 interaction:
   capabilities: [interactable]
-  # Short on purpose: a tent perched on an ice block (3 m) must be out of reach
-  # from the ground.
-  range: 2.0
+  # Long enough to reach from where leaving sets an occupant down (2.3 m from
+  # the centre), short enough that a tent perched on an ice block (3 m up, so
+  # 3.4 m or more from anyone on the ground) stays out of reach.
+  range: 2.5
   line_of_sight_required: false
 triggers:
   on_activated:

@@ -1,6 +1,6 @@
 # 帳篷建築（Tent）實作計劃書
 
-狀態：**設計已定案。K1、K2 與 game_server 的進出流程已實作（見 §3.10）；K3–K6 未做。**
+狀態：**設計已定案。K1、K2、K3 與 game_server 的進出流程已實作（見 §3.10）；K4–K6 未做。**
 分支：`claude/tent-building`，2026-10-01 rebase 到 `claude/apply-pull`（a7da594）之上，
 所以必須在 apply-pull 之後 merge。ABI 接著 apply-pull 的 95 升到 96。
 最後更新：2026-10-01（第五輪 review：進出沿用既有流程、視野隱藏做成 YAML 選項、進入前提、住客上限 4）。
@@ -49,7 +49,7 @@
 | D11 | **建築物種類只由綁定的 action graph 決定。** `on_activated` 綁定的 graph 用新 action `open_ui {ui_id}` 宣告這是哪一種建築；所有 population group 的機制一致 | 見 §3.3 K1 |
 | D12 | **清除類的消失（Expired、CapacityEvicted）也觸發 `on_destroy_entity`。** 用途：建築物消失時對住客施加 impact，讓住客飛走 | 見 §3.5；需要改 kernel（K4） |
 | D13 | 退出：住客在帳篷內再按一次互動即退出。第一版只做進出，不做建築內的互動操作 | 入住鎖只放行對該建築的 Activate |
-| D14 | 互動距離維持 2.0；碰不到（例如帳篷架在冰塊頂上）視為玩家失誤，不處理 | |
+| D14 | 互動距離 2.5（2026-10-01 從 2.0 調整，見 §3.10）；碰不到（例如帳篷架在冰塊頂上）視為玩家失誤，不處理 | 架在冰塊上的帳篷，地面距離至少 3.4 m，仍碰不到 |
 | D15 | 死亡的玩家不能進入建築物 | 見 §3.2、§8 |
 | D16 | 住客不受 stagger 影響 | 第三輪。由入住鎖（K2）處理 |
 | D17 | **所有建築物共用一個 population group**（例如帳篷 + 商店 + …… 合計 ≤ 8），以 group 篩選 | 第三輪。取代「每種建築各一個 group」的選項 |
@@ -370,26 +370,35 @@ collider 32、entity 214、item 3010。帳篷改用下一個空號：`tent_hitbo
 - G6 找不到空位時回入口位置，沒有測試（T16）。
 - 斷線（T14）沒有測試。
 
+**K3：建築消失時先放住客出來。**
+- 在 `destroy_entity_with_context` 裡、`world_.destroy` 之前，把每位住客（依 net id 排序）
+  用和退出相同的方式放出來：建築還在，所以出口點照常在建築周圍找。所有消失原因都會經過這裡，
+  包括 Expired 和 CapacityEvicted 這兩種跳過 on_destroy graph 的原因。
+- 所以住客的 `ShelterChanged` 一定排在建築的 `EntityDestroyed` 之前，之後才執行的
+  on_destroy graph 會發現住客已經在外面，可以被擊退（D12，等 K4 讓清除類消失也觸發）。
+- 只有 prop 會經過這個函式；斷線時直接 `world_.destroy` 的是玩家本身，入住狀態跟著消失（G2）。
+- 測試：
+  - `eviction_lets_occupants_out`：有人住的帳篷被數量上限擠掉，`ShelterChanged` 先於
+    `EntityDestroyed`（reason CapacityEvicted），住客落在 footprint 外，之後能正常移動。
+  - `game_server_runs_the_door`：直接摧毀，住客在同一次呼叫中被放到 (2.30, 0, 0)。
+- `ShelterDirector` 原本在建築消失時補送退出請求的替代做法已刪除。
+
 **game_server：`ShelterDirector`（`game_server/src/shelter_director.{h,cc}`）。**
 - 只看事件，不需要 tick。住客 → 建築的對照表只依 kernel 回報的 `ShelterChanged` 更新，
   不記錄「已送出的請求」，所以 kernel 拒絕的請求不會留下錯誤狀態。
 - `UiOpened`：玩家已在這個建築內 → 送退出；不在任何建築內 → 送進入；在別的建築內 → 不處理
   （kernel 的請求閘門本來就擋掉了）。不看 `ui_id`：所有建築共用進出規則（D8）。
-- `EntityDestroyed`：
-  - 被移除的是住客（斷線）→ 從表中刪除。
-  - 被移除的是建築 → 對每位住客送退出，晚一個 tick 生效；建築已不在，所以回到入口位置。
-  - 這是 K3 完成前的替代做法。
+- `EntityDestroyed`：被移除的是住客（斷線）→ 從表中刪除。建築消失不需處理（K3）。
 - `PlayerLeft`：從表中刪除。
 - 測試：`tent_shelter_test` 的 `game_server_runs_the_door` 用真的 `GameServer` 處理事件：
   - 啟動一次進入、再啟動一次退出；
-  - 帳篷在有人時被摧毀，住客晚一個 tick 回到入口位置 (1.80, 0, 0)，之後能進另一頂帳篷。
+  - 從退出點直接再進去（驗證互動距離 2.5）；
+  - 帳篷在有人時被摧毀，住客被放到帳篷外，之後能進另一頂帳篷。
 
-**實作中發現：退出點在互動距離之外。** 退出點離中心 2.30 m，互動距離是 2.0（D14），所以出來後
-要往帳篷走幾步才能再進去。是否接受，或把退出圈縮小、或把互動距離放大，待決定。
+**實作中發現：退出點在互動距離之外。** 退出點離中心 2.30 m，原本的互動距離是 2.0。已依使用者
+決定把互動距離調為 2.5（D14），從退出點可以直接再進去。
 
-**還沒做：**
-- K3（建築消失時先釋放住客）。目前由 `ShelterDirector` 晚一個 tick 放人，見上。
-- K4–K6、G3 的 YAML 選項，以及 `shelter.capacity` 的 YAML 欄位（目前固定是常數）。
+**還沒做：** K4–K6、G3 的 YAML 選項，以及 `shelter.capacity` 的 YAML 欄位（目前固定是常數）。
 
 ---
 

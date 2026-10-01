@@ -2612,6 +2612,24 @@ bool EntityLifecycleSystem::destroy_entity_with_context(
     if (!entity.has_value()) {
         return false;
     }
+    // Whoever is inside comes out first, while the building still stands: the
+    // way out is looked for around it, and its on_destroy graph -- which runs
+    // only after it is gone -- finds them outside, free to be hit and knocked
+    // away. Done here rather than by whoever asked for the destroy, so no
+    // despawn reason (expiry and eviction included) can leave an occupant shut
+    // inside a building that no longer exists.
+    std::vector<NetId> occupants;
+    for (const auto [occupant, identity, sheltered] :
+         engine.world_.registry().view<NetworkIdentity, Sheltered>().each()) {
+        (void)occupant;
+        if (sheltered.shelter_net_id == net_id) {
+            occupants.push_back(identity.net_id);
+        }
+    }
+    std::sort(occupants.begin(), occupants.end());
+    for (const NetId occupant : occupants) {
+        (void)EntityStateSystem{}.set_shelter(engine, occupant, 0u);
+    }
     glm::vec3 position = event_position == nullptr
         ? glm::vec3{0.0f}
         : *event_position;

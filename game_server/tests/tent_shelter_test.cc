@@ -544,6 +544,68 @@ void occupant_is_immune(
 }
 
 // ---------------------------------------------------------------------------
+// K3: a building evicted by its population cap lets its occupants out first.
+// Eviction skips the on_destroy graph; it must not skip this.
+// ---------------------------------------------------------------------------
+
+void eviction_lets_occupants_out(
+    const GameServerGameplayConfig& config,
+    const std::vector<std::uint8_t>& scene) {
+    KernelHandle* kernel = make_world(config, scene, 7987);
+    const std::uint32_t tent_template = entity_template_id_of(config, "tent");
+    const KernelVec3 tent_at{0.0f, 0.0f, 0.0f};
+    const std::uint32_t tent =
+        create_entity(kernel, tent_template, tent_at, kPeer);
+    const std::uint32_t player =
+        spawn_player(kernel, config, kPeer, KernelVec3{4.0f, 0.0f, 0.0f});
+    step(kernel, 10);
+    require(of_type(enter(kernel, player, tent),
+                    KernelEventType_ShelterChanged).size() == 1u);
+
+    // Newer tents, far off, until the oldest -- the occupied one -- is evicted.
+    std::vector<KernelEvent> events;
+    for (int count = 1; count <= 16; ++count) {
+        create_entity(
+            kernel, tent_template,
+            KernelVec3{20.0f + 6.0f * static_cast<float>(count), 0.0f, 20.0f},
+            kPeer);
+        const std::vector<KernelEvent> tick = step(kernel, 1);
+        events.insert(events.end(), tick.begin(), tick.end());
+        KernelServerEntityState state{};
+        state.struct_size = sizeof(state);
+        if (!Kernel_ServerGetEntityState(kernel, tent, &state)) {
+            break;
+        }
+    }
+    std::size_t released_at = events.size();
+    std::size_t evicted_at = events.size();
+    for (std::size_t index = 0; index < events.size(); ++index) {
+        if (events[index].type == KernelEventType_ShelterChanged &&
+            events[index].net_id == player && events[index].code == 0u &&
+            events[index].related_net_id == tent) {
+            released_at = index;
+        }
+        if (events[index].type == KernelEventType_EntityDestroyed &&
+            events[index].net_id == tent) {
+            require(events[index].code == KernelDespawnReason_CapacityEvicted);
+            evicted_at = index;
+        }
+    }
+    require(evicted_at < events.size());
+    require(released_at < evicted_at);
+    const KernelVec3 released = position_of(kernel, player);
+    std::fprintf(
+        stderr, "[k3]    occupied tent evicted, player released at "
+        "(%.2f, %.2f, %.2f)\n",
+        released.x, released.y, released.z);
+    require(horizontal_distance(released, tent_at) > kTentHalf + kCapsuleRadius);
+    // Out for real: back to its own movement, it walks.
+    walk(kernel, player, KernelVec2{1.0f, 0.0f}, 15, 1u);
+    require(position_of(kernel, player).x > released.x + 0.5f);
+    Kernel_Destroy(kernel);
+}
+
+// ---------------------------------------------------------------------------
 // game_server: activating a building is the door, both ways.
 // ---------------------------------------------------------------------------
 
@@ -596,31 +658,41 @@ void game_server_runs_the_door(
         outside.x, outside.y, outside.z);
     require(horizontal_distance(outside, tent_at) > kTentHalf + kCapsuleRadius);
 
-    // The way out lands past the tent's 2 m reach, so going back in means
-    // stepping up to it first.
-    require(Kernel_ServerSetEntityTransform(
-        kernel, player, &start, &kIdentityRotation));
-    pump(step(kernel, 2));
-
-    // In again, then the tent goes with the player inside: let out a tick
-    // later, where it went in, and free to act again.
-    const KernelVec3 entered_from = position_of(kernel, player);
+    // Back in from where leaving set it down: that spot is within reach.
     require(activate(3, player, tent).status ==
             KernelGameplayRequestStatus_Committed);
     frame();
     require(server.shelter_director().occupants_of(tent) ==
             std::vector<std::uint32_t>{player});
+
+    // The tent goes with the player inside. The kernel lets it out as part of
+    // the destroy -- before the tent's own EntityDestroyed -- around the tent,
+    // on the side it came in from.
     require(Kernel_ServerDestroyEntity(
         kernel, tent, KernelDespawnReason_Destroyed));
-    frame();
-    frame();
+    const std::vector<KernelEvent> destroyed = step(kernel, 1);
+    pump(destroyed);
+    std::size_t released_at = destroyed.size();
+    std::size_t gone_at = destroyed.size();
+    for (std::size_t index = 0; index < destroyed.size(); ++index) {
+        if (destroyed[index].type == KernelEventType_ShelterChanged &&
+            destroyed[index].net_id == player && destroyed[index].code == 0u) {
+            released_at = index;
+        }
+        if (destroyed[index].type == KernelEventType_EntityDestroyed &&
+            destroyed[index].net_id == tent) {
+            gone_at = index;
+        }
+    }
+    require(released_at < gone_at && gone_at < destroyed.size());
     require(server.shelter_director().shelter_of(player) == 0u);
     const KernelVec3 released = position_of(kernel, player);
     std::fprintf(
         stderr, "[gs]    tent destroyed with the player inside, released at "
         "(%.2f, %.2f, %.2f)\n",
         released.x, released.y, released.z);
-    require(horizontal_distance(released, entered_from) < 0.1f);
+    require(horizontal_distance(released, tent_at) > kTentHalf + kCapsuleRadius);
+    require(released.x > kTentHalf);
     // Free again: a second tent can be walked into.
     const std::uint32_t second = create_entity(
         kernel, entity_template_id_of(config, "tent"),
@@ -645,6 +717,7 @@ int main() {
     enter_stay_and_leave(config, scene);
     refusals(config, scene);
     occupant_is_immune(config, scene);
+    eviction_lets_occupants_out(config, scene);
     game_server_runs_the_door(config, scene);
     return 0;
 }

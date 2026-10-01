@@ -164,6 +164,10 @@ bool Kernel_ServerEnqueueEntityState(
  * with movement, outside every building and not in a knockback, and the
  * building is a prop with fewer than KERNEL_SHELTER_CAPACITY actors in it.
  * Each change that happens emits KernelEventType_ShelterChanged.
+ *
+ * A building that is destroyed, for any reason, lets everyone out the same way
+ * first, while it still stands -- so their ShelterChanged events come before
+ * its EntityDestroyed, and its on_destroy graph finds them outside.
  */
 bool Kernel_ServerEnqueueEntityShelter(
     KernelHandle* kernel,

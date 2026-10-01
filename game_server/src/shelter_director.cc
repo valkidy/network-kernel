@@ -31,19 +31,13 @@ void ShelterDirector::handle_event(const KernelEvent& event) {
                 shelter_of_.erase(event.net_id);
             }
             return;
-        case KernelEventType_EntityDestroyed: {
+        case KernelEventType_EntityDestroyed:
             // An occupant removed outright -- a disconnect destroys the player
-            // without a ShelterChanged -- has nothing left to come out of.
+            // without a ShelterChanged -- has nothing left to come out of. A
+            // building needs nothing here: the kernel lets its occupants out
+            // before it goes, and their ShelterChanged arrive first.
             shelter_of_.erase(event.net_id);
-            // A building gone with people inside. Until the kernel releases
-            // them itself as the building goes (K3), they are let out here, a
-            // tick late; with the building gone the kernel puts each back
-            // where it went in.
-            for (const std::uint32_t occupant : occupants_of(event.net_id)) {
-                request(occupant, 0u);
-            }
             return;
-        }
         case KernelEventType_PlayerLeft:
             shelter_of_.erase(event.net_id);
             return;
