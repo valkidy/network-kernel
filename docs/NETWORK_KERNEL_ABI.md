@@ -12,8 +12,13 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 88u`. (This line had read 76 for some time; treat
-`kernel_types.h` as the authority and this document as a description.)
+`KERNEL_ABI_VERSION == 96u`; `kernel_types.h` is the authority.
+
+`KERNEL_CAPABILITY_LOCAL_SHELTER_STATE` uses bit 49
+(`0x0002000000000000`), separate from `KERNEL_CAPABILITY_LOG_CAPTURE` at
+bit 48 (`0x0001000000000000`). This corrects their accidental overlap within
+ABI 96 and matches the Unity bindings; the ABI version and struct layouts
+remain unchanged.
 
 ## Ownership
 
