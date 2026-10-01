@@ -4,7 +4,7 @@
 # one where it lands. The split exists because an item-backed prop may not carry
 # a lifecycle or a population group (gameplay_config.cc), and a tent needs both.
 # It also keeps the tent from being a world item a player could pick back up.
-id: 214
+id: 216
 name: tent
 entity_type: prop
 impulse_resistance: 15.0

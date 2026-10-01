@@ -12,7 +12,7 @@
 #   never nearer the roof than a side.
 #
 # `layer: damageable` for the reason ice_block_hitbox spells out.
-id: 32
+id: 33
 name: tent_hitbox
 shape: oriented_box
 center: {x: 0.0, y: 1.2, z: 0.0}
