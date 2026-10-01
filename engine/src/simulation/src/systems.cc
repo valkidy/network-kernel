@@ -2374,9 +2374,31 @@ bool EntityLifecycleSystem::destroy_entity(
         engine, net_id, reason, 0u, 0u, nullptr);
 }
 
+namespace {
+
+// Whether cleanup -- expiry or eviction -- runs a member's on_destroy_entity
+// graph, by its population group's rule. No group, or no rule, does not.
+bool cleanup_runs_on_destroy(
+    const KernelEngine& engine,
+    std::uint32_t population_group_id) {
+    if (population_group_id == 0u) {
+        return false;
+    }
+    const auto rule = std::find_if(
+        engine.prop_population_rules().begin(),
+        engine.prop_population_rules().end(),
+        [population_group_id](const KernelPropPopulationRuleDefinition& candidate) {
+            return candidate.population_group_id == population_group_id;
+        });
+    return rule != engine.prop_population_rules().end() &&
+        rule->cleanup_runs_on_destroy != 0u;
+}
+
+}  // namespace
+
 void EntityLifecycleSystem::update_prop_lifetimes(
     KernelEngine& engine) const {
-    std::vector<NetId> expired;
+    std::vector<std::pair<NetId, std::uint32_t>> expired;
     auto view = engine.world_.registry().view<NetworkIdentity, PropLifecycle>();
     for (const entt::entity entity : view) {
         PropLifecycle& lifecycle = view.get<PropLifecycle>(entity);
@@ -2385,13 +2407,17 @@ void EntityLifecycleSystem::update_prop_lifetimes(
         }
         --lifecycle.remaining_lifetime_ticks;
         if (lifecycle.remaining_lifetime_ticks == 0u) {
-            expired.push_back(view.get<NetworkIdentity>(entity).net_id);
+            expired.emplace_back(
+                view.get<NetworkIdentity>(entity).net_id,
+                lifecycle.population_group_id);
         }
     }
     std::sort(expired.begin(), expired.end());
-    for (const NetId net_id : expired) {
-        // Lifecycle expiry is resource cleanup and intentionally bypasses
-        // gameplay on_destroy_entity graphs.
+    for (const auto& [net_id, population_group_id] : expired) {
+        // Lifecycle expiry is resource cleanup and bypasses gameplay
+        // on_destroy_entity graphs, unless the group opts in (a building that
+        // throws its occupants clear as it folds away). The catalog keeps such
+        // a graph from spawning into any group, so this cannot cascade.
         (void)destroy_entity_with_context(
             engine,
             net_id,
@@ -2399,7 +2425,7 @@ void EntityLifecycleSystem::update_prop_lifetimes(
             0u,
             0u,
             nullptr,
-            false);
+            cleanup_runs_on_destroy(engine, population_group_id));
     }
 }
 
@@ -2433,8 +2459,10 @@ void EntityLifecycleSystem::enforce_prop_population_limit(
     while (members.size() > rule->max_alive) {
         const NetId oldest = std::get<1>(members.front());
         members.erase(members.begin());
-        // Capacity eviction is resource cleanup and intentionally bypasses
-        // gameplay on_destroy_entity graphs to prevent spawn cascades.
+        // Capacity eviction is resource cleanup and bypasses gameplay
+        // on_destroy_entity graphs to prevent spawn cascades, unless the group
+        // opts in -- which the catalog allows only when no member's graph
+        // spawns into any group, so there is no cascade to prevent.
         (void)destroy_entity_with_context(
             engine,
             oldest,
@@ -2442,7 +2470,7 @@ void EntityLifecycleSystem::enforce_prop_population_limit(
             0u,
             0u,
             nullptr,
-            false);
+            rule->cleanup_runs_on_destroy != 0u);
     }
 }
 
@@ -2650,6 +2678,13 @@ bool EntityLifecycleSystem::destroy_entity_with_context(
                 direction = glm::normalize(offset);
             }
         }
+    }
+    // Nobody did it -- expiry, eviction, a server-side removal -- so there is
+    // no away-from-the-attacker to report. Straight up stands in, rather than
+    // a zero vector that would refuse every spawn_projectile in the graph: a
+    // building's on_destroy blast has to go off however the building went.
+    if (direction == glm::vec3{0.0f}) {
+        direction = glm::vec3{0.0f, 1.0f, 0.0f};
     }
     PeerId owner_peer = 0u;
     if (engine.world_.registry().all_of<NetworkIdentity>(*entity)) {

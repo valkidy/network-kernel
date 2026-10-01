@@ -535,7 +535,7 @@ std::vector<PropPopulationRuleConfig> prop_population_rules_from_yaml(
     for (const YAML::Node& entry : node) {
         reject_unknown_keys(
             entry,
-            {"id", "name", "max_alive"},
+            {"id", "name", "max_alive", "cleanup_runs_on_destroy"},
             path,
             source_kind,
             KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
@@ -549,6 +549,13 @@ std::vector<PropPopulationRuleConfig> prop_population_rules_from_yaml(
         rule.definition.struct_size = sizeof(rule.definition);
         rule.definition.population_group_id = entry["id"].as<std::uint32_t>();
         rule.definition.max_alive = entry["max_alive"].as<std::uint32_t>();
+        // See KernelPropPopulationRuleDefinition: expiry and eviction run the
+        // members' on_destroy_entity graphs too.
+        rule.definition.cleanup_runs_on_destroy =
+            entry["cleanup_runs_on_destroy"] &&
+                entry["cleanup_runs_on_destroy"].as<bool>()
+            ? 1u
+            : 0u;
         if (rule.definition.population_group_id == 0u || rule.name.empty() ||
             rule.definition.max_alive == 0u ||
             rule.definition.max_alive > 256u) {
@@ -6281,11 +6288,14 @@ bool event_expression_available(
             trigger_name == "on_expire";
     }
     if (expression == "event.direction") {
+        // on_destroy_entity: away from whoever destroyed it, or straight up
+        // when nobody did (expiry, eviction), so it is never zero.
         return trigger_name == "on_activated" ||
             trigger_name == "on_item_used" ||
             trigger_name == "on_collision" ||
             trigger_name == "on_projectile_impact" ||
-            trigger_name == "on_expired";
+            trigger_name == "on_expired" ||
+            trigger_name == "on_destroy_entity";
     }
     if (expression == "event.subject_direction") {
         // Only a projectile's own triggers have a subject that was going
@@ -8309,6 +8319,7 @@ std::uint64_t compute_gameplay_catalog_hash(
         hash_string(&hash, rule.name);
         hash_scalar(&hash, rule.definition.population_group_id);
         hash_scalar(&hash, rule.definition.max_alive);
+        hash_scalar(&hash, rule.definition.cleanup_runs_on_destroy);
     }
     std::vector<ActionGraphTemplateConfig> action_graph_templates =
         config.action_graph_templates;
@@ -9506,6 +9517,46 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
             &config.projectile_templates,
             nullptr,
             &config.status_effect_templates);
+        // Mirrors the kernel's refusal, with a name: a group whose cleanup runs
+        // on_destroy must not spawn into any population group from it, or one
+        // eviction could spawn the next without end.
+        const auto population_rule = std::find_if(
+            config.prop_population_rules.begin(),
+            config.prop_population_rules.end(),
+            [&](const PropPopulationRuleConfig& rule) {
+                return rule.definition.population_group_id ==
+                    authored_template.prop.population_group_id;
+            });
+        if (authored_template.prop.population_group_id != 0u &&
+            population_rule != config.prop_population_rules.end() &&
+            population_rule->definition.cleanup_runs_on_destroy != 0u) {
+            const KernelActionTriggerDefinition& on_destroy =
+                entity_template.destroy_entity_trigger;
+            for (std::uint32_t index = 0; index < on_destroy.action_count;
+                 ++index) {
+                const KernelActionDefinition& action = on_destroy.actions[index];
+                if (action.action_type !=
+                    KernelEntityTriggerActionType_SpawnEntity) {
+                    continue;
+                }
+                const auto spawned = std::find_if(
+                    entity_templates.begin(),
+                    entity_templates.end(),
+                    [&](const EntityTemplateConfig& candidate) {
+                        return candidate.actor_template_id ==
+                            action.spawn_entity_template_id;
+                    });
+                if (spawned != entity_templates.end() &&
+                    spawned->prop.population_group_id != 0u) {
+                    throw std::runtime_error(
+                        "population group " + population_rule->name +
+                        " runs on_destroy on cleanup, so " +
+                        authored_template.name +
+                        "'s on_destroy_entity may not spawn " + spawned->name +
+                        ", which is in a population group");
+                }
+            }
+        }
         if (authored_template.skeleton.enabled) {
             entity_template.skeleton.struct_size =
                 sizeof(KernelSkeletonBindingDefinition);

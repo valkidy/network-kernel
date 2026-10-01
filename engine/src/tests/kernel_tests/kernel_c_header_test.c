@@ -26,6 +26,11 @@ _Static_assert(
         sizeof(KernelEvent) == 48u,
     "related_net_id fills KernelEvent's tail padding: the size is unchanged");
 _Static_assert(
+    offsetof(KernelPropPopulationRuleDefinition, cleanup_runs_on_destroy) ==
+            12u &&
+        sizeof(KernelPropPopulationRuleDefinition) == 16u,
+    "cleanup_runs_on_destroy is appended to the population rule in ABI 96");
+_Static_assert(
     offsetof(KernelActionDefinition, pull_mode) >
         offsetof(KernelActionDefinition, repeat_stagger_lifetime_ticks),
     "the pull block is appended after every field that existed before ABI 95");

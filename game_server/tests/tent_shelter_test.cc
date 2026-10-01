@@ -14,11 +14,13 @@
 // placed by hand, the same walk outside -- so "nothing happened" cannot pass
 // for an answer.
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -606,6 +608,186 @@ void eviction_lets_occupants_out(
 }
 
 // ---------------------------------------------------------------------------
+// K4: a group that opts in runs on_destroy on cleanup too -- the tent's
+// collapse blast throws its occupant clear however the tent goes.
+// ---------------------------------------------------------------------------
+
+enum class TentEnd { kDestroyed, kEvicted, kExpired };
+
+const char* tent_end_name(TentEnd end) {
+    switch (end) {
+        case TentEnd::kDestroyed: return "destroyed";
+        case TentEnd::kEvicted: return "evicted";
+        case TentEnd::kExpired: return "expired";
+    }
+    return "?";
+}
+
+GameServerGameplayConfig with_tent_group(
+    const GameServerGameplayConfig& base,
+    bool cleanup_runs_on_destroy) {
+    GameServerGameplayConfig config = base;
+    std::uint32_t group = 0;
+    for (const auto& candidate : config.entity_templates) {
+        if (candidate.name == "tent") {
+            group = candidate.prop.population_group_id;
+        }
+    }
+    require(group != 0u);
+    for (auto& rule : config.prop_population_rules) {
+        if (rule.definition.population_group_id == group) {
+            rule.definition.cleanup_runs_on_destroy =
+                cleanup_runs_on_destroy ? 1u : 0u;
+        }
+    }
+    return config;
+}
+
+struct Thrown {
+    float released_distance = 0.0f;  // from the tent's centre, as let out
+    float farthest = 0.0f;           // over the next second
+    float highest = 0.0f;
+};
+
+// An occupant in the tent at the origin, and the tent ended by `end`. Measures
+// where the occupant is let out and how far the next second carries it.
+Thrown occupant_when_tent_ends(
+    GameServerGameplayConfig config,
+    const std::vector<std::uint8_t>& scene,
+    std::uint16_t port,
+    TentEnd end) {
+    if (end == TentEnd::kExpired) {
+        for (auto& candidate : config.entity_templates) {
+            if (candidate.name == "tent") {
+                candidate.prop.lifetime_ticks = 20u;
+            }
+        }
+    }
+    KernelHandle* kernel = make_world(config, scene, port);
+    const std::uint32_t tent_template = entity_template_id_of(config, "tent");
+    const KernelVec3 origin{0.0f, 0.0f, 0.0f};
+    const std::uint32_t tent = create_entity(kernel, tent_template, origin, kPeer);
+    const std::uint32_t player =
+        spawn_player(kernel, config, kPeer, KernelVec3{1.8f, 0.0f, 0.0f});
+    step(kernel, 2);
+    require(of_type(enter(kernel, player, tent),
+                    KernelEventType_ShelterChanged).size() == 1u);
+
+    bool released = false;
+    const auto watch = [&](const std::vector<KernelEvent>& events) {
+        for (const KernelEvent& event : events) {
+            released = released ||
+                (event.type == KernelEventType_ShelterChanged &&
+                 event.net_id == player && event.code == 0u);
+        }
+    };
+    if (end == TentEnd::kDestroyed) {
+        require(Kernel_ServerDestroyEntity(
+            kernel, tent, KernelDespawnReason_Destroyed));
+        watch(step(kernel, 1));
+    } else if (end == TentEnd::kEvicted) {
+        for (int count = 1; count <= 16 && !released; ++count) {
+            create_entity(
+                kernel, tent_template,
+                KernelVec3{30.0f + 8.0f * static_cast<float>(count), 0.0f, 30.0f},
+                kPeer);
+            watch(step(kernel, 1));
+        }
+    } else {
+        for (int tick = 0; tick < 40 && !released; ++tick) {
+            watch(step(kernel, 1));
+        }
+    }
+    require(released);
+    Thrown thrown;
+    thrown.released_distance =
+        horizontal_distance(position_of(kernel, player), origin);
+    for (int tick = 0; tick < 30; ++tick) {
+        step(kernel, 1);
+        const KernelVec3 at = position_of(kernel, player);
+        thrown.farthest = std::max(thrown.farthest, horizontal_distance(at, origin));
+        thrown.highest = std::max(thrown.highest, at.y - origin.y);
+    }
+    Kernel_Destroy(kernel);
+    return thrown;
+}
+
+void collapse_throws_occupants_clear(
+    const GameServerGameplayConfig& base,
+    const std::vector<std::uint8_t>& scene) {
+    // The shipped catalog opts the tent group in.
+    const GameServerGameplayConfig opted_in = base;
+    const GameServerGameplayConfig opted_out = with_tent_group(base, false);
+    std::uint16_t port = 7988;
+    for (const TentEnd end :
+         {TentEnd::kDestroyed, TentEnd::kEvicted, TentEnd::kExpired}) {
+        const Thrown thrown = occupant_when_tent_ends(opted_in, scene, port++, end);
+        std::fprintf(
+            stderr,
+            "[k4]    %-9s let out at %.2f m, then farthest %.2f m, highest %.2f m\n",
+            tent_end_name(end), thrown.released_distance, thrown.farthest,
+            thrown.highest);
+        require(thrown.released_distance > kTentHalf + kCapsuleRadius);
+        require(thrown.farthest > thrown.released_distance + 1.0f);
+        require(thrown.highest > 0.3f);
+    }
+    // The control: with the group not opted in, cleanup skips the graph as it
+    // always has -- let out, and left standing there.
+    for (const TentEnd end : {TentEnd::kEvicted, TentEnd::kExpired}) {
+        const Thrown thrown =
+            occupant_when_tent_ends(opted_out, scene, port++, end);
+        std::fprintf(
+            stderr,
+            "[k4]    %-9s (control, not opted in) let out at %.2f m, then "
+            "farthest %.2f m, highest %.2f m\n",
+            tent_end_name(end), thrown.released_distance, thrown.farthest,
+            thrown.highest);
+        require(thrown.farthest < thrown.released_distance + 0.2f);
+        require(thrown.highest < 0.2f);
+    }
+
+    // A group that opts in may not spawn into any group from on_destroy: an
+    // eviction spawning the next tent could evict the next without end. The
+    // same graph is fine for a group that does not opt in.
+    const auto spawning_a_tent = [&](bool opt_in) {
+        GameServerGameplayConfig config = with_tent_group(base, opt_in);
+        for (auto& candidate : config.entity_templates) {
+            if (candidate.name == "tent") {
+                candidate.destroy_entity_trigger.action_graph_ref =
+                    "action_spawn_entity_at_destroy_entity";
+                candidate.destroy_entity_trigger.parameters = {
+                    {"template", "tent"},
+                    {"position", "event.position"},
+                    {"owner", "event.instigator"},
+                };
+            }
+        }
+        return config;
+    };
+    KernelConfig kernel_config{};
+    kernel_config.mode = KernelMode_DedicatedServer;
+    kernel_config.tick.server_tick_rate = 30;
+    kernel_config.tick.snapshot_rate = 30;
+    kernel_config.max_events = 256;
+    kernel_config.max_render_states = 64;
+    const auto loads = [&](const GameServerGameplayConfig& config) {
+        KernelHandle* kernel = Kernel_Create(&kernel_config);
+        require(kernel != nullptr);
+        bool loaded = false;
+        try {
+            loaded = network_example::game_server::load_kernel_gameplay_catalog(
+                kernel, config);
+        } catch (const std::exception& error) {
+            std::fprintf(stderr, "[k4]    refused: %s\n", error.what());
+        }
+        Kernel_Destroy(kernel);
+        return loaded;
+    };
+    require(!loads(spawning_a_tent(true)));
+    require(loads(spawning_a_tent(false)));
+}
+
+// ---------------------------------------------------------------------------
 // game_server: activating a building is the door, both ways.
 // ---------------------------------------------------------------------------
 
@@ -693,10 +875,15 @@ void game_server_runs_the_door(
         released.x, released.y, released.z);
     require(horizontal_distance(released, tent_at) > kTentHalf + kCapsuleRadius);
     require(released.x > kTentHalf);
-    // Free again: a second tent can be walked into.
+    // The tent's collapse blast then throws it clear; once it has landed it is
+    // free again, and a second tent can be walked into.
+    pump(step(kernel, 60));
+    const KernelVec3 landed = position_of(kernel, player);
+    require(horizontal_distance(landed, tent_at) >
+            horizontal_distance(released, tent_at) + 1.0f);
     const std::uint32_t second = create_entity(
         kernel, entity_template_id_of(config, "tent"),
-        KernelVec3{released.x + 1.8f, 0.0f, released.z}, kPeer);
+        KernelVec3{landed.x + 1.8f, 0.0f, landed.z}, kPeer);
     pump(step(kernel, 2));
     require(activate(4, player, second).status ==
             KernelGameplayRequestStatus_Committed);
@@ -718,6 +905,7 @@ int main() {
     refusals(config, scene);
     occupant_is_immune(config, scene);
     eviction_lets_occupants_out(config, scene);
+    collapse_throws_occupants_clear(config, scene);
     game_server_runs_the_door(config, scene);
     return 0;
 }

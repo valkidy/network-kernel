@@ -1,0 +1,17 @@
+# Throws one occupant clear of a tent folding away. A shove, not an attack:
+# no damage, no stagger.
+id: action_tent_collapse_at_target
+parameters:
+  target: null
+  # [horizontal, vertical] m/s, split for the reason action_shockwave_at_target
+  # gives: the blast's radial is level, so the lift has to be added outright.
+  strength: [8.0, 5.0]
+  direction: null
+actions:
+  - type: apply_impulse
+    target: params.target
+    strength: params.strength
+    direction: params.direction
+    collision_mask: actor
+    # 5.0 m/s against 9.81 is ~1 s up and down; landing releases it sooner.
+    lockout_ticks: 45

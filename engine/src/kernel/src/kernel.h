@@ -82,6 +82,10 @@ public:
     const World& simulation_world() const { return world_; }
     ItemStore& item_store() { return item_store_; }
     const ItemStore& item_store() const { return item_store_; }
+    const std::vector<KernelPropPopulationRuleDefinition>& prop_population_rules()
+        const {
+        return prop_population_rules_;
+    }
     void queue_prop_state_change(NetId net_id);
     // An actor was knocked back this tick. floor_y is where it stood when
     // struck; the rest of its anchor is read at the end of the tick.

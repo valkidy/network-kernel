@@ -197,11 +197,14 @@ bool expression_available_for_event(
         return event_type == TriggerEventType::kProjectileImpact ||
             event_type == TriggerEventType::kExpired;
     }
+    // A destroy reports away from whoever did it, or straight up when nobody
+    // did, so it always has a direction to give.
     return event_type == TriggerEventType::kActivated ||
         event_type == TriggerEventType::kItemUsed ||
         event_type == TriggerEventType::kCollision ||
         event_type == TriggerEventType::kProjectileImpact ||
-        event_type == TriggerEventType::kExpired;
+        event_type == TriggerEventType::kExpired ||
+        event_type == TriggerEventType::kDestroyEntity;
 }
 
 // Deliberately a switch rather than the cast this used to be. The two enums are

@@ -1,0 +1,24 @@
+# A tent folding away throws the people around it clear (D12): however it
+# goes -- shot down, run out, evicted by a newer one -- its occupants are let
+# out first and then this goes off where it stood.
+#
+# player_side only: it is the occupants it is for. One hit per blast, as in
+# shockwave_blast: the lifetime equals the interval. No damage: an area effect
+# with a graph binding submits none of its own, and this graph applies none.
+id: 27
+name: tent_collapse_blast
+kind: area_effect
+collider_template: tent_collapse_sphere
+damage: 1
+lifetime_ticks: 30
+damage_behavior:
+  type: area_interval
+  damage_interval_ticks: 30
+  falloff: none
+collision_mask: player_side
+triggers:
+  on_projectile_impact:
+    action_graph: action_tent_collapse_at_target
+    parameters:
+      target: event.target
+      direction: event.direction

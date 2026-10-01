@@ -3043,7 +3043,7 @@ bool KernelEngine::load_gameplay_catalog(
         if (rule.struct_size <
                 sizeof(KernelPropPopulationRuleDefinition) ||
             rule.population_group_id == 0u || rule.max_alive == 0u ||
-            rule.max_alive > 256u ||
+            rule.max_alive > 256u || rule.cleanup_runs_on_destroy > 1u ||
             std::any_of(
                 validated_prop_population_rules.begin(),
                 validated_prop_population_rules.end(),
@@ -3481,15 +3481,57 @@ bool KernelEngine::load_gameplay_catalog(
                      .throw_trajectory_projectile_template_id != 0u)) {
                 return false;
             }
+            const auto population_rule = std::find_if(
+                validated_prop_population_rules.begin(),
+                validated_prop_population_rules.end(),
+                [&](const KernelPropPopulationRuleDefinition& rule) {
+                    return rule.population_group_id ==
+                        entity_template.prop.population_group_id;
+                });
             if (entity_template.prop.population_group_id != 0u &&
-                std::none_of(
-                    validated_prop_population_rules.begin(),
-                    validated_prop_population_rules.end(),
-                    [&](const KernelPropPopulationRuleDefinition& rule) {
-                        return rule.population_group_id ==
-                            entity_template.prop.population_group_id;
-                    })) {
+                population_rule == validated_prop_population_rules.end()) {
                 return false;
+            }
+            // Cleanup that runs on_destroy must not spawn into any population
+            // group: an eviction whose graph spawns a member could evict the
+            // next one, whose graph spawns another, without end.
+            if (population_rule != validated_prop_population_rules.end() &&
+                population_rule->cleanup_runs_on_destroy != 0u) {
+                const KernelActionTriggerDefinition& on_destroy =
+                    entity_template.destroy_entity_trigger;
+                const std::uint32_t action_count = on_destroy.action_count == 0u
+                    ? (on_destroy.action_type ==
+                               KernelEntityTriggerActionType_None
+                           ? 0u
+                           : 1u)
+                    : std::min<std::uint32_t>(
+                          on_destroy.action_count,
+                          KERNEL_MAX_ACTION_GRAPH_ACTIONS);
+                for (std::uint32_t action_index = 0;
+                     action_index < action_count;
+                     ++action_index) {
+                    const bool legacy = on_destroy.action_count == 0u;
+                    const std::uint8_t action_type = legacy
+                        ? on_destroy.action_type
+                        : on_destroy.actions[action_index].action_type;
+                    const std::uint32_t spawned = legacy
+                        ? on_destroy.spawn_entity_template_id
+                        : on_destroy.actions[action_index]
+                              .spawn_entity_template_id;
+                    if (action_type != KernelEntityTriggerActionType_SpawnEntity) {
+                        continue;
+                    }
+                    for (std::uint32_t candidate = 0;
+                         candidate < catalog.entity_template_count;
+                         ++candidate) {
+                        const KernelEntityTemplateDefinition& target =
+                            catalog.entity_templates[candidate];
+                        if (target.entity_template_id == spawned &&
+                            target.prop.population_group_id != 0u) {
+                            return false;
+                        }
+                    }
+                }
             }
         }
         validated_entity_templates.push_back(entity_template);

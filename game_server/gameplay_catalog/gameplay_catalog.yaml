@@ -8,6 +8,9 @@ prop_population_rules:
   - id: 2
     name: tent
     max_alive: 4
+    # A tent folding away throws its occupants clear however it goes, so its
+    # on_destroy_entity runs on expiry and eviction too.
+    cleanup_runs_on_destroy: true
 action_template_dir: action_templates
 action_graph_template_dir: action_graph_templates
 status_effect_template_dir: status_effect_templates

@@ -1,6 +1,6 @@
 # 帳篷建築（Tent）實作計劃書
 
-狀態：**設計已定案。K1、K2、K3 與 game_server 的進出流程已實作（見 §3.10）；K4–K6 未做。**
+狀態：**設計已定案。K1–K4 與 game_server 的進出流程已實作（見 §3.10）；K5、K6 未做。**
 分支：`claude/tent-building`，2026-10-01 rebase 到 `claude/apply-pull`（a7da594）之上，
 所以必須在 apply-pull 之後 merge。ABI 接著 apply-pull 的 95 升到 96。
 最後更新：2026-10-01（第五輪 review：進出沿用既有流程、視野隱藏做成 YAML 選項、進入前提、住客上限 4）。
@@ -398,7 +398,30 @@ collider 32、entity 214、item 3010。帳篷改用下一個空號：`tent_hitbo
 **實作中發現：退出點在互動距離之外。** 退出點離中心 2.30 m，原本的互動距離是 2.0。已依使用者
 決定把互動距離調為 2.5（D14），從退出點可以直接再進去。
 
-**還沒做：** K4–K6、G3 的 YAML 選項，以及 `shelter.capacity` 的 YAML 欄位（目前固定是常數）。
+**K4：清除類消失也執行 on_destroy，帳篷收起時把人彈開（D12）。**
+- `KernelPropPopulationRuleDefinition` 增加 `cleanup_runs_on_destroy`（併入 ABI 96，因為
+  96 還沒發佈過）。YAML：`prop_population_rules` 的 `cleanup_runs_on_destroy: true`。
+  帳篷的 group 已開啟。
+- `update_prop_lifetimes`（Expired）與 `enforce_prop_population_limit`（CapacityEvicted）
+  依所屬 group 的設定決定是否執行 graph；沒有 group 或沒開啟的照舊跳過。
+- 連鎖防護：開啟的 group，其成員的 `on_destroy_entity` 不可 `spawn_entity` 任何屬於
+  population group 的 entity。catalog loader 會報錯並指出名稱，kernel 的 catalog validator
+  也會拒絕。
+- **實作中發現並修正：清除類消失的 graph 原本什麼都做不了。** graph 在實體移除之後才執行，
+  所以 `self` 不存在；清除類消失沒有 instigator，`event.direction` 是零向量，
+  `spawn_projectile` 會被 preflight 拒絕。使用者決定：沒有 instigator 時 destroy 事件的方向
+  改為正上方 (0, 1, 0)，並開放 `on_destroy_entity` 使用 `event.direction`（loader 與 kernel
+  兩邊）。目前唯一用到 on_destroy 的既有 template 是測試用的 `activation_damage_prop`，不受影響。
+- 帳篷內容：`on_destroy_entity` → `action_spawn_projectile_at_destroy_entity` 生成
+  `tent_collapse_blast`。這是 area effect，半徑 3 m，`player_side`，命中時
+  `action_tent_collapse_at_target` 施加 split impulse [8, 5]，lockout 45，不造成傷害。
+- 測試 `collapse_throws_occupants_clear`：
+  - destroyed / evicted / expired 三種消失方式，住客都先在 2.30 m 處被放出來，
+    之後最遠到 10.29 m、最高 1.19 m。
+  - 對照組（group 未開啟）：evicted / expired 都只放出來、不移動。
+  - 開啟的 group 若 graph 會生成 tent，載入被拒；未開啟則可以載入。
+
+**還沒做：** K5、K6、G3 的 YAML 選項，以及 `shelter.capacity` 的 YAML 欄位（目前固定是常數）。
 
 ---
 

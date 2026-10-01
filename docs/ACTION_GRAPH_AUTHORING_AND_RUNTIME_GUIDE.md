@@ -111,7 +111,7 @@ schema 的欄位會在載入階段被拒絕。
 | `on_activated` | `subject`, `instigator`, `target`, `position`, `direction` | 啟動機關、互動 prop |
 | `on_collision` | `subject`, `target`, `position`, `direction` | 碰撞傷害、陷阱 |
 | `on_health_depleted` | `subject`, `instigator`, `position` | 死亡前反應、反傷 |
-| `on_destroy_entity` | `subject`, `instigator`, `position` | 銷毀時生成 entity |
+| `on_destroy_entity` | `subject`, `instigator`, `position`, `direction` | 銷毀時生成 entity 或 projectile |
 | `on_projectile_impact` | `subject`, `instigator`, `target`, `position`, `direction`, `subject_direction` | 命中後生成爆炸物 |
 | `on_expired` | `subject`, `instigator`, `position`, `direction`, `subject_direction` | projectile 到期後生成效果 |
 | `on_apply` | `subject`, `instigator`, `target` | status 建立或 stack apply |
@@ -132,6 +132,15 @@ schema 的欄位會在載入階段被拒絕。
   載入時報錯。要延遲 N ticks 再觸發，請用 `speed: 0` 的 marker（見
   `WEAPON_AUTHORING_GUIDE.md`）。靜止的 projectile 回報的 `event.direction` 是
   它生成時的朝向。
+- `on_destroy_entity` 的 `event.direction` 是由 instigator 指向被銷毀者的方向；沒有
+  instigator 時（存在時間到、被數量上限擠掉、伺服器直接移除）是正上方 (0, 1, 0)，
+  永遠不是零向量，所以 `spawn_projectile` 一定能用。graph 在實體移除**之後**才執行：
+  `self` 已不存在，不能當 `spawn_entity` 的 owner；沒有 instigator 時
+  `event.instigator` 也是空的。
+- 存在時間到（Expired）與被數量上限擠掉（CapacityEvicted）預設**不**執行
+  `on_destroy_entity`。population group 寫 `cleanup_runs_on_destroy: true` 才會執行；
+  此時該 group 成員的 `on_destroy_entity` 不可 `spawn_entity` 任何屬於 population
+  group 的 entity（避免擠掉一個、生成一個的無限循環），載入時會被拒絕。
 - `on_collision` 不提供 `event.instigator`；需要歸屬資訊的 collision 行為應由
   產生事件的 gameplay system 明確建模，而不是假設 target 是 instigator。
 - Runtime binding validator 會再次執行同一套 schema 驗證，防止無效 ABI input。

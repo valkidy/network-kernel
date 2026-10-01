@@ -1,0 +1,10 @@
+# The reach of a tent folding away: past the ring leaving sets occupants down
+# on (2.3 m from the centre), so everyone it just let out is caught.
+id: 34
+name: tent_collapse_sphere
+shape: sphere
+center: {x: 0.0, y: 0.0, z: 0.0}
+half_extents: {x: 3.0, y: 3.0, z: 3.0}
+radius: 3.0
+purpose: damage
+layer: area_effect

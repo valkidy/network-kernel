@@ -16,6 +16,8 @@
  *     KernelLocalActionResultReason gained _Sheltered. The shelter command,
  *     Kernel_ServerEnqueueEntityShelter, is game_server's internal bridge
  *     (kernel_api_internal.h), not a managed export.
+ *     KernelPropPopulationRuleDefinition gained cleanup_runs_on_destroy,
+ *     appended; its struct_size grows, so a mirror sized to 95 is refused.
  * 95: apply_pull. KernelEntityTriggerActionType gained _ApplyPull and
  *     KernelEventVec3Source gained _SubjectPosition, where the event's subject
  *     was when it happened (an area effect's centre, a projectile's impact
@@ -1008,6 +1010,13 @@ typedef struct KernelPropPopulationRuleDefinition {
     uint32_t struct_size;
     uint32_t population_group_id;
     uint32_t max_alive;
+    /* 0 or 1. Whether this group's members run their on_destroy_entity graph
+     * when cleanup removes them -- lifetime expiry and eviction past max_alive
+     * -- as they do when destroyed. 0, the default, skips it, which is what
+     * every group did before. A group that sets it may not have a member whose
+     * on_destroy_entity spawns a member of any population group, or one
+     * eviction could spawn the next without end. */
+    uint32_t cleanup_runs_on_destroy;
 } KernelPropPopulationRuleDefinition;
 
 typedef struct KernelPropDefinition {

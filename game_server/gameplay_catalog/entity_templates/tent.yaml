@@ -30,3 +30,11 @@ triggers:
     action_graph: action_open_rest_ui
     parameters:
       target: event.instigator
+  # However it goes. Its occupants are already out when this runs, and the
+  # tent group's cleanup_runs_on_destroy makes expiry and eviction run it too.
+  on_destroy_entity:
+    action_graph: action_spawn_projectile_at_destroy_entity
+    parameters:
+      template: tent_collapse_blast
+      position: event.position
+      direction: event.direction
