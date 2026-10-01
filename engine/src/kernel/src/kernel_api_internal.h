@@ -162,7 +162,8 @@ bool Kernel_ServerEnqueueEntityState(
  *
  * Entering is refused, and nothing changes, unless the actor is a live actor
  * with movement, outside every building and not in a knockback, and the
- * building is a prop with fewer than KERNEL_SHELTER_CAPACITY actors in it.
+ * building is a prop with room: fewer actors in it than its template's
+ * shelter_capacity, KERNEL_SHELTER_CAPACITY when that is 0.
  * Each change that happens emits KernelEventType_ShelterChanged.
  *
  * A building that is destroyed, for any reason, lets everyone out the same way

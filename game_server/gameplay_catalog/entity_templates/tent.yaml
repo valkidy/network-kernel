@@ -18,6 +18,13 @@ health:
   max_hp: 600
 physics:
   collider_template: tent_hitbox
+# Going inside. Hidden from enemies, as a building that draws no threat
+# should keep its occupants (D20); flip hide_occupants_from_vision to false to
+# playtest the alternative, where enemies keep the occupants in sight and crowd
+# the tent.
+shelter:
+  capacity: 4
+  hide_occupants_from_vision: true
 interaction:
   capabilities: [interactable]
   # Long enough to reach from where leaving sets an occupant down (2.3 m from

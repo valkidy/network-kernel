@@ -788,6 +788,141 @@ void collapse_throws_occupants_clear(
 }
 
 // ---------------------------------------------------------------------------
+// G3: a building can hide its occupants from enemy vision (shelter:
+// hide_occupants_from_vision), and say how many it holds (shelter: capacity).
+// ---------------------------------------------------------------------------
+
+GameServerGameplayConfig with_tent_shelter(
+    const GameServerGameplayConfig& base,
+    std::uint32_t capacity,
+    bool hides) {
+    GameServerGameplayConfig config = base;
+    for (auto& candidate : config.entity_templates) {
+        if (candidate.name == "tent") {
+            candidate.shelter_capacity = capacity;
+            candidate.shelter_hides_occupants = hides ? 1u : 0u;
+        }
+    }
+    return config;
+}
+
+struct Sighting {
+    bool outside = false;
+    bool inside = false;
+    bool after = false;
+};
+
+bool sees(KernelHandle* kernel, std::uint32_t agent, std::uint32_t target) {
+    KernelVisionStateQuery query{};
+    query.struct_size = sizeof(query);
+    query.agent_net_id = agent;
+    KernelVisionStateView view{};
+    view.struct_size = sizeof(view);
+    require(Kernel_QueryVisionState(kernel, &query, &view, 1u) == 1u);
+    for (std::uint32_t index = 0; index < view.visible_hostile_count; ++index) {
+        if (view.visible_hostiles[index] == target) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// A beam sentry looks at the tent at the origin; a player stands by it, goes
+// in, and comes out.
+Sighting sentry_watching_the_tent(
+    const GameServerGameplayConfig& config,
+    const std::vector<std::uint8_t>& scene,
+    std::uint16_t port) {
+    const auto sentry_template = std::find_if(
+        config.entity_templates.begin(),
+        config.entity_templates.end(),
+        [](const auto& candidate) { return candidate.name == "beam_sentry"; });
+    require(sentry_template != config.entity_templates.end());
+    const auto player_template = std::find_if(
+        config.actor_templates.begin(),
+        config.actor_templates.end(),
+        [&](const auto& candidate) {
+            return candidate.actor_template_id == config.player.actor_template_id;
+        });
+    require(player_template != config.actor_templates.end());
+    KernelVec3 forward = sentry_template->vision.local_forward;
+    if (forward.x == 0.0f && forward.y == 0.0f && forward.z == 0.0f) {
+        forward = KernelVec3{1.0f, 0.0f, 0.0f};
+    }
+
+    KernelHandle* kernel = make_world(config, scene, port);
+    const KernelVec3 tent_at{0.0f, 0.0f, 0.0f};
+    const std::uint32_t tent = create_entity(
+        kernel, entity_template_id_of(config, "tent"), tent_at, kPeer);
+    // Ten metres back along its own forward, so the tent is straight ahead.
+    const std::uint32_t sentry = create_entity(
+        kernel, sentry_template->actor_template_id,
+        KernelVec3{-10.0f * forward.x, 0.0f, -10.0f * forward.z});
+    require(Kernel_ServerSetEntityVisionConfig(
+        kernel, sentry, &sentry_template->vision));
+    // The player beside the tent, on the sentry's side of it.
+    const std::uint32_t player = spawn_player(
+        kernel, config, kPeer,
+        KernelVec3{-2.0f * forward.x, 0.0f, -2.0f * forward.z});
+    require(Kernel_ServerSetEntityVisionConfig(
+        kernel, player, &player_template->vision));
+    step(kernel, 3);
+
+    Sighting sighting;
+    sighting.outside = sees(kernel, sentry, player);
+    require(of_type(enter(kernel, player, tent),
+                    KernelEventType_ShelterChanged).size() == 1u);
+    step(kernel, 2);
+    sighting.inside = sees(kernel, sentry, player);
+    require(of_type(enter(kernel, player, 0u),
+                    KernelEventType_ShelterChanged).size() == 1u);
+    step(kernel, 2);
+    sighting.after = sees(kernel, sentry, player);
+    Kernel_Destroy(kernel);
+    return sighting;
+}
+
+void shelter_block_from_yaml(
+    const GameServerGameplayConfig& base,
+    const std::vector<std::uint8_t>& scene) {
+    // The shipped tent hides its occupants.
+    const Sighting hidden = sentry_watching_the_tent(base, scene, 7993);
+    // The control: the same tent with the option off.
+    const Sighting seen = sentry_watching_the_tent(
+        with_tent_shelter(base, 4u, false), scene, 7994);
+    std::fprintf(
+        stderr,
+        "[g3]    sentry sees the player -- hiding tent: outside %d, inside %d, "
+        "after %d; plain tent: outside %d, inside %d, after %d\n",
+        hidden.outside, hidden.inside, hidden.after,
+        seen.outside, seen.inside, seen.after);
+    require(hidden.outside && !hidden.inside && hidden.after);
+    require(seen.outside && seen.inside && seen.after);
+
+    // Capacity, from the template: two fit in a tent authored for two.
+    KernelHandle* kernel =
+        make_world(with_tent_shelter(base, 2u, true), scene, 7995);
+    const std::uint32_t tent = create_entity(
+        kernel, entity_template_id_of(base, "tent"), KernelVec3{}, kPeer);
+    std::vector<std::uint32_t> players;
+    for (std::uint32_t index = 0; index < 3u; ++index) {
+        players.push_back(spawn_player(
+            kernel, base, 30u + index,
+            KernelVec3{4.0f, 0.0f, 2.0f * static_cast<float>(index)}));
+    }
+    step(kernel, 3);
+    for (const std::uint32_t player : players) {
+        require(Kernel_ServerEnqueueEntityShelter(
+            kernel, KernelCommandSource_Test, player, tent));
+    }
+    const std::size_t entered =
+        of_type(step(kernel, 1), KernelEventType_ShelterChanged).size();
+    std::fprintf(stderr, "[g3]    capacity 2: %zu of 3 went in\n", entered);
+    require(entered == 2u);
+    Kernel_Destroy(kernel);
+}
+
+// ---------------------------------------------------------------------------
 // game_server: activating a building is the door, both ways.
 // ---------------------------------------------------------------------------
 
@@ -906,6 +1041,7 @@ int main() {
     occupant_is_immune(config, scene);
     eviction_lets_occupants_out(config, scene);
     collapse_throws_occupants_clear(config, scene);
+    shelter_block_from_yaml(config, scene);
     game_server_runs_the_door(config, scene);
     return 0;
 }

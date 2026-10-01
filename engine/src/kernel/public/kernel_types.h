@@ -11,6 +11,8 @@
  *     trigger definition, so every managed mirror of those shifts.
  *     KernelEvent gained related_net_id, appended into what was tail padding,
  *     so sizeof(KernelEvent) is unchanged but a mirror must still name it.
+ *     KernelEntityTemplateDefinition gained shelter_capacity and
+ *     shelter_hides_occupants, appended after knockdown_recovery_ticks.
  *     KernelActionDefinition also gained spawn_placement (a
  *     KERNEL_SPAWN_PLACEMENT_*), appended after ui_id, read only by
  *     spawn_entity.
@@ -843,6 +845,9 @@ typedef enum KernelActionConditionType {
 
 /* How many actors one building holds at once. */
 #define KERNEL_SHELTER_CAPACITY KERNEL_SQUAD_SIZE
+
+/* Ceiling on an authored shelter_capacity. */
+#define KERNEL_MAX_SHELTER_CAPACITY 64u
 
 /* How apply_impulse reads impulse_strength / impulse_strength_vertical.
  * RADIAL: the historical single-scalar form, delta = normalize(dir) * strength.
@@ -2443,6 +2448,14 @@ struct KernelEntityTemplateDefinition {
     /* Ticks a knockback that lands keeps the actor down: rooted, and refusing
      * new actions, from the landing. Zero releases on landing. */
     uint32_t knockdown_recovery_ticks;
+    /* A building's shelter (Kernel_ServerEnqueueEntityShelter); props only,
+     * zero on everything else. How many actors it holds at once: 0 means
+     * KERNEL_SHELTER_CAPACITY, otherwise at most KERNEL_MAX_SHELTER_CAPACITY. */
+    uint32_t shelter_capacity;
+    /* 0 or 1. Whether its occupants drop out of every agent's vision while
+     * inside: nothing sees, chases or aims at them, though an agent keeps its
+     * last sighting and may still come looking. */
+    uint32_t shelter_hides_occupants;
 };
 
 typedef struct KernelEvent {

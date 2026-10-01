@@ -154,6 +154,12 @@ _Static_assert(
         KERNEL_SPAWN_PLACEMENT_EXACT == 0u && KERNEL_SPAWN_PLACEMENT_CLEAR == 1u,
     "spawn_placement is appended after ui_id; exact is the zero default");
 _Static_assert(
+    offsetof(KernelEntityTemplateDefinition, shelter_capacity) >
+            offsetof(KernelEntityTemplateDefinition, knockdown_recovery_ticks) &&
+        offsetof(KernelEntityTemplateDefinition, shelter_hides_occupants) >
+            offsetof(KernelEntityTemplateDefinition, shelter_capacity),
+    "the shelter fields are appended to the entity template in ABI 96");
+_Static_assert(
     offsetof(KernelActionDefinition, spawn_lifetime_ticks) >
         offsetof(KernelActionDefinition, damage_stagger),
     "spawn lifetime and repeat are appended to KernelActionDefinition");

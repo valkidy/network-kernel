@@ -240,9 +240,9 @@ macOS 的 export 清單在 BUILD.bazel、Windows 在 .def，兩邊都要加。
 |---|---|---|
 | G1 | **誰觸發進入。** `open_ui` 發事件 → game_server 呼叫 K2，會多一個 tick 的延遲 | **定案（D30）**：維持既有流程，不讓 kernel 在 `open_ui` 裡直接切換。進入與再按一次的退出都由 game_server 呼叫 K2。因為事件到 K2 之間隔了一個 tick，玩家狀態可能已經改變（例如死亡、被擊退），**K2 必須在 kernel 內重新驗證 D32 的前提條件與 D33 的上限**，不依賴 game_server 收到事件時的判斷。建築消失時的住客釋放（K3）仍在 kernel 的銷毀路徑內，這是順序上的硬性要求，不是另開流程 |
 | G2 | **斷線。** 斷線時伺服器直接 `world_.destroy` 玩家實體（`kernel.cc:6443`），**不經過** `destroy_entity_with_context`，任何 lifecycle 掛勾都不會跑 | D27：入住狀態只放在玩家身上，建築的住客用查詢取得。玩家實體消失時狀態跟著消失，不會在建築上留下過期的名單。重新連線是新實體，沒有入住狀態 |
-| G3 | **住客仍是 AI 的目標。** 住客的位置在建築中心，敵人照樣追過來、照樣打建築，和 D20「建築不吸引威脅」矛盾 | **定案（D31）**：做成 YAML 選項，見下方「G3 的可行性」 |
+| G3 | **住客仍是 AI 的目標。** 住客的位置在建築中心，敵人照樣追過來、照樣打建築，和 D20「建築不吸引威脅」矛盾 | **定案（D31），已實作**：`shelter.hide_occupants_from_vision`，見 §3.10 |
 | G4 | **進入的前提條件** | **定案（D32）**：未死亡、不在任何建築內、不在擊退中；搬著的 prop 先放下；進行中的動作取消 |
-| G5 | **每個建築的住客上限** | **定案（D33）**：4。見下方「G5 的常數」 |
+| G5 | **每個建築的住客上限** | **定案（D33），已實作**：預設 4，可由 `shelter.capacity` 覆寫，見 §3.10 |
 | G6 | **找不到空的出口點。** 帳篷四周都被擋住時怎麼辦 | 建議：進入時記錄入口位置，找不到出口時用入口位置當備案 |
 | G7 | **持續性 status。** 傷害類的 status 走傷害管線，會被無敵擋下；減速等效果照常跑，不影響入住 | 不需處理 |
 | G8 | **伺服器把玩家換 template（`set_actor_template`，復活或換角色時用）** | K2 強制退出後再換 |
@@ -481,8 +481,29 @@ collider 32、entity 214、item 3010。帳篷改用下一個空號：`tent_hitbo
   位置到帳篷位置自行推算反彈動畫（§3.8）。
 - §9-4（撞到側面半嵌入）已解決；平地的 0.6 m 偏差未處理（需要「停止位置」事件來源，不在範圍內）。
 
-**還沒做：** G3 的 YAML 選項（住客不出現在敵人的視野候選中），以及 `shelter.capacity` 的
-YAML 欄位（目前固定是常數）。
+**G3 與 G5 的 YAML：建築 template 的 `shelter:` 區塊。**
+- YAML（只能寫在 prop 上）：
+
+  ```yaml
+  shelter:
+    capacity: 4                        # 1..KERNEL_MAX_SHELTER_CAPACITY（64）；省略時為 KERNEL_SHELTER_CAPACITY（4）
+    hide_occupants_from_vision: true   # 住客不出現在任何敵人的視野候選中
+  ```
+- ABI：`KernelEntityTemplateDefinition` 新增 `shelter_capacity`、`shelter_hides_occupants`
+  （接在 `knockdown_recovery_ticks` 後面，併入 ABI 96）。kernel 的 catalog validator
+  也會檢查範圍，並拒絕非 prop 寫這兩個欄位。
+- 進入建築時的人數上限改為讀建築 template 的 `shelter_capacity`。
+- 視野：`update_vision_states` 每次更新時，先收集所在建築開啟 `shelter_hides_occupants`
+  的住客，候選者迴圈直接跳過他們，跳過方式和死亡的玩家相同。敵人保留最後一次看到的目標與
+  位置，所以可能還會走過來找。
+- 帳篷已設為 `capacity: 4`、`hide_occupants_from_vision: true`。實際遊玩時把後者改成 false
+  就能比較兩種做法。
+- 測試 `shelter_block_from_yaml`：
+  - beam sentry 面向帳篷。會隱藏的帳篷：外面看得到、在裡面看不到、出來後又看得到。
+  - 對照組（同一頂帳篷關掉選項）：三個時間點都看得到。
+  - template 設 capacity 2 時，3 人中只進 2 人。
+
+**目前沒有剩下的實作項目。** 待實測：真正的兩個 process（Unity client）。
 
 ---
 

@@ -342,6 +342,8 @@ void hash_actor_template(
     hash_scalar(hash, actor_template.stagger.duration_ticks);
     hash_scalar(hash, actor_template.stagger.immunity_ticks);
     hash_scalar(hash, actor_template.knockdown_recovery_ticks);
+    hash_scalar(hash, actor_template.shelter_capacity);
+    hash_scalar(hash, actor_template.shelter_hides_occupants);
     hash_scalar(hash, actor_template.death_policy);
     hash_scalar(hash, actor_template.movement_collision_mask);
     hash_scalar(hash, actor_template.weapon_slot_count);
@@ -4601,6 +4603,7 @@ EntityTemplateConfig entity_template_from_yaml(
                 "throw",
                 "carry_offset",
                 "lifecycle",
+                "shelter",
                 "triggers",
                 "spawner",
             },
@@ -4691,6 +4694,35 @@ EntityTemplateConfig entity_template_from_yaml(
                     prop_population_group_id_from_ref(
                         node["lifecycle"]["population_group"],
                         prop_population_rules);
+            }
+        }
+        // What going inside this building means: how many it holds, and
+        // whether enemies stop seeing the people in it.
+        if (node["shelter"]) {
+            reject_unknown_keys(
+                node["shelter"],
+                {"capacity", "hide_occupants_from_vision"},
+                path,
+                source_kind,
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+                entity_template.actor_template_id);
+            if (node["shelter"]["capacity"]) {
+                entity_template.shelter_capacity =
+                    node["shelter"]["capacity"].as<std::uint32_t>();
+                if (entity_template.shelter_capacity == 0u ||
+                    entity_template.shelter_capacity >
+                        KERNEL_MAX_SHELTER_CAPACITY) {
+                    throw std::runtime_error(
+                        "shelter capacity must be between 1 and " +
+                        std::to_string(KERNEL_MAX_SHELTER_CAPACITY) + ": " +
+                        path);
+                }
+            }
+            if (node["shelter"]["hide_occupants_from_vision"]) {
+                entity_template.shelter_hides_occupants =
+                    node["shelter"]["hide_occupants_from_vision"].as<bool>()
+                    ? 1u
+                    : 0u;
             }
         }
         if (node["interaction"]) {
@@ -9501,6 +9533,9 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
             authored_template.stagger.immunity_ticks;
         entity_template.knockdown_recovery_ticks =
             authored_template.knockdown_recovery_ticks;
+        entity_template.shelter_capacity = authored_template.shelter_capacity;
+        entity_template.shelter_hides_occupants =
+            authored_template.shelter_hides_occupants;
         entity_template.death_policy = authored_template.death_policy;
         entity_template.activated_trigger = compile_action_trigger_binding(
             authored_template.activated_trigger,

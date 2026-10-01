@@ -3100,6 +3100,11 @@ bool KernelEngine::load_gameplay_catalog(
             !stagger_profile_is_authorable(entity_template) ||
             entity_template.knockdown_recovery_ticks >
                 KERNEL_MAX_KNOCKDOWN_RECOVERY_TICKS ||
+            entity_template.shelter_capacity > KERNEL_MAX_SHELTER_CAPACITY ||
+            entity_template.shelter_hides_occupants > 1u ||
+            (entity_template.entity_type != KernelEntityType_Prop &&
+             (entity_template.shelter_capacity != 0u ||
+              entity_template.shelter_hides_occupants != 0u)) ||
             entity_template.death_policy > KernelDeathPolicy_Dormant) {
             return false;
         }
@@ -12642,6 +12647,29 @@ void KernelEngine::update_vision_states(float delta_seconds) {
         vision_states_.erase(stale_net_id);
     }
 
+    // Occupants of a building that hides them (shelter_hides_occupants) are
+    // nobody's candidate while inside, the way a dormant corpse is not.
+    std::unordered_set<NetId> hidden_occupants;
+    for (const auto [occupant, identity, sheltered] :
+         world_.registry().view<NetworkIdentity, Sheltered>().each()) {
+        (void)occupant;
+        const std::optional<entt::entity> building =
+            world_.find_entity(sheltered.shelter_net_id);
+        if (!building.has_value() ||
+            !world_.registry().all_of<EntityTemplateRef>(*building)) {
+            continue;
+        }
+        const KernelEntityTemplateDefinition* building_template =
+            find_entity_template(
+                entity_templates_,
+                world_.registry().get<EntityTemplateRef>(*building)
+                    .entity_template_id);
+        if (building_template != nullptr &&
+            building_template->shelter_hides_occupants != 0u) {
+            hidden_occupants.insert(identity.net_id);
+        }
+    }
+
     for (const NetId agent_net_id : active_agents) {
         const auto config_iter = vision_configs_.find(agent_net_id);
         const std::optional<entt::entity> agent_entity =
@@ -12712,6 +12740,9 @@ void KernelEngine::update_vision_states(float delta_seconds) {
             }
             const KernelAgentVisionConfig& candidate_config =
                 candidate_config_iter->second;
+            if (hidden_occupants.contains(candidate_identity.net_id)) {
+                continue;
+            }
             // A dormant corpse keeps its vision config but is nothing to chase,
             // aim at or count as an ally.
             if (const Health* candidate_health =

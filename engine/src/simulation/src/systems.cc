@@ -3044,6 +3044,17 @@ bool EntityStateSystem::set_shelter(
         registry.get<EntityKind>(*shelter).type != EntityType::kProp) {
         return false;
     }
+    std::uint32_t capacity = KERNEL_SHELTER_CAPACITY;
+    if (registry.all_of<EntityTemplateRef>(*shelter)) {
+        const KernelEntityTemplateDefinition* building_template =
+            find_entity_template(
+                engine.entity_templates_,
+                registry.get<EntityTemplateRef>(*shelter).entity_template_id);
+        if (building_template != nullptr &&
+            building_template->shelter_capacity != 0u) {
+            capacity = building_template->shelter_capacity;
+        }
+    }
     std::uint32_t occupants = 0u;
     for (const auto [occupant, sheltered] : registry.view<Sheltered>().each()) {
         (void)occupant;
@@ -3051,7 +3062,7 @@ bool EntityStateSystem::set_shelter(
             ++occupants;
         }
     }
-    if (occupants >= KERNEL_SHELTER_CAPACITY) {
+    if (occupants >= capacity) {
         return false;
     }
 
