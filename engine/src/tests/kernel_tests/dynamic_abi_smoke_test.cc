@@ -525,6 +525,10 @@ int main() {
     KernelAbiInfo abi_info{};
     require(kernel_get_abi_info(&abi_info, sizeof(abi_info)));
     assert(abi_info.abi_version == KERNEL_ABI_VERSION);
+    static_assert(
+        (KERNEL_CAPABILITY_LOCAL_SHELTER_STATE & KERNEL_CAPABILITY_LOG_CAPTURE) == 0,
+        "Shelter state and log capture must use distinct capability bits.");
+    require((abi_info.capability_flags & KERNEL_CAPABILITY_LOCAL_SHELTER_STATE) != 0);
     require((abi_info.capability_flags & KERNEL_CAPABILITY_LOG_CAPTURE) != 0);
     {
         // A null buffer copies nothing but still starts capture.
