@@ -377,6 +377,25 @@ namespace NetworkExample.Kernel
             return KernelNative.Kernel_GetLocalWeaponState(handle, ref state);
         }
 
+        /// <summary>
+        /// The building the local player is inside; see
+        /// <see cref="KernelLocalShelterState"/>. False when there is no local
+        /// player (a dedicated server has none) and on a client until an owner
+        /// snapshot has arrived. Outside every building is a true return with
+        /// <c>shelter_net_id</c> 0. Open the interface for <c>ui_id</c> when
+        /// <c>shelter_net_id</c> turns non-zero, close it when it turns 0.
+        /// Requires <see cref="KernelConstants.CapabilityLocalShelterState"/>.
+        /// </summary>
+        public bool TryGetLocalShelterState(out KernelLocalShelterState state)
+        {
+            ThrowIfDisposed();
+            state = new KernelLocalShelterState
+            {
+                struct_size = KernelLocalShelterState.StructSize,
+            };
+            return KernelNative.Kernel_GetLocalShelterState(handle, ref state);
+        }
+
         public uint GetRenderStates(RenderEntityState[] states)
         {
             ThrowIfDisposed();

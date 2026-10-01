@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 94;
+        public const uint AbiVersion = 96;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int LogMessageTextSize = 512;
@@ -34,6 +34,17 @@ namespace NetworkExample.Kernel
         public const uint MaxKnockdownRecoveryTicks = 300U;
         public const uint ImpulseStrengthModeRadial = 0U;
         public const uint ImpulseStrengthModeSplit = 1U;
+        // apply_pull's pull_mode (ABI 95).
+        public const uint PullModeToPoint = 0U;
+        public const uint PullModeAlong = 1U;
+        // spawn_entity's spawn_placement (ABI 96).
+        public const uint SpawnPlacementExact = 0U;
+        public const uint SpawnPlacementClear = 1U;
+        // Buildings (ABI 96): players in a squad, how many a building holds when
+        // its template says nothing, and the most it may say.
+        public const uint SquadSize = 4U;
+        public const uint ShelterCapacity = SquadSize;
+        public const uint MaxShelterCapacity = 64U;
         public const byte DebugWildcardU8 = 0xff;
 
         public const uint GameplayCatalogLoadStatusFailed = 0;
@@ -115,6 +126,8 @@ namespace NetworkExample.Kernel
         public const ulong CapabilityServerInventoryClear = 0x0000800000000000UL;
         // Kernel_PollLogMessages; additive within ABI 93, so check the flag.
         public const ulong CapabilityLogCapture = 0x0001000000000000UL;
+        // Kernel_GetLocalShelterState (ABI 96).
+        public const ulong CapabilityLocalShelterState = 0x0002000000000000UL;
 
         // KernelLocalWeaponState.flags.
         public const byte LocalWeaponStateFlagReloading = 0x01;
@@ -226,6 +239,13 @@ namespace NetworkExample.Kernel
         // Server-local, never replicated: damage emptied this entity's health.
         // `peer_id` is the damage's source peer, `code` the instigator net id.
         EntityDied = 15,
+        // Server-local: a building's open_ui ran. `net_id` is the building,
+        // `related_net_id` the actor that activated it, `peer_id` its peer and
+        // `code` the ui_id.
+        UiOpened = 16,
+        // Server-local: an actor went into a building (`code` = the building) or
+        // came out (`code` = 0, `related_net_id` = the building it left).
+        ShelterChanged = 17,
     }
 
     public enum KernelDespawnReason : uint
@@ -420,6 +440,8 @@ namespace NetworkExample.Kernel
         GraphRejected = 16,
         // The instigator is dead.
         InstigatorDead = 17,
+        // The instigator is inside a building; it may only activate that one.
+        InstigatorSheltered = 18,
     }
 
     public enum KernelEntityTriggerActionType
@@ -429,6 +451,14 @@ namespace NetworkExample.Kernel
         SpawnEntity = 2,
         SpawnProjectile = 3,
         ApplyHealthChange = 4,
+        ApplyImpulse = 5,
+        ApplyStatus = 6,
+        RemoveStatus = 7,
+        ApplySpeedModifier = 8,
+        // ABI 95.
+        ApplyPull = 9,
+        // ABI 96: a building's on_activated asking for its interface.
+        OpenUi = 10,
     }
 
     public enum KernelEntityRefSource
@@ -445,6 +475,8 @@ namespace NetworkExample.Kernel
         Direction = 1,
         Literal = 2,
         SubjectDirection = 3,
+        // ABI 95: where the event's subject was (an area effect's centre).
+        SubjectPosition = 4,
     }
 
     public enum KernelActionConditionType
@@ -507,6 +539,8 @@ namespace NetworkExample.Kernel
         Cooldown = 12,
         Staggered = 13,
         KnockedBack = 14,
+        // Inside a building: no actions until it comes out.
+        Sheltered = 15,
     }
 
     public enum KernelRemoteActionPresentationEventType : byte
@@ -735,6 +769,7 @@ namespace NetworkExample.Kernel
         public uint skeleton_leg_definition_size;
         public uint status_effect_view_size;
         public uint local_weapon_state_size;
+        public uint local_shelter_state_size;
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
@@ -798,6 +833,32 @@ namespace NetworkExample.Kernel
         public ushort reserved0;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelLocalWeaponState>();
+    }
+
+    /// <summary>
+    /// The building the local player is inside, from
+    /// <c>Kernel_GetLocalShelterState</c>; <see cref="shelter_net_id"/> is 0
+    /// while outside every building.
+    /// </summary>
+    /// <remarks>
+    /// On a listen server this is read from the authoritative world. On a
+    /// client it is what the newest owner snapshot said, and
+    /// <see cref="authoritative_tick"/> is that snapshot's tick: the server
+    /// moves a player in or out a tick after it activates a building, so this
+    /// changes when that snapshot lands, not when the activation is sent.
+    /// <see cref="ui_id"/> is the open_ui id the building's on_activated graph
+    /// names -- which interface to show -- read from the client's own catalog;
+    /// 0 when outside, or when the building names none.
+    /// </remarks>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelLocalShelterState
+    {
+        public uint struct_size;
+        public uint shelter_net_id;
+        public uint ui_id;
+        public uint authoritative_tick;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelLocalShelterState>();
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
@@ -1041,6 +1102,18 @@ namespace NetworkExample.Kernel
         public float repeat_scatter_radius;
         public uint repeat_stagger_lifetime_ticks;
 
+        // apply_pull only (ABI 95); zero on every other action. pull_mode is a
+        // KernelConstants.PullMode*.
+        public uint pull_mode;
+        public float pull_distance;
+        public uint pull_airtime_ticks;
+        public float pull_max_speed;
+
+        // open_ui only (ABI 96): which interface the building offers.
+        public uint ui_id;
+        // spawn_entity only (ABI 96): a KernelConstants.SpawnPlacement*.
+        public uint spawn_placement;
+
         public static uint StructSize => (uint)Marshal.SizeOf<KernelActionDefinition>();
     }
 
@@ -1172,6 +1245,8 @@ namespace NetworkExample.Kernel
         public uint struct_size;
         public uint population_group_id;
         public uint max_alive;
+        // 0 or 1 (ABI 96): expiry and eviction run the members' on_destroy_entity.
+        public uint cleanup_runs_on_destroy;
 
         public static uint StructSize =>
             (uint)Marshal.SizeOf<KernelPropPopulationRuleDefinition>();
@@ -2442,6 +2517,11 @@ namespace NetworkExample.Kernel
         public uint death_policy;
         // Ticks to remain rooted and refuse new actions after knockback lands.
         public uint knockdown_recovery_ticks;
+        // A building's shelter (ABI 96); props only. 0 means
+        // KernelConstants.ShelterCapacity.
+        public uint shelter_capacity;
+        // 0 or 1 (ABI 96): occupants drop out of every agent's vision.
+        public uint shelter_hides_occupants;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelEntityTemplateDefinition>();
     }
@@ -2457,6 +2537,9 @@ namespace NetworkExample.Kernel
         public ulong event_time_us;
         public ulong presentation_time_us;
         public int health_delta;
+        // ABI 96: a second entity the event is about (UiOpened, ShelterChanged).
+        // Fills what was tail padding; the struct's size is unchanged.
+        public uint related_net_id;
     }
 
     [StructLayout(LayoutKind.Sequential)]

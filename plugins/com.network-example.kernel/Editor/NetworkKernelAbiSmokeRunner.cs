@@ -24,7 +24,7 @@ namespace NetworkExample.Kernel.Editor
             KernelAbi.ValidateNativeAbi();
             GameServerAbi.ValidateNativeAbi();
             KernelAbiInfo info = KernelAbi.GetInfo();
-            Require(KernelConstants.AbiVersion == 94, "Managed kernel ABI version was not v94.");
+            Require(KernelConstants.AbiVersion == 96, "Managed kernel ABI version was not v96.");
             Require(
                 KernelLocalWeaponState.StructSize == 20 &&
                 info.local_weapon_state_size == KernelLocalWeaponState.StructSize,
@@ -123,7 +123,7 @@ namespace NetworkExample.Kernel.Editor
                 KernelConstants.MaxStaggerTicks == 300U,
                 "Kernel hit stagger ABI mismatch.");
             Require(
-                System.Runtime.InteropServices.Marshal.SizeOf<KernelActionTriggerDefinition>() == 892 &&
+                System.Runtime.InteropServices.Marshal.SizeOf<KernelActionTriggerDefinition>() == 1084 &&
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("damage_stagger") >
                     (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("impulse_strength_vertical") &&
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelEntityTemplateDefinition>("stagger_immunity_ticks") >
@@ -167,12 +167,41 @@ namespace NetworkExample.Kernel.Editor
                 KernelProjectileReplication.Derived == (KernelProjectileReplication)1 &&
                 KernelProjectileLaunchType.Descent == (KernelProjectileLaunchType)1 &&
                 KernelProjectileLaunchDefinition.StructSize == 24 &&
-                KernelActionDefinition.StructSize == 100 &&
+                KernelActionDefinition.StructSize == 124 &&
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("spawn_lifetime_ticks") == 84 &&
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelProjectileLaunchDefinition>("fall_ticks") == 20 &&
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelProjectileMechanicsDefinition>("launch") ==
                     (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelProjectileMechanicsDefinition>("collision_query_mode") + 4,
                 "Kernel targeted strike ABI mismatch.");
+            Require(
+                KernelEntityTriggerActionType.ApplyPull == (KernelEntityTriggerActionType)9 &&
+                KernelEventVec3Source.SubjectPosition == (KernelEventVec3Source)4 &&
+                (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("pull_mode") == 100,
+                "Kernel apply_pull ABI mismatch.");
+            Require(
+                KernelEntityTriggerActionType.OpenUi == (KernelEntityTriggerActionType)10 &&
+                KernelEventType.UiOpened == (KernelEventType)16 &&
+                KernelEventType.ShelterChanged == (KernelEventType)17 &&
+                KernelGameplayRequestRejectionReason.InstigatorSheltered == (KernelGameplayRequestRejectionReason)18 &&
+                KernelLocalActionResultReason.Sheltered == (KernelLocalActionResultReason)15 &&
+                KernelActionDefinition.StructSize == 124 &&
+                (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("ui_id") == 116 &&
+                (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("spawn_placement") == 120 &&
+                System.Runtime.InteropServices.Marshal.SizeOf<KernelEvent>() == 48 &&
+                (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelEvent>("related_net_id") == 44 &&
+                KernelPropPopulationRuleDefinition.StructSize == 16 &&
+                (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelEntityTemplateDefinition>("shelter_capacity") ==
+                    (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelEntityTemplateDefinition>("knockdown_recovery_ticks") + sizeof(uint) &&
+                (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelEntityTemplateDefinition>("shelter_hides_occupants") ==
+                    (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelEntityTemplateDefinition>("shelter_capacity") + sizeof(uint) &&
+                KernelLocalShelterState.StructSize == 16 &&
+                info.local_shelter_state_size == KernelLocalShelterState.StructSize &&
+                KernelConstants.CapabilityLocalShelterState == 0x0002000000000000UL &&
+                (KernelConstants.CapabilityLocalShelterState & KernelConstants.CapabilityLogCapture) == 0UL &&
+                (info.capability_flags & KernelConstants.CapabilityLocalShelterState) != 0UL &&
+                KernelConstants.SpawnPlacementClear == 1U &&
+                KernelConstants.ShelterCapacity == 4U,
+                "Kernel buildings (ABI 96) mismatch.");
             RequireLANDiscovery();
             byte[] catalogBundleBytes = LoadGameplayCatalogBundleBytes();
 

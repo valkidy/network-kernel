@@ -415,6 +415,10 @@ namespace NetworkExample.Kernel
                 nameof(KernelLocalWeaponState),
                 info.local_weapon_state_size,
                 Marshal.SizeOf<KernelLocalWeaponState>());
+            RequireSize(
+                nameof(KernelLocalShelterState),
+                info.local_shelter_state_size,
+                Marshal.SizeOf<KernelLocalShelterState>());
         }
 
         private static void RequireCapability(
