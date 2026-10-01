@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- updates native plugins and gameplay catalog for ABI 96 apply-pull and building shelter support
+
+
+0.7.0 release notes:
+
 - aligns Unity bindings with kernel ABI 94 for targeted strikes, projectile launch and replication, and repeated spawns
 
 
