@@ -3043,7 +3043,7 @@ bool KernelEngine::load_gameplay_catalog(
         if (rule.struct_size <
                 sizeof(KernelPropPopulationRuleDefinition) ||
             rule.population_group_id == 0u || rule.max_alive == 0u ||
-            rule.max_alive > 256u ||
+            rule.max_alive > 256u || rule.cleanup_runs_on_destroy > 1u ||
             std::any_of(
                 validated_prop_population_rules.begin(),
                 validated_prop_population_rules.end(),
@@ -3100,6 +3100,11 @@ bool KernelEngine::load_gameplay_catalog(
             !stagger_profile_is_authorable(entity_template) ||
             entity_template.knockdown_recovery_ticks >
                 KERNEL_MAX_KNOCKDOWN_RECOVERY_TICKS ||
+            entity_template.shelter_capacity > KERNEL_MAX_SHELTER_CAPACITY ||
+            entity_template.shelter_hides_occupants > 1u ||
+            (entity_template.entity_type != KernelEntityType_Prop &&
+             (entity_template.shelter_capacity != 0u ||
+              entity_template.shelter_hides_occupants != 0u)) ||
             entity_template.death_policy > KernelDeathPolicy_Dormant) {
             return false;
         }
@@ -3360,6 +3365,18 @@ bool KernelEngine::load_gameplay_catalog(
                     }
                     continue;
                 }
+                // A building's interface, for whoever activated it: there is
+                // nobody asking on any other trigger.
+                if (action.action_type ==
+                    KernelEntityTriggerActionType_OpenUi) {
+                    if (trigger != &entity_template.activated_trigger ||
+                        action.ui_id == 0u ||
+                        action.target_source >
+                            KernelEntityRefSource_EventInstigator) {
+                        return false;
+                    }
+                    continue;
+                }
                 // No ApplySpeedModifier branch, so one falls through to the
                 // reject below. A speed modifier is not a standalone effect --
                 // it is a part of a status effect's lifetime, and it is keyed
@@ -3382,6 +3399,7 @@ bool KernelEngine::load_gameplay_catalog(
                 if (action.action_type ==
                     KernelEntityTriggerActionType_SpawnEntity) {
                     if (action.spawn_entity_template_id == 0u ||
+                        action.spawn_placement > KERNEL_SPAWN_PLACEMENT_CLEAR ||
                         action.position_source !=
                             KernelEventVec3Source_Position ||
                         action.owner_source >
@@ -3469,15 +3487,57 @@ bool KernelEngine::load_gameplay_catalog(
                      .throw_trajectory_projectile_template_id != 0u)) {
                 return false;
             }
+            const auto population_rule = std::find_if(
+                validated_prop_population_rules.begin(),
+                validated_prop_population_rules.end(),
+                [&](const KernelPropPopulationRuleDefinition& rule) {
+                    return rule.population_group_id ==
+                        entity_template.prop.population_group_id;
+                });
             if (entity_template.prop.population_group_id != 0u &&
-                std::none_of(
-                    validated_prop_population_rules.begin(),
-                    validated_prop_population_rules.end(),
-                    [&](const KernelPropPopulationRuleDefinition& rule) {
-                        return rule.population_group_id ==
-                            entity_template.prop.population_group_id;
-                    })) {
+                population_rule == validated_prop_population_rules.end()) {
                 return false;
+            }
+            // Cleanup that runs on_destroy must not spawn into any population
+            // group: an eviction whose graph spawns a member could evict the
+            // next one, whose graph spawns another, without end.
+            if (population_rule != validated_prop_population_rules.end() &&
+                population_rule->cleanup_runs_on_destroy != 0u) {
+                const KernelActionTriggerDefinition& on_destroy =
+                    entity_template.destroy_entity_trigger;
+                const std::uint32_t action_count = on_destroy.action_count == 0u
+                    ? (on_destroy.action_type ==
+                               KernelEntityTriggerActionType_None
+                           ? 0u
+                           : 1u)
+                    : std::min<std::uint32_t>(
+                          on_destroy.action_count,
+                          KERNEL_MAX_ACTION_GRAPH_ACTIONS);
+                for (std::uint32_t action_index = 0;
+                     action_index < action_count;
+                     ++action_index) {
+                    const bool legacy = on_destroy.action_count == 0u;
+                    const std::uint8_t action_type = legacy
+                        ? on_destroy.action_type
+                        : on_destroy.actions[action_index].action_type;
+                    const std::uint32_t spawned = legacy
+                        ? on_destroy.spawn_entity_template_id
+                        : on_destroy.actions[action_index]
+                              .spawn_entity_template_id;
+                    if (action_type != KernelEntityTriggerActionType_SpawnEntity) {
+                        continue;
+                    }
+                    for (std::uint32_t candidate = 0;
+                         candidate < catalog.entity_template_count;
+                         ++candidate) {
+                        const KernelEntityTemplateDefinition& target =
+                            catalog.entity_templates[candidate];
+                        if (target.entity_template_id == spawned &&
+                            target.prop.population_group_id != 0u) {
+                            return false;
+                        }
+                    }
+                }
             }
         }
         validated_entity_templates.push_back(entity_template);
@@ -5647,6 +5707,25 @@ bool KernelEngine::server_enqueue_entity_velocity(
     return enqueue_simulation_command(command);
 }
 
+bool KernelEngine::server_enqueue_entity_shelter(
+    std::uint32_t command_source,
+    NetId net_id,
+    NetId shelter_net_id) {
+    if (!running_ || !is_server_mode(config_.mode) || net_id == 0u) {
+        return false;
+    }
+    simulation::CommandSource source{};
+    if (!to_simulation_command_source(command_source, &source)) {
+        return false;
+    }
+    simulation::Command command{};
+    command.id = simulation::CommandId::kSetEntityShelter;
+    command.source = source;
+    command.set_entity_shelter.net_id = net_id;
+    command.set_entity_shelter.shelter_net_id = shelter_net_id;
+    return enqueue_simulation_command(command);
+}
+
 bool KernelEngine::server_enqueue_entity_state(
     std::uint32_t command_source,
     NetId net_id,
@@ -6014,8 +6093,24 @@ void KernelEngine::push_event(
     KernelEventType type,
     NetId net_id,
     PeerId peer_id,
-    std::uint32_t code) {
-    events_.push_back(KernelEvent{type, tick_loop_.current_tick(), net_id, peer_id, code});
+    std::uint32_t code,
+    NetId related_net_id) {
+    KernelEvent event{type, tick_loop_.current_tick(), net_id, peer_id, code};
+    event.related_net_id = related_net_id;
+    events_.push_back(event);
+}
+
+void KernelEngine::queue_ui_opened(
+    NetId building_net_id,
+    PeerId actor_peer,
+    std::uint32_t ui_id,
+    NetId actor_net_id) {
+    push_event(
+        KernelEventType_UiOpened,
+        building_net_id,
+        actor_peer,
+        ui_id,
+        actor_net_id);
 }
 
 void KernelEngine::queue_health_changed_event(
@@ -6185,6 +6280,8 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     predicted_impulse_lockout_until_tick_ = 0u;
     predicted_impulse_lockout_armed_tick_ = 0u;
     predicted_impulse_lockout_recovering_ = false;
+    predicted_shelter_net_id_ = 0u;
+    predicted_shelter_tick_ = 0u;
     predicted_action_buttons_ = 0u;
     predicted_action_binding_id_ = 0u;
     predicted_action_weapon_id_ = 0u;
@@ -7907,6 +8004,8 @@ void KernelEngine::clear_client_session() {
     predicted_impulse_lockout_until_tick_ = 0u;
     predicted_impulse_lockout_armed_tick_ = 0u;
     predicted_impulse_lockout_recovering_ = false;
+    predicted_shelter_net_id_ = 0u;
+    predicted_shelter_tick_ = 0u;
     local_presentation_position_ = glm::vec3{0.0f, 0.0f, 0.0f};
     local_presentation_velocity_ = glm::vec3{0.0f, 0.0f, 0.0f};
     predicted_local_motion_velocity_ = glm::vec3{0.0f, 0.0f, 0.0f};
@@ -8600,6 +8699,14 @@ bool KernelEngine::build_local_character_movement_config(
     config.filter.collision_mask = authored_mask == 0u
         ? physics::kMovementCollisionMask
         : authored_mask;
+    // Inside a building the authority sweeps against terrain alone
+    // (EntityStateSystem::set_shelter), and so must the prediction: under the
+    // authored mask the building's own walls push the player out every step,
+    // and every snapshot pulls it back in.
+    if (predicted_shelter_net_id_ != 0u) {
+        config.filter.collision_mask =
+            physics::collision_layer_bit(physics::CollisionLayer::kTerrain);
+    }
     if (session_rules_.actor_blocking_mode !=
         KernelActorBlockingMode_Predicted) {
         // Limbs go with the capsule rather than surviving on their own: they
@@ -8767,7 +8874,11 @@ bool KernelEngine::step_local_character_prediction(
     // is snapped back at reconciliation.
     const bool impulse_locked =
         prediction_tick < predicted_impulse_lockout_until_tick_;
-    const glm::vec3 desired_horizontal = impulse_locked
+    // Inside a building the authority holds the player still whatever the
+    // stick says (player_movement.cc), so the prediction does too.
+    const glm::vec3 desired_horizontal = predicted_shelter_net_id_ != 0u
+        ? glm::vec3{0.0f}
+        : impulse_locked
         ? (predicted_impulse_lockout_recovering_
                ? glm::vec3{0.0f}
                : glm::vec3{
@@ -8826,6 +8937,71 @@ void KernelEngine::fail_client_prediction(std::string_view diagnostic) {
     push_event(KernelEventType_Error, local_player_net_id_, kServerPeerId, 31);
     clear_client_session();
     prediction_failed_ = true;
+}
+
+std::uint32_t KernelEngine::building_ui_id(std::uint32_t entity_template_id) const {
+    const KernelEntityTemplateDefinition* building =
+        find_entity_template(entity_templates_, entity_template_id);
+    if (building == nullptr) {
+        return 0u;
+    }
+    const KernelActionTriggerDefinition& activated = building->activated_trigger;
+    const std::uint32_t count = std::min<std::uint32_t>(
+        activated.action_count, KERNEL_MAX_ACTION_GRAPH_ACTIONS);
+    for (std::uint32_t index = 0; index < count; ++index) {
+        if (activated.actions[index].action_type ==
+            KernelEntityTriggerActionType_OpenUi) {
+            return activated.actions[index].ui_id;
+        }
+    }
+    return 0u;
+}
+
+bool KernelEngine::local_shelter_state(KernelLocalShelterState* out_state) const {
+    if (out_state == nullptr ||
+        out_state->struct_size < sizeof(KernelLocalShelterState) ||
+        local_player_net_id_ == 0u) {
+        return false;
+    }
+    KernelLocalShelterState state{};
+    state.struct_size = sizeof(state);
+    std::uint32_t building_template_id = 0u;
+    if (is_server_mode(config_.mode)) {
+        const std::optional<entt::entity> actor =
+            world_.find_entity(local_player_net_id_);
+        const Sheltered* sheltered = actor.has_value()
+            ? world_.registry().try_get<Sheltered>(*actor)
+            : nullptr;
+        state.shelter_net_id = sheltered == nullptr ? 0u : sheltered->shelter_net_id;
+        state.authoritative_tick = tick_loop_.current_tick();
+        if (const std::optional<entt::entity> building =
+                world_.find_entity(state.shelter_net_id);
+            building.has_value() &&
+            world_.registry().all_of<EntityTemplateRef>(*building)) {
+            building_template_id = world_.registry()
+                .get<EntityTemplateRef>(*building)
+                .entity_template_id;
+        }
+    } else {
+        if (!has_authoritative_local_entity_) {
+            return false;
+        }
+        state.shelter_net_id = predicted_shelter_net_id_;
+        state.authoritative_tick = predicted_shelter_tick_;
+        const auto building = std::find_if(
+            client_replicated_entities_.begin(),
+            client_replicated_entities_.end(),
+            [&state](const ClientReplicatedEntity& entity) {
+                return entity.net_id == state.shelter_net_id;
+            });
+        if (state.shelter_net_id != 0u &&
+            building != client_replicated_entities_.end()) {
+            building_template_id = building->entity_template_id;
+        }
+    }
+    state.ui_id = state.shelter_net_id == 0u ? 0u : building_ui_id(building_template_id);
+    *out_state = state;
+    return true;
 }
 
 bool KernelEngine::local_weapon_state(KernelLocalWeaponState* out_state) const {
@@ -9074,6 +9250,10 @@ void KernelEngine::reconcile_local_prediction(const WorldSnapshot& snapshot) {
     predicted_local_state_time_us_ = client_local_time_us_;
     has_predicted_local_entity_ = true;
     has_authoritative_local_entity_ = true;
+    // Before the replay below: it steps the pending inputs under whichever mask
+    // the authority now says, inside the building or out.
+    predicted_shelter_net_id_ = authoritative->shelter_net_id;
+    predicted_shelter_tick_ = snapshot.header.server_tick;
     if (prediction_physics_world_ != nullptr) {
         if (!authoritative->has_authoritative_movement_state) {
             fail_client_prediction(
@@ -12206,6 +12386,8 @@ WorldSnapshot KernelEngine::build_relevant_snapshot(
             filtered_entity.impulse_lockout_recovering =
                 filtered_entity.has_impulse_lockout &&
                 entity.impulse_lockout_recovering;
+            filtered_entity.shelter_net_id =
+                entity.net_id == session.player ? entity.shelter_net_id : 0u;
             filtered.entities.push_back(filtered_entity);
         }
     }
@@ -12465,6 +12647,29 @@ void KernelEngine::update_vision_states(float delta_seconds) {
         vision_states_.erase(stale_net_id);
     }
 
+    // Occupants of a building that hides them (shelter_hides_occupants) are
+    // nobody's candidate while inside, the way a dormant corpse is not.
+    std::unordered_set<NetId> hidden_occupants;
+    for (const auto [occupant, identity, sheltered] :
+         world_.registry().view<NetworkIdentity, Sheltered>().each()) {
+        (void)occupant;
+        const std::optional<entt::entity> building =
+            world_.find_entity(sheltered.shelter_net_id);
+        if (!building.has_value() ||
+            !world_.registry().all_of<EntityTemplateRef>(*building)) {
+            continue;
+        }
+        const KernelEntityTemplateDefinition* building_template =
+            find_entity_template(
+                entity_templates_,
+                world_.registry().get<EntityTemplateRef>(*building)
+                    .entity_template_id);
+        if (building_template != nullptr &&
+            building_template->shelter_hides_occupants != 0u) {
+            hidden_occupants.insert(identity.net_id);
+        }
+    }
+
     for (const NetId agent_net_id : active_agents) {
         const auto config_iter = vision_configs_.find(agent_net_id);
         const std::optional<entt::entity> agent_entity =
@@ -12535,6 +12740,9 @@ void KernelEngine::update_vision_states(float delta_seconds) {
             }
             const KernelAgentVisionConfig& candidate_config =
                 candidate_config_iter->second;
+            if (hidden_occupants.contains(candidate_identity.net_id)) {
+                continue;
+            }
             // A dormant corpse keeps its vision config but is nothing to chase,
             // aim at or count as an ally.
             if (const Health* candidate_health =

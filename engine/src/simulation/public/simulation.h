@@ -2,6 +2,7 @@
 #define SIMULATION_PUBLIC_SIMULATION_H_
 
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 #include "kernel/public/kernel_types.h"
@@ -345,6 +346,36 @@ float available_lift(
     const glm::quat& rotation,
     float lift);
 
+// Somewhere just outside a footprint of `footprint_radius` metres around
+// `center` that the entity's movement capsule can stand: on terrain or a
+// static obstacle, touching no terrain, static obstacle or other actor. The
+// first ring clears the footprint by the capsule's radius and a margin; a
+// second ring lies a metre further out. Headings are tried nearest
+// `preferred_direction` first. nullopt when there is no physics world, no
+// movement capsule, or nothing clear -- the caller picks the fallback.
+// Where an entity just spawned at `position` can stand clear, for a spawn
+// that asked for clear placement (KERNEL_SPAWN_PLACEMENT_CLEAR). Its own box
+// hit volume is looked for on terrain or a static obstacle, at `position` and
+// then backing off against `direction` -- the way it came -- a step at a time,
+// touching no terrain or static obstacle. A bottle that struck a wall's face
+// is set down in front of the wall rather than half inside it. nullopt when
+// there is no physics world, no box hit volume, or nothing clear within reach:
+// the caller keeps `position`. Best effort, not a guarantee. `spawner`'s own
+// volumes are looked through: the bottle that spawned it is still there.
+std::optional<glm::vec3> find_clear_spawn_spot(
+    World& world,
+    NetId net_id,
+    const glm::vec3& position,
+    const glm::vec3& direction,
+    NetId spawner);
+
+std::optional<glm::vec3> find_clear_standing_spot(
+    World& world,
+    NetId net_id,
+    const glm::vec3& center,
+    float footprint_radius,
+    const glm::vec3& preferred_direction);
+
 void simulate_projectiles(World& world, float fixed_delta_seconds);
 void simulate_projectiles(
     World& world,
@@ -522,8 +553,9 @@ void apply_stagger_profile(
 void clear_stagger(World& world, entt::entity entity);
 
 // Why this actor may not start a new action right now, or
-// KernelLocalActionResultReason_None. Staggered outranks KnockedBack so a hit
-// that does both reports the one that also interrupted.
+// KernelLocalActionResultReason_None. Sheltered outranks the rest: inside a
+// building nothing else can be happening to it. Staggered outranks KnockedBack
+// so a hit that does both reports the one that also interrupted.
 KernelLocalActionResultReason action_block_reason(
     const World& world,
     entt::entity entity,

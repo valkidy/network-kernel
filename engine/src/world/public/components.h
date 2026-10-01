@@ -237,6 +237,21 @@ struct DamageImmunity {
     std::uint32_t until_tick = 0;
 };
 
+// Server-only. Inside a building; see Kernel_ServerEnqueueEntityShelter. Held
+// on the occupant alone -- a building's occupants are whoever names it here --
+// so an occupant removed without ceremony (a disconnect destroys the player
+// outright) leaves nothing stale behind on the building. While it stands the
+// actor does not move itself and takes no damage, stagger, impulse or pull.
+struct Sheltered {
+    NetId shelter_net_id = 0;
+    // Where it stood when it went in: the way out when nothing around the
+    // building is clear.
+    glm::vec3 entry_position{0.0f};
+    // Its movement mask before the terrain-only one entering set, restored on
+    // the way out.
+    std::uint32_t previous_movement_collision_mask = 0;
+};
+
 struct PlayerTag {};
 struct AgentTag {};
 struct ProjectileTag {};
@@ -784,6 +799,14 @@ struct ActionApplyPullDefinition {
     ActionConditionType condition = ActionConditionType::kAlways;
 };
 
+// A building asking for its interface; see KernelEventType_UiOpened. The
+// target is the actor the interface opens for.
+struct ActionOpenUiDefinition {
+    std::string target_parameter;
+    std::uint32_t ui_id = 0;
+    ActionConditionType condition = ActionConditionType::kAlways;
+};
+
 struct ActionApplyStatusDefinition {
     std::string target_parameter;
     std::string status_parameter;
@@ -811,6 +834,9 @@ struct ActionSpawnEntityDefinition {
     std::uint32_t item_template_id = 0;
     std::uint32_t quantity = 0;
     ActionConditionType condition = ActionConditionType::kAlways;
+    // KERNEL_SPAWN_PLACEMENT_*, a plain integer like ActionApplyPullDefinition
+    // ::mode; EXACT is zero.
+    std::uint32_t placement = 0;
 };
 
 using ActionGraphAction = std::variant<
@@ -822,7 +848,8 @@ using ActionGraphAction = std::variant<
     ActionRemoveStatusDefinition,
     ActionApplySpeedModifierDefinition,
     ActionSpawnEntityDefinition,
-    ActionApplyPullDefinition>;
+    ActionApplyPullDefinition,
+    ActionOpenUiDefinition>;
 
 struct ActionGraphTemplate {
     std::string id;

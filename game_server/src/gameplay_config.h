@@ -235,6 +235,10 @@ struct ActorTemplateConfig {
     // down -- rooted, refusing new actions -- before it may move again. Zero
     // (absent) releases it on landing.
     std::uint32_t knockdown_recovery_ticks = 0;
+    // A building's `shelter:` block; props only. See
+    // KernelEntityTemplateDefinition::shelter_capacity / _hides_occupants.
+    std::uint32_t shelter_capacity = 0;
+    std::uint32_t shelter_hides_occupants = 0;
     // A KernelDeathPolicy; Default leaves it to the kernel (players dormant).
     std::uint32_t death_policy = KernelDeathPolicy_Default;
     // KERNEL_MOVEMENT_LAYER_* bits; 0 keeps the engine default.
@@ -374,6 +378,12 @@ struct ActionGraphActionConfig {
     float pull_distance = 0.0f;
     std::uint32_t pull_airtime_ticks = 0;
     float pull_max_speed = 0.0f;
+    // open_ui only: which interface the building offers. A literal, like
+    // apply_pull's numbers; see KernelActionDefinition::ui_id.
+    std::uint32_t ui_id = 0;
+    // spawn_entity only: a KERNEL_SPAWN_PLACEMENT_*, authored as
+    // `placement: exact | clear`.
+    std::uint32_t spawn_placement = KERNEL_SPAWN_PLACEMENT_EXACT;
 };
 
 struct ActionGraphTemplateConfig {

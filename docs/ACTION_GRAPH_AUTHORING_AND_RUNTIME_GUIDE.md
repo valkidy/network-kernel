@@ -111,7 +111,7 @@ schema 的欄位會在載入階段被拒絕。
 | `on_activated` | `subject`, `instigator`, `target`, `position`, `direction` | 啟動機關、互動 prop |
 | `on_collision` | `subject`, `target`, `position`, `direction` | 碰撞傷害、陷阱 |
 | `on_health_depleted` | `subject`, `instigator`, `position` | 死亡前反應、反傷 |
-| `on_destroy_entity` | `subject`, `instigator`, `position` | 銷毀時生成 entity |
+| `on_destroy_entity` | `subject`, `instigator`, `position`, `direction` | 銷毀時生成 entity 或 projectile |
 | `on_projectile_impact` | `subject`, `instigator`, `target`, `position`, `direction`, `subject_direction` | 命中後生成爆炸物 |
 | `on_expired` | `subject`, `instigator`, `position`, `direction`, `subject_direction` | projectile 到期後生成效果 |
 | `on_apply` | `subject`, `instigator`, `target` | status 建立或 stack apply |
@@ -132,6 +132,15 @@ schema 的欄位會在載入階段被拒絕。
   載入時報錯。要延遲 N ticks 再觸發，請用 `speed: 0` 的 marker（見
   `WEAPON_AUTHORING_GUIDE.md`）。靜止的 projectile 回報的 `event.direction` 是
   它生成時的朝向。
+- `on_destroy_entity` 的 `event.direction` 是由 instigator 指向被銷毀者的方向；沒有
+  instigator 時（存在時間到、被數量上限擠掉、伺服器直接移除）是正上方 (0, 1, 0)，
+  永遠不是零向量，所以 `spawn_projectile` 一定能用。graph 在實體移除**之後**才執行：
+  `self` 已不存在，不能當 `spawn_entity` 的 owner；沒有 instigator 時
+  `event.instigator` 也是空的。
+- 存在時間到（Expired）與被數量上限擠掉（CapacityEvicted）預設**不**執行
+  `on_destroy_entity`。population group 寫 `cleanup_runs_on_destroy: true` 才會執行；
+  此時該 group 成員的 `on_destroy_entity` 不可 `spawn_entity` 任何屬於 population
+  group 的 entity（避免擠掉一個、生成一個的無限循環），載入時會被拒絕。
 - `on_collision` 不提供 `event.instigator`；需要歸屬資訊的 collision 行為應由
   產生事件的 gameplay system 明確建模，而不是假設 target 是 instigator。
 - Runtime binding validator 會再次執行同一套 schema 驗證，防止無效 ABI input。
@@ -208,6 +217,14 @@ template 沒有 `CancelBeforeFirstCommit` 也不會先打出一次；硬直期�
 - `entity_template` 必須解析為既有 Entity Template。
 - `position` 目前必須綁定 `event.position`。
 - `owner` 必須解析為有效 entity reference。
+- `direction`（可省略）綁定 `event.direction`，決定生成物的 yaw。
+- `placement`（可省略，字面值）：`exact`（預設）在 `position` 原地生成；`clear` 會在
+  `position` 附近找空位。做法是以生成物自己的 box hit volume 往下找地面，並確認不碰到
+  terrain 與 static obstacle；放不下就沿 `direction` 的反方向每次退 0.5 m，最多退 4 m。
+  找不到就留在原地（盡力而為，不保證）。生成者（owner，例如還沒消失的瓶子）的碰撞盒
+  不列入判斷。用途：建築 kit 撞到牆面時，建築落在牆前的地面上，而不是嵌進牆裡
+  （`action_spawn_building_and_damage_self_at_collision`）。`placement` 寫在
+  `spawn_entity` 以外的 action 上會在載入時被拒絕。
 
 適用於 entity-backed triggers。
 
@@ -446,6 +463,27 @@ Runtime 在 command commit 當下，依目標**當時**的位置算出目的地�
   **沒有 client 預測**，等 authoritative snapshot 修正。
 
 範例：`action_pull_at_target`（吸引手榴彈 `fungible_pull_bottle`）。
+
+### 4.6 `open_ui`
+
+建築物要求開啟自己的介面。建築物是哪一種（休息帳篷、商店……）只由這個 action 的
+`ui_id` 決定：建築物的 `on_activated` 綁定哪個 graph，它就是哪種建築。
+
+```yaml
+- type: open_ui
+  target: params.target   # 綁定 event.instigator：啟動建築的 actor
+  ui_id: 1                # 1 = 休息 UI；數值的意義由遊戲定義，kernel 不解讀
+```
+
+- 只能用在 entity 的 `on_activated` trigger。只有啟動事件有「誰在要求」。
+- `ui_id` 是 action 上的字面值，必須非 0。
+- Runtime 只發出 `KernelEventType_UiOpened`（`net_id` = 建築、`related_net_id` =
+  啟動者、`peer_id` = 啟動者的 owner peer、`code` = `ui_id`），其他什麼都不做。
+  要不要讓 actor 進入建築，由 game_server 收到事件後決定，再透過
+  `Kernel_ServerEnqueueEntityShelter` 執行。
+- 事件只存在伺服器端，不會同步給 client。
+
+範例：`action_open_rest_ui`（帳篷 `tent`）。
 
 Status lifecycle 目前支援的 actions 為 `apply_damage`、health change、status
 apply/remove 與 speed modifier。Lifecycle safety contract 僅允許 `on_apply` 使用
@@ -798,6 +836,8 @@ Catalog load/compile 會拒絕：
   `max_speed`；`airtime_ticks` 為 0 或超過上限；`max_speed` 不為正；`anchor` 模式的
   `distance` 為負，或 `direction` 模式的 `distance` 缺少或為 0。
 - `anchor`／`distance`／`airtime_ticks`／`max_speed` 寫在 `apply_pull` 以外的 action 上。
+- `open_ui` 用在 `on_activated` 以外的 trigger、缺 `ui_id` 或為 0，或帶有 `target`
+  以外的欄位；`ui_id` 寫在 `open_ui` 以外的 action 上。
 - `apply_pull` 的 anchor/direction 用 vec3 default，或綁定到其他 expression；
   `event.subject_position` 用在 projectile trigger 以外的 trigger。
 - `apply_impulse` 的 `strength`：純量形式非有限或不為正；list 形式不是剛好兩個

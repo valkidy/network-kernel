@@ -59,6 +59,17 @@ bool Kernel_GetLocalWeaponState(
     KernelHandle* kernel,
     KernelLocalWeaponState* out_state);
 
+/*
+ * Copies the building the local player is inside into out_state; see
+ * KernelLocalShelterState. The caller sets out_state->struct_size. Returns
+ * false for a smaller struct_size, when there is no local player (a dedicated
+ * server has none), and on a client until an owner snapshot has arrived.
+ * Outside every building is a true return with shelter_net_id 0.
+ */
+bool Kernel_GetLocalShelterState(
+    KernelHandle* kernel,
+    KernelLocalShelterState* out_state);
+
 KernelLANDiscoveryHandle* Kernel_LANDiscovery_Create(void);
 void Kernel_LANDiscovery_Destroy(KernelLANDiscoveryHandle* discovery);
 

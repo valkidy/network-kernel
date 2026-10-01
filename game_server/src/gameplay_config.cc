@@ -296,6 +296,8 @@ void hash_projectile_template(
             hash_float(hash, action.pull_distance);
             hash_scalar(hash, action.pull_airtime_ticks);
             hash_float(hash, action.pull_max_speed);
+            hash_scalar(hash, action.ui_id);
+            hash_scalar(hash, action.spawn_placement);
             hash_scalar(hash, action.condition_type);
         }
     }
@@ -340,6 +342,8 @@ void hash_actor_template(
     hash_scalar(hash, actor_template.stagger.duration_ticks);
     hash_scalar(hash, actor_template.stagger.immunity_ticks);
     hash_scalar(hash, actor_template.knockdown_recovery_ticks);
+    hash_scalar(hash, actor_template.shelter_capacity);
+    hash_scalar(hash, actor_template.shelter_hides_occupants);
     hash_scalar(hash, actor_template.death_policy);
     hash_scalar(hash, actor_template.movement_collision_mask);
     hash_scalar(hash, actor_template.weapon_slot_count);
@@ -534,7 +538,7 @@ std::vector<PropPopulationRuleConfig> prop_population_rules_from_yaml(
     for (const YAML::Node& entry : node) {
         reject_unknown_keys(
             entry,
-            {"id", "name", "max_alive"},
+            {"id", "name", "max_alive", "cleanup_runs_on_destroy"},
             path,
             source_kind,
             KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
@@ -548,6 +552,13 @@ std::vector<PropPopulationRuleConfig> prop_population_rules_from_yaml(
         rule.definition.struct_size = sizeof(rule.definition);
         rule.definition.population_group_id = entry["id"].as<std::uint32_t>();
         rule.definition.max_alive = entry["max_alive"].as<std::uint32_t>();
+        // See KernelPropPopulationRuleDefinition: expiry and eviction run the
+        // members' on_destroy_entity graphs too.
+        rule.definition.cleanup_runs_on_destroy =
+            entry["cleanup_runs_on_destroy"] &&
+                entry["cleanup_runs_on_destroy"].as<bool>()
+            ? 1u
+            : 0u;
         if (rule.definition.population_group_id == 0u || rule.name.empty() ||
             rule.definition.max_alive == 0u ||
             rule.definition.max_alive > 256u) {
@@ -1909,6 +1920,8 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 "distance",
                 "airtime_ticks",
                 "max_speed",
+                "ui_id",
+                "placement",
             },
             path,
             source_kind,
@@ -1939,6 +1952,14 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
             throw std::runtime_error(
                 "anchor, distance, airtime_ticks and max_speed are only "
                 "supported on apply_pull: " + path);
+        }
+        if (action["placement"] && compiled_action.action_type != "spawn_entity") {
+            throw std::runtime_error(
+                "placement is only supported on spawn_entity: " + path);
+        }
+        if (action["ui_id"] && compiled_action.action_type != "open_ui") {
+            throw std::runtime_error(
+                "ui_id is only supported on open_ui: " + path);
         }
         if ((action["repeat"] || action["lifetime_ticks"]) &&
             compiled_action.action_type != "spawn_projectile") {
@@ -1994,6 +2015,17 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
             }
             compiled_action.owner_parameter =
                 parameter_reference_from_yaml(action["owner"], "owner");
+            if (action["placement"]) {
+                const std::string placement = action["placement"].as<std::string>();
+                if (placement == "exact") {
+                    compiled_action.spawn_placement = KERNEL_SPAWN_PLACEMENT_EXACT;
+                } else if (placement == "clear") {
+                    compiled_action.spawn_placement = KERNEL_SPAWN_PLACEMENT_CLEAR;
+                } else {
+                    throw std::runtime_error(
+                        "spawn_entity placement must be exact or clear: " + path);
+                }
+            }
             if (action["item_template"] || action["quantity"]) {
                 if (!action["item_template"] || !action["quantity"]) {
                     throw std::runtime_error(
@@ -2149,6 +2181,28 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 &compiled_action.target_parameter,
                 &compiled_action.status_parameter,
             };
+        } else if (compiled_action.action_type == "open_ui") {
+            // Who it opens for, and which one. Everything else a building's
+            // interface does is game_server's, not the graph's.
+            if (action["projectile_template"] || action["position"] ||
+                action["direction"] || action["owner"] || action["amount"] ||
+                action["strength"] || action["status"] ||
+                action["operation"] || action["value"] ||
+                action["entity_template"] || action["item_template"] ||
+                action["quantity"] || action["collision_mask"] ||
+                action["lockout_ticks"] || !action["ui_id"]) {
+                throw std::runtime_error(
+                    "open_ui requires target and ui_id and nothing else: " +
+                    path);
+            }
+            compiled_action.ui_id = action["ui_id"].as<std::uint32_t>();
+            if (compiled_action.ui_id == 0u) {
+                throw std::runtime_error(
+                    "open_ui ui_id must be non-zero: " + path);
+            }
+            compiled_action.target_parameter =
+                parameter_reference_from_yaml(action["target"], "target");
+            action_parameters = {&compiled_action.target_parameter};
         } else if (compiled_action.action_type == "apply_speed_modifier") {
             if (action["projectile_template"] || action["position"] ||
                 action["direction"] || action["owner"] || action["amount"] ||
@@ -4549,6 +4603,7 @@ EntityTemplateConfig entity_template_from_yaml(
                 "throw",
                 "carry_offset",
                 "lifecycle",
+                "shelter",
                 "triggers",
                 "spawner",
             },
@@ -4639,6 +4694,35 @@ EntityTemplateConfig entity_template_from_yaml(
                     prop_population_group_id_from_ref(
                         node["lifecycle"]["population_group"],
                         prop_population_rules);
+            }
+        }
+        // What going inside this building means: how many it holds, and
+        // whether enemies stop seeing the people in it.
+        if (node["shelter"]) {
+            reject_unknown_keys(
+                node["shelter"],
+                {"capacity", "hide_occupants_from_vision"},
+                path,
+                source_kind,
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+                entity_template.actor_template_id);
+            if (node["shelter"]["capacity"]) {
+                entity_template.shelter_capacity =
+                    node["shelter"]["capacity"].as<std::uint32_t>();
+                if (entity_template.shelter_capacity == 0u ||
+                    entity_template.shelter_capacity >
+                        KERNEL_MAX_SHELTER_CAPACITY) {
+                    throw std::runtime_error(
+                        "shelter capacity must be between 1 and " +
+                        std::to_string(KERNEL_MAX_SHELTER_CAPACITY) + ": " +
+                        path);
+                }
+            }
+            if (node["shelter"]["hide_occupants_from_vision"]) {
+                entity_template.shelter_hides_occupants =
+                    node["shelter"]["hide_occupants_from_vision"].as<bool>()
+                    ? 1u
+                    : 0u;
             }
         }
         if (node["interaction"]) {
@@ -6253,11 +6337,14 @@ bool event_expression_available(
             trigger_name == "on_expire";
     }
     if (expression == "event.direction") {
+        // on_destroy_entity: away from whoever destroyed it, or straight up
+        // when nobody did (expiry, eviction), so it is never zero.
         return trigger_name == "on_activated" ||
             trigger_name == "on_item_used" ||
             trigger_name == "on_collision" ||
             trigger_name == "on_projectile_impact" ||
-            trigger_name == "on_expired";
+            trigger_name == "on_expired" ||
+            trigger_name == "on_destroy_entity";
     }
     if (expression == "event.subject_direction") {
         // Only a projectile's own triggers have a subject that was going
@@ -6465,6 +6552,11 @@ void compile_projectile_trigger_binding(
         const ActionGraphActionConfig& action = graph->actions[index];
         KernelActionDefinition& compiled_action = compiled.actions[index];
         compiled_action.condition_type = action.condition_type;
+        if (action.action_type == "open_ui") {
+            throw std::runtime_error(
+                "open_ui is only supported in on_activated: " +
+                projectile_template->name);
+        }
         if (action.action_type == "apply_pull") {
             compiled_action.target_source = entity_ref_source(
                 trigger_parameter_value(
@@ -6736,6 +6828,7 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
                     KernelEventVec3Source_Direction;
             }
             compiled_action.owner_source = entity_ref_source(owner);
+            compiled_action.spawn_placement = action.spawn_placement;
             if (!action.item_template_ref.empty()) {
                 if (item_templates == nullptr) {
                     throw std::runtime_error(
@@ -6806,6 +6899,20 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
             }
             compiled_action.impulse_collision_mask = action.collision_mask;
             compiled_action.impulse_lockout_ticks = action.lockout_ticks;
+            continue;
+        }
+        if (action.action_type == "open_ui") {
+            // Mirrors the kernel: only an activation has someone asking.
+            if (trigger_name != "on_activated") {
+                throw std::runtime_error(
+                    "open_ui is only supported in on_activated: " +
+                    binding.action_graph_ref);
+            }
+            compiled_action.action_type = KernelEntityTriggerActionType_OpenUi;
+            compiled_action.target_source = entity_ref_source(
+                trigger_parameter_value(
+                    binding, graph_parameter(action.target_parameter)));
+            compiled_action.ui_id = action.ui_id;
             continue;
         }
         if (action.action_type == "apply_pull") {
@@ -8262,6 +8369,7 @@ std::uint64_t compute_gameplay_catalog_hash(
         hash_string(&hash, rule.name);
         hash_scalar(&hash, rule.definition.population_group_id);
         hash_scalar(&hash, rule.definition.max_alive);
+        hash_scalar(&hash, rule.definition.cleanup_runs_on_destroy);
     }
     std::vector<ActionGraphTemplateConfig> action_graph_templates =
         config.action_graph_templates;
@@ -8320,6 +8428,8 @@ std::uint64_t compute_gameplay_catalog_hash(
             hash_float(&hash, action.pull_distance);
             hash_scalar(&hash, action.pull_airtime_ticks);
             hash_float(&hash, action.pull_max_speed);
+            hash_scalar(&hash, action.ui_id);
+            hash_scalar(&hash, action.spawn_placement);
         }
     }
     std::vector<StatusEffectTemplateConfig> status_effect_templates =
@@ -9423,6 +9533,9 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
             authored_template.stagger.immunity_ticks;
         entity_template.knockdown_recovery_ticks =
             authored_template.knockdown_recovery_ticks;
+        entity_template.shelter_capacity = authored_template.shelter_capacity;
+        entity_template.shelter_hides_occupants =
+            authored_template.shelter_hides_occupants;
         entity_template.death_policy = authored_template.death_policy;
         entity_template.activated_trigger = compile_action_trigger_binding(
             authored_template.activated_trigger,
@@ -9458,6 +9571,46 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
             &config.projectile_templates,
             nullptr,
             &config.status_effect_templates);
+        // Mirrors the kernel's refusal, with a name: a group whose cleanup runs
+        // on_destroy must not spawn into any population group from it, or one
+        // eviction could spawn the next without end.
+        const auto population_rule = std::find_if(
+            config.prop_population_rules.begin(),
+            config.prop_population_rules.end(),
+            [&](const PropPopulationRuleConfig& rule) {
+                return rule.definition.population_group_id ==
+                    authored_template.prop.population_group_id;
+            });
+        if (authored_template.prop.population_group_id != 0u &&
+            population_rule != config.prop_population_rules.end() &&
+            population_rule->definition.cleanup_runs_on_destroy != 0u) {
+            const KernelActionTriggerDefinition& on_destroy =
+                entity_template.destroy_entity_trigger;
+            for (std::uint32_t index = 0; index < on_destroy.action_count;
+                 ++index) {
+                const KernelActionDefinition& action = on_destroy.actions[index];
+                if (action.action_type !=
+                    KernelEntityTriggerActionType_SpawnEntity) {
+                    continue;
+                }
+                const auto spawned = std::find_if(
+                    entity_templates.begin(),
+                    entity_templates.end(),
+                    [&](const EntityTemplateConfig& candidate) {
+                        return candidate.actor_template_id ==
+                            action.spawn_entity_template_id;
+                    });
+                if (spawned != entity_templates.end() &&
+                    spawned->prop.population_group_id != 0u) {
+                    throw std::runtime_error(
+                        "population group " + population_rule->name +
+                        " runs on_destroy on cleanup, so " +
+                        authored_template.name +
+                        "'s on_destroy_entity may not spawn " + spawned->name +
+                        ", which is in a population group");
+                }
+            }
+        }
         if (authored_template.skeleton.enabled) {
             entity_template.skeleton.struct_size =
                 sizeof(KernelSkeletonBindingDefinition);

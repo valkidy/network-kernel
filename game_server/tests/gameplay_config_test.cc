@@ -1283,11 +1283,15 @@ int main() {
         config.static_collision_scene.collision_layer ==
         KERNEL_STATIC_COLLISION_LAYER_TERRAIN);
     require(config.weapons.catalog_version == 16);
-    require(config.prop_population_rules.size() == 1u);
+    require(config.prop_population_rules.size() == 2u);
     require(config.prop_population_rules[0].name == "temporary_deployable");
     require(
         config.prop_population_rules[0].definition.population_group_id == 1u);
     require(config.prop_population_rules[0].definition.max_alive == 256u);
+    require(config.prop_population_rules[1].name == "tent");
+    require(
+        config.prop_population_rules[1].definition.population_group_id == 2u);
+    require(config.prop_population_rules[1].definition.max_alive == 4u);
     const auto ice_block = std::find_if(
         config.entity_templates.begin(),
         config.entity_templates.end(),

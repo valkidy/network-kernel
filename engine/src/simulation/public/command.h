@@ -26,6 +26,7 @@ enum class CommandId : std::uint8_t {
     kCreateInventoryItem,
     kCreateWorldItem,
     kSubmitGameplayRequest,
+    kSetEntityShelter,
 };
 
 enum class CommandSource : std::uint8_t {
@@ -100,6 +101,12 @@ struct SubmitGameplayRequest {
     KernelGameplayRequest request{};
 };
 
+// shelter_net_id 0 takes the actor out of whatever building it is in.
+struct SetEntityShelter {
+    NetId net_id = 0;
+    NetId shelter_net_id = 0;
+};
+
 struct Command {
     CommandId id = CommandId::kUnknown;
     CommandSource source = CommandSource::kInternal;
@@ -116,6 +123,7 @@ struct Command {
     CreateInventoryItem create_inventory_item{};
     CreateWorldItem create_world_item{};
     SubmitGameplayRequest submit_gameplay_request{};
+    SetEntityShelter set_entity_shelter{};
 };
 
 struct CommandResult {

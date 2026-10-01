@@ -1,0 +1,47 @@
+# A tent: a building a player rests inside.
+#
+# Never thrown itself. tent_kit throws tent_kit_prop, and that prop spawns this
+# one where it lands. The split exists because an item-backed prop may not carry
+# a lifecycle or a population group (gameplay_config.cc), and a tent needs both.
+# It also keeps the tent from being a world item a player could pick back up.
+id: 216
+name: tent
+entity_type: prop
+impulse_resistance: 15.0
+lifecycle:
+  # Three minutes at 30 Hz, from the moment it exists. The first player to go
+  # inside shortens what is left; nothing lengthens it.
+  lifetime_ticks: 5400
+  population_group: tent
+health:
+  hp: 600
+  max_hp: 600
+physics:
+  collider_template: tent_hitbox
+# Going inside. Hidden from enemies, as a building that draws no threat
+# should keep its occupants (D20); flip hide_occupants_from_vision to false to
+# playtest the alternative, where enemies keep the occupants in sight and crowd
+# the tent.
+shelter:
+  capacity: 4
+  hide_occupants_from_vision: true
+interaction:
+  capabilities: [interactable]
+  # Long enough to reach from where leaving sets an occupant down (2.3 m from
+  # the centre), short enough that a tent perched on an ice block (3 m up, so
+  # 3.4 m or more from anyone on the ground) stays out of reach.
+  range: 2.5
+  line_of_sight_required: false
+triggers:
+  on_activated:
+    action_graph: action_open_rest_ui
+    parameters:
+      target: event.instigator
+  # However it goes. Its occupants are already out when this runs, and the
+  # tent group's cleanup_runs_on_destroy makes expiry and eviction run it too.
+  on_destroy_entity:
+    action_graph: action_spawn_projectile_at_destroy_entity
+    parameters:
+      template: tent_collapse_blast
+      position: event.position
+      direction: event.direction

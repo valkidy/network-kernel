@@ -547,6 +547,33 @@ void interrupt_staggered_actions(
     }
 }
 
+// An action in progress when its actor went into a building ends there:
+// action_block_reason stops a new one starting, and this ends the one that had.
+void interrupt_sheltered_actions(
+    World& world,
+    std::uint32_t current_tick,
+    std::vector<ActionOutcome>* outcomes) {
+    const auto view = world.registry().view<Sheltered, ActionRuntimeState>();
+    for (const entt::entity entity : view) {
+        ActionRuntimeState& action = view.get<ActionRuntimeState>(entity);
+        if (action.phase != KernelActionPhase_Windup &&
+            action.phase != KernelActionPhase_Active) {
+            continue;
+        }
+        push_outcome(
+            world,
+            entity,
+            action,
+            current_tick,
+            ActionOutcomeType::Corrected,
+            KernelLocalActionResultReason_Sheltered,
+            outcomes);
+        release_action_resources(world, entity, action);
+        reset_action(action);
+        update_visual_flags(world, entity);
+    }
+}
+
 }  // namespace
 
 std::vector<ActionCommit> simulate_actions(
@@ -556,6 +583,7 @@ std::vector<ActionCommit> simulate_actions(
     std::vector<ActionOutcome>* outcomes) {
     std::vector<ActionCommit> commits;
     interrupt_staggered_actions(world, current_tick, outcomes);
+    interrupt_sheltered_actions(world, current_tick, outcomes);
     std::unordered_set<entt::entity> touched;
     for (const QueuedInput& queued_input : inputs) {
         const entt::entity entity = input_entity(world, queued_input);

@@ -273,6 +273,8 @@ struct ActionSpawnEntityCommand {
     std::uint32_t item_template_id = 0;
     std::uint32_t quantity = 0;
     ActionExecutionProvenance provenance;
+    // KERNEL_SPAWN_PLACEMENT_*.
+    std::uint32_t placement = 0;
 };
 
 // The destination is resolved when the command commits, from where the
@@ -289,6 +291,14 @@ struct ActionApplyPullCommand {
     ActionExecutionProvenance provenance;
 };
 
+// `source` is the building whose graph ran, `target` the actor it opens for.
+struct ActionOpenUiCommand {
+    NetId source = 0;
+    NetId target = 0;
+    std::uint32_t ui_id = 0;
+    ActionExecutionProvenance provenance;
+};
+
 using ActionGraphCommand = std::variant<
     ActionSpawnProjectileCommand,
     ActionApplyDamageCommand,
@@ -298,7 +308,8 @@ using ActionGraphCommand = std::variant<
     ActionRemoveStatusCommand,
     ActionApplySpeedModifierCommand,
     ActionSpawnEntityCommand,
-    ActionApplyPullCommand>;
+    ActionApplyPullCommand,
+    ActionOpenUiCommand>;
 
 struct ActionGraphQueuedTrigger {
     CompiledActionGraphBinding binding;
