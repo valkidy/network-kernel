@@ -3360,6 +3360,18 @@ bool KernelEngine::load_gameplay_catalog(
                     }
                     continue;
                 }
+                // A building's interface, for whoever activated it: there is
+                // nobody asking on any other trigger.
+                if (action.action_type ==
+                    KernelEntityTriggerActionType_OpenUi) {
+                    if (trigger != &entity_template.activated_trigger ||
+                        action.ui_id == 0u ||
+                        action.target_source >
+                            KernelEntityRefSource_EventInstigator) {
+                        return false;
+                    }
+                    continue;
+                }
                 // No ApplySpeedModifier branch, so one falls through to the
                 // reject below. A speed modifier is not a standalone effect --
                 // it is a part of a status effect's lifetime, and it is keyed
@@ -5647,6 +5659,25 @@ bool KernelEngine::server_enqueue_entity_velocity(
     return enqueue_simulation_command(command);
 }
 
+bool KernelEngine::server_enqueue_entity_shelter(
+    std::uint32_t command_source,
+    NetId net_id,
+    NetId shelter_net_id) {
+    if (!running_ || !is_server_mode(config_.mode) || net_id == 0u) {
+        return false;
+    }
+    simulation::CommandSource source{};
+    if (!to_simulation_command_source(command_source, &source)) {
+        return false;
+    }
+    simulation::Command command{};
+    command.id = simulation::CommandId::kSetEntityShelter;
+    command.source = source;
+    command.set_entity_shelter.net_id = net_id;
+    command.set_entity_shelter.shelter_net_id = shelter_net_id;
+    return enqueue_simulation_command(command);
+}
+
 bool KernelEngine::server_enqueue_entity_state(
     std::uint32_t command_source,
     NetId net_id,
@@ -6014,8 +6045,24 @@ void KernelEngine::push_event(
     KernelEventType type,
     NetId net_id,
     PeerId peer_id,
-    std::uint32_t code) {
-    events_.push_back(KernelEvent{type, tick_loop_.current_tick(), net_id, peer_id, code});
+    std::uint32_t code,
+    NetId related_net_id) {
+    KernelEvent event{type, tick_loop_.current_tick(), net_id, peer_id, code};
+    event.related_net_id = related_net_id;
+    events_.push_back(event);
+}
+
+void KernelEngine::queue_ui_opened(
+    NetId building_net_id,
+    PeerId actor_peer,
+    std::uint32_t ui_id,
+    NetId actor_net_id) {
+    push_event(
+        KernelEventType_UiOpened,
+        building_net_id,
+        actor_peer,
+        ui_id,
+        actor_net_id);
 }
 
 void KernelEngine::queue_health_changed_event(

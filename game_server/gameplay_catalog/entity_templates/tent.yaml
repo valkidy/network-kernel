@@ -26,5 +26,6 @@ interaction:
   line_of_sight_required: false
 triggers:
   on_activated:
-    action_graph: action_noop
-    parameters: {}
+    action_graph: action_open_rest_ui
+    parameters:
+      target: event.instigator

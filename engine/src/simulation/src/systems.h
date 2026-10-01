@@ -112,6 +112,13 @@ public:
         NetId net_id,
         float lift_meters,
         std::uint32_t invulnerable_ticks) const;
+    // Puts an actor inside a building, or (shelter_net_id 0) takes it out.
+    // See Kernel_ServerEnqueueEntityShelter for every rule. False, and nothing
+    // touched, when the change is refused.
+    bool set_shelter(
+        KernelEngine& engine,
+        NetId net_id,
+        NetId shelter_net_id) const;
 };
 
 class MovementSystem {

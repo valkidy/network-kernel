@@ -5,6 +5,17 @@
 #include <stdint.h>
 
 /*
+ * 96: buildings. KernelEntityTriggerActionType gained _OpenUi, and
+ *     KernelActionDefinition gained ui_id, appended, read only by open_ui;
+ *     zero on every other action. KernelActionDefinition is embedded in every
+ *     trigger definition, so every managed mirror of those shifts.
+ *     KernelEvent gained related_net_id, appended into what was tail padding,
+ *     so sizeof(KernelEvent) is unchanged but a mirror must still name it.
+ *     KernelEventType gained _UiOpened and _ShelterChanged,
+ *     KernelGameplayRequestRejection gained _InstigatorSheltered and
+ *     KernelLocalActionResultReason gained _Sheltered. The shelter command,
+ *     Kernel_ServerEnqueueEntityShelter, is game_server's internal bridge
+ *     (kernel_api_internal.h), not a managed export.
  * 95: apply_pull. KernelEntityTriggerActionType gained _ApplyPull and
  *     KernelEventVec3Source gained _SubjectPosition, where the event's subject
  *     was when it happened (an area effect's centre, a projectile's impact
@@ -134,7 +145,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 95u
+#define KERNEL_ABI_VERSION 96u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -573,6 +584,18 @@ typedef enum KernelEventType {
      * `code` the instigating entity's net id (0 when unknown). Server-local:
      * never replicated. Setting health to zero directly does not emit it. */
     KernelEventType_EntityDied = 15,
+    /* An open_ui action ran: a building's on_activated graph asked for its
+     * interface. `net_id` is the building, `related_net_id` the actor that
+     * activated it, `peer_id` that actor's owner peer and `code` the ui_id the
+     * graph named. What the interface does, and whether the actor goes inside,
+     * is the server's to decide. Server-local: never replicated. */
+    KernelEventType_UiOpened = 16,
+    /* An actor went into a building or came out of one. `net_id` is the actor,
+     * `peer_id` its owner peer, `code` the building it is now inside, or 0
+     * when it left, and `related_net_id` the building it left, or 0 when it
+     * entered. Not emitted when the actor itself is removed (a disconnect).
+     * Server-local: never replicated. */
+    KernelEventType_ShelterChanged = 17,
 } KernelEventType;
 
 typedef enum KernelDespawnReason {
@@ -696,6 +719,9 @@ typedef enum KernelGameplayRequestRejectionReason {
     KernelGameplayRequestRejection_GraphRejected = 16,
     /* The instigator's health is zero: the dead do not use, throw or pick up. */
     KernelGameplayRequestRejection_InstigatorDead = 17,
+    /* The instigator is inside a building. The only request it may make is
+     * to activate that same building, which is how it asks to leave. */
+    KernelGameplayRequestRejection_InstigatorSheltered = 18,
 } KernelGameplayRequestRejectionReason;
 
 typedef enum KernelEntityTriggerActionType {
@@ -709,6 +735,9 @@ typedef enum KernelEntityTriggerActionType {
     KernelEntityTriggerActionType_RemoveStatus = 7,
     KernelEntityTriggerActionType_ApplySpeedModifier = 8,
     KernelEntityTriggerActionType_ApplyPull = 9,
+    /* A building's on_activated graph asking for its interface; see
+     * KernelEventType_UiOpened. Entity on_activated triggers only. */
+    KernelEntityTriggerActionType_OpenUi = 10,
 } KernelEntityTriggerActionType;
 
 typedef enum KernelStatModifierOperation {
@@ -774,6 +803,14 @@ typedef enum KernelActionConditionType {
 /* Ceiling on an actor's knockdown recovery_ticks, checked by the same two
  * parties. */
 #define KERNEL_MAX_KNOCKDOWN_RECOVERY_TICKS 300u
+
+/* Players in a squad. Nothing caps a session's players by this yet; it is the
+ * one number a per-squad limit should read, so a later player cap and the
+ * shelter capacity below cannot drift apart. */
+#define KERNEL_SQUAD_SIZE 4u
+
+/* How many actors one building holds at once. */
+#define KERNEL_SHELTER_CAPACITY KERNEL_SQUAD_SIZE
 
 /* How apply_impulse reads impulse_strength / impulse_strength_vertical.
  * RADIAL: the historical single-scalar form, delta = normalize(dir) * strength.
@@ -853,6 +890,10 @@ typedef struct KernelActionDefinition {
     float pull_distance;
     uint32_t pull_airtime_ticks;
     float pull_max_speed;
+    /* open_ui only; zero on every other action. Which interface the building
+     * offers. Non-zero; what each value means is the game's, not the
+     * kernel's. */
+    uint32_t ui_id;
 } KernelActionDefinition;
 
 typedef struct KernelActionTriggerDefinition {
@@ -1040,6 +1081,8 @@ typedef enum KernelLocalActionResultReason {
     KernelLocalActionResultReason_Cooldown = 12,
     KernelLocalActionResultReason_Staggered = 13,
     KernelLocalActionResultReason_KnockedBack = 14,
+    /* Inside a building: no actions until it comes out. */
+    KernelLocalActionResultReason_Sheltered = 15,
 } KernelLocalActionResultReason;
 
 typedef enum KernelRemoteActionPresentationEventType {
@@ -2360,6 +2403,9 @@ typedef struct KernelEvent {
     uint64_t event_time_us;
     uint64_t presentation_time_us;
     int32_t health_delta;
+    /* A second entity the event is about, where its type says there is one
+     * (UiOpened, ShelterChanged); 0 otherwise. */
+    uint32_t related_net_id;
 } KernelEvent;
 
 typedef struct KernelEntityLifecycleEvent {

@@ -1,8 +1,8 @@
 # 帳篷建築（Tent）實作計劃書
 
-狀態：**設計 review 中，尚未實作 Task A 的 kernel / game_server 部分。**
-分支：`claude/tent-building`（從 `main` 0152baf 開出）。
-已有 commit：`076727d`（catalog + 可行性 probe）、`2557411`（kit 改為瓶子大小）。
+狀態：**設計已定案。K1、K2 已實作（見 §3.10）；K3–K6 與 game_server 的進出流程未做。**
+分支：`claude/tent-building`，2026-10-01 rebase 到 `claude/apply-pull`（a7da594）之上，
+所以必須在 apply-pull 之後 merge。ABI 接著 apply-pull 的 95 升到 96。
 最後更新：2026-10-01（第五輪 review：進出沿用既有流程、視野隱藏做成 YAML 選項、進入前提、住客上限 4）。
 
 本文件整理 2026-09-30 的設計討論與實測結果，以及 2026-10-01 第二到四輪 review 的決定。
@@ -57,7 +57,7 @@
 | D19 | kit 投擲距離比照 ice block，讓投擲距離的設定一致 | 第三輪。**已經一致**：`tent_kit` 與 ice block 的 `stateful_magic_bottle` 都用 `grenade_shell_projectile`，不需要改 |
 | D20 | **建築物不主動承受或吸引威脅，只保留被意外破壞的可能**。不加入敵人的視野候選；HP 設高值 | 第三輪。回覆 §9-1 |
 | D21 | 友軍傷害不保護：玩家自己的 AoE 炸掉自己的建築，屬於玩家自主行為。原則是建築不吸引仇恨，只需讓玩家觀察到它可能被破壞 | 第三輪。回覆 §9-8；client 需要顯示建築受損（例如 HP） |
-| D22 | 兩份 L 的 YAML：`entity_templates/tent.yaml`（id 214，正式，9000）與 `entity_templates/tent_dev.yaml`（id 216，開發，5400）。由 `tent_kit_prop.yaml` 的 `on_collision` 參數 `template` 決定生成哪一個 | 第四輪。對齊現有機制：catalog 只有一個 entry、依目錄載入所有 template，沒有 overlay 或 dev / prod 變體機制，所以用兩個獨立的 template |
+| D22 | 兩份 L 的 YAML：`entity_templates/tent.yaml`（id 216，正式，9000）與 `entity_templates/tent_dev.yaml`（id 217，開發，5400）。由 `tent_kit_prop.yaml` 的 `on_collision` 參數 `template` 決定生成哪一個 | 第四輪。對齊現有機制：catalog 只有一個 entry、依目錄載入所有 template，沒有 overlay 或 dev / prod 變體機制，所以用兩個獨立的 template |
 | D23 | 建築 HP 預設 5000 | 第四輪。`Health.hp` 是 uint16（上限 65535），放得下 |
 | D24 | 建築共用上限時擠掉地圖生成的建築，可以接受，屬於玩家的「意外行為」 | 第四輪 |
 | D25 | 數量限制只靠道具的 `max_stack`（`tent_kit` 為 1）與 group 上限；建築太多而互相擠掉，定位為 gameplay 設計問題（邏輯正確但設計錯誤），不另外加系統限制（不做每人上限） | 第四輪。回覆 §9-7 |
@@ -89,18 +89,18 @@
 已 commit 的部分：
 
 ```
-tent_kit (item 3010)              背包裡的道具：pickupable, throwable
+tent_kit (item 3011)              背包裡的道具：pickupable, throwable
   └─ throw: identity_preserving → tent_kit_prop
 tent_kit_prop (entity 215)        飛行中的瓶子，collider = collision_damage_prop_hitbox (1 m 方塊)
   └─ on_collision terrain|static_obstacle
        → action_spawn_ice_and_damage_self_at_collision
          spawn tent @ event.position，自毀
-tent (entity 214)                 一般 prop（非 item-backed）
+tent (entity 216)                 一般 prop（非 item-backed）
   ├─ lifecycle: 5400 ticks, population_group: tent
   ├─ health 600, impulse_resistance 15
-  ├─ collider: tent_hitbox (32)  oriented_box, 半寬 1.2, 高 2.4, layer damageable
+  ├─ collider: tent_hitbox (33)  oriented_box, 半寬 1.2, 高 2.4, layer damageable
   ├─ interaction: [interactable], range 2.0
-  └─ on_activated → action_noop
+  └─ on_activated → action_open_rest_ui（open_ui, ui_id 1）
 prop_population_rules: tent (id 2, max_alive 4)
 ```
 
@@ -112,7 +112,7 @@ prop_population_rules: tent (id 2, max_alive 4)
 | `lifecycle.lifetime_ticks` | `tent.yaml` 9000（正式）/ `tent_dev.yaml` 5400（開發）（D18、D22） |
 | `health` | 5000 / 5000（D23） |
 | `tent_kit_prop.yaml` | `on_collision` 參數 `template: tent_dev`（開發期間）；正式版改回 `tent` |
-| `on_activated` | 從 `action_noop` 改為含 `open_ui {ui_id: rest}` 的 graph |
+| `on_activated` | ~~從 `action_noop` 改為含 `open_ui` 的 graph~~ 已做：`action_open_rest_ui` |
 | `on_destroy_entity` | 新增：在帳篷位置產生範圍擊退（見 §3.5） |
 | group 規則 | 新增 opt-in：清除類消失也觸發 on_destroy（K4） |
 
@@ -318,6 +318,63 @@ client 重新對齊時讀到非 0，就把預測的遮罩切成 `terrain`、移�
 警告條件：投射物 `damage > 0`，且 `collision_mask` 不含任何陣營位元。在 catalog 載入時印 warning，
 指出 template 名稱，不擋載入。
 
+### 3.10 K1、K2 實作紀錄（2026-10-01）
+
+**rebase 與 id 調整。** apply-pull 先佔了 ABI 95、action enum 9，以及 catalog id
+collider 32、entity 214、item 3010。帳篷改用下一個空號：`tent_hitbox` 33、`tent` 216、
+`tent_kit` 3011（`tent_kit_prop` 維持 215）。D22 的 `tent_dev` 順延為 217。
+
+**K1：`open_ui`。**
+- YAML：`type: open_ui`、`target`（綁 `event.instigator`）、`ui_id`（字面值，非 0）。
+  只能用在 entity 的 `on_activated`；catalog loader 與 kernel validator 都會擋。
+- 一種 UI 一個 graph：`action_open_rest_ui`（ui_id 1）。`action_noop` 已刪除。
+- 執行時只發 `KernelEventType_UiOpened`（`net_id` = 建築、`related_net_id` = 啟動者、
+  `peer_id` = 啟動者的 peer、`code` = ui_id），不做其他事（D30）。
+- ABI 96：`KernelEntityTriggerActionType_OpenUi = 10`、`KernelActionDefinition.ui_id`
+  （append）、`KernelEvent.related_net_id`（填進原本的尾端 padding，sizeof 不變，但 mirror
+  仍要補欄位）。
+
+**K2：入住。**
+- `Kernel_ServerEnqueueEntityShelter(kernel, source, net_id, shelter_net_id)`，走 command
+  queue，下一個 tick 生效（D30）。放在 `kernel_api_internal.h`：和其他 `Enqueue*` 一樣是
+  game_server 用的內部介面，不是 managed export，所以不需要 capability flag，也不用改兩份
+  export 清單。
+- 狀態只在玩家身上：`Sheltered{shelter_net_id, entry_position, previous_movement_collision_mask}`（D27）。
+- 進入：驗證 D32（未死亡、不在任何建築內、不在擊退中）、建築是 prop、住客 <
+  `KERNEL_SHELTER_CAPACITY`（= `KERNEL_SQUAD_SIZE` = 4，D33）；放下搬著的 prop；先設遮罩
+  terrain，再傳送到建築原點；速度歸 0、清除 stagger。發 `KernelEventType_ShelterChanged`
+  （`code` = 建築）。
+- 入住期間：
+  - 移動歸 0，輸入照常 ack；
+  - 傷害整筆丟棄（也就沒有 stagger）；
+  - impulse 和 pull 跳過；
+  - 不能開始新動作（`KernelLocalActionResultReason_Sheltered`），進行中的動作被中斷；
+  - gameplay request 只放行「Activate 自己所在的建築」，其他回
+    `KernelGameplayRequestRejection_InstigatorSheltered`。
+- 退出（`shelter_net_id` 0）：在建築周圍找空位（建築 footprint 半對角線 + 膠囊半徑 +
+  0.25 m，8 個方向，從入口那一側開始，再往外一圈），找不到就回入口位置（G6）；先移出，再恢復
+  原本的遮罩。發 `ShelterChanged`（`code` 0、`related_net_id` = 建築）。建築已不存在時也能退出（直接用入口位置）。
+
+**測試：`//game_server:tent_shelter_test`（全過）。**
+- K1：啟動帳篷會發一個 UiOpened，欄位都正確，而且不會讓人進去。
+- 進入：位置在中心。之後推 30 tick 輸入，位置不動。
+- 入住中：Activate 別的建築被拒（InstigatorSheltered），Activate 自己的帳篷成功。
+- 退出：落在 (2.30, 0, 0)，也就是入口那一側、footprint 外、地面上。之後往帳篷走，停在
+  x = 1.57（牆邊），證明遮罩已經恢復。
+- 拒絕：5 人只進 4 人；已在 A 帳篷內不能進 B；死亡玩家不能進；不在帳篷內時退出不會有事件。
+- 無敵：法師榴彈對照組（手動放進帳篷）命中 1 次、HP 1000 → 955；入住後命中 0 次、HP 不變，
+  帳篷仍被打中 2 次。
+
+**未涵蓋：**
+- 放下搬著的 prop、impulse/pull 阻擋（T10）、進行中動作被中斷，這三項有實作但沒有測試。
+- G6 找不到空位時回入口位置，沒有測試（T16）。
+- 斷線（T14）沒有測試。
+
+**還沒做：**
+- game_server 收到 `UiOpened` 後決定進出並呼叫 K2 的那一層。
+- K3（建築消失時先釋放住客）。目前建築消失後，住客要由 game_server 呼叫退出（建築不在時會回入口位置）。
+- K4–K6、G3 的 YAML 選項，以及 `shelter.capacity` 的 YAML 欄位（目前固定是常數）。
+
 ---
 
 ## 4. 實測事實
@@ -471,7 +528,7 @@ Task A 為 B 預留的接口：
 
 ## 10. 相關檔案
 
-- Catalog：`game_server/gameplay_catalog/entity_templates/{tent,tent_kit_prop}.yaml`、`collider_templates/tent_hitbox.yaml`、`item_templates/tent_kit.yaml`、`action_graph_templates/action_noop.yaml`、`gameplay_catalog.yaml`（population rule）
+- Catalog：`game_server/gameplay_catalog/entity_templates/{tent,tent_kit_prop}.yaml`、`collider_templates/tent_hitbox.yaml`、`item_templates/tent_kit.yaml`、`action_graph_templates/action_open_rest_ui.yaml`、`gameplay_catalog.yaml`（population rule）
 - 測試：`game_server/tests/tent_feasibility_probe_test.cc`
 - 相關 kernel 位置：
   - `kernel.cc` 視野候選迴圈（只看有 vision config 的實體）；`kernel.cc:12055` 進入死亡狀態

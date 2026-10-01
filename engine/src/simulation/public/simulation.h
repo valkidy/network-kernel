@@ -2,6 +2,7 @@
 #define SIMULATION_PUBLIC_SIMULATION_H_
 
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 #include "kernel/public/kernel_types.h"
@@ -345,6 +346,20 @@ float available_lift(
     const glm::quat& rotation,
     float lift);
 
+// Somewhere just outside a footprint of `footprint_radius` metres around
+// `center` that the entity's movement capsule can stand: on terrain or a
+// static obstacle, touching no terrain, static obstacle or other actor. The
+// first ring clears the footprint by the capsule's radius and a margin; a
+// second ring lies a metre further out. Headings are tried nearest
+// `preferred_direction` first. nullopt when there is no physics world, no
+// movement capsule, or nothing clear -- the caller picks the fallback.
+std::optional<glm::vec3> find_clear_standing_spot(
+    World& world,
+    NetId net_id,
+    const glm::vec3& center,
+    float footprint_radius,
+    const glm::vec3& preferred_direction);
+
 void simulate_projectiles(World& world, float fixed_delta_seconds);
 void simulate_projectiles(
     World& world,
@@ -522,8 +537,9 @@ void apply_stagger_profile(
 void clear_stagger(World& world, entt::entity entity);
 
 // Why this actor may not start a new action right now, or
-// KernelLocalActionResultReason_None. Staggered outranks KnockedBack so a hit
-// that does both reports the one that also interrupted.
+// KernelLocalActionResultReason_None. Sheltered outranks the rest: inside a
+// building nothing else can be happening to it. Staggered outranks KnockedBack
+// so a hit that does both reports the one that also interrupted.
 KernelLocalActionResultReason action_block_reason(
     const World& world,
     entt::entity entity,

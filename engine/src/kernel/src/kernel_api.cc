@@ -1065,6 +1065,20 @@ bool Kernel_ServerEnqueueEntityTransform(
     });
 }
 
+bool Kernel_ServerEnqueueEntityShelter(
+    KernelHandle* kernel,
+    uint32_t command_source,
+    uint32_t net_id,
+    uint32_t shelter_net_id) {
+    return abi_call("Kernel_ServerEnqueueEntityShelter", false, [&]() {
+        return kernel != nullptr &&
+               kernel->engine->server_enqueue_entity_shelter(
+                   command_source,
+                   net_id,
+                   shelter_net_id);
+    });
+}
+
 bool Kernel_ServerSetEntityVelocity(
     KernelHandle* kernel,
     uint32_t net_id,

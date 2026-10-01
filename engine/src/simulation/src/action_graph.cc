@@ -479,6 +479,28 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
             });
             continue;
         }
+        if (action.action_type == KernelEntityTriggerActionType_OpenUi) {
+            // A building's interface opens when someone activates it, and for
+            // them: no other event has an actor asking.
+            if (event_type != TriggerEventType::kActivated ||
+                action.ui_id == 0u ||
+                action.target_source > KernelEntityRefSource_EventInstigator) {
+                return std::nullopt;
+            }
+            const std::string target_name = "target" + suffix;
+            binding.graph.parameters.push_back({target_name, std::monostate{}});
+            binding.graph.actions.push_back(ActionOpenUiDefinition{
+                target_name,
+                action.ui_id,
+                *condition,
+            });
+            binding.parameters.push_back({
+                target_name,
+                EntityRefExpression{static_cast<EntityRefSource>(
+                    action.target_source)},
+            });
+            continue;
+        }
         if (action.action_type == KernelEntityTriggerActionType_ApplyPull) {
             if (!pull_is_authorable(
                     action.pull_mode,
@@ -837,6 +859,17 @@ bool validate_action_graph_binding(
             }
             continue;
         }
+        if (const auto* open_ui = std::get_if<ActionOpenUiDefinition>(&action)) {
+            if (open_ui->ui_id == 0u) {
+                return fail(error, "open_ui requires a non-zero ui_id");
+            }
+            if (!validate_action_parameter(
+                    binding, open_ui->target_parameter, ParameterType::kEntityId,
+                    error)) {
+                return false;
+            }
+            continue;
+        }
         if (const auto* pull = std::get_if<ActionApplyPullDefinition>(&action)) {
             if (!pull_is_authorable(
                     pull->mode, pull->distance, pull->airtime_ticks,
@@ -1055,6 +1088,26 @@ bool evaluate_action_graph(
                 owner,
                 spawn->item_template_id,
                 spawn->quantity,
+                provenance,
+            });
+            continue;
+        }
+
+        if (const auto* open_ui = std::get_if<ActionOpenUiDefinition>(&action)) {
+            const ActionGraphParameterValue* target_value =
+                find_resolved_parameter(parameters, open_ui->target_parameter);
+            if (target_value == nullptr ||
+                !std::holds_alternative<EntityIdValue>(*target_value)) {
+                return fail(error, "open_ui action input type mismatch");
+            }
+            const NetId target = std::get<EntityIdValue>(*target_value).value;
+            if (target == 0u) {
+                return fail(error, "open_ui target must not be null");
+            }
+            commands->push_back(ActionOpenUiCommand{
+                self,
+                target,
+                open_ui->ui_id,
                 provenance,
             });
             continue;

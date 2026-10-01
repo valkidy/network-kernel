@@ -1,6 +1,0 @@
-# Does nothing. For a trigger whose only job is to exist: the tent's
-# on_activated makes it interactable, and what entering it does is game_server's
-# work, not a graph's.
-id: action_noop
-parameters: {}
-actions: []

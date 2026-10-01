@@ -86,6 +86,12 @@ public:
     // An actor was knocked back this tick. floor_y is where it stood when
     // struck; the rest of its anchor is read at the end of the tick.
     void queue_actor_impulse(NetId net_id, float floor_y);
+    // A building's graph asked for its interface: KernelEventType_UiOpened.
+    void queue_ui_opened(
+        NetId building_net_id,
+        PeerId actor_peer,
+        std::uint32_t ui_id,
+        NetId actor_net_id);
     bool claim_scope_transfer(
         KernelItemInstanceId item_instance_id,
         NetId prop_entity_id);
@@ -322,6 +328,10 @@ public:
         std::uint32_t command_source,
         NetId net_id,
         const KernelPlayerInput& input);
+    bool server_enqueue_entity_shelter(
+        std::uint32_t command_source,
+        NetId net_id,
+        NetId shelter_net_id);
     bool server_set_entity_combat_state(
         NetId net_id,
         const KernelCombatStateDefinition& combat_state);
@@ -713,7 +723,8 @@ private:
         KernelEventType type,
         NetId net_id = 0,
         PeerId peer_id = 0,
-        std::uint32_t code = 0);
+        std::uint32_t code = 0,
+        NetId related_net_id = 0);
     void register_actor_for_first_physics(NetId net_id);
     bool is_actor_pending_first_physics(NetId net_id) const;
     void filter_pending_first_physics_actors(WorldSnapshot* snapshot) const;

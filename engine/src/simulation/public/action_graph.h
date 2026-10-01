@@ -289,6 +289,14 @@ struct ActionApplyPullCommand {
     ActionExecutionProvenance provenance;
 };
 
+// `source` is the building whose graph ran, `target` the actor it opens for.
+struct ActionOpenUiCommand {
+    NetId source = 0;
+    NetId target = 0;
+    std::uint32_t ui_id = 0;
+    ActionExecutionProvenance provenance;
+};
+
 using ActionGraphCommand = std::variant<
     ActionSpawnProjectileCommand,
     ActionApplyDamageCommand,
@@ -298,7 +306,8 @@ using ActionGraphCommand = std::variant<
     ActionRemoveStatusCommand,
     ActionApplySpeedModifierCommand,
     ActionSpawnEntityCommand,
-    ActionApplyPullCommand>;
+    ActionApplyPullCommand,
+    ActionOpenUiCommand>;
 
 struct ActionGraphQueuedTrigger {
     CompiledActionGraphBinding binding;

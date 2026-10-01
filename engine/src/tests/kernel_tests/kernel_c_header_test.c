@@ -6,8 +6,25 @@
 #include "kernel/public/kernel_api.h"
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 95u,
-    "apply_pull: KernelActionDefinition gained the pull_* block");
+    KERNEL_ABI_VERSION == 96u,
+    "buildings: KernelActionDefinition gained ui_id, KernelEvent gained "
+    "related_net_id");
+_Static_assert(
+    offsetof(KernelActionDefinition, ui_id) >
+        offsetof(KernelActionDefinition, pull_max_speed),
+    "ui_id is appended after every field that existed before ABI 96");
+_Static_assert(
+    KernelEntityTriggerActionType_OpenUi == 10 &&
+        KernelEventType_UiOpened == 16 &&
+        KernelEventType_ShelterChanged == 17 &&
+        KernelGameplayRequestRejection_InstigatorSheltered == 18 &&
+        KernelLocalActionResultReason_Sheltered == 15,
+    "the ABI 96 enum values are appended");
+_Static_assert(
+    offsetof(KernelEvent, related_net_id) >
+            offsetof(KernelEvent, health_delta) &&
+        sizeof(KernelEvent) == 48u,
+    "related_net_id fills KernelEvent's tail padding: the size is unchanged");
 _Static_assert(
     offsetof(KernelActionDefinition, pull_mode) >
         offsetof(KernelActionDefinition, repeat_stagger_lifetime_ticks),
@@ -110,14 +127,15 @@ _Static_assert(
         offsetof(KernelSkeletonBindingDefinition, processing_order),
     "stance crouch is appended to the skeleton binding ABI");
 _Static_assert(
-    sizeof(KernelActionDefinition) == 84u + 16u + 16u,
+    sizeof(KernelActionDefinition) == 84u + 16u + 16u + 4u,
     "KernelActionDefinition ABI size: 84 bytes before ABI 94, plus the "
     "16-byte spawn lifetime and repeat block, plus ABI 95's 16-byte pull "
-    "block");
+    "block, plus ABI 96's ui_id");
 _Static_assert(
-    sizeof(KernelActionTriggerDefinition) == 764u + 8u * 16u + 8u * 16u,
+    sizeof(KernelActionTriggerDefinition) ==
+        764u + 8u * 16u + 8u * 16u + 8u * 4u,
     "KernelActionTriggerDefinition ABI size: its eight actions each grew by "
-    "the ABI 94 repeat block and the ABI 95 pull block");
+    "the ABI 94 repeat block, the ABI 95 pull block and the ABI 96 ui_id");
 _Static_assert(
     offsetof(KernelActionDefinition, spawn_lifetime_ticks) >
         offsetof(KernelActionDefinition, damage_stagger),

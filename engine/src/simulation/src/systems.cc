@@ -533,6 +533,13 @@ bool execute_action_graph_commands(
             }
             continue;
         }
+        if (const auto* open_ui = std::get_if<ActionOpenUiCommand>(&command)) {
+            if (open_ui->ui_id == 0u ||
+                !world.find_entity(open_ui->target).has_value()) {
+                return false;
+            }
+            continue;
+        }
         if (const auto* pull = std::get_if<ActionApplyPullCommand>(&command)) {
             if (!world.find_entity(pull->target).has_value() ||
                 !pull_is_authorable(
@@ -1209,12 +1216,28 @@ bool execute_action_graph_commands(
             recompute_speed(world, target);
             continue;
         }
+        if (const auto* open_ui = std::get_if<ActionOpenUiCommand>(&command)) {
+            // The kernel only says it was asked. Which interface that is, and
+            // whether the actor goes inside, is game_server's to act on.
+            const entt::entity target = *world.find_entity(open_ui->target);
+            const NetworkIdentity* identity =
+                world.registry().try_get<NetworkIdentity>(target);
+            engine.queue_ui_opened(
+                open_ui->source,
+                identity == nullptr ? 0u : identity->owner_peer,
+                open_ui->ui_id,
+                open_ui->target);
+            continue;
+        }
         if (const auto* pull = std::get_if<ActionApplyPullCommand>(&command)) {
             const entt::entity target = *world.find_entity(pull->target);
             // Actors only: a prop in flight moves in a straight line without
-            // gravity, so there is no airtime that lands it anywhere.
+            // gravity, so there is no airtime that lands it anywhere. Never an
+            // occupant: a building's terrain-only mask would let the flight
+            // carry it out through the walls with the shelter still on it.
             if (world.registry().get<EntityKind>(target).type !=
-                EntityType::kActor) {
+                    EntityType::kActor ||
+                world.registry().all_of<Sheltered>(target)) {
                 continue;
             }
             const glm::vec3 position =
@@ -1266,6 +1289,10 @@ bool execute_action_graph_commands(
         if (const auto* impulse =
                 std::get_if<ActionApplyImpulseCommand>(&command)) {
             const entt::entity target = *world.find_entity(impulse->target);
+            // Not an occupant, for the reason apply_pull gives above.
+            if (world.registry().all_of<Sheltered>(target)) {
+                continue;
+            }
             const glm::vec3 direction =
                 glm::normalize(impulse->direction);
             const float resistance = world.registry().all_of<ImpulseResistance>(target)
@@ -2832,6 +2859,159 @@ bool EntityStateSystem::set_transform(
         engine.world_.registry().get<EntityKind>(*entity).type == EntityType::kProp) {
         engine.queue_prop_state_change(net_id);
     }
+    return true;
+}
+
+namespace {
+
+// How far a building's hit volumes reach from its origin across the ground: the
+// footprint an occupant has to be set down clear of.
+float shelter_footprint_radius(const World& world, NetId shelter_net_id) {
+    float radius = 0.0f;
+    for (const ColliderInstance& collider : world.collider_registry().instances()) {
+        if (collider.entity_net_id != shelter_net_id ||
+            (collider.purpose_flags & KernelColliderPurpose_Hit) == 0u) {
+            continue;
+        }
+        const float reach =
+            collider.shape_type == ColliderShapeType::kAabb ||
+                collider.shape_type == ColliderShapeType::kOrientedBox
+            ? std::sqrt(
+                  collider.half_extents.x * collider.half_extents.x +
+                  collider.half_extents.z * collider.half_extents.z)
+            : collider.radius;
+        const glm::vec3 offset = collider.local_center;
+        radius = std::max(
+            radius,
+            reach + std::sqrt(offset.x * offset.x + offset.z * offset.z));
+    }
+    return radius;
+}
+
+}  // namespace
+
+bool EntityStateSystem::set_shelter(
+    KernelEngine& engine,
+    NetId net_id,
+    NetId shelter_net_id) const {
+    if (!engine.running_ || !is_server_mode(engine.config_.mode) || net_id == 0u) {
+        return false;
+    }
+    // Out of the building it is in. A lambda rather than a free function so it
+    // shares this system's access to the engine.
+    const auto leave_shelter = [&engine, net_id](entt::entity entity) {
+        World& world = engine.world_;
+        entt::registry& registry = world.registry();
+        const Sheltered sheltered = registry.get<Sheltered>(entity);
+        glm::vec3 exit = sheltered.entry_position;
+        if (const std::optional<entt::entity> shelter =
+                world.find_entity(sheltered.shelter_net_id);
+            shelter.has_value() && registry.all_of<Transform>(*shelter)) {
+            const glm::vec3 center = registry.get<Transform>(*shelter).position;
+            if (const std::optional<glm::vec3> spot = find_clear_standing_spot(
+                    world,
+                    net_id,
+                    center,
+                    shelter_footprint_radius(world, sheltered.shelter_net_id),
+                    sheltered.entry_position - center)) {
+                exit = *spot;
+            }
+        }
+        // Out first, mask second. The other way round, the building is solid to
+        // the actor while it still stands inside it, and the next step pushes it
+        // out along whichever axis is shortest.
+        registry.get<Transform>(entity).position = exit;
+        if (Velocity* velocity = registry.try_get<Velocity>(entity)) {
+            velocity->linear = glm::vec3{0.0f};
+        }
+        MovementState& movement = registry.get<MovementState>(entity);
+        movement.has_controller_height = false;
+        engine.sync_entity_colliders_from_world(net_id);
+        movement.movement_collision_mask = sheltered.previous_movement_collision_mask;
+        registry.remove<Sheltered>(entity);
+        engine.push_event(
+            KernelEventType_ShelterChanged,
+            net_id,
+            registry.get<NetworkIdentity>(entity).owner_peer,
+            0u,
+            sheltered.shelter_net_id);
+    };
+    World& world = engine.world_;
+    entt::registry& registry = world.registry();
+    const std::optional<entt::entity> entity = world.find_entity(net_id);
+    if (!entity.has_value() ||
+        !registry.all_of<NetworkIdentity, EntityKind, Transform, MovementState>(
+            *entity) ||
+        registry.get<EntityKind>(*entity).type != EntityType::kActor) {
+        return false;
+    }
+    if (const Sheltered* current = registry.try_get<Sheltered>(*entity)) {
+        if (shelter_net_id == 0u) {
+            leave_shelter(*entity);
+            return true;
+        }
+        // Already in this one is nothing to do; in another, it has to come
+        // out of that one first.
+        return current->shelter_net_id == shelter_net_id;
+    }
+    if (shelter_net_id == 0u) {
+        return false;
+    }
+
+    // Who may go in. The dead do not; neither does an actor in the middle of
+    // a knockback, whose flight the authority is still steering.
+    if (const Health* health = registry.try_get<Health>(*entity);
+        health != nullptr && health->max_hp > 0u && health->hp == 0u) {
+        return false;
+    }
+    if (const ImpulseLockout* lockout = registry.try_get<ImpulseLockout>(*entity);
+        lockout != nullptr && engine.current_tick() < lockout->until_tick) {
+        return false;
+    }
+    const std::optional<entt::entity> shelter = world.find_entity(shelter_net_id);
+    if (!shelter.has_value() ||
+        !registry.all_of<EntityKind, Transform>(*shelter) ||
+        registry.get<EntityKind>(*shelter).type != EntityType::kProp) {
+        return false;
+    }
+    std::uint32_t occupants = 0u;
+    for (const auto [occupant, sheltered] : registry.view<Sheltered>().each()) {
+        (void)occupant;
+        if (sheltered.shelter_net_id == shelter_net_id) {
+            ++occupants;
+        }
+    }
+    if (occupants >= KERNEL_SHELTER_CAPACITY) {
+        return false;
+    }
+
+    Transform& transform = registry.get<Transform>(*entity);
+    MovementState& movement = registry.get<MovementState>(*entity);
+    // What it carries stays outside, where it stood.
+    ItemGameplaySystem{}.drop_carried_props(engine, net_id, transform.position);
+    registry.emplace_or_replace<Sheltered>(
+        *entity,
+        Sheltered{
+            shelter_net_id,
+            transform.position,
+            movement.movement_collision_mask});
+    // Mask first, move second, for the reverse of leave_shelter's reason: the
+    // building must already have stopped blocking the actor when it arrives
+    // inside, or the next step pushes it straight back out.
+    movement.movement_collision_mask = KERNEL_MOVEMENT_LAYER_TERRAIN;
+    transform.position = registry.get<Transform>(*shelter).position;
+    movement.has_controller_height = false;
+    if (Velocity* velocity = registry.try_get<Velocity>(*entity)) {
+        velocity->linear = glm::vec3{0.0f};
+    }
+    clear_stagger(world, *entity);
+    engine.sync_entity_colliders_from_world(net_id);
+    engine.push_event(
+        KernelEventType_ShelterChanged,
+        net_id,
+        registry.get<NetworkIdentity>(*entity).owner_peer,
+        shelter_net_id,
+        0u);
     return true;
 }
 

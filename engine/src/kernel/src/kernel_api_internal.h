@@ -152,6 +152,26 @@ bool Kernel_ServerEnqueueEntityState(
     uint32_t visual_flags);
 
 /*
+ * Puts an actor inside a building, or takes it out (shelter_net_id 0), on the
+ * next simulation tick. Inside, the actor stands at the building's origin
+ * under a terrain-only movement mask, takes no damage, stagger, impulse or
+ * pull, starts no action, drops what it carries, and may make one gameplay
+ * request: activating that building. Leaving puts it on the nearest clear spot
+ * around the building -- where it came in from if none is clear -- and only
+ * then restores the mask it had.
+ *
+ * Entering is refused, and nothing changes, unless the actor is a live actor
+ * with movement, outside every building and not in a knockback, and the
+ * building is a prop with fewer than KERNEL_SHELTER_CAPACITY actors in it.
+ * Each change that happens emits KernelEventType_ShelterChanged.
+ */
+bool Kernel_ServerEnqueueEntityShelter(
+    KernelHandle* kernel,
+    uint32_t command_source,
+    uint32_t net_id,
+    uint32_t shelter_net_id);
+
+/*
  * Internal/experimental game_server migration bridge. Enqueues authoritative
  * entity input for the next simulation tick.
  */

@@ -296,6 +296,7 @@ void hash_projectile_template(
             hash_float(hash, action.pull_distance);
             hash_scalar(hash, action.pull_airtime_ticks);
             hash_float(hash, action.pull_max_speed);
+            hash_scalar(hash, action.ui_id);
             hash_scalar(hash, action.condition_type);
         }
     }
@@ -1909,6 +1910,7 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 "distance",
                 "airtime_ticks",
                 "max_speed",
+                "ui_id",
             },
             path,
             source_kind,
@@ -1939,6 +1941,10 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
             throw std::runtime_error(
                 "anchor, distance, airtime_ticks and max_speed are only "
                 "supported on apply_pull: " + path);
+        }
+        if (action["ui_id"] && compiled_action.action_type != "open_ui") {
+            throw std::runtime_error(
+                "ui_id is only supported on open_ui: " + path);
         }
         if ((action["repeat"] || action["lifetime_ticks"]) &&
             compiled_action.action_type != "spawn_projectile") {
@@ -2149,6 +2155,28 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 &compiled_action.target_parameter,
                 &compiled_action.status_parameter,
             };
+        } else if (compiled_action.action_type == "open_ui") {
+            // Who it opens for, and which one. Everything else a building's
+            // interface does is game_server's, not the graph's.
+            if (action["projectile_template"] || action["position"] ||
+                action["direction"] || action["owner"] || action["amount"] ||
+                action["strength"] || action["status"] ||
+                action["operation"] || action["value"] ||
+                action["entity_template"] || action["item_template"] ||
+                action["quantity"] || action["collision_mask"] ||
+                action["lockout_ticks"] || !action["ui_id"]) {
+                throw std::runtime_error(
+                    "open_ui requires target and ui_id and nothing else: " +
+                    path);
+            }
+            compiled_action.ui_id = action["ui_id"].as<std::uint32_t>();
+            if (compiled_action.ui_id == 0u) {
+                throw std::runtime_error(
+                    "open_ui ui_id must be non-zero: " + path);
+            }
+            compiled_action.target_parameter =
+                parameter_reference_from_yaml(action["target"], "target");
+            action_parameters = {&compiled_action.target_parameter};
         } else if (compiled_action.action_type == "apply_speed_modifier") {
             if (action["projectile_template"] || action["position"] ||
                 action["direction"] || action["owner"] || action["amount"] ||
@@ -6465,6 +6493,11 @@ void compile_projectile_trigger_binding(
         const ActionGraphActionConfig& action = graph->actions[index];
         KernelActionDefinition& compiled_action = compiled.actions[index];
         compiled_action.condition_type = action.condition_type;
+        if (action.action_type == "open_ui") {
+            throw std::runtime_error(
+                "open_ui is only supported in on_activated: " +
+                projectile_template->name);
+        }
         if (action.action_type == "apply_pull") {
             compiled_action.target_source = entity_ref_source(
                 trigger_parameter_value(
@@ -6806,6 +6839,20 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
             }
             compiled_action.impulse_collision_mask = action.collision_mask;
             compiled_action.impulse_lockout_ticks = action.lockout_ticks;
+            continue;
+        }
+        if (action.action_type == "open_ui") {
+            // Mirrors the kernel: only an activation has someone asking.
+            if (trigger_name != "on_activated") {
+                throw std::runtime_error(
+                    "open_ui is only supported in on_activated: " +
+                    binding.action_graph_ref);
+            }
+            compiled_action.action_type = KernelEntityTriggerActionType_OpenUi;
+            compiled_action.target_source = entity_ref_source(
+                trigger_parameter_value(
+                    binding, graph_parameter(action.target_parameter)));
+            compiled_action.ui_id = action.ui_id;
             continue;
         }
         if (action.action_type == "apply_pull") {
@@ -8320,6 +8367,7 @@ std::uint64_t compute_gameplay_catalog_hash(
             hash_float(&hash, action.pull_distance);
             hash_scalar(&hash, action.pull_airtime_ticks);
             hash_float(&hash, action.pull_max_speed);
+            hash_scalar(&hash, action.ui_id);
         }
     }
     std::vector<StatusEffectTemplateConfig> status_effect_templates =

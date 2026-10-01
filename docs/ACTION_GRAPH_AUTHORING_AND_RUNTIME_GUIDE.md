@@ -447,6 +447,27 @@ Runtime 在 command commit 當下，依目標**當時**的位置算出目的地�
 
 範例：`action_pull_at_target`（吸引手榴彈 `fungible_pull_bottle`）。
 
+### 4.6 `open_ui`
+
+建築物要求開啟自己的介面。建築物是哪一種（休息帳篷、商店……）只由這個 action 的
+`ui_id` 決定：建築物的 `on_activated` 綁定哪個 graph，它就是哪種建築。
+
+```yaml
+- type: open_ui
+  target: params.target   # 綁定 event.instigator：啟動建築的 actor
+  ui_id: 1                # 1 = 休息 UI；數值的意義由遊戲定義，kernel 不解讀
+```
+
+- 只能用在 entity 的 `on_activated` trigger。只有啟動事件有「誰在要求」。
+- `ui_id` 是 action 上的字面值，必須非 0。
+- Runtime 只發出 `KernelEventType_UiOpened`（`net_id` = 建築、`related_net_id` =
+  啟動者、`peer_id` = 啟動者的 owner peer、`code` = `ui_id`），其他什麼都不做。
+  要不要讓 actor 進入建築，由 game_server 收到事件後決定，再透過
+  `Kernel_ServerEnqueueEntityShelter` 執行。
+- 事件只存在伺服器端，不會同步給 client。
+
+範例：`action_open_rest_ui`（帳篷 `tent`）。
+
 Status lifecycle 目前支援的 actions 為 `apply_damage`、health change、status
 apply/remove 與 speed modifier。Lifecycle safety contract 僅允許 `on_apply` 使用
 damage、health change、speed modifier；`on_tick` 與 `on_expire` 不提交 speed
@@ -798,6 +819,8 @@ Catalog load/compile 會拒絕：
   `max_speed`；`airtime_ticks` 為 0 或超過上限；`max_speed` 不為正；`anchor` 模式的
   `distance` 為負，或 `direction` 模式的 `distance` 缺少或為 0。
 - `anchor`／`distance`／`airtime_ticks`／`max_speed` 寫在 `apply_pull` 以外的 action 上。
+- `open_ui` 用在 `on_activated` 以外的 trigger、缺 `ui_id` 或為 0，或帶有 `target`
+  以外的欄位；`ui_id` 寫在 `open_ui` 以外的 action 上。
 - `apply_pull` 的 anchor/direction 用 vec3 default，或綁定到其他 expression；
   `event.subject_position` 用在 projectile trigger 以外的 trigger。
 - `apply_impulse` 的 `strength`：純量形式非有限或不為正；list 形式不是剛好兩個
