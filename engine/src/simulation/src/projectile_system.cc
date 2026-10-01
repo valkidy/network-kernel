@@ -734,6 +734,10 @@ void queue_projectile_trigger(
         // at all and reports zero, which the loader is what keeps a graph from
         // asking for.
         normalized_or(projectile.initial_velocity, glm::vec3{0.0f}),
+        // A projectile is where it struck or expired, so its own position is
+        // the event's. An area effect reports its centre separately, from
+        // area_effect_system, since there the two differ per target.
+        position,
     };
     ActionExecutionProvenance provenance{
         trigger_request_id(current_tick, identity.net_id, event_type, sequence),

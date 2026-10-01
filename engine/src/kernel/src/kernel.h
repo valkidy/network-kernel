@@ -82,10 +82,20 @@ public:
     const World& simulation_world() const { return world_; }
     ItemStore& item_store() { return item_store_; }
     const ItemStore& item_store() const { return item_store_; }
+    const std::vector<KernelPropPopulationRuleDefinition>& prop_population_rules()
+        const {
+        return prop_population_rules_;
+    }
     void queue_prop_state_change(NetId net_id);
     // An actor was knocked back this tick. floor_y is where it stood when
     // struck; the rest of its anchor is read at the end of the tick.
     void queue_actor_impulse(NetId net_id, float floor_y);
+    // A building's graph asked for its interface: KernelEventType_UiOpened.
+    void queue_ui_opened(
+        NetId building_net_id,
+        PeerId actor_peer,
+        std::uint32_t ui_id,
+        NetId actor_net_id);
     bool claim_scope_transfer(
         KernelItemInstanceId item_instance_id,
         NetId prop_entity_id);
@@ -221,6 +231,10 @@ public:
         std::uint32_t max_bindings) const;
     KernelLocalPlayerInfo local_player_info() const;
     bool local_weapon_state(KernelLocalWeaponState* out_state) const;
+    bool local_shelter_state(KernelLocalShelterState* out_state) const;
+    // The ui_id the building template's on_activated graph names with
+    // open_ui, or 0 when it names none.
+    std::uint32_t building_ui_id(std::uint32_t entity_template_id) const;
     bool server_create_entity(
         const KernelServerEntityCreateInfo& create_info,
         NetId* out_net_id);
@@ -322,6 +336,10 @@ public:
         std::uint32_t command_source,
         NetId net_id,
         const KernelPlayerInput& input);
+    bool server_enqueue_entity_shelter(
+        std::uint32_t command_source,
+        NetId net_id,
+        NetId shelter_net_id);
     bool server_set_entity_combat_state(
         NetId net_id,
         const KernelCombatStateDefinition& combat_state);
@@ -713,7 +731,8 @@ private:
         KernelEventType type,
         NetId net_id = 0,
         PeerId peer_id = 0,
-        std::uint32_t code = 0);
+        std::uint32_t code = 0,
+        NetId related_net_id = 0);
     void register_actor_for_first_physics(NetId net_id);
     bool is_actor_pending_first_physics(NetId net_id) const;
     void filter_pending_first_physics_actors(WorldSnapshot* snapshot) const;
@@ -1283,6 +1302,12 @@ private:
     // that landed: rooted, released only by the count. The twin of
     // ImpulseLockout::recovering.
     bool predicted_impulse_lockout_recovering_ = false;
+    // The building the local player is inside, as the last owner snapshot
+    // said (0 when outside), and that snapshot's tick. The twin of Sheltered:
+    // while it is set the prediction stands still under a terrain-only mask,
+    // as the authority does, instead of being pushed out through the walls.
+    NetId predicted_shelter_net_id_ = 0;
+    std::uint32_t predicted_shelter_tick_ = 0;
     std::uint32_t predicted_action_buttons_ = 0;
     std::uint16_t predicted_action_binding_id_ = 0;
     std::uint8_t predicted_action_weapon_id_ = 0;

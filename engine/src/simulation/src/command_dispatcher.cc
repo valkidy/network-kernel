@@ -109,6 +109,13 @@ CommandResult Dispatcher::dispatch(
             return CommandResult{
                 engine.server_submit_gameplay_request(
                     command.submit_gameplay_request.request)};
+        case CommandId::kSetEntityShelter:
+            return CommandResult{
+                EntityStateSystem{}.set_shelter(
+                    engine,
+                    command.set_entity_shelter.net_id,
+                    command.set_entity_shelter.shelter_net_id),
+                command.set_entity_shelter.net_id};
         case CommandId::kUnknown:
             break;
     }

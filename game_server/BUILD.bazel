@@ -42,6 +42,7 @@ cc_library(
         "src/patrol_group_runtime.cc",
         "src/patrol_navigation.cc",
         "src/respawn_scheduler.cc",
+        "src/shelter_director.cc",
         "src/spawn_sampling.cc",
         "src/spawner_director.cc",
         "src/world_rule_director.cc",
@@ -59,6 +60,7 @@ cc_library(
         "src/gameplay_config.h",
         "src/game_server.h",
         "src/respawn_scheduler.h",
+        "src/shelter_director.h",
         "src/patrol_director.h",
         "src/patrol_group_runtime.h",
         "src/patrol_navigation.h",
@@ -618,8 +620,83 @@ cc_test(
 )
 
 cc_test(
+    name = "tent_feasibility_probe_test",
+    srcs = ["tests/tent_feasibility_probe_test.cc"],
+    data = glob([
+        "gameplay_catalog/action_graph_templates/*.yaml",
+        "gameplay_catalog/action_templates/*.yaml",
+        "gameplay_catalog/collider_templates/*.yaml",
+        "gameplay_catalog/entity_templates/*.yaml",
+        "gameplay_catalog/item_templates/*.yaml",
+        "gameplay_catalog/projectile_templates/*.yaml",
+        "gameplay_catalog/status_effect_templates/*.yaml",
+        "gameplay_catalog/weapon_templates/*.yaml",
+    ]) + [
+        "gameplay_catalog/gameplay_catalog.yaml",
+        "//game_server/gameplay_catalog/mesh_assets:cooked_mesh_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_biped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_quadruped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_tripod_assets",
+    ],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
+    name = "tent_shelter_test",
+    srcs = ["tests/tent_shelter_test.cc"],
+    data = glob([
+        "gameplay_catalog/action_graph_templates/*.yaml",
+        "gameplay_catalog/action_templates/*.yaml",
+        "gameplay_catalog/collider_templates/*.yaml",
+        "gameplay_catalog/entity_templates/*.yaml",
+        "gameplay_catalog/item_templates/*.yaml",
+        "gameplay_catalog/projectile_templates/*.yaml",
+        "gameplay_catalog/status_effect_templates/*.yaml",
+        "gameplay_catalog/weapon_templates/*.yaml",
+    ]) + [
+        "gameplay_catalog/gameplay_catalog.yaml",
+        "//game_server/gameplay_catalog/mesh_assets:cooked_mesh_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_biped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_quadruped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_tripod_assets",
+    ],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
     name = "gingerbread_door_stack_test",
     srcs = ["tests/gingerbread_door_stack_test.cc"],
+    data = glob([
+        "gameplay_catalog/action_graph_templates/*.yaml",
+        "gameplay_catalog/action_templates/*.yaml",
+        "gameplay_catalog/collider_templates/*.yaml",
+        "gameplay_catalog/entity_templates/*.yaml",
+        "gameplay_catalog/item_templates/*.yaml",
+        "gameplay_catalog/projectile_templates/*.yaml",
+        "gameplay_catalog/status_effect_templates/*.yaml",
+        "gameplay_catalog/weapon_templates/*.yaml",
+    ]) + [
+        "gameplay_catalog/gameplay_catalog.yaml",
+        "//game_server/gameplay_catalog/mesh_assets:cooked_mesh_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_biped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_quadruped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_tripod_assets",
+    ],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
+    name = "pull_grenade_test",
+    srcs = ["tests/pull_grenade_test.cc"],
     data = glob([
         "gameplay_catalog/action_graph_templates/*.yaml",
         "gameplay_catalog/action_templates/*.yaml",

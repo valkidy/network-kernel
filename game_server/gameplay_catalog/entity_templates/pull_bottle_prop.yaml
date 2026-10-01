@@ -1,0 +1,21 @@
+# World half of fungible_pull_bottle: breaks on whatever it hits and leaves a
+# pull_blast. The same shape as shockwave_bottle_prop; the self-damage keeps it
+# from detonating again on every tick it rests.
+id: 214
+name: pull_bottle_prop
+entity_type: prop
+health:
+  hp: 1
+  max_hp: 1
+physics:
+  collider_template: collision_damage_prop_hitbox
+triggers:
+  on_collision:
+    collision_mask: terrain | static_obstacle | actor
+    action_graph: action_spawn_projectile_and_damage_self_at_collision
+    parameters:
+      template: pull_blast
+      position: event.position
+      direction: event.direction
+      source: self
+      self_damage: 1

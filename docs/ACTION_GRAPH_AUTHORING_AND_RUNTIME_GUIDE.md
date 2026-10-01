@@ -87,6 +87,8 @@ event.target      = 事件涉及的另一個 entity
 event.position    = authoritative event position
 event.direction   = authoritative event direction
 event.subject_direction = subject 當時的行進方向（只有 projectile trigger 有）
+event.subject_position  = subject 當時的位置（只有 projectile trigger 有）：area effect
+                          是爆心，一般 projectile 是命中/到期點，近戰是攻擊者
 params.*          = binding/default 解析後的 graph parameters
 ```
 
@@ -109,7 +111,7 @@ schema 的欄位會在載入階段被拒絕。
 | `on_activated` | `subject`, `instigator`, `target`, `position`, `direction` | 啟動機關、互動 prop |
 | `on_collision` | `subject`, `target`, `position`, `direction` | 碰撞傷害、陷阱 |
 | `on_health_depleted` | `subject`, `instigator`, `position` | 死亡前反應、反傷 |
-| `on_destroy_entity` | `subject`, `instigator`, `position` | 銷毀時生成 entity |
+| `on_destroy_entity` | `subject`, `instigator`, `position`, `direction` | 銷毀時生成 entity 或 projectile |
 | `on_projectile_impact` | `subject`, `instigator`, `target`, `position`, `direction`, `subject_direction` | 命中後生成爆炸物 |
 | `on_expired` | `subject`, `instigator`, `position`, `direction`, `subject_direction` | projectile 到期後生成效果 |
 | `on_apply` | `subject`, `instigator`, `target` | status 建立或 stack apply |
@@ -130,6 +132,15 @@ schema 的欄位會在載入階段被拒絕。
   載入時報錯。要延遲 N ticks 再觸發，請用 `speed: 0` 的 marker（見
   `WEAPON_AUTHORING_GUIDE.md`）。靜止的 projectile 回報的 `event.direction` 是
   它生成時的朝向。
+- `on_destroy_entity` 的 `event.direction` 是由 instigator 指向被銷毀者的方向；沒有
+  instigator 時（存在時間到、被數量上限擠掉、伺服器直接移除）是正上方 (0, 1, 0)，
+  永遠不是零向量，所以 `spawn_projectile` 一定能用。graph 在實體移除**之後**才執行：
+  `self` 已不存在，不能當 `spawn_entity` 的 owner；沒有 instigator 時
+  `event.instigator` 也是空的。
+- 存在時間到（Expired）與被數量上限擠掉（CapacityEvicted）預設**不**執行
+  `on_destroy_entity`。population group 寫 `cleanup_runs_on_destroy: true` 才會執行；
+  此時該 group 成員的 `on_destroy_entity` 不可 `spawn_entity` 任何屬於 population
+  group 的 entity（避免擠掉一個、生成一個的無限循環），載入時會被拒絕。
 - `on_collision` 不提供 `event.instigator`；需要歸屬資訊的 collision 行為應由
   產生事件的 gameplay system 明確建模，而不是假設 target 是 instigator。
 - Runtime binding validator 會再次執行同一套 schema 驗證，防止無效 ABI input。
@@ -206,6 +217,14 @@ template 沒有 `CancelBeforeFirstCommit` 也不會先打出一次；硬直期�
 - `entity_template` 必須解析為既有 Entity Template。
 - `position` 目前必須綁定 `event.position`。
 - `owner` 必須解析為有效 entity reference。
+- `direction`（可省略）綁定 `event.direction`，決定生成物的 yaw。
+- `placement`（可省略，字面值）：`exact`（預設）在 `position` 原地生成；`clear` 會在
+  `position` 附近找空位。做法是以生成物自己的 box hit volume 往下找地面，並確認不碰到
+  terrain 與 static obstacle；放不下就沿 `direction` 的反方向每次退 0.5 m，最多退 4 m。
+  找不到就留在原地（盡力而為，不保證）。生成者（owner，例如還沒消失的瓶子）的碰撞盒
+  不列入判斷。用途：建築 kit 撞到牆面時，建築落在牆前的地面上，而不是嵌進牆裡
+  （`action_spawn_building_and_damage_self_at_collision`）。`placement` 寫在
+  `spawn_entity` 以外的 action 上會在載入時被拒絕。
 
 適用於 entity-backed triggers。
 
@@ -389,7 +408,82 @@ Authoring 注意：
   兩邊必須一致，否則預測會走開 N ticks 再被 reconciliation 硬拉回來。
 
 目前 projectile-backed triggers 接受 `apply_damage`、`apply_health_change`、
-`apply_impulse` 與 `spawn_projectile` actions。
+`apply_impulse`、`apply_pull` 與 `spawn_projectile` actions。
+
+### 4.5 `apply_pull`
+
+把 actor **送到一個目的地**，而不是推它一下。與 `apply_impulse` 是兩種不同語意：
+
+| | `apply_impulse` | `apply_pull` |
+|---|---|---|
+| 對速度做什麼 | **加上**一個速度增量 | **取代**成算出來的速度 |
+| 作者寫什麼 | 速度（m/s） | 目的地與滯空時間 |
+| 目標原本在跑、在飛 | 會被算進去 | 不影響 |
+| 同一 tick 兩次命中 | 相加 | 後者為準 |
+| 距離 | 不影響速度 | 速度依距離逐一計算 |
+
+兩種寫法，二選一：
+
+```yaml
+# 拉向一點：落在離 anchor distance 公尺處，在目標原本那一側
+- type: apply_pull
+  target: params.target
+  anchor: params.anchor      # binding: event.subject_position 或 event.position
+  distance: 1.0              # >= 0；0 = 拉到點上
+  airtime_ticks: 24          # 1 .. KERNEL_MAX_IMPULSE_LOCKOUT_TICKS
+  max_speed: 12.0            # > 0，水平速度上限（m/s）
+
+# 沿方向移動：從目標所在處沿方向的水平分量移動 distance 公尺
+- type: apply_pull
+  target: params.target
+  direction: params.direction  # binding: event.direction 或 event.subject_direction
+  distance: -3.0               # 有號、不可為 0；負值 = 往反方向（例如拉回攻擊者）
+  airtime_ticks: 20
+  max_speed: 12.0
+```
+
+- `anchor`／`direction` 必須綁定 event expression，不接受 vec3 default：固定的
+  anchor 會是世界上的某個定點，固定的方向則沒有參考對象。
+- `distance`、`airtime_ticks`、`max_speed` 是 action 上的字面值，不是 parameter。
+- 只作用在 actor。Prop 被推動後直線飛行、不受重力，沒有滯空時間能讓它落在目的地。
+- 不接受 `collision_mask`、`lockout_ticks`：lockout 自動設為滯空時間加 2 tick，
+  落地時照常解除，所以擊倒（knockdown）、擋新 action 的規則與擊退相同。
+- Status lifecycle trigger 不接受 `apply_pull`。
+
+Runtime 在 command commit 當下，依目標**當時**的位置算出目的地與速度：
+
+- 垂直速度 = `-g × dt × (N + 0.5) / 2`，g 用目標自己的 gravity。Movement solver
+  是 semi-implicit Euler，且只有「會穿入地面」的那一步才算落地；把零點放在第 N 步
+  中間，落地 tick 就固定是 N，不受浮點誤差影響。`apply_pull_test` 以實際的
+  movement solver 驗證：9 種起點與滯空組合都在第 N tick 落地，誤差 2 cm 內。
+- 水平速度 = 水平位移 ÷ (N × dt)，超過 `max_speed` 時等比縮小，沿同一條線落得比較近。
+- `impulse_resistance` 比較的是算出來的 `max(水平速率, 垂直速率)`。遠處目標需要的
+  速度較大，所以重型目標可能在遠處拉不動、近處拉得動。
+- 同步沿用 `ActorImpulseBatch`（送的是實際速度），不需要新的封包。本地玩家被拉時
+  **沒有 client 預測**，等 authoritative snapshot 修正。
+
+範例：`action_pull_at_target`（吸引手榴彈 `fungible_pull_bottle`）。
+
+### 4.6 `open_ui`
+
+建築物要求開啟自己的介面。建築物是哪一種（休息帳篷、商店……）只由這個 action 的
+`ui_id` 決定：建築物的 `on_activated` 綁定哪個 graph，它就是哪種建築。
+
+```yaml
+- type: open_ui
+  target: params.target   # 綁定 event.instigator：啟動建築的 actor
+  ui_id: 1                # 1 = 休息 UI；數值的意義由遊戲定義，kernel 不解讀
+```
+
+- 只能用在 entity 的 `on_activated` trigger。只有啟動事件有「誰在要求」。
+- `ui_id` 是 action 上的字面值，必須非 0。
+- Runtime 只發出 `KernelEventType_UiOpened`（`net_id` = 建築、`related_net_id` =
+  啟動者、`peer_id` = 啟動者的 owner peer、`code` = `ui_id`），其他什麼都不做。
+  要不要讓 actor 進入建築，由 game_server 收到事件後決定，再透過
+  `Kernel_ServerEnqueueEntityShelter` 執行。
+- 事件只存在伺服器端，不會同步給 client。
+
+範例：`action_open_rest_ui`（帳篷 `tent`）。
 
 Status lifecycle 目前支援的 actions 為 `apply_damage`、health change、status
 apply/remove 與 speed modifier。Lifecycle safety contract 僅允許 `on_apply` 使用
@@ -736,8 +830,16 @@ Catalog load/compile 會拒絕：
 - 未知或不適用於 trigger 的 `event.*` expression。
 - 無效 Entity/Projectile Template reference。
 - Projectile trigger graph 使用 `apply_damage`、`apply_health_change`、
-  `apply_impulse`、`spawn_projectile` 以外的 action。
-- Status lifecycle graph 使用 `apply_impulse`。
+  `apply_impulse`、`apply_pull`、`spawn_projectile` 以外的 action。
+- Status lifecycle graph 使用 `apply_impulse` 或 `apply_pull`。
+- `apply_pull` 同時寫了 `anchor` 與 `direction` 或兩者都沒寫；缺 `airtime_ticks`／
+  `max_speed`；`airtime_ticks` 為 0 或超過上限；`max_speed` 不為正；`anchor` 模式的
+  `distance` 為負，或 `direction` 模式的 `distance` 缺少或為 0。
+- `anchor`／`distance`／`airtime_ticks`／`max_speed` 寫在 `apply_pull` 以外的 action 上。
+- `open_ui` 用在 `on_activated` 以外的 trigger、缺 `ui_id` 或為 0，或帶有 `target`
+  以外的欄位；`ui_id` 寫在 `open_ui` 以外的 action 上。
+- `apply_pull` 的 anchor/direction 用 vec3 default，或綁定到其他 expression；
+  `event.subject_position` 用在 projectile trigger 以外的 trigger。
 - `apply_impulse` 的 `strength`：純量形式非有限或不為正；list 形式不是剛好兩個
   數字、水平為負、任一項非有限，或兩項同時為零。
 - `apply_impulse` 的 `lockout_ticks` 超過 `KERNEL_MAX_IMPULSE_LOCKOUT_TICKS`。

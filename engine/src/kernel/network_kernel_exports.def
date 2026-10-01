@@ -7,6 +7,7 @@ EXPORTS
     Kernel_PollLogMessages
     Kernel_GetLocalPlayerInfo
     Kernel_GetLocalWeaponState
+    Kernel_GetLocalShelterState
     Kernel_LANDiscovery_Create
     Kernel_LANDiscovery_Destroy
     Kernel_LANDiscovery_StartServer

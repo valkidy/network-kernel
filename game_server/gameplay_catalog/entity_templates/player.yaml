@@ -40,9 +40,9 @@ hitbox:
   center: {x: 0.0, y: 0.9, z: 0.0}
   half_extents: {x: 0.35, y: 0.9, z: 0.35}
 weapon_slots:
-  - 3
-  - 1
-  - 7
+  - 13 # 3
+  - 14 # 1
+  - 15 # 7
   - 0
 active_weapon_slot: 0
 inventory_slot_capacity: 16
@@ -65,6 +65,9 @@ inventory_slots:
     quantity: 1
   - item_template: stateful_magic_bottle
     quantity: 1
+  # Last, so every slot index above it stays where it was.
+  - item_template: fungible_pull_bottle
+    quantity: 3
 animations:
   idle: 0
   chasing: 1

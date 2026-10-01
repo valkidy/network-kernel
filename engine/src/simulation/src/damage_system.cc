@@ -136,6 +136,9 @@ KernelLocalActionResultReason action_block_reason(
     const World& world,
     entt::entity entity,
     std::uint32_t current_tick) {
+    if (world.registry().all_of<Sheltered>(entity)) {
+        return KernelLocalActionResultReason_Sheltered;
+    }
     if (is_staggered(world, entity, current_tick)) {
         return KernelLocalActionResultReason_Staggered;
     }
@@ -162,6 +165,12 @@ std::vector<ConfirmedDamage> apply_damage_applications(
         if (const DamageImmunity* immunity =
                 world.registry().try_get<DamageImmunity>(*target);
             immunity != nullptr && current_tick < immunity->until_tick) {
+            continue;
+        }
+        // An occupant is immune for as long as it is inside, however long
+        // that is -- not until a tick, which a revive would also write.
+        // Discarded whole, like immunity above: no stagger, no hit events.
+        if (world.registry().all_of<Sheltered>(*target)) {
             continue;
         }
         const std::uint16_t hp_before =

@@ -3,6 +3,7 @@
 
 #include "kernel/public/kernel_types.h"
 #include "simulation/public/item_system.h"
+#include "world/public/components.h"
 
 namespace network_example {
 
@@ -18,6 +19,13 @@ public:
         KernelEngine& engine,
         const KernelGameplayRequest& request) const;
     void update_carried_props(KernelEngine& engine) const;
+    // Sets down whatever `carrier_net_id` is carrying at `position`, as a
+    // Place request would: placed, colliding again, and replicated. For a
+    // carrier that is about to stop being where its load can follow it.
+    void drop_carried_props(
+        KernelEngine& engine,
+        NetId carrier_net_id,
+        const glm::vec3& position) const;
 };
 
 }  // namespace network_example

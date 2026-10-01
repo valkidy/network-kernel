@@ -7,6 +7,7 @@
 #include "game_server/src/agent_runtime_manager.h"
 #include "game_server/src/gameplay_config.h"
 #include "game_server/src/respawn_scheduler.h"
+#include "game_server/src/shelter_director.h"
 #include "game_server/public/game_server_types.h"
 #include "kernel/public/kernel_api.h"
 
@@ -24,6 +25,7 @@ public:
 
     AgentRuntimeManager& agent_runtime_manager();
     const AgentRuntimeManager& agent_runtime_manager() const;
+    const ShelterDirector& shelter_director() const { return shelter_; }
     bool query_weapon_template(
         std::uint8_t weapon_id,
         GameServerWeaponTemplateInfo* out_info) const;
@@ -43,6 +45,7 @@ private:
     GameServerGameplayConfig config_;
     AgentRuntimeManager agent_runtime_manager_;
     RespawnScheduler respawn_;
+    ShelterDirector shelter_;
     std::set<std::uint32_t> players_;
 };
 

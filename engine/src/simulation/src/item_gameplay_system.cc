@@ -536,6 +536,14 @@ bool ItemGameplaySystem::submit_request(
                    engine.world_.registry().try_get<Health>(*instigator);
                health != nullptr && health->max_hp > 0u && health->hp == 0u) {
         reject(&outcome, KernelGameplayRequestRejection_InstigatorDead);
+    } else if (const Sheltered* sheltered =
+                   engine.world_.registry().try_get<Sheltered>(*instigator);
+               sheltered != nullptr &&
+               (request.domain_action != KernelDomainAction_Activate ||
+                request.target_net_id != sheltered->shelter_net_id)) {
+        // From inside, the one thing to ask is to activate the building
+        // again, which is how an occupant asks to come out.
+        reject(&outcome, KernelGameplayRequestRejection_InstigatorSheltered);
     } else {
         ScopeTransferTransaction transfer_transaction(engine, &outcome);
         ItemInstanceRecord* item = request.selected_item_instance_id == 0
@@ -1254,6 +1262,38 @@ record_outcome:
     engine.processed_gameplay_requests_.push_back(outcome);
     engine.pending_gameplay_request_outcomes_.push_back(outcome);
     return true;
+}
+
+void ItemGameplaySystem::drop_carried_props(
+    KernelEngine& engine,
+    NetId carrier_net_id,
+    const glm::vec3& position) const {
+    std::vector<entt::entity> carried;
+    auto view = engine.world_.registry().view<CarriedBy, PropWorldMode>();
+    for (const entt::entity entity : view) {
+        if (view.get<CarriedBy>(entity).carrier_entity_id == carrier_net_id &&
+            view.get<PropWorldMode>(entity).mode == PropMode::kCarrying) {
+            carried.push_back(entity);
+        }
+    }
+    for (const entt::entity entity : carried) {
+        if (!engine.world_.registry().all_of<NetworkIdentity, Transform>(entity)) {
+            continue;
+        }
+        const NetId prop_net_id =
+            engine.world_.registry().get<NetworkIdentity>(entity).net_id;
+        engine.world_.registry().get<Transform>(entity).position = position;
+        if (const ItemInstanceRef* item =
+                engine.world_.registry().try_get<ItemInstanceRef>(entity)) {
+            engine.item_store_.set_world_mode(
+                item->item_instance_id, KernelWorldItemMode_Placed);
+        }
+        engine.world_.registry().emplace_or_replace<PropWorldMode>(
+            entity, PropWorldMode{PropMode::kPlaced});
+        engine.world_.registry().remove<CarriedBy>(entity);
+        set_prop_collision_enabled(engine, prop_net_id, true);
+        engine.queue_prop_state_change(prop_net_id);
+    }
 }
 
 void ItemGameplaySystem::update_carried_props(KernelEngine& engine) const {

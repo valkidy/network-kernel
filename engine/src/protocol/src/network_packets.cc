@@ -57,6 +57,7 @@ constexpr std::size_t kActorMovementPayloadSize = 22;
 // active slot 1 + state flags 1 + ammo 2.
 constexpr std::size_t kActorWeaponStatePayloadSize = 4;
 constexpr std::size_t kActorImpulseLockoutPayloadSize = 8;
+constexpr std::size_t kActorShelterPayloadSize = 4;
 constexpr std::size_t kProjectileCompactSnapshotPayloadSize = 34;
 // net_id 4 + effective_length 2. No position, rotation or velocity: a beam does
 // not move, and its origin and aim are the shooter's, which every snapshot
@@ -260,6 +261,9 @@ enum ActorSnapshotRecordFlag : std::uint16_t {
     // Schema 23. Only with kActorSnapshotHasImpulseLockout: that lockout is the
     // actor's knockdown recovery.
     kActorSnapshotImpulseLockoutRecovering = 1u << 7,
+    // Schema 26. The building the actor is inside; only ever the receiving
+    // session's own player, and only while it is inside one.
+    kActorSnapshotHasShelter = 1u << 8,
 };
 
 bool is_actor_entity_type(EntityType type) {
@@ -289,6 +293,9 @@ std::uint16_t actor_record_flags(const EntitySnapshot& entity) {
         if (entity.impulse_lockout_recovering) {
             flags |= kActorSnapshotImpulseLockoutRecovering;
         }
+    }
+    if (entity.shelter_net_id != 0u) {
+        flags |= kActorSnapshotHasShelter;
     }
     return flags;
 }
@@ -442,7 +449,8 @@ SnapshotSectionType snapshot_section_type(const EntitySnapshot& entity) {
         return entity.actor_type == ActorType::kAgent &&
                 !entity.has_authoritative_movement_state &&
                 !entity.has_owner_weapon_state &&
-                !entity.has_impulse_lockout
+                !entity.has_impulse_lockout &&
+                entity.shelter_net_id == 0u
             ? SnapshotSectionType::kActorAgent
             : SnapshotSectionType::kActor;
     }
@@ -636,6 +644,9 @@ std::vector<std::uint8_t> encode_snapshot_packet(
                     if ((record_flags & kActorSnapshotHasImpulseLockout) != 0u) {
                         payload.write_u32(entity->impulse_lockout_until_tick);
                         payload.write_u32(entity->impulse_lockout_armed_tick);
+                    }
+                    if ((record_flags & kActorSnapshotHasShelter) != 0u) {
+                        payload.write_u32(entity->shelter_net_id);
                     }
                     break;
                 }
@@ -882,6 +893,12 @@ bool decode_snapshot_packet(
                         (record_flags & kActorSnapshotImpulseLockoutRecovering) != 0u) {
                         return false;
                     }
+                    if ((record_flags & kActorSnapshotHasShelter) != 0u) {
+                        if (!reader.read_u32(&entity.shelter_net_id) ||
+                            entity.shelter_net_id == 0u) {
+                            return false;
+                        }
+                    }
                     break;
                 }
                 case SnapshotSectionType::kActorAgent: {
@@ -1106,6 +1123,9 @@ std::size_t estimate_snapshot_entity_size(const EntitySnapshot& entity) {
                    ((actor_record_flags(entity) &
                      kActorSnapshotHasImpulseLockout) != 0u
                         ? kActorImpulseLockoutPayloadSize
+                        : 0u) +
+                   ((actor_record_flags(entity) & kActorSnapshotHasShelter) != 0u
+                        ? kActorShelterPayloadSize
                         : 0u);
         case SnapshotSectionType::kActorAgent: {
             const std::uint8_t flags = agent_record_flags(entity);

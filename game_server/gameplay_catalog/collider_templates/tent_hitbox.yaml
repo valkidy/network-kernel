@@ -1,0 +1,22 @@
+# A tent: what a weapon has to touch, what a body has to walk around, and --
+# while a player rests inside -- what stands between them and the shots aimed
+# at them.
+#
+# Three constraints set the size:
+# - It must enclose player_hit_aabb (half 0.35 x 0.9 x 0.35, centred 0.9 up)
+#   with margin on every side, so an occupant standing at the centre has no part
+#   of their hit volume outside the tent for a shot to reach directly.
+# - Half-width small enough that a chaser stopped at the wall is still inside
+#   its attack reach of the centre it is aiming at.
+# - Height at least the half-width, so a unit caught under a landing tent is
+#   never nearer the roof than a side.
+#
+# `layer: damageable` for the reason ice_block_hitbox spells out.
+id: 33
+name: tent_hitbox
+shape: oriented_box
+center: {x: 0.0, y: 1.2, z: 0.0}
+half_extents: {x: 1.2, y: 1.2, z: 1.2}
+radius: 0.0
+purpose: hit
+layer: damageable

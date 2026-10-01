@@ -1,0 +1,26 @@
+# The pull grenade: the shockwave turned inside out. Everything hostile in
+# range is yanked toward the blast and staggered, gathered for a follow-up.
+#
+# hostile_side only, like the shockwave, so it can be thrown into a melee your
+# team is in: players and props are never pulled.
+#
+# One hit per blast -- lifetime equals the interval, as in shockwave_blast.
+# The damage here is not what lands: an area effect with a graph binding
+# submits no damage of its own, so the graph's amount is the real number.
+id: 26
+name: pull_blast
+kind: area_effect
+collider_template: pull_area_sphere
+damage: 10
+lifetime_ticks: 30
+damage_behavior:
+  type: area_interval
+  damage_interval_ticks: 30
+  falloff: none
+collision_mask: hostile_side
+triggers:
+  on_projectile_impact:
+    action_graph: action_pull_at_target
+    parameters:
+      target: event.target
+      anchor: event.subject_position

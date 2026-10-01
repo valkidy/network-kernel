@@ -1,0 +1,13 @@
+# The on_destroy_entity counterpart of action_spawn_projectile_at_expired: an
+# entity that goes spawns a projectile where it stood. The direction is away
+# from whoever destroyed it, or straight up when nobody did.
+id: action_spawn_projectile_at_destroy_entity
+parameters:
+  template: null
+  position: null
+  direction: null
+actions:
+  - type: spawn_projectile
+    projectile_template: params.template
+    position: params.position
+    direction: params.direction

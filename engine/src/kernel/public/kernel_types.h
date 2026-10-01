@@ -5,6 +5,38 @@
 #include <stdint.h>
 
 /*
+ * 96: buildings. KernelEntityTriggerActionType gained _OpenUi, and
+ *     KernelActionDefinition gained ui_id, appended, read only by open_ui;
+ *     zero on every other action. KernelActionDefinition is embedded in every
+ *     trigger definition, so every managed mirror of those shifts.
+ *     KernelEvent gained related_net_id, appended into what was tail padding,
+ *     so sizeof(KernelEvent) is unchanged but a mirror must still name it.
+ *     KernelEntityTemplateDefinition gained shelter_capacity and
+ *     shelter_hides_occupants, appended after knockdown_recovery_ticks.
+ *     KernelActionDefinition also gained spawn_placement (a
+ *     KERNEL_SPAWN_PLACEMENT_*), appended after ui_id, read only by
+ *     spawn_entity.
+ *     KernelEventType gained _UiOpened and _ShelterChanged,
+ *     KernelGameplayRequestRejection gained _InstigatorSheltered and
+ *     KernelLocalActionResultReason gained _Sheltered. The shelter command,
+ *     Kernel_ServerEnqueueEntityShelter, is game_server's internal bridge
+ *     (kernel_api_internal.h), not a managed export.
+ *     KernelPropPopulationRuleDefinition gained cleanup_runs_on_destroy,
+ *     appended; its struct_size grows, so a mirror sized to 95 is refused.
+ *     Kernel_GetLocalShelterState and KernelLocalShelterState were added
+ *     behind KERNEL_CAPABILITY_LOCAL_SHELTER_STATE, and KernelAbiInfo gained
+ *     local_shelter_state_size, appended. Snapshot schema 26 carries an own
+ *     player's shelter, which the client's prediction needs.
+ * 95: apply_pull. KernelEntityTriggerActionType gained _ApplyPull and
+ *     KernelEventVec3Source gained _SubjectPosition, where the event's subject
+ *     was when it happened (an area effect's centre, a projectile's impact
+ *     point, a melee swing's attacker). KernelActionDefinition gained
+ *     pull_mode, pull_distance, pull_airtime_ticks and pull_max_speed,
+ *     appended, read only by apply_pull; zero on every other action. Unlike
+ *     apply_impulse, which adds a velocity, apply_pull replaces the target's
+ *     velocity with the one that lands it at a destination after
+ *     pull_airtime_ticks. KernelActionDefinition is embedded in every trigger
+ *     definition, so every managed mirror of those shifts.
  * 94: targeted strikes. KernelProjectileMechanicsDefinition gained `launch`,
  *     appended: a rule that derives where a projectile starts and how fast
  *     it goes from the point it is spawned at. A zero struct_size, the
@@ -124,7 +156,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 94u
+#define KERNEL_ABI_VERSION 96u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -238,6 +270,7 @@
 #define KERNEL_CAPABILITY_SERVER_ENTITY_MOVEMENT_MASK_WRITE UINT64_C(0x0000200000000000)
 #define KERNEL_CAPABILITY_SERVER_ENTITY_REVIVE UINT64_C(0x0000400000000000)
 #define KERNEL_CAPABILITY_SERVER_INVENTORY_CLEAR UINT64_C(0x0000800000000000)
+#define KERNEL_CAPABILITY_LOCAL_SHELTER_STATE UINT64_C(0x0001000000000000)
 /* Kernel_PollLogMessages. Additive within ABI 93: check this flag, not the
  * version, before calling it. */
 #define KERNEL_CAPABILITY_LOG_CAPTURE UINT64_C(0x0001000000000000)
@@ -450,6 +483,7 @@ typedef struct KernelAbiInfo {
     uint32_t skeleton_leg_definition_size;
     uint32_t status_effect_view_size;
     uint32_t local_weapon_state_size;
+    uint32_t local_shelter_state_size;
 } KernelAbiInfo;
 
 typedef struct KernelBuildInfo {
@@ -505,6 +539,27 @@ typedef struct KernelLocalWeaponState {
     uint16_t authoritative_ammo;
     uint16_t reserved0;
 } KernelLocalWeaponState;
+
+/*
+ * The building the local player is inside, for the interface a building opens.
+ * shelter_net_id is 0 when the player is outside every building.
+ *
+ * On a listen server this is read straight from the authoritative world. On a
+ * client it is what the last owner snapshot said (authoritative_tick is that
+ * snapshot's tick): the server moves a player in and out a tick after it
+ * activates the building, so this changes when the snapshot carrying it lands,
+ * not when the activation is sent.
+ *
+ * ui_id is the open_ui id the building's on_activated graph names -- which
+ * interface to show -- looked up from the client's own catalog by the
+ * building's template. 0 when outside, or when the building names none.
+ */
+typedef struct KernelLocalShelterState {
+    uint32_t struct_size;
+    uint32_t shelter_net_id;
+    uint32_t ui_id;
+    uint32_t authoritative_tick;
+} KernelLocalShelterState;
 
 typedef struct KernelLANDiscoveryServerConfig {
     uint32_t struct_size;
@@ -563,6 +618,18 @@ typedef enum KernelEventType {
      * `code` the instigating entity's net id (0 when unknown). Server-local:
      * never replicated. Setting health to zero directly does not emit it. */
     KernelEventType_EntityDied = 15,
+    /* An open_ui action ran: a building's on_activated graph asked for its
+     * interface. `net_id` is the building, `related_net_id` the actor that
+     * activated it, `peer_id` that actor's owner peer and `code` the ui_id the
+     * graph named. What the interface does, and whether the actor goes inside,
+     * is the server's to decide. Server-local: never replicated. */
+    KernelEventType_UiOpened = 16,
+    /* An actor went into a building or came out of one. `net_id` is the actor,
+     * `peer_id` its owner peer, `code` the building it is now inside, or 0
+     * when it left, and `related_net_id` the building it left, or 0 when it
+     * entered. Not emitted when the actor itself is removed (a disconnect).
+     * Server-local: never replicated. */
+    KernelEventType_ShelterChanged = 17,
 } KernelEventType;
 
 typedef enum KernelDespawnReason {
@@ -686,6 +753,9 @@ typedef enum KernelGameplayRequestRejectionReason {
     KernelGameplayRequestRejection_GraphRejected = 16,
     /* The instigator's health is zero: the dead do not use, throw or pick up. */
     KernelGameplayRequestRejection_InstigatorDead = 17,
+    /* The instigator is inside a building. The only request it may make is
+     * to activate that same building, which is how it asks to leave. */
+    KernelGameplayRequestRejection_InstigatorSheltered = 18,
 } KernelGameplayRequestRejectionReason;
 
 typedef enum KernelEntityTriggerActionType {
@@ -698,6 +768,10 @@ typedef enum KernelEntityTriggerActionType {
     KernelEntityTriggerActionType_ApplyStatus = 6,
     KernelEntityTriggerActionType_RemoveStatus = 7,
     KernelEntityTriggerActionType_ApplySpeedModifier = 8,
+    KernelEntityTriggerActionType_ApplyPull = 9,
+    /* A building's on_activated graph asking for its interface; see
+     * KernelEventType_UiOpened. Entity on_activated triggers only. */
+    KernelEntityTriggerActionType_OpenUi = 10,
 } KernelEntityTriggerActionType;
 
 typedef enum KernelStatModifierOperation {
@@ -726,6 +800,10 @@ typedef enum KernelEventVec3Source {
      * area effect's Direction is radial and so differs per target; this is the
      * one value every target of the same event shares. */
     KernelEventVec3Source_SubjectDirection = 3,
+    /* Where the event's subject was when it happened. For an area effect this
+     * is its centre, the one point every target of a blast shares; Position is
+     * where each target was hit. */
+    KernelEventVec3Source_SubjectPosition = 4,
 } KernelEventVec3Source;
 
 KERNEL_RPC_STRUCT(R"json({"type":"KernelVec3"})json")
@@ -760,6 +838,17 @@ typedef enum KernelActionConditionType {
  * parties. */
 #define KERNEL_MAX_KNOCKDOWN_RECOVERY_TICKS 300u
 
+/* Players in a squad. Nothing caps a session's players by this yet; it is the
+ * one number a per-squad limit should read, so a later player cap and the
+ * shelter capacity below cannot drift apart. */
+#define KERNEL_SQUAD_SIZE 4u
+
+/* How many actors one building holds at once. */
+#define KERNEL_SHELTER_CAPACITY KERNEL_SQUAD_SIZE
+
+/* Ceiling on an authored shelter_capacity. */
+#define KERNEL_MAX_SHELTER_CAPACITY 64u
+
 /* How apply_impulse reads impulse_strength / impulse_strength_vertical.
  * RADIAL: the historical single-scalar form, delta = normalize(dir) * strength.
  * SPLIT:  delta = {dir.x * horizontal, vertical, dir.z * horizontal}, both
@@ -767,6 +856,23 @@ typedef enum KernelActionConditionType {
  *         different things; see the authoring guide. */
 #define KERNEL_IMPULSE_STRENGTH_MODE_RADIAL 0u
 #define KERNEL_IMPULSE_STRENGTH_MODE_SPLIT 1u
+
+/* Where apply_pull lands its target, horizontally.
+ * TO_POINT: pull_distance metres from the point position_source names, on the
+ *           side the target is on. Zero gathers everything onto the point.
+ * ALONG:    pull_distance metres (signed) from where the target stands, along
+ *           the horizontal of the vector direction_source names. */
+/* Where spawn_entity puts what it spawns.
+ * EXACT: at the position the action names, whatever is there.
+ * CLEAR: on the ground near it, its box hit volume clear of terrain and
+ *        static obstacles, backing off against the action's direction until
+ *        it fits (find_clear_spawn_spot). Best effort: when nothing nearby
+ *        fits it stays where EXACT would have put it. */
+#define KERNEL_SPAWN_PLACEMENT_EXACT 0u
+#define KERNEL_SPAWN_PLACEMENT_CLEAR 1u
+
+#define KERNEL_PULL_MODE_TO_POINT 0u
+#define KERNEL_PULL_MODE_ALONG 1u
 
 typedef struct KernelActionDefinition {
     uint8_t action_type;
@@ -816,6 +922,27 @@ typedef struct KernelActionDefinition {
     uint16_t reserved3;
     float repeat_scatter_radius;
     uint32_t repeat_stagger_lifetime_ticks;
+    /*
+     * apply_pull only; zero on every other action.
+     *
+     * pull_mode is a KERNEL_PULL_MODE_*. The target's velocity is replaced
+     * with the one that lands it at the destination pull_airtime_ticks later
+     * (1 .. KERNEL_MAX_IMPULSE_LOCKOUT_TICKS): the vertical part from the
+     * airtime and the target's own gravity, the horizontal part from the
+     * distance to cover, capped at pull_max_speed (> 0) m/s. TO_POINT takes a
+     * non-negative pull_distance; ALONG a signed, non-zero one. Actors only.
+     */
+    uint32_t pull_mode;
+    float pull_distance;
+    uint32_t pull_airtime_ticks;
+    float pull_max_speed;
+    /* open_ui only; zero on every other action. Which interface the building
+     * offers. Non-zero; what each value means is the game's, not the
+     * kernel's. */
+    uint32_t ui_id;
+    /* spawn_entity only; zero on every other action. A KERNEL_SPAWN_PLACEMENT_*:
+     * where the spawned entity is put relative to the position it was given. */
+    uint32_t spawn_placement;
 } KernelActionDefinition;
 
 typedef struct KernelActionTriggerDefinition {
@@ -930,6 +1057,13 @@ typedef struct KernelPropPopulationRuleDefinition {
     uint32_t struct_size;
     uint32_t population_group_id;
     uint32_t max_alive;
+    /* 0 or 1. Whether this group's members run their on_destroy_entity graph
+     * when cleanup removes them -- lifetime expiry and eviction past max_alive
+     * -- as they do when destroyed. 0, the default, skips it, which is what
+     * every group did before. A group that sets it may not have a member whose
+     * on_destroy_entity spawns a member of any population group, or one
+     * eviction could spawn the next without end. */
+    uint32_t cleanup_runs_on_destroy;
 } KernelPropPopulationRuleDefinition;
 
 typedef struct KernelPropDefinition {
@@ -1003,6 +1137,8 @@ typedef enum KernelLocalActionResultReason {
     KernelLocalActionResultReason_Cooldown = 12,
     KernelLocalActionResultReason_Staggered = 13,
     KernelLocalActionResultReason_KnockedBack = 14,
+    /* Inside a building: no actions until it comes out. */
+    KernelLocalActionResultReason_Sheltered = 15,
 } KernelLocalActionResultReason;
 
 typedef enum KernelRemoteActionPresentationEventType {
@@ -2312,6 +2448,14 @@ struct KernelEntityTemplateDefinition {
     /* Ticks a knockback that lands keeps the actor down: rooted, and refusing
      * new actions, from the landing. Zero releases on landing. */
     uint32_t knockdown_recovery_ticks;
+    /* A building's shelter (Kernel_ServerEnqueueEntityShelter); props only,
+     * zero on everything else. How many actors it holds at once: 0 means
+     * KERNEL_SHELTER_CAPACITY, otherwise at most KERNEL_MAX_SHELTER_CAPACITY. */
+    uint32_t shelter_capacity;
+    /* 0 or 1. Whether its occupants drop out of every agent's vision while
+     * inside: nothing sees, chases or aims at them, though an agent keeps its
+     * last sighting and may still come looking. */
+    uint32_t shelter_hides_occupants;
 };
 
 typedef struct KernelEvent {
@@ -2323,6 +2467,9 @@ typedef struct KernelEvent {
     uint64_t event_time_us;
     uint64_t presentation_time_us;
     int32_t health_delta;
+    /* A second entity the event is about, where its type says there is one
+     * (UiOpened, ShelterChanged); 0 otherwise. */
+    uint32_t related_net_id;
 } KernelEvent;
 
 typedef struct KernelEntityLifecycleEvent {

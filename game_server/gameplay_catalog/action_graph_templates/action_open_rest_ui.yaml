@@ -1,0 +1,11 @@
+# The rest interface, for whoever activated the building. Which building kind
+# this is lives here and nowhere else: a building is a rest tent because its
+# on_activated runs this graph. ui_id 1 is the rest UI; what it shows, and
+# whether the actor goes inside, is game_server's (KernelEventType_UiOpened).
+id: action_open_rest_ui
+parameters:
+  target: null
+actions:
+  - type: open_ui
+    target: params.target
+    ui_id: 1

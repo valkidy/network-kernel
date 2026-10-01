@@ -1,5 +1,5 @@
 id: 30
-name: gingerbread-infantry
+name: gingerbread_infantry
 entity_type: actor
 actor_type: agent
 camp: enemy_side

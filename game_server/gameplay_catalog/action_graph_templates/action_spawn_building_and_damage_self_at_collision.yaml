@@ -1,0 +1,23 @@
+# action_spawn_ice_and_damage_self_at_collision for a building kit: the same
+# bottle flow, but the building is set down clear of what the bottle struck
+# (placement: clear) instead of at the contact point. A kit thrown flat at a
+# wall used to unfold half inside it; now it backs off the wall the way it
+# came until the building fits, on the ground in front.
+id: action_spawn_building_and_damage_self_at_collision
+parameters:
+  template: null
+  position: null
+  direction: null
+  owner: null
+  source: null
+  self_damage: 1
+actions:
+  - type: spawn_entity
+    entity_template: params.template
+    position: params.position
+    direction: params.direction
+    owner: params.owner
+    placement: clear
+  - type: apply_damage
+    target: params.source
+    amount: params.self_damage

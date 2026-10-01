@@ -97,6 +97,113 @@ inline glm::vec3 impulse_velocity_delta(
         : direction * horizontal;
 }
 
+// apply_pull's numbers, checked the same way by the loader, the kernel's
+// trigger validators and the command preflight.
+inline bool pull_is_authorable(
+    std::uint32_t mode,
+    float distance,
+    std::uint32_t airtime_ticks,
+    float max_speed) {
+    if (!std::isfinite(distance) || !std::isfinite(max_speed) ||
+        max_speed <= 0.0f || airtime_ticks == 0u ||
+        airtime_ticks > KERNEL_MAX_IMPULSE_LOCKOUT_TICKS) {
+        return false;
+    }
+    if (mode == KERNEL_PULL_MODE_TO_POINT) {
+        return distance >= 0.0f;
+    }
+    return mode == KERNEL_PULL_MODE_ALONG && distance != 0.0f;
+}
+
+// A whole apply_pull action as the kernel ABI carries it: the numbers above,
+// plus a point source for TO_POINT and a direction source for ALONG. One copy
+// for the kernel's trigger validators, which otherwise each spell it out.
+inline bool pull_action_is_authorable(const KernelActionDefinition& action) {
+    if (action.target_source > KernelEntityRefSource_EventInstigator ||
+        !pull_is_authorable(
+            action.pull_mode,
+            action.pull_distance,
+            action.pull_airtime_ticks,
+            action.pull_max_speed)) {
+        return false;
+    }
+    if (action.pull_mode == KERNEL_PULL_MODE_TO_POINT) {
+        return action.position_source == KernelEventVec3Source_Position ||
+            action.position_source == KernelEventVec3Source_SubjectPosition;
+    }
+    return action.direction_source == KernelEventVec3Source_Direction ||
+        action.direction_source == KernelEventVec3Source_SubjectDirection;
+}
+
+// Where apply_pull means to put the target, horizontally. `point` is the
+// anchor for TO_POINT and a direction for ALONG. The destination keeps the
+// target's own height; only the horizontal plane is steered.
+inline glm::vec3 pull_destination(
+    std::uint32_t mode,
+    const glm::vec3& target_position,
+    const glm::vec3& point,
+    float distance) {
+    if (mode == KERNEL_PULL_MODE_ALONG) {
+        const glm::vec3 flat{point.x, 0.0f, point.z};
+        const float length = std::sqrt(flat.x * flat.x + flat.z * flat.z);
+        if (length <= 0.0001f) {
+            return target_position;
+        }
+        return target_position + flat * (distance / length);
+    }
+    const glm::vec3 away{
+        target_position.x - point.x, 0.0f, target_position.z - point.z};
+    const float length = std::sqrt(away.x * away.x + away.z * away.z);
+    // Standing on the anchor: gathering onto it is already done, and a ring
+    // around it has no side to put the target on.
+    if (length <= 0.0001f) {
+        return target_position;
+    }
+    return glm::vec3{
+        point.x + away.x * (distance / length),
+        target_position.y,
+        point.z + away.z * (distance / length)};
+}
+
+// The velocity that lands a target at `destination` after `airtime_ticks`.
+//
+// The flight is integrated semi-implicitly -- v += g*dt, then move -- so the
+// height after n ticks is dt*(vy*n + g*dt*n(n+1)/2). The solver only lands a
+// step that would go *below* the ground, so aiming the height at exactly zero
+// on tick N (vy = -g*dt*(N+1)/2) lands it on N+1, or on N, depending on
+// rounding. vy = -g*dt*(N+0.5)/2 puts the crossing half a step into tick N
+// instead: still above the ground after N-1, clearly below it after N, so the
+// landing tick is N whatever the rounding. Measured against the movement
+// solver in apply_pull_test. Horizontally nothing acts during the flight --
+// the lockout keeps the controller off it -- and the landing step still moves
+// its full distance, so N ticks at v cover v*N*dt. A horizontal speed over
+// max_speed is scaled down to it, which lands the target short along the same
+// line rather than somewhere else.
+inline glm::vec3 pull_launch_velocity(
+    const glm::vec3& target_position,
+    const glm::vec3& destination,
+    std::uint32_t airtime_ticks,
+    float fixed_delta_seconds,
+    float gravity_y,
+    float max_speed) {
+    const float flight_seconds =
+        static_cast<float>(airtime_ticks) * fixed_delta_seconds;
+    glm::vec3 horizontal{
+        (destination.x - target_position.x) / flight_seconds,
+        0.0f,
+        (destination.z - target_position.z) / flight_seconds};
+    const float speed =
+        std::sqrt(horizontal.x * horizontal.x + horizontal.z * horizontal.z);
+    if (speed > max_speed) {
+        horizontal *= max_speed / speed;
+    }
+    const float vertical = gravity_y < 0.0f
+        ? -gravity_y * fixed_delta_seconds *
+            (static_cast<float>(airtime_ticks) + 0.5f) * 0.5f
+        : 0.0f;
+    return glm::vec3{horizontal.x, vertical, horizontal.z};
+}
+
 struct ActionSpawnProjectileCommand {
     std::uint32_t projectile_template_id = 0;
     glm::vec3 position{0.0f};
@@ -166,6 +273,30 @@ struct ActionSpawnEntityCommand {
     std::uint32_t item_template_id = 0;
     std::uint32_t quantity = 0;
     ActionExecutionProvenance provenance;
+    // KERNEL_SPAWN_PLACEMENT_*.
+    std::uint32_t placement = 0;
+};
+
+// The destination is resolved when the command commits, from where the
+// target stands then, so `point` is the anchor or direction as the event
+// reported it.
+struct ActionApplyPullCommand {
+    NetId source = 0;
+    NetId target = 0;
+    std::uint32_t mode = KERNEL_PULL_MODE_TO_POINT;
+    glm::vec3 point{0.0f};
+    float distance = 0.0f;
+    std::uint32_t airtime_ticks = 0;
+    float max_speed = 0.0f;
+    ActionExecutionProvenance provenance;
+};
+
+// `source` is the building whose graph ran, `target` the actor it opens for.
+struct ActionOpenUiCommand {
+    NetId source = 0;
+    NetId target = 0;
+    std::uint32_t ui_id = 0;
+    ActionExecutionProvenance provenance;
 };
 
 using ActionGraphCommand = std::variant<
@@ -176,7 +307,9 @@ using ActionGraphCommand = std::variant<
     ActionApplyStatusCommand,
     ActionRemoveStatusCommand,
     ActionApplySpeedModifierCommand,
-    ActionSpawnEntityCommand>;
+    ActionSpawnEntityCommand,
+    ActionApplyPullCommand,
+    ActionOpenUiCommand>;
 
 struct ActionGraphQueuedTrigger {
     CompiledActionGraphBinding binding;

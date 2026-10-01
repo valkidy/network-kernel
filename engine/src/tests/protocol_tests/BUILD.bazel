@@ -7,6 +7,12 @@ cc_test(
 )
 
 cc_test(
+    name = "shelter_roundtrip_test",
+    srcs = ["shelter_roundtrip_test.cc"],
+    deps = ["//engine/src/protocol:protocol"],
+)
+
+cc_test(
     name = "knockdown_lockout_roundtrip_test",
     srcs = ["knockdown_lockout_roundtrip_test.cc"],
     deps = ["//engine/src/protocol:protocol"],

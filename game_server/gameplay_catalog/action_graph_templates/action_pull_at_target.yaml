@@ -1,0 +1,29 @@
+id: action_pull_at_target
+parameters:
+  target: null
+  # Low on purpose: the pull gathers, it does not kill.
+  amount: 10
+  # The blast's centre. Bound to event.subject_position, which for an area
+  # effect is the one point every target shares; event.position would be
+  # where each target was hit.
+  anchor: null
+actions:
+  - type: apply_damage
+    target: params.target
+    amount: params.amount
+    # Authored, as on the shockwave: being yanked off your feet interrupts
+    # whatever you were doing. 150 is the highest threshold in the catalog.
+    stagger: 150
+  - type: apply_pull
+    target: params.target
+    anchor: params.anchor
+    # Land 1 m from the centre, each on the side it came from: gathered for a
+    # follow-up, but not all dropped onto the one point to shove each other
+    # apart.
+    distance: 1.0
+    # 0.8 s in the air. Every target lands on the same tick wherever it
+    # started, because apply_pull works the speed out per target.
+    airtime_ticks: 24
+    # The farthest target in the 6 m radius needs (6 - 1) / 0.8 = 6.25 m/s;
+    # this only matters for something far outside it.
+    max_speed: 12.0

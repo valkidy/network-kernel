@@ -335,6 +335,11 @@ void simulate_actor_movement(
             // death clears the knockback that killed it. Gravity still runs, so
             // a body killed in the air comes down where it will revive from.
             desired_horizontal = glm::vec3{0.0f};
+        } else if (world.registry().all_of<Sheltered>(entity)) {
+            // Inside a building: it stays where entering put it. Its input is
+            // still read and acknowledged, so the client's prediction is not
+            // left waiting on inputs the authority never processed.
+            desired_horizontal = glm::vec3{0.0f};
         } else if (impulse_locked && impulse_lockout->recovering) {
             // Down after a knockback that landed: rooted until it is up again,
             // however the controller is steering.
@@ -658,6 +663,23 @@ void simulate_actor_movement(
     }
 }
 
+namespace {
+
+const ColliderInstance* find_movement_capsule(World& world, NetId net_id) {
+    for (const ColliderInstance& candidate :
+         world.collider_registry().instances()) {
+        if (candidate.entity_net_id == net_id && candidate.lifetime_ticks == 0 &&
+            candidate.enabled &&
+            candidate.shape_type == ColliderShapeType::kCapsule &&
+            (candidate.purpose_flags & KernelColliderPurpose_Movement) != 0u) {
+            return &candidate;
+        }
+    }
+    return nullptr;
+}
+
+}  // namespace
+
 float available_lift(
     World& world,
     NetId net_id,
@@ -671,17 +693,7 @@ float available_lift(
     if (physics_world == nullptr || lift <= 0.0f) {
         return std::max(0.0f, lift);
     }
-    const ColliderInstance* collider = nullptr;
-    for (const ColliderInstance& candidate :
-         world.collider_registry().instances()) {
-        if (candidate.entity_net_id == net_id && candidate.lifetime_ticks == 0 &&
-            candidate.enabled &&
-            candidate.shape_type == ColliderShapeType::kCapsule &&
-            (candidate.purpose_flags & KernelColliderPurpose_Movement) != 0u) {
-            collider = &candidate;
-            break;
-        }
-    }
+    const ColliderInstance* collider = find_movement_capsule(world, net_id);
     if (collider == nullptr) {
         return lift;
     }
@@ -708,6 +720,186 @@ float available_lift(
         }
     }
     return std::max(0.0f, clear);
+}
+
+std::optional<glm::vec3> find_clear_spawn_spot(
+    World& world,
+    NetId net_id,
+    const glm::vec3& position,
+    const glm::vec3& direction,
+    NetId spawner) {
+    // The ground is looked for from a little above the contact point, so a
+    // bottle that struck a wall partway up still finds the floor in front of
+    // it, down to this far below.
+    constexpr float kProbeAboveMeters = 0.5f;
+    constexpr float kProbeBelowMeters = 4.0f;
+    constexpr float kStandSkinMeters = 0.05f;
+    constexpr float kBackStepMeters = 0.5f;
+    constexpr int kBackSteps = 8;
+    constexpr float kMinGroundNormalY = 0.7f;
+    physics::PhysicsWorld* physics_world = world.collision_world();
+    const std::optional<entt::entity> entity = world.find_entity(net_id);
+    if (physics_world == nullptr || !entity.has_value() ||
+        !world.registry().all_of<Transform>(*entity)) {
+        return std::nullopt;
+    }
+    const ColliderInstance* volume = nullptr;
+    for (const ColliderInstance& candidate :
+         world.collider_registry().instances()) {
+        if (candidate.entity_net_id == net_id &&
+            (candidate.purpose_flags & KernelColliderPurpose_Hit) != 0u &&
+            (candidate.shape_type == ColliderShapeType::kAabb ||
+             candidate.shape_type == ColliderShapeType::kOrientedBox)) {
+            volume = &candidate;
+            break;
+        }
+    }
+    if (volume == nullptr) {
+        return std::nullopt;
+    }
+    const glm::quat rotation = world.registry().get<Transform>(*entity).rotation;
+    physics::CollisionShapeDescriptor shape{};
+    shape.type = physics::CollisionShapeType::kBox;
+    shape.half_extents = volume->half_extents;
+    shape.local_center = volume->local_center;
+    physics::CollisionQueryFilter filter{};
+    filter.collision_mask =
+        physics::collision_layer_bit(physics::CollisionLayer::kTerrain) |
+        physics::collision_layer_bit(physics::CollisionLayer::kStaticObstacle);
+    // Its own volume is a static obstacle too.
+    filter.ignored_entity_net_id = net_id;
+    glm::vec3 back{-direction.x, 0.0f, -direction.z};
+    const float back_length = std::sqrt(back.x * back.x + back.z * back.z);
+    back = back_length > 0.0001f ? back / back_length : glm::vec3{0.0f};
+    for (int step = 0; step <= kBackSteps; ++step) {
+        if (step > 0 && back == glm::vec3{0.0f}) {
+            break;
+        }
+        const glm::vec3 above =
+            position + back * (kBackStepMeters * static_cast<float>(step)) +
+            glm::vec3{0.0f, kProbeAboveMeters, 0.0f};
+        physics::ShapeCastRequest down{};
+        down.shape = shape;
+        down.start = above;
+        down.rotation = rotation;
+        down.displacement =
+            glm::vec3{0.0f, -(kProbeAboveMeters + kProbeBelowMeters), 0.0f};
+        down.filter = filter;
+        const auto not_spawner = [spawner](const physics::CollisionHit& hit) {
+            return spawner == 0u || hit.identity.entity_net_id != spawner;
+        };
+        const std::vector<physics::CollisionHit> hits =
+            physics_world->shape_cast_all(down);
+        const auto ground = std::find_if(hits.begin(), hits.end(), not_spawner);
+        // Starting inside something -- the wall it struck -- is reported at
+        // once: back off further.
+        if (ground == hits.end() || !(ground->fraction > 0.0f) ||
+            ground->normal.y < kMinGroundNormalY) {
+            continue;
+        }
+        const glm::vec3 stand = above +
+            down.displacement * ground->fraction +
+            glm::vec3{0.0f, kStandSkinMeters, 0.0f};
+        physics::OverlapRequest clear{};
+        clear.shape = shape;
+        clear.position = stand;
+        clear.rotation = rotation;
+        clear.filter = filter;
+        const std::vector<physics::CollisionHit> touching =
+            physics_world->overlap_all(clear);
+        if (std::none_of(touching.begin(), touching.end(), not_spawner)) {
+            return stand - glm::vec3{0.0f, kStandSkinMeters, 0.0f};
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<glm::vec3> find_clear_standing_spot(
+    World& world,
+    NetId net_id,
+    const glm::vec3& center,
+    float footprint_radius,
+    const glm::vec3& preferred_direction) {
+    // The ground is looked for from this far above the building's base down to
+    // this far below it, which covers a building on a slope or a step.
+    constexpr float kProbeAboveMeters = 2.0f;
+    constexpr float kProbeBelowMeters = 3.0f;
+    // Stood this far off the ground it was found on, so the clear test is not
+    // failed by the very ground the capsule stands on.
+    constexpr float kStandSkinMeters = 0.05f;
+    constexpr int kHeadings = 8;
+    constexpr int kRings = 2;
+    constexpr float kRingStepMeters = 1.0f;
+    // Steeper than this is a wall's top edge or a slope the actor slides off.
+    constexpr float kMinGroundNormalY = 0.7f;
+    constexpr float kFootprintMarginMeters = 0.25f;
+    physics::PhysicsWorld* physics_world = world.collision_world();
+    if (physics_world == nullptr || !(footprint_radius >= 0.0f)) {
+        return std::nullopt;
+    }
+    const ColliderInstance* collider = find_movement_capsule(world, net_id);
+    if (collider == nullptr) {
+        return std::nullopt;
+    }
+    const float ring_radius =
+        footprint_radius + collider->radius + kFootprintMarginMeters;
+    const std::uint32_t static_world_mask =
+        physics::collision_layer_bit(physics::CollisionLayer::kTerrain) |
+        physics::collision_layer_bit(physics::CollisionLayer::kStaticObstacle);
+    const float preferred_length = std::sqrt(
+        preferred_direction.x * preferred_direction.x +
+        preferred_direction.z * preferred_direction.z);
+    const float base_angle = preferred_length > 0.0001f
+        ? std::atan2(preferred_direction.z, preferred_direction.x)
+        : 0.0f;
+    const glm::quat upright{1.0f, 0.0f, 0.0f, 0.0f};
+    for (int ring = 0; ring < kRings; ++ring) {
+        const float radius =
+            ring_radius + static_cast<float>(ring) * kRingStepMeters;
+        for (int index = 0; index < kHeadings; ++index) {
+            // 0, +1, -1, +2, -2, ...: fanning out from the preferred side.
+            const int step = (index + 1) / 2 * ((index % 2) == 1 ? 1 : -1);
+            const float angle = base_angle +
+                static_cast<float>(step) * 6.28318530718f /
+                    static_cast<float>(kHeadings);
+            physics::ShapeCastRequest down{};
+            down.shape = movement_shape(*collider);
+            down.start = glm::vec3{
+                center.x + std::cos(angle) * radius,
+                center.y + kProbeAboveMeters,
+                center.z + std::sin(angle) * radius};
+            down.rotation = upright;
+            down.displacement =
+                glm::vec3{0.0f, -(kProbeAboveMeters + kProbeBelowMeters), 0.0f};
+            down.filter = movement_filter(
+                net_id, collider->collider_id, static_world_mask);
+            const std::vector<physics::CollisionHit> hits =
+                physics_world->shape_cast_all(down);
+            // A cast that starts inside something reports it at once: the
+            // heading runs into a wall or a block taller than the probe.
+            if (hits.empty() || !(hits.front().fraction > 0.0f) ||
+                hits.front().normal.y < kMinGroundNormalY) {
+                continue;
+            }
+            const glm::vec3 stand = down.start +
+                down.displacement * hits.front().fraction +
+                glm::vec3{0.0f, kStandSkinMeters, 0.0f};
+            physics::OverlapRequest clear{};
+            clear.shape = movement_shape(*collider);
+            clear.position = stand;
+            clear.rotation = upright;
+            clear.filter = movement_filter(
+                net_id,
+                collider->collider_id,
+                static_world_mask |
+                    physics::collision_layer_bit(
+                        physics::CollisionLayer::kActorMovement));
+            if (physics_world->overlap_all(clear).empty()) {
+                return stand;
+            }
+        }
+    }
+    return std::nullopt;
 }
 
 void simulate_velocity_movement(World& world, float fixed_delta_seconds) {
