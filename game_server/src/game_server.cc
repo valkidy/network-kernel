@@ -10,7 +10,8 @@ GameServer::GameServer(KernelHandle* kernel, GameServerGameplayConfig config)
     : kernel_(kernel),
       config_(std::move(config)),
       agent_runtime_manager_(kernel, config_),
-      respawn_(config_.player.respawn) {
+      respawn_(config_.player.respawn),
+      shelter_(kernel) {
     load_kernel_gameplay_catalog(kernel_, config_);
 }
 
@@ -30,6 +31,7 @@ void GameServer::handle_event(const KernelEvent& event) {
                players_.find(event.net_id) != players_.end()) {
         respawn_.on_player_died(event.net_id);
     }
+    shelter_.handle_event(event);
     agent_runtime_manager_.handle_event(event);
 }
 

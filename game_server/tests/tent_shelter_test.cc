@@ -42,6 +42,7 @@ void require_impl(bool condition, int line, const char* text) {
 
 #define require(expr) require_impl(static_cast<bool>(expr), __LINE__, #expr)
 
+using network_example::game_server::GameServer;
 using network_example::game_server::GameServerGameplayConfig;
 
 constexpr float kTickSeconds = 1.0f / 30.0f;
@@ -81,10 +82,12 @@ std::uint32_t entity_template_id_of(
     return 0;
 }
 
+// load_catalog false leaves the catalog to a GameServer, which loads its own.
 KernelHandle* make_world(
     const GameServerGameplayConfig& config,
     const std::vector<std::uint8_t>& scene,
-    std::uint16_t port) {
+    std::uint16_t port,
+    bool load_catalog = true) {
     KernelConfig kernel_config{};
     kernel_config.mode = KernelMode_DedicatedServer;
     kernel_config.tick.server_tick_rate = 30;
@@ -93,8 +96,10 @@ KernelHandle* make_world(
     kernel_config.max_render_states = 64;
     KernelHandle* kernel = Kernel_Create(&kernel_config);
     require(kernel != nullptr);
-    require(network_example::game_server::load_kernel_gameplay_catalog(
-        kernel, config));
+    if (load_catalog) {
+        require(network_example::game_server::load_kernel_gameplay_catalog(
+            kernel, config));
+    }
     KernelStaticCollisionSceneConfig scene_config{};
     scene_config.struct_size = sizeof(scene_config);
     scene_config.artifact_bytes = scene.data();
@@ -538,6 +543,96 @@ void occupant_is_immune(
     require(sheltered.occupant_hp_after == sheltered.occupant_hp_before);
 }
 
+// ---------------------------------------------------------------------------
+// game_server: activating a building is the door, both ways.
+// ---------------------------------------------------------------------------
+
+void game_server_runs_the_door(
+    const GameServerGameplayConfig& config,
+    const std::vector<std::uint8_t>& scene) {
+    KernelHandle* kernel = make_world(config, scene, 7986, false);
+    // Events only: its tick would start the directors, and nothing here needs
+    // them -- the shelter flow runs entirely off events.
+    GameServer server(kernel, config);
+    const auto pump = [&](const std::vector<KernelEvent>& events) {
+        for (const KernelEvent& event : events) {
+            server.handle_event(event);
+        }
+    };
+    const auto frame = [&]() { pump(step(kernel, 1)); };
+    const auto activate = [&](std::uint64_t request_id,
+                              std::uint32_t player,
+                              std::uint32_t building) {
+        const Submitted submitted = submit(
+            kernel, kPeer, request_id, player, KernelDomainAction_Activate,
+            building);
+        pump(submitted.events);
+        return submitted.outcome;
+    };
+
+    const KernelVec3 tent_at{0.0f, 0.0f, 0.0f};
+    const std::uint32_t tent = create_entity(
+        kernel, entity_template_id_of(config, "tent"), tent_at, kPeer);
+    const KernelVec3 start{1.8f, 0.0f, 0.0f};
+    const std::uint32_t player = spawn_player(kernel, config, kPeer, start);
+    pump(step(kernel, 10));
+
+    // In: the activation asks, the next tick carries it out.
+    require(activate(1, player, tent).status ==
+            KernelGameplayRequestStatus_Committed);
+    require(server.shelter_director().shelter_of(player) == 0u);
+    frame();
+    require(server.shelter_director().shelter_of(player) == tent);
+    require(horizontal_distance(position_of(kernel, player), tent_at) < 0.05f);
+
+    // Out: the same activation, from inside.
+    require(activate(2, player, tent).status ==
+            KernelGameplayRequestStatus_Committed);
+    frame();
+    require(server.shelter_director().shelter_of(player) == 0u);
+    const KernelVec3 outside = position_of(kernel, player);
+    std::fprintf(
+        stderr, "[gs]    in and out by activation, out at (%.2f, %.2f, %.2f)\n",
+        outside.x, outside.y, outside.z);
+    require(horizontal_distance(outside, tent_at) > kTentHalf + kCapsuleRadius);
+
+    // The way out lands past the tent's 2 m reach, so going back in means
+    // stepping up to it first.
+    require(Kernel_ServerSetEntityTransform(
+        kernel, player, &start, &kIdentityRotation));
+    pump(step(kernel, 2));
+
+    // In again, then the tent goes with the player inside: let out a tick
+    // later, where it went in, and free to act again.
+    const KernelVec3 entered_from = position_of(kernel, player);
+    require(activate(3, player, tent).status ==
+            KernelGameplayRequestStatus_Committed);
+    frame();
+    require(server.shelter_director().occupants_of(tent) ==
+            std::vector<std::uint32_t>{player});
+    require(Kernel_ServerDestroyEntity(
+        kernel, tent, KernelDespawnReason_Destroyed));
+    frame();
+    frame();
+    require(server.shelter_director().shelter_of(player) == 0u);
+    const KernelVec3 released = position_of(kernel, player);
+    std::fprintf(
+        stderr, "[gs]    tent destroyed with the player inside, released at "
+        "(%.2f, %.2f, %.2f)\n",
+        released.x, released.y, released.z);
+    require(horizontal_distance(released, entered_from) < 0.1f);
+    // Free again: a second tent can be walked into.
+    const std::uint32_t second = create_entity(
+        kernel, entity_template_id_of(config, "tent"),
+        KernelVec3{released.x + 1.8f, 0.0f, released.z}, kPeer);
+    pump(step(kernel, 2));
+    require(activate(4, player, second).status ==
+            KernelGameplayRequestStatus_Committed);
+    frame();
+    require(server.shelter_director().shelter_of(player) == second);
+    Kernel_Destroy(kernel);
+}
+
 }  // namespace
 
 int main() {
@@ -550,5 +645,6 @@ int main() {
     enter_stay_and_leave(config, scene);
     refusals(config, scene);
     occupant_is_immune(config, scene);
+    game_server_runs_the_door(config, scene);
     return 0;
 }

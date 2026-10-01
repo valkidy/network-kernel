@@ -1,6 +1,6 @@
 # 帳篷建築（Tent）實作計劃書
 
-狀態：**設計已定案。K1、K2 已實作（見 §3.10）；K3–K6 與 game_server 的進出流程未做。**
+狀態：**設計已定案。K1、K2 與 game_server 的進出流程已實作（見 §3.10）；K3–K6 未做。**
 分支：`claude/tent-building`，2026-10-01 rebase 到 `claude/apply-pull`（a7da594）之上，
 所以必須在 apply-pull 之後 merge。ABI 接著 apply-pull 的 95 升到 96。
 最後更新：2026-10-01（第五輪 review：進出沿用既有流程、視野隱藏做成 YAML 選項、進入前提、住客上限 4）。
@@ -370,9 +370,25 @@ collider 32、entity 214、item 3010。帳篷改用下一個空號：`tent_hitbo
 - G6 找不到空位時回入口位置，沒有測試（T16）。
 - 斷線（T14）沒有測試。
 
+**game_server：`ShelterDirector`（`game_server/src/shelter_director.{h,cc}`）。**
+- 只看事件，不需要 tick。住客 → 建築的對照表只依 kernel 回報的 `ShelterChanged` 更新，
+  不記錄「已送出的請求」，所以 kernel 拒絕的請求不會留下錯誤狀態。
+- `UiOpened`：玩家已在這個建築內 → 送退出；不在任何建築內 → 送進入；在別的建築內 → 不處理
+  （kernel 的請求閘門本來就擋掉了）。不看 `ui_id`：所有建築共用進出規則（D8）。
+- `EntityDestroyed`：
+  - 被移除的是住客（斷線）→ 從表中刪除。
+  - 被移除的是建築 → 對每位住客送退出，晚一個 tick 生效；建築已不在，所以回到入口位置。
+  - 這是 K3 完成前的替代做法。
+- `PlayerLeft`：從表中刪除。
+- 測試：`tent_shelter_test` 的 `game_server_runs_the_door` 用真的 `GameServer` 處理事件：
+  - 啟動一次進入、再啟動一次退出；
+  - 帳篷在有人時被摧毀，住客晚一個 tick 回到入口位置 (1.80, 0, 0)，之後能進另一頂帳篷。
+
+**實作中發現：退出點在互動距離之外。** 退出點離中心 2.30 m，互動距離是 2.0（D14），所以出來後
+要往帳篷走幾步才能再進去。是否接受，或把退出圈縮小、或把互動距離放大，待決定。
+
 **還沒做：**
-- game_server 收到 `UiOpened` 後決定進出並呼叫 K2 的那一層。
-- K3（建築消失時先釋放住客）。目前建築消失後，住客要由 game_server 呼叫退出（建築不在時會回入口位置）。
+- K3（建築消失時先釋放住客）。目前由 `ShelterDirector` 晚一個 tick 放人，見上。
 - K4–K6、G3 的 YAML 選項，以及 `shelter.capacity` 的 YAML 欄位（目前固定是常數）。
 
 ---
