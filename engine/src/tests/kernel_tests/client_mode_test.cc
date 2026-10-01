@@ -1765,6 +1765,100 @@ void reconcile_replays_an_authoritative_knockback() {
 // ticks, whatever the stick says, then free. Released on landing instead, the
 // prediction walked away while the authority held the body down, and every
 // snapshot dragged it back.
+// Inside a building the authority holds its occupant at the centre under a
+// terrain-only mask (EntityStateSystem::set_shelter). The client used to
+// predict under the template's mask, which the building's own walls block: it
+// pushed the player out every step and the next snapshot pulled it back in.
+// With the shelter the owner snapshot now carries, the prediction stands still
+// inside the walls whatever the stick says. Without it -- the control -- the
+// same walls push it out.
+void predicted_shelter_holds_the_local_player_inside() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    const auto inside_a_tent = [&](network_example::KernelEngine* engine) {
+        prepare_character_prediction(engine);
+        // tent_hitbox: half 1.2 on every axis, standing on the ground around
+        // the player, as a static obstacle like every prop collider.
+        network_example::physics::CollisionObjectDescriptor tent{};
+        tent.identity.entity_net_id = 50;
+        tent.identity.collider_id = 901;
+        tent.identity.kind =
+            network_example::physics::CollisionObjectKind::kStaticObstacle;
+        tent.identity.layer =
+            network_example::physics::CollisionLayer::kStaticObstacle;
+        tent.shape.type = network_example::physics::CollisionShapeType::kBox;
+        tent.shape.half_extents = glm::vec3{1.2f, 1.2f, 1.2f};
+        tent.position = glm::vec3{0.0f, 1.2f, 0.0f};
+        std::string error;
+        require(engine->prediction_physics_world_->upsert_object(tent, &error));
+    };
+    KernelPlayerInput push{};
+    push.move.x = 1.0f;
+
+    network_example::KernelEngine sheltered(config);
+    inside_a_tent(&sheltered);
+    sheltered.predicted_shelter_net_id_ = 50u;
+    for (std::uint32_t tick = 1u; tick <= 30u; ++tick) {
+        require(sheltered.step_local_character_prediction(push, tick));
+    }
+    const glm::vec3 held = sheltered.predicted_character_state_.position;
+    require(std::abs(held.x) < 0.01f && std::abs(held.z) < 0.01f);
+    require(std::abs(held.y) < 0.05f);
+
+    network_example::KernelEngine control(config);
+    inside_a_tent(&control);
+    for (std::uint32_t tick = 1u; tick <= 30u; ++tick) {
+        require(control.step_local_character_prediction(KernelPlayerInput{}, tick));
+    }
+    const glm::vec3 pushed = control.predicted_character_state_.position;
+    require(std::abs(pushed.x) > 0.5f || std::abs(pushed.z) > 0.5f ||
+            pushed.y > 1.0f);
+}
+
+// The interface a building opens, for the local player inside it: the client
+// reads the ui_id from its own catalog, by the building's template -- the
+// on_activated graph's open_ui -- and reports nothing while outside.
+void client_shelter_state_names_the_building_ui() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+    prepare_character_prediction(&engine);
+
+    KernelEntityTemplateDefinition tent{};
+    tent.struct_size = sizeof(tent);
+    tent.entity_template_id = 216;
+    tent.entity_type = KernelEntityType_Prop;
+    tent.activated_trigger.struct_size = sizeof(tent.activated_trigger);
+    tent.activated_trigger.action_count = 1u;
+    tent.activated_trigger.actions[0].action_type =
+        KernelEntityTriggerActionType_OpenUi;
+    tent.activated_trigger.actions[0].target_source =
+        KernelEntityRefSource_EventInstigator;
+    tent.activated_trigger.actions[0].ui_id = 3u;
+    engine.entity_templates_.push_back(tent);
+    add_client_render_metadata(&engine, 50, network_example::EntityType::kProp);
+    engine.client_replicated_entities_.back().entity_template_id = 216;
+
+    KernelLocalShelterState state{};
+    state.struct_size = sizeof(state) - 1u;
+    require(!engine.local_shelter_state(&state));
+    state.struct_size = sizeof(state);
+    require(engine.local_shelter_state(&state));
+    require(state.shelter_net_id == 0u && state.ui_id == 0u);
+
+    engine.predicted_shelter_net_id_ = 50u;
+    engine.predicted_shelter_tick_ = 77u;
+    require(engine.local_shelter_state(&state));
+    require(state.shelter_net_id == 50u);
+    require(state.ui_id == 3u);
+    require(state.authoritative_tick == 77u);
+}
+
 void predicted_knockdown_holds_the_local_player_down() {
     KernelConfig config{};
     config.mode = KernelMode_Client;
@@ -5552,6 +5646,8 @@ int main() {
     reconcile_replays_an_authoritative_knockback();
     authoritative_lockout_respects_a_newer_local_one();
     predicted_knockdown_holds_the_local_player_down();
+    predicted_shelter_holds_the_local_player_inside();
+    client_shelter_state_names_the_building_ui();
     late_snapshot_is_stored_but_not_used_for_reconciliation();
     server_accepts_matching_handshake_versions();
     server_rejects_mismatched_snapshot_schema_before_welcome();

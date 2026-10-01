@@ -31,6 +31,12 @@ _Static_assert(
         sizeof(KernelPropPopulationRuleDefinition) == 16u,
     "cleanup_runs_on_destroy is appended to the population rule in ABI 96");
 _Static_assert(
+    sizeof(KernelLocalShelterState) == 16u &&
+        offsetof(KernelAbiInfo, local_shelter_state_size) >
+            offsetof(KernelAbiInfo, local_weapon_state_size) &&
+        KERNEL_CAPABILITY_LOCAL_SHELTER_STATE == UINT64_C(0x0001000000000000),
+    "the local shelter query is added in ABI 96");
+_Static_assert(
     offsetof(KernelActionDefinition, pull_mode) >
         offsetof(KernelActionDefinition, repeat_stagger_lifetime_ticks),
     "the pull block is appended after every field that existed before ABI 95");

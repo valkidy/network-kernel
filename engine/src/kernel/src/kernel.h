@@ -231,6 +231,10 @@ public:
         std::uint32_t max_bindings) const;
     KernelLocalPlayerInfo local_player_info() const;
     bool local_weapon_state(KernelLocalWeaponState* out_state) const;
+    bool local_shelter_state(KernelLocalShelterState* out_state) const;
+    // The ui_id the building template's on_activated graph names with
+    // open_ui, or 0 when it names none.
+    std::uint32_t building_ui_id(std::uint32_t entity_template_id) const;
     bool server_create_entity(
         const KernelServerEntityCreateInfo& create_info,
         NetId* out_net_id);
@@ -1298,6 +1302,12 @@ private:
     // that landed: rooted, released only by the count. The twin of
     // ImpulseLockout::recovering.
     bool predicted_impulse_lockout_recovering_ = false;
+    // The building the local player is inside, as the last owner snapshot
+    // said (0 when outside), and that snapshot's tick. The twin of Sheltered:
+    // while it is set the prediction stands still under a terrain-only mask,
+    // as the authority does, instead of being pushed out through the walls.
+    NetId predicted_shelter_net_id_ = 0;
+    std::uint32_t predicted_shelter_tick_ = 0;
     std::uint32_t predicted_action_buttons_ = 0;
     std::uint16_t predicted_action_binding_id_ = 0;
     std::uint8_t predicted_action_weapon_id_ = 0;

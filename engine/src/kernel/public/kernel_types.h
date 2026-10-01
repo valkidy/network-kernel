@@ -18,6 +18,10 @@
  *     (kernel_api_internal.h), not a managed export.
  *     KernelPropPopulationRuleDefinition gained cleanup_runs_on_destroy,
  *     appended; its struct_size grows, so a mirror sized to 95 is refused.
+ *     Kernel_GetLocalShelterState and KernelLocalShelterState were added
+ *     behind KERNEL_CAPABILITY_LOCAL_SHELTER_STATE, and KernelAbiInfo gained
+ *     local_shelter_state_size, appended. Snapshot schema 26 carries an own
+ *     player's shelter, which the client's prediction needs.
  * 95: apply_pull. KernelEntityTriggerActionType gained _ApplyPull and
  *     KernelEventVec3Source gained _SubjectPosition, where the event's subject
  *     was when it happened (an area effect's centre, a projectile's impact
@@ -261,6 +265,7 @@
 #define KERNEL_CAPABILITY_SERVER_ENTITY_MOVEMENT_MASK_WRITE UINT64_C(0x0000200000000000)
 #define KERNEL_CAPABILITY_SERVER_ENTITY_REVIVE UINT64_C(0x0000400000000000)
 #define KERNEL_CAPABILITY_SERVER_INVENTORY_CLEAR UINT64_C(0x0000800000000000)
+#define KERNEL_CAPABILITY_LOCAL_SHELTER_STATE UINT64_C(0x0001000000000000)
 /* Kernel_PollLogMessages. Additive within ABI 93: check this flag, not the
  * version, before calling it. */
 #define KERNEL_CAPABILITY_LOG_CAPTURE UINT64_C(0x0001000000000000)
@@ -473,6 +478,7 @@ typedef struct KernelAbiInfo {
     uint32_t skeleton_leg_definition_size;
     uint32_t status_effect_view_size;
     uint32_t local_weapon_state_size;
+    uint32_t local_shelter_state_size;
 } KernelAbiInfo;
 
 typedef struct KernelBuildInfo {
@@ -528,6 +534,27 @@ typedef struct KernelLocalWeaponState {
     uint16_t authoritative_ammo;
     uint16_t reserved0;
 } KernelLocalWeaponState;
+
+/*
+ * The building the local player is inside, for the interface a building opens.
+ * shelter_net_id is 0 when the player is outside every building.
+ *
+ * On a listen server this is read straight from the authoritative world. On a
+ * client it is what the last owner snapshot said (authoritative_tick is that
+ * snapshot's tick): the server moves a player in and out a tick after it
+ * activates the building, so this changes when the snapshot carrying it lands,
+ * not when the activation is sent.
+ *
+ * ui_id is the open_ui id the building's on_activated graph names -- which
+ * interface to show -- looked up from the client's own catalog by the
+ * building's template. 0 when outside, or when the building names none.
+ */
+typedef struct KernelLocalShelterState {
+    uint32_t struct_size;
+    uint32_t shelter_net_id;
+    uint32_t ui_id;
+    uint32_t authoritative_tick;
+} KernelLocalShelterState;
 
 typedef struct KernelLANDiscoveryServerConfig {
     uint32_t struct_size;

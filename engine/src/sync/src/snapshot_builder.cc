@@ -93,6 +93,9 @@ WorldSnapshot build_world_snapshot(
             entity_snapshot.impulse_lockout_armed_tick = lockout->armed_tick;
             entity_snapshot.impulse_lockout_recovering = lockout->recovering;
         }
+        if (const Sheltered* sheltered = world.registry().try_get<Sheltered>(entity)) {
+            entity_snapshot.shelter_net_id = sheltered->shelter_net_id;
+        }
         if (world.registry().all_of<WeaponState>(entity)) {
             const WeaponState& weapon = world.registry().get<WeaponState>(entity);
             // An actor with no configured weapon has no magazine to report, and

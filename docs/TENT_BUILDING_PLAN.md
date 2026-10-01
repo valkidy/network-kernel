@@ -1,6 +1,6 @@
 # 帳篷建築（Tent）實作計劃書
 
-狀態：**設計已定案。K1–K4 與 game_server 的進出流程已實作（見 §3.10）；K5、K6 未做。**
+狀態：**設計已定案。K1–K5 與 game_server 的進出流程已實作（見 §3.10）；K6 未做。**
 分支：`claude/tent-building`，2026-10-01 rebase 到 `claude/apply-pull`（a7da594）之上，
 所以必須在 apply-pull 之後 merge。ABI 接著 apply-pull 的 95 升到 96。
 最後更新：2026-10-01（第五輪 review：進出沿用既有流程、視野隱藏做成 YAML 選項、進入前提、住客上限 4）。
@@ -421,7 +421,44 @@ collider 32、entity 214、item 3010。帳篷改用下一個空號：`tent_hitbo
   - 對照組（group 未開啟）：evicted / expired 都只放出來、不移動。
   - 開啟的 group 若 graph 會生成 tent，載入被拒；未開啟則可以載入。
 
-**還沒做：** K5、K6、G3 的 YAML 選項，以及 `shelter.capacity` 的 YAML 欄位（目前固定是常數）。
+**K5：入住狀態同步給擁有者，client 預測跟著切換（D28、D34）。**
+- 伺服器：snapshot builder 把 `Sheltered` 填進 `EntitySnapshot.shelter_net_id`；
+  `build_relevant_snapshot` 只保留在接收方自己的玩家上，其他 session 看到的一律是 0。
+- 線上格式：snapshot schema **25 → 26**。actor record 新增旗標 `kActorSnapshotHasShelter`
+  （1 << 8），後面接 u32 建築 net id。只有在建築內時才送，所以只多 4 bytes；不在建築內時
+  record 和以前完全相同。帶這個欄位的 agent 不會被壓成 compact agent record。
+- client：重新對齊時（在重播輸入之前）採用 snapshot 的 `shelter_net_id`。非 0 時預測的移動
+  遮罩改為只有 terrain，移動歸 0，和伺服器一致。
+- Unity 用的 API：`Kernel_GetLocalShelterState(kernel, &KernelLocalShelterState)`，回傳
+  `shelter_net_id`、`ui_id`、`authoritative_tick`。
+  - 能力旗標 `KERNEL_CAPABILITY_LOCAL_SHELTER_STATE`；`KernelAbiInfo` 新增
+    `local_shelter_state_size`（併入 ABI 96）。
+  - listen server 讀權威世界；client 讀最後一個 owner snapshot。
+  - `ui_id` 由 client 自己的 catalog 依建築的 template 查 `on_activated` 的 open_ui，
+    不需要額外的網路資料。
+  - macOS（BUILD.bazel）和 Windows（.def）兩份 export 清單都已加入。
+- 測試：
+  - `client_mode_test`：
+    - `predicted_shelter_holds_the_local_player_inside`：帳篷大小的 static obstacle 包住玩家，
+      入住時推 30 tick 輸入，位置不動。對照組（沒有入住狀態）被牆推出去，這就是 T3 原本的問題，
+      以程式碼層級重現。
+    - `client_shelter_state_names_the_building_ui`：client 端查詢回傳建築的 ui_id。
+  - `shelter_roundtrip_test`（protocol）：建築 id 往返；建築內恰好多 4 bytes，估算值一致；
+    agent 帶這個欄位仍能往返。
+  - `shelter_end_to_end_test`（server + client 經 loopback）：進入後 client 收到建築 id，
+    其他 session 看到的是 0，離開後下一個 snapshot 清除。
+- T3 狀態：client 預測的拉扯已在程式與 in-process 的 server/client 測試中排除。真正的兩個
+  process（Unity client 連線）尚未實測。
+
+**Unity 端（使用者負責）需要配合的：**
+- C# mirror：`KernelEvent.related_net_id`、`KernelActionDefinition.ui_id`、
+  `KernelPropPopulationRuleDefinition.cleanup_runs_on_destroy`、`KernelAbiInfo.local_shelter_state_size`、
+  新的 `KernelLocalShelterState`，以及新的 enum 值。
+- 每幀用 `Kernel_GetLocalShelterState` 判斷：`shelter_net_id` 變成非 0 時開啟 `ui_id` 對應的 UI，
+  變回 0 時關閉。
+- 其他玩家入住時，模型會疊在建築中心（G 項 §9-5）。目前沒有同步給其他 client，要隱藏的話之後再評估。
+
+**還沒做：** K6、G3 的 YAML 選項，以及 `shelter.capacity` 的 YAML 欄位（目前固定是常數）。
 
 ---
 
