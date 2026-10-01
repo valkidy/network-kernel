@@ -273,6 +273,8 @@ struct ActionSpawnEntityCommand {
     std::uint32_t item_template_id = 0;
     std::uint32_t quantity = 0;
     ActionExecutionProvenance provenance;
+    // KERNEL_SPAWN_PLACEMENT_*.
+    std::uint32_t placement = 0;
 };
 
 // The destination is resolved when the command commits, from where the

@@ -722,6 +722,98 @@ float available_lift(
     return std::max(0.0f, clear);
 }
 
+std::optional<glm::vec3> find_clear_spawn_spot(
+    World& world,
+    NetId net_id,
+    const glm::vec3& position,
+    const glm::vec3& direction,
+    NetId spawner) {
+    // The ground is looked for from a little above the contact point, so a
+    // bottle that struck a wall partway up still finds the floor in front of
+    // it, down to this far below.
+    constexpr float kProbeAboveMeters = 0.5f;
+    constexpr float kProbeBelowMeters = 4.0f;
+    constexpr float kStandSkinMeters = 0.05f;
+    constexpr float kBackStepMeters = 0.5f;
+    constexpr int kBackSteps = 8;
+    constexpr float kMinGroundNormalY = 0.7f;
+    physics::PhysicsWorld* physics_world = world.collision_world();
+    const std::optional<entt::entity> entity = world.find_entity(net_id);
+    if (physics_world == nullptr || !entity.has_value() ||
+        !world.registry().all_of<Transform>(*entity)) {
+        return std::nullopt;
+    }
+    const ColliderInstance* volume = nullptr;
+    for (const ColliderInstance& candidate :
+         world.collider_registry().instances()) {
+        if (candidate.entity_net_id == net_id &&
+            (candidate.purpose_flags & KernelColliderPurpose_Hit) != 0u &&
+            (candidate.shape_type == ColliderShapeType::kAabb ||
+             candidate.shape_type == ColliderShapeType::kOrientedBox)) {
+            volume = &candidate;
+            break;
+        }
+    }
+    if (volume == nullptr) {
+        return std::nullopt;
+    }
+    const glm::quat rotation = world.registry().get<Transform>(*entity).rotation;
+    physics::CollisionShapeDescriptor shape{};
+    shape.type = physics::CollisionShapeType::kBox;
+    shape.half_extents = volume->half_extents;
+    shape.local_center = volume->local_center;
+    physics::CollisionQueryFilter filter{};
+    filter.collision_mask =
+        physics::collision_layer_bit(physics::CollisionLayer::kTerrain) |
+        physics::collision_layer_bit(physics::CollisionLayer::kStaticObstacle);
+    // Its own volume is a static obstacle too.
+    filter.ignored_entity_net_id = net_id;
+    glm::vec3 back{-direction.x, 0.0f, -direction.z};
+    const float back_length = std::sqrt(back.x * back.x + back.z * back.z);
+    back = back_length > 0.0001f ? back / back_length : glm::vec3{0.0f};
+    for (int step = 0; step <= kBackSteps; ++step) {
+        if (step > 0 && back == glm::vec3{0.0f}) {
+            break;
+        }
+        const glm::vec3 above =
+            position + back * (kBackStepMeters * static_cast<float>(step)) +
+            glm::vec3{0.0f, kProbeAboveMeters, 0.0f};
+        physics::ShapeCastRequest down{};
+        down.shape = shape;
+        down.start = above;
+        down.rotation = rotation;
+        down.displacement =
+            glm::vec3{0.0f, -(kProbeAboveMeters + kProbeBelowMeters), 0.0f};
+        down.filter = filter;
+        const auto not_spawner = [spawner](const physics::CollisionHit& hit) {
+            return spawner == 0u || hit.identity.entity_net_id != spawner;
+        };
+        const std::vector<physics::CollisionHit> hits =
+            physics_world->shape_cast_all(down);
+        const auto ground = std::find_if(hits.begin(), hits.end(), not_spawner);
+        // Starting inside something -- the wall it struck -- is reported at
+        // once: back off further.
+        if (ground == hits.end() || !(ground->fraction > 0.0f) ||
+            ground->normal.y < kMinGroundNormalY) {
+            continue;
+        }
+        const glm::vec3 stand = above +
+            down.displacement * ground->fraction +
+            glm::vec3{0.0f, kStandSkinMeters, 0.0f};
+        physics::OverlapRequest clear{};
+        clear.shape = shape;
+        clear.position = stand;
+        clear.rotation = rotation;
+        clear.filter = filter;
+        const std::vector<physics::CollisionHit> touching =
+            physics_world->overlap_all(clear);
+        if (std::none_of(touching.begin(), touching.end(), not_spawner)) {
+            return stand - glm::vec3{0.0f, kStandSkinMeters, 0.0f};
+        }
+    }
+    return std::nullopt;
+}
+
 std::optional<glm::vec3> find_clear_standing_spot(
     World& world,
     NetId net_id,

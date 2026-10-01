@@ -11,6 +11,9 @@
  *     trigger definition, so every managed mirror of those shifts.
  *     KernelEvent gained related_net_id, appended into what was tail padding,
  *     so sizeof(KernelEvent) is unchanged but a mirror must still name it.
+ *     KernelActionDefinition also gained spawn_placement (a
+ *     KERNEL_SPAWN_PLACEMENT_*), appended after ui_id, read only by
+ *     spawn_entity.
  *     KernelEventType gained _UiOpened and _ShelterChanged,
  *     KernelGameplayRequestRejection gained _InstigatorSheltered and
  *     KernelLocalActionResultReason gained _Sheltered. The shelter command,
@@ -854,6 +857,15 @@ typedef enum KernelActionConditionType {
  *           side the target is on. Zero gathers everything onto the point.
  * ALONG:    pull_distance metres (signed) from where the target stands, along
  *           the horizontal of the vector direction_source names. */
+/* Where spawn_entity puts what it spawns.
+ * EXACT: at the position the action names, whatever is there.
+ * CLEAR: on the ground near it, its box hit volume clear of terrain and
+ *        static obstacles, backing off against the action's direction until
+ *        it fits (find_clear_spawn_spot). Best effort: when nothing nearby
+ *        fits it stays where EXACT would have put it. */
+#define KERNEL_SPAWN_PLACEMENT_EXACT 0u
+#define KERNEL_SPAWN_PLACEMENT_CLEAR 1u
+
 #define KERNEL_PULL_MODE_TO_POINT 0u
 #define KERNEL_PULL_MODE_ALONG 1u
 
@@ -923,6 +935,9 @@ typedef struct KernelActionDefinition {
      * offers. Non-zero; what each value means is the game's, not the
      * kernel's. */
     uint32_t ui_id;
+    /* spawn_entity only; zero on every other action. A KERNEL_SPAWN_PLACEMENT_*:
+     * where the spawned entity is put relative to the position it was given. */
+    uint32_t spawn_placement;
 } KernelActionDefinition;
 
 typedef struct KernelActionTriggerDefinition {

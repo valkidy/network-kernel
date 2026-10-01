@@ -297,6 +297,7 @@ void hash_projectile_template(
             hash_scalar(hash, action.pull_airtime_ticks);
             hash_float(hash, action.pull_max_speed);
             hash_scalar(hash, action.ui_id);
+            hash_scalar(hash, action.spawn_placement);
             hash_scalar(hash, action.condition_type);
         }
     }
@@ -1918,6 +1919,7 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 "airtime_ticks",
                 "max_speed",
                 "ui_id",
+                "placement",
             },
             path,
             source_kind,
@@ -1948,6 +1950,10 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
             throw std::runtime_error(
                 "anchor, distance, airtime_ticks and max_speed are only "
                 "supported on apply_pull: " + path);
+        }
+        if (action["placement"] && compiled_action.action_type != "spawn_entity") {
+            throw std::runtime_error(
+                "placement is only supported on spawn_entity: " + path);
         }
         if (action["ui_id"] && compiled_action.action_type != "open_ui") {
             throw std::runtime_error(
@@ -2007,6 +2013,17 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
             }
             compiled_action.owner_parameter =
                 parameter_reference_from_yaml(action["owner"], "owner");
+            if (action["placement"]) {
+                const std::string placement = action["placement"].as<std::string>();
+                if (placement == "exact") {
+                    compiled_action.spawn_placement = KERNEL_SPAWN_PLACEMENT_EXACT;
+                } else if (placement == "clear") {
+                    compiled_action.spawn_placement = KERNEL_SPAWN_PLACEMENT_CLEAR;
+                } else {
+                    throw std::runtime_error(
+                        "spawn_entity placement must be exact or clear: " + path);
+                }
+            }
             if (action["item_template"] || action["quantity"]) {
                 if (!action["item_template"] || !action["quantity"]) {
                     throw std::runtime_error(
@@ -6779,6 +6796,7 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
                     KernelEventVec3Source_Direction;
             }
             compiled_action.owner_source = entity_ref_source(owner);
+            compiled_action.spawn_placement = action.spawn_placement;
             if (!action.item_template_ref.empty()) {
                 if (item_templates == nullptr) {
                     throw std::runtime_error(
@@ -8379,6 +8397,7 @@ std::uint64_t compute_gameplay_catalog_hash(
             hash_scalar(&hash, action.pull_airtime_ticks);
             hash_float(&hash, action.pull_max_speed);
             hash_scalar(&hash, action.ui_id);
+            hash_scalar(&hash, action.spawn_placement);
         }
     }
     std::vector<StatusEffectTemplateConfig> status_effect_templates =

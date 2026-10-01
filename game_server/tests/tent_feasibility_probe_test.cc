@@ -13,6 +13,10 @@
 //    its side and the tent spawns on the side face, half inside the block
 //    (overlap ~3.4 m^3). With a terrain-only landing mask -- the ice bottle's --
 //    the bottle flies through and the tent lands wholly inside (~9.2 m^3).
+//    Since K6 (2026-10-01) the kit spawns with placement: clear, which backs
+//    the tent off the way the bottle came until it fits: both ice cases now
+//    stand on the ground in front of the block, overlap 0 (pinned below). Flat
+//    ground is unchanged, ~0.6 m past where the bottle stopped.
 // 2. Reach. The interaction range is 3D: from the ground 1.8 m from a tent on
 //    the ground, activation commits; 2.5 m from the one stuck on the ice
 //    block, it is rejected out of range.
@@ -704,6 +708,19 @@ int main() {
         run_landing_case(terrain_only, scene, 7963, ground.tent.x, 2.2f);
     print_landing("onto ice, terrain only", through_ice);
 
+    // The control for clear placement: the same throw at the block through
+    // the ice bottle's graph, which spawns exactly at the contact point.
+    GameServerGameplayConfig exact = config;
+    for (auto& candidate : exact.entity_templates) {
+        if (candidate.name == "tent_kit_prop") {
+            candidate.collision_trigger.action_graph_ref =
+                "action_spawn_ice_and_damage_self_at_collision";
+        }
+    }
+    const LandingOutcome exact_on_ice =
+        run_landing_case(exact, scene, 7968, ground.tent.x, 2.2f);
+    print_landing("onto ice, exact (control)", exact_on_ice);
+
     // --- 4. Landing on units -----------------------------------------------
     run_landing_on_units(config, scene, 7964, ground.tent);
 
@@ -756,6 +773,16 @@ int main() {
     // ground, not a throw that never left the hand.
     require(ground.tent.x > 3.0f);
     require(std::fabs(ground.tent.y) < 0.5f);
+
+    // Clear placement: thrown at the block -- struck on its face, or flown
+    // through it with terrain alone -- the tent is set down in front of it on
+    // the ground, not in it, and on the side it was thrown from.
+    for (const LandingOutcome* iced : {&on_ice, &through_ice}) {
+        require(iced->overlap == 0.0f);
+        require(std::fabs(iced->tent.y) < 0.2f);
+        require(iced->tent.x < ground.tent.x);
+    }
+    require(exact_on_ice.overlap > 1.0f);
 
     // Reach and pickup: from the ground beside a tent on the ground, the tent
     // is interactable; it is never a world item, so it cannot be picked up.

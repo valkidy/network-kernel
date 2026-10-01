@@ -834,6 +834,9 @@ struct ActionSpawnEntityDefinition {
     std::uint32_t item_template_id = 0;
     std::uint32_t quantity = 0;
     ActionConditionType condition = ActionConditionType::kAlways;
+    // KERNEL_SPAWN_PLACEMENT_*, a plain integer like ActionApplyPullDefinition
+    // ::mode; EXACT is zero.
+    std::uint32_t placement = 0;
 };
 
 using ActionGraphAction = std::variant<

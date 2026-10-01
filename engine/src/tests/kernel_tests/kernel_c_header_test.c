@@ -138,15 +138,21 @@ _Static_assert(
         offsetof(KernelSkeletonBindingDefinition, processing_order),
     "stance crouch is appended to the skeleton binding ABI");
 _Static_assert(
-    sizeof(KernelActionDefinition) == 84u + 16u + 16u + 4u,
+    sizeof(KernelActionDefinition) == 84u + 16u + 16u + 8u,
     "KernelActionDefinition ABI size: 84 bytes before ABI 94, plus the "
     "16-byte spawn lifetime and repeat block, plus ABI 95's 16-byte pull "
-    "block, plus ABI 96's ui_id");
+    "block, plus ABI 96's ui_id and spawn_placement");
 _Static_assert(
     sizeof(KernelActionTriggerDefinition) ==
-        764u + 8u * 16u + 8u * 16u + 8u * 4u,
+        764u + 8u * 16u + 8u * 16u + 8u * 8u,
     "KernelActionTriggerDefinition ABI size: its eight actions each grew by "
-    "the ABI 94 repeat block, the ABI 95 pull block and the ABI 96 ui_id");
+    "the ABI 94 repeat block, the ABI 95 pull block and ABI 96's ui_id and "
+    "spawn_placement");
+_Static_assert(
+    offsetof(KernelActionDefinition, spawn_placement) >
+            offsetof(KernelActionDefinition, ui_id) &&
+        KERNEL_SPAWN_PLACEMENT_EXACT == 0u && KERNEL_SPAWN_PLACEMENT_CLEAR == 1u,
+    "spawn_placement is appended after ui_id; exact is the zero default");
 _Static_assert(
     offsetof(KernelActionDefinition, spawn_lifetime_ticks) >
         offsetof(KernelActionDefinition, damage_stagger),

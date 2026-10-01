@@ -436,6 +436,9 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
             continue;
         }
         if (action.action_type == KernelEntityTriggerActionType_SpawnEntity) {
+            if (action.spawn_placement > KERNEL_SPAWN_PLACEMENT_CLEAR) {
+                return std::nullopt;
+            }
             const std::string template_name = "entity_template" + suffix;
             const std::string position_name = "position" + suffix;
             const std::string direction_name =
@@ -458,6 +461,7 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
                 action.spawn_item_template_id,
                 action.spawn_item_quantity,
                 *condition,
+                action.spawn_placement,
             });
             binding.parameters.push_back({
                 template_name,
@@ -1092,6 +1096,7 @@ bool evaluate_action_graph(
                 spawn->item_template_id,
                 spawn->quantity,
                 provenance,
+                spawn->placement,
             });
             continue;
         }

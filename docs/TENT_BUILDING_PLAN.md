@@ -1,6 +1,6 @@
 # 帳篷建築（Tent）實作計劃書
 
-狀態：**設計已定案。K1–K5 與 game_server 的進出流程已實作（見 §3.10）；K6 未做。**
+狀態：**設計已定案。K1–K6 與 game_server 的進出流程已實作（見 §3.10）。**
 分支：`claude/tent-building`，2026-10-01 rebase 到 `claude/apply-pull`（a7da594）之上，
 所以必須在 apply-pull 之後 merge。ABI 接著 apply-pull 的 95 升到 96。
 最後更新：2026-10-01（第五輪 review：進出沿用既有流程、視野隱藏做成 YAML 選項、進入前提、住客上限 4）。
@@ -458,7 +458,31 @@ collider 32、entity 214、item 3010。帳篷改用下一個空號：`tent_hitbo
   變回 0 時關閉。
 - 其他玩家入住時，模型會疊在建築中心（G 項 §9-5）。目前沒有同步給其他 client，要隱藏的話之後再評估。
 
-**還沒做：** K6、G3 的 YAML 選項，以及 `shelter.capacity` 的 YAML 欄位（目前固定是常數）。
+**K6：生成時的安全落點校正（D29）。**
+- `spawn_entity` 新增 `placement: exact | clear`（`KernelActionDefinition.spawn_placement`，
+  併入 ABI 96）。帳篷 kit 改用新的 graph `action_spawn_building_and_damage_self_at_collision`
+  （`placement: clear`）。冰塊瓶子仍用原本的 graph，行為不變。
+- 做法（`find_clear_spawn_spot`，伺服器端）：
+  - 先在原位生成，再用生成物自己的 box hit volume 搜尋；生成到移動之間不發佈 snapshot。
+  - 從接觸點上方 0.5 m 往下找地面，確認不碰到 terrain 與 static obstacle。
+  - 放不下就沿丟擲方向的反方向每次退 0.5 m，最多 4 m；找不到留在原位。
+  - 實作中發現：生成者（還在場的瓶子）的碰撞盒會擋住候選位置，甚至讓帳篷架在瓶子上，
+    所以判斷時略過生成者。
+- 實測（`tent_feasibility_probe_test`，已改為 require）：
+
+  | 情況 | 之前（exact） | 之後（clear） |
+  |---|---|---|
+  | 平地 | 停止位置前 0.6 m | 不變 |
+  | 丟向冰塊側面 | 半嵌入，重疊 3.35 m³，架在側面上 | 冰塊前的地面上，重疊 0 |
+  | 只有 terrain（瓶子穿過冰塊） | 完全在冰塊內，9.2 m³ | 冰塊前的地面上，重疊 0 |
+
+  exact 的對照組（同一次丟擲改用冰塊的 graph）仍重現 3.35 m³，證明測試有效。
+- client 演出：不需要 solver。kit 消失與帳篷生成在同一個 snapshot，Unity 由 kit 的最後
+  位置到帳篷位置自行推算反彈動畫（§3.8）。
+- §9-4（撞到側面半嵌入）已解決；平地的 0.6 m 偏差未處理（需要「停止位置」事件來源，不在範圍內）。
+
+**還沒做：** G3 的 YAML 選項（住客不出現在敵人的視野候選中），以及 `shelter.capacity` 的
+YAML 欄位（目前固定是常數）。
 
 ---
 

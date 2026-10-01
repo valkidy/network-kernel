@@ -353,6 +353,22 @@ float available_lift(
 // second ring lies a metre further out. Headings are tried nearest
 // `preferred_direction` first. nullopt when there is no physics world, no
 // movement capsule, or nothing clear -- the caller picks the fallback.
+// Where an entity just spawned at `position` can stand clear, for a spawn
+// that asked for clear placement (KERNEL_SPAWN_PLACEMENT_CLEAR). Its own box
+// hit volume is looked for on terrain or a static obstacle, at `position` and
+// then backing off against `direction` -- the way it came -- a step at a time,
+// touching no terrain or static obstacle. A bottle that struck a wall's face
+// is set down in front of the wall rather than half inside it. nullopt when
+// there is no physics world, no box hit volume, or nothing clear within reach:
+// the caller keeps `position`. Best effort, not a guarantee. `spawner`'s own
+// volumes are looked through: the bottle that spawned it is still there.
+std::optional<glm::vec3> find_clear_spawn_spot(
+    World& world,
+    NetId net_id,
+    const glm::vec3& position,
+    const glm::vec3& direction,
+    NetId spawner);
+
 std::optional<glm::vec3> find_clear_standing_spot(
     World& world,
     NetId net_id,

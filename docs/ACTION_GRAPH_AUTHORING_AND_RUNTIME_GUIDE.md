@@ -217,6 +217,14 @@ template 沒有 `CancelBeforeFirstCommit` 也不會先打出一次；硬直期�
 - `entity_template` 必須解析為既有 Entity Template。
 - `position` 目前必須綁定 `event.position`。
 - `owner` 必須解析為有效 entity reference。
+- `direction`（可省略）綁定 `event.direction`，決定生成物的 yaw。
+- `placement`（可省略，字面值）：`exact`（預設）在 `position` 原地生成；`clear` 會在
+  `position` 附近找空位。做法是以生成物自己的 box hit volume 往下找地面，並確認不碰到
+  terrain 與 static obstacle；放不下就沿 `direction` 的反方向每次退 0.5 m，最多退 4 m。
+  找不到就留在原地（盡力而為，不保證）。生成者（owner，例如還沒消失的瓶子）的碰撞盒
+  不列入判斷。用途：建築 kit 撞到牆面時，建築落在牆前的地面上，而不是嵌進牆裡
+  （`action_spawn_building_and_damage_self_at_collision`）。`placement` 寫在
+  `spawn_entity` 以外的 action 上會在載入時被拒絕。
 
 適用於 entity-backed triggers。
 

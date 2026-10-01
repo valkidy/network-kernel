@@ -1388,6 +1388,23 @@ bool execute_action_graph_commands(
                 engine, create_info, &spawned_net_id, false)) {
             return false;
         }
+        // Placed by its own hit volume, so it is created first, where it was
+        // asked for, and moved once that volume can be swept; nothing is
+        // published in between.
+        if (spawn.placement == KERNEL_SPAWN_PLACEMENT_CLEAR) {
+            if (const std::optional<glm::vec3> clear = find_clear_spawn_spot(
+                    world,
+                    spawned_net_id,
+                    spawn.position,
+                    spawn.direction,
+                    spawn.owner)) {
+                (void)EntityStateSystem{}.set_transform(
+                    engine,
+                    spawned_net_id,
+                    to_kernel_vec3(*clear),
+                    create_info.rotation);
+            }
+        }
         if (spawn.item_template_id != 0u) {
             const auto item_id = engine.item_store().create_world_item(
                 spawn.item_template_id,

@@ -3394,6 +3394,7 @@ bool KernelEngine::load_gameplay_catalog(
                 if (action.action_type ==
                     KernelEntityTriggerActionType_SpawnEntity) {
                     if (action.spawn_entity_template_id == 0u ||
+                        action.spawn_placement > KERNEL_SPAWN_PLACEMENT_CLEAR ||
                         action.position_source !=
                             KernelEventVec3Source_Position ||
                         action.owner_source >

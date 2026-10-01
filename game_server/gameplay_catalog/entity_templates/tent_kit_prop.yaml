@@ -1,8 +1,10 @@
 # A tent in flight: a bottle, the same size as the ice block's, that unfolds into
-# the tent where it lands -- the ice block's flow, step for step. It spawns the
-# tent at the contact point and destroys itself.
+# the tent where it lands -- the ice block's flow, but placed clear: the tent is
+# set down on the ground near the contact point, backing off the way the bottle
+# came until it fits (action_spawn_building_and_damage_self_at_collision).
 #
-# What that costs, measured by //game_server:tent_feasibility_probe_test:
+# What the plain contact-point spawn cost, measured by
+# //game_server:tent_feasibility_probe_test before clear placement:
 # - On flat ground the tent appears ~0.6 m further along the throw than the
 #   bottle stopped (the contact point is the bottle's leading edge).
 # - Bodies under the landing spot are pushed out by the tent appearing around
@@ -22,7 +24,7 @@ physics:
 triggers:
   on_collision:
     collision_mask: terrain|static_obstacle
-    action_graph: action_spawn_ice_and_damage_self_at_collision
+    action_graph: action_spawn_building_and_damage_self_at_collision
     parameters:
       template: tent
       position: event.position

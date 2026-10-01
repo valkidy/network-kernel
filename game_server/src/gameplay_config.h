@@ -377,6 +377,9 @@ struct ActionGraphActionConfig {
     // open_ui only: which interface the building offers. A literal, like
     // apply_pull's numbers; see KernelActionDefinition::ui_id.
     std::uint32_t ui_id = 0;
+    // spawn_entity only: a KERNEL_SPAWN_PLACEMENT_*, authored as
+    // `placement: exact | clear`.
+    std::uint32_t spawn_placement = KERNEL_SPAWN_PLACEMENT_EXACT;
 };
 
 struct ActionGraphTemplateConfig {
