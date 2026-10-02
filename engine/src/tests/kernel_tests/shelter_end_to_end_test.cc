@@ -1,7 +1,8 @@
-// An own player's shelter from the server's world to the client's, through
-// the builder, the relevance filter, the encoder, a transport and the decoder
-// -- the path the client's prediction depends on to stop pushing its player out
-// of a building's walls. Owner only: another session never hears of it.
+// An actor's shelter from the server's world to the client's, through the
+// builder, the relevance filter, the encoder, a transport and the decoder --
+// the path the owner's prediction depends on to stop pushing its player out of
+// a building's walls, and every client's interior depends on to seat the
+// occupants. Since schema 27 another session sees it too, seat included.
 //
 // Two engines and a shuttle standing in for the network, the same way
 // actor_impulse_end_to_end_test does it.
@@ -105,7 +106,7 @@ int main() {
     auto& registry = server.world_.registry();
     registry.emplace<ne::Sheltered>(
         *server.world_.find_entity(player),
-        ne::Sheltered{building, glm::vec3{2.0f, 0.0f, 0.0f}, 0u});
+        ne::Sheltered{building, glm::vec3{2.0f, 0.0f, 0.0f}, 0u, 2u});
     pump();
     require(client.predicted_shelter_net_id_ == building);
     require(client.predicted_shelter_tick_ != 0u);
@@ -113,9 +114,20 @@ int main() {
     state.struct_size = sizeof(state);
     require(client.local_shelter_state(&state));
     require(state.shelter_net_id == building);
+    // And the owner's own render state carries the seat it was given.
+    client.rebuild_render_states();
+    bool saw_own_seat = false;
+    for (const RenderEntityState& rendered : client.render_states_) {
+        if (rendered.net_id == player) {
+            saw_own_seat = true;
+            require(rendered.shelter_net_id == building);
+            require(rendered.shelter_seat == 2u);
+        }
+    }
+    require(saw_own_seat);
 
-    // Owner only: the other player's session sees this player, but not where
-    // it is sheltering.
+    // The other player's session sees where this player is sheltering, and
+    // in which seat, so it can hide the body outside and seat it inside.
     ne::KernelEngine::PeerSession other_session{2, other, 0, true, {}};
     other_session.relevant_entities = server.peer_sessions_.front().relevant_entities;
     other_session.relevant_entities.insert(player);
@@ -125,7 +137,8 @@ int main() {
     for (const ne::EntitySnapshot& entity : seen_by_other.entities) {
         if (entity.net_id == player) {
             saw_player = true;
-            require(entity.shelter_net_id == 0u);
+            require(entity.shelter_net_id == building);
+            require(entity.shelter_seat == 2u);
         }
     }
     require(saw_player);

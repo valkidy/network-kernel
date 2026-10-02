@@ -1029,6 +1029,70 @@ void game_server_runs_the_door(
 
 }  // namespace
 
+// ---------------------------------------------------------------------------
+// Seats: the authority gives each occupant the lowest seat free when it goes
+// in, and every render state reports it, so all clients seat the squad alike.
+// ---------------------------------------------------------------------------
+
+struct SeatReading {
+    std::uint32_t shelter_net_id = 0u;
+    std::uint32_t seat = 0u;
+};
+
+SeatReading seat_of(KernelHandle* kernel, std::uint32_t net_id) {
+    std::array<RenderEntityState, 64> states{};
+    const std::uint32_t count = Kernel_GetRenderStates(
+        kernel, states.data(), static_cast<std::uint32_t>(states.size()));
+    for (std::uint32_t index = 0; index < count && index < states.size(); ++index) {
+        if (states[index].net_id == net_id) {
+            return SeatReading{states[index].shelter_net_id, states[index].shelter_seat};
+        }
+    }
+    require(false);
+    return {};
+}
+
+void seats_fill_lowest_free(
+    const GameServerGameplayConfig& config,
+    const std::vector<std::uint8_t>& scene) {
+    KernelHandle* kernel = make_world(config, scene, 7989);
+    const std::uint32_t tent =
+        create_entity(kernel, entity_template_id_of(config, "tent"), KernelVec3{}, kPeer);
+    std::array<std::uint32_t, KERNEL_SHELTER_CAPACITY + 1u> players{};
+    for (std::size_t index = 0; index < players.size(); ++index) {
+        players[index] = spawn_player(
+            kernel, config, 50u + static_cast<std::uint32_t>(index),
+            KernelVec3{4.0f, 0.0f, 2.0f * static_cast<float>(index)});
+    }
+    step(kernel, 10);
+
+    // In order, one command after another: seats 0, 1, 2, 3.
+    for (std::size_t index = 0; index < KERNEL_SHELTER_CAPACITY; ++index) {
+        require(Kernel_ServerEnqueueEntityShelter(
+            kernel, KernelCommandSource_Test, players[index], tent));
+    }
+    step(kernel, 1);
+    for (std::size_t index = 0; index < KERNEL_SHELTER_CAPACITY; ++index) {
+        const SeatReading reading = seat_of(kernel, players[index]);
+        std::fprintf(stderr, "[seat]  player %zu -> building %u seat %u\n",
+                     index, reading.shelter_net_id, reading.seat);
+        require(reading.shelter_net_id == tent);
+        require(reading.seat == index);
+    }
+
+    // Seat 1 leaves; the next one in takes seat 1, not seat 4.
+    enter(kernel, players[1], 0u);
+    const SeatReading left = seat_of(kernel, players[1]);
+    require(left.shelter_net_id == 0u);
+    require(left.seat == 0u);
+    enter(kernel, players.back(), tent);
+    const SeatReading refilled = seat_of(kernel, players.back());
+    require(refilled.shelter_net_id == tent);
+    require(refilled.seat == 1u);
+    require(seat_of(kernel, players[3]).seat == 3u);
+    Kernel_Destroy(kernel);
+}
+
 int main() {
     const GameServerGameplayConfig config =
         network_example::game_server::default_game_server_gameplay_config();
@@ -1038,6 +1102,7 @@ int main() {
     open_ui_reports_who_asked(config, scene);
     enter_stay_and_leave(config, scene);
     refusals(config, scene);
+    seats_fill_lowest_free(config, scene);
     occupant_is_immune(config, scene);
     eviction_lets_occupants_out(config, scene);
     collapse_throws_occupants_clear(config, scene);

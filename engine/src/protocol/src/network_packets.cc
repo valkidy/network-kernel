@@ -57,7 +57,7 @@ constexpr std::size_t kActorMovementPayloadSize = 22;
 // active slot 1 + state flags 1 + ammo 2.
 constexpr std::size_t kActorWeaponStatePayloadSize = 4;
 constexpr std::size_t kActorImpulseLockoutPayloadSize = 8;
-constexpr std::size_t kActorShelterPayloadSize = 4;
+constexpr std::size_t kActorShelterPayloadSize = 5;
 constexpr std::size_t kProjectileCompactSnapshotPayloadSize = 34;
 // net_id 4 + effective_length 2. No position, rotation or velocity: a beam does
 // not move, and its origin and aim are the shooter's, which every snapshot
@@ -261,8 +261,9 @@ enum ActorSnapshotRecordFlag : std::uint16_t {
     // Schema 23. Only with kActorSnapshotHasImpulseLockout: that lockout is the
     // actor's knockdown recovery.
     kActorSnapshotImpulseLockoutRecovering = 1u << 7,
-    // Schema 26. The building the actor is inside; only ever the receiving
-    // session's own player, and only while it is inside one.
+    // Schema 26. The building the actor is inside, only while it is inside
+    // one. Schema 27 appends its seat (u8) and sends it for every actor, not
+    // only the receiving session's own player.
     kActorSnapshotHasShelter = 1u << 8,
 };
 
@@ -647,6 +648,7 @@ std::vector<std::uint8_t> encode_snapshot_packet(
                     }
                     if ((record_flags & kActorSnapshotHasShelter) != 0u) {
                         payload.write_u32(entity->shelter_net_id);
+                        payload.write_u8(entity->shelter_seat);
                     }
                     break;
                 }
@@ -895,7 +897,9 @@ bool decode_snapshot_packet(
                     }
                     if ((record_flags & kActorSnapshotHasShelter) != 0u) {
                         if (!reader.read_u32(&entity.shelter_net_id) ||
-                            entity.shelter_net_id == 0u) {
+                            entity.shelter_net_id == 0u ||
+                            !reader.read_u8(&entity.shelter_seat) ||
+                            entity.shelter_seat >= KERNEL_MAX_SHELTER_CAPACITY) {
                             return false;
                         }
                     }

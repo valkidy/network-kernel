@@ -6,9 +6,14 @@
 #include "kernel/public/kernel_api.h"
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 96u,
-    "buildings: KernelActionDefinition gained ui_id, KernelEvent gained "
-    "related_net_id");
+    KERNEL_ABI_VERSION == 97u,
+    "seats: RenderEntityState gained shelter_net_id and shelter_seat");
+_Static_assert(
+    offsetof(RenderEntityState, shelter_net_id) >
+            offsetof(RenderEntityState, beam_end) &&
+        offsetof(RenderEntityState, shelter_seat) >
+            offsetof(RenderEntityState, shelter_net_id),
+    "the shelter fields are appended after every field that existed before ABI 97");
 _Static_assert(
     offsetof(KernelActionDefinition, ui_id) >
         offsetof(KernelActionDefinition, pull_max_speed),

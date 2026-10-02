@@ -514,6 +514,11 @@ private:
         // render state only; has_spawn_tick stays false.
         std::uint32_t spawn_tick = 0;
         bool has_spawn_tick = false;
+        // An actor's building and seat as of the last snapshot that carried
+        // it, so a frame drawn without a fresh record does not show an
+        // occupant standing outside.
+        NetId shelter_net_id = 0;
+        std::uint8_t shelter_seat = 0;
         bool active = false;
     };
 

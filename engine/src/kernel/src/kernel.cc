@@ -12395,8 +12395,6 @@ WorldSnapshot KernelEngine::build_relevant_snapshot(
             filtered_entity.impulse_lockout_recovering =
                 filtered_entity.has_impulse_lockout &&
                 entity.impulse_lockout_recovering;
-            filtered_entity.shelter_net_id =
-                entity.net_id == session.player ? entity.shelter_net_id : 0u;
             filtered.entities.push_back(filtered_entity);
         }
     }
@@ -14242,6 +14240,8 @@ void KernelEngine::rebuild_render_states_from_snapshot(
         }
         rendered_entities.insert(entity.net_id);
         replicated->active = true;
+        replicated->shelter_net_id = entity.shelter_net_id;
+        replicated->shelter_seat = entity.shelter_seat;
         if (!use_reliable_prop_state) {
             replicated->position = entity.position;
             replicated->rotation = entity.rotation;
@@ -14347,6 +14347,8 @@ void KernelEngine::rebuild_render_states_from_snapshot(
         if (entity.type == EntityType::kProp) {
             render_states_.back().spawn_tick = entity.spawn_tick;
         }
+        render_states_.back().shelter_net_id = entity.shelter_net_id;
+        render_states_.back().shelter_seat = entity.shelter_seat;
     }
 
     // The derived chains, stepped to the render instant and drawn there.

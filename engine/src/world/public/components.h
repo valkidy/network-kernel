@@ -250,6 +250,10 @@ struct Sheltered {
     // Its movement mask before the terrain-only one entering set, restored on
     // the way out.
     std::uint32_t previous_movement_collision_mask = 0;
+    // Where it sits inside: the lowest seat no other occupant of the same
+    // building held when it went in, 0 to capacity - 1. Assigned by the
+    // authority so every client draws the same occupant in the same seat.
+    std::uint8_t seat = 0;
 };
 
 struct PlayerTag {};
