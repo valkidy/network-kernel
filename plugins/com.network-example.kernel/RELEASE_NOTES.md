@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- updates native plugins and gameplay catalog for ABI 97 shelter seats replicated to every client
+
+
+0.7.0 release notes:
+
 - updates native plugins and gameplay catalog for ABI 96 apply-pull and building shelter support
 
 
