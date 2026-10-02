@@ -75,6 +75,9 @@ RenderEntityState render_state_from_world_entity(
         action_instance_id = projectile.action_instance_id;
         template_id = projectile.projectile_template_id;
     }
+    if (world.registry().all_of<PropLifecycle>(entity)) {
+        spawn_tick = world.registry().get<PropLifecycle>(entity).spawn_tick;
+    }
     if (world.registry().all_of<ActorTemplateRef>(entity)) {
         template_id =
             world.registry().get<ActorTemplateRef>(entity).actor_template_id;

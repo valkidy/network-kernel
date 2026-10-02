@@ -303,6 +303,12 @@ cc_test(
 )
 
 cc_test(
+    name = "prop_spawn_tick_end_to_end_test",
+    srcs = ["prop_spawn_tick_end_to_end_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
+cc_test(
     name = "shelter_end_to_end_test",
     srcs = ["shelter_end_to_end_test.cc"],
     deps = ["//engine/src/kernel:kernel"],

@@ -79,7 +79,7 @@ constexpr std::size_t kLocomotionStepBatchHeaderPayloadSize = 6;
 // net_id 4 + leg_index 1 + start_tick_delta 1 + landing target 12.
 constexpr std::size_t kLocomotionStepRecordPayloadSize = 18;
 constexpr std::size_t kReliableEventPayloadSize = 34;
-constexpr std::size_t kEntitySpawnPayloadSize = 73;
+constexpr std::size_t kEntitySpawnPayloadSize = 77;
 constexpr std::size_t kEntityDespawnPayloadSize = 12;
 constexpr std::size_t kEntityTemplateUpdatePayloadSize = 12;
 constexpr std::size_t kProjectileSpawnBatchHeaderPayloadSize = 24;
@@ -1275,6 +1275,7 @@ std::vector<std::uint8_t> encode_entity_spawn_packet(
     payload.write_u64(packet.item_instance_id);
     payload.write_u8(packet.world_item_mode);
     payload.write_u32(packet.carrier_entity_id);
+    payload.write_u32(packet.spawn_tick);
     return protocol_internal::wrap_packet(
         MessageType::kEntitySpawn,
         payload.bytes(),
@@ -1317,6 +1318,7 @@ bool decode_entity_spawn_packet(
         !reader.read_u8(&packet.world_item_mode) ||
         packet.world_item_mode > KernelWorldItemMode_InFlight ||
         !reader.read_u32(&packet.carrier_entity_id) ||
+        !reader.read_u32(&packet.spawn_tick) ||
         !reader.done()) {
         return false;
     }
