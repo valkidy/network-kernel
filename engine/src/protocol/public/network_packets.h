@@ -27,6 +27,13 @@ struct EntitySpawnPacket {
     KernelItemInstanceId item_instance_id = 0;
     std::uint8_t world_item_mode = KernelWorldItemMode_Placed;
     std::uint32_t carrier_entity_id = 0;
+    // The tick a prop with a lifecycle was spawned on; 0 for everything else.
+    // server_tick above is when this packet was sent -- a later join, or the
+    // prop coming into range, sends it long after the spawn -- so it cannot
+    // stand in for this. With the template's lifetime_ticks it says when the
+    // prop expires, which a client counting a tent down has no other way to
+    // learn: snapshots carry spawn_tick for projectiles only.
+    std::uint32_t spawn_tick = 0;
 };
 
 struct EntityDespawnPacket {

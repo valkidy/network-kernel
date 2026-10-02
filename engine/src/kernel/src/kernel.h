@@ -509,9 +509,16 @@ private:
         std::uint32_t thrown_flight_end_tick = 0;
         bool has_thrown_flight_end = false;
         // The tick a server-only projectile was spawned on, so it is not drawn
-        // before the world timeline reaches it.
+        // before the world timeline reaches it (has_spawn_tick set). For a
+        // prop, its lifecycle spawn from the spawn packet, reported in its
+        // render state only; has_spawn_tick stays false.
         std::uint32_t spawn_tick = 0;
         bool has_spawn_tick = false;
+        // An actor's building and seat as of the last snapshot that carried
+        // it, so a frame drawn without a fresh record does not show an
+        // occupant standing outside.
+        NetId shelter_net_id = 0;
+        std::uint8_t shelter_seat = 0;
         bool active = false;
     };
 

@@ -7715,6 +7715,12 @@ void KernelEngine::handle_client_spawn(const EntitySpawnPacket& packet) {
         entity.position = packet.position;
         entity.rotation = packet.rotation;
         entity.snapshot_tick = packet.server_tick;
+        // A prop's lifecycle spawn. has_spawn_tick stays false: it means a
+        // projectile's world-timeline spawn, and everything reading it
+        // checks for a projectile.
+        if (packet.entity_type == EntityType::kProp) {
+            entity.spawn_tick = packet.spawn_tick;
+        }
         client_replicated_entities_.push_back(entity);
     } else {
         found->type = packet.entity_type;
@@ -7729,6 +7735,9 @@ void KernelEngine::handle_client_spawn(const EntitySpawnPacket& packet) {
         found->carrier_entity_id = packet.carrier_entity_id;
         found->position = packet.position;
         found->rotation = packet.rotation;
+        if (packet.entity_type == EntityType::kProp) {
+            found->spawn_tick = packet.spawn_tick;
+        }
         found->active = false;
     }
     client_metadata_timeout_reported_entities_.erase(packet.net_id);
@@ -12386,8 +12395,6 @@ WorldSnapshot KernelEngine::build_relevant_snapshot(
             filtered_entity.impulse_lockout_recovering =
                 filtered_entity.has_impulse_lockout &&
                 entity.impulse_lockout_recovering;
-            filtered_entity.shelter_net_id =
-                entity.net_id == session.player ? entity.shelter_net_id : 0u;
             filtered.entities.push_back(filtered_entity);
         }
     }
@@ -13096,6 +13103,7 @@ void KernelEngine::send_entity_spawn(PeerId peer, const EntitySnapshot& entity) 
     KernelItemInstanceId item_instance_id = 0;
     std::uint8_t world_item_mode = KernelWorldItemMode_Placed;
     NetId carrier_entity_id = 0;
+    std::uint32_t prop_spawn_tick = 0;
     glm::vec3 spawn_position = entity.position;
     const std::optional<entt::entity> world_entity = world_.find_entity(entity.net_id);
     if (world_entity.has_value() &&
@@ -13141,6 +13149,11 @@ void KernelEngine::send_entity_spawn(PeerId peer, const EntitySnapshot& entity) 
         spawn_position =
             world_.registry().get<ProjectileState>(*world_entity).spawn_position;
     }
+    if (world_entity.has_value() &&
+        world_.registry().all_of<PropLifecycle>(*world_entity)) {
+        prop_spawn_tick =
+            world_.registry().get<PropLifecycle>(*world_entity).spawn_tick;
+    }
     const std::vector<std::uint8_t> packet = encode_entity_spawn_packet(
         EntitySpawnPacket{
             entity.net_id,
@@ -13157,6 +13170,7 @@ void KernelEngine::send_entity_spawn(PeerId peer, const EntitySnapshot& entity) 
             item_instance_id,
             world_item_mode,
             carrier_entity_id,
+            prop_spawn_tick,
         },
         next_packet_sequence_++);
     if (!transport_->Send(
@@ -14210,6 +14224,10 @@ void KernelEngine::rebuild_render_states_from_snapshot(
             entity_id_for_net_id(entity.net_id)));
         RenderEntityState& state = render_states_.back();
         state.template_id = render_template_id(*replicated);
+        // Snapshots carry no spawn tick for a prop; its spawn packet did.
+        if (replicated->type == EntityType::kProp) {
+            state.spawn_tick = replicated->spawn_tick;
+        }
         if (state.entity_type == static_cast<std::uint16_t>(EntityType::kActor) &&
             replicated->actor_template_id != 0u) {
             state.collider_template_id =
@@ -14222,6 +14240,8 @@ void KernelEngine::rebuild_render_states_from_snapshot(
         }
         rendered_entities.insert(entity.net_id);
         replicated->active = true;
+        replicated->shelter_net_id = entity.shelter_net_id;
+        replicated->shelter_seat = entity.shelter_seat;
         if (!use_reliable_prop_state) {
             replicated->position = entity.position;
             replicated->rotation = entity.rotation;
@@ -14324,6 +14344,11 @@ void KernelEngine::rebuild_render_states_from_snapshot(
             render_states_.back().world_item_mode = KernelWorldItemMode_InFlight;
             render_states_.back().carrier_entity_id = 0u;
         }
+        if (entity.type == EntityType::kProp) {
+            render_states_.back().spawn_tick = entity.spawn_tick;
+        }
+        render_states_.back().shelter_net_id = entity.shelter_net_id;
+        render_states_.back().shelter_seat = entity.shelter_seat;
     }
 
     // The derived chains, stepped to the render instant and drawn there.

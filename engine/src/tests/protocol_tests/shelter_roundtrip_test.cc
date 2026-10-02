@@ -1,7 +1,8 @@
-// Snapshot schema 26: an own player's shelter -- the building it is inside --
-// survives the wire, because the client's prediction stands still in the
-// building only if it arrives. Four bytes, and only while the player is
-// inside: outside, the record is exactly what it was.
+// Snapshot schema 27: an actor's shelter -- the building it is inside and its
+// seat there -- survives the wire, because the owner's prediction stands still
+// in the building only if it arrives, and every client seats the occupants by
+// it. Five bytes, and only while the actor is inside: outside, the record is
+// exactly what it was.
 
 #include <cstdint>
 #include <cstdio>
@@ -22,7 +23,9 @@ void require_impl(bool condition, const char* expression, int line) {
 }
 #define require(condition) require_impl((condition), #condition, __LINE__)
 
-network_example::WorldSnapshot player_in(network_example::NetId shelter) {
+network_example::WorldSnapshot player_in(
+    network_example::NetId shelter,
+    std::uint8_t seat = 0) {
     network_example::WorldSnapshot snapshot;
     snapshot.header.server_tick = 120;
     network_example::EntitySnapshot player;
@@ -32,6 +35,7 @@ network_example::WorldSnapshot player_in(network_example::NetId shelter) {
     player.owner_peer = 1;
     player.position = glm::vec3{1.0f, 0.0f, 2.0f};
     player.shelter_net_id = shelter;
+    player.shelter_seat = seat;
     snapshot.entities.push_back(player);
     return snapshot;
 }
@@ -49,16 +53,24 @@ network_example::WorldSnapshot round_trip(const network_example::WorldSnapshot& 
 
 int main() {
     require(round_trip(player_in(42)).entities[0].shelter_net_id == 42u);
+    require(round_trip(player_in(42, 3)).entities[0].shelter_seat == 3u);
     require(round_trip(player_in(0)).entities[0].shelter_net_id == 0u);
 
-    // Four bytes inside, none outside, and the send budget agrees.
+    // A seat no building can have is a corrupt record, refused whole.
+    const std::vector<std::uint8_t> bad_seat = network_example::encode_snapshot_packet(
+        player_in(42, static_cast<std::uint8_t>(KERNEL_MAX_SHELTER_CAPACITY)), 1);
+    network_example::WorldSnapshot rejected;
+    require(!network_example::decode_snapshot_packet(
+        bad_seat.data(), bad_seat.size(), &rejected));
+
+    // Five bytes inside, none outside, and the send budget agrees.
     const std::size_t inside =
         network_example::encode_snapshot_packet(player_in(42), 1).size();
     const std::size_t outside =
         network_example::encode_snapshot_packet(player_in(0), 1).size();
-    require(inside == outside + 4u);
+    require(inside == outside + 5u);
     require(network_example::estimate_snapshot_entity_size(player_in(42).entities[0]) ==
-            network_example::estimate_snapshot_entity_size(player_in(0).entities[0]) + 4u);
+            network_example::estimate_snapshot_entity_size(player_in(0).entities[0]) + 5u);
 
     // An agent carrying one is never squeezed into the compact agent record,
     // which has nowhere to put it.

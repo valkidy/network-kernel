@@ -75,12 +75,13 @@ struct EntitySnapshot {
     // The lockout is the actor getting up after a knockback that landed:
     // rooted, not carrying velocity. Meaningless without has_impulse_lockout.
     bool impulse_lockout_recovering = false;
-    // The building this actor is inside, or 0. Like movement state, the
-    // builder fills it for every occupant and build_relevant_snapshot keeps it
-    // only on the receiving session's own player: the client's prediction
-    // needs it to stop pushing its player out of the building's walls (the
-    // authority's terrain-only mask is not otherwise replicated).
+    // The building this actor is inside, or 0, and its seat there. Sent to
+    // every session that sees the actor (schema 27; 26 sent it to the owner
+    // alone): the owner's prediction needs it to stop pushing its player out
+    // of the building's walls, and every client needs it to draw the
+    // occupants -- hidden outside, seated inside.
     NetId shelter_net_id = 0;
+    std::uint8_t shelter_seat = 0;
     // The weapon the player is holding, for the one client that holds it. Like
     // movement state, the builder fills it for every armed actor and
     // build_relevant_snapshot keeps it only on the receiving session's own

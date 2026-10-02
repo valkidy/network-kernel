@@ -5,6 +5,11 @@
 #include <stdint.h>
 
 /*
+ * 97: seats. RenderEntityState gained shelter_net_id and shelter_seat (with
+ *     two reserved bytes after it), appended after beam_end: the building an
+ *     actor is inside and the seat the authority gave it there, 0 and 0
+ *     outside. Snapshot schema 27 sends both for every actor a session sees,
+ *     where 26 sent the building to its own player only.
  * 96: buildings. KernelEntityTriggerActionType gained _OpenUi, and
  *     KernelActionDefinition gained ui_id, appended, read only by open_ui;
  *     zero on every other action. KernelActionDefinition is embedded in every
@@ -156,7 +161,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 96u
+#define KERNEL_ABI_VERSION 97u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -1445,6 +1450,15 @@ typedef struct RenderEntityState {
      * from its velocity, because it has none.
      */
     KernelVec3 beam_end;
+    /*
+     * Actors only: the building this actor is inside, or 0, and its seat
+     * there, 0 to the building's capacity - 1. The authority assigns seats, so
+     * every client sees the same occupant in the same seat.
+     */
+    uint32_t shelter_net_id;
+    uint8_t shelter_seat;
+    uint8_t reserved_shelter0;
+    uint16_t reserved_shelter1;
 } RenderEntityState;
 
 typedef struct KernelBoneLocalTransform {

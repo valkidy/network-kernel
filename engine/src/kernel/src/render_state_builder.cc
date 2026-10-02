@@ -75,6 +75,9 @@ RenderEntityState render_state_from_world_entity(
         action_instance_id = projectile.action_instance_id;
         template_id = projectile.projectile_template_id;
     }
+    if (world.registry().all_of<PropLifecycle>(entity)) {
+        spawn_tick = world.registry().get<PropLifecycle>(entity).spawn_tick;
+    }
     if (world.registry().all_of<ActorTemplateRef>(entity)) {
         template_id =
             world.registry().get<ActorTemplateRef>(entity).actor_template_id;
@@ -123,7 +126,7 @@ RenderEntityState render_state_from_world_entity(
         template_id =
             world.registry().get<EntityTemplateRef>(entity).entity_template_id;
     }
-    return RenderEntityState{
+    RenderEntityState state{
         entity_id,
         identity.net_id,
         static_cast<std::uint16_t>(kind.type),
@@ -149,12 +152,17 @@ RenderEntityState render_state_from_world_entity(
         0,
         carrier_entity_id,
     };
+    if (const Sheltered* sheltered = world.registry().try_get<Sheltered>(entity)) {
+        state.shelter_net_id = sheltered->shelter_net_id;
+        state.shelter_seat = sheltered->seat;
+    }
+    return state;
 }
 
 RenderEntityState render_state_from_snapshot_entity(
     const EntitySnapshot& entity,
     std::uint64_t entity_id) {
-    return RenderEntityState{
+    RenderEntityState state{
         entity_id,
         entity.net_id,
         static_cast<std::uint16_t>(entity.type),
@@ -196,6 +204,9 @@ RenderEntityState render_state_from_snapshot_entity(
         entity.carrier_entity_id,
         beam_end_from(entity),
     };
+    state.shelter_net_id = entity.shelter_net_id;
+    state.shelter_seat = entity.shelter_seat;
+    return state;
 }
 
 EntitySnapshot interpolate_snapshot_entity(

@@ -95,6 +95,7 @@ WorldSnapshot build_world_snapshot(
         }
         if (const Sheltered* sheltered = world.registry().try_get<Sheltered>(entity)) {
             entity_snapshot.shelter_net_id = sheltered->shelter_net_id;
+            entity_snapshot.shelter_seat = sheltered->seat;
         }
         if (world.registry().all_of<WeaponState>(entity)) {
             const WeaponState& weapon = world.registry().get<WeaponState>(entity);

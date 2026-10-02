@@ -3055,14 +3055,20 @@ bool EntityStateSystem::set_shelter(
             capacity = building_template->shelter_capacity;
         }
     }
-    std::uint32_t occupants = 0u;
+    // Seats are bits, capacity is at most KERNEL_MAX_SHELTER_CAPACITY (64).
+    std::uint64_t taken_seats = 0u;
     for (const auto [occupant, sheltered] : registry.view<Sheltered>().each()) {
         (void)occupant;
-        if (sheltered.shelter_net_id == shelter_net_id) {
-            ++occupants;
+        if (sheltered.shelter_net_id == shelter_net_id &&
+            sheltered.seat < KERNEL_MAX_SHELTER_CAPACITY) {
+            taken_seats |= std::uint64_t{1} << sheltered.seat;
         }
     }
-    if (occupants >= capacity) {
+    std::uint32_t seat = 0u;
+    while (seat < capacity && (taken_seats & (std::uint64_t{1} << seat)) != 0u) {
+        ++seat;
+    }
+    if (seat >= capacity) {
         return false;
     }
 
@@ -3075,7 +3081,8 @@ bool EntityStateSystem::set_shelter(
         Sheltered{
             shelter_net_id,
             transform.position,
-            movement.movement_collision_mask});
+            movement.movement_collision_mask,
+            static_cast<std::uint8_t>(seat)});
     // Mask first, move second, for the reverse of leave_shelter's reason: the
     // building must already have stopped blocking the actor when it arrives
     // inside, or the next step pushes it straight back out.
