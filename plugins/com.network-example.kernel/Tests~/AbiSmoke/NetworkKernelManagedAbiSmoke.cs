@@ -34,7 +34,7 @@ public static class NetworkKernelManagedAbiSmoke
         KernelBuildInfo buildInfo = KernelAbi.GetBuildInfo();
         GameServerAbiInfo gameServerInfo = GameServerAbi.GetInfo();
         RequireSkeletonBindingContract();
-        Require(KernelConstants.AbiVersion == 96, "Managed kernel ABI version was not v96.");
+        Require(KernelConstants.AbiVersion == 97, "Managed kernel ABI version was not v97.");
         Require(
             KernelLocalWeaponState.StructSize == 20 &&
             info.local_weapon_state_size == KernelLocalWeaponState.StructSize,

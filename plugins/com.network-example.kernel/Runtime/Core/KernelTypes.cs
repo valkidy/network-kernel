@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 96;
+        public const uint AbiVersion = 97;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int LogMessageTextSize = 512;
@@ -1407,6 +1407,10 @@ namespace NetworkExample.Kernel
         /// rotation cannot be recovered from its velocity, because it has none.
         /// </summary>
         public KernelVec3 beam_end;
+        public uint shelter_net_id;
+        public byte shelter_seat;
+        public byte reserved_shelter0;
+        public ushort reserved_shelter1;
 
         public static uint StructSize => (uint)Marshal.SizeOf<RenderEntityState>();
     }
