@@ -1,7 +1,7 @@
 # Beam-armed sentry. Same chassis as sentry_grunt; the difference is weapon 8,
 # a sustained beam, in place of the linear-projectile spammer.
 #
-# See grenade_sentry.yaml for the ballistic (parabolic) variant. Nothing here
+# See 24_grenade_sentry.yaml for the ballistic (parabolic) variant. Nothing here
 # solves a firing arc: beam_sentry_beam is a linear projectile, so
 # agent_runtime_manager.cc:48 leaves ballistic_aim disabled and the executor
 # aims straight from the launch position at the target.
@@ -33,7 +33,7 @@ animations:
   idle: 0
   chasing: 1
 # 12 m, and the beam reaches 14 -- the beam must out-range the cone, not the
-# other way round. See beam_sentry_beam_box.yaml.
+# other way round. See 17_collider_beam_sentry_beam_box.yaml.
 vision:
   collider_template: sentry_grunt_vision_cone
 ai:

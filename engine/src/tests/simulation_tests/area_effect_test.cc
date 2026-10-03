@@ -222,8 +222,9 @@ void area_effect_damage_order_is_deterministic() {
 
 // A deployable: Health plus a side. World's own standalone collision world only
 // registers actors, so the prop has to be placed in a supplied world by hand --
-// as kStaticObstacle carrying the `damageable` category ice_block_hitbox.yaml
-// authors, which is what makes cover solid to every side.
+// as kStaticObstacle carrying the `damageable` category
+// 13_collider_ice_block_hitbox.yaml authors, which is what makes cover solid to
+// every side.
 network_example::NetId spawn_cover_prop(
     network_example::World& world,
     network_example::physics::PhysicsWorld& physics,

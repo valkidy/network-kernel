@@ -1,5 +1,5 @@
-id: 23
-name: biped_actor
+id: 22
+name: tripod_actor
 entity_type: actor
 actor_type: agent
 camp: enemy_side
@@ -19,8 +19,8 @@ movement:
   max_yaw_degrees_per_second: 45.0
   collision_mask: terrain
 hitbox:
-  center: {x: 0.0, y: 20.0, z: 0.0}
-  half_extents: {x: 12.0, y: 22.0, z: 8.0}
+  center: {x: 0.0, y: 12.0, z: 0.0}
+  half_extents: {x: 10.0, y: 14.0, z: 10.0}
 weapon_slots: [2]
 active_weapon_slot: 0
 vision:
@@ -44,8 +44,8 @@ animations:
   idle: 0
   chasing: 1
 skeleton:
-  runtime_asset: skeleton_assets/generated/simplified_biped.ozz
-  source_manifest: skeleton_assets/generated/simplified_biped.skeleton_manifest.json
+  runtime_asset: skeleton_assets/generated/simplified_tripod.ozz
+  source_manifest: skeleton_assets/generated/simplified_tripod.skeleton_manifest.json
   # What this actor's rig colliders mean. The rig file says which bones carry
   # them and what shape they are; this says whose side they are on. The same rig
   # could be a friendly actor with a different layer here.
@@ -56,21 +56,26 @@ locomotion:
   gait:
     type: displacement_threshold
     # Same 1.95/18 as the other rigs: the timing follows move_speed, not leg
-    # length. See quadruped_actor.yaml.
+    # length. See 21_quadruped_actor.yaml.
     step_threshold_meters: 1.95
     step_duration_ticks: 18
-    # Two legs, alternating: one group each, one swinging at a time. A biped is
-    # statically unstable mid-swing by construction -- there is only one foot
-    # down -- but nothing here models balance, so it walks regardless. The
-    # arms are not driven; they are in the skeleton, not in this leg list.
+    # An odd leg count has no diagonal to pair, so each leg is its own gait
+    # group and exactly one swings at a time -- a three-phase wave gait, which
+    # is the statically stable choice for a tripod because the two planted feet
+    # plus the body's own footprint always straddle the centre of mass.
+    #
+    # This needs no engine support beyond what the quadruped already uses:
+    # gait_group is an arbitrary index validated against leg_count, and the
+    # scheduler's rule is "at most one group swinging", not "two alternating
+    # groups". processing_order is what fixes the phase sequence.
     max_swinging_legs: 1
-    processing_order: [leg0, leg1]
+    processing_order: [leg0, leg1, leg2]
   foothold:
     query: raycast
-    # 1.18x the authored 30/90 baseline, matching this rig's 21.5 m legs.
+    # 1.29x the authored 30/90 baseline, matching this rig's 23.5 m legs.
     # See docs/LOCOMOTION_GAIT_TUNING.md.
-    query_start_height_meters: 36.0
-    query_distance_meters: 108.0
+    query_start_height_meters: 39.0
+    query_distance_meters: 117.0
     candidate_offsets_meters:
       - {x: 0.0, z: 0.0}
       - {x: 0.2, z: 0.0}
@@ -80,10 +85,9 @@ locomotion:
   body:
     follow_speed: 10.0
     slope_alignment: 0.0
-    # 1.57 m, more than the other two rigs need: this one's legs hang almost
-    # straight down (93.2% rest extension, 1.46 m slack) where the quadruped's
-    # splay out to 88.9%. The crouch buys the same ~3 m dip budget.
-    stance_crouch_meters: 1.57
+    # Same 88.9% rest extension as the quadruped -- identical limbs, only the
+    # hip placement differs -- so the same small crouch reaches ~3 m of slack.
+    stance_crouch_meters: 0.40
   # One value for every leg on all three rigs, so it is a default rather than
   # something repeated per leg.
   leg_defaults:
@@ -92,7 +96,10 @@ locomotion:
   # Only the gait grouping differs per leg; the bones and bend geometry are in
   # the rig file.
   legs:
+    # Leg0 leads, with leg1 and leg2 trailing at +/-120 degrees.
     - id: leg0
       gait_group: 0
     - id: leg1
       gait_group: 1
+    - id: leg2
+      gait_group: 2

@@ -15,7 +15,7 @@ Create them in this order. Each one is referenced by the next.
 | 4 | weapon template | `weapon_templates/` | magazine, range, spread, and the three references above |
 
 Then add the weapon's `id` to a loadout in `entity_templates/` (for example
-`player.yaml`'s `weapon_slots`), or nothing will ever hold it. A loadout holds
+`1_player.yaml`'s `weapon_slots`), or nothing will ever hold it. A loadout holds
 at most 4 weapons.
 
 Ids must be unique within each directory. Weapon ids are 0-255.
@@ -218,7 +218,7 @@ not only setting its camp.
 **Known gap**: a projectile that names *no* side (`spammer`, which is
 `terrain | static_obstacle`) has an empty gameplay-category mask, so it passes
 through every side-layered collider — actors and deployable cover alike. See
-`collider_templates/ice_block_hitbox.yaml`, which hit the same wall from the
+`collider_templates/13_collider_ice_block_hitbox.yaml`, which hit the same wall from the
 target's end.
 
 ### A marker: speed 0

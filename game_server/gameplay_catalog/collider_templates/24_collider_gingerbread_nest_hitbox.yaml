@@ -24,8 +24,8 @@
 # This is what a weapon has to touch, and -- because every non-actor collider is
 # registered as a static obstacle -- what a body has to walk around. The
 # spawner's entry exits are validated against it, so changing these extents can
-# make gingerbread_nest.yaml's door fail catalog load rather than silently put
-# units out inside the wall.
+# make 208_prop_gingerbread_nest.yaml's door fail catalog load rather than
+# silently put units out inside the wall.
 id: 24
 name: gingerbread_nest_hitbox
 shape: oriented_box

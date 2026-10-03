@@ -173,7 +173,7 @@ int main() {
         require(shape.entity_net_id == net_id);
         require(shape.collider_template_id == 0u);
         require(shape.shape_type == KernelColliderShapeType_OrientedBox);
-        // limb | hit, per quadruped_actor.yaml's collision_flags.
+        // limb | hit, per 21_quadruped_actor.yaml's collision_flags.
         require((shape.purpose_flags & KernelColliderPurpose_Limb) != 0u);
         require((shape.purpose_flags & KernelColliderPurpose_Hit) != 0u);
         require(shape.layer_mask == KERNEL_COLLISION_LAYER_HOSTILE_SIDE);
@@ -799,7 +799,7 @@ int main() {
         predicting.session_rules_.actor_blocking_mode =
             KernelActorBlockingMode_Predicted;
         require(predicting.build_local_character_movement_config(&blocking));
-        // player.yaml authors limb, so a session that blocks actors keeps it.
+        // 1_player.yaml authors limb, so a session that blocks actors keeps it.
         require((blocking.filter.collision_mask & limb_bit) != 0u);
         require((blocking.filter.collision_mask & capsule_bit) != 0u);
 

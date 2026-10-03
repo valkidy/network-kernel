@@ -37,7 +37,7 @@ using network_example::physics::PhysicsWorld;
 using network_example::physics::PhysicsWorldConfig;
 using network_example::physics::RayCastRequest;
 
-// quadruped_actor.yaml: 5 foothold candidates, 4 legs.
+// 21_quadruped_actor.yaml: 5 foothold candidates, 4 legs.
 constexpr int kCandidatesPerLeg = 5;
 constexpr int kLegs = 4;
 constexpr int kRaysPerActorTick = kCandidatesPerLeg * kLegs;

@@ -2,7 +2,7 @@
 #
 # It exists as its own template because that catalog shares
 # entity_template_dir with the shipping one, so it cannot edit
-# world_rule_director.yaml without changing what ships. That sharing is what
+# 100_director_world_rule.yaml without changing what ships. That sharing is what
 # the catalog's `enemy:` block used to work around: `enemy:` replaced every
 # world rule's spawn wholesale, which was a per-catalog override wearing the
 # name of something else. A second template says the same thing directly, and

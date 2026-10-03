@@ -809,9 +809,10 @@ std::uint32_t collision_mask_from_yaml(
 // movement.collision_mask names the geometry that stops a body, which is a
 // different axis from the gameplay categories collision_mask_from_yaml parses --
 // see the KERNEL_MOVEMENT_LAYER_* comment in kernel_types.h. It is spelled the
-// same way as a projectile's collision_mask (projectile_templates/rocket.yaml)
-// because it is authored the same way -- a '|' list of layer names -- but it is
-// kept as its own token set so the two vocabularies cannot be confused:
+// same way as a projectile's collision_mask
+// (projectile_templates/3_projectile_rocket.yaml) because it is authored the
+// same way -- a '|' list of layer names -- but it is kept as its own token set
+// so the two vocabularies cannot be confused:
 // "hostile_side" is meaningless under movement and must fail loudly rather than
 // resolve to some unrelated bit.
 std::uint32_t movement_collision_layer_token_from_yaml(

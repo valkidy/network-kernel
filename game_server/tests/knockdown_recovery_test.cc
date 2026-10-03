@@ -38,7 +38,7 @@ void require_impl(bool condition, int line, const char* text) {
 #define require(expr) require_impl(static_cast<bool>(expr), __LINE__, #expr)
 
 constexpr float kTickSeconds = 1.0f / 30.0f;
-// gingerbread.yaml's knockdown recovery_ticks.
+// 28_gingerbread.yaml's knockdown recovery_ticks.
 constexpr std::size_t kRecoveryTicks = 21u;
 
 std::vector<std::uint8_t> read_ground_scene() {

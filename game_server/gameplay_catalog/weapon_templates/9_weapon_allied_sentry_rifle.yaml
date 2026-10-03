@@ -1,5 +1,5 @@
 # Agent-only, like beam_sentry_rifle. Nothing puts weapon 9 in a player
-# loadout; it exists so allied_beam_sentry.yaml has something to point
+# loadout; it exists so 27_allied_beam_sentry.yaml has something to point
 # weapon_slots at.
 #
 # The fire and reload actions are shared with the enemy beam sentry rather than
@@ -15,7 +15,7 @@ weapon_type: beam
 # action spends one round per tick.
 magazine_size: 45
 # No ammo economy and no way to scavenge; running it dry would park it in a
-# permanent reload. Same choice as beam_sentry_rifle.yaml.
+# permanent reload. Same choice as 8_weapon_beam_sentry_rifle.yaml.
 reserve_magazines: 65535
 fire_action_template: beam_sentry_fire
 reload_action_template: beam_sentry_reload

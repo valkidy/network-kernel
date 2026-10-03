@@ -57,7 +57,7 @@
 | D19 | kit 投擲距離比照 ice block，讓投擲距離的設定一致 | 第三輪。**已經一致**：`fungible_tent_kit` 與 ice block 的 `stateful_magic_bottle` 都用 `grenade_shell`，不需要改 |
 | D20 | **建築物不主動承受或吸引威脅，只保留被意外破壞的可能**。不加入敵人的視野候選；HP 設高值 | 第三輪。回覆 §9-1 |
 | D21 | 友軍傷害不保護：玩家自己的 AoE 炸掉自己的建築，屬於玩家自主行為。原則是建築不吸引仇恨，只需讓玩家觀察到它可能被破壞 | 第三輪。回覆 §9-8；client 需要顯示建築受損（例如 HP） |
-| D22 | 兩份 L 的 YAML：`entity_templates/tent.yaml`（id 216，正式，9000）與 `entity_templates/tent_dev.yaml`（id 217，開發，5400）。由 `tent_kit_prop.yaml` 的 `on_collision` 參數 `template` 決定生成哪一個 | 第四輪。對齊現有機制：catalog 只有一個 entry、依目錄載入所有 template，沒有 overlay 或 dev / prod 變體機制，所以用兩個獨立的 template |
+| D22 | 兩份 L 的 YAML：`entity_templates/216_prop_tent.yaml`（id 216，正式，9000）與 `entity_templates/tent_dev.yaml`（id 217，開發，5400）。由 `215_prop_tent_kit.yaml` 的 `on_collision` 參數 `template` 決定生成哪一個 | 第四輪。對齊現有機制：catalog 只有一個 entry、依目錄載入所有 template，沒有 overlay 或 dev / prod 變體機制，所以用兩個獨立的 template |
 | D23 | 建築 HP 預設 5000 | 第四輪。`Health.hp` 是 uint16（上限 65535），放得下 |
 | D24 | 建築共用上限時擠掉地圖生成的建築，可以接受，屬於玩家的「意外行為」 | 第四輪 |
 | D25 | 數量限制只靠道具的 `max_stack`（`fungible_tent_kit` 為 1）與 group 上限；建築太多而互相擠掉，定位為 gameplay 設計問題（邏輯正確但設計錯誤），不另外加系統限制（不做每人上限） | 第四輪。回覆 §9-7 |
@@ -109,9 +109,9 @@ prop_population_rules: tent (id 2, max_alive 4)
 | 項目 | 改成 |
 |---|---|
 | population group | 從 `tent` 改為所有建築物共用的 group（例如 `building`），`max_alive: 8`（D17）；temporary_deployable 另開 group |
-| `lifecycle.lifetime_ticks` | `tent.yaml` 9000（正式）/ `tent_dev.yaml` 5400（開發）（D18、D22） |
+| `lifecycle.lifetime_ticks` | `216_prop_tent.yaml` 9000（正式）/ `tent_dev.yaml` 5400（開發）（D18、D22） |
 | `health` | 5000 / 5000（D23） |
-| `tent_kit_prop.yaml` | `on_collision` 參數 `template: tent_dev`（開發期間）；正式版改回 `tent` |
+| `215_prop_tent_kit.yaml` | `on_collision` 參數 `template: tent_dev`（開發期間）；正式版改回 `tent` |
 | `on_activated` | ~~從 `action_noop` 改為含 `open_ui` 的 graph~~ 已做：`action_open_rest_ui` |
 | `on_destroy_entity` | 新增：在帳篷位置產生範圍擊退（見 §3.5） |
 | group 規則 | 新增 opt-in：清除類消失也觸發 on_destroy（K4） |
@@ -312,7 +312,7 @@ client 重新對齊時讀到非 0，就把預測的遮罩切成 `terrain`、移�
 ### 3.9 不指定陣營的投射物警告（第四輪，D26）
 
 `spammer` 的 `collision_mask` 是 `terrain | static_obstacle`，沒有任何陣營位元。
-`ice_block_hitbox.yaml` 已記錄這個缺口：這種投射物的 `gameplay_category_mask` 是空的，會穿過所有
+`13_collider_ice_block_hitbox.yaml` 已記錄這個缺口：這種投射物的 `gameplay_category_mask` 是空的，會穿過所有
 `layer: damageable` 的碰撞盒（冰塊、帳篷都是）。
 
 警告條件：投射物 `damage > 0`，且 `collision_mask` 不含任何陣營位元。在 catalog 載入時印 warning，
@@ -621,7 +621,7 @@ Task A 為 B 預留的接口：
 - ~~擠掉地圖生成的建築~~：接受（D24）。
 
 確認過與帳篷無關的事：
-- **nest 不會被 temporary_deployable 的清除機制刪除。** `gingerbread_nest.yaml` 沒有 `lifecycle`，
+- **nest 不會被 temporary_deployable 的清除機制刪除。** `208_prop_gingerbread_nest.yaml` 沒有 `lifecycle`，
   生成時不會掛 `PropLifecycle`（`systems.cc:1670`）。存在時間與數量上限都只看有 `PropLifecycle` 的實體。
   目前用 `temporary_deployable` 的只有 `ice_block` 與 `glyph_block`。
 
@@ -658,7 +658,7 @@ Task A 為 B 預留的接口：
 
 ## 10. 相關檔案
 
-- Catalog：`game_server/gameplay_catalog/entity_templates/{tent,tent_kit_prop}.yaml`、`collider_templates/tent_hitbox.yaml`、`item_templates/tent_kit.yaml`、`action_graph_templates/action_open_rest_ui.yaml`、`gameplay_catalog.yaml`（population rule）
+- Catalog：`game_server/gameplay_catalog/entity_templates/{216_prop_tent,215_prop_tent_kit}.yaml`、`collider_templates/33_collider_tent_hitbox.yaml`、`item_templates/3011_fungible_tent_kit.yaml`、`action_graph_templates/action_open_rest_ui.yaml`、`gameplay_catalog.yaml`（population rule）
 - 測試：`game_server/tests/tent_feasibility_probe_test.cc`
 - 相關 kernel 位置：
   - `kernel.cc` 視野候選迴圈（只看有 vision config 的實體）；`kernel.cc:12055` 進入死亡狀態

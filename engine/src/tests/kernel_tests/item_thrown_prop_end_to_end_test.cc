@@ -118,7 +118,7 @@ KernelEntityTemplateDefinition bottle_entity_template() {
     return prop;
 }
 
-// The trajectory is here, as in fungible_shockwave_bottle.yaml.
+// The trajectory is here, as in 3008_fungible_shockwave_bottle.yaml.
 KernelItemTemplateDefinition bottle_item_template() {
     KernelItemTemplateDefinition item{};
     item.struct_size = sizeof(item);

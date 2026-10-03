@@ -27,7 +27,7 @@ animations:
   chasing: 1
 vision:
   collider_template: sentry_grunt_vision_cone
-# Linear-projectile sentry. See grenade_sentry.yaml for ballistic aiming.
+# Linear-projectile sentry. See 24_grenade_sentry.yaml for ballistic aiming.
 ai:
   controller: sentry
   profile: default

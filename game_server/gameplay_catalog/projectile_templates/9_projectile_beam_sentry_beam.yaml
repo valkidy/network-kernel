@@ -31,7 +31,7 @@ collision_mask: player_side | terrain | static_obstacle
 max_hit_count: 1
 gravity: {x: 0.0, y: 0.0, z: 0.0}
 beam:
-  # Documented here, decided in beam_sentry_beam_box.yaml.
+  # Documented here, decided in 17_collider_beam_sentry_beam_box.yaml.
   length: 14.0
   radius: 0.3
   # 2 per tick at 30 Hz = 60 dps while the beam is up, and 90 damage per

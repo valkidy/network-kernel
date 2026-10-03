@@ -1,7 +1,8 @@
 id: 11
 name: shotgun_shot
-# One pellet of the shotgun's shot. See rifle_shot.yaml: an instant weapon
-# authors its damage and its targets here, not on the weapon template.
+# One pellet of the shotgun's shot. See 10_projectile_rifle_shot.yaml: an
+# instant weapon authors its damage and its targets here, not on the weapon
+# template.
 #
 # `damage` is per pellet. The weapon template's pellet_count decides how many
 # rays are fired and pellet_spread how wide the fan is, so the damage a full

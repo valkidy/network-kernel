@@ -1,5 +1,5 @@
-id: 29
-name: gingerbread_warrior
+id: 34
+name: gingerbread_aooni
 entity_type: actor
 actor_type: agent
 camp: enemy_side
@@ -56,7 +56,7 @@ ai:
     patrol_rotation_max_degrees: 30.0
     weapon_id: 11
     animation_idle: idle
-    # See gingerbread.yaml: this is the locomotion clip, not the swing.
+    # See 28_gingerbread.yaml: this is the locomotion clip, not the swing.
     animation_attack: chasing
   chaser:
     stop_distance_meters: 1.8

@@ -363,7 +363,7 @@ entity_type: prop
 impulse_resistance: 15.0   # 有效強度 <= 15.0 的 impulse 完全推不動
 ```
 
-目前只有 `ice_block.yaml` author 了這個欄位（`15.0`），其餘 template 一律使用預設
+目前只有 `204_prop_ice_block.yaml` author 了這個欄位（`15.0`），其餘 template 一律使用預設
 值 0。這個數字的實際效果值得記住：`action_rocket_explosion_at_target` 的
 `strength: [12.0, 5.0]` 有效強度是 `max(12, 5) = 12`，低於 15，所以火箭的爆風推不動
 冰塊——這是刻意的，掩體不該被一發火箭吹走。
@@ -556,7 +556,7 @@ triggers:
 參考實作：
 
 - `game_server/gameplay_catalog/action_graph_templates/action_apply_damage_at_collision.yaml`
-- `game_server/gameplay_catalog/entity_templates/collision_damage_prop.yaml`
+- `game_server/gameplay_catalog/entity_templates/201_prop_collision_damage.yaml`
 
 ---
 
@@ -692,7 +692,7 @@ Guidelines：
 參考實作：
 
 - `game_server/gameplay_catalog/action_graph_templates/action_rocket_explosion_at_target.yaml`
-- `game_server/gameplay_catalog/projectile_templates/rocket_explosion.yaml`
+- `game_server/gameplay_catalog/projectile_templates/8_projectile_rocket_explosion.yaml`
 
 ---
 

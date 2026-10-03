@@ -5,8 +5,9 @@
 # only to get a throwable prop into the world with a collision to fire on.
 #
 # rocket_explosion is an authored area-effect projectile that already carries
-# the AoE damage and knockback graph (projectile_templates/rocket_explosion.yaml
-# -> action_rocket_explosion_at_target), so one throw exercises the whole
+# the AoE damage and knockback graph
+# (projectile_templates/8_projectile_rocket_explosion.yaml ->
+# action_rocket_explosion_at_target), so one throw exercises the whole
 # area-effect path -- radius, falloff, apply_damage and the split-strength
 # apply_impulse -- without a line of engine code.
 #

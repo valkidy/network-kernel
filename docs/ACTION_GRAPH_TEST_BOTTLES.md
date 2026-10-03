@@ -13,12 +13,12 @@ about the vehicles.
 
 | Vehicle | Item template | Fires on | What it does |
 |---|---|---|---|
-| `stateful_test_bottle_spawn_enemy` | `item_templates/test_bottle_spawn_enemy.yaml` (id 3005) | the thrown prop's `on_collision` | spawns a `chaser_grunt` where it lands, then breaks |
-| `stateful_test_bottle_blast` | `item_templates/test_bottle_blast.yaml` (id 3006) | `on_item_used` | detonates a `rocket_explosion` at the aim point |
+| `stateful_test_bottle_spawn_enemy` | `item_templates/3005_stateful_test_bottle_spawn_enemy.yaml` (id 3005) | the thrown prop's `on_collision` | spawns a `chaser_grunt` where it lands, then breaks |
+| `stateful_test_bottle_blast` | `item_templates/3006_stateful_test_bottle_blast.yaml` (id 3006) | `on_item_used` | detonates a `rocket_explosion` at the aim point |
 
 `stateful_test_bottle_blast` is worth a note: `rocket_explosion` is an authored
 area-effect projectile that already carries the AoE damage and knockback graph
-(`projectile_templates/rocket_explosion.yaml` →
+(`projectile_templates/8_projectile_rocket_explosion.yaml` →
 `action_rocket_explosion_at_target`). Using the bottle therefore exercises the
 entire area-effect path — radius, falloff, `apply_damage` and `apply_impulse` —
 end to end, which makes it the cheapest way to eyeball knockback behaviour.
@@ -35,7 +35,7 @@ and adding a slot turns that test red. Two ways in:
   - `inventory.create_item(item_template_id, quantity, container_id)` puts one
     straight into a container.
 - **Persistently.** Add a slot to `inventory_slots` in
-  `entity_templates/player.yaml` (there is spare capacity: 5 of 8 used) **and**
+  `entity_templates/1_player.yaml` (there is spare capacity: 5 of 8 used) **and**
   update the count assertion in `gameplay_config_test.cc`. Do both or the test
   goes red.
 
@@ -45,8 +45,8 @@ The vehicles are deliberately thin — the only interesting lines are the graph
 reference and the parameters bound to it.
 
 **A graph that acts on the world where a thrown object lands** — copy
-`entity_templates/test_bottle_spawn_enemy_prop.yaml` and
-`item_templates/test_bottle_spawn_enemy.yaml`:
+`entity_templates/206_prop_test_bottle_spawn_enemy.yaml` and
+`item_templates/3005_stateful_test_bottle_spawn_enemy.yaml`:
 
 1. In the prop file: pick an unused `id` (props currently occupy 200–206), give
    it a `name`, then change `triggers.on_collision.action_graph` to your graph
@@ -56,7 +56,7 @@ reference and the parameters bound to it.
 3. `bazel build //game_server/gameplay_catalog_bundle:bundle.zip`
 
 **A graph that acts where the player aims** — copy
-`item_templates/test_bottle_blast.yaml`, change the `id`, the `name`, and
+`item_templates/3006_stateful_test_bottle_blast.yaml`, change the `id`, the `name`, and
 `triggers.on_item_used.action_graph` plus its parameters. No prop template
 needed.
 
