@@ -401,6 +401,66 @@ belongs to `lifetime_ticks`. Authoring `motion_collision_mask` on a template
 with no `speed`, on a non-area-effect type, or with actor/prop bits in it is
 rejected at load.
 
+### A ground-following area effect (a tornado)
+
+`motion: {type: ground_follow}` makes a travelling field ride the terrain
+instead of flying a straight line. It hovers `hover_height` above the ground,
+climbs and descends slopes up to `max_slope_degrees` the way a character does,
+holds its height where no ground is in reach (off a cliff), and parks at
+anything steeper — for the rest of its lifetime, as above. It always travels
+level at `speed`, whatever pitch it was aimed at.
+
+```yaml
+type: area_effect
+speed: 6.0
+motion_collision_mask: terrain         # must include terrain
+sync_mode: local_predicted_deterministic
+motion:
+  type: ground_follow
+  hover_height: 1.5                    # required; ground to centre
+  max_slope_degrees: 50                # default 50, the character default
+  step_up: 0.5                         # default 0.5; tallest rise per tick
+  probe_depth: 0.5                     # default 0.5; deepest drop per tick
+```
+
+`step_up` and `probe_depth` are per tick. `step_up` has to cover the steepest
+walkable climb over one tick of travel (`tan(max_slope) × speed / 30`), and
+anything shorter than it is stepped onto rather than stopped at; `probe_depth`
+has to cover the steepest walkable descent, or a downhill reads as a cliff. At
+6 m/s and 50° both need about 0.24 m, so the 0.5 defaults have room.
+
+It is rejected at load without `speed`, without `terrain` in
+`motion_collision_mask`, without `hover_height`, and with
+`sync_mode: hybrid_deterministic_then_snapshot`: hybrid's snapshot correction
+re-anchors through the straight-line formula, which is wrong for a field that
+climbs. Use `local_predicted_deterministic` (every client steps it itself over
+the same terrain, nothing is sent after the spawn) or `server_snapshot_only`.
+
+Terrain authoring note: the ground is found with a ray straight down. Where two
+terrain boxes only meet edge to edge, a ray landing exactly on the seam hits
+neither and the field holds its height for that tick. Overlap terrain pieces.
+
+### area_shape: cylinder
+
+The overlap is a sphere of the collider's radius by default. `area_shape:
+cylinder` makes it an upright column of that radius, `half_height` above and
+below the field's centre, so a target over the field but within its radius is
+left out. With a ground-following field, `half_height` equal to `hover_height`
+puts the column's foot on the ground.
+
+```yaml
+area_shape: cylinder
+half_height: 1.5
+```
+
+`half_height` is required with a cylinder and rejected without one, and both
+keys, like `motion`, are rejected on anything but an area effect. Falloff, if
+authored, still scales by the 3D distance from the centre, not from the axis.
+
+A field that only pulls (a tornado bound to `apply_pull`) still authors a
+non-zero `damage`: an area effect with a graph binding submits no damage of its
+own, so the graph decides what lands.
+
 `hit_instigator` (default `false`) is accepted here and rejected everywhere
 else. An area effect normally filters the actor that fired it out of its overlap
 query, so a weapon's own blast can neither hurt nor push its shooter, and that

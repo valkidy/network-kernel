@@ -1517,6 +1517,20 @@ RuntimeProjectileTemplate to_runtime_projectile_template(
         mechanics.area_effect.hit_instigator != 0u;
     projectile_template.area_motion_collision_mask =
         mechanics.area_effect.motion_collision_mask;
+    projectile_template.area_shape =
+        mechanics.area_effect.shape == KernelAreaEffectShape_Cylinder
+            ? AreaEffectShape::kCylinder
+            : AreaEffectShape::kSphere;
+    projectile_template.area_half_height = mechanics.area_effect.half_height;
+    if (mechanics.area_effect.motion == KernelAreaEffectMotion_GroundFollow) {
+        projectile_template.area_ground_follow = AreaEffectGroundFollow{
+            true,
+            mechanics.area_effect.hover_height,
+            mechanics.area_effect.max_slope_degrees,
+            mechanics.area_effect.step_up,
+            mechanics.area_effect.probe_depth,
+        };
+    }
     projectile_template.beam_length = mechanics.beam.length;
     projectile_template.beam_radius = mechanics.beam.radius;
     if (projectile_template.has_collision_geometry &&
@@ -1702,6 +1716,41 @@ bool validate_launch_mechanics(
         mechanics.lifetime_ticks > launch.fall_ticks;
 }
 
+bool positive_finite(float value) {
+    return std::isfinite(value) && value > 0.0f;
+}
+
+bool validate_area_effect_shape(
+    const KernelAreaEffectMechanicsDefinition& area_effect) {
+    if (area_effect.shape == KernelAreaEffectShape_Sphere) {
+        return area_effect.half_height == 0.0f;
+    }
+    return area_effect.shape == KernelAreaEffectShape_Cylinder &&
+           positive_finite(area_effect.half_height);
+}
+
+// A linear field carries no ride settings, so a stray one is a mistake rather
+// than something to ignore. A ground-following one has to name the terrain
+// it rides -- with nothing to probe it would hold its spawn height forever,
+// which is a straight line by another name.
+bool validate_area_effect_motion(
+    const KernelAreaEffectMechanicsDefinition& area_effect) {
+    if (area_effect.motion == KernelAreaEffectMotion_Linear) {
+        return area_effect.hover_height == 0.0f &&
+               area_effect.max_slope_degrees == 0.0f &&
+               area_effect.step_up == 0.0f &&
+               area_effect.probe_depth == 0.0f;
+    }
+    return area_effect.motion == KernelAreaEffectMotion_GroundFollow &&
+           (area_effect.motion_collision_mask &
+            KERNEL_COLLISION_LAYER_TERRAIN) != 0u &&
+           positive_finite(area_effect.hover_height) &&
+           positive_finite(area_effect.max_slope_degrees) &&
+           area_effect.max_slope_degrees < 90.0f &&
+           positive_finite(area_effect.step_up) &&
+           positive_finite(area_effect.probe_depth);
+}
+
 bool validate_area_effect_mechanics(
     const KernelAreaEffectMechanicsDefinition& area_effect) {
     return area_effect.struct_size >= sizeof(KernelAreaEffectMechanicsDefinition) &&
@@ -1717,7 +1766,9 @@ bool validate_area_effect_mechanics(
            // says, and letting those bits in here would read as a second,
            // contradictory answer to that question.
            (area_effect.motion_collision_mask &
-            ~KERNEL_COLLISION_MASK_STATIC_WORLD) == 0u;
+            ~KERNEL_COLLISION_MASK_STATIC_WORLD) == 0u &&
+           validate_area_effect_shape(area_effect) &&
+           validate_area_effect_motion(area_effect);
 }
 
 bool validate_beam_mechanics(const KernelBeamMechanicsDefinition& beam) {

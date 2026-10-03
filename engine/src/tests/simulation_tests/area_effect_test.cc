@@ -3,10 +3,12 @@
 #include <cstdlib>
 #include <optional>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include "physics/public/physics_world.h"
 #include "simulation/public/action_graph.h"
@@ -376,6 +378,151 @@ void a_travelling_area_effect_advances_and_a_still_one_does_not() {
     require(travelled > 0.39f && travelled < 0.41f);
 }
 
+void add_terrain_box(
+    network_example::physics::PhysicsWorld& physics,
+    std::uint32_t collider_id,
+    const glm::vec3& center,
+    const glm::vec3& half_extents,
+    const glm::quat& rotation = glm::quat{1.0f, 0.0f, 0.0f, 0.0f}) {
+    network_example::physics::CollisionObjectDescriptor box;
+    box.identity = network_example::physics::CollisionObjectIdentity{
+        0,
+        collider_id,
+        network_example::physics::kHitZoneUnscaled,
+        network_example::physics::CollisionObjectKind::kTerrain,
+        network_example::physics::CollisionLayer::kTerrain,
+    };
+    box.shape.type = network_example::physics::CollisionShapeType::kBox;
+    box.shape.half_extents = half_extents;
+    box.position = center;
+    box.rotation = rotation;
+    std::string error;
+    require(physics.upsert_object(box, &error));
+}
+
+// Spawned through the action-graph path from a hand-height point, aimed a
+// little downward, then stepped `ticks` times.
+entt::entity spawn_and_run_ground_follower(
+    network_example::World& world,
+    std::uint32_t ticks) {
+    network_example::RuntimeProjectileTemplate area_template{};
+    area_template.projectile_template_id = 42;
+    area_template.projectile_type = network_example::ProjectileType::kAreaEffect;
+    area_template.motion_model = network_example::ProjectileMotionModel::kLinear;
+    area_template.speed = 6.0f;
+    area_template.area_radius = 2.0f;
+    area_template.damage = 20;
+    area_template.damage_interval_ticks = 30;
+    area_template.lifetime_ticks = 300;
+    area_template.collision_mask = network_example::kCollisionMaskDamageable;
+    area_template.area_motion_collision_mask = KERNEL_COLLISION_LAYER_TERRAIN;
+    area_template.area_ground_follow =
+        network_example::AreaEffectGroundFollow{true, 1.0f, 50.0f, 0.5f, 0.5f};
+    world.set_projectile_templates({area_template});
+    require(network_example::spawn_action_graph_projectile(
+        world,
+        42,
+        0,
+        0,
+        0,
+        glm::vec3{0.0f, 1.5f, 0.0f},
+        glm::normalize(glm::vec3{1.0f, -0.5f, 0.0f}),
+        0,
+        1.0f / 30.0f));
+    entt::entity area = entt::null;
+    for (const entt::entity entity :
+         world.registry().view<network_example::ProjectileAreaEffectRuntime>()) {
+        area = entity;
+    }
+    require(area != entt::null);
+    for (std::uint32_t tick = 0; tick < ticks; ++tick) {
+        network_example::simulate_projectiles(world, 1.0f / 30.0f);
+    }
+    return area;
+}
+
+// A ground-following field is settled onto the ground at spawn, travels level
+// whatever its aim, and climbs a walkable slope at its hover height -- the
+// straight line its spawn velocity draws would have dug into the ramp.
+void a_ground_following_area_effect_rides_up_a_ramp() {
+    network_example::World world;
+    network_example::physics::PhysicsWorld physics;
+    world.set_collision_world(&physics);
+    add_terrain_box(physics, 1, glm::vec3{-8.0f, -0.5f, 0.0f}, glm::vec3{11.0f, 0.5f, 5.0f});
+    const float angle = glm::radians(30.0f);
+    const glm::quat tilt = glm::angleAxis(angle, glm::vec3{0.0f, 0.0f, 1.0f});
+    const glm::vec3 ramp_top{2.0f + 5.0f * std::cos(angle), 5.0f * std::sin(angle), 0.0f};
+    add_terrain_box(
+        physics,
+        2,
+        ramp_top - tilt * glm::vec3{0.0f, 0.5f, 0.0f},
+        glm::vec3{5.0f, 0.5f, 5.0f},
+        tilt);
+
+    const entt::entity area = spawn_and_run_ground_follower(world, 30);
+    const auto& projectile =
+        world.registry().get<network_example::ProjectileState>(area);
+    const glm::vec3 position =
+        world.registry().get<network_example::Transform>(area).position;
+    // Level at full speed despite the downward aim.
+    require(std::fabs(projectile.initial_velocity.x - 6.0f) < 0.001f);
+    require(projectile.initial_velocity.y == 0.0f);
+    // Settled from 1.5 m to the 1 m hover before it moved.
+    require(std::fabs(projectile.spawn_position.y - 1.0f) < 0.001f);
+    require(position.x > 5.9f && position.x < 6.1f);
+    require(std::fabs(position.y - (std::tan(angle) * (position.x - 2.0f) + 1.0f)) < 0.01f);
+}
+
+void a_ground_following_area_effect_parks_at_a_wall() {
+    network_example::World world;
+    network_example::physics::PhysicsWorld physics;
+    world.set_collision_world(&physics);
+    add_terrain_box(physics, 1, glm::vec3{0.0f, -0.5f, 0.0f}, glm::vec3{20.0f, 0.5f, 5.0f});
+    add_terrain_box(physics, 2, glm::vec3{3.5f, 3.0f, 0.0f}, glm::vec3{0.5f, 3.0f, 5.0f});
+
+    const entt::entity area = spawn_and_run_ground_follower(world, 30);
+    const auto& projectile =
+        world.registry().get<network_example::ProjectileState>(area);
+    const glm::vec3 position =
+        world.registry().get<network_example::Transform>(area).position;
+    // The stop is swept with a ray at the centre, so the centre ends on the
+    // wall's face at x = 3.
+    require(std::fabs(position.x - 3.0f) < 0.01f);
+    require(std::fabs(position.y - 1.0f) < 0.001f);
+    // Parked the way a straight-line field is.
+    require(projectile.initial_velocity == glm::vec3{0.0f});
+    require(world.registry().get<network_example::Velocity>(area).linear ==
+            glm::vec3{0.0f});
+}
+
+// A cylinder bounds the overlap by its height: a target over the field but
+// within its radius is reached by a sphere and left out by a column.
+void a_cylinder_area_effect_leaves_out_what_is_above_its_column() {
+    const auto damaged = [](network_example::AreaEffectShape shape) {
+        network_example::World world;
+        const network_example::NetId beside =
+            spawn_enemy(world, glm::vec3{1.0f, 0.0f, 0.0f});
+        const network_example::NetId above =
+            spawn_enemy(world, glm::vec3{0.0f, 2.0f, 0.0f});
+        const network_example::NetId area = spawn_area_projectile(
+            world, 0, glm::vec3{0.0f, 0.5f, 0.0f}, 2.0f, 10, 0, 20, 7);
+        auto& runtime =
+            world.registry().get<network_example::ProjectileAreaEffectRuntime>(
+                *world.find_entity(area));
+        runtime.shape = shape;
+        runtime.half_height = 0.5f;
+        network_example::DamagePipeline pipeline;
+        std::vector<KernelEvent> events;
+        network_example::simulate_area_effects(world, 0, &events, &pipeline);
+        pipeline.confirm_ready(world, 0, 0, &events);
+        return std::pair{health(world, beside).hp < 50, health(world, above).hp < 50};
+    };
+    require((damaged(network_example::AreaEffectShape::kSphere) ==
+             std::pair{true, true}));
+    require((damaged(network_example::AreaEffectShape::kCylinder) ==
+             std::pair{true, false}));
+}
+
 // The overlap query filters the shooter out, which is why a weapon's own blast
 // has never been able to push or hurt the actor that fired it. hit_instigator is
 // how a template asks for the opposite, and it buys self-damage along with the
@@ -625,5 +772,8 @@ int main() {
     area_effect_dispatches_its_graph_once_per_target_in_radius();
     a_travelling_area_effect_reports_its_own_heading();
     area_effect_impulse_direction_is_level_for_a_level_blast();
+    a_ground_following_area_effect_rides_up_a_ramp();
+    a_ground_following_area_effect_parks_at_a_wall();
+    a_cylinder_area_effect_leaves_out_what_is_above_its_column();
     return 0;
 }

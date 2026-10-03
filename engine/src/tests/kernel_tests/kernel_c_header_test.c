@@ -6,8 +6,18 @@
 #include "kernel/public/kernel_api.h"
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 97u,
-    "seats: RenderEntityState gained shelter_net_id and shelter_seat");
+    KERNEL_ABI_VERSION == 98u,
+    "tornadoes: KernelAreaEffectMechanicsDefinition gained shape and motion");
+_Static_assert(
+    offsetof(KernelAreaEffectMechanicsDefinition, shape) >
+            offsetof(KernelAreaEffectMechanicsDefinition, motion_collision_mask) &&
+        offsetof(KernelAreaEffectMechanicsDefinition, probe_depth) >
+            offsetof(KernelAreaEffectMechanicsDefinition, half_height),
+    "the area effect shape and motion fields are appended after ABI 97's");
+_Static_assert(
+    KernelAreaEffectShape_Cylinder == 1 &&
+        KernelAreaEffectMotion_GroundFollow == 1,
+    "the ABI 98 enum values");
 _Static_assert(
     offsetof(RenderEntityState, shelter_net_id) >
             offsetof(RenderEntityState, beam_end) &&
