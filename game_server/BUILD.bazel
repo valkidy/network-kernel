@@ -189,6 +189,18 @@ cc_test(
 )
 
 cc_test(
+    name = "tornado_catalog_test",
+    srcs = ["tests/tornado_catalog_test.cc"],
+    data = [
+        "//game_server/gameplay_catalog_bundle:bundle",
+    ],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
     name = "targeted_strike_catalog_test",
     srcs = ["tests/targeted_strike_catalog_test.cc"],
     data = [

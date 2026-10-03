@@ -423,6 +423,12 @@ motion:
   probe_depth: 0.5                     # default 0.5; deepest drop per tick
 ```
 
+The shipped example is `projectile_templates/28_projectile_tornado.yaml`: a
+3 m column (`collider_templates/35_collider_tornado_column.yaml`) that rides
+2 m up for 300 ticks and pulls hostiles once a second through
+`action_graph_templates/action_tornado_pull.yaml`, which does `apply_pull`
+only. No weapon or item fires it yet.
+
 `step_up` and `probe_depth` are per tick. `step_up` has to cover the steepest
 walkable climb over one tick of travel (`tan(max_slope) × speed / 30`), and
 anything shorter than it is stepped onto rather than stopped at; `probe_depth`
