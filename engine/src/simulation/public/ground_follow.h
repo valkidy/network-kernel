@@ -67,10 +67,11 @@ struct StepResult {
 };
 
 // Puts a field that has just spawned onto the ground beneath it: a hand-held
-// launch does not start at hover height. Looks down at most max_drop below the
-// spawn point and returns false, leaving the state alone, if there is no
-// walkable ground that close -- the field then simply holds its spawn height
-// until the ground comes up to meet it.
+// launch does not start at hover height, and one spawned where a bottle broke
+// starts on the ground itself. Looks from step_up above the spawn point to at
+// most max_drop below it, and returns false, leaving the state alone, if there
+// is no walkable ground in that span -- the field then simply holds its spawn
+// height until the ground comes up to meet it.
 bool settle(
     const physics::PhysicsWorld& physics_world,
     const Config& config,

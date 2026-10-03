@@ -100,10 +100,13 @@ bool settle(
     if (state == nullptr || max_drop <= 0.0f) {
         return false;
     }
+    // From step_up above the spawn point, not the point itself: a field
+    // spawned where something broke on the ground starts on the surface, and
+    // a ray from there reads as starting inside it.
     physics::RayCastRequest request{};
-    request.origin = state->position;
+    request.origin = state->position + glm::vec3{0.0f, config.step_up, 0.0f};
     request.direction = glm::vec3{0.0f, -1.0f, 0.0f};
-    request.max_distance = max_drop;
+    request.max_distance = config.step_up + max_drop;
     request.filter = config.filter;
     physics::CollisionHit hit{};
     if (!physics_world.ray_cast_closest(request, &hit) ||

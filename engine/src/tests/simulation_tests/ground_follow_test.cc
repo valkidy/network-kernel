@@ -267,6 +267,19 @@ void settles_onto_ground_and_refuses_without_any() {
     ground_follow::State over_nothing{glm::vec3{5.0f, 1.5f, 0.0f}};
     assert(!ground_follow::settle(scene.physics, config, 3.0f, &over_nothing));
     assert(over_nothing.position.y == 1.5f);
+
+    // Spawned exactly on the ground -- where a bottle that broke there puts
+    // it. A probe from the spawn point itself would start on the surface and
+    // read as starting inside it.
+    ground_follow::State on_ground{glm::vec3{-5.0f, 0.0f, 0.0f}};
+    assert(ground_follow::settle(scene.physics, config, 3.0f, &on_ground));
+    assert(near(on_ground.position.y, 2.0f, 0.0001f));
+    // And then rides rather than parking at once.
+    ground_follow::Config moving = config;
+    moving.horizontal_velocity = glm::vec3{-6.0f, 0.0f, 0.0f};
+    ground_follow::step(scene.physics, moving, kDt, &on_ground);
+    assert(!on_ground.parked);
+    assert(near(on_ground.position.y, 2.0f, 0.0001f));
 }
 
 void a_replay_over_the_same_course_is_identical() {
