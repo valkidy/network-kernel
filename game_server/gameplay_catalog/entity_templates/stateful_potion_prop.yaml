@@ -1,5 +1,5 @@
 id: 205
-name: stateful_potion_prop
+name: stateful_potion
 entity_type: prop
 health:
   hp: 3

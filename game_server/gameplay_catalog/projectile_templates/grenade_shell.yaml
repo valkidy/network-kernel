@@ -1,5 +1,5 @@
 id: 7
-name: grenade_shell_projectile
+name: grenade_shell
 damage: 0
 sync_mode: local_predicted_deterministic
 collider_template: projectile_aabb

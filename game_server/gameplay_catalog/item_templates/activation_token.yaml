@@ -1,9 +1,9 @@
 id: 3000
-name: activation_token
+name: stateful_activation_token
 mode: stateful
 max_stack: 1
 capabilities: [pickupable, deployable, interactable]
-entity_template: activation_damage_prop
+entity_template: activation_damage
 world_interaction:
   range: 3.0
   line_of_sight_required: false

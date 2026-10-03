@@ -22,7 +22,7 @@ physics:
   collider_template: gingerbread_nest_hitbox
 triggers:
   # Collapsing on whoever brought it down. Free, in the sense that props have
-  # carried this hook all along -- see activation_damage_prop.
+  # carried this hook all along -- see activation_damage.
   on_health_depleted:
     action_graph: action_apply_damage_at_health_depleted
     parameters:

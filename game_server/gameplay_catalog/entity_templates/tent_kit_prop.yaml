@@ -14,7 +14,7 @@
 #   surface; with terrain alone it would fly through and the tent would land
 #   wholly inside the prop, which is what the ice bottle does today.
 id: 215
-name: tent_kit_prop
+name: tent_kit
 entity_type: prop
 health:
   hp: 1

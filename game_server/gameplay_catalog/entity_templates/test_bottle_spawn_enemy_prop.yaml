@@ -4,7 +4,7 @@
 # `action_graph` and the `parameters` block under it -- everything else exists
 # only to get a throwable prop into the world with a collision to fire on.
 id: 206
-name: test_bottle_spawn_enemy_prop
+name: test_bottle_spawn_enemy
 entity_type: prop
 health:
   hp: 1

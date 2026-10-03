@@ -2,9 +2,9 @@
 # happen before the next one opens. The graph is acyclic by construction --
 # gameplay_config.cc rejects a cycle at load -- which is right for a mission
 # and wrong for anything periodic. Roaming population belongs to
-# world_rule_director instead.
+# world_rule instead.
 id: 101
-name: game_rule_director
+name: game_rule
 entity_type: director
 server_only: true
 transform:

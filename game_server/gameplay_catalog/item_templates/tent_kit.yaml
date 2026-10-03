@@ -1,15 +1,15 @@
 id: 3011
-name: tent_kit
+name: fungible_tent_kit
 mode: fungible
 max_stack: 1
 capabilities: [pickupable, throwable]
-entity_template: tent_kit_prop
+entity_template: tent_kit
 world_interaction:
   range: 3.0
   line_of_sight_required: false
 throw:
   mode: identity_preserving
-  trajectory_projectile: grenade_shell_projectile
+  trajectory_projectile: grenade_shell
 use:
   quantity_cost: 0
   cooldown_ticks: 0

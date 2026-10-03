@@ -8,7 +8,7 @@
 # without ever asking the kernel for a director, so there is no template for
 # them to hang off.
 #
-# Its counterpart is game_rule_director, which owns mission flow.
+# Its counterpart is game_rule, which owns mission flow.
 #
 # Currently inert in the shipping catalog, for two separate reasons worth
 # knowing before editing the spawn block below: gameplay_catalog.yaml does
@@ -17,7 +17,7 @@
 # config wholesale (gameplay_config.cc:8173). The legged_locomotion test
 # catalog does preload it.
 id: 100
-name: world_rule_director
+name: world_rule
 entity_type: director
 server_only: true
 transform:

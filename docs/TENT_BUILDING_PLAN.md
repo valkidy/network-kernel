@@ -54,13 +54,13 @@
 | D16 | 住客不受 stagger 影響 | 第三輪。由入住鎖（K2）處理 |
 | D17 | **所有建築物共用一個 population group**（例如帳篷 + 商店 + …… 合計 ≤ 8），以 group 篩選 | 第三輪。取代「每種建築各一個 group」的選項 |
 | D18 | 開發 / 正式兩組 L 做成兩份 YAML | 第三輪。見 §3.1 |
-| D19 | kit 投擲距離比照 ice block，讓投擲距離的設定一致 | 第三輪。**已經一致**：`tent_kit` 與 ice block 的 `stateful_magic_bottle` 都用 `grenade_shell_projectile`，不需要改 |
+| D19 | kit 投擲距離比照 ice block，讓投擲距離的設定一致 | 第三輪。**已經一致**：`fungible_tent_kit` 與 ice block 的 `stateful_magic_bottle` 都用 `grenade_shell`，不需要改 |
 | D20 | **建築物不主動承受或吸引威脅，只保留被意外破壞的可能**。不加入敵人的視野候選；HP 設高值 | 第三輪。回覆 §9-1 |
 | D21 | 友軍傷害不保護：玩家自己的 AoE 炸掉自己的建築，屬於玩家自主行為。原則是建築不吸引仇恨，只需讓玩家觀察到它可能被破壞 | 第三輪。回覆 §9-8；client 需要顯示建築受損（例如 HP） |
 | D22 | 兩份 L 的 YAML：`entity_templates/tent.yaml`（id 216，正式，9000）與 `entity_templates/tent_dev.yaml`（id 217，開發，5400）。由 `tent_kit_prop.yaml` 的 `on_collision` 參數 `template` 決定生成哪一個 | 第四輪。對齊現有機制：catalog 只有一個 entry、依目錄載入所有 template，沒有 overlay 或 dev / prod 變體機制，所以用兩個獨立的 template |
 | D23 | 建築 HP 預設 5000 | 第四輪。`Health.hp` 是 uint16（上限 65535），放得下 |
 | D24 | 建築共用上限時擠掉地圖生成的建築，可以接受，屬於玩家的「意外行為」 | 第四輪 |
-| D25 | 數量限制只靠道具的 `max_stack`（`tent_kit` 為 1）與 group 上限；建築太多而互相擠掉，定位為 gameplay 設計問題（邏輯正確但設計錯誤），不另外加系統限制（不做每人上限） | 第四輪。回覆 §9-7 |
+| D25 | 數量限制只靠道具的 `max_stack`（`fungible_tent_kit` 為 1）與 group 上限；建築太多而互相擠掉，定位為 gameplay 設計問題（邏輯正確但設計錯誤），不另外加系統限制（不做每人上限） | 第四輪。回覆 §9-7 |
 | D26 | 不指定陣營的投射物（例如 `spammer`）會穿過建築，定位為設定問題，不應出現在正式版資料。catalog 載入時印 log warning | 第四輪。回覆 §9-9；見 §3.9 |
 | D27 | 入住狀態只存在玩家身上（`Sheltered{shelter_net_id}`），建築的住客以查詢取得，不在建築上存名單 | 第四輪。見 §3.6 |
 | D28 | 入住狀態同步給 client（只給擁有者），client 預測時跟著切換遮罩、移動歸 0 | 第四輪。見 §3.7；需要改 snapshot schema |
@@ -89,9 +89,9 @@
 已 commit 的部分：
 
 ```
-tent_kit (item 3011)              背包裡的道具：pickupable, throwable
-  └─ throw: identity_preserving → tent_kit_prop
-tent_kit_prop (entity 215)        飛行中的瓶子，collider = collision_damage_prop_hitbox (1 m 方塊)
+fungible_tent_kit (item 3011)     背包裡的道具：pickupable, throwable
+  └─ throw: identity_preserving → tent_kit
+tent_kit (entity 215)             飛行中的瓶子，collider = collision_damage_prop_hitbox (1 m 方塊)
   └─ on_collision terrain|static_obstacle
        → action_spawn_ice_and_damage_self_at_collision
          spawn tent @ event.position，自毀
@@ -311,7 +311,7 @@ client 重新對齊時讀到非 0，就把預測的遮罩切成 `terrain`、移�
 
 ### 3.9 不指定陣營的投射物警告（第四輪，D26）
 
-`spammer_projectile` 的 `collision_mask` 是 `terrain | static_obstacle`，沒有任何陣營位元。
+`spammer` 的 `collision_mask` 是 `terrain | static_obstacle`，沒有任何陣營位元。
 `ice_block_hitbox.yaml` 已記錄這個缺口：這種投射物的 `gameplay_category_mask` 是空的，會穿過所有
 `layer: damageable` 的碰撞盒（冰塊、帳篷都是）。
 
@@ -322,7 +322,7 @@ client 重新對齊時讀到非 0，就把預測的遮罩切成 `terrain`、移�
 
 **rebase 與 id 調整。** apply-pull 先佔了 ABI 95、action enum 9，以及 catalog id
 collider 32、entity 214、item 3010。帳篷改用下一個空號：`tent_hitbox` 33、`tent` 216、
-`tent_kit` 3011（`tent_kit_prop` 維持 215）。D22 的 `tent_dev` 順延為 217。
+`fungible_tent_kit` 3011（`tent_kit` 維持 215）。D22 的 `tent_dev` 順延為 217。
 
 **K1：`open_ui`。**
 - YAML：`type: open_ui`、`target`（綁 `event.instigator`）、`ui_id`（字面值，非 0）。
@@ -411,7 +411,7 @@ collider 32、entity 214、item 3010。帳篷改用下一個空號：`tent_hitbo
   所以 `self` 不存在；清除類消失沒有 instigator，`event.direction` 是零向量，
   `spawn_projectile` 會被 preflight 拒絕。使用者決定：沒有 instigator 時 destroy 事件的方向
   改為正上方 (0, 1, 0)，並開放 `on_destroy_entity` 使用 `event.direction`（loader 與 kernel
-  兩邊）。目前唯一用到 on_destroy 的既有 template 是測試用的 `activation_damage_prop`，不受影響。
+  兩邊）。目前唯一用到 on_destroy 的既有 template 是測試用的 `activation_damage`，不受影響。
 - 帳篷內容：`on_destroy_entity` → `action_spawn_projectile_at_destroy_entity` 生成
   `tent_collapse_blast`。這是 area effect，半徑 3 m，`player_side`，命中時
   `action_tent_collapse_at_target` 施加 split impulse [8, 5]，lockout 45，不造成傷害。
@@ -524,7 +524,7 @@ collider 32、entity 214、item 3010。帳篷改用下一個空號：`tent_hitbo
 | beam 射擊住客 | 帳篷吃下全部 43 發，住客 0 發 |
 | 法師榴彈 | 帳篷被打中，**住客仍被範圍傷害打到**（需要無敵） |
 | spammer | 連對照組都沒打中任何人，無結論 |
-| kit 投擲距離 | 沿用 `grenade_shell_projectile`，飛了約 40 m |
+| kit 投擲距離 | 沿用 `grenade_shell`，飛了約 40 m |
 
 其他 probe 中確認的事：prop 的 entity state 回報的 template id 是 0；`owner_peer` 為 0 建立的 prop 屬於 hostile 陣營（實際丟出的帳篷繼承丟擲者的 peer，是玩家陣營）。
 

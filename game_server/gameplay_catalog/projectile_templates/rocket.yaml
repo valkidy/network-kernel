@@ -1,5 +1,5 @@
 id: 3
-name: rocket_projectile
+name: rocket
 damage: 45
 # Linear, zero gravity, constant speed: the path is a closed-form function of
 # spawn position and initial velocity, so there is nothing here a client

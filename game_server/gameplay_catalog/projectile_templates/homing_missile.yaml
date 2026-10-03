@@ -1,5 +1,5 @@
 id: 6
-name: homing_missile_projectile
+name: homing_missile
 damage: 20
 sync_mode: hybrid_deterministic_then_snapshot
 collider_template: projectile_sphere

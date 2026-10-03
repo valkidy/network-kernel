@@ -931,7 +931,7 @@ int main() {
             nullptr;
         for (const network_example::game_server::EntityTemplateConfig& entity :
              config.entity_templates) {
-            if (entity.name == "collision_damage_prop") {
+            if (entity.name == "collision_damage") {
                 damage_prop = &entity;
             }
         }
@@ -1025,7 +1025,7 @@ int main() {
             nullptr;
         for (const network_example::game_server::ProjectileTemplateConfig&
                  projectile : config.projectile_templates) {
-            if (projectile.name == "rocket_projectile") {
+            if (projectile.name == "rocket") {
                 rocket = &projectile;
             }
         }
@@ -1084,7 +1084,7 @@ int main() {
             nullptr;
         for (const network_example::game_server::ProjectileTemplateConfig&
                  projectile : config.projectile_templates) {
-            if (projectile.name == "spammer_projectile") {
+            if (projectile.name == "spammer") {
                 spammer = &projectile;
             }
         }

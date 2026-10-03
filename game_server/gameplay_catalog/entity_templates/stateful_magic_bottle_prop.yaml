@@ -1,5 +1,5 @@
 id: 203
-name: stateful_magic_bottle_prop
+name: stateful_magic_bottle
 entity_type: prop
 health:
   hp: 1

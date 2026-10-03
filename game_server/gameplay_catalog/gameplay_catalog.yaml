@@ -29,7 +29,7 @@ weapon_template_dir: weapon_templates
 projectile_template_dir: projectile_templates
 entity_template_dir: entity_templates
 preload_directors:
-  - game_rule_director
+  - game_rule
 item_template_dir: item_templates
 collider_template_dir: collider_templates
 skeleton_manifests_dir: skeleton_assets/generated
@@ -60,7 +60,7 @@ player:
     invulnerable_seconds: 2.0
     team_revive_times: -1
 # Squads the world produces on its own schedule, independent of the mission.
-# Authored here rather than on world_rule_director because a patrol never
+# Authored here rather than on world_rule because a patrol never
 # reaches the kernel as a director: game_server spawns it, owns its grouping and
 # walks its route, the same way it owns every other AI decision.
 #

@@ -13,10 +13,10 @@ about the vehicles.
 
 | Vehicle | Item template | Fires on | What it does |
 |---|---|---|---|
-| `test_bottle_spawn_enemy` | `item_templates/test_bottle_spawn_enemy.yaml` (id 3005) | the thrown prop's `on_collision` | spawns a `chaser_grunt` where it lands, then breaks |
-| `test_bottle_blast` | `item_templates/test_bottle_blast.yaml` (id 3006) | `on_item_used` | detonates a `rocket_explosion` at the aim point |
+| `stateful_test_bottle_spawn_enemy` | `item_templates/test_bottle_spawn_enemy.yaml` (id 3005) | the thrown prop's `on_collision` | spawns a `chaser_grunt` where it lands, then breaks |
+| `stateful_test_bottle_blast` | `item_templates/test_bottle_blast.yaml` (id 3006) | `on_item_used` | detonates a `rocket_explosion` at the aim point |
 
-`test_bottle_blast` is worth a note: `rocket_explosion` is an authored
+`stateful_test_bottle_blast` is worth a note: `rocket_explosion` is an authored
 area-effect projectile that already carries the AoE damage and knockback graph
 (`projectile_templates/rocket_explosion.yaml` →
 `action_rocket_explosion_at_target`). Using the bottle therefore exercises the
@@ -62,7 +62,7 @@ needed.
 
 `action_graph_templates/action_spawn_ice_and_damage_self_at_collision.yaml` is
 worth knowing about: despite the name it is fully generic — it spawns whatever
-`template` names and then damages `source`. `test_bottle_spawn_enemy` uses it
+`template` names and then damages `source`. `stateful_test_bottle_spawn_enemy` uses it
 unchanged to spawn a `chaser_grunt`. Reach for it before writing a new graph.
 
 The self-damage is not decoration. A prop that survives its own `on_collision`
@@ -84,16 +84,16 @@ These are properties of the current engine, not of the vehicles:
   default on a parameter named `direction`.
 - **A spawned agent is picked up by the AI automatically.** `AgentRuntimeManager`
   scans every entity with `actor_type == agent` regardless of who created it,
-  so `test_bottle_spawn_enemy` produces a chaser that behaves exactly like a
+  so `stateful_test_bottle_spawn_enemy` produces a chaser that behaves exactly like a
   director-spawned one.
 - **A prop with no `on_collision` binding slides.** Once pushed it travels in a
   straight line until its lifetime expires — see §4.4 of the authoring guide.
 
 ## Known gap: `spawn_projectile` on an entity trigger
 
-The natural shape for `test_bottle_blast` would have been a thrown prop whose
+The natural shape for `stateful_test_bottle_blast` would have been a thrown prop whose
 `on_collision` spawns the explosion where it lands, matching
-`test_bottle_spawn_enemy`. That does not load, and the failure is worth
+`stateful_test_bottle_spawn_enemy`. That does not load, and the failure is worth
 understanding because it is a loader/kernel disagreement rather than an
 authoring mistake:
 

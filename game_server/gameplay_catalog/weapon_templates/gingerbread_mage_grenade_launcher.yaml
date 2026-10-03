@@ -11,4 +11,4 @@ weapon_type: projectile
 magazine_size: 6
 fire_action_template: grenade_launcher_fire
 reload_action_template: grenade_launcher_reload
-projectile_template: gingerbread_mage_grenade_shell_projectile
+projectile_template: gingerbread_mage_grenade_shell

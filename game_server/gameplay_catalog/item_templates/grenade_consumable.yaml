@@ -1,5 +1,5 @@
 id: 3001
-name: grenade_consumable
+name: fungible_grenade_consumable
 mode: fungible
 max_stack: 5
 capabilities: [throwable]
@@ -13,6 +13,6 @@ triggers:
   on_item_used:
     action_graph: action_spawn_projectile_at_impact
     parameters:
-      template: grenade_shell_projectile
+      template: grenade_shell
       position: event.position
       direction: event.direction

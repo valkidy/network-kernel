@@ -526,7 +526,7 @@ Prop binding：
 
 ```yaml
 id: 201
-name: collision_damage_prop
+name: collision_damage
 entity_type: prop
 
 health:
@@ -583,7 +583,7 @@ triggers:
   on_destroy_entity:
     action_graph: action_spawn_entity_at_destroy_entity
     parameters:
-      template: collision_damage_prop
+      template: collision_damage
       position: event.position
       owner: event.instigator
 ```

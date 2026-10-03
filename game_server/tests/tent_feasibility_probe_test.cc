@@ -1,9 +1,9 @@
 // The questions the tent design rests on, measured against the shipped
 // catalog rather than argued from the code:
 //
-// tent_kit throws tent_kit_prop, a bottle the size of the ice block's, which on
-// landing spawns the tent (a pure prop, so it can carry a lifecycle) at
-// event.position and destroys itself -- the ice block's flow.
+// fungible_tent_kit throws tent_kit, a bottle the size of the ice block's,
+// which on landing spawns the tent (a pure prop, so it can carry a lifecycle)
+// at event.position and destroys itself -- the ice block's flow.
 //
 // 1. Landing. Where does the tent end up relative to where the bottle came to
 //    rest -- on flat ground, and thrown at an ice block?
@@ -264,7 +264,8 @@ std::uint32_t find_tent(KernelHandle* kernel) {
     return 0u;
 }
 
-// Throws one tent_kit from `thrower` along `direction`; returns the kit.
+// Throws one fungible_tent_kit from `thrower` along `direction`; returns the
+// kit.
 std::uint32_t throw_tent(
     KernelHandle* kernel,
     const GameServerGameplayConfig& config,
@@ -274,7 +275,11 @@ std::uint32_t throw_tent(
     require(Kernel_ServerCreateInventoryContainer(kernel, thrower, 8, &container));
     KernelItemInstanceId item = 0;
     require(Kernel_ServerCreateInventoryItem(
-        kernel, item_template_id_of(config, "tent_kit"), 1, container, &item));
+        kernel,
+        item_template_id_of(config, "fungible_tent_kit"),
+        1,
+        container,
+        &item));
     step(kernel, 1);
     const KernelGameplayRequestOutcome outcome = submit(
         kernel, kThrowerPeer, 1, thrower, KernelDomainAction_Throw, item, 0u,
@@ -685,7 +690,7 @@ int main() {
     const GameServerGameplayConfig config =
         network_example::game_server::default_game_server_gameplay_config();
     require(entity_template_id_of(config, "tent") != 0u);
-    require(item_template_id_of(config, "tent_kit") != 0u);
+    require(item_template_id_of(config, "fungible_tent_kit") != 0u);
     const std::vector<std::uint8_t> scene = read_ground_scene();
 
     // --- 1-3. Landing, reach, pickup ---------------------------------------
@@ -700,7 +705,7 @@ int main() {
     // The same throw with static_obstacle struck from the landing mask.
     GameServerGameplayConfig terrain_only = config;
     for (auto& candidate : terrain_only.entity_templates) {
-        if (candidate.name == "tent_kit_prop") {
+        if (candidate.name == "tent_kit") {
             candidate.collision_trigger_mask = KERNEL_COLLISION_LAYER_TERRAIN;
         }
     }
@@ -712,7 +717,7 @@ int main() {
     // the ice bottle's graph, which spawns exactly at the contact point.
     GameServerGameplayConfig exact = config;
     for (auto& candidate : exact.entity_templates) {
-        if (candidate.name == "tent_kit_prop") {
+        if (candidate.name == "tent_kit") {
             candidate.collision_trigger.action_graph_ref =
                 "action_spawn_ice_and_damage_self_at_collision";
         }

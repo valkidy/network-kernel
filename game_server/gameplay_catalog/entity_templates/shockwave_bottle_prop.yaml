@@ -1,8 +1,8 @@
 # World half of fungible_shockwave_bottle: breaks on whatever it hits and
-# leaves a shockwave_blast. The same shape as test_bottle_blast_prop; the
+# leaves a shockwave_blast. The same shape as test_bottle_blast; the
 # self-damage keeps it from detonating again on every tick it rests.
 id: 212
-name: shockwave_bottle_prop
+name: shockwave_bottle
 entity_type: prop
 health:
   hp: 1

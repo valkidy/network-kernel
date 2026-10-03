@@ -16,7 +16,7 @@
 # catalog. That branch exists now, pinned by
 # //engine/src/tests/kernel_tests:entity_trigger_action_parity_test.
 id: 207
-name: test_bottle_blast_prop
+name: test_bottle_blast
 entity_type: prop
 health:
   hp: 1

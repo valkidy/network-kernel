@@ -1,7 +1,7 @@
 # World half of fungible_frag_grenade_bottle: breaks on whatever it hits and
-# leaves a frag_blast. See shockwave_bottle_prop.
+# leaves a frag_blast. See shockwave_bottle.
 id: 213
-name: frag_grenade_bottle_prop
+name: frag_grenade_bottle
 entity_type: prop
 health:
   hp: 1

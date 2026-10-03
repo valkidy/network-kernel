@@ -681,21 +681,21 @@ int main() {
     };
     const auto numeric_preload_config = load_with_catalog(replace_once(
         production_catalog_yaml,
-        "  - game_rule_director\n",
+        "  - game_rule\n",
         "  - 101\n"));
     require(numeric_preload_config.preload_director_template_ids.size() == 1u);
     require(numeric_preload_config.preload_director_template_ids[0] == 101u);
     require(rejects_preload_catalog(replace_once(
         production_catalog_yaml,
-        "  - game_rule_director\n",
+        "  - game_rule\n",
         "  - player\n")));
     require(rejects_preload_catalog(replace_once(
         production_catalog_yaml,
-        "  - game_rule_director\n",
-        "  - game_rule_director\n  - game_rule_director\n")));
+        "  - game_rule\n",
+        "  - game_rule\n  - game_rule\n")));
     const auto empty_preload_config = load_with_catalog(replace_once(
         production_catalog_yaml,
-        "preload_directors:\n  - game_rule_director\n",
+        "preload_directors:\n  - game_rule\n",
         ""));
     require(empty_preload_config.preload_director_template_ids.empty());
     const std::string production_quadruped_rig =
@@ -2441,7 +2441,7 @@ int main() {
     bool found_beam_rifle_beam = false;
     for (const network_example::game_server::ProjectileTemplateConfig& projectile :
          config.projectile_templates) {
-        if (projectile.name == "grenade_shell_projectile") {
+        if (projectile.name == "grenade_shell") {
             found_grenade_shell = true;
             assert(projectile.definition.mechanics.collider_template_id == 16);
             assert(projectile.definition.mechanics.damage == 0);
@@ -2453,12 +2453,12 @@ int main() {
             assert(projectile.definition.mechanics.projectile_impact_trigger
                        .spawn_projectile_template_id == 8);
         }
-        if (projectile.name == "spammer_projectile") {
+        if (projectile.name == "spammer") {
             found_spammer_projectile = true;
             assert(projectile.definition.mechanics.collider_template_id == 7);
             assert(projectile.definition.mechanics.damage == 1);
         }
-        if (projectile.name == "rocket_projectile") {
+        if (projectile.name == "rocket") {
             found_rocket_projectile = true;
             assert(projectile.definition.mechanics.collider_template_id == 3);
             assert(projectile.definition.mechanics.damage_shape ==
@@ -2501,7 +2501,7 @@ int main() {
             assert(projectile.definition.mechanics.projectile_impact_trigger.actions[1].impulse_lockout_ticks ==
                    40u);
         }
-        if (projectile.name == "homing_missile_projectile") {
+        if (projectile.name == "homing_missile") {
             found_homing_projectile = true;
             assert(projectile.definition.mechanics.collider_template_id == 7);
             assert(projectile.definition.mechanics.homing.lock_on_range == 25.0f);

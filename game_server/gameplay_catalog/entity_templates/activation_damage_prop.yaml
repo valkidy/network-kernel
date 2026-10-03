@@ -1,5 +1,5 @@
 id: 200
-name: activation_damage_prop
+name: activation_damage
 entity_type: prop
 health:
   hp: 1
@@ -18,6 +18,6 @@ triggers:
   on_destroy_entity:
     action_graph: action_spawn_entity_at_destroy_entity
     parameters:
-      template: collision_damage_prop
+      template: collision_damage
       position: event.position
       owner: event.instigator

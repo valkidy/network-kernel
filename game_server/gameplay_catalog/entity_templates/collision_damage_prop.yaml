@@ -1,5 +1,5 @@
 id: 201
-name: collision_damage_prop
+name: collision_damage
 entity_type: prop
 health:
   hp: 1

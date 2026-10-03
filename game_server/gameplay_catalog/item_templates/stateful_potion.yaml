@@ -3,13 +3,13 @@ name: stateful_potion
 mode: stateful
 max_stack: 1
 capabilities: [consumable, pickupable, throwable]
-entity_template: stateful_potion_prop
+entity_template: stateful_potion
 world_interaction:
   range: 3.0
   line_of_sight_required: false
 throw:
   mode: identity_preserving
-  trajectory_projectile: grenade_shell_projectile
+  trajectory_projectile: grenade_shell
 use:
   quantity_cost: 1
   cooldown_ticks: 0

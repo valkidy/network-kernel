@@ -1,5 +1,5 @@
 id: 2
-name: spammer_projectile
+name: spammer
 damage: 1
 sync_mode: local_predicted_deterministic
 collider_template: projectile_sphere

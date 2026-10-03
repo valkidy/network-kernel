@@ -17,7 +17,7 @@
 #
 # Nothing spawns this yet -- the game-rule director only spawns enemy waves. The
 # quickest way to get one into a running world is to point
-# test_bottle_spawn_enemy_prop's `template` parameter at it and throw the bottle;
+# test_bottle_spawn_enemy's `template` parameter at it and throw the bottle;
 # see docs/ACTION_GRAPH_TEST_BOTTLES.md.
 id: 27
 name: allied_beam_sentry

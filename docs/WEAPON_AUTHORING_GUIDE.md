@@ -215,7 +215,7 @@ it, and the enemy's `player_side` weapons pass straight through it. Adding a
 friendly unit therefore means authoring a hit collider on the player's layer,
 not only setting its camp.
 
-**Known gap**: a projectile that names *no* side (`spammer_projectile`, which is
+**Known gap**: a projectile that names *no* side (`spammer`, which is
 `terrain | static_obstacle`) has an empty gameplay-category mask, so it passes
 through every side-layered collider — actors and deployable cover alike. See
 `collider_templates/ice_block_hitbox.yaml`, which hit the same wall from the

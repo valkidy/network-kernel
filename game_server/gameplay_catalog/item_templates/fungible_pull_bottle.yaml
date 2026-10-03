@@ -9,13 +9,13 @@ name: fungible_pull_bottle
 mode: fungible
 max_stack: 3
 capabilities: [pickupable, throwable]
-entity_template: pull_bottle_prop
+entity_template: pull_bottle
 world_interaction:
   range: 3.0
   line_of_sight_required: false
 throw:
   mode: identity_preserving
-  trajectory_projectile: grenade_shell_projectile
+  trajectory_projectile: grenade_shell
 use:
   quantity_cost: 0
   cooldown_ticks: 0

@@ -1,5 +1,5 @@
 id: 15
-name: gingerbread_mage_grenade_shell_projectile
+name: gingerbread_mage_grenade_shell
 damage: 0
 sync_mode: local_predicted_deterministic
 collider_template: projectile_aabb
