@@ -1133,8 +1133,12 @@ std::vector<CollisionHit> PhysicsWorld::ray_cast_all(
             impl_->system_->GetBodyLockInterface(), result.mBodyID);
         if (body_lock.Succeeded()) {
             const JPH::Body& body = body_lock.GetBody();
+            // Into the body's own frame, rotation included. Subtracting the
+            // position alone left the point unrotated, and on a rotated box
+            // that picks whichever face the unrotated point is nearest.
             const JPH::Vec3 local_hit_position = JPH::Vec3(
-                to_jolt_r(hit_position) - body.GetPosition());
+                body.GetInverseCenterOfMassTransform() *
+                to_jolt_r(hit_position));
             hit_normal = from_jolt(
                 body.GetWorldTransform().Multiply3x3(
                     body.GetShape()->GetSurfaceNormal(
