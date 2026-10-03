@@ -90,6 +90,62 @@ Current catalog-level versioning uses `catalog_version`. Whether individual
 template files should also gain `schema_version` is an open discussion item
 below.
 
+### Template File Naming
+
+Template files under `game_server/gameplay_catalog/` are named from their `id`
+and `name`, with the kind spelled out in full so a file reads correctly on its
+own:
+
+| Kind | Directory | File name | Example |
+|---|---|---|---|
+| actor | `entity_templates/` | `$id_$name` | `1_player.yaml` |
+| prop | `entity_templates/` | `$id_prop_$name` | `215_prop_tent_kit.yaml` |
+| director | `entity_templates/` | `$id_director_$name` | `101_director_game_rule.yaml` |
+| item | `item_templates/` | `$id_$name` | `3011_fungible_tent_kit.yaml` |
+| collider | `collider_templates/` | `$id_collider_$name` | `1_collider_player_hit_aabb.yaml` |
+| projectile | `projectile_templates/` | `$id_projectile_$name` | `3_projectile_rocket.yaml` |
+| weapon | `weapon_templates/` | `$id_weapon_$key` | `5_weapon_beam_rifle.yaml` |
+| status effect | `status_effect_templates/` | `$id_status_effect_$name` | `1001_status_effect_burn.yaml` |
+
+`$id` is the YAML `id`, unpadded. `$name` is the YAML `name`, so a template's
+name and its file always agree. In `entity_templates/` the kind comes from
+`entity_type` (`actor`, `prop`, `director`).
+
+Rules for `name`:
+
+- Item names start with their mode: `fungible_` or `stateful_`, matching the
+  `mode` field.
+- A name does not repeat its kind. Write `tent_kit`, not `tent_kit_prop`;
+  `rocket`, not `rocket_projectile`; `game_rule`, not `game_rule_director`.
+  The file prefix already carries the kind.
+- Names are unique per kind, not across kinds, so the prop `tent_kit` and the
+  item `fungible_tent_kit` coexist, as do the projectile `rocket` and the
+  weapon `3_weapon_rocket`.
+- Actor and item names must not start with a kind word (`prop_`, `director_`,
+  `collider_`, `projectile_`, `weapon_`, `status_effect_`), or the file name
+  reads as the wrong kind.
+
+Weapons are the exception. A weapon's YAML `name` is a display string
+(`Beam Rifle`, `Sentry Beam Emitter`) and does not have to match its file.
+`$key` is a snake_case identifier that lives only in the file name; it cannot
+be derived from the display string. Always author `name` on a weapon: when it
+is missing the loader falls back to the file stem, and the weapon would be
+named `5_weapon_beam_rifle`.
+
+Action templates (`action_templates/`) and action graph templates
+(`action_graph_templates/`) are not covered. They are reused once settled and
+keep their current names.
+
+The loader enumerates each template directory and resolves every reference by
+YAML `name` or `id`, so renaming a file changes nothing at runtime. Two things
+do key on file names:
+
+- Tests that read a shipped template, or override one by file name, such as
+  the override map in `game_server/tests/gameplay_config_test.cc`. A stale file
+  name there silently skips the override instead of failing.
+- Files load in file-name order, so `10_` sorts before `2_`. Nothing may depend
+  on load order.
+
 ## Mapping, Validation, And Serialization
 
 Each YAML schema must map explicitly to known C++ fields. The loader should:

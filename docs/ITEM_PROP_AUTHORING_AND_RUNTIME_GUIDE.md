@@ -40,6 +40,13 @@ Consume-and-spawn Throw requires a non-empty `on_item_used` graph containing a
 spawn action. A normal Consume may explicitly bind an empty graph; it commits
 successfully with no graph side effect.
 
+Item names start with their mode, `fungible_` or `stateful_`, and item files
+are named `$id_$name.yaml`. Prop files are `$id_prop_$name.yaml`, and a prop
+name does not end in `_prop`. An item and its prop may share a stem, as in the
+item `fungible_tent_kit` (`3011_fungible_tent_kit.yaml`) and the prop
+`tent_kit` (`215_prop_tent_kit.yaml`). The full rule is in
+[Template File Naming](DATA_DRIVEN_TEMPLATE_DESIGN.md#template-file-naming).
+
 See the checked-in examples:
 
 - `game_server/gameplay_catalog/item_templates/3000_stateful_activation_token.yaml`

@@ -20,6 +20,12 @@ at most 4 weapons.
 
 Ids must be unique within each directory. Weapon ids are 0-255.
 
+Name the files `$id_projectile_$name.yaml` and `$id_weapon_$key.yaml`, as in
+`3_projectile_rocket.yaml` and `3_weapon_rocket.yaml`. A weapon's YAML `name`
+is its display string and does not have to match the file. Action template
+files keep their plain names. The full rule is in
+[Template File Naming](DATA_DRIVEN_TEMPLATE_DESIGN.md#template-file-naming).
+
 Files 2 and 3 can be shared with an existing weapon; file 1 cannot. If the same
 gun is wanted on both sides, it is two weapons with two projectile templates —
 see "Name a side" below for why.
@@ -488,13 +494,15 @@ refill amount itself is not yet data-driven, so that shape needs an engineer.
 
 ## Checklist for a new weapon
 
-1. `projectile_templates/<name>_shot.yaml` — damage and collision_mask
+1. `projectile_templates/<id>_projectile_<name>_shot.yaml` — damage and
+   collision_mask
 2. **Name the side in `collision_mask`** — `hostile_side` for a player's weapon,
    `player_side` for an enemy's. Leaving it out means it hits both.
 3. `action_templates/<name>_fire.yaml` — rate of fire (shareable with another
    weapon)
 4. `action_templates/<name>_reload.yaml` — reload time (shareable)
-5. `weapon_templates/<name>.yaml` — magazine, range, and the three references
+5. `weapon_templates/<id>_weapon_<name>.yaml` — magazine, range, and the three
+   references; YAML `name` is the display string
 6. Add the weapon id to `weapon_slots` in an `entity_templates/` loadout
 7. Rebuild the catalog bundle and ship the same bundle to client and server
 
