@@ -7576,12 +7576,26 @@ void KernelEngine::handle_client_projectile_spawn_batch(
                 // field has to be stepped there, over the same terrain the
                 // authority stepped it on. A parked one was re-recorded where
                 // it parked, so its catch-up is a no-op.
+                //
+                // "There" is the render timeline, not the server's present: the
+                // actors this field pulls are drawn an interpolation delay in
+                // the past, and a field drawn at the present would run that far
+                // ahead of them. So a record that arrives before the render
+                // timeline reaches its spawn tick -- the usual case, an on-time
+                // spawn -- waits out the difference instead of catching up.
                 if (is_ground_following(*projectile_template)) {
                     PredictedProjectile& follower = predicted_projectiles_.back();
-                    const std::uint32_t catch_up_ticks = std::min(
-                        local_prediction_server_tick(packet.server_tick) -
-                            packet.server_tick,
-                        projectile_template->lifetime_ticks);
+                    const std::uint32_t render_tick = ground_follower_render_tick(
+                        local_prediction_server_tick(packet.server_tick));
+                    const std::uint32_t catch_up_ticks =
+                        render_tick > packet.server_tick
+                            ? std::min(
+                                  render_tick - packet.server_tick,
+                                  projectile_template->lifetime_ticks)
+                            : 0u;
+                    follower.hold_ticks = packet.server_tick > render_tick
+                        ? packet.server_tick - render_tick
+                        : 0u;
                     const ground_follow::State state = ground_following_spawn_state(
                         prediction_physics_world_.get(),
                         area_ground_follow_config(
@@ -10998,7 +11012,8 @@ void KernelEngine::append_predicted_projectile_render_states() {
             return !projectile.locally_terminated;
         });
     for (const PredictedProjectile& projectile : predicted_projectiles_) {
-        if (projectile.locally_terminated || projectile.hidden_by_actor_hit) {
+        if (projectile.locally_terminated || projectile.hidden_by_actor_hit ||
+            projectile.hold_ticks > 0u) {
             continue;
         }
         const glm::vec3 render_position =
@@ -11162,6 +11177,12 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
                     projectile.projectile_template_id);
             follower_template != nullptr &&
             is_ground_following(*follower_template)) {
+            if (projectile.hold_ticks > 0u) {
+                // Not started on the render timeline yet, so not aged either.
+                --projectile.hold_ticks;
+                projectile.lifetime_elapsed_ticks -= 1;
+                continue;
+            }
             if (prediction_physics_world_ != nullptr &&
                 glm::dot(projectile.initial_velocity, projectile.initial_velocity) >
                     0.0f) {
@@ -11541,6 +11562,17 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
         benchmark_stats_.projectile_solver_cost_us +=
             std::max<std::uint64_t>(1, elapsed_cost_us(cost_start));
     }
+}
+
+// The tick the world timeline is drawn at, given the server's present: the
+// same interpolation delay render_target_server_time_us puts the actors behind.
+std::uint32_t KernelEngine::ground_follower_render_tick(
+    std::uint32_t server_now_tick) const {
+    const std::uint32_t interpolation_delay_ticks =
+        tick_loop_.snapshot_interval_ticks() * 2u;
+    return server_now_tick > interpolation_delay_ticks
+        ? server_now_tick - interpolation_delay_ticks
+        : 0u;
 }
 
 std::uint32_t KernelEngine::local_prediction_server_tick(

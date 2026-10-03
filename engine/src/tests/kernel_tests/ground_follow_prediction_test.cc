@@ -50,6 +50,9 @@ constexpr ne::NetId kTornado = 71;
 constexpr ne::PeerId kShooterPeer = 3;
 constexpr std::uint32_t kActionInstance = 9;
 constexpr float kDt = 1.0f / 30.0f;
+// The world timeline is drawn this far behind the server's present: two
+// snapshot intervals, and the client below sends one snapshot per two ticks.
+constexpr std::uint32_t kRenderDelayTicks = 4;
 
 ne::RuntimeProjectileTemplate tornado_template() {
     ne::RuntimeProjectileTemplate tornado{};
@@ -200,6 +203,17 @@ struct Client {
         return engine.predicted_projectiles_.front();
     }
 
+    const RenderEntityState* drawn(ne::NetId net_id) {
+        engine.render_states_.clear();
+        engine.append_predicted_projectile_render_states();
+        for (const RenderEntityState& state : engine.render_states_) {
+            if (state.net_id == net_id) {
+                return &state;
+            }
+        }
+        return nullptr;
+    }
+
     std::vector<glm::vec3> run(std::uint32_t ticks) {
         std::vector<glm::vec3> trace;
         for (std::uint32_t tick = 0; tick < ticks; ++tick) {
@@ -212,10 +226,13 @@ struct Client {
     ne::KernelEngine engine;
 };
 
-// The whole course, on time: every tick the client draws is exactly where the
-// authority put the field -- bit for bit, since both run the same solver over
-// identical terrain. The course climbs, crosses a cliff and parks, so a client
-// that skipped any of those would part company with the authority somewhere.
+// The whole course, on time: once the render timeline reaches the spawn tick,
+// every tick the client draws is exactly where the authority put the field --
+// bit for bit, since both run the same solver over identical terrain. Until
+// then it waits, hidden: an on-time record arrives before the timeline the
+// pulled actors are drawn on has got there. The course climbs, crosses a cliff
+// and parks, so a client that skipped any of those would part company with the
+// authority somewhere.
 void a_client_steps_a_ground_follower_exactly_as_the_authority_does() {
     Authority authority;
     // Settled from its 1.5 m launch onto the 1 m hover, and level.
@@ -227,7 +244,15 @@ void a_client_steps_a_ground_follower_exactly_as_the_authority_does() {
     client.set_server_tick(kSpawnTick);
     client.receive_spawn(authority);
     require(client.tornado().position == authority.spawn_position);
+    require(client.tornado().hold_ticks == kRenderDelayTicks);
+    require(client.drawn(kTornado) == nullptr);
+    const std::vector<glm::vec3> held = client.run(kRenderDelayTicks);
+    for (const glm::vec3& position : held) {
+        require(position == authority.spawn_position);
+    }
+    require(client.tornado().lifetime_elapsed_ticks == 0u);
     const std::vector<glm::vec3> drawn = client.run(120);
+    require(client.drawn(kTornado) != nullptr);
 
     require(drawn == expected);
     // And the course really did all of it.
@@ -243,20 +268,24 @@ void a_client_steps_a_ground_follower_exactly_as_the_authority_does() {
 }
 
 // A record that arrives 40 ticks after the spawn is caught up on receipt to
-// where the authority has the field now, then carries on in step with it.
-void a_late_spawn_record_is_stepped_to_where_the_authority_is() {
+// where the authority had the field at the render timeline's tick -- not the
+// present, which would draw it ahead of the actors it pulls -- then carries on
+// in step with it.
+void a_late_spawn_record_is_stepped_to_the_render_timeline() {
     constexpr std::uint32_t kLate = 40;
+    constexpr std::uint32_t kCaughtUp = kLate - kRenderDelayTicks;
     Authority authority;
-    const std::vector<glm::vec3> expected = authority.run(kLate + 30);
+    const std::vector<glm::vec3> expected = authority.run(kCaughtUp + 30);
 
     Client client;
     client.set_server_tick(kSpawnTick + kLate);
     client.receive_spawn(authority);
-    require(client.tornado().position == expected[kLate - 1]);
-    require(client.tornado().lifetime_elapsed_ticks == kLate);
+    require(client.tornado().hold_ticks == 0u);
+    require(client.tornado().position == expected[kCaughtUp - 1]);
+    require(client.tornado().lifetime_elapsed_ticks == kCaughtUp);
     const std::vector<glm::vec3> drawn = client.run(30);
     require(drawn ==
-            std::vector<glm::vec3>(expected.begin() + kLate, expected.end()));
+            std::vector<glm::vec3>(expected.begin() + kCaughtUp, expected.end()));
 }
 
 // A ground follower's lifetime is kept locally, as a standard projectile's is:
@@ -267,7 +296,9 @@ void a_ground_follower_ends_on_its_lifetime() {
     client.set_server_tick(kSpawnTick);
     client.receive_spawn(authority);
     require(client.tornado().ends_on_lifetime);
-    client.run(kLifetimeTicks - 1);
+    // The lifetime is counted on the render timeline too: from when it
+    // starts, not from when its record arrived.
+    client.run(kRenderDelayTicks + kLifetimeTicks - 1);
     require(!client.tornado().locally_terminated);
     client.run(1);
     require(client.tornado().locally_terminated);
@@ -277,7 +308,7 @@ void a_ground_follower_ends_on_its_lifetime() {
 
 int main() {
     a_client_steps_a_ground_follower_exactly_as_the_authority_does();
-    a_late_spawn_record_is_stepped_to_where_the_authority_is();
+    a_late_spawn_record_is_stepped_to_the_render_timeline();
     a_ground_follower_ends_on_its_lifetime();
     return 0;
 }
