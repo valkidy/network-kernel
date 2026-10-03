@@ -18,6 +18,7 @@
 #include <Jolt/Physics/Collision/ShapeFilter.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/Shape/CylinderShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Character/CharacterVirtual.h>
 #include <Jolt/Physics/PhysicsSystem.h>
@@ -419,7 +420,8 @@ bool valid_shape(const CollisionShapeDescriptor& shape) {
     if (shape.type == CollisionShapeType::kSphere) {
         return std::isfinite(shape.radius) && shape.radius > 0.0f;
     }
-    if (shape.type == CollisionShapeType::kCapsule) {
+    if (shape.type == CollisionShapeType::kCapsule ||
+        shape.type == CollisionShapeType::kCylinder) {
         return std::isfinite(shape.radius) && shape.radius > 0.0f &&
             std::isfinite(shape.capsule_half_height) &&
             shape.capsule_half_height > 0.0f;
@@ -455,6 +457,17 @@ JPH::RefConst<JPH::Shape> make_shape(const CollisionShapeDescriptor& shape) {
         return new JPH::CapsuleShape(
             shape.capsule_half_height,
             shape.radius);
+    }
+    if (shape.type == CollisionShapeType::kCylinder) {
+        // Jolt rounds a cylinder's edges by a convex radius that must not
+        // exceed either dimension, so a column thinner than the default
+        // rounding takes a smaller one rather than being refused.
+        return new JPH::CylinderShape(
+            shape.capsule_half_height,
+            shape.radius,
+            std::min(
+                JPH::cDefaultConvexRadius,
+                std::min(shape.capsule_half_height, shape.radius)));
     }
     return new JPH::BoxShape(to_jolt(shape.half_extents));
 }
@@ -872,6 +885,10 @@ bool PhysicsWorld::upsert_object(
     std::unique_lock lock(impl_->mutex_);
     if (!valid_shape(object.shape)) {
         *error = "invalid collision shape dimensions";
+        return false;
+    }
+    if (object.shape.type == CollisionShapeType::kCylinder) {
+        *error = "a cylinder is a query shape, not a body";
         return false;
     }
     const glm::vec3 world_position =

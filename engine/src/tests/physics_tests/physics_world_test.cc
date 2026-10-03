@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <cstdint>
@@ -271,6 +272,69 @@ void ray_normal_on_a_rotated_box_is_the_face_it_hit() {
     }
 }
 
+// A cylinder overlap answers "what is inside this upright column": a box above
+// the column but within the same radius of its centre is out, where a sphere of
+// that radius takes it in. And it is a query shape only -- no body may be one.
+void cylinder_overlap_is_bounded_by_its_height_and_is_never_a_body() {
+    PhysicsWorld world(PhysicsWorldConfig{0});
+    std::string error;
+    const auto add = [&](std::uint32_t id, const glm::vec3& position) {
+        assert(world.upsert_object(
+            plain(
+                id,
+                id,
+                position,
+                CollisionObjectKind::kStaticObstacle,
+                CollisionLayer::kStaticObstacle),
+            &error));
+    };
+    // Unit boxes. Beside: inside the column. Above: 1.3 m up at its nearest,
+    // over the column's 1 m half height but well inside a 2 m sphere. Far:
+    // 2.5 m out at its nearest, outside both.
+    add(1, glm::vec3(1.5f, 0.0f, 0.0f));
+    add(2, glm::vec3(0.0f, 1.8f, 0.0f));
+    add(3, glm::vec3(3.0f, 0.0f, 0.0f));
+
+    const auto ids = [](const std::vector<CollisionHit>& hits) {
+        std::vector<std::uint32_t> out;
+        for (const CollisionHit& hit : hits) {
+            out.push_back(hit.identity.collider_id);
+        }
+        std::sort(out.begin(), out.end());
+        return out;
+    };
+    OverlapRequest request{};
+    request.filter.collision_mask =
+        network_example::physics::collision_layer_bit(CollisionLayer::kStaticObstacle);
+
+    request.shape.type = CollisionShapeType::kCylinder;
+    request.shape.radius = 2.0f;
+    request.shape.capsule_half_height = 1.0f;
+    assert(ids(world.overlap_all(request)) == std::vector<std::uint32_t>{1});
+
+    request.shape.type = CollisionShapeType::kSphere;
+    assert((ids(world.overlap_all(request)) == std::vector<std::uint32_t>{1, 2}));
+
+    // Thinner than Jolt's default edge rounding: still a valid query.
+    request.shape.type = CollisionShapeType::kCylinder;
+    request.shape.radius = 0.01f;
+    request.shape.capsule_half_height = 0.01f;
+    request.position = glm::vec3(1.5f, 0.0f, 0.0f);
+    assert(ids(world.overlap_all(request)) == std::vector<std::uint32_t>{1});
+
+    CollisionObjectDescriptor column = plain(
+        9,
+        9,
+        glm::vec3(10.0f, 0.0f, 0.0f),
+        CollisionObjectKind::kStaticObstacle,
+        CollisionLayer::kStaticObstacle);
+    column.shape.type = CollisionShapeType::kCylinder;
+    column.shape.radius = 1.0f;
+    column.shape.capsule_half_height = 1.0f;
+    assert(!world.upsert_object(column, &error));
+    assert(error == "a cylinder is a query shape, not a body");
+}
+
 void side_less_query_reaches_categorised_objects() {
     // collision_filter_from_mask only forwards ACTOR bits into a query's
     // gameplay_category_mask, so a projectile authored as terrain|static_obstacle
@@ -328,6 +392,7 @@ int main(int argc, char** argv) {
     assert(world2.query_worker_count() == 2);
 
     ray_normal_on_a_rotated_box_is_the_face_it_hit();
+    cylinder_overlap_is_bounded_by_its_height_and_is_never_a_body();
 
     const CollisionObjectIdentity terrain_identity{
         0,
