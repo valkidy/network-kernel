@@ -2,6 +2,7 @@
 #define SYNC_PUBLIC_HISTORY_BUFFER_H_
 
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -54,6 +55,9 @@ public:
 private:
     std::vector<HistoryFrame> frames_;
     std::uint32_t write_index_ = 0;
+    // write_frame's (net_id, alive) table for the limb pass, sorted by net_id.
+    // Kept between frames so that refilling it allocates nothing.
+    std::vector<std::pair<NetId, bool>> alive_by_net_id_;
 };
 
 // include_limbs defaults to false so that a caller which has not been taught

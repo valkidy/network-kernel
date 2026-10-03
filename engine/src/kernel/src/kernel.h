@@ -809,7 +809,7 @@ private:
     void finalize_simulated_projectile_destructions(
         std::size_t first_event,
         std::size_t last_event,
-        const std::unordered_set<NetId>& actors_before_tick);
+        const std::vector<NetId>& actors_before_tick);
     bool enqueue_simulation_command(const simulation::Command& command);
     std::size_t drain_simulation_commands();
     void record_simulation_tick_cost(
@@ -1053,7 +1053,7 @@ private:
     void queue_remote_presentation_from_events(
         std::size_t first_event,
         std::size_t last_event,
-        const std::unordered_set<NetId>& actors_before_tick);
+        const std::vector<NetId>& actors_before_tick);
     void queue_server_remote_presentation(
         const KernelRemoteActionPresentationEvent& event);
     void flush_remote_action_presentation(
@@ -1240,6 +1240,27 @@ private:
     std::vector<KernelDebugInfo> debug_records_;
     std::unordered_map<NetId, KernelAgentVisionConfig> vision_configs_;
     std::unordered_map<NetId, VisionRuntimeState> vision_states_;
+    // update_vision_states' working set, kept between ticks so that refilling
+    // it reuses the memory instead of allocating a cell at a time.
+    struct VisionCandidate {
+        NetId net_id = 0;
+        const KernelAgentVisionConfig* config = nullptr;
+        glm::vec3 position{0.0f};
+    };
+    std::vector<VisionCandidate> vision_candidates_;
+    // (cell key, candidate index), sorted, then flattened into the occupied
+    // cells' keys, where each cell's candidates start, and the candidates
+    // themselves, cell after cell. One x column's cells are adjacent, so a
+    // cone copies a column's candidates out in one go.
+    std::vector<std::pair<std::uint64_t, std::uint32_t>> vision_candidate_cells_;
+    std::vector<std::uint64_t> vision_cell_keys_;
+    std::vector<std::uint32_t> vision_cell_starts_;
+    std::vector<std::uint32_t> vision_cell_members_;
+    std::vector<std::uint32_t> vision_unfiled_candidates_;
+    std::vector<std::uint32_t> vision_cone_candidates_;
+    // The actors alive when simulate_tick began, sorted. Kept between ticks
+    // for the same reason as the vision working set.
+    std::vector<NetId> actors_before_tick_;
     std::unordered_map<NetId, PendingFirstPhysicsActor>
         pending_first_physics_actors_;
     simulation::CommandQueue command_queue_;

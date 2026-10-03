@@ -11597,14 +11597,15 @@ void KernelEngine::record_simulation_tick_cost(
 void KernelEngine::finalize_simulated_projectile_destructions(
     std::size_t first_event,
     std::size_t last_event,
-    const std::unordered_set<NetId>& actors_before_tick) {
+    const std::vector<NetId>& actors_before_tick) {
     const std::size_t capped_last = std::min(last_event, events_.size());
     std::unordered_set<NetId> finalized_projectiles;
     for (std::size_t index = first_event; index < capped_last; ++index) {
         const KernelEvent& event = events_[index];
         if (event.type != KernelEventType_EntityDestroyed ||
             event.code != KernelDespawnReason_Destroyed ||
-            actors_before_tick.find(event.net_id) != actors_before_tick.end() ||
+            std::binary_search(
+                actors_before_tick.begin(), actors_before_tick.end(), event.net_id) ||
             !finalized_projectiles.insert(event.net_id).second) {
             continue;
         }
@@ -12105,7 +12106,8 @@ void KernelEngine::simulate_tick() {
         tick_time_us(tick_loop_.current_tick(), fixed_delta);
     const std::size_t first_tick_event = events_.size();
     world_.prune_action_graph_batches(tick_loop_.current_tick());
-    std::unordered_set<NetId> actors_before_tick;
+    std::vector<NetId>& actors_before_tick = actors_before_tick_;
+    actors_before_tick.clear();
     std::vector<ActionOutcome> action_outcomes;
     const auto actor_view = world_.registry().view<NetworkIdentity, EntityKind>();
     for (const entt::entity entity : actor_view) {
@@ -12114,8 +12116,9 @@ void KernelEngine::simulate_tick() {
             continue;
         }
         const NetId net_id = actor_view.get<NetworkIdentity>(entity).net_id;
-        actors_before_tick.insert(net_id);
+        actors_before_tick.push_back(net_id);
     }
+    std::sort(actors_before_tick.begin(), actors_before_tick.end());
     world_.collider_registry().expire_tick_lifetimes();
     EntityLifecycleSystem{}.update_prop_lifetimes(*this);
     const std::size_t queue_depth = command_queue_.size();
@@ -12734,17 +12737,19 @@ void KernelEngine::update_vision_states(float delta_seconds) {
     // matches back in that order: the visible lists are capped and the nearest
     // hostile keeps the first of a tie, so a different order would change who
     // an agent sees.
-    struct VisionCandidate {
-        NetId net_id = 0;
-        const KernelAgentVisionConfig* config = nullptr;
-        glm::vec3 position{0.0f};
-    };
-    std::vector<VisionCandidate> vision_candidates;
-    std::unordered_map<std::uint64_t, std::vector<std::uint32_t>> candidate_cells;
+    //
+    // The grid is a sorted vector of (cell, candidate) rather than a map of
+    // cells, so a tick allocates nothing once the vectors have grown.
+    std::vector<VisionCandidate>& vision_candidates = vision_candidates_;
+    std::vector<std::pair<std::uint64_t, std::uint32_t>>& candidate_cells =
+        vision_candidate_cells_;
     // A position the grid cannot file -- not a number, or too far out to name a
     // cell. Read by every cone, so that it is judged exactly as it was before
     // there was a grid.
-    std::vector<std::uint32_t> unfiled_candidates;
+    std::vector<std::uint32_t>& unfiled_candidates = vision_unfiled_candidates_;
+    vision_candidates.clear();
+    candidate_cells.clear();
+    unfiled_candidates.clear();
     const auto fileable = [](float meters) {
         return std::isfinite(meters) && std::abs(meters) < 1.0e9f;
     };
@@ -12752,9 +12757,13 @@ void KernelEngine::update_vision_states(float delta_seconds) {
         return static_cast<std::int64_t>(
             std::floor(meters / kVisionCandidateCellMeters));
     };
+    // Offset so that the key orders cells by x, then z, negative coordinates
+    // included: one column's cells are a single contiguous run. A fileable
+    // coordinate names a cell well inside 32 bits either way.
     const auto cell_key = [](std::int64_t x, std::int64_t z) {
-        return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(x)) << 32u) |
-            static_cast<std::uint64_t>(static_cast<std::uint32_t>(z));
+        constexpr std::int64_t kOffset = std::int64_t{1} << 31u;
+        return (static_cast<std::uint64_t>(x + kOffset) << 32u) |
+            static_cast<std::uint64_t>(z + kOffset);
     };
     if (!active_agents.empty()) {
         auto candidates =
@@ -12787,17 +12796,33 @@ void KernelEngine::update_vision_states(float delta_seconds) {
                 &candidate_config_iter->second,
                 position});
             if (fileable(position.x) && fileable(position.z)) {
-                candidate_cells[cell_key(
-                    cell_coordinate(position.x),
-                    cell_coordinate(position.z))]
-                    .push_back(index);
+                candidate_cells.emplace_back(
+                    cell_key(
+                        cell_coordinate(position.x),
+                        cell_coordinate(position.z)),
+                    index);
             } else {
                 unfiled_candidates.push_back(index);
             }
         }
     }
-    std::vector<std::uint32_t> cone_candidates;
-    cone_candidates.reserve(vision_candidates.size());
+    std::sort(candidate_cells.begin(), candidate_cells.end());
+    std::vector<std::uint64_t>& cell_keys = vision_cell_keys_;
+    std::vector<std::uint32_t>& cell_starts = vision_cell_starts_;
+    std::vector<std::uint32_t>& cell_members = vision_cell_members_;
+    cell_keys.clear();
+    cell_starts.clear();
+    cell_members.clear();
+    for (const auto& [key, candidate_index] : candidate_cells) {
+        if (cell_keys.empty() || cell_keys.back() != key) {
+            cell_keys.push_back(key);
+            cell_starts.push_back(static_cast<std::uint32_t>(cell_members.size()));
+        }
+        cell_members.push_back(candidate_index);
+    }
+    cell_starts.push_back(static_cast<std::uint32_t>(cell_members.size()));
+    const std::size_t occupied_cells = cell_keys.size();
+    std::vector<std::uint32_t>& cone_candidates = vision_cone_candidates_;
 
     for (const NetId agent_net_id : active_agents) {
         const auto config_iter = vision_configs_.find(agent_net_id);
@@ -12876,7 +12901,7 @@ void KernelEngine::update_vision_states(float delta_seconds) {
             high_z = cell_coordinate(origin.z + reach);
             read_every_candidate =
                 (high_x - low_x + 1) * (high_z - low_z + 1) >
-                static_cast<std::int64_t>(candidate_cells.size());
+                static_cast<std::int64_t>(occupied_cells);
         }
         if (read_every_candidate) {
             for (std::uint32_t index = 0; index < vision_candidates.size(); ++index) {
@@ -12884,15 +12909,19 @@ void KernelEngine::update_vision_states(float delta_seconds) {
             }
         } else {
             for (std::int64_t cell_x = low_x; cell_x <= high_x; ++cell_x) {
-                for (std::int64_t cell_z = low_z; cell_z <= high_z; ++cell_z) {
-                    const auto cell = candidate_cells.find(cell_key(cell_x, cell_z));
-                    if (cell != candidate_cells.end()) {
-                        cone_candidates.insert(
-                            cone_candidates.end(),
-                            cell->second.begin(),
-                            cell->second.end());
-                    }
+                const auto first_cell = std::lower_bound(
+                    cell_keys.begin(), cell_keys.end(), cell_key(cell_x, low_z));
+                const auto end_cell = std::upper_bound(
+                    first_cell, cell_keys.end(), cell_key(cell_x, high_z));
+                if (first_cell == end_cell) {
+                    continue;
                 }
+                cone_candidates.insert(
+                    cone_candidates.end(),
+                    cell_members.begin() +
+                        cell_starts[first_cell - cell_keys.begin()],
+                    cell_members.begin() +
+                        cell_starts[end_cell - cell_keys.begin()]);
             }
             cone_candidates.insert(
                 cone_candidates.end(),
@@ -15595,7 +15624,7 @@ void KernelEngine::publish_status_effect_state(NetId target) {
 void KernelEngine::queue_remote_presentation_from_events(
     std::size_t first_event,
     std::size_t last_event,
-    const std::unordered_set<NetId>& actors_before_tick) {
+    const std::vector<NetId>& actors_before_tick) {
     if (!is_server_mode(config_.mode)) {
         return;
     }
@@ -15611,11 +15640,13 @@ void KernelEngine::queue_remote_presentation_from_events(
         const KernelEvent& event = events_[index];
         std::uint8_t event_type = UINT8_MAX;
         if (event.type == KernelEventType_DamageApplied &&
-            actors_before_tick.find(event.net_id) != actors_before_tick.end()) {
+            std::binary_search(
+                actors_before_tick.begin(), actors_before_tick.end(), event.net_id)) {
             event_type = KernelRemoteActionPresentationEventType_HitReaction;
         } else if (
             event.type == KernelEventType_EntityDestroyed &&
-            actors_before_tick.find(event.net_id) != actors_before_tick.end()) {
+            std::binary_search(
+                actors_before_tick.begin(), actors_before_tick.end(), event.net_id)) {
             event_type = KernelRemoteActionPresentationEventType_DeathTrigger;
         }
         if (event_type == UINT8_MAX) {
