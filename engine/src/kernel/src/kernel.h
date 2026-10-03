@@ -112,6 +112,12 @@ public:
     physics::PhysicsWorld* mutable_physics_world() {
         return physics_world_.get();
     }
+    // Enables or disables an entity collider's body in the authoritative
+    // physics world. Writers outside the collider sync go through here rather
+    // than through mutable_physics_world(), because the sync skips bodies whose
+    // state it believes it already wrote, and a write it did not see would
+    // leave it believing the wrong thing.
+    void set_physics_collider_enabled(std::uint32_t collider_id, bool enabled);
     bool has_static_collision_scene() const {
         return !static_collision_scene_.empty();
     }
@@ -1265,7 +1271,21 @@ private:
     std::uint32_t static_collision_collider_id_ = 0;
     std::uint32_t static_collision_layer_ = 0;
     std::unique_ptr<physics::PhysicsWorld> physics_world_;
-    std::unordered_set<std::uint32_t> physics_entity_collider_ids_;
+    // What the collider sync last wrote into physics_world_ for each entity
+    // collider it holds there. A body is only written when what the sync
+    // computes differs from this, which is most of them on most ticks: three
+    // full sweeps a tick used to rewrite every body in the world, 42% of the
+    // kernel tick at 1300 agents. `sweep` is the full sweep that last saw the
+    // collider, so one that stops being pushed is found without rebuilding a
+    // set on every call.
+    struct PhysicsColliderState {
+        glm::vec3 position{0.0f};
+        glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+        bool enabled = false;
+        std::uint32_t sweep = 0;
+    };
+    std::unordered_map<std::uint32_t, PhysicsColliderState> physics_entity_colliders_;
+    std::uint32_t physics_collider_sweep_ = 0;
     std::unique_ptr<physics::PhysicsWorld> prediction_physics_world_;
     std::unordered_map<NetId, std::uint32_t> prediction_proxy_collider_ids_;
     // Props as static obstacles and other actors' hit volumes, both where the

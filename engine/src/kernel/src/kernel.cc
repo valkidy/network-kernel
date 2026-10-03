@@ -4757,19 +4757,37 @@ bool KernelEngine::push_collider_into_physics(const ColliderInstance& collider) 
         object.enabled = false;
     }
     std::string error;
-    if (physics_entity_collider_ids_.contains(collider.collider_id)) {
-        physics_world_->set_object_transform(
-            collider.collider_id,
-            object.position,
-            object.rotation);
-        physics_world_->set_object_enabled(
-            collider.collider_id,
-            object.enabled);
+    if (const auto held = physics_entity_colliders_.find(collider.collider_id);
+        held != physics_entity_colliders_.end()) {
+        PhysicsColliderState& state = held->second;
+        // Compared exactly: a body written with the values it already holds
+        // ends up as it was, so skipping the write changes nothing a query
+        // can see.
+        if (state.position != object.position ||
+            state.rotation != object.rotation) {
+            physics_world_->set_object_transform(
+                collider.collider_id,
+                object.position,
+                object.rotation);
+            state.position = object.position;
+            state.rotation = object.rotation;
+        }
+        if (state.enabled != object.enabled) {
+            physics_world_->set_object_enabled(
+                collider.collider_id,
+                object.enabled);
+            state.enabled = object.enabled;
+        }
+        state.sweep = physics_collider_sweep_;
     } else if (physics_world_->upsert_object(object, &error)) {
         // Recorded here rather than only by the full sweep's bookkeeping, so a
         // single-entity sync that adds a collider does not add it again on the
         // next call.
-        physics_entity_collider_ids_.insert(collider.collider_id);
+        physics_entity_colliders_[collider.collider_id] = PhysicsColliderState{
+            object.position,
+            object.rotation,
+            object.enabled,
+            physics_collider_sweep_};
     } else {
         spdlog::error(
             "failed to materialize collider_id={} in physics world: {}",
@@ -4778,6 +4796,19 @@ bool KernelEngine::push_collider_into_physics(const ColliderInstance& collider) 
         return false;
     }
     return true;
+}
+
+void KernelEngine::set_physics_collider_enabled(
+    std::uint32_t collider_id,
+    bool enabled) {
+    if (physics_world_ == nullptr) {
+        return;
+    }
+    physics_world_->set_object_enabled(collider_id, enabled);
+    if (const auto held = physics_entity_colliders_.find(collider_id);
+        held != physics_entity_colliders_.end()) {
+        held->second.enabled = enabled;
+    }
 }
 
 void KernelEngine::refresh_collider_world_transform(ColliderInstance& collider) {
@@ -4823,24 +4854,22 @@ void KernelEngine::sync_entity_colliders_from_world() {
     if (physics_world_ == nullptr) {
         return;
     }
-    std::unordered_set<std::uint32_t> current_collider_ids;
-    // Rebuilt from scratch on every call, so it is worth sizing up front. The
-    // loop below filters, so the instance count is an upper bound rather than
-    // the exact size -- which is what reserve wants.
-    current_collider_ids.reserve(world_.collider_registry().instances().size());
+    // Every collider this sweep pushes is stamped with it; whatever is left
+    // holding an older stamp was not pushed, and leaves the physics world.
+    ++physics_collider_sweep_;
     for (const ColliderInstance& collider :
          world_.collider_registry().instances()) {
-        if (!push_collider_into_physics(collider)) {
-            continue;
-        }
-        current_collider_ids.insert(collider.collider_id);
+        push_collider_into_physics(collider);
     }
-    for (std::uint32_t collider_id : physics_entity_collider_ids_) {
-        if (!current_collider_ids.contains(collider_id)) {
-            physics_world_->remove_object(collider_id);
+    for (auto held = physics_entity_colliders_.begin();
+         held != physics_entity_colliders_.end();) {
+        if (held->second.sweep != physics_collider_sweep_) {
+            physics_world_->remove_object(held->first);
+            held = physics_entity_colliders_.erase(held);
+        } else {
+            ++held;
         }
     }
-    physics_entity_collider_ids_ = std::move(current_collider_ids);
 
     // Entity spawns and despawns are the only broad phase churn here (existing
     // colliders are moved in place above), but the authoritative world is just
@@ -6200,7 +6229,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     processed_gameplay_requests_.clear();
     pending_gameplay_request_outcomes_.clear();
     pending_network_gameplay_outcomes_.clear();
-    physics_entity_collider_ids_.clear();
+    physics_entity_colliders_.clear();
     prediction_proxy_collider_ids_.clear();
     prediction_obstacle_collider_ids_.clear();
     prediction_local_hitbox_collider_id_ = 0u;

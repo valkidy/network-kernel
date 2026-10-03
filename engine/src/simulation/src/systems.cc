@@ -1363,10 +1363,8 @@ bool execute_action_graph_commands(
                      world.collider_registry().mutable_instances()) {
                     if (collider.entity_net_id == impulse->target) {
                         collider.enabled = true;
-                        if (engine.mutable_physics_world() != nullptr) {
-                            engine.mutable_physics_world()->set_object_enabled(
-                                collider.collider_id, true);
-                        }
+                        engine.set_physics_collider_enabled(
+                            collider.collider_id, true);
                     }
                 }
                 engine.queue_prop_state_change(impulse->target);

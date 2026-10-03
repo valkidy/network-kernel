@@ -271,10 +271,7 @@ void set_prop_collision_enabled(
             continue;
         }
         collider.enabled = enabled;
-        if (engine.mutable_physics_world() != nullptr) {
-            engine.mutable_physics_world()->set_object_enabled(
-                collider.collider_id, enabled);
-        }
+        engine.set_physics_collider_enabled(collider.collider_id, enabled);
     }
 }
 
