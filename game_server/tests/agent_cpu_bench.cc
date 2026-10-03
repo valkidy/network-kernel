@@ -25,6 +25,7 @@
 // different machine. Run it with
 //   bazel run -c opt //game_server:agent_cpu_bench
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -959,10 +960,254 @@ void print_snapshot_table(const Catalog& catalog, std::size_t session_count) {
     std::printf("\n");
 }
 
+// What the same density costs once the map is an open world.
+//
+// The tables above all fit the shipping 200 x 200 plane. This one holds the
+// shipping density -- the patrol catalog's authored ceiling, 52 agents on that
+// plane -- and grows the map to 1 km on a side, which is 25 times the agents,
+// with 16 sessions. Agents are spread evenly over the whole map rather than in
+// the relevance-radius spiral the other tables use, because an open world is
+// mostly agents that no player can see; that is the case the per-session
+// snapshot path still walks in full.
+//
+// Snapshots are built every sampled tick to get a stable mean, then reported at
+// the 15 Hz the server actually sends: half a round lands on the average tick.
+// measure_scenario adds a whole round per tick instead, so its % column runs
+// high by that much; the two are not comparable.
+constexpr std::size_t kOpenWorldSessions = 16;
+constexpr std::uint32_t kOpenWorldSnapshotRate = 15;
+constexpr std::size_t kOpenWorldQueryCapacity = 8192;
+
+struct OpenWorldRow {
+    const char* name = "";
+    std::size_t world_agents = 0;
+    std::uint32_t world_entities = 0;
+    std::uint32_t agents_driven = 0;
+    double relevant_per_session = 0.0;
+    float lowest_actor_y = 0.0f;
+    double ai_us = 0.0;
+    double kernel_us = 0.0;
+    double snapshot_round_us = 0.0;
+};
+
+// An even grid over the square, inset so no agent starts on the edge it could
+// walk off.
+KernelVec3 open_world_agent_position(
+    std::size_t index,
+    std::size_t count,
+    float half_extent) {
+    const std::size_t columns = static_cast<std::size_t>(
+        std::ceil(std::sqrt(static_cast<double>(count))));
+    const float span = half_extent * 2.0f * 0.9f;
+    const float step = span / static_cast<float>(columns);
+    const float origin = -span * 0.5f + step * 0.5f;
+    return KernelVec3{
+        origin + step * static_cast<float>(index % columns),
+        1.0f,
+        origin + step * static_cast<float>(index / columns)};
+}
+
+OpenWorldRow measure_open_world(
+    const Catalog& catalog,
+    const char* name,
+    const std::vector<std::uint8_t>& scene_bytes,
+    float half_extent,
+    std::size_t agent_count,
+    const std::vector<KernelVec3>& player_positions,
+    std::uint16_t port) {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = kServerTickRate;
+    config.tick.snapshot_rate = kOpenWorldSnapshotRate;
+    config.max_events = 16384;
+    config.max_render_states = 4096;
+    KernelHandle* kernel = Kernel_Create(&config);
+    require(kernel != nullptr);
+
+    // The catalog's ids, not ones of our own: a scene registered under
+    // collider_id 1 is accepted and then leaves no ground.
+    KernelStaticCollisionSceneConfig scene{};
+    scene.struct_size = sizeof(scene);
+    scene.artifact_bytes = scene_bytes.data();
+    scene.artifact_size = static_cast<std::uint32_t>(scene_bytes.size());
+    scene.scene_id = catalog.config.static_collision_scene.scene_id;
+    scene.collider_id = catalog.config.static_collision_scene.collider_id;
+    scene.collision_layer = catalog.config.static_collision_scene.collision_layer;
+    require(Kernel_SetStaticCollisionScene(kernel, &scene));
+    require(Kernel_StartDedicatedServer(kernel, port));
+    require(Kernel_LoadGameplayCatalog(kernel, &catalog.storage.definition, nullptr));
+
+    const network_example::game_server::ActorTemplateConfig* chaser =
+        find_template(catalog.config.actor_templates, "chaser_grunt");
+    require(chaser != nullptr);
+
+    std::vector<std::uint32_t> players;
+    for (const KernelVec3& position : player_positions) {
+        players.push_back(spawn_actor(
+            kernel,
+            catalog.config.player.actor_template_id,
+            network_example::game_server::kActorTypePlayer,
+            position));
+    }
+    for (std::size_t index = 0; index < agent_count; ++index) {
+        spawn_actor(
+            kernel,
+            chaser->actor_template_id,
+            network_example::game_server::kActorTypeAgent,
+            open_world_agent_position(index, agent_count, half_extent));
+    }
+
+    network_example::game_server::AgentRuntimeManager manager(
+        kernel, catalog.config);
+    network_example::KernelEngine& engine = engine_of(kernel);
+
+    // Outside the engine's own session list, as in measure_scenario, so that
+    // Kernel_Update does not build these snapshots too.
+    std::vector<network_example::KernelEngine::PeerSession> sessions;
+    for (std::size_t index = 0; index < players.size(); ++index) {
+        sessions.push_back(network_example::KernelEngine::PeerSession{
+            static_cast<std::uint32_t>(index + 1), players[index], 0, true, {}});
+    }
+
+    for (std::uint32_t tick = 0; tick < kWarmupTicks; ++tick) {
+        manager.tick(kTickSeconds);
+        Kernel_Update(kernel, kTickSeconds);
+    }
+
+    double ai_us = 0.0;
+    double kernel_us = 0.0;
+    double snapshot_us = 0.0;
+    std::size_t relevant_agent_total = 0;
+    for (std::uint32_t tick = 0; tick < kSampleTicks; ++tick) {
+        const auto ai_start = std::chrono::steady_clock::now();
+        manager.tick(kTickSeconds);
+        ai_us += micros_since(ai_start);
+        const auto kernel_start = std::chrono::steady_clock::now();
+        Kernel_Update(kernel, kTickSeconds);
+        kernel_us += micros_since(kernel_start);
+
+        std::size_t relevant_agents = 0;
+        const auto snapshot_start = std::chrono::steady_clock::now();
+        for (network_example::KernelEngine::PeerSession& session : sessions) {
+            const network_example::WorldSnapshot relevant =
+                engine.build_relevant_snapshot(session, tick * 66u);
+            const network_example::WorldSnapshot send =
+                engine.build_snapshot_send_set(session, relevant, 1200u);
+            for (const network_example::EntitySnapshot& entity :
+                 relevant.entities) {
+                if (entity.actor_type == network_example::ActorType::kAgent) {
+                    ++relevant_agents;
+                }
+            }
+        }
+        snapshot_us += micros_since(snapshot_start);
+        relevant_agent_total += relevant_agents;
+    }
+
+    std::vector<KernelServerEntityState> census(kOpenWorldQueryCapacity);
+    for (KernelServerEntityState& state : census) {
+        state.struct_size = sizeof(KernelServerEntityState);
+    }
+    OpenWorldRow row;
+    row.name = name;
+    row.world_agents = agent_count;
+    row.world_entities = Kernel_ServerQueryEntities(
+        kernel, 0u, census.data(),
+        static_cast<std::uint32_t>(census.size()));
+    row.lowest_actor_y = 0.0f;
+    for (std::uint32_t index = 0; index < row.world_entities; ++index) {
+        row.lowest_actor_y = std::min(row.lowest_actor_y, census[index].position.y);
+    }
+    row.agents_driven = static_cast<std::uint32_t>(manager.agent_count());
+    row.relevant_per_session = static_cast<double>(relevant_agent_total) /
+        static_cast<double>(kSampleTicks * sessions.size());
+    row.ai_us = ai_us / static_cast<double>(kSampleTicks);
+    row.kernel_us = kernel_us / static_cast<double>(kSampleTicks);
+    row.snapshot_round_us = snapshot_us / static_cast<double>(kSampleTicks);
+
+    Kernel_Destroy(kernel);
+    return row;
+}
+
+// 16 players on a 4 x 4 grid, `spacing` apart, centred on the origin.
+std::vector<KernelVec3> spread_players(float spacing) {
+    std::vector<KernelVec3> positions;
+    for (std::size_t index = 0; index < kOpenWorldSessions; ++index) {
+        positions.push_back(KernelVec3{
+            (static_cast<float>(index % 4) - 1.5f) * spacing,
+            1.0f,
+            (static_cast<float>(index / 4) - 1.5f) * spacing});
+    }
+    return positions;
+}
+
+void print_open_world_table(const Catalog& catalog) {
+    const std::vector<std::uint8_t> kilometre_scene = read_binary_file(
+        (runfiles_root() / "game_server" / "tests" / "test_mesh_assets" /
+         "jolt" / "plane_1000x1000.joltmesh")
+            .string());
+    require(!kilometre_scene.empty());
+
+    std::printf(
+        "I. OPEN WORLD: shipping density (52 agents / 200 m square), %zu sessions\n",
+        kOpenWorldSessions);
+    std::printf(
+        "%-28s %6s %7s %7s %8s %8s %9s %10s %12s %11s %9s\n",
+        "map", "agents", "driven", "entity", "rel/sess", "lowest y",
+        "ai us", "kernel us", "snap rnd us", "snap/tick", "% of 33ms");
+    // Clustered players for the party row: inside one another's relevance
+    // radius, standing in the middle of the agent grid.
+    std::vector<KernelVec3> party;
+    for (std::size_t index = 0; index < kOpenWorldSessions; ++index) {
+        party.push_back(KernelVec3{
+            static_cast<float>(index % 4) * 2.0f,
+            1.0f,
+            static_cast<float>(index / 4) * 2.0f});
+    }
+    const OpenWorldRow rows[] = {
+        measure_open_world(
+            catalog, "200 m, players spread 50 m",
+            catalog.scene_bytes, 100.0f, 52, spread_players(50.0f),
+            next_port++),
+        measure_open_world(
+            catalog, "1 km, players spread 250 m",
+            kilometre_scene, 500.0f, 1300, spread_players(250.0f),
+            next_port++),
+        measure_open_world(
+            catalog, "1 km, players in one party",
+            kilometre_scene, 500.0f, 1300, party, next_port++),
+    };
+    for (const OpenWorldRow& row : rows) {
+        const double snapshot_per_tick_us = row.snapshot_round_us *
+            static_cast<double>(kOpenWorldSnapshotRate) /
+            static_cast<double>(kServerTickRate);
+        const double total_us = row.ai_us + row.kernel_us + snapshot_per_tick_us;
+        std::printf(
+            "%-28s %6zu %7u %7u %8.1f %8.2f %9.1f %10.1f %12.1f %11.1f %9.1f\n",
+            row.name,
+            row.world_agents,
+            row.agents_driven,
+            row.world_entities,
+            row.relevant_per_session,
+            row.lowest_actor_y,
+            row.ai_us,
+            row.kernel_us,
+            row.snapshot_round_us,
+            snapshot_per_tick_us,
+            total_us / (1'000'000.0 / kServerTickRate) * 100.0);
+    }
+    std::printf("\n");
+}
+
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
     const Catalog catalog = load_catalog();
+    // The open-world table alone, without the minutes the rest take.
+    if (argc > 1 && std::string(argv[1]) == "--open-world") {
+        print_open_world_table(catalog);
+        return 0;
+    }
     std::printf(
         "tick_rate=%u Hz  budget=%.1f ms/tick  warmup=%u ticks  sample=%u ticks\n\n",
         kServerTickRate,
@@ -978,5 +1223,6 @@ int main() {
     print_scenario_table(catalog);
     print_composition_table(catalog);
     print_locomotion_table();
+    print_open_world_table(catalog);
     return 0;
 }
