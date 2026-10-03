@@ -92,8 +92,9 @@ Required compile/ABI smoke:
   ```
 
 - Compile the package runtime/editor C# assemblies with Unity.
-- In Unity Editor, run `Network Example/Kernel Hello World` to confirm the
-  Editor can load `libnetwork_kernel.dylib` and call `Kernel_GetAbiInfo`.
+- In Unity Editor, run `Tools/Network Example/Kernel Package/Run ABI Smoke`
+  to confirm the Editor can load `libnetwork_kernel.dylib` and that the ABI
+  matches (the same runner the package builder calls in batchmode).
 - Compile and run `Tests~/AbiSmoke/NetworkKernelManagedAbiSmoke.cs` with the
   package runtime sources in a directory containing `libnetwork_kernel.dylib`;
   it validates kernel and game-server ABI sizes, exercises

@@ -18,7 +18,7 @@ namespace NetworkExample.Kernel.Editor
     {
         private static uint nextActionInstanceId = 1;
 
-        [MenuItem("Network Example/Run Kernel ABI Smoke")]
+        [MenuItem("Tools/Network Example/Kernel Package/Run ABI Smoke", false, 300)]
         public static void Run()
         {
             KernelAbi.ValidateNativeAbi();
