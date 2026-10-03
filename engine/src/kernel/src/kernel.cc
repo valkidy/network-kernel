@@ -375,6 +375,11 @@ constexpr float kDefaultEntityRelevanceDistanceMeters = 40.0f;
 // over a second of travel.
 constexpr float kDefaultEntityRelevanceExitDistanceMeters = 44.0f;
 constexpr float kDefaultProjectileRelevanceDistanceMeters = 80.0f;
+// The side of a cell in the grid update_vision_states files candidates in. A
+// cone only ever reads the cells its range overlaps, so the cell wants to be
+// near a typical cone's range: much smaller and a cone walks many empty cells,
+// much larger and it reads candidates it is about to reject on distance.
+constexpr float kVisionCandidateCellMeters = 16.0f;
 // Slots go to whoever has waited longest, scaled by how much the receiving
 // player is likely to notice. Without the weights every relevant agent gets the
 // same share, which at 200 agents and 32 slots is 1.8 Hz each whether it is
@@ -12677,6 +12682,81 @@ void KernelEngine::update_vision_states(float delta_seconds) {
         }
     }
 
+    // Everything a cone could see, gathered once per tick rather than once per
+    // agent: walking the whole registry from every cone made vision
+    // agents x entities, 80% of the tick at 1300 agents. Only entities with a
+    // vision config are ever candidates, and whether one is hidden or dead does
+    // not depend on who is looking, so those checks happen here too.
+    //
+    // Candidates keep the registry's iteration order, and each cone reads its
+    // matches back in that order: the visible lists are capped and the nearest
+    // hostile keeps the first of a tie, so a different order would change who
+    // an agent sees.
+    struct VisionCandidate {
+        NetId net_id = 0;
+        const KernelAgentVisionConfig* config = nullptr;
+        glm::vec3 position{0.0f};
+    };
+    std::vector<VisionCandidate> vision_candidates;
+    std::unordered_map<std::uint64_t, std::vector<std::uint32_t>> candidate_cells;
+    // A position the grid cannot file -- not a number, or too far out to name a
+    // cell. Read by every cone, so that it is judged exactly as it was before
+    // there was a grid.
+    std::vector<std::uint32_t> unfiled_candidates;
+    const auto fileable = [](float meters) {
+        return std::isfinite(meters) && std::abs(meters) < 1.0e9f;
+    };
+    const auto cell_coordinate = [](float meters) {
+        return static_cast<std::int64_t>(
+            std::floor(meters / kVisionCandidateCellMeters));
+    };
+    const auto cell_key = [](std::int64_t x, std::int64_t z) {
+        return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(x)) << 32u) |
+            static_cast<std::uint64_t>(static_cast<std::uint32_t>(z));
+    };
+    if (!active_agents.empty()) {
+        auto candidates =
+            world_.registry().view<const NetworkIdentity, const EntityKind, const Transform>();
+        for (const entt::entity candidate_entity : candidates) {
+            const NetworkIdentity& candidate_identity =
+                candidates.get<const NetworkIdentity>(candidate_entity);
+            const auto candidate_config_iter =
+                vision_configs_.find(candidate_identity.net_id);
+            if (candidate_config_iter == vision_configs_.end()) {
+                continue;
+            }
+            if (hidden_occupants.contains(candidate_identity.net_id)) {
+                continue;
+            }
+            // A dormant corpse keeps its vision config but is nothing to chase,
+            // aim at or count as an ally.
+            if (const Health* candidate_health =
+                    world_.registry().try_get<Health>(candidate_entity);
+                candidate_health != nullptr && candidate_health->max_hp > 0u &&
+                candidate_health->hp == 0u) {
+                continue;
+            }
+            const glm::vec3 position =
+                candidates.get<const Transform>(candidate_entity).position;
+            const std::uint32_t index =
+                static_cast<std::uint32_t>(vision_candidates.size());
+            vision_candidates.push_back(VisionCandidate{
+                candidate_identity.net_id,
+                &candidate_config_iter->second,
+                position});
+            if (fileable(position.x) && fileable(position.z)) {
+                candidate_cells[cell_key(
+                    cell_coordinate(position.x),
+                    cell_coordinate(position.z))]
+                    .push_back(index);
+            } else {
+                unfiled_candidates.push_back(index);
+            }
+        }
+    }
+    std::vector<std::uint32_t> cone_candidates;
+    cone_candidates.reserve(vision_candidates.size());
+
     for (const NetId agent_net_id : active_agents) {
         const auto config_iter = vision_configs_.find(agent_net_id);
         const std::optional<entt::entity> agent_entity =
@@ -12733,45 +12813,68 @@ void KernelEngine::update_vision_states(float delta_seconds) {
                 : previous.time_since_last_seen_target + delta_seconds;
         view.valid = 1u;
 
+        // The cells the cone's range overlaps, padded by a metre so that
+        // rounding at the edge of the range can never leave out a candidate
+        // the exact distance test below would have kept. When that is more
+        // cells than the grid holds, or the range or origin is not a number the
+        // grid can bound, every candidate is read instead.
+        cone_candidates.clear();
+        const float reach = cone_range + 1.0f;
+        bool read_every_candidate =
+            !fileable(origin.x - reach) || !fileable(origin.x + reach) ||
+            !fileable(origin.z - reach) || !fileable(origin.z + reach);
+        std::int64_t low_x = 0;
+        std::int64_t high_x = -1;
+        std::int64_t low_z = 0;
+        std::int64_t high_z = -1;
+        if (!read_every_candidate) {
+            low_x = cell_coordinate(origin.x - reach);
+            high_x = cell_coordinate(origin.x + reach);
+            low_z = cell_coordinate(origin.z - reach);
+            high_z = cell_coordinate(origin.z + reach);
+            read_every_candidate =
+                (high_x - low_x + 1) * (high_z - low_z + 1) >
+                static_cast<std::int64_t>(candidate_cells.size());
+        }
+        if (read_every_candidate) {
+            for (std::uint32_t index = 0; index < vision_candidates.size(); ++index) {
+                cone_candidates.push_back(index);
+            }
+        } else {
+            for (std::int64_t cell_x = low_x; cell_x <= high_x; ++cell_x) {
+                for (std::int64_t cell_z = low_z; cell_z <= high_z; ++cell_z) {
+                    const auto cell = candidate_cells.find(cell_key(cell_x, cell_z));
+                    if (cell != candidate_cells.end()) {
+                        cone_candidates.insert(
+                            cone_candidates.end(),
+                            cell->second.begin(),
+                            cell->second.end());
+                    }
+                }
+            }
+            cone_candidates.insert(
+                cone_candidates.end(),
+                unfiled_candidates.begin(),
+                unfiled_candidates.end());
+            std::sort(cone_candidates.begin(), cone_candidates.end());
+        }
+
         float nearest_hostile_distance_squared =
             std::numeric_limits<float>::max();
-        auto candidates =
-            world_.registry().view<const NetworkIdentity, const EntityKind, const Transform>();
-        for (const entt::entity candidate_entity : candidates) {
-            const NetworkIdentity& candidate_identity =
-                candidates.get<const NetworkIdentity>(candidate_entity);
-            const auto candidate_config_iter =
-                vision_configs_.find(candidate_identity.net_id);
-            if (candidate_config_iter == vision_configs_.end()) {
-                continue;
-            }
-            const KernelAgentVisionConfig& candidate_config =
-                candidate_config_iter->second;
-            if (hidden_occupants.contains(candidate_identity.net_id)) {
-                continue;
-            }
-            // A dormant corpse keeps its vision config but is nothing to chase,
-            // aim at or count as an ally.
-            if (const Health* candidate_health =
-                    world_.registry().try_get<Health>(candidate_entity);
-                candidate_health != nullptr && candidate_health->max_hp > 0u &&
-                candidate_health->hp == 0u) {
-                continue;
-            }
+        for (const std::uint32_t candidate_index : cone_candidates) {
+            const VisionCandidate& candidate = vision_candidates[candidate_index];
             const std::uint8_t relation = classify_agent_relation(
                 agent_net_id,
                 config.camp,
-                candidate_identity.net_id,
-                candidate_config.camp);
+                candidate.net_id,
+                candidate.config->camp);
             if (relation != KernelAgentRelation_Ally &&
                 relation != KernelAgentRelation_Hostile &&
                 relation != KernelAgentRelation_Neutral) {
                 continue;
             }
 
-            const Transform& candidate_transform =
-                candidates.get<const Transform>(candidate_entity);
-            glm::vec3 delta = candidate_transform.position - origin;
+            glm::vec3 delta = candidate.position - origin;
             delta.y = 0.0f;
             const float distance_squared = glm::dot(delta, delta);
             if (distance_squared > cone_range * cone_range) {
@@ -12795,15 +12898,15 @@ void KernelEngine::update_vision_states(float delta_seconds) {
                 if (view.visible_hostile_count < config.max_visible_hostiles &&
                     view.visible_hostile_count < KERNEL_MAX_VISIBLE_HOSTILES) {
                     view.visible_hostiles[view.visible_hostile_count++] =
-                        candidate_identity.net_id;
+                        candidate.net_id;
                 }
                 if (distance_squared < nearest_hostile_distance_squared) {
                     nearest_hostile_distance_squared = distance_squared;
-                    view.current_target_candidate = candidate_identity.net_id;
+                    view.current_target_candidate = candidate.net_id;
                     view.relation_to_current_target = KernelAgentRelation_Hostile;
-                    view.last_seen_target = candidate_identity.net_id;
+                    view.last_seen_target = candidate.net_id;
                     view.last_known_target_position =
-                        to_kernel_vec3(candidate_transform.position);
+                        to_kernel_vec3(candidate.position);
                     view.time_since_last_seen_target = 0.0f;
                     runtime_state.has_last_seen_target = true;
                 }
@@ -12812,13 +12915,13 @@ void KernelEngine::update_vision_states(float delta_seconds) {
                 view.visible_ally_count < config.max_visible_allies &&
                 view.visible_ally_count < KERNEL_MAX_VISIBLE_ALLIES) {
                 view.visible_allies[view.visible_ally_count++] =
-                    candidate_identity.net_id;
+                    candidate.net_id;
             } else if (
                 relation == KernelAgentRelation_Neutral &&
                 view.visible_neutral_count < config.max_visible_neutrals &&
                 view.visible_neutral_count < KERNEL_MAX_VISIBLE_NEUTRALS) {
                 view.visible_neutrals[view.visible_neutral_count++] =
-                    candidate_identity.net_id;
+                    candidate.net_id;
             }
         }
 
