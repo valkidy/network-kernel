@@ -12393,21 +12393,36 @@ bool KernelEngine::is_derived_projectile(NetId net_id) const {
     return projectile != nullptr && projectile->derived;
 }
 
-WorldSnapshot KernelEngine::build_relevant_snapshot(
-    const PeerSession& session,
+WorldSnapshot KernelEngine::build_shared_world_snapshot(
     std::uint32_t server_time_ms) const {
-    WorldSnapshot full_snapshot = build_world_snapshot(
+    // last_processed_input_seq is per session; build_relevant_snapshot fills
+    // it in for each one.
+    return build_world_snapshot(
         world_,
         tick_loop_.current_tick(),
         server_time_ms,
-        session.last_processed_input_seq);
+        0u);
+}
+
+WorldSnapshot KernelEngine::build_relevant_snapshot(
+    const PeerSession& session,
+    std::uint32_t server_time_ms) const {
+    return build_relevant_snapshot(
+        session,
+        build_shared_world_snapshot(server_time_ms));
+}
+
+WorldSnapshot KernelEngine::build_relevant_snapshot(
+    const PeerSession& session,
+    const WorldSnapshot& world_snapshot) const {
     const EntitySnapshot* player_entity =
-        find_snapshot_entity(full_snapshot, session.player);
+        find_snapshot_entity(world_snapshot, session.player);
 
     WorldSnapshot filtered;
-    filtered.header = full_snapshot.header;
-    filtered.entities.reserve(full_snapshot.entities.size());
-    for (const EntitySnapshot& entity : full_snapshot.entities) {
+    filtered.header = world_snapshot.header;
+    filtered.header.last_processed_input_seq = session.last_processed_input_seq;
+    filtered.entities.reserve(world_snapshot.entities.size());
+    for (const EntitySnapshot& entity : world_snapshot.entities) {
         if (is_actor_pending_first_physics(entity.net_id)) {
             continue;
         }
@@ -14502,11 +14517,13 @@ void KernelEngine::rebuild_render_states_from_snapshot(
 void KernelEngine::publish_snapshot() {
     const std::uint32_t server_time_ms = static_cast<std::uint32_t>(
         tick_loop_.current_tick() * tick_loop_.fixed_delta_seconds() * 1000.0f);
-    latest_snapshot_ = build_world_snapshot(
-        world_,
-        tick_loop_.current_tick(),
-        server_time_ms,
-        local_last_processed_input_seq_);
+    // Built once and shared: by latest_snapshot_ here, and by every session
+    // below, each of which only filters it.
+    const WorldSnapshot world_snapshot =
+        build_shared_world_snapshot(server_time_ms);
+    latest_snapshot_ = world_snapshot;
+    latest_snapshot_.header.last_processed_input_seq =
+        local_last_processed_input_seq_;
     filter_pending_first_physics_actors(&latest_snapshot_);
     spdlog::debug(
         "{}",
@@ -14522,7 +14539,7 @@ void KernelEngine::publish_snapshot() {
         local_listen_session_.last_processed_input_seq = local_last_processed_input_seq_;
         local_listen_session_.welcomed = local_player_net_id_ != 0;
         WorldSnapshot peer_snapshot =
-            build_relevant_snapshot(local_listen_session_, server_time_ms);
+            build_relevant_snapshot(local_listen_session_, world_snapshot);
         sync_session_relevance(&local_listen_session_, peer_snapshot);
         drop_unannounced_entities(local_listen_session_, &peer_snapshot);
         const WorldSnapshot send_snapshot = build_snapshot_send_set(
@@ -14555,7 +14572,7 @@ void KernelEngine::publish_snapshot() {
                 continue;
             }
             WorldSnapshot peer_snapshot =
-                build_relevant_snapshot(session, server_time_ms);
+                build_relevant_snapshot(session, world_snapshot);
             sync_session_relevance(&session, peer_snapshot);
             drop_unannounced_entities(session, &peer_snapshot);
             // One send set for the interval, over as many independent

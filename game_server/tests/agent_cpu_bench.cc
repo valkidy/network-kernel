@@ -415,9 +415,12 @@ SnapshotRow measure_snapshot_build(
     std::size_t sent_entities = 0;
     for (std::uint32_t sample = 0; sample < kSampleTicks; ++sample) {
         const auto start = std::chrono::steady_clock::now();
+        // One world snapshot for the round, as publish_snapshot builds it.
+        const network_example::WorldSnapshot world_snapshot =
+            engine.build_shared_world_snapshot(sample * 66u);
         for (network_example::KernelEngine::PeerSession& session : sessions) {
             const network_example::WorldSnapshot relevant =
-                engine.build_relevant_snapshot(session, sample * 66u);
+                engine.build_relevant_snapshot(session, world_snapshot);
             const network_example::WorldSnapshot send =
                 engine.build_snapshot_send_set(session, relevant, 1200u);
             sent_entities = send.entities.size();
@@ -590,9 +593,11 @@ ScenarioRow measure_scenario(
         std::size_t packed_agents = 0;
         std::size_t packed_projectile_records = 0;
         std::size_t packed_prop_records = 0;
+        const network_example::WorldSnapshot world_snapshot =
+            engine.build_shared_world_snapshot(tick * 66u);
         for (network_example::KernelEngine::PeerSession& session : sessions) {
             const network_example::WorldSnapshot relevant =
-                engine.build_relevant_snapshot(session, tick * 66u);
+                engine.build_relevant_snapshot(session, world_snapshot);
             const network_example::WorldSnapshot send =
                 engine.build_snapshot_send_set(session, relevant, 1200u);
             if (&session == &sessions.front()) {
@@ -1088,9 +1093,11 @@ OpenWorldRow measure_open_world(
 
         std::size_t relevant_agents = 0;
         const auto snapshot_start = std::chrono::steady_clock::now();
+        const network_example::WorldSnapshot world_snapshot =
+            engine.build_shared_world_snapshot(tick * 66u);
         for (network_example::KernelEngine::PeerSession& session : sessions) {
             const network_example::WorldSnapshot relevant =
-                engine.build_relevant_snapshot(session, tick * 66u);
+                engine.build_relevant_snapshot(session, world_snapshot);
             const network_example::WorldSnapshot send =
                 engine.build_snapshot_send_set(session, relevant, 1200u);
             for (const network_example::EntitySnapshot& entity :

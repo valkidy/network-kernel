@@ -941,6 +941,14 @@ private:
         PeerId owner_peer,
         std::uint32_t action_instance_id);
     void publish_snapshot();
+    // The whole world at this tick, before any session's filter. Built once per
+    // snapshot interval and handed to every session's build_relevant_snapshot:
+    // building it per session cost sessions x entities on every interval.
+    WorldSnapshot build_shared_world_snapshot(std::uint32_t server_time_ms) const;
+    WorldSnapshot build_relevant_snapshot(
+        const PeerSession& session,
+        const WorldSnapshot& world_snapshot) const;
+    // Builds its own world snapshot; for callers with one session to ask about.
     WorldSnapshot build_relevant_snapshot(
         const PeerSession& session,
         std::uint32_t server_time_ms) const;
