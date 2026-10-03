@@ -4886,11 +4886,11 @@ void KernelEngine::sync_entity_colliders_from_world() {
 // re-aimed cost agents times colliders, in Jolt body writes and broad phase
 // AABB notifications. Moving one entity moves one entity's colliders.
 //
-// It still walks the instance list to find them, because the registry is a flat
-// vector with no per-entity index; what it does not do is write the other
-// entities' bodies into the physics world. There is also no removal sweep and
-// no broad phase rebuild here: a transform adds and removes nothing, and the
-// three tick-level syncs still do both.
+// It finds them through the registry's per-entity index rather than by walking
+// the instance list: walking it was still agents times colliders, only in
+// comparisons instead of Jolt writes. There is also no removal sweep and no
+// broad phase rebuild here: a transform adds and removes nothing, and the three
+// tick-level syncs still do both.
 void KernelEngine::sync_entity_colliders_from_world(NetId net_id) {
     if (net_id == 0) {
         return;
@@ -4902,22 +4902,20 @@ void KernelEngine::sync_entity_colliders_from_world(NetId net_id) {
     if (world_.registry().all_of<ProjectileState>(*entity)) {
         materialize_projectile_collider(net_id);
     }
-    for (ColliderInstance& collider :
-         world_.collider_registry().mutable_instances()) {
-        if (collider.entity_net_id != net_id) {
-            continue;
-        }
-        refresh_collider_world_transform(collider);
+    // Looked up after materializing, which may have added this entity's
+    // collider. Neither loop adds or removes one, so the indices hold.
+    std::vector<ColliderInstance>& instances =
+        world_.collider_registry().mutable_instances();
+    const std::vector<std::uint32_t>& indices =
+        world_.collider_registry().entity_collider_indices(net_id);
+    for (const std::uint32_t index : indices) {
+        refresh_collider_world_transform(instances[index]);
     }
     if (physics_world_ == nullptr) {
         return;
     }
-    for (const ColliderInstance& collider :
-         world_.collider_registry().instances()) {
-        if (collider.entity_net_id != net_id) {
-            continue;
-        }
-        push_collider_into_physics(collider);
+    for (const std::uint32_t index : indices) {
+        push_collider_into_physics(instances[index]);
     }
 }
 
@@ -5135,7 +5133,7 @@ void KernelEngine::sync_client_render_colliders() {
         return;
     }
 
-    world_.collider_registry().mutable_instances().clear();
+    world_.collider_registry().clear();
     std::unordered_set<NetId> current_prediction_obstacles;
     for (const RenderEntityState& state : render_states_) {
         const EntityType entity_type =
