@@ -1313,6 +1313,11 @@ ProjectileSyncMode to_projectile_sync_mode(std::uint8_t sync_mode) {
     return ProjectileSyncMode::kHybridDeterministicThenSnapshot;
 }
 
+bool is_ground_following(const RuntimeProjectileTemplate& projectile_template) {
+    return projectile_template.projectile_type == ProjectileType::kAreaEffect &&
+           projectile_template.area_ground_follow.enabled;
+}
+
 std::uint8_t to_kernel_projectile_sync_mode(ProjectileSyncMode sync_mode) {
     switch (sync_mode) {
         case ProjectileSyncMode::kLocalPredictedDeterministic:
@@ -7561,8 +7566,39 @@ void KernelEngine::handle_client_projectile_spawn_batch(
                     false,
                     0,
                     projectile_template->projectile_type ==
-                        ProjectileType::kStandard,
+                            ProjectileType::kStandard ||
+                        is_ground_following(*projectile_template),
                 });
+                // Nothing is sent about a ground follower after its spawn, and
+                // the spawn record is the one it had at birth -- a session that
+                // only now finds it relevant gets a record many ticks old. A
+                // straight line could be evaluated from it at any age; this
+                // field has to be stepped there, over the same terrain the
+                // authority stepped it on. A parked one was re-recorded where
+                // it parked, so its catch-up is a no-op.
+                if (is_ground_following(*projectile_template)) {
+                    PredictedProjectile& follower = predicted_projectiles_.back();
+                    const std::uint32_t catch_up_ticks = std::min(
+                        local_prediction_server_tick(packet.server_tick) -
+                            packet.server_tick,
+                        projectile_template->lifetime_ticks);
+                    const ground_follow::State state = ground_following_spawn_state(
+                        prediction_physics_world_.get(),
+                        area_ground_follow_config(
+                            projectile_template->area_ground_follow,
+                            initial_velocity,
+                            projectile_template->area_motion_collision_mask),
+                        spawn_position,
+                        catch_up_ticks,
+                        tick_loop_.fixed_delta_seconds());
+                    follower.position = state.position;
+                    follower.lifetime_elapsed_ticks = catch_up_ticks;
+                    if (state.parked) {
+                        follower.spawn_position = state.position;
+                        follower.initial_velocity = glm::vec3{0.0f};
+                        follower.velocity = glm::vec3{0.0f};
+                    }
+                }
             }
 
             const glm::vec3 spawn_position = record.spawn_position;
@@ -9723,9 +9759,26 @@ void KernelEngine::predict_local_projectile(const KernelPlayerInput& input) {
         player_position = latest->position;
     }
 
-    const glm::vec3 origin = player_position + glm::vec3{0.0f, 1.0f, 0.0f};
+    glm::vec3 origin = player_position + glm::vec3{0.0f, 1.0f, 0.0f};
     const glm::vec3 direction = input_aim_to_world(input);
-    const glm::vec3 velocity = direction * projectile_template->speed;
+    glm::vec3 velocity = direction * projectile_template->speed;
+    const bool ground_following = is_ground_following(*projectile_template);
+    // Launched the way the authority launches it: level, and settled onto the
+    // ground under the muzzle before its first step.
+    if (ground_following) {
+        velocity = ground_following_launch_velocity(
+            direction, projectile_template->speed);
+        origin = ground_following_spawn_state(
+                     prediction_physics_world_.get(),
+                     area_ground_follow_config(
+                         projectile_template->area_ground_follow,
+                         velocity,
+                         projectile_template->area_motion_collision_mask),
+                     origin,
+                     0u,
+                     tick_loop_.fixed_delta_seconds())
+                     .position;
+    }
     const ProjectileMotionModel motion_model = projectile_template->motion_model;
     const glm::vec3 gravity = projectile_template->gravity;
     predicted_projectiles_.push_back(PredictedProjectile{
@@ -9752,7 +9805,8 @@ void KernelEngine::predict_local_projectile(const KernelPlayerInput& input) {
         false,
         false,
         0,
-        projectile_template->projectile_type == ProjectileType::kStandard,
+        projectile_template->projectile_type == ProjectileType::kStandard ||
+            ground_following,
     });
 }
 
@@ -11099,6 +11153,41 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
             projectile.actor_hit_prediction_spent = true;
         }
         projectile.age_ticks += 1;
+        // A ground follower is stepped by the solver the authority steps it
+        // with, over this client's copy of the same static world. That solver
+        // owns what stops it too, so none of the straight-line flight or its
+        // collision below applies. Nothing ever corrects it: it is only drawn.
+        if (const RuntimeProjectileTemplate* follower_template =
+                catalog_runtime_.find_projectile_template(
+                    projectile.projectile_template_id);
+            follower_template != nullptr &&
+            is_ground_following(*follower_template)) {
+            if (prediction_physics_world_ != nullptr &&
+                glm::dot(projectile.initial_velocity, projectile.initial_velocity) >
+                    0.0f) {
+                ground_follow::State state{projectile.position, false};
+                const ground_follow::StepResult step = ground_follow::step(
+                    *prediction_physics_world_,
+                    area_ground_follow_config(
+                        follower_template->area_ground_follow,
+                        projectile.initial_velocity,
+                        follower_template->area_motion_collision_mask),
+                    fixed_delta_seconds,
+                    &state);
+                projectile.position = state.position;
+                projectile.velocity = step.velocity;
+                if (state.parked) {
+                    projectile.spawn_position = state.position;
+                    projectile.initial_velocity = glm::vec3{0.0f};
+                    projectile.velocity = glm::vec3{0.0f};
+                }
+            }
+            if (projectile.ends_on_lifetime && projectile.max_lifetime_ticks > 0u &&
+                projectile.lifetime_elapsed_ticks >= projectile.max_lifetime_ticks) {
+                projectile.locally_terminated = true;
+            }
+            continue;
+        }
         const float projectile_age_duration =
             static_cast<float>(projectile.age_ticks) * fixed_delta_seconds;
         const glm::vec3 next_position = projectile_position_at(
