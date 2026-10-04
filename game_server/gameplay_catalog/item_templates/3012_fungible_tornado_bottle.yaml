@@ -1,0 +1,22 @@
+# Tornado in a bottle: where it breaks, a tornado rises and travels on in the
+# direction the bottle was thrown, pulling everything hostile its column
+# reaches once a second for ten seconds. It deals no damage.
+#
+# Fungible and identity-preserving, like fungible_pull_bottle: a throw splits
+# one bottle off the stack and the prop that lands is that bottle.
+id: 3012
+name: fungible_tornado_bottle
+mode: fungible
+max_stack: 3
+capabilities: [pickupable, throwable]
+entity_template: tornado_bottle
+world_interaction:
+  range: 3.0
+  line_of_sight_required: false
+throw:
+  mode: identity_preserving
+  trajectory_projectile: grenade_shell
+use:
+  quantity_cost: 0
+  cooldown_ticks: 0
+  destroy_when_empty: false

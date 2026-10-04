@@ -353,6 +353,24 @@ enum class ProjectileType : std::uint8_t {
     kBeam = 2,
 };
 
+// What an area effect's overlap is: a ball, or an upright column that is
+// bounded by its height as well as its radius.
+enum class AreaEffectShape : std::uint8_t {
+    kSphere = 0,
+    kCylinder = 1,
+};
+
+// How a travelling area effect moves. Ground-following rides the terrain at a
+// hover height (simulation/public/ground_follow.h) instead of flying the
+// straight line its spawn velocity draws.
+struct AreaEffectGroundFollow {
+    bool enabled = false;
+    float hover_height = 0.0f;
+    float max_slope_degrees = 50.0f;
+    float step_up = 0.5f;
+    float probe_depth = 0.5f;
+};
+
 enum class ProjectileDamageFalloff : std::uint8_t {
     kNone = 0,
     kLinear = 1,
@@ -947,6 +965,12 @@ struct RuntimeProjectileTemplate {
     // Area effects only. What stops the effect as it travels, as static-world
     // layer bits. Zero means nothing does and no sweep is run at all.
     std::uint32_t area_motion_collision_mask = 0;
+    // Area effects only. The overlap's shape; a cylinder's half height is
+    // area_half_height and its radius is area_radius.
+    AreaEffectShape area_shape = AreaEffectShape::kSphere;
+    float area_half_height = 0.0f;
+    // Area effects only. Disabled unless authored.
+    AreaEffectGroundFollow area_ground_follow{};
     std::uint32_t collision_mask = kCollisionMaskDamageable;
     std::uint32_t max_hit_count = 1;
     std::optional<CompiledActionGraphBinding> projectile_impact_binding;
@@ -1059,6 +1083,11 @@ struct ProjectileAreaEffectRuntime {
     // evaluation past its own lifetime.
     std::uint32_t next_damage_tick = 0;
     std::optional<CompiledActionGraphBinding> action_graph_binding;
+    // Appended after the binding so the positional initialisers at both spawn
+    // sites stay as they are; each site copies these from the template.
+    AreaEffectShape shape = AreaEffectShape::kSphere;
+    float half_height = 0.0f;
+    AreaEffectGroundFollow ground_follow{};
 };
 
 struct ProjectileInteractionRule {

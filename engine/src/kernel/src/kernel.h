@@ -583,6 +583,11 @@ private:
         bool hidden_by_actor_hit = false;
         std::uint32_t actor_hit_reveal_tick = 0;
         bool actor_hit_prediction_spent = false;
+        // Ground followers only. Ticks left before it starts: one whose spawn
+        // record arrives before the render timeline has reached its spawn tick
+        // waits, hidden and unmoved, until it has -- so it is drawn on the
+        // timeline the actors it pulls are drawn on.
+        std::uint32_t hold_ticks = 0;
     };
 
     // One throw this client requested, from the request until the prop it
@@ -922,6 +927,7 @@ private:
         std::uint64_t* out_server_time_us) const;
     std::uint64_t render_target_server_time_us(
         std::uint64_t client_render_time_us) const;
+    std::uint32_t ground_follower_render_tick(std::uint32_t server_now_tick) const;
     void advance_render_clock(std::uint64_t client_render_time_us);
     bool build_interpolated_snapshot(
         std::uint64_t client_render_time_us,

@@ -82,6 +82,24 @@ bool spawn_projectile_from_template(
         start = launch.origin;
         velocity = launch.velocity;
     }
+    bool ground_following_parked = false;
+    if (projectile_template.projectile_type == ProjectileType::kAreaEffect &&
+        projectile_template.area_ground_follow.enabled) {
+        velocity = ground_following_launch_velocity(
+            normalized_or(direction, glm::vec3{1.0f, 0.0f, 0.0f}),
+            projectile_template.speed);
+        const ground_follow::State spawn_state = ground_following_spawn_state(
+            world.collision_world(),
+            area_ground_follow_config(
+                projectile_template.area_ground_follow,
+                velocity,
+                projectile_template.area_motion_collision_mask),
+            start,
+            0u,
+            fixed_delta_seconds);
+        start = spawn_state.position;
+        ground_following_parked = spawn_state.parked;
+    }
     const NetId projectile_net_id = world.spawn_projectile(
         owner_peer,
         start,
@@ -113,7 +131,8 @@ bool spawn_projectile_from_template(
     projectile.launch_salt = launch_salt;
     projectile.derived = projectile_template.derived;
     projectile.spawn_position = start;
-    projectile.initial_velocity = velocity;
+    projectile.initial_velocity =
+        ground_following_parked ? glm::vec3{0.0f} : velocity;
     projectile.gravity = projectile_template.gravity;
     projectile.previous_position = start;
     // A descent falls along its own path, not the heading it was handed.
@@ -132,7 +151,9 @@ bool spawn_projectile_from_template(
             Hitbox{
                 {0.0f, 0.0f, 0.0f},
                 {projectile_template.area_radius,
-                 projectile_template.area_radius,
+                 projectile_template.area_shape == AreaEffectShape::kCylinder
+                     ? projectile_template.area_half_height
+                     : projectile_template.area_radius,
                  projectile_template.area_radius},
                 projectile_template.collider_template_id});
         world.registry().emplace<ProjectileAreaEffectRuntime>(
@@ -154,6 +175,11 @@ bool spawn_projectile_from_template(
                 {},
                 projectile_template.projectile_impact_binding,
             });
+        ProjectileAreaEffectRuntime& area_effect =
+            world.registry().get<ProjectileAreaEffectRuntime>(*projectile_entity);
+        area_effect.shape = projectile_template.area_shape;
+        area_effect.half_height = projectile_template.area_half_height;
+        area_effect.ground_follow = projectile_template.area_ground_follow;
     }
     if (projectile_template.projectile_type == ProjectileType::kBeam) {
         world.registry().emplace<ProjectileBeamRuntime>(
@@ -1364,6 +1390,61 @@ glm::vec3 projectile_velocity_at(
     return initial_velocity;
 }
 
+ground_follow::Config area_ground_follow_config(
+    const AreaEffectGroundFollow& ground_follow,
+    const glm::vec3& initial_velocity,
+    std::uint32_t motion_collision_mask) {
+    ground_follow::Config config{};
+    config.horizontal_velocity =
+        glm::vec3{initial_velocity.x, 0.0f, initial_velocity.z};
+    config.hover_height = ground_follow.hover_height;
+    config.max_slope_degrees = ground_follow.max_slope_degrees;
+    config.step_up = ground_follow.step_up;
+    config.probe_depth = ground_follow.probe_depth;
+    // A ray at the field's centre. The swept volume a standard projectile
+    // takes from its collider would have to stay under hover_height to keep
+    // off the ground it rides, and the probe already stops it at anything
+    // taller than step_up.
+    config.sweep_radius = 0.0f;
+    config.filter = collision_filter_from_mask(motion_collision_mask);
+    return config;
+}
+
+glm::vec3 ground_following_launch_velocity(
+    const glm::vec3& direction,
+    float speed) {
+    const glm::vec3 horizontal{direction.x, 0.0f, direction.z};
+    const float length = glm::length(horizontal);
+    if (length <= 0.0001f) {
+        return glm::vec3{0.0f};
+    }
+    return horizontal / length * speed;
+}
+
+ground_follow::State ground_following_spawn_state(
+    const physics::PhysicsWorld* physics_world,
+    const ground_follow::Config& config,
+    const glm::vec3& spawn_position,
+    std::uint32_t catch_up_ticks,
+    float fixed_delta_seconds) {
+    ground_follow::State state{spawn_position, false};
+    if (physics_world == nullptr) {
+        return state;
+    }
+    // Far enough to find the ground under a launch from hand height: the
+    // field's own ride plus everything the probe reaches below it. Further
+    // than that and it holds its spawn height, as it would over a cliff.
+    ground_follow::settle(
+        *physics_world,
+        config,
+        config.hover_height + config.step_up + config.probe_depth,
+        &state);
+    for (std::uint32_t tick = 0; tick < catch_up_ticks && !state.parked; ++tick) {
+        ground_follow::step(*physics_world, config, fixed_delta_seconds, &state);
+    }
+    return state;
+}
+
 std::vector<physics::CollisionHit> query_projectile_collision_hits(
     const physics::PhysicsWorld& collision_world,
     const ProjectileState& projectile,
@@ -1442,6 +1523,41 @@ void simulate_projectiles(
         ProjectileState& projectile = view.get<ProjectileState>(entity);
 
         projectile.previous_position = transform.position;
+        // A ground-following field is stepped, not evaluated: where it is now
+        // depends on every slope it has crossed, so there is no closed form
+        // from its spawn point. The solver also owns what stops it, so the
+        // straight-line sweep further down is not for it.
+        if (const auto* area_effect =
+                world.registry().try_get<ProjectileAreaEffectRuntime>(entity);
+            area_effect != nullptr && area_effect->ground_follow.enabled) {
+            projectile.age_ticks += 1;
+            if (world.collision_world() == nullptr) {
+                velocity.linear = glm::vec3{0.0f};
+                continue;
+            }
+            ground_follow::State state{transform.position, false};
+            const ground_follow::StepResult step = ground_follow::step(
+                *world.collision_world(),
+                area_ground_follow_config(
+                    area_effect->ground_follow,
+                    projectile.initial_velocity,
+                    area_effect->motion_collision_mask),
+                fixed_delta_seconds,
+                &state);
+            transform.position = state.position;
+            velocity.linear = step.velocity;
+            if (state.parked) {
+                // Parked the way a straight-line field is: a zero
+                // initial_velocity is what the gate at the top of this loop
+                // reads, so from now on it runs nothing here -- including
+                // this assignment, so the velocity has to read zero now or it
+                // keeps the parking tick's last step for good.
+                projectile.spawn_position = transform.position;
+                projectile.initial_velocity = glm::vec3{0.0f};
+                velocity.linear = glm::vec3{0.0f};
+            }
+            continue;
+        }
         if (projectile.motion_model == ProjectileMotionModel::kHoming &&
             world.registry().all_of<HomingState>(entity)) {
             advance_homing_projectile(

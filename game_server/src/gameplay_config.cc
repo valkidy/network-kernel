@@ -254,6 +254,13 @@ void hash_projectile_template(
     hash_scalar(hash, mechanics.area_effect.collision_mask);
     hash_scalar(hash, mechanics.area_effect.hit_instigator);
     hash_scalar(hash, mechanics.area_effect.motion_collision_mask);
+    hash_scalar(hash, mechanics.area_effect.shape);
+    hash_scalar(hash, mechanics.area_effect.motion);
+    hash_float(hash, mechanics.area_effect.half_height);
+    hash_float(hash, mechanics.area_effect.hover_height);
+    hash_float(hash, mechanics.area_effect.max_slope_degrees);
+    hash_float(hash, mechanics.area_effect.step_up);
+    hash_float(hash, mechanics.area_effect.probe_depth);
     hash_float(hash, mechanics.beam.length);
     hash_float(hash, mechanics.beam.radius);
     hash_scalar(hash, mechanics.beam.damage_per_tick);
@@ -5827,6 +5834,128 @@ void read_projectile_launch(
     }
 }
 
+float positive_area_float_from_yaml(
+    const YAML::Node& node,
+    float fallback,
+    const std::string& what,
+    const std::string& template_name) {
+    const float value = node ? node.as<float>() : fallback;
+    if (!std::isfinite(value) || value <= 0.0f) {
+        throw std::runtime_error(
+            what + " must be finite and positive: " + template_name);
+    }
+    return value;
+}
+
+// The overlap's shape. A sphere is the default and needs nothing else; a
+// cylinder is an upright column that also needs its half height, which is the
+// one thing a sphere's radius does not already say.
+void area_effect_shape_from_yaml(
+    const YAML::Node& node,
+    const std::string& template_name,
+    KernelProjectileMechanicsDefinition* mechanics) {
+    const std::string shape =
+        node["area_shape"] ? node["area_shape"].as<std::string>() : "sphere";
+    if (shape == "sphere") {
+        if (node["half_height"]) {
+            throw std::runtime_error(
+                "half_height needs area_shape cylinder: " + template_name);
+        }
+        mechanics->area_effect.shape = KernelAreaEffectShape_Sphere;
+        return;
+    }
+    if (shape != "cylinder") {
+        throw std::runtime_error(
+            "unsupported area_shape " + shape + ": " + template_name);
+    }
+    if (!node["half_height"]) {
+        throw std::runtime_error(
+            "area_shape cylinder needs half_height: " + template_name);
+    }
+    mechanics->area_effect.shape = KernelAreaEffectShape_Cylinder;
+    mechanics->area_effect.half_height = positive_area_float_from_yaml(
+        node["half_height"], 0.0f, "half_height", template_name);
+}
+
+// How a travelling field moves. Linear, the default, is the straight line its
+// speed draws. ground_follow rides the terrain, and three things about it are
+// refused here rather than left to misbehave:
+//   - a field that does not travel has nothing to follow;
+//   - one whose motion_collision_mask leaves out terrain has nothing to probe,
+//     and would hold its spawn height for good;
+//   - one that a client both predicts and has corrected by snapshots (hybrid).
+//     The correction re-anchors through the straight-line formula, which is
+//     wrong for a field that climbs, so only a field the client derives alone
+//     (local_predicted_deterministic) or only draws from snapshots
+//     (server_snapshot_only) is accepted.
+void area_effect_motion_from_yaml(
+    const YAML::Node& node,
+    const std::string& path,
+    std::uint32_t source_kind,
+    const std::string& template_name,
+    KernelProjectileMechanicsDefinition* mechanics) {
+    const YAML::Node motion = node["motion"];
+    mechanics->area_effect.motion = KernelAreaEffectMotion_Linear;
+    if (!motion) {
+        return;
+    }
+    reject_unknown_keys(
+        motion,
+        {"type", "hover_height", "max_slope_degrees", "step_up", "probe_depth"},
+        path,
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_PROJECTILE);
+    const std::string type =
+        motion["type"] ? motion["type"].as<std::string>() : "linear";
+    if (type == "linear") {
+        if (motion.size() > 1u) {
+            throw std::runtime_error(
+                "a linear area_effect motion takes no settings: " +
+                template_name);
+        }
+        return;
+    }
+    if (type != "ground_follow") {
+        throw std::runtime_error(
+            "unsupported area_effect motion " + type + ": " + template_name);
+    }
+    if (mechanics->speed <= 0.0f) {
+        throw std::runtime_error(
+            "motion ground_follow needs an area_effect that travels: " +
+            template_name);
+    }
+    if ((mechanics->area_effect.motion_collision_mask &
+         KERNEL_COLLISION_LAYER_TERRAIN) == 0u) {
+        throw std::runtime_error(
+            "motion ground_follow needs terrain in motion_collision_mask: " +
+            template_name);
+    }
+    if (mechanics->sync_mode ==
+        KernelProjectileSyncMode_HybridDeterministicThenSnapshot) {
+        throw std::runtime_error(
+            "motion ground_follow needs sync_mode "
+            "local_predicted_deterministic or server_snapshot_only: " +
+            template_name);
+    }
+    if (!motion["hover_height"]) {
+        throw std::runtime_error(
+            "motion ground_follow needs hover_height: " + template_name);
+    }
+    mechanics->area_effect.motion = KernelAreaEffectMotion_GroundFollow;
+    mechanics->area_effect.hover_height = positive_area_float_from_yaml(
+        motion["hover_height"], 0.0f, "hover_height", template_name);
+    mechanics->area_effect.max_slope_degrees = positive_area_float_from_yaml(
+        motion["max_slope_degrees"], 50.0f, "max_slope_degrees", template_name);
+    if (mechanics->area_effect.max_slope_degrees >= 90.0f) {
+        throw std::runtime_error(
+            "max_slope_degrees must be under 90: " + template_name);
+    }
+    mechanics->area_effect.step_up = positive_area_float_from_yaml(
+        motion["step_up"], 0.5f, "step_up", template_name);
+    mechanics->area_effect.probe_depth = positive_area_float_from_yaml(
+        motion["probe_depth"], 0.5f, "probe_depth", template_name);
+}
+
 ProjectileTemplateConfig projectile_template_from_yaml(
     const YAML::Node& node,
     const std::string& path,
@@ -5854,6 +5983,9 @@ ProjectileTemplateConfig projectile_template_from_yaml(
             "collision_mask",
             "hit_instigator",
             "motion_collision_mask",
+            "area_shape",
+            "half_height",
+            "motion",
             "max_hit_count",
             "gravity",
             "triggers",
@@ -6076,7 +6208,21 @@ ProjectileTemplateConfig projectile_template_from_yaml(
         // damages them, so it has to be asked for rather than inherited.
         mechanics.area_effect.hit_instigator = static_cast<std::uint8_t>(
             node["hit_instigator"] && node["hit_instigator"].as<bool>() ? 1 : 0);
+        area_effect_shape_from_yaml(node, projectile_template.name, &mechanics);
+        area_effect_motion_from_yaml(
+            node, path, source_kind, projectile_template.name, &mechanics);
         return projectile_template;
+    }
+
+    for (const char* key : {"area_shape", "half_height", "motion"}) {
+        if (node[key]) {
+            // A standard projectile's flight and a beam's reach are answered
+            // by their own fields; these only shape an area effect's field.
+            throw std::runtime_error(
+                std::string(key) +
+                " is only supported on area_effect projectiles: " +
+                projectile_template.name);
+        }
     }
 
     if (node["motion_collision_mask"]) {

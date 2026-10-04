@@ -7,6 +7,7 @@
 
 #include "kernel/public/kernel_types.h"
 #include "physics/public/physics_world.h"
+#include "simulation/public/ground_follow.h"
 #include "sync/public/history_buffer.h"
 #include "world/public/world.h"
 
@@ -138,6 +139,32 @@ glm::vec3 projectile_velocity_at(
     ProjectileMotionModel motion_model,
     const glm::vec3& gravity,
     float elapsed_seconds);
+
+// A ground-following area effect's solver settings: its authored ride, its
+// horizontal travel, and the static-world layers that stop it. Every caller --
+// the spawn paths, the per-tick advance and a client predicting the same field
+// -- builds them here, so they cannot disagree about what the field is.
+ground_follow::Config area_ground_follow_config(
+    const AreaEffectGroundFollow& ground_follow,
+    const glm::vec3& initial_velocity,
+    std::uint32_t motion_collision_mask);
+
+// The horizontal launch velocity of a ground-following field: the heading's
+// horizontal part at full speed. Its height comes from the ground, so aiming
+// up or down changes where it goes, not how fast.
+glm::vec3 ground_following_launch_velocity(
+    const glm::vec3& direction,
+    float speed);
+
+// Where a ground-following field starts: settled onto the ground under its
+// spawn point, then stepped catch_up_ticks ticks forward for a spawn that is
+// already that old. Without a physics world it stays where it spawned.
+ground_follow::State ground_following_spawn_state(
+    const physics::PhysicsWorld* physics_world,
+    const ground_follow::Config& config,
+    const glm::vec3& spawn_position,
+    std::uint32_t catch_up_ticks,
+    float fixed_delta_seconds);
 
 // Where an actor under an ImpulseLockout is `elapsed_seconds` after a sample
 // of it at `origin` moving at `velocity`, until something stops it. While the
