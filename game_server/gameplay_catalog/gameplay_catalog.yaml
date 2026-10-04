@@ -74,7 +74,7 @@ patrol_budget:
   max_live_agents: 48
 # Every unit an on_alert spawner has put out, server-wide, alive at once. Each
 # caller's own max_live_agents bounds one caller; this bounds all of them, so N
-# grunts spotting a player on the same tick cannot put out N waves. It counts
+# callers spotting a player on the same tick cannot put out N waves. It counts
 # the units, not the callers: killing a caller does not hand its share back.
 reinforce_budget:
   max_live_agents: 64

@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -44,6 +45,7 @@ using network_example::game_server::SpawnerTrigger;
 constexpr const char* kCatalogDir = "game_server/gameplay_catalog";
 constexpr const char* kGruntFile = "entity_templates/26_chaser_grunt.yaml";
 constexpr const char* kNestFile = "entity_templates/208_prop_gingerbread_nest.yaml";
+constexpr const char* kCourierFile = "entity_templates/35_courier_grunt.yaml";
 
 constexpr const char* kBudgets =
     "\nreinforce_budget:\n"
@@ -90,19 +92,21 @@ public:
         fs::remove_all(root_);
         fs::copy(kCatalogDir, root_, fs::copy_options::recursive);
         shipping_catalog_ = read_file(root_ / "gameplay_catalog.yaml");
-        shipping_grunt_ = read_file(root_ / kGruntFile);
+        grunt_ = read_file(root_ / kGruntFile);
         nest_ = read_file(root_ / kNestFile);
-        // The cases author their own call for help and their own ceilings, so
-        // they start from the shipping files with those taken out.
+        courier_ = read_file(root_ / kCourierFile);
+        // The cases author their own call for help -- on chaser_grunt -- and
+        // their own ceilings, so they start from the shipping files with the
+        // shipped caller and ceilings taken out.
         catalog_ = cut(
             shipping_catalog_,
             "# Every unit an on_alert spawner",
             "agent_budget:\n  max_live_agents: 256\n");
-        grunt_ = cut(shipping_grunt_, "# Calls for help:", {});
+        fs::remove(root_ / kCourierFile);
     }
 
     const std::string& shipping_catalog() const { return shipping_catalog_; }
-    const std::string& shipping_grunt() const { return shipping_grunt_; }
+    const std::string& courier() const { return courier_; }
     const std::string& grunt() const { return grunt_; }
     const std::string& nest() const { return nest_; }
 
@@ -126,16 +130,25 @@ public:
         write_file(root_ / "gameplay_catalog.yaml", catalog_text);
         write_file(root_ / kGruntFile, grunt);
         write_file(root_ / kNestFile, nest);
-        std::vector<std::pair<std::string, std::string>> originals;
+        // What each file held before, or nothing if this load adds it.
+        std::vector<std::pair<std::string, std::optional<std::string>>> originals;
         for (const auto& [path, text] : others) {
-            originals.emplace_back(path, read_file(root_ / path));
+            originals.emplace_back(
+                path,
+                fs::exists(root_ / path)
+                    ? std::optional<std::string>(read_file(root_ / path))
+                    : std::nullopt);
             write_file(root_ / path, text);
         }
         GameServerGameplayConfig config =
             network_example::game_server::load_gameplay_config_from_catalog_file(
                 (root_ / "gameplay_catalog.yaml").string());
         for (const auto& [path, text] : originals) {
-            write_file(root_ / path, text);
+            if (text.has_value()) {
+                write_file(root_ / path, *text);
+            } else {
+                fs::remove(root_ / path);
+            }
         }
         return config;
     }
@@ -175,7 +188,7 @@ private:
 
     fs::path root_;
     std::string shipping_catalog_;
-    std::string shipping_grunt_;
+    std::string courier_;
     std::string catalog_;
     std::string grunt_;
     std::string nest_;
@@ -886,25 +899,29 @@ void world_rules_are_counted_not_refused(CatalogCopy* catalog) {
     }
 }
 
-// What ships: chaser_grunt calls two more grunts once per engagement, under
-// the 64 and 256 ceilings.
-void the_shipping_grunt_calls_for_help(CatalogCopy* catalog) {
+// What ships: courier_grunt calls two chaser_grunts once per engagement,
+// under the 64 and 256 ceilings, and chaser_grunt itself calls nobody.
+void the_shipping_courier_calls_chaser_grunts(CatalogCopy* catalog) {
     const GameServerGameplayConfig config = catalog->load_whole(
-        catalog->shipping_catalog(), catalog->shipping_grunt(), catalog->nest());
+        catalog->shipping_catalog(),
+        catalog->grunt(),
+        catalog->nest(),
+        {{kCourierFile, catalog->courier()}});
     require(config.reinforce_budget.max_live_agents == 64u);
     require(config.agent_budget.max_live_agents == 256u);
-    const SpawnerCarrierConfig* grunt = carrier_named(config, "chaser_grunt");
-    require(grunt != nullptr);
-    require(grunt->spawner.trigger == SpawnerTrigger::kOnAlert);
-    require(grunt->spawner.calls_per_alert == 1u);
-    require(grunt->spawner.interval_ticks == 600u);
-    require(grunt->spawner.max_live_agents == 4u);
-    require(grunt->spawner.count_min == 2u && grunt->spawner.count_max == 2u);
-    require(grunt->spawner.composition.size() == 1u);
-    require(grunt->spawner.composition[0].entity_template_id ==
+    require(carrier_named(config, "chaser_grunt") == nullptr);
+    const SpawnerCarrierConfig* courier = carrier_named(config, "courier_grunt");
+    require(courier != nullptr);
+    require(courier->entity_type == KernelEntityType_Actor);
+    require(courier->spawner.trigger == SpawnerTrigger::kOnAlert);
+    require(courier->spawner.calls_per_alert == 1u);
+    require(courier->spawner.interval_ticks == 600u);
+    require(courier->spawner.max_live_agents == 4u);
+    require(courier->spawner.count_min == 2u && courier->spawner.count_max == 2u);
+    require(courier->spawner.composition.size() == 1u);
+    require(courier->spawner.composition[0].entity_template_id ==
             template_id_of(config, "chaser_grunt"));
-    // Under the server-wide ceiling with room for a wave on top of every
-    // discretionary ceiling it was sized from.
+    // Room for every discretionary ceiling it was sized from.
     require(config.agent_budget.max_live_agents >=
             config.patrol_budget.max_live_agents +
                 config.reinforce_budget.max_live_agents);
@@ -914,7 +931,7 @@ void the_shipping_grunt_calls_for_help(CatalogCopy* catalog) {
 
 int main() {
     CatalogCopy catalog;
-    the_shipping_grunt_calls_for_help(&catalog);
+    the_shipping_courier_calls_chaser_grunts(&catalog);
     an_agent_carries_an_on_alert_spawner(&catalog);
     misauthored_on_alert_is_refused(&catalog);
     an_engagement_is_signalled_from_start_to_end(&catalog);

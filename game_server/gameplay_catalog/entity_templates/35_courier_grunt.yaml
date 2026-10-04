@@ -1,5 +1,11 @@
-id: 26
-name: chaser_grunt
+# A chaser_grunt that calls for help: the test unit for on_alert spawners.
+#
+# Everything above `spawner:` is chaser_grunt's, so it moves, sees and fights
+# exactly like one, and the only difference in play is the call. What it calls
+# is chaser_grunt itself, which carries no spawner -- so a call never chains,
+# whatever the guard against called units calling would say.
+id: 35
+name: courier_grunt
 entity_type: actor
 actor_type: agent
 camp: enemy_side
@@ -82,3 +88,26 @@ ai:
     # well inside it or the grunt yo-yos on the boundary.
     leash_meters: 18.0
     leash_resume_meters: 6.0
+# On first spotting someone, two chaser_grunts come out around it.
+#
+# Once per engagement, and no more often than every 20 s however its alert
+# flickers. Only while it can actually see its target: an engagement outlives
+# sight by up to two forget windows, and help arriving at empty ground reads as
+# a bug.
+#
+# Everything a call puts out also counts against the catalog's reinforce_budget
+# and agent_budget, and a call refused for room tries again on each tick the
+# courier is still engaged and in sight rather than waiting for the next fight.
+spawner:
+  trigger: on_alert
+  calls_per_alert: 1
+  interval_ticks: 600
+  # Two waves' worth from one courier, so a second engagement can call while
+  # the first wave is still standing, and a third cannot.
+  max_live_agents: 4
+  radius: 4.0
+  count: {min: 2, max: 2}
+  composition:
+    - entity_template: chaser_grunt
+      min: 2
+      max: 2
