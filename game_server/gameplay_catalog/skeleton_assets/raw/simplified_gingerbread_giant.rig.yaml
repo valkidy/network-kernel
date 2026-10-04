@@ -1,0 +1,30 @@
+# Rig identity and colliders for simplified_gingerbread_giant.glb.
+# GEO_* box dimensions are stored in the GLB node scales.
+# Gait timing and other locomotion tuning belong to the entity template.
+rig_version: 2
+skeleton: simplified_gingerbread_giant
+forward_axis: positive_z
+root_bone: SIM_Root
+body_bone: JNT_Body
+# Shared knee-local hinge; both bind-pose bend normals align with this axis.
+knee_hinge_local: {x: 0.0, y: 0.0, z: -1.0}
+# Model-space unit poles follow each knee's bind-pose bend direction.
+legs:
+  - {id: leg0, hip: JNT_Leg0_Hip, knee: JNT_Leg0_Knee, foot: JNT_Leg0_Foot,
+     pole_local: {x: 0.987310, y: 0.143246, z: -0.068547}}
+  - {id: leg1, hip: JNT_Leg1_Hip, knee: JNT_Leg1_Knee, foot: JNT_Leg1_Foot,
+     pole_local: {x: -0.989331, y: 0.144003, z: 0.022059}}
+colliders:
+  - {bone: GEO_Leg0_Upper, leg: leg0}
+  - {bone: GEO_Leg0_Lower, leg: leg0}
+  - {bone: GEO_Leg1_Upper, leg: leg1}
+  - {bone: GEO_Leg1_Lower, leg: leg1}
+  # The arms name no leg: they are limbs of the rig, but not part of any gait.
+  - {bone: GEO_Arm0_Upper}
+  - {bone: GEO_Arm0_Lower}
+  - {bone: GEO_Arm1_Upper}
+  - {bone: GEO_Arm1_Lower}
+  - {bone: GEO_Hip}
+  - {bone: GEO_Torso}
+  - {bone: GEO_Body}
+  - {bone: GEO_Head}
