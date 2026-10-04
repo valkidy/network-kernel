@@ -1,7 +1,6 @@
 #include "game_server/src/agent_sentry_controller.h"
 
 #include <array>
-#include <cassert>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -131,7 +130,7 @@ void load_catalog(KernelHandle* kernel) {
     catalog.projectile_template_count = 1;
     catalog.action_templates = actions.data();
     catalog.action_template_count = static_cast<std::uint32_t>(actions.size());
-    assert(Kernel_LoadGameplayCatalog(kernel, &catalog, nullptr));
+    require(Kernel_LoadGameplayCatalog(kernel, &catalog, nullptr));
 }
 
 std::uint32_t create_entity(
@@ -145,8 +144,8 @@ std::uint32_t create_entity(
     create_info.position = position;
     create_info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
     std::uint32_t net_id = 0;
-    assert(Kernel_ServerCreateEntity(kernel, &create_info, &net_id));
-    assert(net_id != 0);
+    require(Kernel_ServerCreateEntity(kernel, &create_info, &net_id));
+    require(net_id != 0);
     return net_id;
 }
 
@@ -168,7 +167,7 @@ void set_combat(
     combat.hitbox_half_extents = KernelVec3{0.4f, 0.8f, 0.4f};
     combat.ammo[0] = ammo;
     combat.reserve_magazines[0] = reserve_magazines;
-    assert(Kernel_ServerSetEntityCombatState(kernel, net_id, &combat));
+    require(Kernel_ServerSetEntityCombatState(kernel, net_id, &combat));
 }
 
 void set_spammer_weapon_mechanics(
@@ -184,7 +183,7 @@ void set_spammer_weapon_mechanics(
     weapon.fire_action_template_id = kTestFireActionTemplateId;
     weapon.reload_action_template_id = kTestReloadActionTemplateId;
     weapon.projectile_template_id = 3;
-    assert(Kernel_ServerSetEntityWeaponMechanics(kernel, net_id, &weapon));
+    require(Kernel_ServerSetEntityWeaponMechanics(kernel, net_id, &weapon));
 }
 
 void set_vision(
@@ -198,7 +197,7 @@ void set_vision(
     vision.vision_collider_template_id = vision_collider_template_id;
     vision.max_visible_hostiles = KERNEL_MAX_VISIBLE_HOSTILES;
     vision.max_visible_allies = KERNEL_MAX_VISIBLE_ALLIES;
-    assert(Kernel_ServerSetEntityVisionConfig(kernel, net_id, &vision));
+    require(Kernel_ServerSetEntityVisionConfig(kernel, net_id, &vision));
 }
 
 void run_frame(
@@ -227,16 +226,16 @@ network_example::game_server::SentryPerceptionSnapshot perception_for(
 KernelQuat query_rotation(KernelHandle* kernel, std::uint32_t net_id) {
     KernelServerEntityState state{};
     state.struct_size = sizeof(state);
-    assert(Kernel_ServerGetEntityState(kernel, net_id, &state));
-    assert(state.valid != 0u);
+    require(Kernel_ServerGetEntityState(kernel, net_id, &state));
+    require(state.valid != 0u);
     return state.rotation;
 }
 
 KernelServerEntityState query_state(KernelHandle* kernel, std::uint32_t net_id) {
     KernelServerEntityState state{};
     state.struct_size = sizeof(state);
-    assert(Kernel_ServerGetEntityState(kernel, net_id, &state));
-    assert(state.valid != 0u);
+    require(Kernel_ServerGetEntityState(kernel, net_id, &state));
+    require(state.valid != 0u);
     return state;
 }
 
@@ -250,7 +249,7 @@ KernelServerEntityState query_first_projectile(KernelHandle* kernel) {
         KernelEntityType_Projectile,
         states.data(),
         static_cast<std::uint32_t>(states.size()));
-    assert(count > 0);
+    require(count > 0);
     return states[0];
 }
 
@@ -264,8 +263,8 @@ float yaw_from_rotation(const KernelQuat& rotation) {
 
 void assert_rotation_faces(const KernelQuat& rotation, float x, float z) {
     const float expected_yaw = std::atan2(z, x);
-    assert(almost_equal(rotation.y, -std::sin(expected_yaw * 0.5f)));
-    assert(almost_equal(rotation.w, std::cos(expected_yaw * 0.5f)));
+    require(almost_equal(rotation.y, -std::sin(expected_yaw * 0.5f)));
+    require(almost_equal(rotation.w, std::cos(expected_yaw * 0.5f)));
 }
 
 }  // namespace
@@ -273,7 +272,7 @@ void assert_rotation_faces(const KernelQuat& rotation, float x, float z) {
 int main() {
     KernelConfig config = server_config();
     KernelHandle* kernel = Kernel_Create(&config);
-    assert(kernel != nullptr);
+    require(kernel != nullptr);
     require(Kernel_StartDedicatedServer(kernel, 8045));
     load_catalog(kernel);
 
@@ -288,7 +287,7 @@ int main() {
     KernelQuat identity{0.0f, 0.0f, 0.0f, 1.0f};
 
     KernelVec3 out_of_range{100.0f, 0.0f, 0.0f};
-    assert(Kernel_ServerSetEntityTransform(kernel, player_net_id, &out_of_range, &identity));
+    require(Kernel_ServerSetEntityTransform(kernel, player_net_id, &out_of_range, &identity));
     Kernel_Update(kernel, 1.0f / 30.0f);
 
     network_example::game_server::AgentRuntimeState enemy;
@@ -313,66 +312,66 @@ int main() {
     const network_example::game_server::AgentSentryController controller;
 
     run_frame(kernel, controller, &enemies);
-    assert(enemies[0].sentry.state == network_example::game_server::AgentSentryState::kIdle);
+    require(enemies[0].sentry.state == network_example::game_server::AgentSentryState::kIdle);
     KernelQuat rotation = query_rotation(kernel, enemy_net_id);
-    assert(almost_equal(yaw_from_rotation(rotation), 0.0f));
+    require(almost_equal(yaw_from_rotation(rotation), 0.0f));
     run_frame(kernel, controller, &enemies);
     rotation = query_rotation(kernel, enemy_net_id);
     const float patrol_degrees = std::fabs(yaw_from_rotation(rotation)) * 180.0f /
                                  3.14159265358979323846f;
-    assert(patrol_degrees >= 15.0f);
-    assert(patrol_degrees <= 30.0f);
+    require(patrol_degrees >= 15.0f);
+    require(patrol_degrees <= 30.0f);
 
     KernelVec3 player_position{5.0f, 0.0f, 2.0f};
     KernelVec3 agent_position{0.0f, 0.0f, 0.0f};
-    assert(Kernel_ServerSetEntityTransform(
+    require(Kernel_ServerSetEntityTransform(
         kernel,
         enemy_net_id,
         &agent_position,
         &identity));
-    assert(Kernel_ServerSetEntityTransform(kernel, player_net_id, &player_position, &identity));
+    require(Kernel_ServerSetEntityTransform(kernel, player_net_id, &player_position, &identity));
     Kernel_Update(kernel, 1.0f / 30.0f);
     run_frame(kernel, controller, &enemies);
-    assert(enemies[0].sentry.state == network_example::game_server::AgentSentryState::kAlert);
+    require(enemies[0].sentry.state == network_example::game_server::AgentSentryState::kAlert);
     const auto perception = perception_for(kernel, enemy_net_id);
-    assert(perception.has_target_position);
-    assert(almost_equal(perception.target_position.x, player_position.x));
-    assert(almost_equal(perception.target_position.y, player_position.y + 0.8f));
-    assert(almost_equal(perception.target_position.z, player_position.z));
+    require(perception.has_target_position);
+    require(almost_equal(perception.target_position.x, player_position.x));
+    require(almost_equal(perception.target_position.y, player_position.y + 0.8f));
+    require(almost_equal(perception.target_position.z, player_position.z));
     rotation = query_rotation(kernel, enemy_net_id);
     assert_rotation_faces(rotation, 5.0f, 2.0f);
     KernelServerEntityState state = query_state(kernel, enemy_net_id);
-    assert(state.ammo[0] == 2);
+    require(state.ammo[0] == 2);
 
     run_frame(kernel, controller, &enemies);
-    assert(enemies[0].sentry.state == network_example::game_server::AgentSentryState::kAttack);
+    require(enemies[0].sentry.state == network_example::game_server::AgentSentryState::kAttack);
     state = query_state(kernel, enemy_net_id);
-    assert(state.ammo[0] == 1);
+    require(state.ammo[0] == 1);
     const KernelServerEntityState projectile = query_first_projectile(kernel);
-    assert(almost_equal(projectile.position.y, 1.0f));
-    assert(projectile.velocity.y > 0.0f);
+    require(almost_equal(projectile.position.y, 1.0f));
+    require(projectile.velocity.y > 0.0f);
     KernelServerEntityState player_state = query_state(kernel, player_net_id);
     for (int tick = 0; tick < 30 && player_state.hp == 100; ++tick) {
         Kernel_Update(kernel, 1.0f / 30.0f);
         player_state = query_state(kernel, player_net_id);
     }
-    assert(player_state.hp == 99);
+    require(player_state.hp == 99);
 
     run_frame(kernel, controller, &enemies);
     state = query_state(kernel, enemy_net_id);
-    assert(state.ammo[0] == 0);
+    require(state.ammo[0] == 0);
 
     run_frame(kernel, controller, &enemies);
     state = query_state(kernel, enemy_net_id);
-    assert(state.is_reloading != 0u);
-    assert(state.reload_remaining_ticks > 0u);
+    require(state.is_reloading != 0u);
+    require(state.reload_remaining_ticks > 0u);
     for (int tick = 0; tick < 3; ++tick) {
         run_frame(kernel, controller, &enemies);
     }
     state = query_state(kernel, enemy_net_id);
-    assert(state.is_reloading == 0u);
-    assert(state.ammo[0] == 2);
-    assert(state.reserve_magazines[0] == 3);
+    require(state.is_reloading == 0u);
+    require(state.ammo[0] == 2);
+    require(state.reserve_magazines[0] == 3);
 
     network_example::game_server::AgentSentryConfig cooldown_config =
         sentry_config;
@@ -383,41 +382,41 @@ int main() {
         controller;
     run_frame(kernel, cooldown_controller, &enemies);
     state = query_state(kernel, enemy_net_id);
-    assert(state.ammo[0] == 2);
-    assert(enemies[0].sentry.ballistic_retry_ticks == 3);
+    require(state.ammo[0] == 2);
+    require(enemies[0].sentry.ballistic_retry_ticks == 3);
     for (int expected = 2; expected >= 0; --expected) {
         run_frame(kernel, cooldown_controller, &enemies);
         state = query_state(kernel, enemy_net_id);
-        assert(state.ammo[0] == 2);
-        assert(
+        require(state.ammo[0] == 2);
+        require(
             enemies[0].sentry.ballistic_retry_ticks ==
             static_cast<std::uint32_t>(expected));
-        assert(enemies[0].velocity.x == 0.0f);
-        assert(enemies[0].velocity.z == 0.0f);
+        require(enemies[0].velocity.x == 0.0f);
+        require(enemies[0].velocity.z == 0.0f);
     }
     run_frame(kernel, cooldown_controller, &enemies);
     state = query_state(kernel, enemy_net_id);
-    assert(state.ammo[0] == 2);
-    assert(enemies[0].sentry.ballistic_retry_ticks == 3);
+    require(state.ammo[0] == 2);
+    require(enemies[0].sentry.ballistic_retry_ticks == 3);
 
-    assert(Kernel_ServerSetEntityTransform(kernel, player_net_id, &out_of_range, &identity));
+    require(Kernel_ServerSetEntityTransform(kernel, player_net_id, &out_of_range, &identity));
     Kernel_Update(kernel, 1.0f / 30.0f);
     for (int tick = 0; tick < 2; ++tick) {
         run_frame(kernel, controller, &enemies);
-        assert(enemies[0].sentry.state == network_example::game_server::AgentSentryState::kAttack);
+        require(enemies[0].sentry.state == network_example::game_server::AgentSentryState::kAttack);
     }
     run_frame(kernel, controller, &enemies);
-    assert(enemies[0].sentry.state == network_example::game_server::AgentSentryState::kAlert);
+    require(enemies[0].sentry.state == network_example::game_server::AgentSentryState::kAlert);
 
     for (int tick = 0; tick < 2; ++tick) {
         run_frame(kernel, controller, &enemies);
-        assert(enemies[0].sentry.state == network_example::game_server::AgentSentryState::kAlert);
+        require(enemies[0].sentry.state == network_example::game_server::AgentSentryState::kAlert);
     }
     run_frame(kernel, controller, &enemies);
-    assert(enemies[0].sentry.state == network_example::game_server::AgentSentryState::kIdle);
-    assert(enemies[0].velocity.x == 0.0f);
-    assert(enemies[0].velocity.y == 0.0f);
-    assert(enemies[0].velocity.z == 0.0f);
+    require(enemies[0].sentry.state == network_example::game_server::AgentSentryState::kIdle);
+    require(enemies[0].velocity.x == 0.0f);
+    require(enemies[0].velocity.y == 0.0f);
+    require(enemies[0].velocity.z == 0.0f);
 
     Kernel_Destroy(kernel);
     return 0;
