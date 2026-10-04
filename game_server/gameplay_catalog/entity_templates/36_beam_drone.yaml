@@ -1,0 +1,74 @@
+# A flying drone: holds 9 m over whatever is beneath it, sees far, and burns
+# what it sees with a beam from above.
+#
+# It flies on the hover controller, so it never falls and is stopped by
+# terrain and static obstacles in every direction, rising over what it can
+# climb in time. It is a chaser for the same reason a melee unit is: it closes
+# until the target is within its beam's reach across the ground, then holds
+# there. Every distance below is horizontal, which is what lets a unit 9 m up
+# arrive at all.
+id: 36
+name: beam_drone
+entity_type: actor
+actor_type: agent
+camp: enemy_side
+collider_template: sentry_grunt_hit_aabb
+health:
+  hp: 200
+  max_hp: 200
+movement:
+  controller: hover
+  move_speed_meters_per_second: 4.0
+  collider_template: sentry_grunt_movement_capsule
+  # Ignored by hover, which never falls; present because every actor authors
+  # it.
+  gravity: {x: 0.0, y: 0.0, z: 0.0}
+  max_slope_degrees: 50.0
+  step_height: 0.4
+  ground_probe_distance: 0.25
+  ground_snap_distance: 0.5
+  # Not `actor`: a drone flies over ground units rather than being stopped by
+  # them, and leaving the layer out keeps its capsule out of everyone else's
+  # way too.
+  collision_mask: terrain | static_obstacle
+  hover:
+    height_meters: 9.0
+    vertical_speed_meters_per_second: 3.0
+hitbox:
+  center: {x: 0.0, y: 0.8, z: 0.0}
+  half_extents: {x: 0.4, y: 0.8, z: 0.4}
+weapon_slots:
+  - 16
+active_weapon_slot: 0
+animations:
+  idle: 0
+  chasing: 1
+vision:
+  collider_template: drone_vision_cone
+ai:
+  controller: chaser
+  profile: default
+  sentry:
+    # A second of tracking before it fires, against a grunt's three: it saw
+    # first and from further, and should feel quick to react.
+    alert_ticks: 30
+    forget_ticks: 150
+    patrol_rotation_interval_ticks: 30
+    patrol_rotation_min_degrees: 15.0
+    patrol_rotation_max_degrees: 30.0
+    weapon_id: 16
+    animation_idle: idle
+    animation_attack: chasing
+  chaser:
+    # Closes to 8 m across the ground and holds out to 10, inside a 14 m
+    # attack range, so wherever it is parked it can fire. drone_beam reaches
+    # 20 m, enough for 14 m across and 9 m down.
+    stop_distance_meters: 8.0
+    resume_distance_meters: 10.0
+    input_magnitude: 1.0
+    attack_range_meters: 14.0
+  patrol:
+    slot_radius_meters: 1.2
+    input_magnitude: 0.5
+    leash_meters: 24.0
+    leash_resume_meters: 8.0

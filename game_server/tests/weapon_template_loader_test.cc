@@ -960,6 +960,126 @@ void area_effect_motion_collision_mask_is_authored() {
     assert(load_fails(standard_dir));
 }
 
+// A tornado's two extras: a ground-following ride and an upright-column
+// overlap. Each loads with its defaults, and each refuses the combinations
+// that would leave it with nothing to do or a client unable to draw it.
+void area_effect_ground_follow_and_cylinder_are_authored() {
+    const std::string area_template =
+        "id: 4\nname: fire_floor_area\ntype: area_effect\n"
+        "collider_template: area_effect_sphere\n"
+        "damage: 12\n"
+        "lifetime_ticks: 6\n"
+        "damage_behavior:\n"
+        "  type: area_interval\n"
+        "  damage_interval_ticks: 2\n"
+        "  falloff: none\n"
+        "collision_mask: hostile_side\n";
+    const std::string travelling =
+        "speed: 6.0\nmotion_collision_mask: terrain\n"
+        "sync_mode: local_predicted_deterministic\n";
+    const auto load_with = [&](const std::string& name, const std::string& extra) {
+        const std::filesystem::path dir = tmp_dir(name);
+        write_valid_templates(dir);
+        write_file(
+            dir.parent_path() / "projectile_templates" / "fire_floor_area.yaml",
+            area_template + extra);
+        return dir;
+    };
+
+    // Absent: a sphere that flies a straight line, as every template did.
+    network_example::game_server::GameServerGameplayConfig config =
+        network_example::game_server::load_gameplay_config_from_weapon_template_directory(
+            load_with("tornado_default", "").string());
+    KernelAreaEffectMechanicsDefinition area =
+        projectile_mechanics(config, 4).area_effect;
+    assert(area.shape == KernelAreaEffectShape_Sphere);
+    assert(area.motion == KernelAreaEffectMotion_Linear);
+    assert(area.half_height == 0.0f && area.hover_height == 0.0f);
+    assert(area.max_slope_degrees == 0.0f);
+
+    // Authored with only what it must name; the rest takes the character
+    // controller's numbers.
+    config = network_example::game_server::load_gameplay_config_from_weapon_template_directory(
+        load_with(
+            "tornado_minimal",
+            travelling + "motion:\n  type: ground_follow\n  hover_height: 1.5\n")
+            .string());
+    area = projectile_mechanics(config, 4).area_effect;
+    assert(area.motion == KernelAreaEffectMotion_GroundFollow);
+    assert(area.hover_height == 1.5f);
+    assert(area.max_slope_degrees == 50.0f);
+    assert(area.step_up == 0.5f && area.probe_depth == 0.5f);
+
+    config = network_example::game_server::load_gameplay_config_from_weapon_template_directory(
+        load_with(
+            "tornado_full",
+            travelling +
+                "area_shape: cylinder\nhalf_height: 1.5\n"
+                "motion:\n  type: ground_follow\n  hover_height: 1.5\n"
+                "  max_slope_degrees: 40\n  step_up: 0.3\n  probe_depth: 0.8\n")
+            .string());
+    area = projectile_mechanics(config, 4).area_effect;
+    assert(area.shape == KernelAreaEffectShape_Cylinder);
+    assert(area.half_height == 1.5f);
+    assert(area.max_slope_degrees == 40.0f);
+    assert(area.step_up == 0.3f && area.probe_depth == 0.8f);
+
+    // Server-only drawing is the other mode a client can live with.
+    assert(!load_fails(load_with(
+        "tornado_snapshot_only",
+        "speed: 6.0\nmotion_collision_mask: terrain\n"
+        "sync_mode: server_snapshot_only\n"
+        "motion:\n  type: ground_follow\n  hover_height: 1.5\n")));
+
+    const std::string ride = "motion:\n  type: ground_follow\n  hover_height: 1.5\n";
+    // Nothing to follow without travel.
+    assert(load_fails(load_with(
+        "tornado_still",
+        "motion_collision_mask: terrain\nsync_mode: local_predicted_deterministic\n" +
+            ride)));
+    // Nothing to probe without terrain in the mask.
+    assert(load_fails(load_with(
+        "tornado_no_terrain",
+        "speed: 6.0\nmotion_collision_mask: static_obstacle\n"
+        "sync_mode: local_predicted_deterministic\n" +
+            ride)));
+    // Hybrid's correction re-anchors through the straight-line formula.
+    assert(load_fails(load_with(
+        "tornado_hybrid",
+        "speed: 6.0\nmotion_collision_mask: terrain\n"
+        "sync_mode: hybrid_deterministic_then_snapshot\n" +
+            ride)));
+    assert(load_fails(load_with(
+        "tornado_no_hover",
+        travelling + "motion:\n  type: ground_follow\n")));
+    assert(load_fails(load_with(
+        "tornado_flat_slope",
+        travelling + ride + "  max_slope_degrees: 90\n")));
+    assert(load_fails(load_with(
+        "tornado_unknown_key",
+        travelling + ride + "  bounce: true\n")));
+    assert(load_fails(load_with(
+        "tornado_linear_settings",
+        travelling + "motion:\n  type: linear\n  hover_height: 1.5\n")));
+    assert(load_fails(load_with("cylinder_no_height", "area_shape: cylinder\n")));
+    assert(load_fails(load_with("sphere_with_height", "half_height: 1.0\n")));
+    assert(load_fails(load_with("unknown_shape", "area_shape: cone\n")));
+
+    // And none of it on anything but an area effect.
+    const std::filesystem::path standard_dir = tmp_dir("tornado_standard");
+    write_valid_templates(standard_dir);
+    write_file(
+        standard_dir.parent_path() / "projectile_templates" / "rocket.yaml",
+        "id: 3\nname: rocket_projectile\ndamage: 45\n"
+        "sync_mode: server_snapshot_only\ncollider_template: rocket_aabb\n"
+        "movement_model: linear\nhit_response: destroy\n"
+        "damage_shape: direct_hit\nspeed: 35.0\nlifetime_ticks: 75\n"
+        "collision_mask: damageable\nmax_hit_count: 1\n"
+        "area_shape: cylinder\n"
+        "gravity: {x: 0.0, y: 0.0, z: 0.0}\n");
+    assert(load_fails(standard_dir));
+}
+
 void subject_direction_needs_a_projectile_that_travels() {
     const auto write_impulse_graph = [](const std::filesystem::path& dir,
                                         const std::string& direction) {
@@ -1895,6 +2015,7 @@ int main() {
     derived_replication_is_authored();
     subject_direction_needs_a_projectile_that_travels();
     area_effect_motion_collision_mask_is_authored();
+    area_effect_ground_follow_and_cylinder_are_authored();
     catalog_file_loads_colliders();
     return 0;
 }

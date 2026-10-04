@@ -45,11 +45,14 @@ void tick_groups(
     groups->tick(agents, index, delta_seconds);
 }
 
+// `agent_ceiling`, when non-zero, is the server-wide agent_budget: built from
+// the same snapshot the director reads, the way the agent runtime builds it.
 void tick_director(
     network_example::game_server::PatrolDirector* director,
     KernelHandle* kernel,
     network_example::game_server::PatrolGroupRuntime* groups,
-    const network_example::game_server::PatrolNavigation* navigation) {
+    const network_example::game_server::PatrolNavigation* navigation,
+    std::uint32_t agent_ceiling = 0) {
     std::vector<KernelServerEntityState> actors(256);
     for (KernelServerEntityState& state : actors) {
         state.struct_size = sizeof(KernelServerEntityState);
@@ -60,11 +63,19 @@ void tick_director(
         actors.data(),
         static_cast<std::uint32_t>(actors.size()));
     require(count < actors.size());
+    network_example::game_server::AgentBudget budget;
+    budget.ceiling = agent_ceiling;
+    for (std::uint32_t index = 0; index < count; ++index) {
+        if (actors[index].actor_type == network_example::game_server::kActorTypeAgent) {
+            ++budget.live;
+        }
+    }
     director->tick(
         kernel,
         groups,
         navigation,
-        network_example::game_server::ActorStateView{actors.data(), count});
+        network_example::game_server::ActorStateView{actors.data(), count},
+        agent_ceiling == 0u ? nullptr : &budget);
 }
 
 std::filesystem::path runfiles_root() {
@@ -886,6 +897,53 @@ void the_budget_caps_agents_across_definitions() {
 }
 
 
+// The server-wide agent budget counts every agent, not only squads: with five
+// agents already standing that no patrol made, a ceiling one short of room for
+// the largest squad holds every squad back, and a ceiling with exactly that
+// room admits one squad and no second.
+void the_agent_budget_counts_agents_patrols_did_not_make() {
+    using network_example::game_server::PatrolDirector;
+    using network_example::game_server::PatrolGroupRuntime;
+
+    const KernelConfig config = server_config();
+    KernelHandle* kernel = Kernel_Create(&config);
+    require(kernel != nullptr);
+    require(Kernel_StartDedicatedServer(kernel, 7836));
+    load_catalog(kernel);
+    for (int index = 0; index < 5; ++index) {
+        KernelServerEntityCreateInfo create_info{};
+        create_info.struct_size = sizeof(create_info);
+        create_info.entity_type = network_example::game_server::kEntityTypeActor;
+        create_info.actor_type = network_example::game_server::kActorTypeAgent;
+        create_info.position = KernelVec3{-80.0f, 0.0f, 4.0f * index};
+        create_info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+        std::uint32_t net_id = 0;
+        require(Kernel_ServerCreateEntity(kernel, &create_info, &net_id));
+    }
+    Kernel_Update(kernel, 1.0f / 30.0f);
+
+    PatrolDefinitionConfig definition = mixed_definition();
+    definition.interval_ticks = 1;
+    definition.max_live_groups = 4;
+
+    // Five standing plus a largest squad of ten is fifteen.
+    PatrolDirector held_back({definition});
+    PatrolGroupRuntime held_back_groups;
+    for (int tick = 0; tick < 20; ++tick) {
+        tick_director(&held_back, kernel, &held_back_groups, nullptr, 14);
+    }
+    require(held_back_groups.groups().empty());
+
+    PatrolDirector admitted({definition});
+    PatrolGroupRuntime admitted_groups;
+    for (int tick = 0; tick < 20; ++tick) {
+        tick_director(&admitted, kernel, &admitted_groups, nullptr, 15);
+    }
+    require(admitted_groups.groups().size() == 1u);
+
+    Kernel_Destroy(kernel);
+}
+
 // With a navmesh, a route is a path: it bends around what is in the way, and
 // its start is somewhere the squad can stand. The straight chord this replaces
 // can do neither, so a bend is the observable difference.
@@ -996,6 +1054,7 @@ int main() {
     an_empty_server_does_not_sweep_its_patrols_away();
     a_patrol_nobody_is_near_retires_early();
     the_budget_caps_agents_across_definitions();
+    the_agent_budget_counts_agents_patrols_did_not_make();
     a_navigable_patrol_routes_around_obstacles();
     an_unwalkable_area_spawns_nothing();
     return 0;

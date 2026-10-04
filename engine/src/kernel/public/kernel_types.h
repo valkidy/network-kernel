@@ -5,6 +5,19 @@
 #include <stdint.h>
 
 /*
+ * 99: hover. KernelMovementControllerType gained _Hover, and
+ *     KernelMovementDefinition gained hover_height_meters and
+ *     hover_vertical_speed_meters_per_second, appended after
+ *     movement_collision_mask and read only by the hover controller.
+ *     KernelMovementDefinition is embedded in KernelEntityTemplateDefinition,
+ *     so every managed mirror of that shifts.
+ * 98: tornadoes. KernelAreaEffectMechanicsDefinition gained shape, motion,
+ *     two reserved bytes, half_height, hover_height, max_slope_degrees,
+ *     step_up and probe_depth, appended after motion_collision_mask. Zero
+ *     shape and motion are the standing behaviour -- a sphere that flies its
+ *     straight line -- so every existing template means what it meant.
+ *     KERNEL_AREA_EFFECT_MOTION_GROUND_FOLLOW rides the terrain instead, and
+ *     KERNEL_AREA_EFFECT_SHAPE_CYLINDER bounds the overlap by half_height.
  * 97: seats. RenderEntityState gained shelter_net_id and shelter_seat (with
  *     two reserved bytes after it), appended after beam_end: the building an
  *     actor is inside and the seat the authority gave it there, 0 and 0
@@ -161,7 +174,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 97u
+#define KERNEL_ABI_VERSION 99u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -1741,6 +1754,24 @@ typedef struct KernelHomingMechanicsDefinition {
     float max_speed;
 } KernelHomingMechanicsDefinition;
 
+/* What an area effect's overlap is. A cylinder stands upright on the field's
+ * centre, radius across and half_height up and down. */
+typedef enum KernelAreaEffectShape {
+    KernelAreaEffectShape_Sphere = 0,
+    KernelAreaEffectShape_Cylinder = 1,
+} KernelAreaEffectShape;
+
+/* How a travelling area effect moves. Linear flies the straight line its spawn
+ * velocity draws. GroundFollow rides the terrain at hover_height: it climbs and
+ * descends slopes no steeper than max_slope_degrees, holds its height where no
+ * ground is in reach, and stops at anything steeper -- what counts as terrain
+ * being motion_collision_mask. It is stepped tick by tick, so a client can
+ * only predict it by running the same steps over the same static world. */
+typedef enum KernelAreaEffectMotion {
+    KernelAreaEffectMotion_Linear = 0,
+    KernelAreaEffectMotion_GroundFollow = 1,
+} KernelAreaEffectMotion;
+
 typedef struct KernelAreaEffectMechanicsDefinition {
     uint32_t struct_size;
     float radius;
@@ -1762,6 +1793,23 @@ typedef struct KernelAreaEffectMechanicsDefinition {
      * and the reason a field that does not need this costs nothing to have it.
      * Distinct from collision_mask, which says who the effect affects. */
     uint32_t motion_collision_mask;
+    /* KernelAreaEffectShape. */
+    uint8_t shape;
+    /* KernelAreaEffectMotion. */
+    uint8_t motion;
+    uint16_t reserved3;
+    /* Cylinder only: from the centre to the top and to the bottom. */
+    float half_height;
+    /* GroundFollow only. From the ground to the field's centre. */
+    float hover_height;
+    /* GroundFollow only. Steepest ground ridden, in degrees from level. */
+    float max_slope_degrees;
+    /* GroundFollow only. The tallest rise taken in one tick; an obstacle any
+     * taller stops the field. */
+    float step_up;
+    /* GroundFollow only. How far below the field's ground level still counts
+     * as ground; anything further is a cliff the field holds its height over. */
+    float probe_depth;
 } KernelAreaEffectMechanicsDefinition;
 
 typedef struct KernelBeamMechanicsDefinition {
@@ -2374,6 +2422,13 @@ typedef enum KernelMovementControllerType {
     KernelMovementControllerType_Grounded = 1,
     KernelMovementControllerType_Kinematic = 2,
     KernelMovementControllerType_Character = 3,
+    /*
+     * Flies: holds hover_height_meters of clearance above whatever is beneath
+     * it -- terrain or a static obstacle -- and never falls. Moves on the same
+     * horizontal input as the others and is stopped by what its movement
+     * collision mask names, in every direction.
+     */
+    KernelMovementControllerType_Hover = 4,
 } KernelMovementControllerType;
 
 typedef struct KernelMovementDefinition {
@@ -2400,6 +2455,15 @@ typedef struct KernelMovementDefinition {
      * this to terrain alone is how that is expressed.
      */
     uint32_t movement_collision_mask;
+    /*
+     * Hover only, and ignored by every other controller. The clearance held
+     * between the bottom of the movement capsule and whatever is beneath it,
+     * and how fast it may climb or sink to keep it. A finite vertical speed is
+     * what makes it rise over an obstacle rather than teleport onto it, and
+     * what lets a wall it cannot out-climb in time stop it.
+     */
+    float hover_height_meters;
+    float hover_vertical_speed_meters_per_second;
 } KernelMovementDefinition;
 
 // Everything a director needed lived here too: a target count, what to spawn,

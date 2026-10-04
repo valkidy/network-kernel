@@ -108,7 +108,7 @@ int main() {
     scene_config.collider_id = config.static_collision_scene.collider_id;
     scene_config.collision_layer = config.static_collision_scene.collision_layer;
     require(Kernel_SetStaticCollisionScene(kernel, &scene_config));
-    require(Kernel_StartListenServer(kernel, 7951));
+    require(Kernel_StartListenServer(kernel, 7952));
     network_example::game_server::GameServer game_server(kernel, config);
     // What the host apps do before their first frame: without it no director
     // runs, so no mission and no nests.

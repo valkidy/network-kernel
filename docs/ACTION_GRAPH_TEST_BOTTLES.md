@@ -13,12 +13,12 @@ about the vehicles.
 
 | Vehicle | Item template | Fires on | What it does |
 |---|---|---|---|
-| `test_bottle_spawn_enemy` | `item_templates/test_bottle_spawn_enemy.yaml` (id 3005) | the thrown prop's `on_collision` | spawns a `chaser_grunt` where it lands, then breaks |
-| `test_bottle_blast` | `item_templates/test_bottle_blast.yaml` (id 3006) | `on_item_used` | detonates a `rocket_explosion` at the aim point |
+| `stateful_test_bottle_spawn_enemy` | `item_templates/3005_stateful_test_bottle_spawn_enemy.yaml` (id 3005) | the thrown prop's `on_collision` | spawns a `chaser_grunt` where it lands, then breaks |
+| `stateful_test_bottle_blast` | `item_templates/3006_stateful_test_bottle_blast.yaml` (id 3006) | `on_item_used` | detonates a `rocket_explosion` at the aim point |
 
-`test_bottle_blast` is worth a note: `rocket_explosion` is an authored
+`stateful_test_bottle_blast` is worth a note: `rocket_explosion` is an authored
 area-effect projectile that already carries the AoE damage and knockback graph
-(`projectile_templates/rocket_explosion.yaml` →
+(`projectile_templates/8_projectile_rocket_explosion.yaml` →
 `action_rocket_explosion_at_target`). Using the bottle therefore exercises the
 entire area-effect path — radius, falloff, `apply_damage` and `apply_impulse` —
 end to end, which makes it the cheapest way to eyeball knockback behaviour.
@@ -35,7 +35,7 @@ and adding a slot turns that test red. Two ways in:
   - `inventory.create_item(item_template_id, quantity, container_id)` puts one
     straight into a container.
 - **Persistently.** Add a slot to `inventory_slots` in
-  `entity_templates/player.yaml` (there is spare capacity: 5 of 8 used) **and**
+  `entity_templates/1_player.yaml` (there is spare capacity: 5 of 8 used) **and**
   update the count assertion in `gameplay_config_test.cc`. Do both or the test
   goes red.
 
@@ -45,8 +45,8 @@ The vehicles are deliberately thin — the only interesting lines are the graph
 reference and the parameters bound to it.
 
 **A graph that acts on the world where a thrown object lands** — copy
-`entity_templates/test_bottle_spawn_enemy_prop.yaml` and
-`item_templates/test_bottle_spawn_enemy.yaml`:
+`entity_templates/206_prop_test_bottle_spawn_enemy.yaml` and
+`item_templates/3005_stateful_test_bottle_spawn_enemy.yaml`:
 
 1. In the prop file: pick an unused `id` (props currently occupy 200–206), give
    it a `name`, then change `triggers.on_collision.action_graph` to your graph
@@ -56,13 +56,13 @@ reference and the parameters bound to it.
 3. `bazel build //game_server/gameplay_catalog_bundle:bundle.zip`
 
 **A graph that acts where the player aims** — copy
-`item_templates/test_bottle_blast.yaml`, change the `id`, the `name`, and
+`item_templates/3006_stateful_test_bottle_blast.yaml`, change the `id`, the `name`, and
 `triggers.on_item_used.action_graph` plus its parameters. No prop template
 needed.
 
 `action_graph_templates/action_spawn_ice_and_damage_self_at_collision.yaml` is
 worth knowing about: despite the name it is fully generic — it spawns whatever
-`template` names and then damages `source`. `test_bottle_spawn_enemy` uses it
+`template` names and then damages `source`. `stateful_test_bottle_spawn_enemy` uses it
 unchanged to spawn a `chaser_grunt`. Reach for it before writing a new graph.
 
 The self-damage is not decoration. A prop that survives its own `on_collision`
@@ -84,16 +84,16 @@ These are properties of the current engine, not of the vehicles:
   default on a parameter named `direction`.
 - **A spawned agent is picked up by the AI automatically.** `AgentRuntimeManager`
   scans every entity with `actor_type == agent` regardless of who created it,
-  so `test_bottle_spawn_enemy` produces a chaser that behaves exactly like a
+  so `stateful_test_bottle_spawn_enemy` produces a chaser that behaves exactly like a
   director-spawned one.
 - **A prop with no `on_collision` binding slides.** Once pushed it travels in a
   straight line until its lifetime expires — see §4.4 of the authoring guide.
 
 ## Known gap: `spawn_projectile` on an entity trigger
 
-The natural shape for `test_bottle_blast` would have been a thrown prop whose
+The natural shape for `stateful_test_bottle_blast` would have been a thrown prop whose
 `on_collision` spawns the explosion where it lands, matching
-`test_bottle_spawn_enemy`. That does not load, and the failure is worth
+`stateful_test_bottle_spawn_enemy`. That does not load, and the failure is worth
 understanding because it is a loader/kernel disagreement rather than an
 authoring mistake:
 

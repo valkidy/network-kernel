@@ -12,7 +12,11 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 96u`; `kernel_types.h` is the authority.
+`KERNEL_ABI_VERSION == 99u`; `kernel_types.h` is the authority. ABI 98
+appended the tornado shape and motion fields to
+`KernelAreaEffectMechanicsDefinition`. ABI 99 appended `hover_height_meters`
+and `hover_vertical_speed_meters_per_second` to `KernelMovementDefinition` and
+added `KernelMovementControllerType_Hover`.
 
 `KERNEL_CAPABILITY_LOCAL_SHELTER_STATE` uses bit 49
 (`0x0002000000000000`), separate from `KERNEL_CAPABILITY_LOG_CAPTURE` at

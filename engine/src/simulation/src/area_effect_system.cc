@@ -106,6 +106,14 @@ void simulate_area_effects(
         physics::OverlapRequest request{};
         request.shape.type = physics::CollisionShapeType::kSphere;
         request.shape.radius = area_effect.radius;
+        // An upright column, centred on the field like the sphere is.
+        // hit.distance below stays the 3D distance to the centre, so a
+        // cylinder with falloff scales by how far a target is from the middle
+        // of the column, not from its axis.
+        if (area_effect.shape == AreaEffectShape::kCylinder) {
+            request.shape.type = physics::CollisionShapeType::kCylinder;
+            request.shape.capsule_half_height = area_effect.half_height;
+        }
         request.position = transform.position;
         request.filter = collision_filter_from_mask(area_effect.collision_mask);
         // One query feeds both the damage and the impulse trigger, so opting

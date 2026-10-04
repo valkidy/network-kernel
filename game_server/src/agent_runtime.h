@@ -40,6 +40,13 @@ enum class AgentSentryState : std::uint8_t {
     kReturn = 3,
 };
 
+// Alert or attack: the agent has a target, or had one recently enough that it
+// has not given up on it yet. A squad holds while a member is engaged, and an
+// on_alert spawner only calls while its carrier is.
+inline bool is_engaged(AgentSentryState state) {
+    return state == AgentSentryState::kAlert || state == AgentSentryState::kAttack;
+}
+
 // What a squad member needs to know about the squad, which is very little: the
 // point it should be standing on and the squad's travel velocity. The route,
 // formation and progress all live on the PatrolGroup, so the controller can
@@ -143,6 +150,10 @@ struct AgentRuntimeState {
     bool chase_holding = false;
     AgentPatrolRuntimeState patrol{};
     AgentEntryRuntimeState entry{};
+    // Whether the agent was engaged when its controller last ran, so that an
+    // engagement starting can be told from one carrying on. Only kept for
+    // agents that carry an on_alert spawner; nothing else reads it.
+    bool engaged_last_tick = false;
 };
 
 // Where each agent sits in the manager's list.

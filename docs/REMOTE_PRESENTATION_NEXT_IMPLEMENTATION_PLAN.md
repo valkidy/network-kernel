@@ -740,7 +740,7 @@ snapshot 之後，又從那一刻重新飛了一整段壽命。
 
 **對應預測物和權威 prop：不用改封包格式。**
 - 玩家實際在丟的瓶子（shockwave、frag、glyph、magic 等）全部是
-  `identity_preserving`，只有 `grenade_consumable` 是 `consume_and_spawn`。
+  `identity_preserving`，只有 `fungible_grenade_consumable` 是 `consume_and_spawn`。
   9.1 說 fungible bottle 屬於 ConsumeAndSpawn 是錯的。
 - `identity_preserving` 的投擲把 prop 的 net_id 填進回覆的 `prop_entity_id`
   （`item_gameplay_system.cc`），回覆以 reliable 送回發出請求的 client，帶著
@@ -804,7 +804,7 @@ W6 留下三項延伸，讀程式碼後（2026-09-28）：
 | 項目 | 目前遊戲會發生嗎 | 原因 |
 |---|---|---|
 | 丟出手上拿著的 prop | 不會 | Unity 只送 Use / Throw / Pickup，沒有 Carry；撿起來直接進背包 |
-| `consume_and_spawn` 投擲 | 不會 | 只有 `grenade_consumable`，不在玩家初始背包，也沒有其他地方引用 |
+| `consume_and_spawn` 投擲 | 不會 | 只有 `fungible_grenade_consumable`，不在玩家初始背包，也沒有其他地方引用 |
 | 爆炸預測 | 會 | 瓶子在預測落點停住，等 server 的 despawn 和爆炸（約 RTT + 輸入延遲）才炸 |
 
 爆炸預測需要：從 item → prop template → 碰撞 trigger 的 action graph 參數找出爆炸

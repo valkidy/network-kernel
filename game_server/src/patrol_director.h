@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "game_server/src/agent_budget.h"
 #include "game_server/src/agent_runtime.h"
 #include "game_server/src/patrol_group_runtime.h"
 #include "game_server/src/patrol_navigation.h"
@@ -123,11 +124,14 @@ public:
     // retirement pass reads player positions out of it; it used to run its own
     // full actor query once per live squad, so the cost of retiring scaled with
     // squads times entities for a rule that only ever needs the nearest player.
+    // `agent_budget` is the server-wide ceiling, which may be null: a squad is
+    // admitted only if its largest draw fits, and spends that much.
     void tick(
         KernelHandle* kernel,
         PatrolGroupRuntime* groups,
         const PatrolNavigation* navigation,
-        const ActorStateView& actors);
+        const ActorStateView& actors,
+        AgentBudget* agent_budget = nullptr);
 
     const std::vector<PatrolDefinitionConfig>& definitions() const;
     // Squads spawned since the server started, across all definitions. The

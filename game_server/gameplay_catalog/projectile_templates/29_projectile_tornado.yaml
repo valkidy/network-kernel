@@ -1,0 +1,41 @@
+# A tornado: a funnel that rides the ground and, once a second, pulls in
+# everything hostile its column reaches. It deals no damage of its own.
+#
+# One entity for its whole life -- the periodic pull is the field's own
+# overlap every damage_interval_ticks, not a child spawned per pull.
+#
+# It climbs and descends slopes up to 50 degrees at a 2 m hover, holds its
+# height off a cliff, and stops against anything steeper; terrain is the only
+# thing that stops it. Locally predicted: each client steps it with the same
+# solver over the same terrain, and nothing about it is sent after the spawn.
+# The pull itself is the server's alone.
+#
+# The damage here is not what lands: an area effect with a graph binding
+# submits no damage of its own, and the graph deals none.
+id: 29
+name: tornado
+kind: area_effect
+collider_template: tornado_column
+damage: 1
+speed: 6.0
+lifetime_ticks: 300
+sync_mode: local_predicted_deterministic
+damage_behavior:
+  type: area_interval
+  damage_interval_ticks: 30
+  falloff: none
+collision_mask: hostile_side
+motion_collision_mask: terrain
+# The column stands on the ground: half_height equals hover_height, so it
+# reaches from the ground to 4 m up.
+area_shape: cylinder
+half_height: 2.0
+motion:
+  type: ground_follow
+  hover_height: 2.0
+triggers:
+  on_projectile_impact:
+    action_graph: action_tornado_pull
+    parameters:
+      target: event.target
+      anchor: event.subject_position

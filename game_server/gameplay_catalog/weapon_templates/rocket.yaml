@@ -1,7 +1,0 @@
-id: 3
-name: Rocket
-weapon_type: projectile
-magazine_size: 6
-fire_action_template: rocket_fire
-reload_action_template: rocket_reload
-projectile_template: rocket_projectile
