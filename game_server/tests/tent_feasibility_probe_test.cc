@@ -757,7 +757,7 @@ int main() {
         Shooter{"beam_sentry", 8},       // beam
         Shooter{"gingerbread_mage", 12}, // lobbed grenade, area effect
     };
-    std::uint16_t port = 7970;
+    std::uint16_t port = 8010;
     std::array<FireOutcome, 3> open{};
     std::array<FireOutcome, 3> tented{};
     for (std::size_t index = 0; index < shooters.size(); ++index) {
