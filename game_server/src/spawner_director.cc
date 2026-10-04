@@ -199,8 +199,14 @@ void SpawnerDirector::tick_interval_carriers(
             }
             for (std::uint32_t index = 0; index < count; ++index) {
                 const KernelServerEntityState& state = query_buffer_[index];
-                if (state.valid == 0u ||
-                    carrier_for(state.entity_template_id) == nullptr) {
+                // Clocks only. A caller of the same entity type turns up in
+                // this query too, and an instance made here would start it on
+                // an interval countdown -- holding its first call back by a
+                // whole interval. Callers are made by the alert pass.
+                const SpawnerCarrierConfig* found =
+                    carrier_for(state.entity_template_id);
+                if (state.valid == 0u || found == nullptr ||
+                    found->spawner.trigger != SpawnerTrigger::kInterval) {
                     continue;
                 }
                 live_carriers.push_back(state.net_id);
