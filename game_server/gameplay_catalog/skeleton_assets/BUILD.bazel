@@ -4,6 +4,16 @@ load(":skeleton_asset_rules.bzl", "skeleton_asset")
 
 package(default_visibility = ["//visibility:public"])
 
+filegroup(
+    name = "locomotion_skeleton_assets",
+    srcs = [
+        ":simplified_biped_assets",
+        ":simplified_quadruped_assets",
+        ":simplified_tripod_assets",
+        ":simplified_gingerbread_giant_assets",
+    ],
+)
+
 # The locomotion rigs, exported from LocomotionModel.unity by
 # //tools:unity_scene_to_glb with no coordinate conversion. asset_id 1 and 2
 # belonged to simplified_monster_sim_v4 and rock_robot_biped_24u_v3 and are
@@ -28,4 +38,11 @@ skeleton_asset(
     src = "raw/simplified_tripod.glb",
     rig = "raw/simplified_tripod.rig.yaml",
     asset_id = 5,
+)
+
+skeleton_asset(
+    name = "simplified_gingerbread_giant",
+    src = "raw/simplified_gingerbread_giant.glb",
+    rig = "raw/simplified_gingerbread_giant.rig.yaml",
+    asset_id = 6,
 )
