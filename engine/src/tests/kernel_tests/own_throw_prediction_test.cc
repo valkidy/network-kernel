@@ -112,7 +112,7 @@ KernelEntityTemplateDefinition bottle_entity_template() {
     return prop;
 }
 
-// As fungible_shockwave_bottle.yaml: identity preserving, trajectory here.
+// As 3008_fungible_shockwave_bottle.yaml: identity preserving, trajectory here.
 KernelItemTemplateDefinition bottle_item_template() {
     KernelItemTemplateDefinition item{};
     item.struct_size = sizeof(item);

@@ -112,6 +112,12 @@ public:
     physics::PhysicsWorld* mutable_physics_world() {
         return physics_world_.get();
     }
+    // Enables or disables an entity collider's body in the authoritative
+    // physics world. Writers outside the collider sync go through here rather
+    // than through mutable_physics_world(), because the sync skips bodies whose
+    // state it believes it already wrote, and a write it did not see would
+    // leave it believing the wrong thing.
+    void set_physics_collider_enabled(std::uint32_t collider_id, bool enabled);
     bool has_static_collision_scene() const {
         return !static_collision_scene_.empty();
     }
@@ -577,6 +583,11 @@ private:
         bool hidden_by_actor_hit = false;
         std::uint32_t actor_hit_reveal_tick = 0;
         bool actor_hit_prediction_spent = false;
+        // Ground followers only. Ticks left before it starts: one whose spawn
+        // record arrives before the render timeline has reached its spawn tick
+        // waits, hidden and unmoved, until it has -- so it is drawn on the
+        // timeline the actors it pulls are drawn on.
+        std::uint32_t hold_ticks = 0;
     };
 
     // One throw this client requested, from the request until the prop it
@@ -803,7 +814,7 @@ private:
     void finalize_simulated_projectile_destructions(
         std::size_t first_event,
         std::size_t last_event,
-        const std::unordered_set<NetId>& actors_before_tick);
+        const std::vector<NetId>& actors_before_tick);
     bool enqueue_simulation_command(const simulation::Command& command);
     std::size_t drain_simulation_commands();
     void record_simulation_tick_cost(
@@ -916,6 +927,7 @@ private:
         std::uint64_t* out_server_time_us) const;
     std::uint64_t render_target_server_time_us(
         std::uint64_t client_render_time_us) const;
+    std::uint32_t ground_follower_render_tick(std::uint32_t server_now_tick) const;
     void advance_render_clock(std::uint64_t client_render_time_us);
     bool build_interpolated_snapshot(
         std::uint64_t client_render_time_us,
@@ -935,6 +947,14 @@ private:
         PeerId owner_peer,
         std::uint32_t action_instance_id);
     void publish_snapshot();
+    // The whole world at this tick, before any session's filter. Built once per
+    // snapshot interval and handed to every session's build_relevant_snapshot:
+    // building it per session cost sessions x entities on every interval.
+    WorldSnapshot build_shared_world_snapshot(std::uint32_t server_time_ms) const;
+    WorldSnapshot build_relevant_snapshot(
+        const PeerSession& session,
+        const WorldSnapshot& world_snapshot) const;
+    // Builds its own world snapshot; for callers with one session to ask about.
     WorldSnapshot build_relevant_snapshot(
         const PeerSession& session,
         std::uint32_t server_time_ms) const;
@@ -1039,7 +1059,7 @@ private:
     void queue_remote_presentation_from_events(
         std::size_t first_event,
         std::size_t last_event,
-        const std::unordered_set<NetId>& actors_before_tick);
+        const std::vector<NetId>& actors_before_tick);
     void queue_server_remote_presentation(
         const KernelRemoteActionPresentationEvent& event);
     void flush_remote_action_presentation(
@@ -1226,6 +1246,27 @@ private:
     std::vector<KernelDebugInfo> debug_records_;
     std::unordered_map<NetId, KernelAgentVisionConfig> vision_configs_;
     std::unordered_map<NetId, VisionRuntimeState> vision_states_;
+    // update_vision_states' working set, kept between ticks so that refilling
+    // it reuses the memory instead of allocating a cell at a time.
+    struct VisionCandidate {
+        NetId net_id = 0;
+        const KernelAgentVisionConfig* config = nullptr;
+        glm::vec3 position{0.0f};
+    };
+    std::vector<VisionCandidate> vision_candidates_;
+    // (cell key, candidate index), sorted, then flattened into the occupied
+    // cells' keys, where each cell's candidates start, and the candidates
+    // themselves, cell after cell. One x column's cells are adjacent, so a
+    // cone copies a column's candidates out in one go.
+    std::vector<std::pair<std::uint64_t, std::uint32_t>> vision_candidate_cells_;
+    std::vector<std::uint64_t> vision_cell_keys_;
+    std::vector<std::uint32_t> vision_cell_starts_;
+    std::vector<std::uint32_t> vision_cell_members_;
+    std::vector<std::uint32_t> vision_unfiled_candidates_;
+    std::vector<std::uint32_t> vision_cone_candidates_;
+    // The actors alive when simulate_tick began, sorted. Kept between ticks
+    // for the same reason as the vision working set.
+    std::vector<NetId> actors_before_tick_;
     std::unordered_map<NetId, PendingFirstPhysicsActor>
         pending_first_physics_actors_;
     simulation::CommandQueue command_queue_;
@@ -1265,7 +1306,21 @@ private:
     std::uint32_t static_collision_collider_id_ = 0;
     std::uint32_t static_collision_layer_ = 0;
     std::unique_ptr<physics::PhysicsWorld> physics_world_;
-    std::unordered_set<std::uint32_t> physics_entity_collider_ids_;
+    // What the collider sync last wrote into physics_world_ for each entity
+    // collider it holds there. A body is only written when what the sync
+    // computes differs from this, which is most of them on most ticks: three
+    // full sweeps a tick used to rewrite every body in the world, 42% of the
+    // kernel tick at 1300 agents. `sweep` is the full sweep that last saw the
+    // collider, so one that stops being pushed is found without rebuilding a
+    // set on every call.
+    struct PhysicsColliderState {
+        glm::vec3 position{0.0f};
+        glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+        bool enabled = false;
+        std::uint32_t sweep = 0;
+    };
+    std::unordered_map<std::uint32_t, PhysicsColliderState> physics_entity_colliders_;
+    std::uint32_t physics_collider_sweep_ = 0;
     std::unique_ptr<physics::PhysicsWorld> prediction_physics_world_;
     std::unordered_map<NetId, std::uint32_t> prediction_proxy_collider_ids_;
     // Props as static obstacles and other actors' hit volumes, both where the

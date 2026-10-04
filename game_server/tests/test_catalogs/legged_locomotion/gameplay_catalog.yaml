@@ -8,6 +8,10 @@ prop_population_rules:
   - id: 2
     name: tent
     max_alive: 4
+# Shares entity_template_dir with production for the same reason, so it carries
+# courier_grunt's call for help, and a catalog with one must bound them all.
+reinforce_budget:
+  max_live_agents: 64
 action_template_dir: action_templates
 action_graph_template_dir: action_graph_templates
 reload_action_template:

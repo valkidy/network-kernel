@@ -60,6 +60,11 @@ enum class CollisionShapeType : std::uint8_t {
     kBox,
     kSphere,
     kCapsule,
+    // Query-only: a shape to ask "what is inside this upright column", never a
+    // body. upsert_object refuses it, so nothing the world contains is ever a
+    // cylinder and every other caller can keep assuming box/sphere/capsule.
+    // Upright along local Y; its half height rides in capsule_half_height.
+    kCylinder,
 };
 
 struct CollisionShapeDescriptor {

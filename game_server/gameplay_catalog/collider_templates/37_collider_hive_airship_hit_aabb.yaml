@@ -1,0 +1,10 @@
+# The airship's hull, for being shot: 6 x 3 x 6 m standing on the capsule's
+# bottom, so it is the same height off the ground the hover holds.
+id: 37
+name: hive_airship_hit_aabb
+shape: aabb
+center: {x: 0.0, y: 1.5, z: 0.0}
+half_extents: {x: 3.0, y: 1.5, z: 3.0}
+radius: 0.0
+purpose: hit
+layer: hostile_side

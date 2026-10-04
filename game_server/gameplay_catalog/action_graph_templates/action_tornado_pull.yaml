@@ -1,0 +1,19 @@
+id: action_tornado_pull
+parameters:
+  target: null
+  # The funnel's centre when it pulled. Bound to event.subject_position, the
+  # one point every target of one pull shares.
+  anchor: null
+# Pull only: the tornado deals no damage and staggers nobody. What it does is
+# gather, once a second, everything its column reaches.
+actions:
+  - type: apply_pull
+    target: params.target
+    anchor: params.anchor
+    # Land 1 m from where the centre was, each on its own side.
+    distance: 1.0
+    # 0.6 s in the air: done before the next pull 30 ticks later, so a target
+    # is never pulled again while still flying from the last one.
+    airtime_ticks: 18
+    # The far edge of the 3 m column needs (3 - 1) / 0.6 = 3.3 m/s.
+    max_speed: 12.0

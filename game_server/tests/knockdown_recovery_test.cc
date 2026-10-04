@@ -38,7 +38,7 @@ void require_impl(bool condition, int line, const char* text) {
 #define require(expr) require_impl(static_cast<bool>(expr), __LINE__, #expr)
 
 constexpr float kTickSeconds = 1.0f / 30.0f;
-// gingerbread.yaml's knockdown recovery_ticks.
+// 28_gingerbread.yaml's knockdown recovery_ticks.
 constexpr std::size_t kRecoveryTicks = 21u;
 
 std::vector<std::uint8_t> read_ground_scene() {
@@ -93,7 +93,7 @@ int main() {
     scene_config.collider_id = config.static_collision_scene.collider_id;
     scene_config.collision_layer = config.static_collision_scene.collision_layer;
     require(Kernel_SetStaticCollisionScene(kernel, &scene_config));
-    require(Kernel_StartListenServer(kernel, 7961));
+    require(Kernel_StartListenServer(kernel, 7953));
 
     network_example::game_server::GameServer game_server(kernel, config);
     require(game_server.preload_directors());

@@ -303,7 +303,7 @@ Row measure(const Catalog& catalog, std::size_t agent_count, std::uint16_t port)
         find_actor_template(catalog.config, "grenade_sentry");
     require(sentry != nullptr);
     const std::uint32_t shell_template_id =
-        find_projectile_template_id(catalog.config, "grenade_shell_projectile");
+        find_projectile_template_id(catalog.config, "grenade_shell");
     const std::uint32_t explosion_template_id =
         find_projectile_template_id(catalog.config, "rocket_explosion");
     require(shell_template_id != 0u);

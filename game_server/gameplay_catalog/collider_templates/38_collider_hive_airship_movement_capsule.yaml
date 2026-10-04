@@ -1,0 +1,12 @@
+# The airship's movement volume: 5 m across, bottom at the entity's origin
+# (centre 3.0 - half height 0.5 - radius 2.5), so hover clearance is measured
+# from the hull's underside and a 5 m hull cannot squeeze through a gap a
+# grunt-sized capsule would.
+id: 38
+name: hive_airship_movement_capsule
+shape: capsule
+center: {x: 0.0, y: 3.0, z: 0.0}
+half_height: 0.5
+radius: 2.5
+purpose: movement
+layer: hostile_side

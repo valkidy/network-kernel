@@ -588,17 +588,50 @@ NetId fire_projectile(
     std::vector<KernelEvent>* events) {
     const float age_duration =
         static_cast<float>(age_ticks) * fixed_delta_seconds;
-    const glm::vec3 current_position = projectile_position_at(
+    glm::vec3 current_position = projectile_position_at(
         origin,
         velocity,
         projectile_template.motion_model,
         projectile_template.gravity,
         age_duration);
-    const glm::vec3 current_velocity = projectile_velocity_at(
+    glm::vec3 current_velocity = projectile_velocity_at(
         velocity,
         projectile_template.motion_model,
         projectile_template.gravity,
         age_duration);
+    glm::vec3 launch_origin = origin;
+    glm::vec3 launch_velocity = velocity;
+    // A ground-following field has no closed form to fast-forward with, so a
+    // spawn that is already age_ticks old is stepped there instead, over the
+    // same terrain the per-tick advance will keep stepping it on.
+    if (projectile_template.projectile_type == ProjectileType::kAreaEffect &&
+        projectile_template.area_ground_follow.enabled) {
+        launch_velocity =
+            ground_following_launch_velocity(velocity, glm::length(velocity));
+        const ground_follow::Config config = area_ground_follow_config(
+            projectile_template.area_ground_follow,
+            launch_velocity,
+            projectile_template.area_motion_collision_mask);
+        launch_origin = ground_following_spawn_state(
+                            world.collision_world(),
+                            config,
+                            origin,
+                            0u,
+                            fixed_delta_seconds)
+                            .position;
+        const ground_follow::State current = ground_following_spawn_state(
+            world.collision_world(),
+            config,
+            origin,
+            age_ticks,
+            fixed_delta_seconds);
+        current_position = current.position;
+        current_velocity = current.parked ? glm::vec3{0.0f} : launch_velocity;
+        if (current.parked) {
+            launch_origin = current_position;
+            launch_velocity = glm::vec3{0.0f};
+        }
+    }
     const NetId projectile = world.spawn_projectile(
         shooter_peer_id,
         current_position,
@@ -634,8 +667,8 @@ NetId fire_projectile(
         projectile_state.hit_count = 0;
         projectile_state.max_lifetime_ticks = projectile_template.lifetime_ticks;
         projectile_state.age_ticks = age_ticks;
-        projectile_state.spawn_position = origin;
-        projectile_state.initial_velocity = velocity;
+        projectile_state.spawn_position = launch_origin;
+        projectile_state.initial_velocity = launch_velocity;
         projectile_state.gravity = projectile_template.gravity;
         projectile_state.previous_position = current_position;
         projectile_state.spawn_direction =
@@ -670,7 +703,9 @@ NetId fire_projectile(
                 Hitbox{
                     {0.0f, 0.0f, 0.0f},
                     {projectile_template.area_radius,
-                     projectile_template.area_radius,
+                     projectile_template.area_shape == AreaEffectShape::kCylinder
+                         ? projectile_template.area_half_height
+                         : projectile_template.area_radius,
                      projectile_template.area_radius},
                     projectile_template.collider_template_id});
             world.registry().emplace<ProjectileAreaEffectRuntime>(
@@ -690,6 +725,12 @@ NetId fire_projectile(
                     {},
                     projectile_template.projectile_impact_binding,
                 });
+            ProjectileAreaEffectRuntime& area_effect =
+                world.registry().get<ProjectileAreaEffectRuntime>(
+                    *projectile_entity);
+            area_effect.shape = projectile_template.area_shape;
+            area_effect.half_height = projectile_template.area_half_height;
+            area_effect.ground_follow = projectile_template.area_ground_follow;
         }
         if (projectile_template.projectile_type == ProjectileType::kBeam) {
             world.registry().emplace<ProjectileBeamRuntime>(

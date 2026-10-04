@@ -100,7 +100,14 @@ AgentRuntimeManager::AgentRuntimeManager(
     // Not filtered by the preload list: a spawner is active because its
     // carrier is in the world, which is the whole point of putting the rule
     // on the carrier.
-    spawner_director_ = SpawnerDirector(config_.spawner_carriers);
+    spawner_director_ = SpawnerDirector(
+        config_.spawner_carriers, config_.reinforce_budget.max_live_agents);
+    alert_carrier_template_ids_.clear();
+    for (const SpawnerCarrierConfig& carrier : config_.spawner_carriers) {
+        if (carrier.spawner.trigger == SpawnerTrigger::kOnAlert) {
+            alert_carrier_template_ids_.push_back(carrier.entity_template_id);
+        }
+    }
     if (!config_.navigation_mesh.artifact.empty()) {
         std::string error;
         if (patrol_navigation_.load(config_.navigation_mesh.artifact, &error)) {
@@ -197,6 +204,48 @@ void AgentRuntimeManager::dispatch_controllers(
     // No write-back pass. Controllers never add or drop agents, and a batch now
     // points at the entries rather than holding copies of them, so what a
     // controller wrote is already in agents_.
+}
+
+void AgentRuntimeManager::collect_alert_signals() {
+    alert_signals_.clear();
+    if (alert_carrier_template_ids_.empty()) {
+        return;
+    }
+    for (AgentRuntimeState& agent : agents_) {
+        if (std::find(
+                alert_carrier_template_ids_.begin(),
+                alert_carrier_template_ids_.end(),
+                agent.actor_template_id) == alert_carrier_template_ids_.end()) {
+            continue;
+        }
+        // Still walking out: no controller ran, so its state says nothing
+        // about this tick. It cannot be engaged yet anyway.
+        if (agent.entry.active) {
+            continue;
+        }
+        const bool engaged = is_engaged(agent.sentry.state);
+        const bool started = engaged && !agent.engaged_last_tick;
+        agent.engaged_last_tick = engaged;
+        if (!engaged) {
+            continue;
+        }
+        AlertSignal signal;
+        signal.net_id = agent.net_id;
+        signal.entity_template_id = agent.actor_template_id;
+        signal.engagement_started = started;
+        // Off the frame the controllers decided on, not off their counters:
+        // lost_target_ticks is zeroed by every state transition too, so attack
+        // giving up into alert reads as "in sight" for a tick it is not.
+        const KernelVisionStateView* vision =
+            perception_frame_.vision_state(agent.net_id);
+        signal.sees_target =
+            vision != nullptr && vision->current_target_candidate != 0u;
+        alert_signals_.push_back(signal);
+    }
+}
+
+const std::vector<AlertSignal>& AgentRuntimeManager::alert_signals() const {
+    return alert_signals_;
 }
 
 void AgentRuntimeManager::handle_event(const KernelEvent& event) {
@@ -320,6 +369,9 @@ void AgentRuntimeManager::tick(float delta_seconds) {
         if (!has_live_agent()) {
             despawn_pending_ = false;
         } else {
+            // No controller runs, so nobody is engaged this tick; a signal
+            // left from before the despawn would name agents being destroyed.
+            alert_signals_.clear();
             return;
         }
     }
@@ -328,6 +380,9 @@ void AgentRuntimeManager::tick(float delta_seconds) {
     // run -- which is exactly what the per-squad queries used to see, because
     // retirement happens before this tick creates anything.
     ActorStateView actors = refresh_actor_states();
+    AgentBudget agent_budget;
+    agent_budget.ceiling = config_.agent_budget.max_live_agents;
+    agent_budget.live = live_agent_count(actors);
 
     // Ahead of the resync on purpose: the director creates entities, and the
     // group runtime drops members it cannot find in the agent list. Ticking it
@@ -335,18 +390,29 @@ void AgentRuntimeManager::tick(float delta_seconds) {
     // spawned.
     const std::uint32_t spawned_groups_before =
         patrol_director_.spawned_group_count();
-    patrol_director_.tick(kernel_, &patrol_groups_, &patrol_navigation_, actors);
+    patrol_director_.tick(
+        kernel_, &patrol_groups_, &patrol_navigation_, actors, &agent_budget);
     // Only on a tick a squad actually appeared, which is once per definition
     // per interval_ticks. The world rule counts every agent alive including the
     // ones just spawned -- counting the pre-spawn list would have it top up
     // against a population that already exists.
     if (patrol_director_.spawned_group_count() != spawned_groups_before) {
         actors = refresh_actor_states();
+        // Exact again: the patrol spent its largest draw, not what it drew.
+        agent_budget.live = live_agent_count(actors);
     }
-    world_rule_director_.tick(kernel_, live_agent_count(actors));
+    // Counted, never refused: a world rule keeps a population the world is
+    // meant to have.
+    const std::uint32_t world_rule_spawned_before =
+        world_rule_director_.spawned_agent_count();
+    world_rule_director_.tick(kernel_, agent_budget.live);
+    agent_budget.spend(
+        world_rule_director_.spawned_agent_count() - world_rule_spawned_before);
 
     game_rule_director_.tick(kernel_);
-    spawner_director_.tick(kernel_);
+    // Last tick's engagement: the controllers that produced it have all run,
+    // and nothing has been created since.
+    spawner_director_.tick(kernel_, alert_signals_, &agent_budget);
     // Re-taken because the three directors above all create, and the resync
     // exists to discover what they made -- that is the whole reason it runs
     // after them.
@@ -364,6 +430,7 @@ void AgentRuntimeManager::tick(float delta_seconds) {
     // Still on the post-director snapshot: nothing between it and here creates,
     // destroys or moves an entity, so it is what a per-agent query would return.
     dispatch_controllers(actors, delta_seconds);
+    collect_alert_signals();
 }
 
 void AgentRuntimeManager::despawn_all(std::uint32_t reason) {

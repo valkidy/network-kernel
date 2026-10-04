@@ -337,9 +337,9 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip(
     // a hardcoded list silently drifts as templates are added.
     {
         const std::unordered_map<std::string, std::string> overrides = {
-            {"player.yaml", player_actor_yaml},
-            {"sentry_grunt.yaml", sentry_actor_yaml},
-            {"quadruped_actor.yaml", legged_actor_yaml},
+            {"1_player.yaml", player_actor_yaml},
+            {"2_sentry_grunt.yaml", sentry_actor_yaml},
+            {"21_quadruped_actor.yaml", legged_actor_yaml},
         };
         std::vector<std::filesystem::path> entity_files;
         for (const std::filesystem::directory_entry& entry :
@@ -399,7 +399,7 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip(
 
 std::vector<std::uint8_t> make_gameplay_bundle_zip() {
     return make_gameplay_bundle_zip(
-        read_text_file("game_server/gameplay_catalog/entity_templates/sentry_grunt.yaml"));
+        read_text_file("game_server/gameplay_catalog/entity_templates/2_sentry_grunt.yaml"));
 }
 
 std::string replace_once(
@@ -523,7 +523,7 @@ std::vector<std::uint8_t> make_entity_template_bundle_zip(
         "  entity_template: player\n"});
     append_collider_template_files(&files);
     files.push_back({
-        "entity_templates/player.yaml",
+        "entity_templates/1_player.yaml",
         "id: 1\n"
         "name: player\n"
         "entity_type: actor\n"
@@ -548,7 +548,7 @@ std::vector<std::uint8_t> make_entity_template_bundle_zip(
         "  idle: 0\n"
         "  chasing: 1\n"});
     files.push_back({
-        "entity_templates/sentry_grunt.yaml",
+        "entity_templates/2_sentry_grunt.yaml",
         sentry_template_yaml});
     files.push_back({
         "entity_templates/earth_mother.yaml",
@@ -653,11 +653,11 @@ int main() {
         }));
 
     const std::string production_player_yaml =
-        read_text_file("game_server/gameplay_catalog/entity_templates/player.yaml");
+        read_text_file("game_server/gameplay_catalog/entity_templates/1_player.yaml");
     const std::string production_sentry_yaml =
-        read_text_file("game_server/gameplay_catalog/entity_templates/sentry_grunt.yaml");
+        read_text_file("game_server/gameplay_catalog/entity_templates/2_sentry_grunt.yaml");
     const std::string production_quadruped_yaml =
-        read_text_file("game_server/gameplay_catalog/entity_templates/quadruped_actor.yaml");
+        read_text_file("game_server/gameplay_catalog/entity_templates/21_quadruped_actor.yaml");
     const std::string production_catalog_yaml =
         read_text_file("game_server/gameplay_catalog/gameplay_catalog.yaml");
     const auto load_with_catalog = [&](const std::string& catalog_yaml) {
@@ -681,21 +681,21 @@ int main() {
     };
     const auto numeric_preload_config = load_with_catalog(replace_once(
         production_catalog_yaml,
-        "  - game_rule_director\n",
+        "  - game_rule\n",
         "  - 101\n"));
     require(numeric_preload_config.preload_director_template_ids.size() == 1u);
     require(numeric_preload_config.preload_director_template_ids[0] == 101u);
     require(rejects_preload_catalog(replace_once(
         production_catalog_yaml,
-        "  - game_rule_director\n",
+        "  - game_rule\n",
         "  - player\n")));
     require(rejects_preload_catalog(replace_once(
         production_catalog_yaml,
-        "  - game_rule_director\n",
-        "  - game_rule_director\n  - game_rule_director\n")));
+        "  - game_rule\n",
+        "  - game_rule\n  - game_rule\n")));
     const auto empty_preload_config = load_with_catalog(replace_once(
         production_catalog_yaml,
-        "preload_directors:\n  - game_rule_director\n",
+        "preload_directors:\n  - game_rule\n",
         ""));
     require(empty_preload_config.preload_director_template_ids.empty());
     const std::string production_quadruped_rig =
@@ -2318,7 +2318,7 @@ int main() {
     assert(player_template.weapon_ids[3] == network_example::game_server::kWeaponRifle);
     assert(player_template.active_weapon_slot == 0);
     assert(player_template.inventory_slot_capacity == 16);
-    // player.yaml stocks shockwave (3008) and frag (3009) bottles, four
+    // 1_player.yaml stocks shockwave (3008) and frag (3009) bottles, four
     // stateful_magic_bottle (3004) slots, and pull (3010) bottles last; the
     // fungible_potion and stateful_potion slots are commented out there. The
     // shape they used to give this case is exercised by inventory_player_yaml
@@ -2441,7 +2441,7 @@ int main() {
     bool found_beam_rifle_beam = false;
     for (const network_example::game_server::ProjectileTemplateConfig& projectile :
          config.projectile_templates) {
-        if (projectile.name == "grenade_shell_projectile") {
+        if (projectile.name == "grenade_shell") {
             found_grenade_shell = true;
             assert(projectile.definition.mechanics.collider_template_id == 16);
             assert(projectile.definition.mechanics.damage == 0);
@@ -2453,12 +2453,12 @@ int main() {
             assert(projectile.definition.mechanics.projectile_impact_trigger
                        .spawn_projectile_template_id == 8);
         }
-        if (projectile.name == "spammer_projectile") {
+        if (projectile.name == "spammer") {
             found_spammer_projectile = true;
             assert(projectile.definition.mechanics.collider_template_id == 7);
             assert(projectile.definition.mechanics.damage == 1);
         }
-        if (projectile.name == "rocket_projectile") {
+        if (projectile.name == "rocket") {
             found_rocket_projectile = true;
             assert(projectile.definition.mechanics.collider_template_id == 3);
             assert(projectile.definition.mechanics.damage_shape ==
@@ -2501,7 +2501,7 @@ int main() {
             assert(projectile.definition.mechanics.projectile_impact_trigger.actions[1].impulse_lockout_ticks ==
                    40u);
         }
-        if (projectile.name == "homing_missile_projectile") {
+        if (projectile.name == "homing_missile") {
             found_homing_projectile = true;
             assert(projectile.definition.mechanics.collider_template_id == 7);
             assert(projectile.definition.mechanics.homing.lock_on_range == 25.0f);
@@ -2563,7 +2563,7 @@ int main() {
         "      target: event.target\n"
         "      strength: 4.5\n";
     const auto impulse_bundle = make_gameplay_bundle_zip(
-        read_text_file("game_server/gameplay_catalog/entity_templates/sentry_grunt.yaml"),
+        read_text_file("game_server/gameplay_catalog/entity_templates/2_sentry_grunt.yaml"),
         {{"action_graph_templates/action_apply_impulse_test.yaml", impulse_graph},
          {"entity_templates/impulse_prop.yaml", impulse_prop}});
     const auto impulse_config =
@@ -2633,7 +2633,7 @@ int main() {
         "    parameters:\n"
         "      target: event.target\n";
     const auto split_impulse_bundle = make_gameplay_bundle_zip(
-        read_text_file("game_server/gameplay_catalog/entity_templates/sentry_grunt.yaml"),
+        read_text_file("game_server/gameplay_catalog/entity_templates/2_sentry_grunt.yaml"),
         {{"action_graph_templates/action_split_impulse_test.yaml",
           split_impulse_graph},
          {"entity_templates/split_impulse_prop.yaml", split_impulse_prop}});
@@ -2675,7 +2675,7 @@ int main() {
             "    direction: params.direction\n"
             "    lockout_ticks: 100000\n";
         const auto oversized_bundle = make_gameplay_bundle_zip(
-            read_text_file("game_server/gameplay_catalog/entity_templates/sentry_grunt.yaml"),
+            read_text_file("game_server/gameplay_catalog/entity_templates/2_sentry_grunt.yaml"),
             {{"action_graph_templates/action_split_impulse_test.yaml",
               oversized_graph},
              {"entity_templates/split_impulse_prop.yaml", split_impulse_prop}});
@@ -2704,7 +2704,7 @@ int main() {
             "    strength: params.strength\n"
             "    direction: params.direction\n";
         const auto empty_bundle = make_gameplay_bundle_zip(
-            read_text_file("game_server/gameplay_catalog/entity_templates/sentry_grunt.yaml"),
+            read_text_file("game_server/gameplay_catalog/entity_templates/2_sentry_grunt.yaml"),
             {{"action_graph_templates/action_split_impulse_test.yaml",
               empty_graph},
              {"entity_templates/split_impulse_prop.yaml", split_impulse_prop}});
@@ -2771,7 +2771,7 @@ int main() {
             "      anchor: event.subject_position\n"
             "      direction: event.direction\n";
         const auto bundle = make_gameplay_bundle_zip(
-            read_text_file("game_server/gameplay_catalog/entity_templates/sentry_grunt.yaml"),
+            read_text_file("game_server/gameplay_catalog/entity_templates/2_sentry_grunt.yaml"),
             {{"action_graph_templates/action_pull_test.yaml", graph},
              {"entity_templates/pull_test_prop.yaml", prop}});
         try {
@@ -2864,7 +2864,7 @@ int main() {
         "      amount: 30\n";
     const std::vector<std::uint8_t> health_change_bundle =
         make_gameplay_bundle_zip(
-            read_text_file("game_server/gameplay_catalog/entity_templates/sentry_grunt.yaml"),
+            read_text_file("game_server/gameplay_catalog/entity_templates/2_sentry_grunt.yaml"),
             {
                 {"action_graph_templates/action_apply_health_change.yaml",
                  health_change_graph},
@@ -2960,7 +2960,7 @@ int main() {
         "      direction: event.direction\n";
     const std::vector<std::uint8_t> collision_projectile_bundle =
         make_gameplay_bundle_zip(
-            read_text_file("game_server/gameplay_catalog/entity_templates/sentry_grunt.yaml"),
+            read_text_file("game_server/gameplay_catalog/entity_templates/2_sentry_grunt.yaml"),
             {
                 {"action_graph_templates/"
                  "action_spawn_projectile_at_collision.yaml",
@@ -3020,7 +3020,7 @@ int main() {
             "      amount: " + std::string(invalid_amount) + "\n";
         const std::vector<std::uint8_t> invalid_bundle =
             make_gameplay_bundle_zip(
-                read_text_file("game_server/gameplay_catalog/entity_templates/sentry_grunt.yaml"),
+                read_text_file("game_server/gameplay_catalog/entity_templates/2_sentry_grunt.yaml"),
                 {
                     {"action_graph_templates/action_apply_health_change.yaml",
                      health_change_graph},
@@ -3068,7 +3068,7 @@ int main() {
             "triggers:\n" + invalid_trigger;
         const std::vector<std::uint8_t> invalid_bundle =
             make_gameplay_bundle_zip(
-                read_text_file("game_server/gameplay_catalog/entity_templates/sentry_grunt.yaml"),
+                read_text_file("game_server/gameplay_catalog/entity_templates/2_sentry_grunt.yaml"),
                 {
                     {"action_graph_templates/action_apply_health_change.yaml",
                      health_change_graph},
@@ -3090,7 +3090,7 @@ int main() {
 
     const std::vector<std::uint8_t> bundle_with_large_binary =
         make_gameplay_bundle_zip(
-            read_text_file("game_server/gameplay_catalog/entity_templates/sentry_grunt.yaml"),
+            read_text_file("game_server/gameplay_catalog/entity_templates/2_sentry_grunt.yaml"),
             {{
                 "mesh_assets/jolt/oversized.joltmesh",
                 std::string(1024 * 1024 + 1, 'x'),
@@ -3164,7 +3164,7 @@ int main() {
     // Authored on its own director template rather than through an `enemy:`
     // override of the shipping one. That override existed only because this
     // catalog shares entity_template_dir with production and could not edit
-    // world_rule_director.yaml without changing what ships.
+    // 100_director_world_rule.yaml without changing what ships.
     // Every authored director is translated, and the preload list decides which
     // are live -- so this shared template directory yields the shipping world
     // rule as well as this catalog's own. Named, not indexed.
@@ -3339,7 +3339,7 @@ int main() {
 
     const std::vector<std::uint8_t> legacy_item_input_bundle =
         make_gameplay_bundle_zip(
-            read_text_file("game_server/gameplay_catalog/entity_templates/sentry_grunt.yaml"),
+            read_text_file("game_server/gameplay_catalog/entity_templates/2_sentry_grunt.yaml"),
             {{"item_templates/legacy.yaml",
               "id: 9900\n"
               "name: legacy\n"
@@ -3363,7 +3363,7 @@ int main() {
 
     const std::vector<std::uint8_t> legacy_throw_speed_bundle =
         make_gameplay_bundle_zip(
-            read_text_file("game_server/gameplay_catalog/entity_templates/sentry_grunt.yaml"),
+            read_text_file("game_server/gameplay_catalog/entity_templates/2_sentry_grunt.yaml"),
             {{"item_templates/legacy_throw.yaml",
               "id: 9902\n"
               "name: legacy_throw\n"
@@ -3388,7 +3388,7 @@ int main() {
 
     const std::vector<std::uint8_t> legacy_prop_mapping_bundle =
         make_gameplay_bundle_zip(
-            read_text_file("game_server/gameplay_catalog/entity_templates/sentry_grunt.yaml"),
+            read_text_file("game_server/gameplay_catalog/entity_templates/2_sentry_grunt.yaml"),
             {{"entity_templates/legacy.yaml",
               "id: 9901\n"
               "name: legacy_prop\n"
@@ -3469,14 +3469,14 @@ int main() {
         "projectile_template_dir: projectile_templates\n"
         "collider_template_dir: collider_templates\n"});
     const std::vector<std::string> duplicate_collider_weapon_files = {
-        "beam_rifle.yaml",
-        "fire_floor.yaml",
-        "homing_missile.yaml",
-        "rifle.yaml",
-        "rocket.yaml",
-        "shotgun.yaml",
-        "grenade_launcher.yaml",
-        "spammer.yaml",
+        "5_weapon_beam_rifle.yaml",
+        "4_weapon_fire_floor.yaml",
+        "6_weapon_homing_missile.yaml",
+        "0_weapon_rifle.yaml",
+        "3_weapon_rocket.yaml",
+        "1_weapon_shotgun.yaml",
+        "7_weapon_grenade_launcher.yaml",
+        "2_weapon_spammer.yaml",
     };
     for (const std::string& file : duplicate_collider_weapon_files) {
         duplicate_collider_files.push_back({
