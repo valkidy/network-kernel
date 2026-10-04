@@ -6,8 +6,18 @@
 #include "kernel/public/kernel_api.h"
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 97u,
-    "seats: RenderEntityState gained shelter_net_id and shelter_seat");
+    KERNEL_ABI_VERSION == 98u,
+    "hover: KernelMovementDefinition gained hover_height_meters and "
+    "hover_vertical_speed_meters_per_second");
+_Static_assert(
+    offsetof(KernelMovementDefinition, hover_height_meters) >
+            offsetof(KernelMovementDefinition, movement_collision_mask) &&
+        offsetof(KernelMovementDefinition, hover_vertical_speed_meters_per_second) >
+            offsetof(KernelMovementDefinition, hover_height_meters),
+    "the hover fields are appended after every field that existed before ABI 98");
+_Static_assert(
+    KernelMovementControllerType_Hover == 4,
+    "the ABI 98 enum value is appended");
 _Static_assert(
     offsetof(RenderEntityState, shelter_net_id) >
             offsetof(RenderEntityState, beam_end) &&

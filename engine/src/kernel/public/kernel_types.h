@@ -161,7 +161,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 97u
+#define KERNEL_ABI_VERSION 98u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -2374,6 +2374,13 @@ typedef enum KernelMovementControllerType {
     KernelMovementControllerType_Grounded = 1,
     KernelMovementControllerType_Kinematic = 2,
     KernelMovementControllerType_Character = 3,
+    /*
+     * Flies: holds hover_height_meters of clearance above whatever is beneath
+     * it -- terrain or a static obstacle -- and never falls. Moves on the same
+     * horizontal input as the others and is stopped by what its movement
+     * collision mask names, in every direction.
+     */
+    KernelMovementControllerType_Hover = 4,
 } KernelMovementControllerType;
 
 typedef struct KernelMovementDefinition {
@@ -2400,6 +2407,15 @@ typedef struct KernelMovementDefinition {
      * this to terrain alone is how that is expressed.
      */
     uint32_t movement_collision_mask;
+    /*
+     * Hover only, and ignored by every other controller. The clearance held
+     * between the bottom of the movement capsule and whatever is beneath it,
+     * and how fast it may climb or sink to keep it. A finite vertical speed is
+     * what makes it rise over an obstacle rather than teleport onto it, and
+     * what lets a wall it cannot out-climb in time stop it.
+     */
+    float hover_height_meters;
+    float hover_vertical_speed_meters_per_second;
 } KernelMovementDefinition;
 
 // Everything a director needed lived here too: a target count, what to spawn,
