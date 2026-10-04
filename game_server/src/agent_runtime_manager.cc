@@ -101,6 +101,12 @@ AgentRuntimeManager::AgentRuntimeManager(
     // carrier is in the world, which is the whole point of putting the rule
     // on the carrier.
     spawner_director_ = SpawnerDirector(config_.spawner_carriers);
+    alert_carrier_template_ids_.clear();
+    for (const SpawnerCarrierConfig& carrier : config_.spawner_carriers) {
+        if (carrier.spawner.trigger == SpawnerTrigger::kOnAlert) {
+            alert_carrier_template_ids_.push_back(carrier.entity_template_id);
+        }
+    }
     if (!config_.navigation_mesh.artifact.empty()) {
         std::string error;
         if (patrol_navigation_.load(config_.navigation_mesh.artifact, &error)) {
@@ -197,6 +203,47 @@ void AgentRuntimeManager::dispatch_controllers(
     // No write-back pass. Controllers never add or drop agents, and a batch now
     // points at the entries rather than holding copies of them, so what a
     // controller wrote is already in agents_.
+}
+
+void AgentRuntimeManager::collect_alert_signals() {
+    alert_signals_.clear();
+    if (alert_carrier_template_ids_.empty()) {
+        return;
+    }
+    for (AgentRuntimeState& agent : agents_) {
+        if (std::find(
+                alert_carrier_template_ids_.begin(),
+                alert_carrier_template_ids_.end(),
+                agent.actor_template_id) == alert_carrier_template_ids_.end()) {
+            continue;
+        }
+        // Still walking out: no controller ran, so its state says nothing
+        // about this tick. It cannot be engaged yet anyway.
+        if (agent.entry.active) {
+            continue;
+        }
+        const bool engaged = is_engaged(agent.sentry.state);
+        const bool started = engaged && !agent.engaged_last_tick;
+        agent.engaged_last_tick = engaged;
+        if (!engaged) {
+            continue;
+        }
+        AlertSignal signal;
+        signal.net_id = agent.net_id;
+        signal.engagement_started = started;
+        // Off the frame the controllers decided on, not off their counters:
+        // lost_target_ticks is zeroed by every state transition too, so attack
+        // giving up into alert reads as "in sight" for a tick it is not.
+        const KernelVisionStateView* vision =
+            perception_frame_.vision_state(agent.net_id);
+        signal.sees_target =
+            vision != nullptr && vision->current_target_candidate != 0u;
+        alert_signals_.push_back(signal);
+    }
+}
+
+const std::vector<AlertSignal>& AgentRuntimeManager::alert_signals() const {
+    return alert_signals_;
 }
 
 void AgentRuntimeManager::handle_event(const KernelEvent& event) {
@@ -320,6 +367,9 @@ void AgentRuntimeManager::tick(float delta_seconds) {
         if (!has_live_agent()) {
             despawn_pending_ = false;
         } else {
+            // No controller runs, so nobody is engaged this tick; a signal
+            // left from before the despawn would name agents being destroyed.
+            alert_signals_.clear();
             return;
         }
     }
@@ -364,6 +414,7 @@ void AgentRuntimeManager::tick(float delta_seconds) {
     // Still on the post-director snapshot: nothing between it and here creates,
     // destroys or moves an entity, so it is what a per-agent query would return.
     dispatch_controllers(actors, delta_seconds);
+    collect_alert_signals();
 }
 
 void AgentRuntimeManager::despawn_all(std::uint32_t reason) {

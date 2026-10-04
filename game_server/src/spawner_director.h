@@ -125,6 +125,23 @@ struct SpawnerEntryRequest {
     std::uint32_t max_ticks = 0;
 };
 
+// One engaged agent that carries an on_alert spawner, as its controller left it
+// at the end of a tick. Taken by the director on the tick after, never mid-
+// controller: what a controller wrote is only settled once they have all run.
+//
+// Only engaged agents appear. Absence is "not engaged", which is also what ends
+// an engagement -- and so what lets the next one count its calls from zero.
+struct AlertSignal {
+    std::uint32_t net_id = 0;
+    // Idle or return to alert or attack, this tick. Attack falling back to
+    // alert is not a new engagement: the agent never stopped being engaged.
+    bool engagement_started = false;
+    // Whether it can see its target this tick. Engagement outlives sight by
+    // up to two forget windows, and calling for help at empty ground in that
+    // tail reads as a bug, so the director asks for both.
+    bool sees_target = false;
+};
+
 // A template that carries a spawner, and what kind of entity it is -- the kind
 // is what the director queries for, so a catalog with no spawners costs no
 // queries at all.
