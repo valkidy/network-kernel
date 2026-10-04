@@ -46,6 +46,9 @@ public:
     const WorldRuleDirector& world_rule_director() const;
     const GameRuleDirector& game_rule_director() const;
     const SpawnerDirector& spawner_director() const;
+    // Who carried an on_alert spawner and was engaged at the end of the last
+    // tick. The spawner reads this on the next one.
+    const std::vector<AlertSignal>& alert_signals() const;
 
 private:
     // One controller per agent actor template. Agents from different templates
@@ -94,6 +97,10 @@ private:
     // to ask the kernel per agent for the vision state and for the entity state
     // this snapshot already holds.
     void dispatch_controllers(const ActorStateView& actors, float delta_seconds);
+    // After the controllers: who is engaged now, among agents that carry an
+    // on_alert spawner. Rebuilt every tick, and empty -- at no cost -- in a
+    // catalog that has none.
+    void collect_alert_signals();
     AgentControllerBinding* binding_for(std::uint32_t actor_template_id);
 
     KernelHandle* kernel_ = nullptr;
@@ -110,6 +117,10 @@ private:
     WorldRuleDirector world_rule_director_;
     GameRuleDirector game_rule_director_;
     SpawnerDirector spawner_director_;
+    // Templates whose spawner calls on alert. A handful at most, so a scan
+    // beats a set; empty means the signal pass never walks the agents at all.
+    std::vector<std::uint32_t> alert_carrier_template_ids_;
+    std::vector<AlertSignal> alert_signals_;
     // Kept across ticks so that a population which has already been sized for
     // does not reallocate every tick.
     mutable std::vector<KernelServerEntityState> actor_query_buffer_;

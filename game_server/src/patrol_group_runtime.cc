@@ -31,10 +31,6 @@ KernelVec3 rotate_into_heading(
     };
 }
 
-bool is_engaged(AgentSentryState state) {
-    return state == AgentSentryState::kAlert || state == AgentSentryState::kAttack;
-}
-
 AgentRuntimeState* find_agent(
     std::vector<AgentRuntimeState>* agents,
     const AgentIndex& index,

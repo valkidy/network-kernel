@@ -380,6 +380,10 @@ void hash_actor_template(
     hash_float(hash, actor_template.patrol.leash_meters);
     hash_float(hash, actor_template.patrol.leash_resume_meters);
     hash_scalar(hash, actor_template.spawner.authored ? 1u : 0u);
+    hash_scalar(
+        hash, static_cast<std::uint32_t>(actor_template.spawner.trigger));
+    hash_scalar(hash, actor_template.spawner.calls_per_alert);
+    hash_vec3(hash, actor_template.spawner.offset);
     hash_scalar(hash, actor_template.spawner.seed);
     hash_scalar(hash, actor_template.spawner.interval_ticks);
     hash_scalar(hash, actor_template.spawner.max_live_agents);
@@ -2885,6 +2889,11 @@ void apply_catalog_patrol_config(
     const std::string& path,
     std::uint32_t source_kind);
 void apply_catalog_world_rule_config(GameServerGameplayConfig* config);
+void apply_catalog_population_budget_config(
+    const YAML::Node& document,
+    GameServerGameplayConfig* config,
+    const std::string& path,
+    std::uint32_t source_kind);
 void apply_catalog_spawner_config(
     GameServerGameplayConfig* config,
     const std::string& path,
@@ -3769,6 +3778,7 @@ ActorTemplateConfig actor_template_from_yaml(
             "vision",
             "skeleton",
             "locomotion",
+            "spawner",
         },
         path,
         source_kind,
@@ -4524,6 +4534,13 @@ ActorTemplateConfig actor_template_from_yaml(
             }
         }
     }
+    // Whether an actor may carry this kind of spawner depends on its AI, which
+    // apply_catalog_spawner_config checks once every template is loaded.
+    actor_template.spawner = spawner_from_yaml(
+        node["spawner"],
+        path,
+        source_kind,
+        actor_template.actor_template_id);
     return actor_template;
 }
 
@@ -7463,6 +7480,8 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             "preload_directors",
             "patrols",
             "patrol_budget",
+            "reinforce_budget",
+            "agent_budget",
             "navigation_mesh",
         },
         path,
@@ -7718,6 +7737,8 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     apply_catalog_patrol_config(
         document, &config, path, source.source_kind());
     apply_catalog_world_rule_config(&config);
+    apply_catalog_population_budget_config(
+        document, &config, path, source.source_kind());
     apply_catalog_spawner_config(&config, path, source.source_kind());
 
     const std::vector<std::string> errors = validate_gameplay_config(config);
@@ -7830,10 +7851,13 @@ SpawnerConfig spawner_from_yaml(
     reject_unknown_keys(
         node,
         {
+            "trigger",
+            "calls_per_alert",
             "seed",
             "interval_ticks",
             "max_live_agents",
             "radius",
+            "offset",
             "count",
             "composition",
             "entry",
@@ -7843,6 +7867,29 @@ SpawnerConfig spawner_from_yaml(
         KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
         template_id);
     spawner.authored = true;
+    if (node["trigger"]) {
+        const std::string trigger = node["trigger"].as<std::string>();
+        if (trigger == "interval") {
+            spawner.trigger = SpawnerTrigger::kInterval;
+        } else if (trigger == "on_alert") {
+            spawner.trigger = SpawnerTrigger::kOnAlert;
+        } else {
+            throw std::runtime_error(
+                "spawner trigger must be interval or on_alert: " + trigger);
+        }
+    }
+    if (node["calls_per_alert"]) {
+        // Refused rather than ignored: on a clock it would read as a limit that
+        // is not there.
+        if (spawner.trigger != SpawnerTrigger::kOnAlert) {
+            throw std::runtime_error(
+                "spawner calls_per_alert requires trigger: on_alert");
+        }
+        spawner.calls_per_alert = node["calls_per_alert"].as<std::uint32_t>();
+    }
+    if (node["offset"]) {
+        spawner.offset = vec3_from_yaml(node["offset"]);
+    }
     if (node["seed"]) {
         spawner.seed = node["seed"].as<std::uint32_t>();
     }
@@ -8072,6 +8119,34 @@ std::string validate_spawner_entry_placement(
     return {};
 }
 
+// `reinforce_budget:` and `agent_budget:`, both one ceiling at catalog top
+// level beside `patrol_budget:`. Read before the spawner pass, which checks
+// every on_alert wave against the reinforce budget.
+void apply_catalog_population_budget_config(
+    const YAML::Node& document,
+    GameServerGameplayConfig* config,
+    const std::string& path,
+    std::uint32_t source_kind) {
+    const auto read_ceiling = [&](const char* key, std::uint32_t* out) {
+        const YAML::Node budget = document[key];
+        if (!budget) {
+            return;
+        }
+        reject_unknown_keys(
+            budget,
+            {"max_live_agents"},
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+        if (budget["max_live_agents"]) {
+            *out = budget["max_live_agents"].as<std::uint32_t>();
+        }
+    };
+    read_ceiling(
+        "reinforce_budget", &config->reinforce_budget.max_live_agents);
+    read_ceiling("agent_budget", &config->agent_budget.max_live_agents);
+}
+
 void apply_catalog_spawner_config(
     GameServerGameplayConfig* config,
     const std::string& path,
@@ -8100,6 +8175,33 @@ void apply_catalog_spawner_config(
             validate_spawner_config(entity_template.spawner);
         if (!error.empty()) {
             throw std::runtime_error(error + ": " + entity_template.name);
+        }
+        if (entity_template.spawner.trigger == SpawnerTrigger::kOnAlert) {
+            // The trigger reads the carrier's sentry state, which only the
+            // sentry and chaser controllers keep.
+            if (entity_template.entity_type != kEntityTypeActor ||
+                entity_template.actor_type != kActorTypeAgent ||
+                (entity_template.ai_controller_type !=
+                     KernelAiControllerType_Sentry &&
+                 entity_template.ai_controller_type !=
+                     KernelAiControllerType_Chaser)) {
+                throw std::runtime_error(
+                    "spawner trigger on_alert requires an agent with a sentry "
+                    "or chaser controller: " + entity_template.name);
+            }
+            const std::uint32_t budget =
+                config->reinforce_budget.max_live_agents;
+            if (budget == 0u) {
+                throw std::runtime_error(
+                    "spawner trigger on_alert requires reinforce_budget: " +
+                    entity_template.name);
+            }
+            // Waves are whole, so a budget below one could never let it call.
+            if (budget < entity_template.spawner.count_max) {
+                throw std::runtime_error(
+                    "reinforce_budget is below the largest wave of " +
+                    entity_template.name);
+            }
         }
         if (entity_template.spawner.entry.authored) {
             // Only once the composition's ids are resolved above: this reads the
@@ -8592,6 +8694,8 @@ std::uint64_t compute_gameplay_catalog_hash(
         hash_scalar(&hash, rule.tick_interval);
     }
     hash_scalar(&hash, config.patrol_budget.max_live_agents);
+    hash_scalar(&hash, config.reinforce_budget.max_live_agents);
+    hash_scalar(&hash, config.agent_budget.max_live_agents);
     hash_string(&hash, config.navigation_mesh.entry_path);
     hash_scalar(
         &hash,
