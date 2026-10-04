@@ -4,6 +4,7 @@
 #include <cassert>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <vector>
 
@@ -11,6 +12,15 @@
 #include "game_server/src/gameplay_config.h"
 
 namespace {
+
+void require_impl(bool condition, const char* expression, int line) {
+    if (!condition) {
+        std::fprintf(stderr, "require failed at line %d: %s\n", line, expression);
+        std::abort();
+    }
+}
+
+#define require(condition) require_impl((condition), #condition, __LINE__)
 
 constexpr std::uint32_t kTestFireActionTemplateId = 100;
 constexpr std::uint32_t kTestReloadActionTemplateId = 101;
@@ -264,7 +274,7 @@ int main() {
     KernelConfig config = server_config();
     KernelHandle* kernel = Kernel_Create(&config);
     assert(kernel != nullptr);
-    assert(Kernel_StartDedicatedServer(kernel, 7777));
+    require(Kernel_StartDedicatedServer(kernel, 8045));
     load_catalog(kernel);
 
     const std::uint32_t enemy_net_id =

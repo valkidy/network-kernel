@@ -16,6 +16,15 @@
 
 namespace {
 
+void require_impl(bool condition, const char* expression, int line) {
+    if (!condition) {
+        std::fprintf(stderr, "require failed at line %d: %s\n", line, expression);
+        std::abort();
+    }
+}
+
+#define require(condition) require_impl((condition), #condition, __LINE__)
+
 constexpr std::uint16_t kMaxReserveMagazines =
     std::numeric_limits<std::uint16_t>::max();
 
@@ -376,7 +385,7 @@ int main() {
         kernel,
         &sync_server_config,
         &sync_manifest));
-    assert(Kernel_StartListenServer(kernel, 7777));
+    require(Kernel_StartListenServer(kernel, 8046));
 
     KernelConfig client_config = config;
     client_config.mode = KernelMode_Client;
@@ -389,7 +398,7 @@ int main() {
     sync_client_config.timeout_ms = 5000u;
     assert(Kernel_StartClientCatalogSync(
         catalog_client,
-        "127.0.0.1:7777",
+        "127.0.0.1:8046",
         &sync_client_config));
     assert(pump_until_catalog_sync_state(
         kernel,

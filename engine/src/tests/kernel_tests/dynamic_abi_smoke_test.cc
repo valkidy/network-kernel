@@ -720,7 +720,7 @@ int main() {
     assert(kernel != nullptr);
     assert(kernel_get_skeleton_bind_pose(
                kernel, 999u, UINT64_C(1), nullptr, 0u) == 0u);
-    require(kernel_start_listen_server(kernel, 7777));
+    require(kernel_start_listen_server(kernel, 8047));
     GameServerHandle* game_server = game_server_create(kernel);
     assert(game_server != nullptr);
     assert(game_server_create_with_weapon_template_directory(kernel, nullptr) == nullptr);

@@ -99,7 +99,7 @@ void server_set_entity_health_updates_hp_only() {
     options.out_static_scene_rejected = &static_scene_rejected;
     assert(Kernel_LoadGameplayCatalog(kernel, &catalog, &options));
     assert(static_scene_rejected == 0u);
-    assert(Kernel_StartDedicatedServer(kernel, 7812));
+    require(Kernel_StartDedicatedServer(kernel, 8042));
 
     KernelServerEntityCreateInfo create_info{};
     create_info.struct_size = sizeof(create_info);
@@ -890,7 +890,7 @@ int main() {
         &invalid_sync_server_config,
         &manifest));
     assert(!Kernel_ServerCreateEntity(kernel, &create_info, &created_net_id));
-    assert(Kernel_StartDedicatedServer(kernel, 7777));
+    require(Kernel_StartDedicatedServer(kernel, 8043));
 
     assert(Kernel_ServerCreateEntity(kernel, &create_info, &created_net_id));
     assert(created_net_id != 0);

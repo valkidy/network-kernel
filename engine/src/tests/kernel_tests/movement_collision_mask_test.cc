@@ -297,14 +297,14 @@ float walk_into_blocker(std::uint16_t port, std::uint32_t blocker_template_id) {
 int main() {
     // The default mask keeps the old behaviour: the blocker stops the player,
     // resting against it rather than anywhere near the 15 m the walk asked for.
-    const float blocked_x = walk_into_blocker(7811, kBlockingTemplateId);
+    const float blocked_x = walk_into_blocker(8040, kBlockingTemplateId);
     require(blocked_x > 0.0f);
     require(blocked_x < kContactX + 0.1f);
     require(blocked_x > kContactX - 0.5f);
 
     // Dropping the actor layer takes the capsule out of the player's sweep too,
     // so the walk runs to completion straight through where it stood.
-    const float unblocked_x = walk_into_blocker(7812, kNonBlockingTemplateId);
+    const float unblocked_x = walk_into_blocker(8041, kNonBlockingTemplateId);
     require(unblocked_x > kBlockerX + kBlockerRadius);
 
     std::printf(

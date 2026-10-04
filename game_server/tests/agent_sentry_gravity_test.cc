@@ -230,7 +230,7 @@ struct SentryFixture {
 // vertical component is zero the agent can never hold more than a single
 // tick's worth of gravity -- a flat -0.327 m/s forever, whatever the drop.
 void the_controller_no_longer_overwrites_vertical_velocity() {
-    SentryFixture fixture(7811);
+    SentryFixture fixture(8036);
     constexpr std::uint32_t kTicks = 10;
     fixture.tick(kTicks);
 
@@ -248,7 +248,7 @@ void the_controller_no_longer_overwrites_vertical_velocity() {
 // descending. With the vertical velocity clobbered it crept at a fixed
 // 0.011 m per tick instead, which reads as hanging in the air.
 void a_sentry_spawned_in_the_air_falls() {
-    SentryFixture fixture(7812);
+    SentryFixture fixture(8037);
     const float start = fixture.state().position.y;
     require(std::fabs(start - kSpawnHeight) < 0.001f);
 
@@ -278,8 +278,8 @@ KernelVec3 fall_after(std::uint16_t port, bool passive_patrol, std::uint32_t tic
 void the_patrol_path_falls_identically() {
     // Sequentially, never both at once: two live KernelHandles in one process
     // is not a configuration the game has, and it does not survive here.
-    const KernelVec3 patrol = fall_after(7813, true, 10u);
-    const KernelVec3 sentry = fall_after(7814, false, 10u);
+    const KernelVec3 patrol = fall_after(8038, true, 10u);
+    const KernelVec3 sentry = fall_after(8039, false, 10u);
 
     require(std::fabs(patrol.z - sentry.z) < 0.001f);
     require(std::fabs(patrol.y - sentry.y) < 0.001f);

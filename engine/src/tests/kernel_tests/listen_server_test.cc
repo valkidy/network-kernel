@@ -1,10 +1,21 @@
 #include <array>
 #include <cassert>
+#include <cstdio>
+#include <cstdlib>
 
 #include "kernel/public/kernel_api.h"
 #include "world/public/components.h"
 
 namespace {
+
+void require_impl(bool condition, const char* expression, int line) {
+    if (!condition) {
+        std::fprintf(stderr, "require failed at line %d: %s\n", line, expression);
+        std::abort();
+    }
+}
+
+#define require(condition) require_impl((condition), #condition, __LINE__)
 
 RenderEntityState find_player(const std::array<RenderEntityState, 16>& states, std::uint32_t count) {
     for (std::uint32_t index = 0; index < count; ++index) {
@@ -412,7 +423,7 @@ int main() {
 
     KernelHandle* kernel = Kernel_Create(&config);
     assert(kernel != nullptr);
-    assert(Kernel_StartListenServer(kernel, 7777));
+    require(Kernel_StartListenServer(kernel, 8048));
     load_minimal_gameplay_catalog(kernel);
 
     std::array<KernelEvent, 16> events{};
