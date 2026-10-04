@@ -276,6 +276,7 @@ using network_example::game_server::SpawnCompositionEntry;
 using network_example::game_server::SpawnerCarrierConfig;
 using network_example::game_server::SpawnerConfig;
 using network_example::game_server::SpawnerDirector;
+using network_example::game_server::SpawnerTrigger;
 
 SpawnerCarrierConfig nest_carrier(
     std::uint32_t interval,
@@ -410,6 +411,55 @@ void a_ceiling_bounds_the_nest_and_waves_stay_whole() {
     Kernel_Destroy(kernel);
 }
 
+// The disc follows the carrier's offset, so a carrier can put its wave out from
+// somewhere other than its own middle -- under a hull, say.
+void an_offset_moves_where_the_wave_comes_out() {
+    KernelHandle* kernel = start_server(7865);
+    SpawnerCarrierConfig carrier = nest_carrier(2, 3, 3, 0);
+    carrier.spawner.offset = KernelVec3{0.0f, 0.0f, 20.0f};
+    SpawnerDirector director({carrier});
+    create_nest(kernel, KernelVec3{10.0f, 0.0f, 0.0f});
+
+    for (int tick = 0; tick < 2; ++tick) {
+        director.tick(kernel);
+    }
+    const std::vector<KernelVec3> positions = agent_positions(kernel);
+    require(positions.size() == 3u);
+    for (const KernelVec3& position : positions) {
+        const float dx = position.x - 10.0f;
+        const float dz = position.z - 20.0f;
+        require(std::sqrt(dx * dx + dz * dz) <= 4.5f);
+    }
+
+    Kernel_Destroy(kernel);
+}
+
+// A call for help is not a clock. With nothing engaging the carrier, an
+// on_alert spawner puts out nothing however long it stands there; the control
+// is the same carrier on a clock, which does.
+void an_on_alert_carrier_does_not_run_on_the_clock() {
+    KernelHandle* kernel = start_server(7866);
+    SpawnerCarrierConfig carrier = nest_carrier(2, 2, 2, 0);
+    carrier.spawner.trigger = SpawnerTrigger::kOnAlert;
+    SpawnerDirector director({carrier});
+    create_nest(kernel, KernelVec3{10.0f, 0.0f, 0.0f});
+    for (int tick = 0; tick < 30; ++tick) {
+        director.tick(kernel);
+    }
+    require(agent_count(kernel) == 0u);
+    require(director.spawned_unit_count() == 0u);
+    Kernel_Destroy(kernel);
+
+    KernelHandle* control = start_server(7867);
+    SpawnerDirector clock({nest_carrier(2, 2, 2, 0)});
+    create_nest(control, KernelVec3{10.0f, 0.0f, 0.0f});
+    for (int tick = 0; tick < 30; ++tick) {
+        clock.tick(control);
+    }
+    require(agent_count(control) > 0u);
+    Kernel_Destroy(control);
+}
+
 }  // namespace
 
 int main() {
@@ -417,5 +467,7 @@ int main() {
     two_nests_of_one_template_run_independently();
     destroying_a_nest_stops_it_and_keeps_its_units();
     a_ceiling_bounds_the_nest_and_waves_stay_whole();
+    an_offset_moves_where_the_wave_comes_out();
+    an_on_alert_carrier_does_not_run_on_the_clock();
     return 0;
 }

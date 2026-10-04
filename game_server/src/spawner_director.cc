@@ -1,6 +1,7 @@
 #include "game_server/src/spawner_director.h"
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
 
 #include <spdlog/spdlog.h>
@@ -68,6 +69,24 @@ std::string validate_spawner_config(const SpawnerConfig& spawner) {
         spawner.max_live_agents < spawner.count_max) {
         return "spawner ceiling is below the largest wave it would draw";
     }
+    if (!std::isfinite(spawner.offset.x) || !std::isfinite(spawner.offset.y) ||
+        !std::isfinite(spawner.offset.z)) {
+        return "spawner offset must be finite";
+    }
+    if (spawner.trigger == SpawnerTrigger::kOnAlert) {
+        // A call for help arrives where the fight is, not through a door: the
+        // walk-out holds a unit for the walk, which is the wrong moment to be
+        // holding it.
+        if (spawner.entry.authored) {
+            return "spawner trigger on_alert cannot have an entry";
+        }
+        // Unbounded calls with no ceiling of its own leave only the shared
+        // reinforce budget between one carrier and the whole of it.
+        if (spawner.calls_per_alert == 0u && spawner.max_live_agents == 0u) {
+            return "spawner with unbounded calls_per_alert requires "
+                   "max_live_agents";
+        }
+    }
     if (spawner.entry.authored) {
         if (spawner.entry.exits.empty()) {
             return "spawner entry requires at least one exit";
@@ -92,8 +111,15 @@ std::string validate_spawner_config(const SpawnerConfig& spawner) {
     return {};
 }
 
-SpawnerDirector::SpawnerDirector(std::vector<SpawnerCarrierConfig> carriers)
-    : carriers_(std::move(carriers)) {
+SpawnerDirector::SpawnerDirector(std::vector<SpawnerCarrierConfig> carriers) {
+    // Only clocks are run here so far. An on_alert carrier is parsed and
+    // validated but not yet driven, and must not fall through to the interval
+    // path: it would call for help on a timer with nobody in sight.
+    for (SpawnerCarrierConfig& carrier : carriers) {
+        if (carrier.spawner.trigger == SpawnerTrigger::kInterval) {
+            carriers_.push_back(std::move(carrier));
+        }
+    }
     for (const SpawnerCarrierConfig& carrier : carriers_) {
         if (std::find(
                 queried_entity_types_.begin(),
@@ -275,7 +301,10 @@ void SpawnerDirector::tick(KernelHandle* kernel) {
                 // authored start instead, which is inside itself.
                 create_info.position = door != nullptr
                     ? carrier_world_point(carrier_state, door->start)
-                    : sample_area(area, carrier_state.position, &random_state);
+                    : sample_area(
+                          area,
+                          carrier_world_point(carrier_state, spawner.offset),
+                          &random_state);
                 // Facing the way the carrier faces, so a unit walking out is
                 // already pointed at the door rather than turning on the spot.
                 create_info.rotation =

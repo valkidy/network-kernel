@@ -61,8 +61,29 @@ struct SpawnerEntryConfig {
     std::vector<SpawnerEntryExit> exits;
 };
 
+// What makes a spawner put out a wave.
+//
+// kInterval is the nest: a clock, whatever is going on around it. kOnAlert is a
+// call for help: the carrier's own AI has to be engaged with a target it can
+// see, so only an agent can carry one -- a prop has no AI state to read.
+enum class SpawnerTrigger : std::uint8_t {
+    kInterval = 0,
+    kOnAlert = 1,
+};
+
 struct SpawnerConfig {
     bool authored = false;
+    SpawnerTrigger trigger = SpawnerTrigger::kInterval;
+    // on_alert only: calls per engagement, an engagement running from the
+    // carrier leaving idle/return until it goes back to one. interval_ticks is
+    // the gap between calls, and it carries across engagements, so a carrier
+    // flickering in and out of alert cannot call on every flicker. Zero is
+    // unbounded, like max_live_agents -- which is why it requires a ceiling.
+    std::uint32_t calls_per_alert = 1;
+    // Where the wave's disc is centred, relative to the carrier and turned by
+    // its rotation, as entry doors are. A flying carrier drops units from
+    // under its hull rather than out of its middle.
+    KernelVec3 offset{0.0f, 0.0f, 0.0f};
     // Mixed with the carrier's net id, so two nests of one template do not put
     // out identical waves. That makes replays depend on entity creation order
     // being deterministic rather than on this value alone -- which holds, since
@@ -80,7 +101,8 @@ struct SpawnerConfig {
     // that is not a comfortable multiple of the wave size leaves headroom
     // unused, and validate_spawner_config refuses one below a whole wave.
     std::uint32_t max_live_agents = 0;
-    // Where they come out: a disc centred on the carrier, wherever it is now.
+    // Where they come out: a disc centred on the carrier (plus `offset`),
+    // wherever it is now.
     float radius = 0.0f;
     std::uint32_t count_min = 1;
     std::uint32_t count_max = 1;
