@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- aligns Unity bindings with ABI 99 ground-follow cylinder area effects and hover movement
+
+
+0.7.0 release notes:
+
 - updates native plugins and gameplay catalog for ABI 97 shelter seats replicated to every client
 
 

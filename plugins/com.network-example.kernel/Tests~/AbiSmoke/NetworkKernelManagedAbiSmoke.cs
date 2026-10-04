@@ -34,7 +34,7 @@ public static class NetworkKernelManagedAbiSmoke
         KernelBuildInfo buildInfo = KernelAbi.GetBuildInfo();
         GameServerAbiInfo gameServerInfo = GameServerAbi.GetInfo();
         RequireSkeletonBindingContract();
-        Require(KernelConstants.AbiVersion == 97, "Managed kernel ABI version was not v97.");
+        Require(KernelConstants.AbiVersion == 99, "Managed kernel ABI version was not v99.");
         Require(
             KernelLocalWeaponState.StructSize == 20 &&
             info.local_weapon_state_size == KernelLocalWeaponState.StructSize,
@@ -133,7 +133,7 @@ public static class NetworkKernelManagedAbiSmoke
             KernelSessionRulesConfig.StructSize == 8,
             "Kernel configuration layout size mismatch.");
         Require(
-            KernelMovementDefinition.StructSize == 48,
+            KernelMovementDefinition.StructSize == 56,
             "Kernel movement definition layout size mismatch.");
         Require(
             KernelBoneLocalTransform.StructSize == 40 &&
@@ -251,6 +251,16 @@ public static class NetworkKernelManagedAbiSmoke
             KernelConstants.SpawnPlacementClear == 1U &&
             KernelConstants.ShelterCapacity == 4U,
             "Kernel buildings (ABI 96) mismatch.");
+        Require(
+            KernelAreaEffectShape.Cylinder == (KernelAreaEffectShape)1 &&
+            KernelAreaEffectMotion.GroundFollow == (KernelAreaEffectMotion)1 &&
+            KernelMovementControllerType.Hover == (KernelMovementControllerType)4 &&
+            KernelAreaEffectMechanicsDefinition.StructSize == 60 &&
+            (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelAreaEffectMechanicsDefinition>("shape") == 36 &&
+            (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelAreaEffectMechanicsDefinition>("probe_depth") == 56 &&
+            (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelMovementDefinition>("hover_height_meters") == 48 &&
+            (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelMovementDefinition>("hover_vertical_speed_meters_per_second") == 52,
+            "Kernel ground-follow area effect and hover ABI mismatch.");
         RequireLANDiscovery();
         byte[] catalogBundleBytes = LoadGameplayCatalogBundleBytes();
 

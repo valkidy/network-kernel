@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 97;
+        public const uint AbiVersion = 99;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int LogMessageTextSize = 512;
@@ -689,6 +689,7 @@ namespace NetworkExample.Kernel
         Grounded = 1,
         Kinematic = 2,
         Character = 3,
+        Hover = 4,
     }
 
     public enum KernelFootholdQueryType : byte
@@ -2237,6 +2238,18 @@ namespace NetworkExample.Kernel
         public static uint StructSize => (uint)Marshal.SizeOf<KernelProjectileMechanicsDefinition>();
     }
 
+    public enum KernelAreaEffectShape : byte
+    {
+        Sphere = 0,
+        Cylinder = 1,
+    }
+
+    public enum KernelAreaEffectMotion : byte
+    {
+        Linear = 0,
+        GroundFollow = 1,
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     public struct KernelAreaEffectMechanicsDefinition
     {
@@ -2252,6 +2265,15 @@ namespace NetworkExample.Kernel
         public byte reserved1;
         public ushort reserved2;
         public uint motion_collision_mask;
+        // KernelAreaEffectShape and KernelAreaEffectMotion; zero preserves sphere/linear behavior.
+        public byte shape;
+        public byte motion;
+        public ushort reserved3;
+        public float half_height;
+        public float hover_height;
+        public float max_slope_degrees;
+        public float step_up;
+        public float probe_depth;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelAreaEffectMechanicsDefinition>();
     }
@@ -2370,6 +2392,9 @@ namespace NetworkExample.Kernel
         public float ground_snap_distance;
         public float max_yaw_degrees_per_second;
         public uint movement_collision_mask;
+        // Hover only: clearance above the surface and the speed used to maintain it.
+        public float hover_height_meters;
+        public float hover_vertical_speed_meters_per_second;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelMovementDefinition>();
     }
