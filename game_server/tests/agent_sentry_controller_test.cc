@@ -281,6 +281,9 @@ int main() {
     const std::uint32_t player_net_id =
         create_entity(kernel, network_example::game_server::kActorTypePlayer, {5.0f, 0.0f, 0.0f});
     set_combat(kernel, enemy_net_id, 2, 4);
+    // Combat state is what gives an actor its hitbox; without it the player's
+    // aim point is its feet, not the 0.8 m hitbox centre the sentry targets.
+    set_combat(kernel, player_net_id, 0, 0);
     set_spammer_weapon_mechanics(kernel, enemy_net_id, 2);
     set_vision(kernel, enemy_net_id, KernelAgentCamp_EnemySide, 2);
     set_vision(kernel, player_net_id, KernelAgentCamp_PlayerSide, 0);
@@ -348,8 +351,13 @@ int main() {
     state = query_state(kernel, enemy_net_id);
     require(state.ammo[0] == 1);
     const KernelServerEntityState projectile = query_first_projectile(kernel);
-    require(almost_equal(projectile.position.y, 1.0f));
-    require(projectile.velocity.y > 0.0f);
+    // The projectile is read back after its spawn tick, so it has already
+    // flown one tick from the 1.0 m muzzle. Undo that tick's gravity to get
+    // the launch velocity the ballistic aim chose: slightly upward, to carry
+    // the drop over ~5.4 m down to the 0.8 m hitbox centre.
+    require(almost_equal(projectile.position.y, 1.0f, 0.01f));
+    const float launch_velocity_y = projectile.velocity.y + 9.81f / 30.0f;
+    require(launch_velocity_y > 0.0f);
     KernelServerEntityState player_state = query_state(kernel, player_net_id);
     for (int tick = 0; tick < 30 && player_state.hp == 100; ++tick) {
         Kernel_Update(kernel, 1.0f / 30.0f);

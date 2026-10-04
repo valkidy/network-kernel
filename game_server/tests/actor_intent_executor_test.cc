@@ -20,6 +20,9 @@ void require_impl(bool condition, const char* expression, int line) {
 
 #define require(condition) require_impl((condition), #condition, __LINE__)
 
+constexpr std::uint32_t kTestFireActionTemplateId = 100;
+constexpr std::uint32_t kTestReloadActionTemplateId = 101;
+
 KernelConfig server_config() {
     KernelConfig config{};
     config.mode = KernelMode_DedicatedServer;
@@ -62,9 +65,33 @@ KernelProjectileTemplateDefinition projectile_template() {
     return projectile;
 }
 
+KernelActionTemplateDefinition fire_action_template() {
+    KernelActionTemplateDefinition action{};
+    action.struct_size = sizeof(action);
+    action.action_template_id = kTestFireActionTemplateId;
+    action.trigger_mode = KernelActionTriggerMode_Press;
+    action.ammo_cost_per_commit = 1;
+    action.max_commit_count = 1;
+    return action;
+}
+
+KernelActionTemplateDefinition reload_action_template() {
+    KernelActionTemplateDefinition action{};
+    action.struct_size = sizeof(action);
+    action.action_template_id = kTestReloadActionTemplateId;
+    action.trigger_mode = KernelActionTriggerMode_Press;
+    action.commit_offset_ticks = 3;
+    action.max_commit_count = 1;
+    return action;
+}
+
 void load_catalog(KernelHandle* kernel) {
     const KernelColliderTemplateDefinition collider = collider_template();
     const KernelProjectileTemplateDefinition projectile = projectile_template();
+    const std::array<KernelActionTemplateDefinition, 2> actions = {
+        fire_action_template(),
+        reload_action_template(),
+    };
     KernelGameplayCatalogDefinition catalog{};
     catalog.struct_size = sizeof(catalog);
     catalog.catalog_version = 1;
@@ -73,6 +100,8 @@ void load_catalog(KernelHandle* kernel) {
     catalog.collider_template_count = 1;
     catalog.projectile_templates = &projectile;
     catalog.projectile_template_count = 1;
+    catalog.action_templates = actions.data();
+    catalog.action_template_count = static_cast<std::uint32_t>(actions.size());
     require(Kernel_LoadGameplayCatalog(kernel, &catalog, nullptr));
 }
 
@@ -118,6 +147,8 @@ void set_weapon(KernelHandle* kernel, std::uint32_t net_id) {
     weapon.magazine_size = 2;
     weapon.damage = 1;
     weapon.projectile_template_id = 3;
+    weapon.fire_action_template_id = kTestFireActionTemplateId;
+    weapon.reload_action_template_id = kTestReloadActionTemplateId;
     require(Kernel_ServerSetEntityWeaponMechanics(kernel, net_id, &weapon));
 }
 
@@ -198,6 +229,9 @@ int main() {
 
     const std::uint32_t actor = create_actor(kernel, {0.0f, 0.0f, 0.0f});
     const std::uint32_t target = create_actor(kernel, {5.0f, 0.0f, 0.0f});
+    // Combat state is what gives an actor its hitbox; without it the target's
+    // aim point is its feet, not the 0.8 m hitbox centre checked below.
+    set_combat(kernel, target, 0, 0);
     set_weapon(kernel, actor);
 
     require(std::fabs(Kernel_GetFixedDeltaSeconds(kernel) - 1.0f / 30.0f) <

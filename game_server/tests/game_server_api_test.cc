@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <utility>
@@ -214,6 +215,46 @@ std::vector<std::uint8_t> make_store_zip(
     return zip;
 }
 
+// The collision mesh the catalog names, read from the catalog itself so the
+// missing-entry check follows the terrain the game actually ships with.
+std::string static_collision_entry_path() {
+    std::istringstream catalog(read_text_file(
+        runfiles_root() / "game_server" / "gameplay_catalog" /
+        "gameplay_catalog.yaml"));
+    bool in_scene = false;
+    for (std::string line; std::getline(catalog, line);) {
+        if (line.rfind("static_collision_scene:", 0) == 0) {
+            in_scene = true;
+            continue;
+        }
+        if (!in_scene) {
+            continue;
+        }
+        if (!line.empty() && line[0] != ' ') {
+            break;
+        }
+        const std::size_t key = line.find_first_not_of(' ');
+        const std::string entry = "entry_path:";
+        if (key != std::string::npos && line.compare(key, entry.size(), entry) == 0) {
+            const std::size_t value =
+                line.find_first_not_of(' ', key + entry.size());
+            return value == std::string::npos ? std::string() : line.substr(value);
+        }
+    }
+    return std::string();
+}
+
+std::uint32_t count_yaml_files(const std::filesystem::path& directory) {
+    std::uint32_t count = 0;
+    for (const std::filesystem::directory_entry& entry :
+         std::filesystem::directory_iterator(directory)) {
+        if (entry.is_regular_file() && entry.path().extension() == ".yaml") {
+            ++count;
+        }
+    }
+    return count;
+}
+
 std::vector<std::uint8_t> make_gameplay_bundle_zip() {
     const std::filesystem::path root = runfiles_root();
     std::vector<std::pair<std::string, std::string>> files;
@@ -336,9 +377,9 @@ int main() {
     require(
         load_result.error_code ==
         KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_MISSING_BUNDLE_ENTRY);
-    require(
-        std::string(load_result.path) ==
-        "mesh_assets/jolt/undulating.joltmesh");
+    const std::string collision_entry = static_collision_entry_path();
+    require(!collision_entry.empty());
+    require(std::string(load_result.path) == collision_entry);
     require(load_result.diagnostic[0] != '\0');
 
     const std::vector<std::uint8_t> gameplay_bundle = read_binary_file(
@@ -365,7 +406,11 @@ int main() {
     require(load_result.catalog_version == 16);
     require(load_result.catalog_hash != 0);
     require(load_result.projectile_template_count > 0);
-    require(load_result.collider_template_count == 14);
+    require(
+        load_result.collider_template_count ==
+        count_yaml_files(
+            runfiles_root() / "game_server" / "gameplay_catalog" /
+            "collider_templates"));
     require(load_result.collider_binding_count == 0);
     KernelSessionRulesConfig session_rules{};
     session_rules.struct_size = sizeof(session_rules);
