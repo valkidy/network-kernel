@@ -95,7 +95,8 @@ void PatrolDirector::tick(
     KernelHandle* kernel,
     PatrolGroupRuntime* groups,
     const PatrolNavigation* navigation,
-    const ActorStateView& actors) {
+    const ActorStateView& actors,
+    AgentBudget* agent_budget) {
     if (kernel == nullptr || groups == nullptr) {
         return;
     }
@@ -131,9 +132,18 @@ void PatrolDirector::tick(
             live_agents + definition.count_max > budget_.max_live_agents) {
             continue;
         }
+        // The server-wide ceiling, by the same largest-draw rule: it counts
+        // every agent, not just squads, so a full world holds patrols back.
+        if (agent_budget != nullptr &&
+            agent_budget->room() < definition.count_max) {
+            continue;
+        }
         if (spawn_patrol(kernel, groups, navigation, definition, &runtime)) {
             runtime.ticks_until_spawn = definition.interval_ticks;
             live_agents += definition.count_max;
+            if (agent_budget != nullptr) {
+                agent_budget->spend(definition.count_max);
+            }
         }
     }
 }

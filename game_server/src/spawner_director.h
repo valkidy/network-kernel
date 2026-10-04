@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "game_server/src/agent_budget.h"
 #include "game_server/src/spawn_sampling.h"
 #include "kernel/public/kernel_api.h"
 #include "kernel/public/kernel_types.h"
@@ -168,7 +169,12 @@ public:
     // `alerts` is the previous tick's engagement, as the agent runtime left it
     // after its controllers ran. Read here, in the director phase, rather than
     // acted on mid-controller, where the actor snapshot would already be stale.
-    void tick(KernelHandle* kernel, const std::vector<AlertSignal>& alerts = {});
+    // `agent_budget` is the server-wide ceiling and may be null. Clocks and
+    // callers alike take only whole waves that fit, and spend what they make.
+    void tick(
+        KernelHandle* kernel,
+        const std::vector<AlertSignal>& alerts = {},
+        AgentBudget* agent_budget = nullptr);
 
     struct Instance {
         std::uint32_t carrier_net_id = 0;
@@ -202,9 +208,11 @@ private:
     const SpawnerCarrierConfig* carrier_for(std::uint32_t entity_template_id) const;
     SpawnerTrigger trigger_of(const Instance& instance) const;
     bool is_alert_carrier(std::uint32_t entity_template_id) const;
-    void tick_interval_carriers(KernelHandle* kernel);
+    void tick_interval_carriers(KernelHandle* kernel, AgentBudget* agent_budget);
     void tick_alert_carriers(
-        KernelHandle* kernel, const std::vector<AlertSignal>& alerts);
+        KernelHandle* kernel,
+        const std::vector<AlertSignal>& alerts,
+        AgentBudget* agent_budget);
     // Creates one whole wave around the carrier and records it. Returns how
     // many units were made; zero means nothing was spent.
     std::uint32_t emit_wave(

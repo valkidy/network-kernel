@@ -57,6 +57,7 @@ cc_library(
         "src/agent_steering.h",
         "src/ballistic_aim.h",
         "src/game_rule_director.h",
+        "src/agent_budget.h",
         "src/gameplay_config.h",
         "src/game_server.h",
         "src/respawn_scheduler.h",

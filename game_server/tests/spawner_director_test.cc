@@ -460,6 +460,24 @@ void an_on_alert_carrier_does_not_run_on_the_clock() {
     Kernel_Destroy(control);
 }
 
+// The server-wide agent budget holds a clock to whole waves that fit: with a
+// ceiling of five and waves of three, one wave and then nothing, where the
+// same nest unbudgeted goes on (a_nest_emits_on_its_interval).
+void the_agent_budget_holds_a_nest_to_whole_waves() {
+    KernelHandle* kernel = start_server(7868);
+    SpawnerDirector director({nest_carrier(2, 3, 3, 0)});
+    create_nest(kernel, KernelVec3{10.0f, 0.0f, 0.0f});
+    for (int tick = 0; tick < 30; ++tick) {
+        network_example::game_server::AgentBudget budget;
+        budget.ceiling = 5;
+        budget.live = agent_count(kernel);
+        director.tick(kernel, {}, &budget);
+        require(agent_count(kernel) <= 5u);
+    }
+    require(agent_count(kernel) == 3u);
+    Kernel_Destroy(kernel);
+}
+
 }  // namespace
 
 int main() {
@@ -469,5 +487,6 @@ int main() {
     a_ceiling_bounds_the_nest_and_waves_stay_whole();
     an_offset_moves_where_the_wave_comes_out();
     an_on_alert_carrier_does_not_run_on_the_clock();
+    the_agent_budget_holds_a_nest_to_whole_waves();
     return 0;
 }

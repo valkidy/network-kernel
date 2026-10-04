@@ -157,15 +157,19 @@ const SpawnerCarrierConfig* SpawnerDirector::carrier_for(
 
 void SpawnerDirector::tick(
     KernelHandle* kernel,
-    const std::vector<AlertSignal>& alerts) {
+    const std::vector<AlertSignal>& alerts,
+    AgentBudget* agent_budget) {
     if (kernel == nullptr || carriers_.empty()) {
         return;
     }
-    tick_interval_carriers(kernel);
-    tick_alert_carriers(kernel, alerts);
+    // Clocks before callers: when the server is nearly full, a call for help
+    // is the first thing to give way.
+    tick_interval_carriers(kernel, agent_budget);
+    tick_alert_carriers(kernel, alerts, agent_budget);
 }
 
-void SpawnerDirector::tick_interval_carriers(KernelHandle* kernel) {
+void SpawnerDirector::tick_interval_carriers(
+    KernelHandle* kernel, AgentBudget* agent_budget) {
     if (queried_entity_types_.empty()) {
         return;
     }
@@ -301,10 +305,20 @@ void SpawnerDirector::tick_interval_carriers(KernelHandle* kernel) {
                 continue;
             }
         }
+        if (agent_budget != nullptr) {
+            count = std::min(count, agent_budget->room());
+            if (count < spawner.count_min) {
+                continue;
+            }
+        }
 
-        if (emit_wave(kernel, &instance, *carrier, carrier_state, count,
-                      &random_state) == 0u) {
+        const std::uint32_t created = emit_wave(
+            kernel, &instance, *carrier, carrier_state, count, &random_state);
+        if (created == 0u) {
             continue;
+        }
+        if (agent_budget != nullptr) {
+            agent_budget->spend(created);
         }
         instance.ticks_until_spawn = spawner.interval_ticks;
     }
@@ -312,7 +326,8 @@ void SpawnerDirector::tick_interval_carriers(KernelHandle* kernel) {
 
 void SpawnerDirector::tick_alert_carriers(
     KernelHandle* kernel,
-    const std::vector<AlertSignal>& alerts) {
+    const std::vector<AlertSignal>& alerts,
+    AgentBudget* agent_budget) {
     // The shared budget counts what callers put out, for as long as it lives
     // -- not for as long as its caller does. A caller dying must not hand its
     // share back, or killing callers one by one would let the next caller
@@ -452,6 +467,9 @@ void SpawnerDirector::tick_alert_carriers(
         count = std::min(
             count,
             room_under(reinforce_max_live_agents_, reinforce_live_net_ids_.size()));
+        if (agent_budget != nullptr) {
+            count = std::min(count, agent_budget->room());
+        }
         if (count < spawner.count_min) {
             continue;
         }
@@ -463,9 +481,13 @@ void SpawnerDirector::tick_alert_carriers(
             carrier_state.valid == 0u) {
             continue;
         }
-        if (emit_wave(kernel, &instance, *carrier, carrier_state, count,
-                      &random_state) == 0u) {
+        const std::uint32_t created = emit_wave(
+            kernel, &instance, *carrier, carrier_state, count, &random_state);
+        if (created == 0u) {
             continue;
+        }
+        if (agent_budget != nullptr) {
+            agent_budget->spend(created);
         }
         ++instance.calls_this_engagement;
         instance.ticks_until_spawn = spawner.interval_ticks;

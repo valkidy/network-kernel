@@ -380,6 +380,9 @@ void AgentRuntimeManager::tick(float delta_seconds) {
     // run -- which is exactly what the per-squad queries used to see, because
     // retirement happens before this tick creates anything.
     ActorStateView actors = refresh_actor_states();
+    AgentBudget agent_budget;
+    agent_budget.ceiling = config_.agent_budget.max_live_agents;
+    agent_budget.live = live_agent_count(actors);
 
     // Ahead of the resync on purpose: the director creates entities, and the
     // group runtime drops members it cannot find in the agent list. Ticking it
@@ -387,20 +390,29 @@ void AgentRuntimeManager::tick(float delta_seconds) {
     // spawned.
     const std::uint32_t spawned_groups_before =
         patrol_director_.spawned_group_count();
-    patrol_director_.tick(kernel_, &patrol_groups_, &patrol_navigation_, actors);
+    patrol_director_.tick(
+        kernel_, &patrol_groups_, &patrol_navigation_, actors, &agent_budget);
     // Only on a tick a squad actually appeared, which is once per definition
     // per interval_ticks. The world rule counts every agent alive including the
     // ones just spawned -- counting the pre-spawn list would have it top up
     // against a population that already exists.
     if (patrol_director_.spawned_group_count() != spawned_groups_before) {
         actors = refresh_actor_states();
+        // Exact again: the patrol spent its largest draw, not what it drew.
+        agent_budget.live = live_agent_count(actors);
     }
-    world_rule_director_.tick(kernel_, live_agent_count(actors));
+    // Counted, never refused: a world rule keeps a population the world is
+    // meant to have.
+    const std::uint32_t world_rule_spawned_before =
+        world_rule_director_.spawned_agent_count();
+    world_rule_director_.tick(kernel_, agent_budget.live);
+    agent_budget.spend(
+        world_rule_director_.spawned_agent_count() - world_rule_spawned_before);
 
     game_rule_director_.tick(kernel_);
     // Last tick's engagement: the controllers that produced it have all run,
     // and nothing has been created since.
-    spawner_director_.tick(kernel_, alert_signals_);
+    spawner_director_.tick(kernel_, alert_signals_, &agent_budget);
     // Re-taken because the three directors above all create, and the resync
     // exists to discover what they made -- that is the whole reason it runs
     // after them.

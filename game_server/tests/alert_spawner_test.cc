@@ -14,6 +14,7 @@
 #include <iterator>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "game_server/src/game_server.h"
@@ -96,15 +97,42 @@ public:
     const std::string& grunt() const { return grunt_; }
     const std::string& nest() const { return nest_; }
 
+    const std::string& catalog() const { return catalog_; }
+
     GameServerGameplayConfig load(
         const std::string& catalog_tail,
         const std::string& grunt,
         const std::string& nest) {
-        write_file(root_ / "gameplay_catalog.yaml", catalog_ + catalog_tail);
+        return load_whole(catalog_ + catalog_tail, grunt, nest);
+    }
+
+    // With the catalog file replaced outright, for a case that has to change
+    // something already in it rather than add to it.
+    // `others` rewrites any further files for this load only.
+    GameServerGameplayConfig load_whole(
+        const std::string& catalog_text,
+        const std::string& grunt,
+        const std::string& nest,
+        const std::vector<std::pair<std::string, std::string>>& others = {}) {
+        write_file(root_ / "gameplay_catalog.yaml", catalog_text);
         write_file(root_ / kGruntFile, grunt);
         write_file(root_ / kNestFile, nest);
-        return network_example::game_server::load_gameplay_config_from_catalog_file(
-            (root_ / "gameplay_catalog.yaml").string());
+        std::vector<std::pair<std::string, std::string>> originals;
+        for (const auto& [path, text] : others) {
+            originals.emplace_back(path, read_file(root_ / path));
+            write_file(root_ / path, text);
+        }
+        GameServerGameplayConfig config =
+            network_example::game_server::load_gameplay_config_from_catalog_file(
+                (root_ / "gameplay_catalog.yaml").string());
+        for (const auto& [path, text] : originals) {
+            write_file(root_ / path, text);
+        }
+        return config;
+    }
+
+    std::string original(const std::string& path) const {
+        return read_file(fs::path(kCatalogDir) / path);
     }
 
     // The message, or empty if it loaded.
@@ -301,12 +329,17 @@ std::uint32_t template_id_of(
 // server's tick, then the kernel's, then the kernel's events back.
 class Server {
 public:
-    Server(GameServerGameplayConfig config, std::uint16_t port) {
+    Server(
+        GameServerGameplayConfig config,
+        std::uint16_t port,
+        bool keep_world_rules = false) {
         // Only what a case creates. The shipping mission puts three nests out
         // the moment a player exists, preloaded or not, and their waves would
         // be counted as calls.
         config.game_rules.clear();
-        config.world_rule_spawns.clear();
+        if (!keep_world_rules) {
+            config.world_rule_spawns.clear();
+        }
         config.patrols.clear();
         KernelConfig kernel_config{};
         kernel_config.mode = KernelMode_DedicatedServer;
@@ -396,6 +429,23 @@ public:
         vision.camp = KernelAgentCamp_PlayerSide;
         require(Kernel_ServerSetEntityVisionConfig(kernel_, net_id, &vision));
         return net_id;
+    }
+
+    std::uint32_t agent_count() const {
+        std::array<KernelServerEntityState, 64> states{};
+        for (KernelServerEntityState& state : states) {
+            state.struct_size = sizeof(state);
+        }
+        const std::uint32_t count = Kernel_ServerQueryEntities(
+            kernel_,
+            KernelEntityType_Actor,
+            states.data(),
+            static_cast<std::uint32_t>(states.size()));
+        std::uint32_t agents = 0;
+        for (std::uint32_t index = 0; index < count; ++index) {
+            agents += states[index].actor_type == KernelActorType_Agent ? 1u : 0u;
+        }
+        return agents;
     }
 
     const network_example::game_server::SpawnerDirector& director() const {
@@ -733,6 +783,83 @@ void called_units_cannot_call(CatalogCopy* catalog) {
     require(server.director().spawned_unit_count() == 2u);
 }
 
+std::string agent_budget(std::uint32_t max_live_agents) {
+    return "\nagent_budget:\n  max_live_agents: " +
+        std::to_string(max_live_agents) + "\n";
+}
+
+// The server-wide ceiling holds a caller back exactly at the edge: one grunt
+// standing, a wave of two, so a ceiling of two leaves room for one and refuses
+// it, and three admits it.
+void the_agent_budget_holds_a_caller_at_the_edge(CatalogCopy* catalog) {
+    for (const std::uint32_t ceiling : {2u, 3u}) {
+        const GameServerGameplayConfig config = catalog->load(
+            reinforce_budget(64) + agent_budget(ceiling),
+            catalog->grunt() + grunt_spawner(1, 120, 8),
+            catalog->nest());
+        Server server(config, ceiling == 2u ? 7996 : 7997);
+        const std::uint32_t grunt =
+            server.create(template_id_of(config, "chaser_grunt"), {0.0f, 0.0f, 0.0f});
+        server.create_player(kInSight);
+        for (int tick = 0; tick < 60; ++tick) {
+            server.step();
+        }
+        // Engaged and in sight either way, so only the ceiling differs.
+        require(server.signal_for(grunt) != nullptr);
+        require(server.director().spawned_unit_count() ==
+                (ceiling == 2u ? 0u : 2u));
+    }
+}
+
+// A world rule is never refused, and what it makes is counted. It keeps every
+// agent in the world at its target, so it is given a target of three against
+// a ceiling of one: it fills to three anyway. Then, with a target of two and a
+// ceiling of three, its tripod and the grunt leave a caller one place, too few
+// for a wave of two -- where the same ceiling with no tripod admitted the call
+// (the_agent_budget_holds_a_caller_at_the_edge).
+void world_rules_are_counted_not_refused(CatalogCopy* catalog) {
+    const std::string preload = "preload_directors:\n  - game_rule\n";
+    const std::string world_rule_only = replace_once(
+        catalog->catalog(), preload, "preload_directors:\n  - world_rule\n");
+    const std::string world_rule_file =
+        "entity_templates/100_director_world_rule.yaml";
+    const auto with_target = [&](std::uint32_t target) {
+        return replace_once(
+            catalog->original(world_rule_file),
+            "target_count: 1",
+            "target_count: " + std::to_string(target));
+    };
+
+    {
+        const GameServerGameplayConfig config = catalog->load_whole(
+            world_rule_only + agent_budget(1),
+            catalog->grunt(),
+            catalog->nest(),
+            {{world_rule_file, with_target(3)}});
+        Server server(config, 7990, true);
+        require(step_until(&server, 200, [&] { return server.agent_count() == 3u; }));
+    }
+    {
+        const GameServerGameplayConfig config = catalog->load_whole(
+            world_rule_only + reinforce_budget(64) + agent_budget(3),
+            catalog->grunt() + grunt_spawner(1, 120, 8),
+            catalog->nest(),
+            {{world_rule_file, with_target(2)}});
+        Server server(config, 7991, true);
+        const std::uint32_t grunt =
+            server.create(template_id_of(config, "chaser_grunt"), {0.0f, 0.0f, 0.0f});
+        require(step_until(&server, 120, [&] { return server.agent_count() == 2u; }));
+        server.place(grunt, {0.0f, 0.0f, 0.0f});
+        server.create_player(kInSight);
+        for (int tick = 0; tick < 60; ++tick) {
+            server.step();
+        }
+        require(server.agent_count() == 2u);
+        require(server.signal_for(grunt) != nullptr);
+        require(server.director().spawned_unit_count() == 0u);
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -744,6 +871,8 @@ int main() {
     unbounded_calls_are_spaced_capped_and_need_sight(&catalog);
     the_reinforce_budget_is_shared_and_outlives_callers(&catalog);
     called_units_cannot_call(&catalog);
+    the_agent_budget_holds_a_caller_at_the_edge(&catalog);
+    world_rules_are_counted_not_refused(&catalog);
     std::printf("alert_spawner_test: PASS\n");
     return 0;
 }
