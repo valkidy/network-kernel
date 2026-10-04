@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "game_server/src/agent_budget.h"
 #include "game_server/src/spawn_sampling.h"
 #include "kernel/public/kernel_api.h"
 #include "kernel/public/kernel_types.h"
@@ -61,8 +62,29 @@ struct SpawnerEntryConfig {
     std::vector<SpawnerEntryExit> exits;
 };
 
+// What makes a spawner put out a wave.
+//
+// kInterval is the nest: a clock, whatever is going on around it. kOnAlert is a
+// call for help: the carrier's own AI has to be engaged with a target it can
+// see, so only an agent can carry one -- a prop has no AI state to read.
+enum class SpawnerTrigger : std::uint8_t {
+    kInterval = 0,
+    kOnAlert = 1,
+};
+
 struct SpawnerConfig {
     bool authored = false;
+    SpawnerTrigger trigger = SpawnerTrigger::kInterval;
+    // on_alert only: calls per engagement, an engagement running from the
+    // carrier leaving idle/return until it goes back to one. interval_ticks is
+    // the gap between calls, and it carries across engagements, so a carrier
+    // flickering in and out of alert cannot call on every flicker. Zero is
+    // unbounded, like max_live_agents -- which is why it requires a ceiling.
+    std::uint32_t calls_per_alert = 1;
+    // Where the wave's disc is centred, relative to the carrier and turned by
+    // its rotation, as entry doors are. A flying carrier drops units from
+    // under its hull rather than out of its middle.
+    KernelVec3 offset{0.0f, 0.0f, 0.0f};
     // Mixed with the carrier's net id, so two nests of one template do not put
     // out identical waves. That makes replays depend on entity creation order
     // being deterministic rather than on this value alone -- which holds, since
@@ -80,7 +102,8 @@ struct SpawnerConfig {
     // that is not a comfortable multiple of the wave size leaves headroom
     // unused, and validate_spawner_config refuses one below a whole wave.
     std::uint32_t max_live_agents = 0;
-    // Where they come out: a disc centred on the carrier, wherever it is now.
+    // Where they come out: a disc centred on the carrier (plus `offset`),
+    // wherever it is now.
     float radius = 0.0f;
     std::uint32_t count_min = 1;
     std::uint32_t count_max = 1;
@@ -103,6 +126,25 @@ struct SpawnerEntryRequest {
     std::uint32_t max_ticks = 0;
 };
 
+// One engaged agent that carries an on_alert spawner, as its controller left it
+// at the end of a tick. Taken by the director on the tick after, never mid-
+// controller: what a controller wrote is only settled once they have all run.
+//
+// Only engaged agents appear. Absence is "not engaged", which is also what ends
+// an engagement -- and so what lets the next one count its calls from zero.
+struct AlertSignal {
+    std::uint32_t net_id = 0;
+    // Which carrier rule it runs, so the director never has to ask.
+    std::uint32_t entity_template_id = 0;
+    // Idle or return to alert or attack, this tick. Attack falling back to
+    // alert is not a new engagement: the agent never stopped being engaged.
+    bool engagement_started = false;
+    // Whether it can see its target this tick. Engagement outlives sight by
+    // up to two forget windows, and calling for help at empty ground in that
+    // tail reads as a bug, so the director asks for both.
+    bool sees_target = false;
+};
+
 // A template that carries a spawner, and what kind of entity it is -- the kind
 // is what the director queries for, so a catalog with no spawners costs no
 // queries at all.
@@ -118,15 +160,33 @@ std::string validate_spawner_config(const SpawnerConfig& spawner);
 // Runs one rule instance per live carrier.
 class SpawnerDirector {
 public:
-    explicit SpawnerDirector(std::vector<SpawnerCarrierConfig> carriers = {});
+    // `reinforce_max_live_agents` is the catalog's reinforce_budget: what every
+    // on_alert carrier together may have alive at once. Zero is unbounded.
+    explicit SpawnerDirector(
+        std::vector<SpawnerCarrierConfig> carriers = {},
+        std::uint32_t reinforce_max_live_agents = 0);
 
-    void tick(KernelHandle* kernel);
+    // `alerts` is the previous tick's engagement, as the agent runtime left it
+    // after its controllers ran. Read here, in the director phase, rather than
+    // acted on mid-controller, where the actor snapshot would already be stale.
+    // `agent_budget` is the server-wide ceiling and may be null. Clocks and
+    // callers alike take only whole waves that fit, and spend what they make.
+    void tick(
+        KernelHandle* kernel,
+        const std::vector<AlertSignal>& alerts = {},
+        AgentBudget* agent_budget = nullptr);
 
     struct Instance {
         std::uint32_t carrier_net_id = 0;
         std::uint32_t entity_template_id = 0;
+        // A clock's countdown to its next wave; a caller's gap before it may
+        // call again.
         std::uint32_t ticks_until_spawn = 0;
         std::uint32_t spawn_ordinal = 0;
+        // on_alert only: calls made since this engagement started, and whether
+        // one was refused for room -- which ends calling until the next.
+        std::uint32_t calls_this_engagement = 0;
+        bool refused_this_engagement = false;
         // What this carrier has put out and not yet lost, which is what the
         // ceiling counts. Units outlive their carrier on purpose: despawning
         // what a player has just fought their way through, at the moment they
@@ -137,6 +197,9 @@ public:
     const std::vector<SpawnerCarrierConfig>& carriers() const;
     const std::vector<Instance>& instances() const;
     std::uint32_t spawned_unit_count() const;
+    // Units put out by on_alert calls and still alive, server-wide: what the
+    // reinforce budget is held against.
+    std::uint32_t reinforce_live_count() const;
 
     // The walks this tick's wave owes, moved out rather than copied: whoever
     // runs agents takes them once and owns them from then on. Left here they
@@ -145,6 +208,22 @@ public:
 
 private:
     const SpawnerCarrierConfig* carrier_for(std::uint32_t entity_template_id) const;
+    SpawnerTrigger trigger_of(const Instance& instance) const;
+    bool is_alert_carrier(std::uint32_t entity_template_id) const;
+    void tick_interval_carriers(KernelHandle* kernel, AgentBudget* agent_budget);
+    void tick_alert_carriers(
+        KernelHandle* kernel,
+        const std::vector<AlertSignal>& alerts,
+        AgentBudget* agent_budget);
+    // Creates one whole wave around the carrier and records it. Returns how
+    // many units were made; zero means nothing was spent.
+    std::uint32_t emit_wave(
+        KernelHandle* kernel,
+        Instance* instance,
+        const SpawnerCarrierConfig& carrier,
+        const KernelServerEntityState& carrier_state,
+        std::uint32_t count,
+        std::uint64_t* random_state);
 
     std::vector<SpawnerCarrierConfig> carriers_;
     std::vector<std::uint16_t> queried_entity_types_;
@@ -152,6 +231,13 @@ private:
     std::vector<KernelServerEntityState> query_buffer_;
     std::vector<SpawnerEntryRequest> pending_entries_;
     std::uint32_t spawned_unit_count_ = 0;
+    std::uint32_t reinforce_max_live_agents_ = 0;
+    // Alive units from on_alert calls, kept apart from the per-caller lists so
+    // a caller dying does not hand its share of the budget back.
+    std::vector<std::uint32_t> reinforce_live_net_ids_;
+    // Units any spawner put out whose own template calls for help: they may
+    // not, or calls would chain.
+    std::vector<std::uint32_t> cannot_call_net_ids_;
 };
 
 }  // namespace network_example::game_server

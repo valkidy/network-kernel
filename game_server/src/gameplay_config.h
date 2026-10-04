@@ -437,6 +437,14 @@ struct StaticCollisionSceneConfig {
     std::uint32_t collision_layer = 0;
 };
 
+struct ReinforceBudgetConfig {
+    std::uint32_t max_live_agents = 0;
+};
+
+struct AgentBudgetConfig {
+    std::uint32_t max_live_agents = 0;
+};
+
 struct GameServerGameplayConfig {
     WeaponCatalogConfig weapons;
     std::vector<ActionTemplateConfig> action_templates;
@@ -448,6 +456,15 @@ struct GameServerGameplayConfig {
     // entirely outside the kernel ABI.
     std::vector<PatrolDefinitionConfig> patrols;
     PatrolBudgetConfig patrol_budget;
+    // Every unit put out by an on_alert spawner, server-wide, alive at once.
+    // Per-carrier ceilings bound one caller; this bounds N callers. Zero is
+    // unbounded, and a catalog with any on_alert spawner must author it.
+    ReinforceBudgetConfig reinforce_budget;
+    // Every agent on the server. Spawners that fill room when there is room --
+    // patrols, nests, on_alert -- are held to it; mission and world rules and
+    // action-graph spawns count toward it but are never refused, so it is a
+    // hard ceiling only for the former. Zero is unbounded.
+    AgentBudgetConfig agent_budget;
     // The baked navmesh, carried whole rather than by path: game_server loads
     // it itself -- Detour never reaches the kernel -- so nothing downstream has
     // the archive open any more by the time it is needed.
