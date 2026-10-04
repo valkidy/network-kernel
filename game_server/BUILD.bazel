@@ -207,6 +207,7 @@ cc_test(
     srcs = ["tests/agent_cpu_bench.cc"],
     data = [
         "//game_server/gameplay_catalog_bundle:bundle",
+        "//game_server/tests/test_mesh_assets:cooked_test_mesh_assets",
     ],
     tags = ["manual"],
     deps = [

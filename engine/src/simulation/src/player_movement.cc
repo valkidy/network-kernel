@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
-#include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include <glm/geometric.hpp>
@@ -224,6 +224,70 @@ void simulate_player_movement(
     }
 }
 
+namespace {
+
+// Sorts (key, value) pairs by key and keeps the first of each key in their
+// original order.
+template <typename Key, typename Value>
+void keep_first_per_key(std::vector<std::pair<Key, Value>>* entries) {
+    std::stable_sort(
+        entries->begin(),
+        entries->end(),
+        [](const std::pair<Key, Value>& lhs, const std::pair<Key, Value>& rhs) {
+            return lhs.first < rhs.first;
+        });
+    entries->erase(
+        std::unique(
+            entries->begin(),
+            entries->end(),
+            [](const std::pair<Key, Value>& lhs, const std::pair<Key, Value>& rhs) {
+                return lhs.first == rhs.first;
+            }),
+        entries->end());
+}
+
+// Sorts (key, input) pairs by key and keeps, for each key, the input with the
+// highest input_seq -- the earliest of those, on a tie.
+template <typename Key>
+void keep_newest_input_per_key(
+    std::vector<std::pair<Key, const QueuedInput*>>* entries) {
+    std::stable_sort(
+        entries->begin(),
+        entries->end(),
+        [](const std::pair<Key, const QueuedInput*>& lhs,
+           const std::pair<Key, const QueuedInput*>& rhs) {
+            return lhs.first < rhs.first;
+        });
+    std::size_t kept = 0;
+    for (std::size_t index = 0; index < entries->size(); ++index) {
+        const std::pair<Key, const QueuedInput*>& entry = (*entries)[index];
+        if (kept > 0 && (*entries)[kept - 1].first == entry.first) {
+            if (entry.second->input.input_seq >
+                (*entries)[kept - 1].second->input.input_seq) {
+                (*entries)[kept - 1].second = entry.second;
+            }
+            continue;
+        }
+        (*entries)[kept++] = entry;
+    }
+    entries->resize(kept);
+}
+
+// The value for `key` in pairs sorted by key with one entry each, or null.
+template <typename Key, typename Value>
+Value find_by_key(const std::vector<std::pair<Key, Value>>& entries, Key key) {
+    const auto found = std::lower_bound(
+        entries.begin(),
+        entries.end(),
+        key,
+        [](const std::pair<Key, Value>& entry, Key wanted) {
+            return entry.first < wanted;
+        });
+    return found != entries.end() && found->first == key ? found->second : nullptr;
+}
+
+}  // namespace
+
 void simulate_actor_movement(
     World& world,
     const std::vector<QueuedInput>& inputs,
@@ -258,29 +322,43 @@ void simulate_actor_movement(
                 view.get<NetworkIdentity>(rhs).net_id;
         });
 
-    std::unordered_map<NetId, const ColliderInstance*> movement_colliders;
-    movement_colliders.reserve(actors.size());
+    // The lookups below are sorted vectors kept between calls rather than maps
+    // built per call: a map allocates a node per entry, and with every agent in
+    // the world in them that was an allocation per actor per tick. Each is
+    // cleared before use, so nothing carries over from the last call.
+    //
+    // A capsule per actor, keeping the first one the registry lists -- what
+    // the map's emplace kept.
+    thread_local std::vector<std::pair<NetId, const ColliderInstance*>>
+        movement_colliders;
+    movement_colliders.clear();
     for (const ColliderInstance& collider :
          world.collider_registry().instances()) {
         if (collider.lifetime_ticks == 0 && collider.enabled &&
             collider.shape_type == ColliderShapeType::kCapsule &&
             (collider.purpose_flags & KernelColliderPurpose_Movement) != 0u) {
-            movement_colliders.emplace(collider.entity_net_id, &collider);
+            movement_colliders.emplace_back(collider.entity_net_id, &collider);
         }
     }
-    std::unordered_map<NetId, const QueuedInput*> latest_input_by_net_id;
-    std::unordered_map<PeerId, const QueuedInput*> latest_input_by_owner;
-    latest_input_by_net_id.reserve(inputs.size());
-    latest_input_by_owner.reserve(inputs.size());
+    keep_first_per_key(&movement_colliders);
+    // The newest input per controlled actor, and per owner for inputs that
+    // name no actor. Ties keep the earliest input, as the fold this replaced
+    // did.
+    thread_local std::vector<std::pair<NetId, const QueuedInput*>>
+        latest_input_by_net_id;
+    thread_local std::vector<std::pair<PeerId, const QueuedInput*>>
+        latest_input_by_owner;
+    latest_input_by_net_id.clear();
+    latest_input_by_owner.clear();
     for (const QueuedInput& input : inputs) {
-        auto& latest = input.controlled_net_id != 0
-            ? latest_input_by_net_id[input.controlled_net_id]
-            : latest_input_by_owner[input.owner_peer];
-        if (latest == nullptr ||
-            input.input.input_seq > latest->input.input_seq) {
-            latest = &input;
+        if (input.controlled_net_id != 0) {
+            latest_input_by_net_id.emplace_back(input.controlled_net_id, &input);
+        } else {
+            latest_input_by_owner.emplace_back(input.owner_peer, &input);
         }
     }
+    keep_newest_input_per_key(&latest_input_by_net_id);
+    keep_newest_input_per_key(&latest_input_by_owner);
 
     std::vector<BufferedMovementResult> buffered;
     buffered.reserve(actors.size());
@@ -294,10 +372,8 @@ void simulate_actor_movement(
             MovementState::ControllerType::kNone) {
             continue;
         }
-        const auto collider_found = movement_colliders.find(identity.net_id);
-        const ColliderInstance* collider = collider_found == movement_colliders.end()
-            ? nullptr
-            : collider_found->second;
+        const ColliderInstance* collider =
+            find_by_key(movement_colliders, identity.net_id);
         if (collider == nullptr ||
             collider->collider_template_id !=
                 next_movement.movement_collider_template_id) {
@@ -306,17 +382,12 @@ void simulate_actor_movement(
 
         glm::vec3 desired_horizontal{
             current_velocity.linear.x, 0.0f, current_velocity.linear.z};
-        const auto by_net_id = latest_input_by_net_id.find(identity.net_id);
         const QueuedInput* movement_input =
-            by_net_id == latest_input_by_net_id.end()
-                ? nullptr
-                : by_net_id->second;
+            find_by_key(latest_input_by_net_id, identity.net_id);
         if (movement_input == nullptr &&
             world.registry().all_of<PlayerTag>(entity)) {
-            const auto by_owner = latest_input_by_owner.find(identity.owner_peer);
-            movement_input = by_owner != latest_input_by_owner.end()
-                ? by_owner->second
-                : nullptr;
+            movement_input =
+                find_by_key(latest_input_by_owner, identity.owner_peer);
         }
         // A knockback lives in Velocity, and this is the line that would
         // otherwise redefine the horizontal half of it from input every tick.

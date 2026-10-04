@@ -375,6 +375,11 @@ constexpr float kDefaultEntityRelevanceDistanceMeters = 40.0f;
 // over a second of travel.
 constexpr float kDefaultEntityRelevanceExitDistanceMeters = 44.0f;
 constexpr float kDefaultProjectileRelevanceDistanceMeters = 80.0f;
+// The side of a cell in the grid update_vision_states files candidates in. A
+// cone only ever reads the cells its range overlaps, so the cell wants to be
+// near a typical cone's range: much smaller and a cone walks many empty cells,
+// much larger and it reads candidates it is about to reject on distance.
+constexpr float kVisionCandidateCellMeters = 16.0f;
 // Slots go to whoever has waited longest, scaled by how much the receiving
 // player is likely to notice. Without the weights every relevant agent gets the
 // same share, which at 200 agents and 32 slots is 1.8 Hz each whether it is
@@ -4752,19 +4757,37 @@ bool KernelEngine::push_collider_into_physics(const ColliderInstance& collider) 
         object.enabled = false;
     }
     std::string error;
-    if (physics_entity_collider_ids_.contains(collider.collider_id)) {
-        physics_world_->set_object_transform(
-            collider.collider_id,
-            object.position,
-            object.rotation);
-        physics_world_->set_object_enabled(
-            collider.collider_id,
-            object.enabled);
+    if (const auto held = physics_entity_colliders_.find(collider.collider_id);
+        held != physics_entity_colliders_.end()) {
+        PhysicsColliderState& state = held->second;
+        // Compared exactly: a body written with the values it already holds
+        // ends up as it was, so skipping the write changes nothing a query
+        // can see.
+        if (state.position != object.position ||
+            state.rotation != object.rotation) {
+            physics_world_->set_object_transform(
+                collider.collider_id,
+                object.position,
+                object.rotation);
+            state.position = object.position;
+            state.rotation = object.rotation;
+        }
+        if (state.enabled != object.enabled) {
+            physics_world_->set_object_enabled(
+                collider.collider_id,
+                object.enabled);
+            state.enabled = object.enabled;
+        }
+        state.sweep = physics_collider_sweep_;
     } else if (physics_world_->upsert_object(object, &error)) {
         // Recorded here rather than only by the full sweep's bookkeeping, so a
         // single-entity sync that adds a collider does not add it again on the
         // next call.
-        physics_entity_collider_ids_.insert(collider.collider_id);
+        physics_entity_colliders_[collider.collider_id] = PhysicsColliderState{
+            object.position,
+            object.rotation,
+            object.enabled,
+            physics_collider_sweep_};
     } else {
         spdlog::error(
             "failed to materialize collider_id={} in physics world: {}",
@@ -4773,6 +4796,19 @@ bool KernelEngine::push_collider_into_physics(const ColliderInstance& collider) 
         return false;
     }
     return true;
+}
+
+void KernelEngine::set_physics_collider_enabled(
+    std::uint32_t collider_id,
+    bool enabled) {
+    if (physics_world_ == nullptr) {
+        return;
+    }
+    physics_world_->set_object_enabled(collider_id, enabled);
+    if (const auto held = physics_entity_colliders_.find(collider_id);
+        held != physics_entity_colliders_.end()) {
+        held->second.enabled = enabled;
+    }
 }
 
 void KernelEngine::refresh_collider_world_transform(ColliderInstance& collider) {
@@ -4818,24 +4854,22 @@ void KernelEngine::sync_entity_colliders_from_world() {
     if (physics_world_ == nullptr) {
         return;
     }
-    std::unordered_set<std::uint32_t> current_collider_ids;
-    // Rebuilt from scratch on every call, so it is worth sizing up front. The
-    // loop below filters, so the instance count is an upper bound rather than
-    // the exact size -- which is what reserve wants.
-    current_collider_ids.reserve(world_.collider_registry().instances().size());
+    // Every collider this sweep pushes is stamped with it; whatever is left
+    // holding an older stamp was not pushed, and leaves the physics world.
+    ++physics_collider_sweep_;
     for (const ColliderInstance& collider :
          world_.collider_registry().instances()) {
-        if (!push_collider_into_physics(collider)) {
-            continue;
-        }
-        current_collider_ids.insert(collider.collider_id);
+        push_collider_into_physics(collider);
     }
-    for (std::uint32_t collider_id : physics_entity_collider_ids_) {
-        if (!current_collider_ids.contains(collider_id)) {
-            physics_world_->remove_object(collider_id);
+    for (auto held = physics_entity_colliders_.begin();
+         held != physics_entity_colliders_.end();) {
+        if (held->second.sweep != physics_collider_sweep_) {
+            physics_world_->remove_object(held->first);
+            held = physics_entity_colliders_.erase(held);
+        } else {
+            ++held;
         }
     }
-    physics_entity_collider_ids_ = std::move(current_collider_ids);
 
     // Entity spawns and despawns are the only broad phase churn here (existing
     // colliders are moved in place above), but the authoritative world is just
@@ -4852,11 +4886,11 @@ void KernelEngine::sync_entity_colliders_from_world() {
 // re-aimed cost agents times colliders, in Jolt body writes and broad phase
 // AABB notifications. Moving one entity moves one entity's colliders.
 //
-// It still walks the instance list to find them, because the registry is a flat
-// vector with no per-entity index; what it does not do is write the other
-// entities' bodies into the physics world. There is also no removal sweep and
-// no broad phase rebuild here: a transform adds and removes nothing, and the
-// three tick-level syncs still do both.
+// It finds them through the registry's per-entity index rather than by walking
+// the instance list: walking it was still agents times colliders, only in
+// comparisons instead of Jolt writes. There is also no removal sweep and no
+// broad phase rebuild here: a transform adds and removes nothing, and the three
+// tick-level syncs still do both.
 void KernelEngine::sync_entity_colliders_from_world(NetId net_id) {
     if (net_id == 0) {
         return;
@@ -4868,22 +4902,20 @@ void KernelEngine::sync_entity_colliders_from_world(NetId net_id) {
     if (world_.registry().all_of<ProjectileState>(*entity)) {
         materialize_projectile_collider(net_id);
     }
-    for (ColliderInstance& collider :
-         world_.collider_registry().mutable_instances()) {
-        if (collider.entity_net_id != net_id) {
-            continue;
-        }
-        refresh_collider_world_transform(collider);
+    // Looked up after materializing, which may have added this entity's
+    // collider. Neither loop adds or removes one, so the indices hold.
+    std::vector<ColliderInstance>& instances =
+        world_.collider_registry().mutable_instances();
+    const std::vector<std::uint32_t>& indices =
+        world_.collider_registry().entity_collider_indices(net_id);
+    for (const std::uint32_t index : indices) {
+        refresh_collider_world_transform(instances[index]);
     }
     if (physics_world_ == nullptr) {
         return;
     }
-    for (const ColliderInstance& collider :
-         world_.collider_registry().instances()) {
-        if (collider.entity_net_id != net_id) {
-            continue;
-        }
-        push_collider_into_physics(collider);
+    for (const std::uint32_t index : indices) {
+        push_collider_into_physics(instances[index]);
     }
 }
 
@@ -5101,7 +5133,7 @@ void KernelEngine::sync_client_render_colliders() {
         return;
     }
 
-    world_.collider_registry().mutable_instances().clear();
+    world_.collider_registry().clear();
     std::unordered_set<NetId> current_prediction_obstacles;
     for (const RenderEntityState& state : render_states_) {
         const EntityType entity_type =
@@ -6195,7 +6227,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     processed_gameplay_requests_.clear();
     pending_gameplay_request_outcomes_.clear();
     pending_network_gameplay_outcomes_.clear();
-    physics_entity_collider_ids_.clear();
+    physics_entity_colliders_.clear();
     prediction_proxy_collider_ids_.clear();
     prediction_obstacle_collider_ids_.clear();
     prediction_local_hitbox_collider_id_ = 0u;
@@ -11565,14 +11597,15 @@ void KernelEngine::record_simulation_tick_cost(
 void KernelEngine::finalize_simulated_projectile_destructions(
     std::size_t first_event,
     std::size_t last_event,
-    const std::unordered_set<NetId>& actors_before_tick) {
+    const std::vector<NetId>& actors_before_tick) {
     const std::size_t capped_last = std::min(last_event, events_.size());
     std::unordered_set<NetId> finalized_projectiles;
     for (std::size_t index = first_event; index < capped_last; ++index) {
         const KernelEvent& event = events_[index];
         if (event.type != KernelEventType_EntityDestroyed ||
             event.code != KernelDespawnReason_Destroyed ||
-            actors_before_tick.find(event.net_id) != actors_before_tick.end() ||
+            std::binary_search(
+                actors_before_tick.begin(), actors_before_tick.end(), event.net_id) ||
             !finalized_projectiles.insert(event.net_id).second) {
             continue;
         }
@@ -12073,7 +12106,8 @@ void KernelEngine::simulate_tick() {
         tick_time_us(tick_loop_.current_tick(), fixed_delta);
     const std::size_t first_tick_event = events_.size();
     world_.prune_action_graph_batches(tick_loop_.current_tick());
-    std::unordered_set<NetId> actors_before_tick;
+    std::vector<NetId>& actors_before_tick = actors_before_tick_;
+    actors_before_tick.clear();
     std::vector<ActionOutcome> action_outcomes;
     const auto actor_view = world_.registry().view<NetworkIdentity, EntityKind>();
     for (const entt::entity entity : actor_view) {
@@ -12082,8 +12116,9 @@ void KernelEngine::simulate_tick() {
             continue;
         }
         const NetId net_id = actor_view.get<NetworkIdentity>(entity).net_id;
-        actors_before_tick.insert(net_id);
+        actors_before_tick.push_back(net_id);
     }
+    std::sort(actors_before_tick.begin(), actors_before_tick.end());
     world_.collider_registry().expire_tick_lifetimes();
     EntityLifecycleSystem{}.update_prop_lifetimes(*this);
     const std::size_t queue_depth = command_queue_.size();
@@ -12361,21 +12396,36 @@ bool KernelEngine::is_derived_projectile(NetId net_id) const {
     return projectile != nullptr && projectile->derived;
 }
 
-WorldSnapshot KernelEngine::build_relevant_snapshot(
-    const PeerSession& session,
+WorldSnapshot KernelEngine::build_shared_world_snapshot(
     std::uint32_t server_time_ms) const {
-    WorldSnapshot full_snapshot = build_world_snapshot(
+    // last_processed_input_seq is per session; build_relevant_snapshot fills
+    // it in for each one.
+    return build_world_snapshot(
         world_,
         tick_loop_.current_tick(),
         server_time_ms,
-        session.last_processed_input_seq);
+        0u);
+}
+
+WorldSnapshot KernelEngine::build_relevant_snapshot(
+    const PeerSession& session,
+    std::uint32_t server_time_ms) const {
+    return build_relevant_snapshot(
+        session,
+        build_shared_world_snapshot(server_time_ms));
+}
+
+WorldSnapshot KernelEngine::build_relevant_snapshot(
+    const PeerSession& session,
+    const WorldSnapshot& world_snapshot) const {
     const EntitySnapshot* player_entity =
-        find_snapshot_entity(full_snapshot, session.player);
+        find_snapshot_entity(world_snapshot, session.player);
 
     WorldSnapshot filtered;
-    filtered.header = full_snapshot.header;
-    filtered.entities.reserve(full_snapshot.entities.size());
-    for (const EntitySnapshot& entity : full_snapshot.entities) {
+    filtered.header = world_snapshot.header;
+    filtered.header.last_processed_input_seq = session.last_processed_input_seq;
+    filtered.entities.reserve(world_snapshot.entities.size());
+    for (const EntitySnapshot& entity : world_snapshot.entities) {
         if (is_actor_pending_first_physics(entity.net_id)) {
             continue;
         }
@@ -12677,6 +12727,103 @@ void KernelEngine::update_vision_states(float delta_seconds) {
         }
     }
 
+    // Everything a cone could see, gathered once per tick rather than once per
+    // agent: walking the whole registry from every cone made vision
+    // agents x entities, 80% of the tick at 1300 agents. Only entities with a
+    // vision config are ever candidates, and whether one is hidden or dead does
+    // not depend on who is looking, so those checks happen here too.
+    //
+    // Candidates keep the registry's iteration order, and each cone reads its
+    // matches back in that order: the visible lists are capped and the nearest
+    // hostile keeps the first of a tie, so a different order would change who
+    // an agent sees.
+    //
+    // The grid is a sorted vector of (cell, candidate) rather than a map of
+    // cells, so a tick allocates nothing once the vectors have grown.
+    std::vector<VisionCandidate>& vision_candidates = vision_candidates_;
+    std::vector<std::pair<std::uint64_t, std::uint32_t>>& candidate_cells =
+        vision_candidate_cells_;
+    // A position the grid cannot file -- not a number, or too far out to name a
+    // cell. Read by every cone, so that it is judged exactly as it was before
+    // there was a grid.
+    std::vector<std::uint32_t>& unfiled_candidates = vision_unfiled_candidates_;
+    vision_candidates.clear();
+    candidate_cells.clear();
+    unfiled_candidates.clear();
+    const auto fileable = [](float meters) {
+        return std::isfinite(meters) && std::abs(meters) < 1.0e9f;
+    };
+    const auto cell_coordinate = [](float meters) {
+        return static_cast<std::int64_t>(
+            std::floor(meters / kVisionCandidateCellMeters));
+    };
+    // Offset so that the key orders cells by x, then z, negative coordinates
+    // included: one column's cells are a single contiguous run. A fileable
+    // coordinate names a cell well inside 32 bits either way.
+    const auto cell_key = [](std::int64_t x, std::int64_t z) {
+        constexpr std::int64_t kOffset = std::int64_t{1} << 31u;
+        return (static_cast<std::uint64_t>(x + kOffset) << 32u) |
+            static_cast<std::uint64_t>(z + kOffset);
+    };
+    if (!active_agents.empty()) {
+        auto candidates =
+            world_.registry().view<const NetworkIdentity, const EntityKind, const Transform>();
+        for (const entt::entity candidate_entity : candidates) {
+            const NetworkIdentity& candidate_identity =
+                candidates.get<const NetworkIdentity>(candidate_entity);
+            const auto candidate_config_iter =
+                vision_configs_.find(candidate_identity.net_id);
+            if (candidate_config_iter == vision_configs_.end()) {
+                continue;
+            }
+            if (hidden_occupants.contains(candidate_identity.net_id)) {
+                continue;
+            }
+            // A dormant corpse keeps its vision config but is nothing to chase,
+            // aim at or count as an ally.
+            if (const Health* candidate_health =
+                    world_.registry().try_get<Health>(candidate_entity);
+                candidate_health != nullptr && candidate_health->max_hp > 0u &&
+                candidate_health->hp == 0u) {
+                continue;
+            }
+            const glm::vec3 position =
+                candidates.get<const Transform>(candidate_entity).position;
+            const std::uint32_t index =
+                static_cast<std::uint32_t>(vision_candidates.size());
+            vision_candidates.push_back(VisionCandidate{
+                candidate_identity.net_id,
+                &candidate_config_iter->second,
+                position});
+            if (fileable(position.x) && fileable(position.z)) {
+                candidate_cells.emplace_back(
+                    cell_key(
+                        cell_coordinate(position.x),
+                        cell_coordinate(position.z)),
+                    index);
+            } else {
+                unfiled_candidates.push_back(index);
+            }
+        }
+    }
+    std::sort(candidate_cells.begin(), candidate_cells.end());
+    std::vector<std::uint64_t>& cell_keys = vision_cell_keys_;
+    std::vector<std::uint32_t>& cell_starts = vision_cell_starts_;
+    std::vector<std::uint32_t>& cell_members = vision_cell_members_;
+    cell_keys.clear();
+    cell_starts.clear();
+    cell_members.clear();
+    for (const auto& [key, candidate_index] : candidate_cells) {
+        if (cell_keys.empty() || cell_keys.back() != key) {
+            cell_keys.push_back(key);
+            cell_starts.push_back(static_cast<std::uint32_t>(cell_members.size()));
+        }
+        cell_members.push_back(candidate_index);
+    }
+    cell_starts.push_back(static_cast<std::uint32_t>(cell_members.size()));
+    const std::size_t occupied_cells = cell_keys.size();
+    std::vector<std::uint32_t>& cone_candidates = vision_cone_candidates_;
+
     for (const NetId agent_net_id : active_agents) {
         const auto config_iter = vision_configs_.find(agent_net_id);
         const std::optional<entt::entity> agent_entity =
@@ -12733,45 +12880,72 @@ void KernelEngine::update_vision_states(float delta_seconds) {
                 : previous.time_since_last_seen_target + delta_seconds;
         view.valid = 1u;
 
+        // The cells the cone's range overlaps, padded by a metre so that
+        // rounding at the edge of the range can never leave out a candidate
+        // the exact distance test below would have kept. When that is more
+        // cells than the grid holds, or the range or origin is not a number the
+        // grid can bound, every candidate is read instead.
+        cone_candidates.clear();
+        const float reach = cone_range + 1.0f;
+        bool read_every_candidate =
+            !fileable(origin.x - reach) || !fileable(origin.x + reach) ||
+            !fileable(origin.z - reach) || !fileable(origin.z + reach);
+        std::int64_t low_x = 0;
+        std::int64_t high_x = -1;
+        std::int64_t low_z = 0;
+        std::int64_t high_z = -1;
+        if (!read_every_candidate) {
+            low_x = cell_coordinate(origin.x - reach);
+            high_x = cell_coordinate(origin.x + reach);
+            low_z = cell_coordinate(origin.z - reach);
+            high_z = cell_coordinate(origin.z + reach);
+            read_every_candidate =
+                (high_x - low_x + 1) * (high_z - low_z + 1) >
+                static_cast<std::int64_t>(occupied_cells);
+        }
+        if (read_every_candidate) {
+            for (std::uint32_t index = 0; index < vision_candidates.size(); ++index) {
+                cone_candidates.push_back(index);
+            }
+        } else {
+            for (std::int64_t cell_x = low_x; cell_x <= high_x; ++cell_x) {
+                const auto first_cell = std::lower_bound(
+                    cell_keys.begin(), cell_keys.end(), cell_key(cell_x, low_z));
+                const auto end_cell = std::upper_bound(
+                    first_cell, cell_keys.end(), cell_key(cell_x, high_z));
+                if (first_cell == end_cell) {
+                    continue;
+                }
+                cone_candidates.insert(
+                    cone_candidates.end(),
+                    cell_members.begin() +
+                        cell_starts[first_cell - cell_keys.begin()],
+                    cell_members.begin() +
+                        cell_starts[end_cell - cell_keys.begin()]);
+            }
+            cone_candidates.insert(
+                cone_candidates.end(),
+                unfiled_candidates.begin(),
+                unfiled_candidates.end());
+            std::sort(cone_candidates.begin(), cone_candidates.end());
+        }
+
         float nearest_hostile_distance_squared =
             std::numeric_limits<float>::max();
-        auto candidates =
-            world_.registry().view<const NetworkIdentity, const EntityKind, const Transform>();
-        for (const entt::entity candidate_entity : candidates) {
-            const NetworkIdentity& candidate_identity =
-                candidates.get<const NetworkIdentity>(candidate_entity);
-            const auto candidate_config_iter =
-                vision_configs_.find(candidate_identity.net_id);
-            if (candidate_config_iter == vision_configs_.end()) {
-                continue;
-            }
-            const KernelAgentVisionConfig& candidate_config =
-                candidate_config_iter->second;
-            if (hidden_occupants.contains(candidate_identity.net_id)) {
-                continue;
-            }
-            // A dormant corpse keeps its vision config but is nothing to chase,
-            // aim at or count as an ally.
-            if (const Health* candidate_health =
-                    world_.registry().try_get<Health>(candidate_entity);
-                candidate_health != nullptr && candidate_health->max_hp > 0u &&
-                candidate_health->hp == 0u) {
-                continue;
-            }
+        for (const std::uint32_t candidate_index : cone_candidates) {
+            const VisionCandidate& candidate = vision_candidates[candidate_index];
             const std::uint8_t relation = classify_agent_relation(
                 agent_net_id,
                 config.camp,
-                candidate_identity.net_id,
-                candidate_config.camp);
+                candidate.net_id,
+                candidate.config->camp);
             if (relation != KernelAgentRelation_Ally &&
                 relation != KernelAgentRelation_Hostile &&
                 relation != KernelAgentRelation_Neutral) {
                 continue;
             }
 
-            const Transform& candidate_transform =
-                candidates.get<const Transform>(candidate_entity);
-            glm::vec3 delta = candidate_transform.position - origin;
+            glm::vec3 delta = candidate.position - origin;
             delta.y = 0.0f;
             const float distance_squared = glm::dot(delta, delta);
             if (distance_squared > cone_range * cone_range) {
@@ -12795,15 +12969,15 @@ void KernelEngine::update_vision_states(float delta_seconds) {
                 if (view.visible_hostile_count < config.max_visible_hostiles &&
                     view.visible_hostile_count < KERNEL_MAX_VISIBLE_HOSTILES) {
                     view.visible_hostiles[view.visible_hostile_count++] =
-                        candidate_identity.net_id;
+                        candidate.net_id;
                 }
                 if (distance_squared < nearest_hostile_distance_squared) {
                     nearest_hostile_distance_squared = distance_squared;
-                    view.current_target_candidate = candidate_identity.net_id;
+                    view.current_target_candidate = candidate.net_id;
                     view.relation_to_current_target = KernelAgentRelation_Hostile;
-                    view.last_seen_target = candidate_identity.net_id;
+                    view.last_seen_target = candidate.net_id;
                     view.last_known_target_position =
-                        to_kernel_vec3(candidate_transform.position);
+                        to_kernel_vec3(candidate.position);
                     view.time_since_last_seen_target = 0.0f;
                     runtime_state.has_last_seen_target = true;
                 }
@@ -12812,13 +12986,13 @@ void KernelEngine::update_vision_states(float delta_seconds) {
                 view.visible_ally_count < config.max_visible_allies &&
                 view.visible_ally_count < KERNEL_MAX_VISIBLE_ALLIES) {
                 view.visible_allies[view.visible_ally_count++] =
-                    candidate_identity.net_id;
+                    candidate.net_id;
             } else if (
                 relation == KernelAgentRelation_Neutral &&
                 view.visible_neutral_count < config.max_visible_neutrals &&
                 view.visible_neutral_count < KERNEL_MAX_VISIBLE_NEUTRALS) {
                 view.visible_neutrals[view.visible_neutral_count++] =
-                    candidate_identity.net_id;
+                    candidate.net_id;
             }
         }
 
@@ -14372,11 +14546,13 @@ void KernelEngine::rebuild_render_states_from_snapshot(
 void KernelEngine::publish_snapshot() {
     const std::uint32_t server_time_ms = static_cast<std::uint32_t>(
         tick_loop_.current_tick() * tick_loop_.fixed_delta_seconds() * 1000.0f);
-    latest_snapshot_ = build_world_snapshot(
-        world_,
-        tick_loop_.current_tick(),
-        server_time_ms,
-        local_last_processed_input_seq_);
+    // Built once and shared: by latest_snapshot_ here, and by every session
+    // below, each of which only filters it.
+    const WorldSnapshot world_snapshot =
+        build_shared_world_snapshot(server_time_ms);
+    latest_snapshot_ = world_snapshot;
+    latest_snapshot_.header.last_processed_input_seq =
+        local_last_processed_input_seq_;
     filter_pending_first_physics_actors(&latest_snapshot_);
     spdlog::debug(
         "{}",
@@ -14392,7 +14568,7 @@ void KernelEngine::publish_snapshot() {
         local_listen_session_.last_processed_input_seq = local_last_processed_input_seq_;
         local_listen_session_.welcomed = local_player_net_id_ != 0;
         WorldSnapshot peer_snapshot =
-            build_relevant_snapshot(local_listen_session_, server_time_ms);
+            build_relevant_snapshot(local_listen_session_, world_snapshot);
         sync_session_relevance(&local_listen_session_, peer_snapshot);
         drop_unannounced_entities(local_listen_session_, &peer_snapshot);
         const WorldSnapshot send_snapshot = build_snapshot_send_set(
@@ -14425,7 +14601,7 @@ void KernelEngine::publish_snapshot() {
                 continue;
             }
             WorldSnapshot peer_snapshot =
-                build_relevant_snapshot(session, server_time_ms);
+                build_relevant_snapshot(session, world_snapshot);
             sync_session_relevance(&session, peer_snapshot);
             drop_unannounced_entities(session, &peer_snapshot);
             // One send set for the interval, over as many independent
@@ -15448,7 +15624,7 @@ void KernelEngine::publish_status_effect_state(NetId target) {
 void KernelEngine::queue_remote_presentation_from_events(
     std::size_t first_event,
     std::size_t last_event,
-    const std::unordered_set<NetId>& actors_before_tick) {
+    const std::vector<NetId>& actors_before_tick) {
     if (!is_server_mode(config_.mode)) {
         return;
     }
@@ -15464,11 +15640,13 @@ void KernelEngine::queue_remote_presentation_from_events(
         const KernelEvent& event = events_[index];
         std::uint8_t event_type = UINT8_MAX;
         if (event.type == KernelEventType_DamageApplied &&
-            actors_before_tick.find(event.net_id) != actors_before_tick.end()) {
+            std::binary_search(
+                actors_before_tick.begin(), actors_before_tick.end(), event.net_id)) {
             event_type = KernelRemoteActionPresentationEventType_HitReaction;
         } else if (
             event.type == KernelEventType_EntityDestroyed &&
-            actors_before_tick.find(event.net_id) != actors_before_tick.end()) {
+            std::binary_search(
+                actors_before_tick.begin(), actors_before_tick.end(), event.net_id)) {
             event_type = KernelRemoteActionPresentationEventType_DeathTrigger;
         }
         if (event_type == UINT8_MAX) {

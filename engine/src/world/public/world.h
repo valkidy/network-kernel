@@ -153,14 +153,32 @@ public:
         void remove_entity_colliders(NetId entity_net_id);
         void expire_tick_lifetimes();
         bool has_persistent_entity_collider(NetId entity_net_id) const;
+        // Edits colliders in place. Adding, removing or re-keying one through
+        // this would leave entity_collider_indices describing the wrong
+        // colliders, so those go through the methods above and clear().
         std::vector<ColliderInstance>& mutable_instances();
         const std::vector<ColliderInstance>& instances() const;
+        // Where one entity's colliders sit in instances(), in the order it
+        // holds them. Finding them used to mean walking every collider in the
+        // world, which a per-entity sync did once per command: agents times
+        // colliders a tick. Valid until the next call that adds or removes a
+        // collider.
+        const std::vector<std::uint32_t>& entity_collider_indices(
+            NetId entity_net_id) const;
+        void clear();
 
     private:
         std::uint32_t allocate_collider_id();
+        // An append keeps the index current; a removal shifts every position
+        // after it, so it only marks the index stale and the next lookup
+        // rebuilds it.
+        void index_appended_instance();
 
         std::vector<ColliderInstance> instances_;
         std::uint32_t next_collider_id_ = 1;
+        mutable std::unordered_map<NetId, std::vector<std::uint32_t>>
+            entity_collider_indices_;
+        mutable bool entity_collider_indices_stale_ = true;
     };
 
     ColliderRegistry& collider_registry();

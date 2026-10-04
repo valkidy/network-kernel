@@ -316,6 +316,7 @@ ColliderInstance& World::ColliderRegistry::upsert_entity_collider(
     instance.entity_net_id = entity_net_id;
     instance.collider_template_id = collider_template_id;
     instances_.push_back(instance);
+    index_appended_instance();
     return instances_.back();
 }
 
@@ -350,10 +351,12 @@ ColliderInstance& World::ColliderRegistry::upsert_bone_collider(
     instance.collider_template_id = collider_template_id;
     instance.bone_index = bone_index;
     instances_.push_back(instance);
+    index_appended_instance();
     return instances_.back();
 }
 
 void World::ColliderRegistry::remove_bone_colliders(NetId entity_net_id) {
+    const std::size_t count_before = instances_.size();
     instances_.erase(
         std::remove_if(
             instances_.begin(),
@@ -363,6 +366,9 @@ void World::ColliderRegistry::remove_bone_colliders(NetId entity_net_id) {
                        instance.bone_index != UINT32_MAX;
             }),
         instances_.end());
+    if (instances_.size() != count_before) {
+        entity_collider_indices_stale_ = true;
+    }
 }
 
 ColliderInstance& World::ColliderRegistry::add_ephemeral_collider(
@@ -373,10 +379,12 @@ ColliderInstance& World::ColliderRegistry::add_ephemeral_collider(
         instance.remaining_ticks = instance.lifetime_ticks;
     }
     instances_.push_back(instance);
+    index_appended_instance();
     return instances_.back();
 }
 
 void World::ColliderRegistry::remove_entity_colliders(NetId entity_net_id) {
+    const std::size_t count_before = instances_.size();
     instances_.erase(
         std::remove_if(
             instances_.begin(),
@@ -385,9 +393,13 @@ void World::ColliderRegistry::remove_entity_colliders(NetId entity_net_id) {
                 return instance.entity_net_id == entity_net_id;
             }),
         instances_.end());
+    if (instances_.size() != count_before) {
+        entity_collider_indices_stale_ = true;
+    }
 }
 
 void World::ColliderRegistry::expire_tick_lifetimes() {
+    const std::size_t count_before = instances_.size();
     for (ColliderInstance& instance : instances_) {
         if (instance.lifetime_ticks == 0 || instance.remaining_ticks == 0) {
             continue;
@@ -403,6 +415,9 @@ void World::ColliderRegistry::expire_tick_lifetimes() {
                        instance.remaining_ticks == 0;
             }),
         instances_.end());
+    if (instances_.size() != count_before) {
+        entity_collider_indices_stale_ = true;
+    }
 }
 
 bool World::ColliderRegistry::has_persistent_entity_collider(
@@ -428,6 +443,35 @@ World::ColliderRegistry::instances() const {
 
 std::uint32_t World::ColliderRegistry::allocate_collider_id() {
     return next_collider_id_++;
+}
+
+void World::ColliderRegistry::index_appended_instance() {
+    if (entity_collider_indices_stale_) {
+        return;
+    }
+    entity_collider_indices_[instances_.back().entity_net_id].push_back(
+        static_cast<std::uint32_t>(instances_.size() - 1u));
+}
+
+const std::vector<std::uint32_t>&
+World::ColliderRegistry::entity_collider_indices(NetId entity_net_id) const {
+    if (entity_collider_indices_stale_) {
+        entity_collider_indices_.clear();
+        for (std::uint32_t index = 0; index < instances_.size(); ++index) {
+            entity_collider_indices_[instances_[index].entity_net_id].push_back(
+                index);
+        }
+        entity_collider_indices_stale_ = false;
+    }
+    static const std::vector<std::uint32_t> kNone;
+    const auto found = entity_collider_indices_.find(entity_net_id);
+    return found == entity_collider_indices_.end() ? kNone : found->second;
+}
+
+void World::ColliderRegistry::clear() {
+    instances_.clear();
+    entity_collider_indices_.clear();
+    entity_collider_indices_stale_ = true;
 }
 
 // Ids are never reused, which is what a client still holding a stale net_id
