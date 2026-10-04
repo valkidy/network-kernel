@@ -15,10 +15,16 @@ Create them in this order. Each one is referenced by the next.
 | 4 | weapon template | `weapon_templates/` | magazine, range, spread, and the three references above |
 
 Then add the weapon's `id` to a loadout in `entity_templates/` (for example
-`player.yaml`'s `weapon_slots`), or nothing will ever hold it. A loadout holds
+`1_player.yaml`'s `weapon_slots`), or nothing will ever hold it. A loadout holds
 at most 4 weapons.
 
 Ids must be unique within each directory. Weapon ids are 0-255.
+
+Name the files `$id_projectile_$name.yaml` and `$id_weapon_$key.yaml`, as in
+`3_projectile_rocket.yaml` and `3_weapon_rocket.yaml`. A weapon's YAML `name`
+is its display string and does not have to match the file. Action template
+files keep their plain names. The full rule is in
+[Template File Naming](DATA_DRIVEN_TEMPLATE_DESIGN.md#template-file-naming).
 
 Files 2 and 3 can be shared with an existing weapon; file 1 cannot. If the same
 gun is wanted on both sides, it is two weapons with two projectile templates —
@@ -215,10 +221,10 @@ it, and the enemy's `player_side` weapons pass straight through it. Adding a
 friendly unit therefore means authoring a hit collider on the player's layer,
 not only setting its camp.
 
-**Known gap**: a projectile that names *no* side (`spammer_projectile`, which is
+**Known gap**: a projectile that names *no* side (`spammer`, which is
 `terrain | static_obstacle`) has an empty gameplay-category mask, so it passes
 through every side-layered collider — actors and deployable cover alike. See
-`collider_templates/ice_block_hitbox.yaml`, which hit the same wall from the
+`collider_templates/13_collider_ice_block_hitbox.yaml`, which hit the same wall from the
 target's end.
 
 ### A marker: speed 0
@@ -395,6 +401,79 @@ belongs to `lifetime_ticks`. Authoring `motion_collision_mask` on a template
 with no `speed`, on a non-area-effect type, or with actor/prop bits in it is
 rejected at load.
 
+### A ground-following area effect (a tornado)
+
+`motion: {type: ground_follow}` makes a travelling field ride the terrain
+instead of flying a straight line. It hovers `hover_height` above the ground,
+climbs and descends slopes up to `max_slope_degrees` the way a character does,
+holds its height where no ground is in reach (off a cliff), and parks at
+anything steeper — for the rest of its lifetime, as above. It always travels
+level at `speed`, whatever pitch it was aimed at.
+
+```yaml
+type: area_effect
+speed: 6.0
+motion_collision_mask: terrain         # must include terrain
+sync_mode: local_predicted_deterministic
+motion:
+  type: ground_follow
+  hover_height: 1.5                    # required; ground to centre
+  max_slope_degrees: 50                # default 50, the character default
+  step_up: 0.5                         # default 0.5; tallest rise per tick
+  probe_depth: 0.5                     # default 0.5; deepest drop per tick
+```
+
+The shipped example is `projectile_templates/29_projectile_tornado.yaml`: a
+3 m column (`collider_templates/39_collider_tornado_column.yaml`) that rides
+2 m up for 300 ticks and pulls hostiles once a second through
+`action_graph_templates/action_tornado_pull.yaml`, which does `apply_pull`
+only. `fungible_tornado_bottle` (item 3012, prop 217) throws it: where the
+bottle breaks, the tornado rises and travels on along the level part of the
+bottle's heading.
+
+A pull every 30 ticks at 6 m/s means the funnel moves its whole 6 m diameter
+between two pulls, so a target walking into it can pass through untouched.
+Shorten `damage_interval_ticks` (and `airtime_ticks` with it) or widen the
+collider if that matters more than the cost.
+
+`step_up` and `probe_depth` are per tick. `step_up` has to cover the steepest
+walkable climb over one tick of travel (`tan(max_slope) × speed / 30`), and
+anything shorter than it is stepped onto rather than stopped at; `probe_depth`
+has to cover the steepest walkable descent, or a downhill reads as a cliff. At
+6 m/s and 50° both need about 0.24 m, so the 0.5 defaults have room.
+
+It is rejected at load without `speed`, without `terrain` in
+`motion_collision_mask`, without `hover_height`, and with
+`sync_mode: hybrid_deterministic_then_snapshot`: hybrid's snapshot correction
+re-anchors through the straight-line formula, which is wrong for a field that
+climbs. Use `local_predicted_deterministic` (every client steps it itself over
+the same terrain, nothing is sent after the spawn) or `server_snapshot_only`.
+
+Terrain authoring note: the ground is found with a ray straight down. Where two
+terrain boxes only meet edge to edge, a ray landing exactly on the seam hits
+neither and the field holds its height for that tick. Overlap terrain pieces.
+
+### area_shape: cylinder
+
+The overlap is a sphere of the collider's radius by default. `area_shape:
+cylinder` makes it an upright column of that radius, `half_height` above and
+below the field's centre, so a target over the field but within its radius is
+left out. With a ground-following field, `half_height` equal to `hover_height`
+puts the column's foot on the ground.
+
+```yaml
+area_shape: cylinder
+half_height: 1.5
+```
+
+`half_height` is required with a cylinder and rejected without one, and both
+keys, like `motion`, are rejected on anything but an area effect. Falloff, if
+authored, still scales by the 3D distance from the centre, not from the axis.
+
+A field that only pulls (a tornado bound to `apply_pull`) still authors a
+non-zero `damage`: an area effect with a graph binding submits no damage of its
+own, so the graph decides what lands.
+
 `hit_instigator` (default `false`) is accepted here and rejected everywhere
 else. An area effect normally filters the actor that fired it out of its overlap
 query, so a weapon's own blast can neither hurt nor push its shooter, and that
@@ -488,13 +567,15 @@ refill amount itself is not yet data-driven, so that shape needs an engineer.
 
 ## Checklist for a new weapon
 
-1. `projectile_templates/<name>_shot.yaml` — damage and collision_mask
+1. `projectile_templates/<id>_projectile_<name>_shot.yaml` — damage and
+   collision_mask
 2. **Name the side in `collision_mask`** — `hostile_side` for a player's weapon,
    `player_side` for an enemy's. Leaving it out means it hits both.
 3. `action_templates/<name>_fire.yaml` — rate of fire (shareable with another
    weapon)
 4. `action_templates/<name>_reload.yaml` — reload time (shareable)
-5. `weapon_templates/<name>.yaml` — magazine, range, and the three references
+5. `weapon_templates/<id>_weapon_<name>.yaml` — magazine, range, and the three
+   references; YAML `name` is the display string
 6. Add the weapon id to `weapon_slots` in an `entity_templates/` loadout
 7. Rebuild the catalog bundle and ship the same bundle to client and server
 

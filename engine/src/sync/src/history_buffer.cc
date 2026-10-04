@@ -2,8 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <limits>
-#include <unordered_map>
 
 namespace network_example {
 namespace {
@@ -96,7 +96,8 @@ void HistoryBuffer::write_frame(const World& world, std::uint32_t server_tick) {
         const NetworkIdentity,
         const Transform,
         const Hitbox>();
-    std::unordered_map<NetId, bool> alive_by_net_id;
+    std::vector<std::pair<NetId, bool>>& alive_by_net_id = alive_by_net_id_;
+    alive_by_net_id.clear();
     for (const entt::entity entity : view) {
         if (world.registry().all_of<ProjectileTag>(entity)) {
             continue;
@@ -125,8 +126,16 @@ void HistoryBuffer::write_frame(const World& world, std::uint32_t server_tick) {
             static_cast<std::uint8_t>(alive ? 1 : 0),
             0,
         });
-        alive_by_net_id[identity.net_id] = alive;
+        alive_by_net_id.emplace_back(identity.net_id, alive);
     }
+    // Stable, so that if a net_id ever appeared twice the lookup below could
+    // still take the last one written, as the map this replaced did.
+    std::stable_sort(
+        alive_by_net_id.begin(),
+        alive_by_net_id.end(),
+        [](const std::pair<NetId, bool>& lhs, const std::pair<NetId, bool>& rhs) {
+            return lhs.first < rhs.first;
+        });
 
     // A rig's per-bone volumes, taken from the collider registry rather than
     // re-derived: the authoritative solve already refreshed them this tick, and
@@ -144,10 +153,18 @@ void HistoryBuffer::write_frame(const World& world, std::uint32_t server_tick) {
         if (collider.bone_index == UINT32_MAX) {
             continue;
         }
-        const auto alive = alive_by_net_id.find(collider.entity_net_id);
-        if (alive == alive_by_net_id.end()) {
+        const auto after = std::upper_bound(
+            alive_by_net_id.begin(),
+            alive_by_net_id.end(),
+            collider.entity_net_id,
+            [](NetId net_id, const std::pair<NetId, bool>& entry) {
+                return net_id < entry.first;
+            });
+        if (after == alive_by_net_id.begin() ||
+            std::prev(after)->first != collider.entity_net_id) {
             continue;
         }
+        const auto alive = std::prev(after);
         frame.volumes.push_back(HitVolumeSnapshot{
             collider.entity_net_id,
             collider.world_center,

@@ -381,10 +381,10 @@ void beam_transform_rotation_follows_aim() {
 
 // A destructible blocker: a prop carrying Health and a side, standing in the
 // beam's path. Registered the way the kernel registers a prop -- kind and layer
-// kStaticObstacle -- and carrying the gameplay_category ice_block_hitbox.yaml
-// authors, `damageable`. That category covers all three sides on purpose, so
-// blocking never depends on which side the block belongs to; only the entity's
-// GameplaySide does, and only for damage.
+// kStaticObstacle -- and carrying the gameplay_category
+// 13_collider_ice_block_hitbox.yaml authors, `damageable`. That category covers
+// all three sides on purpose, so blocking never depends on which side the block
+// belongs to; only the entity's GameplaySide does, and only for damage.
 network_example::NetId spawn_cover_prop(
     network_example::World& world,
     network_example::physics::PhysicsWorld& physics,

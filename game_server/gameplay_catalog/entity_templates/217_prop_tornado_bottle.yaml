@@ -1,0 +1,27 @@
+# World half of fungible_tornado_bottle: breaks on whatever it hits and leaves
+# a tornado. The same shape as pull_bottle; the self-damage keeps it from
+# setting off another tornado on every tick it rests.
+#
+# direction is the bottle's own heading as it struck (a collision reports the
+# prop's velocity, falling back to the contact normal only if it had none).
+# The tornado keeps the level part of it, so it carries on the way the bottle
+# was thrown. position is the contact point; the tornado settles from there to
+# its hover height above the ground.
+id: 217
+name: tornado_bottle
+entity_type: prop
+health:
+  hp: 1
+  max_hp: 1
+physics:
+  collider_template: collision_damage_prop_hitbox
+triggers:
+  on_collision:
+    collision_mask: terrain | static_obstacle | actor
+    action_graph: action_spawn_projectile_and_damage_self_at_collision
+    parameters:
+      template: tornado
+      position: event.position
+      direction: event.direction
+      source: self
+      self_damage: 1

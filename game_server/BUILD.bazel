@@ -55,6 +55,7 @@ cc_library(
         "src/agent_steering.h",
         "src/ballistic_aim.h",
         "src/game_rule_director.h",
+        "src/agent_budget.h",
         "src/gameplay_config.h",
         "src/game_server.h",
         "src/respawn_scheduler.h",
@@ -185,6 +186,18 @@ cc_test(
 )
 
 cc_test(
+    name = "tornado_catalog_test",
+    srcs = ["tests/tornado_catalog_test.cc"],
+    data = [
+        "//game_server/gameplay_catalog_bundle:bundle",
+    ],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
     name = "targeted_strike_catalog_test",
     srcs = ["tests/targeted_strike_catalog_test.cc"],
     data = [
@@ -203,6 +216,7 @@ cc_test(
     srcs = ["tests/agent_cpu_bench.cc"],
     data = [
         "//game_server/gameplay_catalog_bundle:bundle",
+        "//game_server/tests/test_mesh_assets:cooked_test_mesh_assets",
     ],
     tags = ["manual"],
     deps = [
@@ -688,6 +702,31 @@ cc_test(
 )
 
 cc_test(
+    name = "tornado_bottle_test",
+    srcs = ["tests/tornado_bottle_test.cc"],
+    data = glob([
+        "gameplay_catalog/action_graph_templates/*.yaml",
+        "gameplay_catalog/action_templates/*.yaml",
+        "gameplay_catalog/collider_templates/*.yaml",
+        "gameplay_catalog/entity_templates/*.yaml",
+        "gameplay_catalog/item_templates/*.yaml",
+        "gameplay_catalog/projectile_templates/*.yaml",
+        "gameplay_catalog/status_effect_templates/*.yaml",
+        "gameplay_catalog/weapon_templates/*.yaml",
+    ]) + [
+        "gameplay_catalog/gameplay_catalog.yaml",
+        "//game_server/gameplay_catalog/mesh_assets:cooked_mesh_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_biped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_quadruped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_tripod_assets",
+    ],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
     name = "knockdown_recovery_test",
     srcs = ["tests/knockdown_recovery_test.cc"],
     data = glob([
@@ -726,6 +765,81 @@ cc_test(
         "gameplay_catalog/gameplay_catalog.yaml",
         "//game_server/gameplay_catalog/mesh_assets:cooked_mesh_assets",
         "//game_server/gameplay_catalog/skeleton_assets:locomotion_skeleton_assets",
+    ],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
+    name = "alert_spawner_test",
+    srcs = ["tests/alert_spawner_test.cc"],
+    data = glob([
+        "gameplay_catalog/action_graph_templates/*.yaml",
+        "gameplay_catalog/action_templates/*.yaml",
+        "gameplay_catalog/collider_templates/*.yaml",
+        "gameplay_catalog/entity_templates/*.yaml",
+        "gameplay_catalog/item_templates/*.yaml",
+        "gameplay_catalog/projectile_templates/*.yaml",
+        "gameplay_catalog/status_effect_templates/*.yaml",
+        "gameplay_catalog/weapon_templates/*.yaml",
+    ]) + [
+        "gameplay_catalog/gameplay_catalog.yaml",
+        "//game_server/gameplay_catalog/mesh_assets:cooked_mesh_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_biped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_quadruped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_tripod_assets",
+    ],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
+    name = "hover_controller_test",
+    srcs = ["tests/hover_controller_test.cc"],
+    data = glob([
+        "gameplay_catalog/action_graph_templates/*.yaml",
+        "gameplay_catalog/action_templates/*.yaml",
+        "gameplay_catalog/collider_templates/*.yaml",
+        "gameplay_catalog/entity_templates/*.yaml",
+        "gameplay_catalog/item_templates/*.yaml",
+        "gameplay_catalog/projectile_templates/*.yaml",
+        "gameplay_catalog/status_effect_templates/*.yaml",
+        "gameplay_catalog/weapon_templates/*.yaml",
+    ]) + [
+        "gameplay_catalog/gameplay_catalog.yaml",
+        "//game_server/gameplay_catalog/mesh_assets:cooked_mesh_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_biped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_quadruped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_tripod_assets",
+    ],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
+    name = "flying_units_test",
+    srcs = ["tests/flying_units_test.cc"],
+    data = glob([
+        "gameplay_catalog/action_graph_templates/*.yaml",
+        "gameplay_catalog/action_templates/*.yaml",
+        "gameplay_catalog/collider_templates/*.yaml",
+        "gameplay_catalog/entity_templates/*.yaml",
+        "gameplay_catalog/item_templates/*.yaml",
+        "gameplay_catalog/projectile_templates/*.yaml",
+        "gameplay_catalog/status_effect_templates/*.yaml",
+        "gameplay_catalog/weapon_templates/*.yaml",
+    ]) + [
+        "gameplay_catalog/gameplay_catalog.yaml",
+        "//game_server/gameplay_catalog/mesh_assets:cooked_mesh_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_biped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_quadruped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_tripod_assets",
     ],
     deps = [
         ":game_server",

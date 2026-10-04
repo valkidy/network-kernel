@@ -254,6 +254,13 @@ void hash_projectile_template(
     hash_scalar(hash, mechanics.area_effect.collision_mask);
     hash_scalar(hash, mechanics.area_effect.hit_instigator);
     hash_scalar(hash, mechanics.area_effect.motion_collision_mask);
+    hash_scalar(hash, mechanics.area_effect.shape);
+    hash_scalar(hash, mechanics.area_effect.motion);
+    hash_float(hash, mechanics.area_effect.half_height);
+    hash_float(hash, mechanics.area_effect.hover_height);
+    hash_float(hash, mechanics.area_effect.max_slope_degrees);
+    hash_float(hash, mechanics.area_effect.step_up);
+    hash_float(hash, mechanics.area_effect.probe_depth);
     hash_float(hash, mechanics.beam.length);
     hash_float(hash, mechanics.beam.radius);
     hash_scalar(hash, mechanics.beam.damage_per_tick);
@@ -346,6 +353,9 @@ void hash_actor_template(
     hash_scalar(hash, actor_template.shelter_hides_occupants);
     hash_scalar(hash, actor_template.death_policy);
     hash_scalar(hash, actor_template.movement_collision_mask);
+    hash_float(hash, actor_template.movement_hover_height_meters);
+    hash_float(
+        hash, actor_template.movement_hover_vertical_speed_meters_per_second);
     hash_scalar(hash, actor_template.weapon_slot_count);
     for (std::uint8_t index = 0; index < actor_template.weapon_slot_count; ++index) {
         hash_scalar(hash, actor_template.weapon_ids[index]);
@@ -380,6 +390,10 @@ void hash_actor_template(
     hash_float(hash, actor_template.patrol.leash_meters);
     hash_float(hash, actor_template.patrol.leash_resume_meters);
     hash_scalar(hash, actor_template.spawner.authored ? 1u : 0u);
+    hash_scalar(
+        hash, static_cast<std::uint32_t>(actor_template.spawner.trigger));
+    hash_scalar(hash, actor_template.spawner.calls_per_alert);
+    hash_vec3(hash, actor_template.spawner.offset);
     hash_scalar(hash, actor_template.spawner.seed);
     hash_scalar(hash, actor_template.spawner.interval_ticks);
     hash_scalar(hash, actor_template.spawner.max_live_agents);
@@ -809,9 +823,10 @@ std::uint32_t collision_mask_from_yaml(
 // movement.collision_mask names the geometry that stops a body, which is a
 // different axis from the gameplay categories collision_mask_from_yaml parses --
 // see the KERNEL_MOVEMENT_LAYER_* comment in kernel_types.h. It is spelled the
-// same way as a projectile's collision_mask (projectile_templates/rocket.yaml)
-// because it is authored the same way -- a '|' list of layer names -- but it is
-// kept as its own token set so the two vocabularies cannot be confused:
+// same way as a projectile's collision_mask
+// (projectile_templates/3_projectile_rocket.yaml) because it is authored the
+// same way -- a '|' list of layer names -- but it is kept as its own token set
+// so the two vocabularies cannot be confused:
 // "hostile_side" is meaningless under movement and must fail loudly rather than
 // resolve to some unrelated bit.
 std::uint32_t movement_collision_layer_token_from_yaml(
@@ -2668,6 +2683,9 @@ std::uint8_t movement_controller_type_from_yaml(const YAML::Node& node) {
     if (value == "character") {
         return KernelMovementControllerType_Character;
     }
+    if (value == "hover") {
+        return KernelMovementControllerType_Hover;
+    }
     throw std::runtime_error("unsupported movement controller: " + value);
 }
 
@@ -2884,6 +2902,11 @@ void apply_catalog_patrol_config(
     const std::string& path,
     std::uint32_t source_kind);
 void apply_catalog_world_rule_config(GameServerGameplayConfig* config);
+void apply_catalog_population_budget_config(
+    const YAML::Node& document,
+    GameServerGameplayConfig* config,
+    const std::string& path,
+    std::uint32_t source_kind);
 void apply_catalog_spawner_config(
     GameServerGameplayConfig* config,
     const std::string& path,
@@ -3768,6 +3791,7 @@ ActorTemplateConfig actor_template_from_yaml(
             "vision",
             "skeleton",
             "locomotion",
+            "spawner",
         },
         path,
         source_kind,
@@ -3900,6 +3924,7 @@ ActorTemplateConfig actor_template_from_yaml(
             "ground_snap_distance",
             "max_yaw_degrees_per_second",
             "collision_mask",
+            "hover",
         },
         path,
         source_kind,
@@ -3937,6 +3962,35 @@ ActorTemplateConfig actor_template_from_yaml(
     if (movement["collision_mask"]) {
         actor_template.movement_collision_mask =
             movement_collision_mask_from_yaml(movement["collision_mask"]);
+    }
+    // `hover:` belongs to `controller: hover` and nothing else: refused on any
+    // other controller rather than ignored, and required on this one, because
+    // there is no clearance that would be a sensible default for every flier.
+    const bool hovers = actor_template.movement_controller_type ==
+        KernelMovementControllerType_Hover;
+    const YAML::Node hover = movement["hover"];
+    if (hover && !hovers) {
+        throw std::runtime_error(
+            "movement hover requires controller: hover: " + actor_template.name);
+    }
+    if (hovers) {
+        if (!hover || !hover["height_meters"] ||
+            !hover["vertical_speed_meters_per_second"]) {
+            throw std::runtime_error(
+                "controller: hover requires hover with height_meters and "
+                "vertical_speed_meters_per_second: " + actor_template.name);
+        }
+        reject_unknown_keys(
+            hover,
+            {"height_meters", "vertical_speed_meters_per_second"},
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+            actor_template.actor_template_id);
+        actor_template.movement_hover_height_meters =
+            hover["height_meters"].as<float>();
+        actor_template.movement_hover_vertical_speed_meters_per_second =
+            hover["vertical_speed_meters_per_second"].as<float>();
     }
 
     const YAML::Node hitbox = node["hitbox"];
@@ -4523,6 +4577,13 @@ ActorTemplateConfig actor_template_from_yaml(
             }
         }
     }
+    // Whether an actor may carry this kind of spawner depends on its AI, which
+    // apply_catalog_spawner_config checks once every template is loaded.
+    actor_template.spawner = spawner_from_yaml(
+        node["spawner"],
+        path,
+        source_kind,
+        actor_template.actor_template_id);
     return actor_template;
 }
 
@@ -5826,6 +5887,128 @@ void read_projectile_launch(
     }
 }
 
+float positive_area_float_from_yaml(
+    const YAML::Node& node,
+    float fallback,
+    const std::string& what,
+    const std::string& template_name) {
+    const float value = node ? node.as<float>() : fallback;
+    if (!std::isfinite(value) || value <= 0.0f) {
+        throw std::runtime_error(
+            what + " must be finite and positive: " + template_name);
+    }
+    return value;
+}
+
+// The overlap's shape. A sphere is the default and needs nothing else; a
+// cylinder is an upright column that also needs its half height, which is the
+// one thing a sphere's radius does not already say.
+void area_effect_shape_from_yaml(
+    const YAML::Node& node,
+    const std::string& template_name,
+    KernelProjectileMechanicsDefinition* mechanics) {
+    const std::string shape =
+        node["area_shape"] ? node["area_shape"].as<std::string>() : "sphere";
+    if (shape == "sphere") {
+        if (node["half_height"]) {
+            throw std::runtime_error(
+                "half_height needs area_shape cylinder: " + template_name);
+        }
+        mechanics->area_effect.shape = KernelAreaEffectShape_Sphere;
+        return;
+    }
+    if (shape != "cylinder") {
+        throw std::runtime_error(
+            "unsupported area_shape " + shape + ": " + template_name);
+    }
+    if (!node["half_height"]) {
+        throw std::runtime_error(
+            "area_shape cylinder needs half_height: " + template_name);
+    }
+    mechanics->area_effect.shape = KernelAreaEffectShape_Cylinder;
+    mechanics->area_effect.half_height = positive_area_float_from_yaml(
+        node["half_height"], 0.0f, "half_height", template_name);
+}
+
+// How a travelling field moves. Linear, the default, is the straight line its
+// speed draws. ground_follow rides the terrain, and three things about it are
+// refused here rather than left to misbehave:
+//   - a field that does not travel has nothing to follow;
+//   - one whose motion_collision_mask leaves out terrain has nothing to probe,
+//     and would hold its spawn height for good;
+//   - one that a client both predicts and has corrected by snapshots (hybrid).
+//     The correction re-anchors through the straight-line formula, which is
+//     wrong for a field that climbs, so only a field the client derives alone
+//     (local_predicted_deterministic) or only draws from snapshots
+//     (server_snapshot_only) is accepted.
+void area_effect_motion_from_yaml(
+    const YAML::Node& node,
+    const std::string& path,
+    std::uint32_t source_kind,
+    const std::string& template_name,
+    KernelProjectileMechanicsDefinition* mechanics) {
+    const YAML::Node motion = node["motion"];
+    mechanics->area_effect.motion = KernelAreaEffectMotion_Linear;
+    if (!motion) {
+        return;
+    }
+    reject_unknown_keys(
+        motion,
+        {"type", "hover_height", "max_slope_degrees", "step_up", "probe_depth"},
+        path,
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_PROJECTILE);
+    const std::string type =
+        motion["type"] ? motion["type"].as<std::string>() : "linear";
+    if (type == "linear") {
+        if (motion.size() > 1u) {
+            throw std::runtime_error(
+                "a linear area_effect motion takes no settings: " +
+                template_name);
+        }
+        return;
+    }
+    if (type != "ground_follow") {
+        throw std::runtime_error(
+            "unsupported area_effect motion " + type + ": " + template_name);
+    }
+    if (mechanics->speed <= 0.0f) {
+        throw std::runtime_error(
+            "motion ground_follow needs an area_effect that travels: " +
+            template_name);
+    }
+    if ((mechanics->area_effect.motion_collision_mask &
+         KERNEL_COLLISION_LAYER_TERRAIN) == 0u) {
+        throw std::runtime_error(
+            "motion ground_follow needs terrain in motion_collision_mask: " +
+            template_name);
+    }
+    if (mechanics->sync_mode ==
+        KernelProjectileSyncMode_HybridDeterministicThenSnapshot) {
+        throw std::runtime_error(
+            "motion ground_follow needs sync_mode "
+            "local_predicted_deterministic or server_snapshot_only: " +
+            template_name);
+    }
+    if (!motion["hover_height"]) {
+        throw std::runtime_error(
+            "motion ground_follow needs hover_height: " + template_name);
+    }
+    mechanics->area_effect.motion = KernelAreaEffectMotion_GroundFollow;
+    mechanics->area_effect.hover_height = positive_area_float_from_yaml(
+        motion["hover_height"], 0.0f, "hover_height", template_name);
+    mechanics->area_effect.max_slope_degrees = positive_area_float_from_yaml(
+        motion["max_slope_degrees"], 50.0f, "max_slope_degrees", template_name);
+    if (mechanics->area_effect.max_slope_degrees >= 90.0f) {
+        throw std::runtime_error(
+            "max_slope_degrees must be under 90: " + template_name);
+    }
+    mechanics->area_effect.step_up = positive_area_float_from_yaml(
+        motion["step_up"], 0.5f, "step_up", template_name);
+    mechanics->area_effect.probe_depth = positive_area_float_from_yaml(
+        motion["probe_depth"], 0.5f, "probe_depth", template_name);
+}
+
 ProjectileTemplateConfig projectile_template_from_yaml(
     const YAML::Node& node,
     const std::string& path,
@@ -5853,6 +6036,9 @@ ProjectileTemplateConfig projectile_template_from_yaml(
             "collision_mask",
             "hit_instigator",
             "motion_collision_mask",
+            "area_shape",
+            "half_height",
+            "motion",
             "max_hit_count",
             "gravity",
             "triggers",
@@ -6075,7 +6261,21 @@ ProjectileTemplateConfig projectile_template_from_yaml(
         // damages them, so it has to be asked for rather than inherited.
         mechanics.area_effect.hit_instigator = static_cast<std::uint8_t>(
             node["hit_instigator"] && node["hit_instigator"].as<bool>() ? 1 : 0);
+        area_effect_shape_from_yaml(node, projectile_template.name, &mechanics);
+        area_effect_motion_from_yaml(
+            node, path, source_kind, projectile_template.name, &mechanics);
         return projectile_template;
+    }
+
+    for (const char* key : {"area_shape", "half_height", "motion"}) {
+        if (node[key]) {
+            // A standard projectile's flight and a beam's reach are answered
+            // by their own fields; these only shape an area effect's field.
+            throw std::runtime_error(
+                std::string(key) +
+                " is only supported on area_effect projectiles: " +
+                projectile_template.name);
+        }
     }
 
     if (node["motion_collision_mask"]) {
@@ -7462,6 +7662,8 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             "preload_directors",
             "patrols",
             "patrol_budget",
+            "reinforce_budget",
+            "agent_budget",
             "navigation_mesh",
         },
         path,
@@ -7717,6 +7919,8 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     apply_catalog_patrol_config(
         document, &config, path, source.source_kind());
     apply_catalog_world_rule_config(&config);
+    apply_catalog_population_budget_config(
+        document, &config, path, source.source_kind());
     apply_catalog_spawner_config(&config, path, source.source_kind());
 
     const std::vector<std::string> errors = validate_gameplay_config(config);
@@ -7829,10 +8033,13 @@ SpawnerConfig spawner_from_yaml(
     reject_unknown_keys(
         node,
         {
+            "trigger",
+            "calls_per_alert",
             "seed",
             "interval_ticks",
             "max_live_agents",
             "radius",
+            "offset",
             "count",
             "composition",
             "entry",
@@ -7842,6 +8049,29 @@ SpawnerConfig spawner_from_yaml(
         KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
         template_id);
     spawner.authored = true;
+    if (node["trigger"]) {
+        const std::string trigger = node["trigger"].as<std::string>();
+        if (trigger == "interval") {
+            spawner.trigger = SpawnerTrigger::kInterval;
+        } else if (trigger == "on_alert") {
+            spawner.trigger = SpawnerTrigger::kOnAlert;
+        } else {
+            throw std::runtime_error(
+                "spawner trigger must be interval or on_alert: " + trigger);
+        }
+    }
+    if (node["calls_per_alert"]) {
+        // Refused rather than ignored: on a clock it would read as a limit that
+        // is not there.
+        if (spawner.trigger != SpawnerTrigger::kOnAlert) {
+            throw std::runtime_error(
+                "spawner calls_per_alert requires trigger: on_alert");
+        }
+        spawner.calls_per_alert = node["calls_per_alert"].as<std::uint32_t>();
+    }
+    if (node["offset"]) {
+        spawner.offset = vec3_from_yaml(node["offset"]);
+    }
     if (node["seed"]) {
         spawner.seed = node["seed"].as<std::uint32_t>();
     }
@@ -8071,6 +8301,34 @@ std::string validate_spawner_entry_placement(
     return {};
 }
 
+// `reinforce_budget:` and `agent_budget:`, both one ceiling at catalog top
+// level beside `patrol_budget:`. Read before the spawner pass, which checks
+// every on_alert wave against the reinforce budget.
+void apply_catalog_population_budget_config(
+    const YAML::Node& document,
+    GameServerGameplayConfig* config,
+    const std::string& path,
+    std::uint32_t source_kind) {
+    const auto read_ceiling = [&](const char* key, std::uint32_t* out) {
+        const YAML::Node budget = document[key];
+        if (!budget) {
+            return;
+        }
+        reject_unknown_keys(
+            budget,
+            {"max_live_agents"},
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+        if (budget["max_live_agents"]) {
+            *out = budget["max_live_agents"].as<std::uint32_t>();
+        }
+    };
+    read_ceiling(
+        "reinforce_budget", &config->reinforce_budget.max_live_agents);
+    read_ceiling("agent_budget", &config->agent_budget.max_live_agents);
+}
+
 void apply_catalog_spawner_config(
     GameServerGameplayConfig* config,
     const std::string& path,
@@ -8099,6 +8357,33 @@ void apply_catalog_spawner_config(
             validate_spawner_config(entity_template.spawner);
         if (!error.empty()) {
             throw std::runtime_error(error + ": " + entity_template.name);
+        }
+        if (entity_template.spawner.trigger == SpawnerTrigger::kOnAlert) {
+            // The trigger reads the carrier's sentry state, which only the
+            // sentry and chaser controllers keep.
+            if (entity_template.entity_type != kEntityTypeActor ||
+                entity_template.actor_type != kActorTypeAgent ||
+                (entity_template.ai_controller_type !=
+                     KernelAiControllerType_Sentry &&
+                 entity_template.ai_controller_type !=
+                     KernelAiControllerType_Chaser)) {
+                throw std::runtime_error(
+                    "spawner trigger on_alert requires an agent with a sentry "
+                    "or chaser controller: " + entity_template.name);
+            }
+            const std::uint32_t budget =
+                config->reinforce_budget.max_live_agents;
+            if (budget == 0u) {
+                throw std::runtime_error(
+                    "spawner trigger on_alert requires reinforce_budget: " +
+                    entity_template.name);
+            }
+            // Waves are whole, so a budget below one could never let it call.
+            if (budget < entity_template.spawner.count_max) {
+                throw std::runtime_error(
+                    "reinforce_budget is below the largest wave of " +
+                    entity_template.name);
+            }
         }
         if (entity_template.spawner.entry.authored) {
             // Only once the composition's ids are resolved above: this reads the
@@ -8591,6 +8876,8 @@ std::uint64_t compute_gameplay_catalog_hash(
         hash_scalar(&hash, rule.tick_interval);
     }
     hash_scalar(&hash, config.patrol_budget.max_live_agents);
+    hash_scalar(&hash, config.reinforce_budget.max_live_agents);
+    hash_scalar(&hash, config.agent_budget.max_live_agents);
     hash_string(&hash, config.navigation_mesh.entry_path);
     hash_scalar(
         &hash,
@@ -9101,7 +9388,15 @@ std::vector<std::string> validate_gameplay_config(
             actor_template.health.hp > actor_template.health.max_hp ||
             actor_template.move_speed_meters_per_second <= 0.0f ||
             actor_template.movement_controller_type >
-                KernelMovementControllerType_Character ||
+                KernelMovementControllerType_Hover ||
+            (actor_template.movement_controller_type ==
+                 KernelMovementControllerType_Hover &&
+             (!std::isfinite(actor_template.movement_hover_height_meters) ||
+              actor_template.movement_hover_height_meters <= 0.0f ||
+              !std::isfinite(
+                  actor_template.movement_hover_vertical_speed_meters_per_second) ||
+              actor_template.movement_hover_vertical_speed_meters_per_second <=
+                  0.0f)) ||
             actor_template.movement_controller_type ==
                 KernelMovementControllerType_None ||
             actor_template.movement_collider_template_id == 0u ||
@@ -9520,6 +9815,10 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
             authored_template.movement_max_yaw_degrees_per_second;
         entity_template.movement.movement_collision_mask =
             authored_template.movement_collision_mask;
+        entity_template.movement.hover_height_meters =
+            authored_template.movement_hover_height_meters;
+        entity_template.movement.hover_vertical_speed_meters_per_second =
+            authored_template.movement_hover_vertical_speed_meters_per_second;
         entity_template.impulse_resistance =
             authored_template.impulse_resistance;
         entity_template.stagger_threshold = authored_template.stagger.threshold;

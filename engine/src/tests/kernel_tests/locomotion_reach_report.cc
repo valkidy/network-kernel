@@ -104,7 +104,7 @@ int main(int argc, char** argv) {
         return 2;
     }
 
-    // quadruped_actor.yaml: max_reach_ratio 0.99 on every leg.
+    // 21_quadruped_actor.yaml: max_reach_ratio 0.99 on every leg.
     constexpr float kMaxReachRatio = 0.999f;
     const std::array<const char*, 4> legs{
         "FrontLeft", "FrontRight", "RearLeft", "RearRight"};

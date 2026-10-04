@@ -71,7 +71,7 @@ void require_impl(bool condition, int line, const char* text) {
 #define require(expr) require_impl(static_cast<bool>(expr), __LINE__, #expr)
 
 constexpr float kTickSeconds = 1.0f / 30.0f;
-// rocket_projectile's own mechanics.
+// rocket's own mechanics.
 constexpr float kSpeedMetersPerSecond = 35.0f;
 constexpr std::uint32_t kLifetimeTicks = 75;
 constexpr float kWallDistanceMeters = 20.0f;

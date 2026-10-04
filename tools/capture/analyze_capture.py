@@ -37,7 +37,7 @@ QUATERNION_DOT_TOLERANCE = 1e-6  # 1 - |dot|
 # are all indifferent to it -- which is how the straight-leg glitch survived
 # every green run of this capture. This check is what makes the capture able to
 # see it.
-MAX_REACH_RATIO = 0.99         # quadruped_actor.yaml, every leg
+MAX_REACH_RATIO = 0.99         # 21_quadruped_actor.yaml, every leg
 CLAMP_MARGIN = 1e-4
 # Budget, not a physical constant: the rig cannot reach zero on undulating
 # terrain (see the seat-height discussion in docs/LOCOMOTION_GAIT_TUNING.md), but a leg

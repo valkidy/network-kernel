@@ -1,0 +1,24 @@
+# The drone's beam: beam_sentry_beam made long enough to reach down from the
+# air. A drone fires from 9 m up at anything within 14 m across the ground, so
+# the beam has to cover sqrt(14^2 + 9^2) ~ 16.6 m; 20 leaves margin. Its own
+# template because a projectile belongs to exactly one weapon.
+id: 28
+name: drone_beam
+type: beam
+sync_mode: server_snapshot_only
+collider_template: drone_beam_box
+movement_model: linear
+hit_response: destroy
+damage_shape: direct_hit
+damage: 2
+speed: 0.0
+lifetime_ticks: 0
+# Terrain and obstacles stop it, so a drone cannot burn a player through a
+# roof it happens to be above.
+collision_mask: player_side | terrain | static_obstacle
+max_hit_count: 1
+gravity: {x: 0.0, y: 0.0, z: 0.0}
+beam:
+  length: 20.0
+  radius: 0.3
+  lifetime_ticks: 2

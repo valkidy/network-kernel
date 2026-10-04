@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
-#include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include <glm/geometric.hpp>
@@ -190,6 +190,125 @@ glm::vec3 move_kinematic_horizontal(
     return transform.position + displacement * safe_fraction;
 }
 
+// The first hit in a sweep that is actually in the way: its surface faces back
+// against the direction of travel. A surface merely touched in passing, like
+// the ground under a capsule moving sideways, does not stop anything.
+float first_blocking_fraction(
+    physics::PhysicsWorld& physics_world,
+    const physics::ShapeCastRequest& request,
+    glm::vec3* normal) {
+    const glm::vec3 direction = glm::normalize(request.displacement);
+    float fraction = 1.0f;
+    for (const physics::CollisionHit& hit :
+         physics_world.shape_cast_all(request)) {
+        if (glm::dot(direction, hit.normal) < -0.0001f && hit.fraction < fraction) {
+            fraction = hit.fraction;
+            if (normal != nullptr) {
+                *normal = hit.normal;
+            }
+        }
+    }
+    return fraction;
+}
+
+// One sweep, stopped just short of the first thing in the way.
+glm::vec3 sweep(
+    physics::PhysicsWorld& physics_world,
+    const ColliderInstance& collider,
+    const glm::vec3& start,
+    const glm::quat& rotation,
+    const glm::vec3& displacement,
+    std::uint32_t collision_mask,
+    glm::vec3* blocking_normal,
+    float* travelled) {
+    *travelled = 1.0f;
+    if (glm::dot(displacement, displacement) <= 0.00000001f) {
+        return start;
+    }
+    physics::ShapeCastRequest request{};
+    request.shape = movement_shape(collider);
+    request.start = start;
+    request.rotation = rotation;
+    request.displacement = displacement;
+    request.filter = movement_filter(
+        collider.entity_net_id, collider.collider_id, collision_mask);
+    const float fraction =
+        first_blocking_fraction(physics_world, request, blocking_normal);
+    *travelled = fraction;
+    if (fraction >= 1.0f) {
+        return start + displacement;
+    }
+    return start + displacement * std::max(0.0f, fraction - 0.001f);
+}
+
+// A hovering actor's step: horizontal input as everyone else gets it, and a
+// height that follows whatever is underneath at a fixed clearance.
+//
+// Nothing here is gravity. A hover holds height because it is told to, not
+// because something holds it up, so there is no ground state to land in and
+// no initial seating onto the floor the other controllers do -- that seating
+// is exactly what would drop a drone placed at 9 m onto the ground.
+//
+// Horizontal first, then vertical, each its own sweep: rising over a box it is
+// already above is the vertical step's job, so the horizontal sweep has to be
+// allowed to stop short against the box's side when the climb has not kept up.
+glm::vec3 step_hover(
+    physics::PhysicsWorld& physics_world,
+    const ColliderInstance& collider,
+    const Transform& transform,
+    const glm::vec3& desired_horizontal,
+    const MovementState& movement,
+    float fixed_delta_seconds) {
+    const std::uint32_t mask = movement.movement_collision_mask;
+    glm::vec3 position = transform.position;
+
+    // Into the first thing in the way, then once along it, so a drone pushed
+    // diagonally into a wall slides along the wall instead of sticking to it.
+    const glm::vec3 displacement{
+        desired_horizontal.x * fixed_delta_seconds,
+        0.0f,
+        desired_horizontal.z * fixed_delta_seconds};
+    glm::vec3 wall_normal{0.0f};
+    float travelled = 1.0f;
+    position = sweep(
+        physics_world, collider, position, transform.rotation, displacement,
+        mask, &wall_normal, &travelled);
+    if (travelled < 1.0f) {
+        glm::vec3 across{wall_normal.x, 0.0f, wall_normal.z};
+        if (glm::dot(across, across) > 0.00000001f) {
+            across = glm::normalize(across);
+            const glm::vec3 remaining = displacement * (1.0f - travelled);
+            const glm::vec3 slide = remaining - across * glm::dot(remaining, across);
+            float slid = 1.0f;
+            position = sweep(
+                physics_world, collider, position, transform.rotation, slide,
+                mask, nullptr, &slid);
+        }
+    }
+
+    // Three times the clearance, and never less than ten metres beyond it, is
+    // how far down it looks. Past that -- off a cliff, over a pit -- it holds the
+    // height it has rather than diving after a floor it cannot see. The margin
+    // is that wide because anything placed or knocked above its clearance has to
+    // be able to see the floor to come back down to it.
+    const float clearance = movement.hover_height_meters;
+    const float probe_distance = std::max(3.0f * clearance, clearance + 10.0f);
+    const GroundProbe ground = probe_ground(
+        physics_world, collider, position, transform.rotation, probe_distance,
+        movement.max_slope_degrees, mask);
+    if (ground.hit) {
+        const float below = probe_distance * ground.collision.fraction;
+        const float max_step =
+            movement.hover_vertical_speed_meters_per_second * fixed_delta_seconds;
+        const float rise = std::clamp(clearance - below, -max_step, max_step);
+        float climbed = 1.0f;
+        position = sweep(
+            physics_world, collider, position, transform.rotation,
+            glm::vec3{0.0f, rise, 0.0f}, mask, nullptr, &climbed);
+    }
+    return position;
+}
+
 struct BufferedMovementResult {
     entt::entity entity = entt::null;
     NetId net_id = 0;
@@ -223,6 +342,70 @@ void simulate_player_movement(
         }
     }
 }
+
+namespace {
+
+// Sorts (key, value) pairs by key and keeps the first of each key in their
+// original order.
+template <typename Key, typename Value>
+void keep_first_per_key(std::vector<std::pair<Key, Value>>* entries) {
+    std::stable_sort(
+        entries->begin(),
+        entries->end(),
+        [](const std::pair<Key, Value>& lhs, const std::pair<Key, Value>& rhs) {
+            return lhs.first < rhs.first;
+        });
+    entries->erase(
+        std::unique(
+            entries->begin(),
+            entries->end(),
+            [](const std::pair<Key, Value>& lhs, const std::pair<Key, Value>& rhs) {
+                return lhs.first == rhs.first;
+            }),
+        entries->end());
+}
+
+// Sorts (key, input) pairs by key and keeps, for each key, the input with the
+// highest input_seq -- the earliest of those, on a tie.
+template <typename Key>
+void keep_newest_input_per_key(
+    std::vector<std::pair<Key, const QueuedInput*>>* entries) {
+    std::stable_sort(
+        entries->begin(),
+        entries->end(),
+        [](const std::pair<Key, const QueuedInput*>& lhs,
+           const std::pair<Key, const QueuedInput*>& rhs) {
+            return lhs.first < rhs.first;
+        });
+    std::size_t kept = 0;
+    for (std::size_t index = 0; index < entries->size(); ++index) {
+        const std::pair<Key, const QueuedInput*>& entry = (*entries)[index];
+        if (kept > 0 && (*entries)[kept - 1].first == entry.first) {
+            if (entry.second->input.input_seq >
+                (*entries)[kept - 1].second->input.input_seq) {
+                (*entries)[kept - 1].second = entry.second;
+            }
+            continue;
+        }
+        (*entries)[kept++] = entry;
+    }
+    entries->resize(kept);
+}
+
+// The value for `key` in pairs sorted by key with one entry each, or null.
+template <typename Key, typename Value>
+Value find_by_key(const std::vector<std::pair<Key, Value>>& entries, Key key) {
+    const auto found = std::lower_bound(
+        entries.begin(),
+        entries.end(),
+        key,
+        [](const std::pair<Key, Value>& entry, Key wanted) {
+            return entry.first < wanted;
+        });
+    return found != entries.end() && found->first == key ? found->second : nullptr;
+}
+
+}  // namespace
 
 void simulate_actor_movement(
     World& world,
@@ -258,29 +441,43 @@ void simulate_actor_movement(
                 view.get<NetworkIdentity>(rhs).net_id;
         });
 
-    std::unordered_map<NetId, const ColliderInstance*> movement_colliders;
-    movement_colliders.reserve(actors.size());
+    // The lookups below are sorted vectors kept between calls rather than maps
+    // built per call: a map allocates a node per entry, and with every agent in
+    // the world in them that was an allocation per actor per tick. Each is
+    // cleared before use, so nothing carries over from the last call.
+    //
+    // A capsule per actor, keeping the first one the registry lists -- what
+    // the map's emplace kept.
+    thread_local std::vector<std::pair<NetId, const ColliderInstance*>>
+        movement_colliders;
+    movement_colliders.clear();
     for (const ColliderInstance& collider :
          world.collider_registry().instances()) {
         if (collider.lifetime_ticks == 0 && collider.enabled &&
             collider.shape_type == ColliderShapeType::kCapsule &&
             (collider.purpose_flags & KernelColliderPurpose_Movement) != 0u) {
-            movement_colliders.emplace(collider.entity_net_id, &collider);
+            movement_colliders.emplace_back(collider.entity_net_id, &collider);
         }
     }
-    std::unordered_map<NetId, const QueuedInput*> latest_input_by_net_id;
-    std::unordered_map<PeerId, const QueuedInput*> latest_input_by_owner;
-    latest_input_by_net_id.reserve(inputs.size());
-    latest_input_by_owner.reserve(inputs.size());
+    keep_first_per_key(&movement_colliders);
+    // The newest input per controlled actor, and per owner for inputs that
+    // name no actor. Ties keep the earliest input, as the fold this replaced
+    // did.
+    thread_local std::vector<std::pair<NetId, const QueuedInput*>>
+        latest_input_by_net_id;
+    thread_local std::vector<std::pair<PeerId, const QueuedInput*>>
+        latest_input_by_owner;
+    latest_input_by_net_id.clear();
+    latest_input_by_owner.clear();
     for (const QueuedInput& input : inputs) {
-        auto& latest = input.controlled_net_id != 0
-            ? latest_input_by_net_id[input.controlled_net_id]
-            : latest_input_by_owner[input.owner_peer];
-        if (latest == nullptr ||
-            input.input.input_seq > latest->input.input_seq) {
-            latest = &input;
+        if (input.controlled_net_id != 0) {
+            latest_input_by_net_id.emplace_back(input.controlled_net_id, &input);
+        } else {
+            latest_input_by_owner.emplace_back(input.owner_peer, &input);
         }
     }
+    keep_newest_input_per_key(&latest_input_by_net_id);
+    keep_newest_input_per_key(&latest_input_by_owner);
 
     std::vector<BufferedMovementResult> buffered;
     buffered.reserve(actors.size());
@@ -294,10 +491,8 @@ void simulate_actor_movement(
             MovementState::ControllerType::kNone) {
             continue;
         }
-        const auto collider_found = movement_colliders.find(identity.net_id);
-        const ColliderInstance* collider = collider_found == movement_colliders.end()
-            ? nullptr
-            : collider_found->second;
+        const ColliderInstance* collider =
+            find_by_key(movement_colliders, identity.net_id);
         if (collider == nullptr ||
             collider->collider_template_id !=
                 next_movement.movement_collider_template_id) {
@@ -306,17 +501,12 @@ void simulate_actor_movement(
 
         glm::vec3 desired_horizontal{
             current_velocity.linear.x, 0.0f, current_velocity.linear.z};
-        const auto by_net_id = latest_input_by_net_id.find(identity.net_id);
         const QueuedInput* movement_input =
-            by_net_id == latest_input_by_net_id.end()
-                ? nullptr
-                : by_net_id->second;
+            find_by_key(latest_input_by_net_id, identity.net_id);
         if (movement_input == nullptr &&
             world.registry().all_of<PlayerTag>(entity)) {
-            const auto by_owner = latest_input_by_owner.find(identity.owner_peer);
-            movement_input = by_owner != latest_input_by_owner.end()
-                ? by_owner->second
-                : nullptr;
+            movement_input =
+                find_by_key(latest_input_by_owner, identity.owner_peer);
         }
         // A knockback lives in Velocity, and this is the line that would
         // otherwise redefine the horizontal half of it from input every tick.
@@ -372,6 +562,20 @@ void simulate_actor_movement(
             MovementState::GroundState::kGrounded;
 
         if (next_movement.controller_type ==
+            MovementState::ControllerType::kHover) {
+            result.physics_finalized = true;
+            result.position = step_hover(
+                *physics_world,
+                *collider,
+                transform,
+                desired_horizontal,
+                next_movement,
+                fixed_delta_seconds);
+            result.velocity = fixed_delta_seconds > 0.0f
+                ? (result.position - transform.position) / fixed_delta_seconds
+                : glm::vec3{0.0f};
+            result.movement.ground_state = MovementState::GroundState::kAirborne;
+        } else if (next_movement.controller_type ==
             MovementState::ControllerType::kCharacter) {
             const Clock::time_point start = Clock::now();
             movement_solver::CharacterMovementConfig config{};

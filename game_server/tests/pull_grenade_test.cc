@@ -134,7 +134,7 @@ int main() {
     scene_config.collider_id = config.static_collision_scene.collider_id;
     scene_config.collision_layer = config.static_collision_scene.collision_layer;
     require(Kernel_SetStaticCollisionScene(kernel, &scene_config));
-    require(Kernel_StartListenServer(kernel, 7962));
+    require(Kernel_StartListenServer(kernel, 7954));
 
     network_example::game_server::GameServer game_server(kernel, config);
     require(game_server.preload_directors());
