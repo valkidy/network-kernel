@@ -1,0 +1,10 @@
+# Sentry Beam Emitter with the longer drone_beam. Fire and reload timing are
+# the sentry's own.
+id: 16
+name: Drone Beam Emitter
+weapon_type: beam
+magazine_size: 45
+reserve_magazines: 65535
+fire_action_template: beam_sentry_fire
+reload_action_template: beam_sentry_reload
+projectile_template: drone_beam

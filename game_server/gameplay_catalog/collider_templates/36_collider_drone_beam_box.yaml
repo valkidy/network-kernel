@@ -1,0 +1,9 @@
+# drone_beam's body: 20 m long, centred on the beam like beam_sentry_beam_box.
+id: 36
+name: drone_beam_box
+shape: oriented_box
+center: {x: 0.0, y: 0.0, z: 0.0}
+half_extents: {x: 0.3, y: 0.3, z: 10.0}
+radius: 0.0
+purpose: damage
+layer: projectile
