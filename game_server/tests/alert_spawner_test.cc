@@ -946,6 +946,39 @@ void the_shipping_courier_calls_chaser_grunts(CatalogCopy* catalog) {
                 config.reinforce_budget.max_live_agents);
 }
 
+// A clock on an actor must not swallow a caller. Clocks are found by querying
+// their entity type, which turns up callers of that type as well; an instance
+// made for a caller there would start it on the clock's countdown and hold its
+// first call back by a whole interval. With a beam sentry carrying a clock in
+// the world, a grunt that spots a player still calls at once.
+void a_clock_on_an_actor_does_not_delay_a_caller(CatalogCopy* catalog) {
+    const std::string sentry_file = "entity_templates/25_beam_sentry.yaml";
+    const std::string clocked_sentry = catalog->original(sentry_file) +
+        "\nspawner:\n"
+        "  interval_ticks: 600\n"
+        "  radius: 4.0\n"
+        "  count: {min: 1, max: 1}\n"
+        "  composition:\n"
+        "    - entity_template: gingerbread\n"
+        "      min: 1\n"
+        "      max: 1\n";
+    const GameServerGameplayConfig config = catalog->load_whole(
+        catalog->catalog() + reinforce_budget(64),
+        catalog->grunt() + grunt_spawner(1, 600, 8),
+        catalog->nest(),
+        {{sentry_file, clocked_sentry}});
+    Server server(config, 7915);
+    server.create(template_id_of(config, "beam_sentry"), {0.0f, 0.0f, 60.0f});
+    const std::uint32_t grunt =
+        server.create(template_id_of(config, "chaser_grunt"), {0.0f, 0.0f, 0.0f});
+    server.step();
+    server.step();
+    server.create_player(kInSight);
+    require(step_until(&server, 10, [&] {
+        return server.spawned_by(grunt).size() == 2u;
+    }));
+}
+
 }  // namespace
 
 int main() {
@@ -960,6 +993,7 @@ int main() {
     called_units_cannot_call(&catalog);
     the_agent_budget_holds_a_caller_at_the_edge(&catalog);
     world_rules_are_counted_not_refused(&catalog);
+    a_clock_on_an_actor_does_not_delay_a_caller(&catalog);
     std::printf("alert_spawner_test: PASS\n");
     return 0;
 }
