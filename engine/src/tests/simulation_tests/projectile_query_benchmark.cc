@@ -8,9 +8,9 @@
 // template authors. A ray is the cheapest narrow-phase primitive Jolt has and a
 // swept volume also presents a larger AABB to the broad phase, so this measures
 // what that correctness fix costs per tick.
-#include <cassert>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -19,6 +19,20 @@
 #include "physics/public/physics_world.h"
 #include "simulation/public/collision_filter.h"
 #include "simulation/public/simulation.h"
+
+namespace {
+
+void require_impl(bool condition, const char* expression, int line) {
+    if (!condition) {
+        std::fprintf(stderr, "require failed at line %d: %s\n", line, expression);
+        std::abort();
+    }
+}
+
+}  // namespace
+
+#define require(condition) \
+    require_impl(static_cast<bool>(condition), #condition, __LINE__)
 
 namespace ne = network_example;
 
@@ -33,7 +47,7 @@ void add_actor(
     std::uint32_t collider_id) {
     const ne::NetId net_id = world.spawn_enemy(position);
     const auto entity = world.find_entity(net_id);
-    assert(entity.has_value());
+    require(entity.has_value());
     world.registry().get<ne::Health>(*entity) = ne::Health{10000, 10000};
     ne::physics::CollisionObjectDescriptor object;
     object.identity = ne::physics::CollisionObjectIdentity{
@@ -46,7 +60,7 @@ void add_actor(
     object.shape.half_extents = glm::vec3{0.35f, 0.9f, 0.35f};
     object.position = position;
     std::string error;
-    assert(physics.upsert_object(object, &error));
+    require(physics.upsert_object(object, &error));
 }
 
 void run(const char* name, Geometry geometry, int projectiles, int actors, int ticks) {
@@ -71,7 +85,7 @@ void run(const char* name, Geometry geometry, int projectiles, int actors, int t
         const glm::vec3 velocity{35.0f, 0.0f, 0.0f};
         const ne::NetId net_id = world.spawn_projectile(1, origin, velocity);
         const auto entity = world.find_entity(net_id);
-        assert(entity.has_value());
+        require(entity.has_value());
         ne::ProjectileState& state =
             world.registry().get<ne::ProjectileState>(*entity);
         state.collision_mask = ne::kCollisionLayerHostileSide;

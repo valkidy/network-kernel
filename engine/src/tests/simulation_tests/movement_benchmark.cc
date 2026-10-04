@@ -1,8 +1,9 @@
 #include <algorithm>
-#include <cassert>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <iomanip>
 #include <iostream>
 #include <numeric>
@@ -16,6 +17,20 @@
 #include "physics/public/physics_world.h"
 #include "simulation/public/movement_solver.h"
 #include "simulation/public/simulation.h"
+
+namespace {
+
+void require_impl(bool condition, const char* expression, int line) {
+    if (!condition) {
+        std::fprintf(stderr, "require failed at line %d: %s\n", line, expression);
+        std::abort();
+    }
+}
+
+}  // namespace
+
+#define require(condition) \
+    require_impl(static_cast<bool>(condition), #condition, __LINE__)
 
 namespace {
 
@@ -158,14 +173,14 @@ private:
         object.shape.half_extents = half_extents;
         object.position = position;
         std::string error;
-        assert(physics_.upsert_object(object, &error));
+        require(physics_.upsert_object(object, &error));
     }
 
     void add_actor(std::uint32_t index, float lane_z) {
         const auto net_id = world_.spawn_player(
             index + 1, {0.0f, 0.0f, lane_z});
         const std::optional<entt::entity> found = world_.find_entity(net_id);
-        assert(found.has_value());
+        require(found.has_value());
         auto& movement = world_.registry()
             .get<network_example::MovementState>(*found);
         movement.speed_meters_per_second = 5.0f;
@@ -219,7 +234,7 @@ private:
                 movement.shape.capsule_half_height = 0.55f;
                 movement.position = transform.position + actor.local_center;
                 std::string error;
-                assert(physics_.upsert_object(movement, &error));
+                require(physics_.upsert_object(movement, &error));
 
                 network_example::physics::CollisionObjectDescriptor hitbox{};
                 hitbox.identity = {
@@ -235,13 +250,13 @@ private:
                     network_example::physics::CollisionShapeType::kBox;
                 hitbox.shape.half_extents = {0.35f, 0.9f, 0.35f};
                 hitbox.position = transform.position + actor.local_center;
-                assert(physics_.upsert_object(hitbox, &error));
+                require(physics_.upsert_object(hitbox, &error));
             } else {
-                assert(physics_.set_object_transform(
+                require(physics_.set_object_transform(
                     actor.movement_collider_id,
                     transform.position + actor.local_center,
                     transform.rotation));
-                assert(physics_.set_object_transform(
+                require(physics_.set_object_transform(
                     actor.hitbox_collider_id,
                     transform.position + actor.local_center,
                     transform.rotation));
@@ -320,9 +335,9 @@ RunResult run_once(Variant variant, std::uint32_t actor_count) {
             measured_inputs[tick], kWarmupTicks + tick, &result.movement);
         const auto elapsed = std::chrono::duration<double, std::micro>(
             std::chrono::steady_clock::now() - start).count();
-        assert(std::isfinite(elapsed));
+        require(std::isfinite(elapsed));
         result.tick_us.push_back(elapsed);
-        assert(scenario.states_are_legal());
+        require(scenario.states_are_legal());
         if (tick == 59 && variant != Variant::kDirect) {
             result.step_condition = variant == Variant::kCharacter
                 ? scenario.first_actor_x() > 3.0f
@@ -330,15 +345,15 @@ RunResult run_once(Variant variant, std::uint32_t actor_count) {
         }
     }
     result.queries = scenario.query_stats();
-    assert(result.tick_us.size() == kMeasuredTicks);
+    require(result.tick_us.size() == kMeasuredTicks);
     if (variant != Variant::kDirect) {
-        assert(result.step_condition);
+        require(result.step_condition);
     }
     return result;
 }
 
 double percentile(std::vector<double> values, double fraction) {
-    assert(!values.empty());
+    require(!values.empty());
     std::sort(values.begin(), values.end());
     const std::size_t index = static_cast<std::size_t>(
         fraction * static_cast<double>(values.size() - 1));
@@ -415,16 +430,16 @@ int main() {
                 variant == Variant::kKinematic ? &kinematic : &character,
                 run_once(variant, actor_count));
         }
-        assert(direct.samples.size() == kRuns * kMeasuredTicks);
-        assert(kinematic.samples.size() == kRuns * kMeasuredTicks);
-        assert(character.samples.size() == kRuns * kMeasuredTicks);
+        require(direct.samples.size() == kRuns * kMeasuredTicks);
+        require(kinematic.samples.size() == kRuns * kMeasuredTicks);
+        require(character.samples.size() == kRuns * kMeasuredTicks);
         print_result(Variant::kDirect, actor_count, direct);
         print_result(Variant::kKinematic, actor_count, kinematic);
         print_result(Variant::kCharacter, actor_count, character);
         const double kinematic_avg = average(kinematic);
         const double character_avg = average(character);
-        assert(std::isfinite(kinematic_avg));
-        assert(std::isfinite(character_avg));
+        require(std::isfinite(kinematic_avg));
+        require(std::isfinite(character_avg));
         std::cout << "player_ab,actors=" << actor_count
                   << ",kinematic_avg_us=" << kinematic_avg
                   << ",character_avg_us=" << character_avg

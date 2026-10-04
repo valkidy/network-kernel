@@ -1,7 +1,22 @@
-#include <cassert>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 
 #include "kernel/src/kernel.h"
+
+namespace {
+
+void require_impl(bool condition, const char* expression, int line) {
+    if (!condition) {
+        std::fprintf(stderr, "require failed at line %d: %s\n", line, expression);
+        std::abort();
+    }
+}
+
+}  // namespace
+
+#define require(condition) \
+    require_impl(static_cast<bool>(condition), #condition, __LINE__)
 
 namespace {
 
@@ -60,37 +75,37 @@ int main() {
         KernelEntityRefSource_EventInstigator);
     status.on_expire_trigger = trigger_with_action(
         KernelEntityTriggerActionType_ApplyHealthChange);
-    assert(load_status(status));
+    require(load_status(status));
 
     status = base_status();
     status.on_tick_trigger = trigger_with_action(
         KernelEntityTriggerActionType_ApplyImpulse);
-    assert(!load_status(status));
+    require(!load_status(status));
 
     status = base_status();
     status.on_apply_trigger = trigger_with_action(
         KernelEntityTriggerActionType_ApplyStatus);
-    assert(!load_status(status));
+    require(!load_status(status));
 
     status = base_status();
     status.on_expire_trigger = trigger_with_action(
         KernelEntityTriggerActionType_SpawnEntity);
-    assert(!load_status(status));
+    require(!load_status(status));
 
     status = base_status();
     status.on_tick_trigger = trigger_with_action(
         KernelEntityTriggerActionType_ApplySpeedModifier);
-    assert(!load_status(status));
+    require(!load_status(status));
 
     status = base_status();
     status.on_apply_trigger = trigger_with_action(
         KernelEntityTriggerActionType_ApplySpeedModifier,
         KernelEntityRefSource_EventInstigator);
-    assert(!load_status(status));
+    require(!load_status(status));
 
     status = base_status();
     status.replacement_policy = KernelStatusEffectReplacementPolicy_Refresh;
-    assert(load_status(status));
+    require(load_status(status));
 
     status = base_status();
     status.replacement_policy = KernelStatusEffectReplacementPolicy_Stack;
@@ -98,16 +113,16 @@ int main() {
     status.refresh_on_stack = 1u;
     status.on_tick_trigger = trigger_with_action(
         KernelEntityTriggerActionType_ApplyDamage);
-    assert(load_status(status));
+    require(load_status(status));
 
     status.max_stacks = 1u;
-    assert(!load_status(status));
+    require(!load_status(status));
     status.max_stacks = 33u;
-    assert(!load_status(status));
+    require(!load_status(status));
 
     status = base_status();
     status.max_stacks = 2u;
-    assert(!load_status(status));
+    require(!load_status(status));
 
     status = base_status();
     status.replacement_policy = KernelStatusEffectReplacementPolicy_Stack;
@@ -115,7 +130,7 @@ int main() {
     status.on_tick_trigger = trigger_with_action(
         KernelEntityTriggerActionType_ApplyDamage);
     status.on_tick_trigger.actions[0].damage_amount = 40000u;
-    assert(!load_status(status));
+    require(!load_status(status));
 
     status = base_status();
     status.replacement_policy = KernelStatusEffectReplacementPolicy_Stack;
@@ -125,6 +140,6 @@ int main() {
     status.on_apply_trigger.actions[0].modifier_operation =
         KernelStatModifierOperation_Multiplier;
     status.on_apply_trigger.actions[0].modifier_value = 1.0e20f;
-    assert(!load_status(status));
+    require(!load_status(status));
     return 0;
 }

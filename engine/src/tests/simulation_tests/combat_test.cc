@@ -1,6 +1,5 @@
-#include <cassert>
-#include <cstddef>
 #include <cmath>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
@@ -26,7 +25,7 @@ network_example::Health& health(
     network_example::World& world,
     network_example::NetId net_id) {
     const auto entity = world.find_entity(net_id);
-    assert(entity.has_value());
+    require(entity.has_value());
     return world.registry().get<network_example::Health>(*entity);
 }
 
@@ -34,7 +33,7 @@ network_example::WeaponState& weapon_state(
     network_example::World& world,
     network_example::NetId net_id) {
     const auto entity = world.find_entity(net_id);
-    assert(entity.has_value());
+    require(entity.has_value());
     return world.registry().get<network_example::WeaponState>(*entity);
 }
 
@@ -42,7 +41,7 @@ network_example::ProjectileState& projectile_state(
     network_example::World& world,
     network_example::NetId net_id) {
     const auto entity = world.find_entity(net_id);
-    assert(entity.has_value());
+    require(entity.has_value());
     return world.registry().get<network_example::ProjectileState>(*entity);
 }
 
@@ -50,7 +49,7 @@ network_example::Transform& transform_state(
     network_example::World& world,
     network_example::NetId net_id) {
     const auto entity = world.find_entity(net_id);
-    assert(entity.has_value());
+    require(entity.has_value());
     return world.registry().get<network_example::Transform>(*entity);
 }
 
@@ -171,7 +170,7 @@ void configure_test_weapons(
     network_example::World& world,
     network_example::NetId net_id) {
     const auto entity = world.find_entity(net_id);
-    assert(entity.has_value());
+    require(entity.has_value());
     network_example::WeaponTuning& tuning =
         world.registry().get_or_emplace<network_example::WeaponTuning>(*entity);
     tuning.configured = {true, true, true, true, true, false, false};
@@ -243,7 +242,7 @@ network_example::NetId spawn_player(
     const network_example::NetId player = world.spawn_player(owner_peer, position);
     health(world, player) = network_example::Health{100, 100};
     const auto entity = world.find_entity(player);
-    assert(entity.has_value());
+    require(entity.has_value());
     world.registry().get<network_example::Hitbox>(*entity) =
         network_example::Hitbox{{0.0f, 0.9f, 0.0f}, {0.35f, 0.9f, 0.35f}, 0};
     configure_test_weapons(world, player);
@@ -256,7 +255,7 @@ network_example::NetId spawn_enemy(
     const network_example::NetId enemy = world.spawn_enemy(position);
     health(world, enemy) = network_example::Health{50, 50};
     const auto entity = world.find_entity(enemy);
-    assert(entity.has_value());
+    require(entity.has_value());
     world.registry().get<network_example::Hitbox>(*entity) =
         network_example::Hitbox{{0.0f, 0.8f, 0.0f}, {0.4f, 0.8f, 0.4f}, 0};
     return enemy;
@@ -646,8 +645,8 @@ void deterministic_projectile_paths_match_motion_models() {
             network_example::ProjectileMotionModel::kLinear,
             gravity,
             0.5f);
-    assert(rocket.x > 4.99f && rocket.x < 5.01f);
-    assert(rocket.y > 3.49f && rocket.y < 3.51f);
+    require(rocket.x > 4.99f && rocket.x < 5.01f);
+    require(rocket.y > 3.49f && rocket.y < 3.51f);
 
     const glm::vec3 grenade =
         network_example::projectile_position_at(
@@ -656,9 +655,9 @@ void deterministic_projectile_paths_match_motion_models() {
             network_example::ProjectileMotionModel::kParabolic,
             gravity,
             0.5f);
-    assert(grenade.x > 4.99f && grenade.x < 5.01f);
-    assert(grenade.y > 2.26f && grenade.y < 2.28f);
-    assert(grenade.y < rocket.y);
+    require(grenade.x > 4.99f && grenade.x < 5.01f);
+    require(grenade.y > 2.26f && grenade.y < 2.28f);
+    require(grenade.y < rocket.y);
 }
 
 void rocket_moves_linearly_and_grenade_arcs() {
@@ -674,14 +673,14 @@ void rocket_moves_linearly_and_grenade_arcs() {
         &rocket_events);
 
     const network_example::NetId rocket = spawned_projectile(rocket_events);
-    assert(rocket != 0);
-    assert(projectile_state(rocket_world, rocket).motion_model ==
+    require(rocket != 0);
+    require(projectile_state(rocket_world, rocket).motion_model ==
            network_example::ProjectileMotionModel::kLinear);
     network_example::simulate_projectiles(rocket_world, 0.1f, 1, &rocket_events);
     const network_example::Transform& rocket_transform =
         transform_state(rocket_world, rocket);
-    assert(rocket_transform.position.x > 3.49f && rocket_transform.position.x < 3.51f);
-    assert(rocket_transform.position.y > 0.99f && rocket_transform.position.y < 1.01f);
+    require(rocket_transform.position.x > 3.49f && rocket_transform.position.x < 3.51f);
+    require(rocket_transform.position.y > 0.99f && rocket_transform.position.y < 1.01f);
 
     network_example::World grenade_world;
     spawn_player(grenade_world, 1, glm::vec3{0.0f, 0.0f, 0.0f});
@@ -695,14 +694,14 @@ void rocket_moves_linearly_and_grenade_arcs() {
         &grenade_events);
 
     const network_example::NetId grenade = spawned_projectile(grenade_events);
-    assert(grenade != 0);
-    assert(projectile_state(grenade_world, grenade).motion_model ==
+    require(grenade != 0);
+    require(projectile_state(grenade_world, grenade).motion_model ==
            network_example::ProjectileMotionModel::kParabolic);
     network_example::simulate_projectiles(grenade_world, 0.1f, 1, &grenade_events);
     const network_example::Transform& grenade_transform =
         transform_state(grenade_world, grenade);
-    assert(grenade_transform.position.x > 1.49f && grenade_transform.position.x < 1.51f);
-    assert(grenade_transform.position.y > 0.94f && grenade_transform.position.y < 0.96f);
+    require(grenade_transform.position.x > 1.49f && grenade_transform.position.x < 1.51f);
+    require(grenade_transform.position.y > 0.94f && grenade_transform.position.y < 0.96f);
 }
 
 void projectile_damage_values_leave_enemy_flee_window() {
@@ -746,9 +745,9 @@ void rejects_fire_during_cooldown_and_reload() {
         queue(fire_input(network_example::kWeaponSlot0)),
         0,
         &events);
-    assert(health(world, enemy).hp == 25);
-    assert(weapon_state(world, player).ammo[network_example::kWeaponSlot0] == 29);
-    assert(count_events(events, KernelEventType_FireConfirmed) == 1);
+    require(health(world, enemy).hp == 25);
+    require(weapon_state(world, player).ammo[network_example::kWeaponSlot0] == 29);
+    require(count_events(events, KernelEventType_FireConfirmed) == 1);
 
     events.clear();
     network_example::simulate_weapons(
@@ -756,8 +755,8 @@ void rejects_fire_during_cooldown_and_reload() {
         queue(fire_input(network_example::kWeaponSlot0)),
         1,
         &events);
-    assert(events.empty());
-    assert(health(world, enemy).hp == 25);
+    require(events.empty());
+    require(health(world, enemy).hp == 25);
 
     events.clear();
     network_example::simulate_weapons(
@@ -765,8 +764,8 @@ void rejects_fire_during_cooldown_and_reload() {
         queue(fire_input(network_example::kWeaponSlot0)),
         3,
         &events);
-    assert(health(world, enemy).hp == 0);
-    assert(count_events(events, KernelEventType_DamageApplied) == 1);
+    require(health(world, enemy).hp == 0);
+    require(count_events(events, KernelEventType_DamageApplied) == 1);
 
     network_example::World reload_world;
     const network_example::NetId reload_player =
@@ -784,8 +783,8 @@ void rejects_fire_during_cooldown_and_reload() {
     reload_input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
     events.clear();
     network_example::simulate_weapons(reload_world, queue(reload_input), 5, &events);
-    assert(events.empty());
-    assert(reload_weapon.is_reloading);
+    require(events.empty());
+    require(reload_weapon.is_reloading);
 
     events.clear();
     network_example::simulate_weapons(
@@ -793,13 +792,13 @@ void rejects_fire_during_cooldown_and_reload() {
         queue(fire_input(network_example::kWeaponSlot0)),
         6,
         &events);
-    assert(events.empty());
-    assert(health(reload_world, reload_enemy).hp == 50);
+    require(events.empty());
+    require(health(reload_world, reload_enemy).hp == 50);
 
     network_example::simulate_weapons(reload_world, {}, 35, &events);
-    assert(!reload_weapon.is_reloading);
-    assert(reload_weapon.ammo[network_example::kWeaponSlot0] == 30);
-    assert(reload_weapon.reserve_magazines[network_example::kWeaponSlot0] == 0);
+    require(!reload_weapon.is_reloading);
+    require(reload_weapon.ammo[network_example::kWeaponSlot0] == 30);
+    require(reload_weapon.reserve_magazines[network_example::kWeaponSlot0] == 0);
 
     events.clear();
     network_example::simulate_weapons(
@@ -807,8 +806,8 @@ void rejects_fire_during_cooldown_and_reload() {
         queue(fire_input(network_example::kWeaponSlot0)),
         36,
         &events);
-    assert(health(reload_world, reload_enemy).hp == 25);
-    assert(count_events(events, KernelEventType_FireConfirmed) == 1);
+    require(health(reload_world, reload_enemy).hp == 25);
+    require(count_events(events, KernelEventType_FireConfirmed) == 1);
 }
 
 void shotgun_applies_multiple_pellets() {
@@ -824,9 +823,9 @@ void shotgun_applies_multiple_pellets() {
         0,
         &events);
 
-    assert(health(world, enemy).hp == 0);
-    assert(count_events(events, KernelEventType_FireConfirmed) == 1);
-    assert(count_events(events, KernelEventType_DamageApplied) == 5);
+    require(health(world, enemy).hp == 0);
+    require(count_events(events, KernelEventType_FireConfirmed) == 1);
+    require(count_events(events, KernelEventType_DamageApplied) == 5);
 }
 
 void grenade_sweeps_and_explodes_with_falloff() {
@@ -846,8 +845,8 @@ void grenade_sweeps_and_explodes_with_falloff() {
         queue(grenade_input),
         0,
         &events);
-    assert(count_events(events, KernelEventType_FireConfirmed) == 1);
-    assert(count_events(events, KernelEventType_EntitySpawned) == 1);
+    require(count_events(events, KernelEventType_FireConfirmed) == 1);
+    require(count_events(events, KernelEventType_EntitySpawned) == 1);
 
     network_example::NetId projectile = 0;
     for (const KernelEvent& event : events) {
@@ -855,28 +854,28 @@ void grenade_sweeps_and_explodes_with_falloff() {
             projectile = event.net_id;
         }
     }
-    assert(projectile != 0);
+    require(projectile != 0);
     const auto projectile_entity = world.find_entity(projectile);
-    assert(projectile_entity.has_value());
-    assert(
+    require(projectile_entity.has_value());
+    require(
         world.registry()
             .get<network_example::NetworkIdentity>(*projectile_entity)
             .owner_peer == 1);
-    assert(projectile_state(world, projectile).spawn_tick == 0);
-    assert(projectile_state(world, projectile).action_instance_id == 4321);
+    require(projectile_state(world, projectile).spawn_tick == 0);
+    require(projectile_state(world, projectile).action_instance_id == 4321);
 
     events.clear();
     network_example::simulate_projectiles(world, 0.2f, 1, &events);
 
-    assert(!world.find_entity(projectile).has_value());
-    assert(count_events(events, KernelEventType_EntitySpawned) == 1);
+    require(!world.find_entity(projectile).has_value());
+    require(count_events(events, KernelEventType_EntitySpawned) == 1);
     network_example::simulate_area_effects(world, 1, &events, nullptr);
-    assert(health(world, near_enemy).hp > 0);
-    assert(health(world, near_enemy).hp < 50);
-    assert(health(world, far_enemy).hp > 0);
-    assert(health(world, far_enemy).hp < 50);
-    assert(health(world, near_enemy).hp < health(world, far_enemy).hp);
-    assert(count_events(events, KernelEventType_DamageApplied) >= 2);
+    require(health(world, near_enemy).hp > 0);
+    require(health(world, near_enemy).hp < 50);
+    require(health(world, far_enemy).hp > 0);
+    require(health(world, far_enemy).hp < 50);
+    require(health(world, near_enemy).hp < health(world, far_enemy).hp);
+    require(count_events(events, KernelEventType_DamageApplied) >= 2);
 }
 
 void server_projectile_damage_to_player_is_pended() {
@@ -896,22 +895,22 @@ void server_projectile_damage_to_player_is_pended() {
     projectile.damage = 80;
     projectile.max_lifetime_ticks = 1;
     const auto projectile_entity = world.find_entity(projectile_net_id);
-    assert(projectile_entity.has_value());
+    require(projectile_entity.has_value());
     world.registry().emplace<network_example::OnExpiredTriggerTag>(
         *projectile_entity);
 
     network_example::DamagePipeline pipeline;
     std::vector<KernelEvent> events;
     network_example::simulate_projectiles(world, 0.02f, 0, &events, &pipeline);
-    assert(health(world, player).hp == 100);
-    assert(count_events(events, KernelEventType_EntitySpawned) == 1);
+    require(health(world, player).hp == 100);
+    require(count_events(events, KernelEventType_EntitySpawned) == 1);
     network_example::simulate_area_effects(world, 0, 0, &events, &pipeline);
-    assert(count_events(events, KernelEventType_DamageApplied) == 0);
-    assert(pipeline.pending_count() == 1);
+    require(count_events(events, KernelEventType_DamageApplied) == 0);
+    require(pipeline.pending_count() == 1);
 
     pipeline.confirm_ready(world, 100000, 3, &events);
-    assert(health(world, player).hp < 100);
-    assert(count_events(events, KernelEventType_DamageApplied) == 1);
+    require(health(world, player).hp < 100);
+    require(count_events(events, KernelEventType_DamageApplied) == 1);
 }
 
 void direct_hit_projectile_without_explosion_applies_damage() {
@@ -953,7 +952,7 @@ void projectile_weapon_fires_again_after_cooldown() {
         queue(grenade_input),
         0,
         &events);
-    assert(count_events(events, KernelEventType_EntitySpawned) == 1);
+    require(count_events(events, KernelEventType_EntitySpawned) == 1);
 
     events.clear();
     set_action_instance(grenade_input, 8766u);
@@ -962,7 +961,7 @@ void projectile_weapon_fires_again_after_cooldown() {
         queue(grenade_input),
         1,
         &events);
-    assert(events.empty());
+    require(events.empty());
 
     events.clear();
     network_example::simulate_weapons(
@@ -970,8 +969,8 @@ void projectile_weapon_fires_again_after_cooldown() {
         queue(grenade_input),
         30,
         &events);
-    assert(count_events(events, KernelEventType_EntitySpawned) == 1);
-    assert(weapon_state(world, player).ammo[network_example::kWeaponSlot2] == 28);
+    require(count_events(events, KernelEventType_EntitySpawned) == 1);
+    require(weapon_state(world, player).ammo[network_example::kWeaponSlot2] == 28);
 }
 
 void local_predicted_spammer_can_spawn_many_low_damage_projectiles() {
@@ -979,7 +978,7 @@ void local_predicted_spammer_can_spawn_many_low_damage_projectiles() {
     const network_example::NetId player =
         spawn_player(world, 1, glm::vec3{0.0f, 0.0f, 0.0f});
     const auto player_entity = world.find_entity(player);
-    assert(player_entity.has_value());
+    require(player_entity.has_value());
     network_example::WeaponTuning& tuning =
         world.registry().get<network_example::WeaponTuning>(*player_entity);
     network_example::WeaponMechanicsDefinition& spammer =
@@ -1044,7 +1043,7 @@ void projectile_spammer_burst_spawns_three_spread_projectiles() {
     const network_example::NetId player =
         spawn_player(world, 1, glm::vec3{0.0f, 0.0f, 0.0f});
     const auto player_entity = world.find_entity(player);
-    assert(player_entity.has_value());
+    require(player_entity.has_value());
     network_example::WeaponTuning& tuning =
         world.registry().get<network_example::WeaponTuning>(*player_entity);
     network_example::WeaponMechanicsDefinition& spammer =
@@ -1131,17 +1130,17 @@ void projectile_rewind_spawns_from_historical_muzzle() {
         &events);
 
     const network_example::NetId projectile = spawned_projectile(events);
-    assert(projectile != 0);
+    require(projectile != 0);
     const auto projectile_entity = world.find_entity(projectile);
-    assert(projectile_entity.has_value());
+    require(projectile_entity.has_value());
     const network_example::Transform& transform =
         world.registry().get<network_example::Transform>(*projectile_entity);
-    assert(transform.position.x > 1.49f);
-    assert(transform.position.x < 1.51f);
-    assert(transform.position.y > 0.95f);
-    assert(transform.position.y < 0.96f);
-    assert(projectile_state(world, projectile).spawn_tick == 4);
-    assert(projectile_state(world, projectile).age_ticks == 3u);
+    require(transform.position.x > 1.49f);
+    require(transform.position.x < 1.51f);
+    require(transform.position.y > 0.95f);
+    require(transform.position.y < 0.96f);
+    require(projectile_state(world, projectile).spawn_tick == 4);
+    require(projectile_state(world, projectile).age_ticks == 3u);
 }
 
 void projectile_without_rewind_uses_current_muzzle() {
@@ -1157,16 +1156,16 @@ void projectile_without_rewind_uses_current_muzzle() {
         &events);
 
     const network_example::NetId projectile = spawned_projectile(events);
-    assert(projectile != 0);
+    require(projectile != 0);
     const auto projectile_entity = world.find_entity(projectile);
-    assert(projectile_entity.has_value());
+    require(projectile_entity.has_value());
     const network_example::Transform& transform =
         world.registry().get<network_example::Transform>(*projectile_entity);
-    assert(transform.position.x > 9.99f);
-    assert(transform.position.x < 10.01f);
-    assert(projectile_state(world, projectile).spawn_tick == 7);
-    assert(projectile_state(world, projectile).age_ticks == 0u);
-    assert(player != 0);
+    require(transform.position.x > 9.99f);
+    require(transform.position.x < 10.01f);
+    require(projectile_state(world, projectile).spawn_tick == 7);
+    require(projectile_state(world, projectile).age_ticks == 0u);
+    require(player != 0);
 }
 
 void projectile_historical_hit_emits_impact_trigger() {
@@ -1249,7 +1248,7 @@ void rewind_hitscan_uses_historical_hit_volumes() {
     const network_example::NetId current_enemy =
         spawn_enemy(current_world, glm::vec3{5.0f, 0.0f, 0.0f});
     const auto current_enemy_entity = current_world.find_entity(current_enemy);
-    assert(current_enemy_entity.has_value());
+    require(current_enemy_entity.has_value());
     current_world.registry().get<network_example::Transform>(*current_enemy_entity).position =
         glm::vec3{120.0f, 0.0f, 0.0f};
 
@@ -1259,8 +1258,8 @@ void rewind_hitscan_uses_historical_hit_volumes() {
         queue(fire_input(network_example::kWeaponSlot0)),
         0,
         &events);
-    assert(health(current_world, current_enemy).hp == 50);
-    assert(count_events(events, KernelEventType_DamageApplied) == 0);
+    require(health(current_world, current_enemy).hp == 50);
+    require(count_events(events, KernelEventType_DamageApplied) == 0);
 
     network_example::World rewound_world;
     spawn_player(rewound_world, 1, glm::vec3{0.0f, 0.0f, 0.0f});
@@ -1269,7 +1268,7 @@ void rewind_hitscan_uses_historical_hit_volumes() {
     network_example::HistoryBuffer history(4);
     history.write_frame(rewound_world, 4);
     const auto rewound_enemy_entity = rewound_world.find_entity(rewound_enemy);
-    assert(rewound_enemy_entity.has_value());
+    require(rewound_enemy_entity.has_value());
     rewound_world.registry().get<network_example::Transform>(*rewound_enemy_entity).position =
         glm::vec3{20.0f, 0.0f, 0.0f};
 
@@ -1280,8 +1279,8 @@ void rewind_hitscan_uses_historical_hit_volumes() {
         5,
         &events,
         history.find_frame(4));
-    assert(health(rewound_world, rewound_enemy).hp == 25);
-    assert(count_events(events, KernelEventType_DamageApplied) == 1);
+    require(health(rewound_world, rewound_enemy).hp == 25);
+    require(count_events(events, KernelEventType_DamageApplied) == 1);
 }
 
 void rewind_shotgun_respects_range() {
@@ -1301,8 +1300,8 @@ void rewind_shotgun_respects_range() {
         3,
         &events,
         history.find_frame(2));
-    assert(health(shotgun_world, enemy).hp == 0);
-    assert(count_events(events, KernelEventType_DamageApplied) == 5);
+    require(health(shotgun_world, enemy).hp == 0);
+    require(count_events(events, KernelEventType_DamageApplied) == 5);
 
     network_example::World range_world;
     spawn_player(range_world, 1, glm::vec3{0.0f, 0.0f, 0.0f});
@@ -1317,8 +1316,8 @@ void rewind_shotgun_respects_range() {
         2,
         &events,
         range_history.find_frame(1));
-    assert(health(range_world, far_enemy).hp == 50);
-    assert(count_events(events, KernelEventType_DamageApplied) == 0);
+    require(health(range_world, far_enemy).hp == 50);
+    require(count_events(events, KernelEventType_DamageApplied) == 0);
 }
 
 void area_effect_weapon_spawns_and_damages_enemy() {

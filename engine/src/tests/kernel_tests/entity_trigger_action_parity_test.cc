@@ -12,7 +12,6 @@
 // belongs in `kEntityTriggerActions` below, and if the kernel has no branch for
 // it this test says so before a catalog does.
 
-#include <cassert>
 #include <cstdint>
 #include <cstdlib>
 
@@ -26,7 +25,6 @@ constexpr std::uint32_t kProjectileTemplateId = 9003u;
 constexpr std::uint32_t kStatusEffectId = 9004u;
 
 void require(bool condition) {
-    assert(condition);
     if (!condition) {
         std::abort();
     }

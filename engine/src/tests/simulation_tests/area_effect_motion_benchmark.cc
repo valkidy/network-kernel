@@ -32,7 +32,6 @@
 // to write it down is that rocket_explosion spawns at its own impact point,
 // which is to say on top of whoever was hit -- the expensive case, every time.
 
-#include <cassert>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -45,6 +44,20 @@
 #include "physics/public/physics_world.h"
 #include "simulation/public/collision_filter.h"
 #include "simulation/public/simulation.h"
+
+namespace {
+
+void require_impl(bool condition, const char* expression, int line) {
+    if (!condition) {
+        std::fprintf(stderr, "require failed at line %d: %s\n", line, expression);
+        std::abort();
+    }
+}
+
+}  // namespace
+
+#define require(condition) \
+    require_impl(static_cast<bool>(condition), #condition, __LINE__)
 
 namespace ne = network_example;
 
@@ -66,7 +79,7 @@ void add_actor(
     std::uint32_t collider_id) {
     const ne::NetId net_id = world.spawn_enemy(position);
     const auto entity = world.find_entity(net_id);
-    assert(entity.has_value());
+    require(entity.has_value());
     world.registry().get<ne::Health>(*entity) = ne::Health{60000, 60000};
     world.registry().get<ne::Hitbox>(*entity) =
         ne::Hitbox{{0.0f, 0.9f, 0.0f}, {0.35f, 0.9f, 0.35f}, 0};
@@ -130,7 +143,7 @@ void run(
     const glm::vec3 velocity{speed, 0.0f, 0.0f};
     const ne::NetId net_id = world.spawn_projectile(1, origin, velocity);
     const auto entity = world.find_entity(net_id);
-    assert(entity.has_value());
+    require(entity.has_value());
     ne::ProjectileState& state =
         world.registry().get<ne::ProjectileState>(*entity);
     state.collision_mask = ne::kCollisionLayerHostileSide;

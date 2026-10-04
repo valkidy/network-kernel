@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cassert>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -617,11 +616,11 @@ int main() {
     const std::size_t player_index = actor_index_by_id(1u);
     const std::size_t sentry_index = actor_index_by_id(2u);
 
-    assert(network_example::game_server::AgentSentryConfig{}.weapon_id ==
+    require(network_example::game_server::AgentSentryConfig{}.weapon_id ==
            UINT16_MAX);
     const std::vector<std::string> errors =
         network_example::game_server::validate_gameplay_config(config);
-    assert(errors.empty());
+    require(errors.empty());
     require(config.preload_director_template_ids.size() == 1u);
     require(config.preload_director_template_ids[0] == 101u);
 
@@ -925,11 +924,11 @@ int main() {
     }
     require(numeric_item_player != nullptr);
     require(numeric_item_player->inventory_slots[0].item_template_id == 3002);
-    assert(rejects_player_yaml(replace_once(
+    require(rejects_player_yaml(replace_once(
         inventory_player_yaml,
         "inventory_slot_capacity: 8\n",
         "")));
-    assert(rejects_player_yaml(replace_once(
+    require(rejects_player_yaml(replace_once(
         inventory_player_yaml,
         "inventory_slots:\n"
         "  - item_template: fungible_potion\n"
@@ -939,39 +938,39 @@ int main() {
         "  - item_template: stateful_magic_bottle\n"
         "    quantity: 1\n",
         "")));
-    assert(rejects_player_yaml(replace_once(
+    require(rejects_player_yaml(replace_once(
         inventory_player_yaml,
         "inventory_slots:\n",
         "inventory_slots: {}\n")));
-    assert(rejects_player_yaml(replace_once(
+    require(rejects_player_yaml(replace_once(
         inventory_player_yaml,
         "  - item_template: fungible_potion\n    quantity: 5\n",
         "  - null\n")));
-    assert(rejects_player_yaml(replace_once(
+    require(rejects_player_yaml(replace_once(
         inventory_player_yaml,
         "    quantity: 5\n",
         "    quantity: 5\n    unsupported: true\n")));
-    assert(rejects_player_yaml(replace_once(
+    require(rejects_player_yaml(replace_once(
         inventory_player_yaml,
         "    quantity: 5\n",
         "")));
-    assert(rejects_player_yaml(replace_once(
+    require(rejects_player_yaml(replace_once(
         inventory_player_yaml,
         "item_template: fungible_potion",
         "item_template: missing_item")));
-    assert(rejects_player_yaml(replace_once(
+    require(rejects_player_yaml(replace_once(
         inventory_player_yaml,
         "quantity: 5",
         "quantity: 0")));
-    assert(rejects_player_yaml(replace_once(
+    require(rejects_player_yaml(replace_once(
         inventory_player_yaml,
         "quantity: 5",
         "quantity: 6")));
-    assert(rejects_player_yaml(replace_once(
+    require(rejects_player_yaml(replace_once(
         inventory_player_yaml,
         "item_template: stateful_potion\n    quantity: 1",
         "item_template: stateful_potion\n    quantity: 2")));
-    assert(rejects_player_yaml(replace_once(
+    require(rejects_player_yaml(replace_once(
         inventory_player_yaml,
         "inventory_slot_capacity: 8",
         "inventory_slot_capacity: 2")));
@@ -991,7 +990,7 @@ int main() {
     } catch (const std::exception&) {
         agent_inventory_rejected = true;
     }
-    assert(agent_inventory_rejected);
+    require(agent_inventory_rejected);
 
     const std::vector<std::uint8_t> entity_bundle =
         make_entity_template_bundle_zip(
@@ -1001,14 +1000,14 @@ int main() {
             entity_bundle.data(),
             static_cast<std::uint32_t>(entity_bundle.size()),
             "gameplay_catalog.yaml");
-    assert(entity_config.entity_templates.size() == 3);
-    assert(entity_config.entity_templates[1].name == "sentry_grunt");
-    assert(entity_config.entity_templates[1].actor_type ==
+    require(entity_config.entity_templates.size() == 3);
+    require(entity_config.entity_templates[1].name == "sentry_grunt");
+    require(entity_config.entity_templates[1].actor_type ==
            network_example::game_server::kActorTypeAgent);
-    assert(entity_config.entity_templates[1].vision.camp == KernelAgentCamp_EnemySide);
-    assert(entity_config.entity_templates[2].name == "earth_mother");
-    assert(entity_config.entity_templates[2].entity_type == KernelEntityType_Director);
-    assert(
+    require(entity_config.entity_templates[1].vision.camp == KernelAgentCamp_EnemySide);
+    require(entity_config.entity_templates[2].name == "earth_mother");
+    require(entity_config.entity_templates[2].entity_type == KernelEntityType_Director);
+    require(
         entity_config.entity_templates[2].director_kind ==
         network_example::game_server::AuthoredDirectorKind::kWorldRule);
     // The world rule compiles into game_server's own config, like the game
@@ -1215,19 +1214,19 @@ int main() {
     const network_example::game_server::ActorTemplateConfig&
         data_driven_sentry =
             data_driven_sentry_config.entity_templates[1];
-    assert(data_driven_sentry.sentry.alert_ticks == 4);
-    assert(data_driven_sentry.sentry.forget_ticks == 6);
-    assert(data_driven_sentry.sentry.patrol_rotation_interval_ticks == 2);
-    assert(data_driven_sentry.sentry.patrol_rotation_min_degrees == 10.5f);
-    assert(data_driven_sentry.sentry.patrol_rotation_max_degrees == 22.5f);
-    assert(data_driven_sentry.sentry.passive_patrol);
-    assert(data_driven_sentry.sentry.patrol_extent_x_meters == 8.0f);
-    assert(data_driven_sentry.sentry.patrol_input_magnitude == 0.6f);
-    assert(data_driven_sentry.sentry.move_speed_meters_per_second == 2.5f);
-    assert(data_driven_sentry.sentry.weapon_id == 2);
-    assert(data_driven_sentry.sentry.animation_idle ==
+    require(data_driven_sentry.sentry.alert_ticks == 4);
+    require(data_driven_sentry.sentry.forget_ticks == 6);
+    require(data_driven_sentry.sentry.patrol_rotation_interval_ticks == 2);
+    require(data_driven_sentry.sentry.patrol_rotation_min_degrees == 10.5f);
+    require(data_driven_sentry.sentry.patrol_rotation_max_degrees == 22.5f);
+    require(data_driven_sentry.sentry.passive_patrol);
+    require(data_driven_sentry.sentry.patrol_extent_x_meters == 8.0f);
+    require(data_driven_sentry.sentry.patrol_input_magnitude == 0.6f);
+    require(data_driven_sentry.sentry.move_speed_meters_per_second == 2.5f);
+    require(data_driven_sentry.sentry.weapon_id == 2);
+    require(data_driven_sentry.sentry.animation_idle ==
            data_driven_sentry.animation_idle);
-    assert(data_driven_sentry.sentry.animation_attack ==
+    require(data_driven_sentry.sentry.animation_attack ==
            data_driven_sentry.animation_chasing);
 
     for (const std::pair<std::string, std::string>& invalid_patrol_value : {
@@ -1254,7 +1253,7 @@ int main() {
         } catch (const std::exception&) {
             invalid_passive_patrol_rejected = true;
         }
-        assert(invalid_passive_patrol_rejected);
+        require(invalid_passive_patrol_rejected);
     }
 
     const std::vector<std::uint8_t> invalid_enemy_entity_bundle =
@@ -1271,15 +1270,15 @@ int main() {
             std::string(error.what()).find("unsupported entity_type: enemy") !=
             std::string::npos;
     }
-    assert(enemy_entity_type_rejected);
+    require(enemy_entity_type_rejected);
 
-    assert(config.player.actor_template_id == 1);
-    assert(
+    require(config.player.actor_template_id == 1);
+    require(
         config.static_collision_scene.entry_path ==
         "mesh_assets/jolt/plane_200x200.joltmesh");
-    assert(config.static_collision_scene.scene_id == 1u);
-    assert(config.static_collision_scene.collider_id == 0x80000001u);
-    assert(
+    require(config.static_collision_scene.scene_id == 1u);
+    require(config.static_collision_scene.collider_id == 0x80000001u);
+    require(
         config.static_collision_scene.collision_layer ==
         KERNEL_STATIC_COLLISION_LAYER_TERRAIN);
     require(config.weapons.catalog_version == 16);
@@ -1391,10 +1390,10 @@ int main() {
         network_example::game_server::compute_gameplay_catalog_hash(changed_config));
     const KernelCombatStateDefinition player_combat_state =
         network_example::game_server::make_player_combat_state(config);
-    assert(player_combat_state.hp == 1000);
-    assert(player_combat_state.max_hp == 1000);
-    assert(player_combat_state.move_speed_meters_per_second == 5.0f);
-    assert(player_combat_state.collider_template_id == 1);
+    require(player_combat_state.hp == 1000);
+    require(player_combat_state.max_hp == 1000);
+    require(player_combat_state.move_speed_meters_per_second == 5.0f);
+    require(player_combat_state.collider_template_id == 1);
 
     const network_example::game_server::KernelGameplayCatalogStorage catalog =
         network_example::game_server::build_kernel_gameplay_catalog(config);
@@ -2157,43 +2156,43 @@ int main() {
     require(
         magic_bottle->collision_trigger.actions[0].direction_source ==
         KernelEventVec3Source_Direction);
-    assert(catalog.definition.actor_template_count == config.actor_templates.size());
-    assert(catalog.actor_templates.size() == config.actor_templates.size());
+    require(catalog.definition.actor_template_count == config.actor_templates.size());
+    require(catalog.actor_templates.size() == config.actor_templates.size());
     // Same order as config.actor_templates, whose sizes are asserted equal just
     // above, so the id-resolved index carries over.
-    assert(catalog.actor_templates[sentry_index].collider_template_id == 2);
-    assert(
+    require(catalog.actor_templates[sentry_index].collider_template_id == 2);
+    require(
         catalog.actor_templates[sentry_index].vision.vision_collider_template_id ==
         9);
 
     const KernelWeaponMechanicsDefinition& rifle =
         config.weapons.definitions[network_example::game_server::kWeaponRifle];
-    assert(rifle.weapon_id == network_example::game_server::kWeaponRifle);
-    assert(rifle.fire_mode == KernelWeaponFireMode_Hitscan);
-    assert(rifle.damage == 45);
-    assert(rifle.magazine_size == 3000);
-    assert(rifle.reserve_magazines == 6);
-    assert(rifle.max_range == 100.0f);
-    assert(rifle.segment_collider_template_id == 5);
+    require(rifle.weapon_id == network_example::game_server::kWeaponRifle);
+    require(rifle.fire_mode == KernelWeaponFireMode_Hitscan);
+    require(rifle.damage == 45);
+    require(rifle.magazine_size == 3000);
+    require(rifle.reserve_magazines == 6);
+    require(rifle.max_range == 100.0f);
+    require(rifle.segment_collider_template_id == 5);
 
     const KernelWeaponMechanicsDefinition& rocket =
         config.weapons.definitions[network_example::game_server::kWeaponRocket];
-    assert(rocket.weapon_id == network_example::game_server::kWeaponRocket);
-    assert(rocket.fire_mode == KernelWeaponFireMode_Projectile);
-    assert(rocket.projectile_template_id == 3);
-    assert(
+    require(rocket.weapon_id == network_example::game_server::kWeaponRocket);
+    require(rocket.fire_mode == KernelWeaponFireMode_Projectile);
+    require(rocket.projectile_template_id == 3);
+    require(
         config.weapons
             .projectile_sync_modes[network_example::game_server::kWeaponGrenade] ==
         KernelProjectileSyncMode_LocalPredictedDeterministic);
     const KernelWeaponMechanicsDefinition& grenade_launcher =
         config.weapons.definitions[network_example::game_server::kWeaponGrenade];
-    assert(grenade_launcher.fire_mode == KernelWeaponFireMode_Projectile);
-    assert(grenade_launcher.damage == 0);
-    assert(grenade_launcher.magazine_size == 6);
-    assert(grenade_launcher.projectile_template_id == 7);
-    assert(config.weapons.collider_template_ids
+    require(grenade_launcher.fire_mode == KernelWeaponFireMode_Projectile);
+    require(grenade_launcher.damage == 0);
+    require(grenade_launcher.magazine_size == 6);
+    require(grenade_launcher.projectile_template_id == 7);
+    require(config.weapons.collider_template_ids
                [network_example::game_server::kWeaponGrenade] == 16);
-    assert(config.weapons.names[network_example::game_server::kWeaponGrenade] ==
+    require(config.weapons.names[network_example::game_server::kWeaponGrenade] ==
            "Grenade Launcher");
     // grenade_sentry (24), named: this used to be whatever the catalog's
     // `enemy:` override selected, which e8f716e deleted.
@@ -2206,24 +2205,24 @@ int main() {
         }
     }
     require(config_enemy_template != nullptr);
-    assert(
+    require(
         network_example::game_server::active_weapon_id(*config_enemy_template) ==
         network_example::game_server::kWeaponGrenade);
-    assert(config_enemy_template->sentry.weapon_id ==
+    require(config_enemy_template->sentry.weapon_id ==
            network_example::game_server::kWeaponGrenade);
     const KernelWeaponMechanicsDefinition& projectile_spammer =
         config.weapons.definitions[network_example::game_server::kWeaponSpammer];
-    assert(projectile_spammer.damage == 1);
-    assert(projectile_spammer.magazine_size == 3);
-    assert(projectile_spammer.reserve_magazines == kMaxReserveMagazines);
-    assert(projectile_spammer.projectile_template_id == 2);
-    assert(config.weapons.names[network_example::game_server::kWeaponSpammer] ==
+    require(projectile_spammer.damage == 1);
+    require(projectile_spammer.magazine_size == 3);
+    require(projectile_spammer.reserve_magazines == kMaxReserveMagazines);
+    require(projectile_spammer.projectile_template_id == 2);
+    require(config.weapons.names[network_example::game_server::kWeaponSpammer] ==
            "Projectile Spammer");
-    assert(config_enemy_template->sentry.alert_ticks == 90);
-    assert(config_enemy_template->sentry.forget_ticks == 150);
-    assert(config_enemy_template->sentry.patrol_rotation_interval_ticks == 30);
-    assert(config_enemy_template->sentry.patrol_rotation_min_degrees == 15.0f);
-    assert(config_enemy_template->sentry.patrol_rotation_max_degrees == 30.0f);
+    require(config_enemy_template->sentry.alert_ticks == 90);
+    require(config_enemy_template->sentry.forget_ticks == 150);
+    require(config_enemy_template->sentry.patrol_rotation_interval_ticks == 30);
+    require(config_enemy_template->sentry.patrol_rotation_min_degrees == 15.0f);
+    require(config_enemy_template->sentry.patrol_rotation_max_degrees == 30.0f);
     // Hybrid, not server-only. The rocket's path is linear at a constant speed
     // with no gravity, so a client can reproduce it from the spawn record
     // alone; held at server-only it was never made a PredictedProjectile at
@@ -2233,21 +2232,21 @@ int main() {
     // and the interpolator drew the gaps as hold-then-jump. Beams are what
     // genuinely need server-only here: their reach depends on what blocks them,
     // which is not derivable client-side.
-    assert(
+    require(
         config.weapons
             .projectile_sync_modes[network_example::game_server::kWeaponRocket] ==
         KernelProjectileSyncMode_HybridDeterministicThenSnapshot);
     // Counts the collider_templates/ directory, which the bundle now enumerates
     // rather than lists, so this tracks the filesystem.
     require(count_catalog_templates("collider_templates") > 0u);
-    assert(
+    require(
         config.colliders.templates.size() ==
         count_catalog_templates("collider_templates"));
-    assert(config.colliders.bindings.empty());
+    require(config.colliders.bindings.empty());
     // Every entity_templates/*.yaml with entity_type: actor. Tracks the
     // filesystem for the same reason the collider count above does.
     require(count_catalog_templates("entity_templates", "entity_type: actor\n") > 0u);
-    assert(
+    require(
         config.actor_templates.size() ==
         count_catalog_templates("entity_templates", "entity_type: actor\n"));
     // A friendly agent is friendly in three independent places, and each is a
@@ -2261,11 +2260,11 @@ int main() {
         const network_example::game_server::ActorTemplateConfig* allied_sentry =
             network_example::game_server::find_actor_template(config, 27u);
         require(allied_sentry != nullptr);
-        assert(allied_sentry->name == "allied_beam_sentry");
-        assert(allied_sentry->actor_type ==
+        require(allied_sentry->name == "allied_beam_sentry");
+        require(allied_sentry->actor_type ==
                network_example::game_server::kActorTypeAgent);
         // 1. Not the enemy_side an agent defaults to.
-        assert(allied_sentry->vision.camp == KernelAgentCamp_PlayerSide);
+        require(allied_sentry->vision.camp == KernelAgentCamp_PlayerSide);
         // 2. Its hit collider is on the player's side, so the player's
         //    hostile_side weapons pass it by and the enemy's reach it.
         const network_example::game_server::ColliderTemplateConfig*
@@ -2277,10 +2276,10 @@ int main() {
             }
         }
         require(allied_sentry_hitbox != nullptr);
-        assert(allied_sentry_hitbox->definition.layer_mask ==
+        require(allied_sentry_hitbox->definition.layer_mask ==
                KERNEL_COLLISION_LAYER_PLAYER_SIDE);
         // 3. And what it fires is aimed at the other side.
-        assert(allied_sentry->sentry.weapon_id == 9u);
+        require(allied_sentry->sentry.weapon_id == 9u);
         const auto& allied_weapon = config.weapons.definitions[9];
         const auto allied_beam = std::find_if(
             config.projectile_templates.begin(),
@@ -2290,10 +2289,10 @@ int main() {
                     allied_weapon.projectile_template_id;
             });
         require(allied_beam != config.projectile_templates.end());
-        assert(allied_beam->name == "allied_sentry_beam");
-        assert((allied_beam->definition.mechanics.collision_mask &
+        require(allied_beam->name == "allied_sentry_beam");
+        require((allied_beam->definition.mechanics.collision_mask &
                 KERNEL_COLLISION_LAYER_HOSTILE_SIDE) != 0u);
-        assert((allied_beam->definition.mechanics.collision_mask &
+        require((allied_beam->definition.mechanics.collision_mask &
                 KERNEL_COLLISION_LAYER_PLAYER_SIDE) == 0u);
     }
 
@@ -2304,20 +2303,20 @@ int main() {
     require(player_template_ptr != nullptr);
     const network_example::game_server::ActorTemplateConfig& player_template =
         *player_template_ptr;
-    assert(player_template.actor_template_id == 1);
-    assert(player_template.name == "player");
-    assert(player_template.entity_type == network_example::game_server::kEntityTypeActor);
-    assert(player_template.actor_type == network_example::game_server::kActorTypePlayer);
-    assert(player_template.collider_template_id == 1);
-    assert(player_template.weapon_slot_count == 4);
-    assert(player_template.weapon_ids[0] == network_example::game_server::kWeaponRocket);
-    assert(player_template.weapon_ids[1] == network_example::game_server::kWeaponShotgun);
-    assert(player_template.weapon_ids[2] == network_example::game_server::kWeaponGrenade);
+    require(player_template.actor_template_id == 1);
+    require(player_template.name == "player");
+    require(player_template.entity_type == network_example::game_server::kEntityTypeActor);
+    require(player_template.actor_type == network_example::game_server::kActorTypePlayer);
+    require(player_template.collider_template_id == 1);
+    require(player_template.weapon_slot_count == 4);
+    require(player_template.weapon_ids[0] == network_example::game_server::kWeaponRocket);
+    require(player_template.weapon_ids[1] == network_example::game_server::kWeaponShotgun);
+    require(player_template.weapon_ids[2] == network_example::game_server::kWeaponGrenade);
     // Rifle rides in the last slot rather than the first so the weapon a player
     // spawns holding is unchanged; it is here to make weapon 0 reachable at all.
-    assert(player_template.weapon_ids[3] == network_example::game_server::kWeaponRifle);
-    assert(player_template.active_weapon_slot == 0);
-    assert(player_template.inventory_slot_capacity == 16);
+    require(player_template.weapon_ids[3] == network_example::game_server::kWeaponRifle);
+    require(player_template.active_weapon_slot == 0);
+    require(player_template.inventory_slot_capacity == 16);
     // 1_player.yaml stocks shockwave (3008) and frag (3009) bottles, four
     // stateful_magic_bottle (3004) slots, and pull (3010) bottles last; the
     // fungible_potion and stateful_potion slots are commented out there. The
@@ -2326,66 +2325,66 @@ int main() {
     require(player_template.inventory_slots.size() == 7);
     require(player_template.inventory_slots[6].item_template_id == 3010);
     require(player_template.inventory_slots[6].quantity == 3);
-    assert(player_template.inventory_slots[0].item_template_id == 3008);
-    assert(player_template.inventory_slots[0].quantity == 3);
-    assert(player_template.inventory_slots[1].item_template_id == 3009);
-    assert(player_template.inventory_slots[1].quantity == 2);
+    require(player_template.inventory_slots[0].item_template_id == 3008);
+    require(player_template.inventory_slots[0].quantity == 3);
+    require(player_template.inventory_slots[1].item_template_id == 3009);
+    require(player_template.inventory_slots[1].quantity == 2);
     for (std::size_t index = 2; index < 6; ++index) {
-        assert(player_template.inventory_slots[index].item_template_id == 3004);
-        assert(player_template.inventory_slots[index].quantity == 1);
+        require(player_template.inventory_slots[index].item_template_id == 3004);
+        require(player_template.inventory_slots[index].quantity == 1);
     }
-    assert(player_template.vision.camp == KernelAgentCamp_PlayerSide);
-    assert(player_template.vision.vision_collider_template_id == 0);
-    assert(player_template.movement_controller_type ==
+    require(player_template.vision.camp == KernelAgentCamp_PlayerSide);
+    require(player_template.vision.vision_collider_template_id == 0);
+    require(player_template.movement_controller_type ==
            KernelMovementControllerType_Character);
-    assert(player_template.movement_collider_template_id == 10);
+    require(player_template.movement_collider_template_id == 10);
     const network_example::game_server::ActorTemplateConfig* enemy_template_ptr =
         network_example::game_server::find_actor_template(config, 2u);
     require(enemy_template_ptr != nullptr);
     const network_example::game_server::ActorTemplateConfig& enemy_template =
         *enemy_template_ptr;
-    assert(enemy_template.actor_template_id == 2);
-    assert(enemy_template.name == "sentry_grunt");
-    assert(enemy_template.entity_type == network_example::game_server::kEntityTypeActor);
-    assert(enemy_template.actor_type == network_example::game_server::kActorTypeAgent);
-    assert(enemy_template.collider_template_id == 2);
-    assert(enemy_template.weapon_slot_count == 1);
-    assert(enemy_template.weapon_ids[0] == network_example::game_server::kWeaponSpammer);
-    assert(enemy_template.movement_controller_type ==
+    require(enemy_template.actor_template_id == 2);
+    require(enemy_template.name == "sentry_grunt");
+    require(enemy_template.entity_type == network_example::game_server::kEntityTypeActor);
+    require(enemy_template.actor_type == network_example::game_server::kActorTypeAgent);
+    require(enemy_template.collider_template_id == 2);
+    require(enemy_template.weapon_slot_count == 1);
+    require(enemy_template.weapon_ids[0] == network_example::game_server::kWeaponSpammer);
+    require(enemy_template.movement_controller_type ==
            KernelMovementControllerType_Grounded);
-    assert(enemy_template.movement_collider_template_id == 11);
+    require(enemy_template.movement_collider_template_id == 11);
     const auto grenade_sentry = std::find_if(
         config.actor_templates.begin(),
         config.actor_templates.end(),
         [](const network_example::game_server::ActorTemplateConfig& actor) {
             return actor.name == "grenade_sentry";
         });
-    assert(grenade_sentry != config.actor_templates.end());
-    assert(grenade_sentry->actor_template_id == 24);
-    assert(grenade_sentry->weapon_slot_count == 1);
-    assert(
+    require(grenade_sentry != config.actor_templates.end());
+    require(grenade_sentry->actor_template_id == 24);
+    require(grenade_sentry->weapon_slot_count == 1);
+    require(
         grenade_sentry->weapon_ids[0] ==
         network_example::game_server::kWeaponGrenade);
-    assert(grenade_sentry->sentry.weapon_id ==
+    require(grenade_sentry->sentry.weapon_id ==
            network_example::game_server::kWeaponGrenade);
-    assert(grenade_sentry->sentry.ballistic_retry_cooldown_ticks == 30);
+    require(grenade_sentry->sentry.ballistic_retry_cooldown_ticks == 30);
 
     const KernelWeaponMechanicsDefinition& fire_floor =
         config.weapons.definitions[network_example::game_server::kWeaponFireFloor];
-    assert(fire_floor.weapon_id == network_example::game_server::kWeaponFireFloor);
-    assert(fire_floor.fire_mode == KernelWeaponFireMode_Projectile);
-    assert(fire_floor.projectile_template_id == 4);
-    assert(config.weapons.names[network_example::game_server::kWeaponFireFloor] ==
+    require(fire_floor.weapon_id == network_example::game_server::kWeaponFireFloor);
+    require(fire_floor.fire_mode == KernelWeaponFireMode_Projectile);
+    require(fire_floor.projectile_template_id == 4);
+    require(config.weapons.names[network_example::game_server::kWeaponFireFloor] ==
            "Fire Floor");
 
     const KernelWeaponMechanicsDefinition& beam_rifle =
         config.weapons.definitions[network_example::game_server::kWeaponBeamRifle];
-    assert(beam_rifle.weapon_id == network_example::game_server::kWeaponBeamRifle);
-    assert(beam_rifle.fire_mode == KernelWeaponFireMode_Projectile);
-    assert(beam_rifle.projectile_template_id == 5);
-    assert(config.weapons.collider_template_ids
+    require(beam_rifle.weapon_id == network_example::game_server::kWeaponBeamRifle);
+    require(beam_rifle.fire_mode == KernelWeaponFireMode_Projectile);
+    require(beam_rifle.projectile_template_id == 5);
+    require(config.weapons.collider_template_ids
                [network_example::game_server::kWeaponBeamRifle] == 8);
-    assert(config.weapons.names[network_example::game_server::kWeaponBeamRifle] ==
+    require(config.weapons.names[network_example::game_server::kWeaponBeamRifle] ==
            "Beam Rifle");
 
     bool found_vision_collider = false;
@@ -2395,41 +2394,41 @@ int main() {
          config.colliders.templates) {
         if (collider.definition.template_id == 9) {
             found_vision_collider = true;
-            assert(collider.name == "sentry_grunt_vision_cone");
-            assert(collider.definition.shape_type == KernelColliderShapeType_Cone);
-            assert(collider.definition.purpose_flags == KernelColliderPurpose_Vision);
-            assert(collider.definition.layer_mask == KERNEL_COLLISION_LAYER_AGENT_VISION);
-            assert(collider.definition.shape_params.x == 12.0f);
-            assert(collider.definition.shape_params.y == 90.0f);
+            require(collider.name == "sentry_grunt_vision_cone");
+            require(collider.definition.shape_type == KernelColliderShapeType_Cone);
+            require(collider.definition.purpose_flags == KernelColliderPurpose_Vision);
+            require(collider.definition.layer_mask == KERNEL_COLLISION_LAYER_AGENT_VISION);
+            require(collider.definition.shape_params.x == 12.0f);
+            require(collider.definition.shape_params.y == 90.0f);
         } else if (collider.definition.template_id == 10) {
             found_player_movement_capsule = true;
-            assert(collider.definition.shape_type ==
+            require(collider.definition.shape_type ==
                    KernelColliderShapeType_Capsule);
-            assert(collider.definition.purpose_flags ==
+            require(collider.definition.purpose_flags ==
                    KernelColliderPurpose_Movement);
-            assert(collider.definition.shape_params.x == 0.55f);
-            assert(collider.definition.shape_params.y == 0.35f);
+            require(collider.definition.shape_params.x == 0.55f);
+            require(collider.definition.shape_params.y == 0.35f);
         } else if (collider.definition.template_id == 11) {
             found_sentry_grunt_movement_capsule = true;
-            assert(collider.definition.shape_type ==
+            require(collider.definition.shape_type ==
                    KernelColliderShapeType_Capsule);
-            assert(collider.definition.purpose_flags ==
+            require(collider.definition.purpose_flags ==
                    KernelColliderPurpose_Movement);
         }
     }
-    assert(found_vision_collider);
-    assert(found_player_movement_capsule);
-    assert(found_sentry_grunt_movement_capsule);
+    require(found_vision_collider);
+    require(found_player_movement_capsule);
+    require(found_sentry_grunt_movement_capsule);
 
     const KernelWeaponMechanicsDefinition& homing_missile =
         config.weapons.definitions[network_example::game_server::kWeaponHomingMissile];
-    assert(homing_missile.projectile_template_id == 6);
-    assert(config.weapons.collider_template_ids
+    require(homing_missile.projectile_template_id == 6);
+    require(config.weapons.collider_template_ids
                [network_example::game_server::kWeaponHomingMissile] == 7);
     // Every projectile_templates/*.yaml, including rifle_shot and shotgun_shot,
     // which nothing spawns: an instant weapon's shot is still described there.
     require(count_catalog_templates("projectile_templates") > 0u);
-    assert(
+    require(
         config.projectile_templates.size() ==
         count_catalog_templates("projectile_templates"));
     bool found_homing_projectile = false;
@@ -2443,47 +2442,47 @@ int main() {
          config.projectile_templates) {
         if (projectile.name == "grenade_shell") {
             found_grenade_shell = true;
-            assert(projectile.definition.mechanics.collider_template_id == 16);
-            assert(projectile.definition.mechanics.damage == 0);
-            assert(projectile.definition.mechanics.damage_shape ==
+            require(projectile.definition.mechanics.collider_template_id == 16);
+            require(projectile.definition.mechanics.damage == 0);
+            require(projectile.definition.mechanics.damage_shape ==
                    KernelProjectileDamageShape_None);
-            assert(projectile.definition.mechanics
+            require(projectile.definition.mechanics
                        .projectile_impact_trigger.action_type ==
                    KernelEntityTriggerActionType_SpawnProjectile);
-            assert(projectile.definition.mechanics.projectile_impact_trigger
+            require(projectile.definition.mechanics.projectile_impact_trigger
                        .spawn_projectile_template_id == 8);
         }
         if (projectile.name == "spammer") {
             found_spammer_projectile = true;
-            assert(projectile.definition.mechanics.collider_template_id == 7);
-            assert(projectile.definition.mechanics.damage == 1);
+            require(projectile.definition.mechanics.collider_template_id == 7);
+            require(projectile.definition.mechanics.damage == 1);
         }
         if (projectile.name == "rocket") {
             found_rocket_projectile = true;
-            assert(projectile.definition.mechanics.collider_template_id == 3);
-            assert(projectile.definition.mechanics.damage_shape ==
+            require(projectile.definition.mechanics.collider_template_id == 3);
+            require(projectile.definition.mechanics.damage_shape ==
                    KernelProjectileDamageShape_DirectHit);
-            assert(projectile.definition.mechanics.damage == 45);
-            assert(projectile.definition.mechanics
+            require(projectile.definition.mechanics.damage == 45);
+            require(projectile.definition.mechanics
                        .projectile_impact_trigger.action_type ==
                    KernelEntityTriggerActionType_SpawnProjectile);
-            assert(projectile.definition.mechanics.projectile_impact_trigger
+            require(projectile.definition.mechanics.projectile_impact_trigger
                        .spawn_projectile_template_id == 8);
         }
         if (projectile.name == "rocket_explosion") {
             found_rocket_explosion = true;
-            assert(projectile.definition.mechanics.projectile_type ==
+            require(projectile.definition.mechanics.projectile_type ==
                    KernelProjectileType_AreaEffect);
-            assert(projectile.definition.mechanics.damage == 45);
-            assert(projectile.definition.mechanics.area_effect.damage_interval_ticks == 45);
-            assert(projectile.definition.mechanics.area_effect.lifetime_ticks == 45);
-            assert(projectile.definition.mechanics.damage_falloff ==
+            require(projectile.definition.mechanics.damage == 45);
+            require(projectile.definition.mechanics.area_effect.damage_interval_ticks == 45);
+            require(projectile.definition.mechanics.area_effect.lifetime_ticks == 45);
+            require(projectile.definition.mechanics.damage_falloff ==
                    KernelProjectileDamageFalloff_Linear);
-            assert(projectile.definition.mechanics.area_effect.collision_mask &
+            require(projectile.definition.mechanics.area_effect.collision_mask &
                    KERNEL_COLLISION_MASK_PROP);
-            assert(projectile.definition.mechanics.projectile_impact_trigger.action_count ==
+            require(projectile.definition.mechanics.projectile_impact_trigger.action_count ==
                    2u);
-            assert(projectile.definition.mechanics.projectile_impact_trigger.actions[1].action_type ==
+            require(projectile.definition.mechanics.projectile_impact_trigger.actions[1].action_type ==
                    KernelEntityTriggerActionType_ApplyImpulse);
             // All four, not just the horizontal. `impulse_strength` alone reads
             // 12.0 under both forms, so on its own it cannot tell the split
@@ -2492,40 +2491,40 @@ int main() {
             // binding is always taken as the scalar form and would quietly
             // defeat the graph's [horizontal, vertical] default. The mode is
             // what pins that down.
-            assert(projectile.definition.mechanics.projectile_impact_trigger.actions[1].impulse_strength_mode ==
+            require(projectile.definition.mechanics.projectile_impact_trigger.actions[1].impulse_strength_mode ==
                    KERNEL_IMPULSE_STRENGTH_MODE_SPLIT);
-            assert(projectile.definition.mechanics.projectile_impact_trigger.actions[1].impulse_strength ==
+            require(projectile.definition.mechanics.projectile_impact_trigger.actions[1].impulse_strength ==
                    12.0f);
-            assert(projectile.definition.mechanics.projectile_impact_trigger.actions[1].impulse_strength_vertical ==
+            require(projectile.definition.mechanics.projectile_impact_trigger.actions[1].impulse_strength_vertical ==
                    5.0f);
-            assert(projectile.definition.mechanics.projectile_impact_trigger.actions[1].impulse_lockout_ticks ==
+            require(projectile.definition.mechanics.projectile_impact_trigger.actions[1].impulse_lockout_ticks ==
                    40u);
         }
         if (projectile.name == "homing_missile") {
             found_homing_projectile = true;
-            assert(projectile.definition.mechanics.collider_template_id == 7);
-            assert(projectile.definition.mechanics.homing.lock_on_range == 25.0f);
+            require(projectile.definition.mechanics.collider_template_id == 7);
+            require(projectile.definition.mechanics.homing.lock_on_range == 25.0f);
         }
         if (projectile.name == "fire_floor_area") {
             found_fire_floor_area = true;
-            assert(projectile.definition.mechanics.projectile_type ==
+            require(projectile.definition.mechanics.projectile_type ==
                    KernelProjectileType_AreaEffect);
-            assert(projectile.definition.mechanics.area_effect.damage_per_interval == 12);
+            require(projectile.definition.mechanics.area_effect.damage_per_interval == 12);
         }
         if (projectile.name == "beam_rifle_beam") {
             found_beam_rifle_beam = true;
-            assert(projectile.definition.mechanics.projectile_type ==
+            require(projectile.definition.mechanics.projectile_type ==
                    KernelProjectileType_Beam);
-            assert(projectile.definition.mechanics.beam.damage_per_tick == 1);
+            require(projectile.definition.mechanics.beam.damage_per_tick == 1);
         }
     }
-    assert(found_grenade_shell);
-    assert(found_spammer_projectile);
-    assert(found_rocket_projectile);
-    assert(found_rocket_explosion);
-    assert(found_homing_projectile);
-    assert(found_fire_floor_area);
-    assert(found_beam_rifle_beam);
+    require(found_grenade_shell);
+    require(found_spammer_projectile);
+    require(found_rocket_projectile);
+    require(found_rocket_explosion);
+    require(found_homing_projectile);
+    require(found_fire_floor_area);
+    require(found_beam_rifle_beam);
 
     const auto player_entity_template = std::find_if(
         config.entity_templates.begin(),
@@ -2830,11 +2829,11 @@ int main() {
             gameplay_bundle.data(),
             static_cast<std::uint32_t>(gameplay_bundle.size()),
             "gameplay_catalog.yaml");
-    assert(bundle_config.weapons.catalog_hash == config.weapons.catalog_hash);
-    assert(bundle_config.colliders.templates.size() == config.colliders.templates.size());
-    assert(bundle_config.colliders.bindings.empty());
-    assert(bundle_config.projectile_templates.size() == config.projectile_templates.size());
-    assert(bundle_config.actor_templates.size() == config.actor_templates.size());
+    require(bundle_config.weapons.catalog_hash == config.weapons.catalog_hash);
+    require(bundle_config.colliders.templates.size() == config.colliders.templates.size());
+    require(bundle_config.colliders.bindings.empty());
+    require(bundle_config.projectile_templates.size() == config.projectile_templates.size());
+    require(bundle_config.actor_templates.size() == config.actor_templates.size());
 
     const std::string health_change_graph =
         "id: action_apply_health_change\n"
@@ -3101,7 +3100,7 @@ int main() {
                 bundle_with_large_binary.data(),
                 static_cast<std::uint32_t>(bundle_with_large_binary.size()),
                 "gameplay_catalog.yaml");
-    assert(binary_bundle_config.weapons.catalog_hash == config.weapons.catalog_hash);
+    require(binary_bundle_config.weapons.catalog_hash == config.weapons.catalog_hash);
 
     const std::vector<std::uint8_t> generated_bundle = read_binary_file(
         (runfiles_root() / "game_server" / "gameplay_catalog_bundle" / "bundle.zip")
@@ -3111,8 +3110,8 @@ int main() {
             generated_bundle.data(),
             static_cast<std::uint32_t>(generated_bundle.size()),
             "gameplay_catalog.yaml");
-    assert(generated_bundle_config.weapons.catalog_hash == config.weapons.catalog_hash);
-    assert(
+    require(generated_bundle_config.weapons.catalog_hash == config.weapons.catalog_hash);
+    require(
         generated_bundle_config.projectile_templates.size() ==
         config.projectile_templates.size());
 
@@ -3239,7 +3238,7 @@ int main() {
             std::string(error.what()).find("unsupported catalog_version") !=
             std::string::npos;
     }
-    assert(unsupported_version_rejected);
+    require(unsupported_version_rejected);
 
     const std::vector<std::uint8_t> unknown_catalog_field_bundle = make_store_zip({
         {"gameplay_catalog.yaml", "catalog_version: 8\nsurprise: true\n"},
@@ -3254,7 +3253,7 @@ int main() {
         unknown_catalog_field_rejected =
             std::string(error.what()).find("unknown field") != std::string::npos;
     }
-    assert(unknown_catalog_field_rejected);
+    require(unknown_catalog_field_rejected);
 
     // catalog_version 10 replaced the skeleton_manifests list with a directory
     // scan. The old key is still in the allowlist purely so it can be reported
@@ -3280,7 +3279,7 @@ int main() {
             std::string(error.what()).find("skeleton_manifests_dir") !=
             std::string::npos;
     }
-    assert(legacy_manifest_list_rejected);
+    require(legacy_manifest_list_rejected);
 
     // A directory that exists but holds no manifests is a typo, not an empty
     // rig set -- catalogs without skeletons omit the key entirely.
@@ -3302,7 +3301,7 @@ int main() {
         empty_manifest_dir_rejected =
             std::string(error.what()).find("contains no") != std::string::npos;
     }
-    assert(empty_manifest_dir_rejected);
+    require(empty_manifest_dir_rejected);
 
     const std::string production_catalog =
         read_text_file("game_server/gameplay_catalog/gameplay_catalog.yaml");
@@ -3359,7 +3358,7 @@ int main() {
         legacy_item_input_rejected =
             std::string(error.what()).find("unknown field") != std::string::npos;
     }
-    assert(legacy_item_input_rejected);
+    require(legacy_item_input_rejected);
 
     const std::vector<std::uint8_t> legacy_throw_speed_bundle =
         make_gameplay_bundle_zip(
@@ -3384,7 +3383,7 @@ int main() {
             std::string(error.what()).find("unknown field") !=
             std::string::npos;
     }
-    assert(legacy_throw_speed_rejected);
+    require(legacy_throw_speed_rejected);
 
     const std::vector<std::uint8_t> legacy_prop_mapping_bundle =
         make_gameplay_bundle_zip(
@@ -3407,7 +3406,7 @@ int main() {
         legacy_prop_mapping_rejected =
             std::string(error.what()).find("unknown field") != std::string::npos;
     }
-    assert(legacy_prop_mapping_rejected);
+    require(legacy_prop_mapping_rejected);
 
     const std::vector<std::uint8_t> unknown_nested_catalog_field_bundle = make_store_zip({
         {"gameplay_catalog.yaml",
@@ -3429,7 +3428,7 @@ int main() {
         unknown_nested_catalog_field_rejected =
             std::string(error.what()).find("unknown field") != std::string::npos;
     }
-    assert(unknown_nested_catalog_field_rejected);
+    require(unknown_nested_catalog_field_rejected);
 
     const std::vector<std::uint8_t> legacy_collider_field_bundle = make_store_zip({
         {"gameplay_catalog.yaml",
@@ -3448,7 +3447,7 @@ int main() {
         legacy_collider_field_rejected =
             std::string(error.what()).find("unknown field") != std::string::npos;
     }
-    assert(legacy_collider_field_rejected);
+    require(legacy_collider_field_rejected);
 
     std::vector<std::pair<std::string, std::string>> duplicate_collider_files;
     duplicate_collider_files.push_back({
@@ -3516,7 +3515,7 @@ int main() {
             std::string(error.what()).find("duplicate collider template id") !=
             std::string::npos;
     }
-    assert(duplicate_collider_id_rejected);
+    require(duplicate_collider_id_rejected);
 
     const std::vector<std::uint8_t> invalid_path_bundle = make_store_zip({
         {"../x.yaml", "catalog_version: 1\n"},
@@ -3532,7 +3531,7 @@ int main() {
             std::string(error.what()).find("invalid archive path") !=
             std::string::npos;
     }
-    assert(invalid_path_rejected);
+    require(invalid_path_rejected);
 
     const std::vector<std::uint8_t> duplicate_path_bundle = make_store_zip({
         {"gameplay_catalog.yaml", "catalog_version: 1\n"},
@@ -3549,11 +3548,11 @@ int main() {
             std::string(error.what()).find("duplicate archive entry") !=
             std::string::npos;
     }
-    assert(duplicate_path_rejected);
+    require(duplicate_path_rejected);
 
     network_example::game_server::GameServerGameplayConfig invalid = config;
     invalid.weapons.definitions[0].damage = 0;
-    assert(!network_example::game_server::validate_gameplay_config(invalid).empty());
+    require(!network_example::game_server::validate_gameplay_config(invalid).empty());
 
     network_example::game_server::GameServerGameplayConfig actor_hash_changed =
         config;
@@ -3606,47 +3605,47 @@ int main() {
 
     invalid = config;
     invalid.actor_templates[player_index].inventory_slot_capacity = 2;
-    assert(!network_example::game_server::validate_gameplay_config(invalid).empty());
+    require(!network_example::game_server::validate_gameplay_config(invalid).empty());
     invalid = config;
     invalid.actor_templates[player_index].inventory_slots[0].quantity = 0;
-    assert(!network_example::game_server::validate_gameplay_config(invalid).empty());
+    require(!network_example::game_server::validate_gameplay_config(invalid).empty());
     invalid = config;
     // Slot 0 is fungible_shockwave_bottle, max_stack 3.
     invalid.actor_templates[player_index].inventory_slots[0].quantity = 4;
-    assert(!network_example::game_server::validate_gameplay_config(invalid).empty());
+    require(!network_example::game_server::validate_gameplay_config(invalid).empty());
     invalid = config;
     // Slot 2 is stateful_magic_bottle: a stateful item never stacks.
     invalid.actor_templates[player_index].inventory_slots[2].quantity = 2;
-    assert(!network_example::game_server::validate_gameplay_config(invalid).empty());
+    require(!network_example::game_server::validate_gameplay_config(invalid).empty());
     invalid = config;
     invalid.actor_templates[player_index].inventory_slots[0].item_template_id = 999999;
-    assert(!network_example::game_server::validate_gameplay_config(invalid).empty());
+    require(!network_example::game_server::validate_gameplay_config(invalid).empty());
     invalid = config;
     invalid.actor_templates[sentry_index].inventory_slot_capacity = 1;
     invalid.actor_templates[sentry_index].inventory_slots = {
         config.actor_templates[player_index].inventory_slots[0]};
-    assert(!network_example::game_server::validate_gameplay_config(invalid).empty());
+    require(!network_example::game_server::validate_gameplay_config(invalid).empty());
 
     invalid = config;
     invalid.actor_templates[sentry_index].sentry.weapon_id =
         network_example::game_server::kWeaponRocket;
-    assert(!network_example::game_server::validate_gameplay_config(invalid).empty());
+    require(!network_example::game_server::validate_gameplay_config(invalid).empty());
     invalid = config;
     invalid.actor_templates[sentry_index].sentry.alert_ticks = 0;
-    assert(!network_example::game_server::validate_gameplay_config(invalid).empty());
+    require(!network_example::game_server::validate_gameplay_config(invalid).empty());
     invalid = config;
     invalid.actor_templates[sentry_index].sentry.forget_ticks = 0;
-    assert(!network_example::game_server::validate_gameplay_config(invalid).empty());
+    require(!network_example::game_server::validate_gameplay_config(invalid).empty());
     invalid = config;
     invalid.actor_templates[sentry_index].sentry.patrol_rotation_interval_ticks = 0;
-    assert(!network_example::game_server::validate_gameplay_config(invalid).empty());
+    require(!network_example::game_server::validate_gameplay_config(invalid).empty());
     invalid = config;
     invalid.actor_templates[sentry_index].sentry.patrol_rotation_min_degrees = 0.0f;
-    assert(!network_example::game_server::validate_gameplay_config(invalid).empty());
+    require(!network_example::game_server::validate_gameplay_config(invalid).empty());
     invalid = config;
     invalid.actor_templates[sentry_index].sentry.patrol_rotation_max_degrees =
         invalid.actor_templates[sentry_index].sentry.patrol_rotation_min_degrees - 1.0f;
-    assert(!network_example::game_server::validate_gameplay_config(invalid).empty());
+    require(!network_example::game_server::validate_gameplay_config(invalid).empty());
 
     const auto create_player_entity = [](KernelHandle* kernel) {
         KernelServerEntityCreateInfo create_info{};
@@ -3656,7 +3655,7 @@ int main() {
         create_info.owner_peer = 7;
         create_info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
         std::uint32_t net_id = 0;
-        assert(Kernel_ServerCreateEntity(kernel, &create_info, &net_id));
+        require(Kernel_ServerCreateEntity(kernel, &create_info, &net_id));
         return net_id;
     };
     const auto make_server_kernel = []() {
@@ -3665,7 +3664,7 @@ int main() {
         kernel_config.tick.server_tick_rate = 30;
         kernel_config.tick.snapshot_rate = 30;
         KernelHandle* kernel = Kernel_Create(&kernel_config);
-        assert(kernel != nullptr);
+        require(kernel != nullptr);
         return kernel;
     };
 
@@ -4460,7 +4459,7 @@ int main() {
     KernelHandle* inventory_kernel = make_server_kernel();
     network_example::game_server::GameServer inventory_server(
         inventory_kernel, inventory_config);
-    assert(Kernel_StartDedicatedServer(inventory_kernel, 7898));
+    require(Kernel_StartDedicatedServer(inventory_kernel, 7898));
     const std::uint32_t inventory_player = create_player_entity(inventory_kernel);
     KernelEvent player_joined{};
     player_joined.type = KernelEventType_PlayerJoined;
@@ -4470,39 +4469,39 @@ int main() {
     for (KernelInventoryContainerView& container : containers) {
         container.struct_size = sizeof(KernelInventoryContainerView);
     }
-    assert(Kernel_CopyOwnedInventoryContainers(
+    require(Kernel_CopyOwnedInventoryContainers(
                inventory_kernel,
                inventory_player,
                containers.data(),
                static_cast<std::uint32_t>(containers.size())) == 1);
-    assert(containers[0].slot_capacity == 8);
-    assert(containers[0].occupied_slot_count == 3);
+    require(containers[0].slot_capacity == 8);
+    require(containers[0].occupied_slot_count == 3);
     std::array<KernelItemInstanceView, 8> items{};
     for (KernelItemInstanceView& item : items) {
         item.struct_size = sizeof(KernelItemInstanceView);
     }
-    assert(Kernel_CopyInventorySlots(
+    require(Kernel_CopyInventorySlots(
                inventory_kernel,
                containers[0].inventory_container_id,
                items.data(),
                static_cast<std::uint32_t>(items.size())) == 3);
-    assert(items[0].slot == 0 && items[0].item_template_id == 3002 &&
+    require(items[0].slot == 0 && items[0].item_template_id == 3002 &&
            items[0].quantity == 5);
-    assert(items[1].slot == 1 && items[1].item_template_id == 3003 &&
+    require(items[1].slot == 1 && items[1].item_template_id == 3003 &&
            items[1].quantity == 1);
-    assert(items[1].portable_state_field_count == 1);
-    assert(items[1].portable_state_fields[0].uint32_default == 3);
-    assert(items[2].slot == 2 && items[2].item_template_id == 3004 &&
+    require(items[1].portable_state_field_count == 1);
+    require(items[1].portable_state_fields[0].uint32_default == 3);
+    require(items[2].slot == 2 && items[2].item_template_id == 3004 &&
            items[2].quantity == 1);
-    assert(items[2].portable_state_field_count == 1);
-    assert(items[2].portable_state_fields[0].uint32_default == 1);
+    require(items[2].portable_state_field_count == 1);
+    require(items[2].portable_state_fields[0].uint32_default == 1);
     inventory_server.handle_event(player_joined);
-    assert(Kernel_CopyOwnedInventoryContainers(
+    require(Kernel_CopyOwnedInventoryContainers(
                inventory_kernel,
                inventory_player,
                containers.data(),
                static_cast<std::uint32_t>(containers.size())) == 1);
-    assert(Kernel_CopyInventorySlots(
+    require(Kernel_CopyInventorySlots(
                inventory_kernel,
                containers[0].inventory_container_id,
                items.data(),
@@ -4518,17 +4517,17 @@ int main() {
     no_inventory_config.weapons.catalog_hash =
         network_example::game_server::compute_gameplay_catalog_hash(
             no_inventory_config);
-    assert(network_example::game_server::validate_gameplay_config(
+    require(network_example::game_server::validate_gameplay_config(
                no_inventory_config).empty());
     KernelHandle* no_inventory_kernel = make_server_kernel();
     network_example::game_server::GameServer no_inventory_server(
         no_inventory_kernel, no_inventory_config);
-    assert(Kernel_StartDedicatedServer(no_inventory_kernel, 7899));
+    require(Kernel_StartDedicatedServer(no_inventory_kernel, 7899));
     const std::uint32_t no_inventory_player =
         create_player_entity(no_inventory_kernel);
     player_joined.net_id = no_inventory_player;
     no_inventory_server.handle_event(player_joined);
-    assert(Kernel_CopyOwnedInventoryContainers(
+    require(Kernel_CopyOwnedInventoryContainers(
                no_inventory_kernel,
                no_inventory_player,
                nullptr,

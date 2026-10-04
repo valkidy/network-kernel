@@ -1,8 +1,23 @@
-#include <cassert>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <vector>
 
 #include "protocol/public/network_packets.h"
+
+namespace {
+
+void require_impl(bool condition, const char* expression, int line) {
+    if (!condition) {
+        std::fprintf(stderr, "require failed at line %d: %s\n", line, expression);
+        std::abort();
+    }
+}
+
+}  // namespace
+
+#define require(condition) \
+    require_impl(static_cast<bool>(condition), #condition, __LINE__)
 
 int main() {
     using namespace network_example;
@@ -23,20 +38,20 @@ int main() {
     }
     const std::vector<std::uint8_t> encoded =
         encode_status_effect_state_packet(packet, 11u);
-    assert(!encoded.empty());
+    require(!encoded.empty());
     StatusEffectStatePacket decoded;
-    assert(decode_status_effect_state_packet(
+    require(decode_status_effect_state_packet(
         encoded.data(), encoded.size(), &decoded));
-    assert(decoded.server_tick == packet.server_tick);
-    assert(decoded.target_net_id == packet.target_net_id);
-    assert(decoded.revision == packet.revision);
-    assert(decoded.records.size() == kMaxActiveStatusEffects);
-    assert(decoded.records.back().status_instance_id == 2031u);
-    assert(decoded.records.back().stack_count == 32u);
+    require(decoded.server_tick == packet.server_tick);
+    require(decoded.target_net_id == packet.target_net_id);
+    require(decoded.revision == packet.revision);
+    require(decoded.records.size() == kMaxActiveStatusEffects);
+    require(decoded.records.back().status_instance_id == 2031u);
+    require(decoded.records.back().stack_count == 32u);
 
     packet.records.push_back(StatusEffectStateRecord{
         2000u, 3000u, 3u, 80u, 140u});
-    assert(encode_status_effect_state_packet(packet).empty());
+    require(encode_status_effect_state_packet(packet).empty());
 
     StatusEffectStatePacket duplicate;
     duplicate.server_tick = 10u;
@@ -48,8 +63,8 @@ int main() {
     };
     const std::vector<std::uint8_t> duplicate_bytes =
         encode_status_effect_state_packet(duplicate);
-    assert(!duplicate_bytes.empty());
-    assert(!decode_status_effect_state_packet(
+    require(!duplicate_bytes.empty());
+    require(!decode_status_effect_state_packet(
         duplicate_bytes.data(), duplicate_bytes.size(), &decoded));
 
     StatusEffectStatePacket empty;
@@ -58,10 +73,10 @@ int main() {
     empty.revision = 2u;
     const std::vector<std::uint8_t> empty_bytes =
         encode_status_effect_state_packet(empty);
-    assert(!empty_bytes.empty());
-    assert(decode_status_effect_state_packet(
+    require(!empty_bytes.empty());
+    require(decode_status_effect_state_packet(
         empty_bytes.data(), empty_bytes.size(), &decoded));
-    assert(decoded.records.empty());
+    require(decoded.records.empty());
 
     StatusEffectStatePacket invalid_stack;
     invalid_stack.server_tick = 12u;
@@ -70,8 +85,8 @@ int main() {
     invalid_stack.records = {
         StatusEffectStateRecord{1u, 6u, 3u, 1u, 2u, 0u},
     };
-    assert(encode_status_effect_state_packet(invalid_stack).empty());
+    require(encode_status_effect_state_packet(invalid_stack).empty());
     invalid_stack.records[0].stack_count = 33u;
-    assert(encode_status_effect_state_packet(invalid_stack).empty());
+    require(encode_status_effect_state_packet(invalid_stack).empty());
     return 0;
 }
