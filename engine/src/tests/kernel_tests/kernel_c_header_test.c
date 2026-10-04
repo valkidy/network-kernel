@@ -39,7 +39,7 @@ _Static_assert(
     sizeof(KernelLocalShelterState) == 16u &&
         offsetof(KernelAbiInfo, local_shelter_state_size) >
             offsetof(KernelAbiInfo, local_weapon_state_size) &&
-        KERNEL_CAPABILITY_LOCAL_SHELTER_STATE == UINT64_C(0x0001000000000000),
+        KERNEL_CAPABILITY_LOCAL_SHELTER_STATE == UINT64_C(0x0002000000000000),
     "the local shelter query is added in ABI 96");
 _Static_assert(
     offsetof(KernelActionDefinition, pull_mode) >
