@@ -3,7 +3,7 @@
 # pulls from is authored here. How tall it reaches is the projectile's
 # half_height: the overlap is an upright column (area_shape: cylinder), not
 # this sphere.
-id: 35
+id: 39
 name: tornado_column
 shape: sphere
 center: {x: 0.0, y: 0.0, z: 0.0}

@@ -1,4 +1,4 @@
-// The shipped tornado (projectile 28), driven end to end on a dedicated server
+// The shipped tornado (projectile 29), driven end to end on a dedicated server
 // with the shipped catalog and static scene. It has no weapon yet, so the
 // player's Fire Floor is pointed at it.
 //
@@ -206,7 +206,7 @@ void the_shipped_tornado_is_a_ground_following_column() {
     const Catalog catalog = load_catalog();
     const auto* tornado = find_projectile(catalog, "tornado");
     require(tornado != nullptr);
-    require(tornado->definition.projectile_template_id == 28u);
+    require(tornado->definition.projectile_template_id == 29u);
     const KernelProjectileMechanicsDefinition& mechanics =
         tornado->definition.mechanics;
     require(mechanics.sync_mode ==

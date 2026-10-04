@@ -190,6 +190,125 @@ glm::vec3 move_kinematic_horizontal(
     return transform.position + displacement * safe_fraction;
 }
 
+// The first hit in a sweep that is actually in the way: its surface faces back
+// against the direction of travel. A surface merely touched in passing, like
+// the ground under a capsule moving sideways, does not stop anything.
+float first_blocking_fraction(
+    physics::PhysicsWorld& physics_world,
+    const physics::ShapeCastRequest& request,
+    glm::vec3* normal) {
+    const glm::vec3 direction = glm::normalize(request.displacement);
+    float fraction = 1.0f;
+    for (const physics::CollisionHit& hit :
+         physics_world.shape_cast_all(request)) {
+        if (glm::dot(direction, hit.normal) < -0.0001f && hit.fraction < fraction) {
+            fraction = hit.fraction;
+            if (normal != nullptr) {
+                *normal = hit.normal;
+            }
+        }
+    }
+    return fraction;
+}
+
+// One sweep, stopped just short of the first thing in the way.
+glm::vec3 sweep(
+    physics::PhysicsWorld& physics_world,
+    const ColliderInstance& collider,
+    const glm::vec3& start,
+    const glm::quat& rotation,
+    const glm::vec3& displacement,
+    std::uint32_t collision_mask,
+    glm::vec3* blocking_normal,
+    float* travelled) {
+    *travelled = 1.0f;
+    if (glm::dot(displacement, displacement) <= 0.00000001f) {
+        return start;
+    }
+    physics::ShapeCastRequest request{};
+    request.shape = movement_shape(collider);
+    request.start = start;
+    request.rotation = rotation;
+    request.displacement = displacement;
+    request.filter = movement_filter(
+        collider.entity_net_id, collider.collider_id, collision_mask);
+    const float fraction =
+        first_blocking_fraction(physics_world, request, blocking_normal);
+    *travelled = fraction;
+    if (fraction >= 1.0f) {
+        return start + displacement;
+    }
+    return start + displacement * std::max(0.0f, fraction - 0.001f);
+}
+
+// A hovering actor's step: horizontal input as everyone else gets it, and a
+// height that follows whatever is underneath at a fixed clearance.
+//
+// Nothing here is gravity. A hover holds height because it is told to, not
+// because something holds it up, so there is no ground state to land in and
+// no initial seating onto the floor the other controllers do -- that seating
+// is exactly what would drop a drone placed at 9 m onto the ground.
+//
+// Horizontal first, then vertical, each its own sweep: rising over a box it is
+// already above is the vertical step's job, so the horizontal sweep has to be
+// allowed to stop short against the box's side when the climb has not kept up.
+glm::vec3 step_hover(
+    physics::PhysicsWorld& physics_world,
+    const ColliderInstance& collider,
+    const Transform& transform,
+    const glm::vec3& desired_horizontal,
+    const MovementState& movement,
+    float fixed_delta_seconds) {
+    const std::uint32_t mask = movement.movement_collision_mask;
+    glm::vec3 position = transform.position;
+
+    // Into the first thing in the way, then once along it, so a drone pushed
+    // diagonally into a wall slides along the wall instead of sticking to it.
+    const glm::vec3 displacement{
+        desired_horizontal.x * fixed_delta_seconds,
+        0.0f,
+        desired_horizontal.z * fixed_delta_seconds};
+    glm::vec3 wall_normal{0.0f};
+    float travelled = 1.0f;
+    position = sweep(
+        physics_world, collider, position, transform.rotation, displacement,
+        mask, &wall_normal, &travelled);
+    if (travelled < 1.0f) {
+        glm::vec3 across{wall_normal.x, 0.0f, wall_normal.z};
+        if (glm::dot(across, across) > 0.00000001f) {
+            across = glm::normalize(across);
+            const glm::vec3 remaining = displacement * (1.0f - travelled);
+            const glm::vec3 slide = remaining - across * glm::dot(remaining, across);
+            float slid = 1.0f;
+            position = sweep(
+                physics_world, collider, position, transform.rotation, slide,
+                mask, nullptr, &slid);
+        }
+    }
+
+    // Three times the clearance, and never less than ten metres beyond it, is
+    // how far down it looks. Past that -- off a cliff, over a pit -- it holds the
+    // height it has rather than diving after a floor it cannot see. The margin
+    // is that wide because anything placed or knocked above its clearance has to
+    // be able to see the floor to come back down to it.
+    const float clearance = movement.hover_height_meters;
+    const float probe_distance = std::max(3.0f * clearance, clearance + 10.0f);
+    const GroundProbe ground = probe_ground(
+        physics_world, collider, position, transform.rotation, probe_distance,
+        movement.max_slope_degrees, mask);
+    if (ground.hit) {
+        const float below = probe_distance * ground.collision.fraction;
+        const float max_step =
+            movement.hover_vertical_speed_meters_per_second * fixed_delta_seconds;
+        const float rise = std::clamp(clearance - below, -max_step, max_step);
+        float climbed = 1.0f;
+        position = sweep(
+            physics_world, collider, position, transform.rotation,
+            glm::vec3{0.0f, rise, 0.0f}, mask, nullptr, &climbed);
+    }
+    return position;
+}
+
 struct BufferedMovementResult {
     entt::entity entity = entt::null;
     NetId net_id = 0;
@@ -443,6 +562,20 @@ void simulate_actor_movement(
             MovementState::GroundState::kGrounded;
 
         if (next_movement.controller_type ==
+            MovementState::ControllerType::kHover) {
+            result.physics_finalized = true;
+            result.position = step_hover(
+                *physics_world,
+                *collider,
+                transform,
+                desired_horizontal,
+                next_movement,
+                fixed_delta_seconds);
+            result.velocity = fixed_delta_seconds > 0.0f
+                ? (result.position - transform.position) / fixed_delta_seconds
+                : glm::vec3{0.0f};
+            result.movement.ground_state = MovementState::GroundState::kAirborne;
+        } else if (next_movement.controller_type ==
             MovementState::ControllerType::kCharacter) {
             const Clock::time_point start = Clock::now();
             movement_solver::CharacterMovementConfig config{};

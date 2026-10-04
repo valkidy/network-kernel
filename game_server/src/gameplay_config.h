@@ -243,6 +243,9 @@ struct ActorTemplateConfig {
     std::uint32_t death_policy = KernelDeathPolicy_Default;
     // KERNEL_MOVEMENT_LAYER_* bits; 0 keeps the engine default.
     std::uint32_t movement_collision_mask = 0u;
+    // controller: hover only.
+    float movement_hover_height_meters = 0.0f;
+    float movement_hover_vertical_speed_meters_per_second = 0.0f;
     std::array<std::uint32_t, KERNEL_MAX_WEAPON_SLOTS> weapon_ids{};
     std::uint8_t weapon_slot_count = 0;
     std::uint8_t active_weapon_slot = 0;

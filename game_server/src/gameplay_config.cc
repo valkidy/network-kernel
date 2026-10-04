@@ -353,6 +353,9 @@ void hash_actor_template(
     hash_scalar(hash, actor_template.shelter_hides_occupants);
     hash_scalar(hash, actor_template.death_policy);
     hash_scalar(hash, actor_template.movement_collision_mask);
+    hash_float(hash, actor_template.movement_hover_height_meters);
+    hash_float(
+        hash, actor_template.movement_hover_vertical_speed_meters_per_second);
     hash_scalar(hash, actor_template.weapon_slot_count);
     for (std::uint8_t index = 0; index < actor_template.weapon_slot_count; ++index) {
         hash_scalar(hash, actor_template.weapon_ids[index]);
@@ -2680,6 +2683,9 @@ std::uint8_t movement_controller_type_from_yaml(const YAML::Node& node) {
     if (value == "character") {
         return KernelMovementControllerType_Character;
     }
+    if (value == "hover") {
+        return KernelMovementControllerType_Hover;
+    }
     throw std::runtime_error("unsupported movement controller: " + value);
 }
 
@@ -3918,6 +3924,7 @@ ActorTemplateConfig actor_template_from_yaml(
             "ground_snap_distance",
             "max_yaw_degrees_per_second",
             "collision_mask",
+            "hover",
         },
         path,
         source_kind,
@@ -3955,6 +3962,35 @@ ActorTemplateConfig actor_template_from_yaml(
     if (movement["collision_mask"]) {
         actor_template.movement_collision_mask =
             movement_collision_mask_from_yaml(movement["collision_mask"]);
+    }
+    // `hover:` belongs to `controller: hover` and nothing else: refused on any
+    // other controller rather than ignored, and required on this one, because
+    // there is no clearance that would be a sensible default for every flier.
+    const bool hovers = actor_template.movement_controller_type ==
+        KernelMovementControllerType_Hover;
+    const YAML::Node hover = movement["hover"];
+    if (hover && !hovers) {
+        throw std::runtime_error(
+            "movement hover requires controller: hover: " + actor_template.name);
+    }
+    if (hovers) {
+        if (!hover || !hover["height_meters"] ||
+            !hover["vertical_speed_meters_per_second"]) {
+            throw std::runtime_error(
+                "controller: hover requires hover with height_meters and "
+                "vertical_speed_meters_per_second: " + actor_template.name);
+        }
+        reject_unknown_keys(
+            hover,
+            {"height_meters", "vertical_speed_meters_per_second"},
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+            actor_template.actor_template_id);
+        actor_template.movement_hover_height_meters =
+            hover["height_meters"].as<float>();
+        actor_template.movement_hover_vertical_speed_meters_per_second =
+            hover["vertical_speed_meters_per_second"].as<float>();
     }
 
     const YAML::Node hitbox = node["hitbox"];
@@ -9352,7 +9388,15 @@ std::vector<std::string> validate_gameplay_config(
             actor_template.health.hp > actor_template.health.max_hp ||
             actor_template.move_speed_meters_per_second <= 0.0f ||
             actor_template.movement_controller_type >
-                KernelMovementControllerType_Character ||
+                KernelMovementControllerType_Hover ||
+            (actor_template.movement_controller_type ==
+                 KernelMovementControllerType_Hover &&
+             (!std::isfinite(actor_template.movement_hover_height_meters) ||
+              actor_template.movement_hover_height_meters <= 0.0f ||
+              !std::isfinite(
+                  actor_template.movement_hover_vertical_speed_meters_per_second) ||
+              actor_template.movement_hover_vertical_speed_meters_per_second <=
+                  0.0f)) ||
             actor_template.movement_controller_type ==
                 KernelMovementControllerType_None ||
             actor_template.movement_collider_template_id == 0u ||
@@ -9771,6 +9815,10 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
             authored_template.movement_max_yaw_degrees_per_second;
         entity_template.movement.movement_collision_mask =
             authored_template.movement_collision_mask;
+        entity_template.movement.hover_height_meters =
+            authored_template.movement_hover_height_meters;
+        entity_template.movement.hover_vertical_speed_meters_per_second =
+            authored_template.movement_hover_vertical_speed_meters_per_second;
         entity_template.impulse_resistance =
             authored_template.impulse_resistance;
         entity_template.stagger_threshold = authored_template.stagger.threshold;

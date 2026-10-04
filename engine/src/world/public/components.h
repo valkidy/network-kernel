@@ -1126,6 +1126,7 @@ struct MovementState {
         kGrounded = 1,
         kKinematic = 2,
         kCharacter = 3,
+        kHover = 4,
     } controller_type = ControllerType::kNone;
     enum class GroundState : std::uint8_t {
         kAirborne = 0,
@@ -1159,6 +1160,10 @@ struct MovementState {
     float step_height = 0.4f;
     float ground_probe_distance = 0.25f;
     float ground_snap_distance = 0.5f;
+    // Hover only: clearance held above whatever is beneath the capsule, and
+    // the cap on how fast it climbs or sinks to hold it.
+    float hover_height_meters = 0.0f;
+    float hover_vertical_speed_meters_per_second = 0.0f;
     glm::vec3 last_queried_position{0.0f};
     bool has_last_queried_position = false;
     bool landed_this_tick = false;

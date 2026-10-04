@@ -6,8 +6,18 @@
 #include "kernel/public/kernel_api.h"
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 98u,
-    "tornadoes: KernelAreaEffectMechanicsDefinition gained shape and motion");
+    KERNEL_ABI_VERSION == 99u,
+    "hover: KernelMovementDefinition gained hover_height_meters and "
+    "hover_vertical_speed_meters_per_second");
+_Static_assert(
+    offsetof(KernelMovementDefinition, hover_height_meters) >
+            offsetof(KernelMovementDefinition, movement_collision_mask) &&
+        offsetof(KernelMovementDefinition, hover_vertical_speed_meters_per_second) >
+            offsetof(KernelMovementDefinition, hover_height_meters),
+    "the hover fields are appended after every field that existed before ABI 99");
+_Static_assert(
+    KernelMovementControllerType_Hover == 4,
+    "the ABI 99 enum value is appended");
 _Static_assert(
     offsetof(KernelAreaEffectMechanicsDefinition, shape) >
             offsetof(KernelAreaEffectMechanicsDefinition, motion_collision_mask) &&
@@ -49,7 +59,7 @@ _Static_assert(
     sizeof(KernelLocalShelterState) == 16u &&
         offsetof(KernelAbiInfo, local_shelter_state_size) >
             offsetof(KernelAbiInfo, local_weapon_state_size) &&
-        KERNEL_CAPABILITY_LOCAL_SHELTER_STATE == UINT64_C(0x0001000000000000),
+        KERNEL_CAPABILITY_LOCAL_SHELTER_STATE == UINT64_C(0x0002000000000000),
     "the local shelter query is added in ABI 96");
 _Static_assert(
     offsetof(KernelActionDefinition, pull_mode) >

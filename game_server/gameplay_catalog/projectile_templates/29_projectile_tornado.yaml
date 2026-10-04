@@ -12,7 +12,7 @@
 #
 # The damage here is not what lands: an area effect with a graph binding
 # submits no damage of its own, and the graph deals none.
-id: 28
+id: 29
 name: tornado
 kind: area_effect
 collider_template: tornado_column

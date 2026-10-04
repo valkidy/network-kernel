@@ -1834,6 +1834,10 @@ bool EntityLifecycleSystem::create_entity(
                 entity_template->movement.ground_snap_distance;
             movement.movement_collision_mask =
                 entity_template->movement.movement_collision_mask;
+            movement.hover_height_meters =
+                entity_template->movement.hover_height_meters;
+            movement.hover_vertical_speed_meters_per_second =
+                entity_template->movement.hover_vertical_speed_meters_per_second;
             movement.locomotion_owns_height =
                 entity_template->skeleton.body_follow_speed > 0.0f;
         }
@@ -2852,6 +2856,11 @@ bool EntityStateSystem::set_actor_template(
             authored_entity_template->movement.ground_snap_distance;
         movement.movement_collision_mask =
             authored_entity_template->movement.movement_collision_mask;
+        movement.hover_height_meters =
+            authored_entity_template->movement.hover_height_meters;
+        movement.hover_vertical_speed_meters_per_second =
+            authored_entity_template->movement
+                .hover_vertical_speed_meters_per_second;
         movement.locomotion_owns_height =
             authored_entity_template->skeleton.body_follow_speed > 0.0f;
         // A player is spawned bare and only ever gets its template here, so

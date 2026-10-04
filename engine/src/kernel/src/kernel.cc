@@ -3706,7 +3706,15 @@ bool KernelEngine::load_gameplay_catalog(
         if (entity_template.movement.struct_size <
                 sizeof(KernelMovementDefinition) ||
             entity_template.movement.controller_type >
-                KernelMovementControllerType_Character ||
+                KernelMovementControllerType_Hover ||
+            (entity_template.movement.controller_type ==
+                 KernelMovementControllerType_Hover &&
+             (!std::isfinite(entity_template.movement.hover_height_meters) ||
+              entity_template.movement.hover_height_meters <= 0.0f ||
+              !std::isfinite(entity_template.movement
+                                 .hover_vertical_speed_meters_per_second) ||
+              entity_template.movement.hover_vertical_speed_meters_per_second <=
+                  0.0f)) ||
             (entity_template.entity_type == KernelEntityType_Actor &&
              entity_template.movement.controller_type ==
                  KernelMovementControllerType_None) ||

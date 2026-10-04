@@ -423,8 +423,8 @@ motion:
   probe_depth: 0.5                     # default 0.5; deepest drop per tick
 ```
 
-The shipped example is `projectile_templates/28_projectile_tornado.yaml`: a
-3 m column (`collider_templates/35_collider_tornado_column.yaml`) that rides
+The shipped example is `projectile_templates/29_projectile_tornado.yaml`: a
+3 m column (`collider_templates/39_collider_tornado_column.yaml`) that rides
 2 m up for 300 ticks and pulls hostiles once a second through
 `action_graph_templates/action_tornado_pull.yaml`, which does `apply_pull`
 only. `fungible_tornado_bottle` (item 3012, prop 217) throws it: where the

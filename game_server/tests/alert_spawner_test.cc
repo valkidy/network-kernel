@@ -46,6 +46,13 @@ constexpr const char* kCatalogDir = "game_server/gameplay_catalog";
 constexpr const char* kGruntFile = "entity_templates/26_chaser_grunt.yaml";
 constexpr const char* kNestFile = "entity_templates/208_prop_gingerbread_nest.yaml";
 constexpr const char* kCourierFile = "entity_templates/35_courier_grunt.yaml";
+// Every shipped template that calls for help. The cases take them all out,
+// so that what calls in a case is only what that case authored.
+constexpr std::array<const char*, 3> kShippedCallerFiles{
+    kCourierFile,
+    "entity_templates/37_hive_airship.yaml",
+    "entity_templates/38_gingerbread_courier.yaml",
+};
 
 constexpr const char* kBudgets =
     "\nreinforce_budget:\n"
@@ -94,7 +101,9 @@ public:
         shipping_catalog_ = read_file(root_ / "gameplay_catalog.yaml");
         grunt_ = read_file(root_ / kGruntFile);
         nest_ = read_file(root_ / kNestFile);
-        courier_ = read_file(root_ / kCourierFile);
+        for (const char* file : kShippedCallerFiles) {
+            shipped_callers_.emplace_back(file, read_file(root_ / file));
+        }
         // The cases author their own call for help -- on chaser_grunt -- and
         // their own ceilings, so they start from the shipping files with the
         // shipped caller and ceilings taken out.
@@ -102,11 +111,15 @@ public:
             shipping_catalog_,
             "# Every unit an on_alert spawner",
             "agent_budget:\n  max_live_agents: 256\n");
-        fs::remove(root_ / kCourierFile);
+        for (const char* file : kShippedCallerFiles) {
+            fs::remove(root_ / file);
+        }
     }
 
     const std::string& shipping_catalog() const { return shipping_catalog_; }
-    const std::string& courier() const { return courier_; }
+    const std::vector<std::pair<std::string, std::string>>& shipped_callers() const {
+        return shipped_callers_;
+    }
     const std::string& grunt() const { return grunt_; }
     const std::string& nest() const { return nest_; }
 
@@ -188,7 +201,7 @@ private:
 
     fs::path root_;
     std::string shipping_catalog_;
-    std::string courier_;
+    std::vector<std::pair<std::string, std::string>> shipped_callers_;
     std::string catalog_;
     std::string grunt_;
     std::string nest_;
@@ -925,7 +938,7 @@ void the_shipping_courier_calls_chaser_grunts(CatalogCopy* catalog) {
         catalog->shipping_catalog(),
         catalog->grunt(),
         catalog->nest(),
-        {{kCourierFile, catalog->courier()}});
+        catalog->shipped_callers());
     require(config.reinforce_budget.max_live_agents == 64u);
     require(config.agent_budget.max_live_agents == 256u);
     require(carrier_named(config, "chaser_grunt") == nullptr);
@@ -940,6 +953,15 @@ void the_shipping_courier_calls_chaser_grunts(CatalogCopy* catalog) {
     require(courier->spawner.composition.size() == 1u);
     require(courier->spawner.composition[0].entity_template_id ==
             template_id_of(config, "chaser_grunt"));
+    // The other two shipped callers are there too, and every caller is an
+    // agent: the loader refuses anything else, so this is the whole set.
+    std::size_t callers = 0;
+    for (const SpawnerCarrierConfig& carrier : config.spawner_carriers) {
+        callers += carrier.spawner.trigger == SpawnerTrigger::kOnAlert ? 1u : 0u;
+    }
+    require(callers == kShippedCallerFiles.size());
+    require(carrier_named(config, "hive_airship") != nullptr);
+    require(carrier_named(config, "gingerbread_courier") != nullptr);
     // Room for every discretionary ceiling it was sized from.
     require(config.agent_budget.max_live_agents >=
             config.patrol_budget.max_live_agents +
