@@ -412,6 +412,10 @@ void SpawnerDirector::tick_alert_carriers(
         Instance& instance = *found;
         if (signal->engagement_started) {
             instance.calls_this_engagement = 0;
+            instance.refused_this_engagement = false;
+        }
+        if (instance.refused_this_engagement) {
+            continue;
         }
 
         // Plan B: only with the target in sight. An engagement outlives sight
@@ -449,10 +453,11 @@ void SpawnerDirector::tick_alert_carriers(
             next_in_range(&random_state, spawner.count_min, spawner.count_max);
         // Two ceilings, the caller's own and the shared one, and waves stay
         // whole under both: a wave cannot be trimmed, for the reason the
-        // interval path gives. Refused for room is not a call made -- neither
-        // the count nor the gap is spent, so the caller tries again on the next
-        // tick it is still engaged and in sight, and gets in as soon as there is
-        // room.
+        // interval path gives. Refused for room, the caller gives up for the
+        // rest of this engagement and tries again in the next: help that turns
+        // up long after the moment it was called for reads as a random spawn,
+        // not as an answer. Neither the count nor the gap is spent, so the next
+        // engagement calls as if the refused one never happened.
         const auto room_under = [](std::uint32_t ceiling, std::size_t live) {
             if (ceiling == 0u) {
                 return UINT32_MAX;
@@ -471,6 +476,7 @@ void SpawnerDirector::tick_alert_carriers(
             count = std::min(count, agent_budget->room());
         }
         if (count < spawner.count_min) {
+            instance.refused_this_engagement = true;
             continue;
         }
 

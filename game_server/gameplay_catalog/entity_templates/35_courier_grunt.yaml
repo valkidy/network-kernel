@@ -96,8 +96,8 @@ ai:
 # a bug.
 #
 # Everything a call puts out also counts against the catalog's reinforce_budget
-# and agent_budget, and a call refused for room tries again on each tick the
-# courier is still engaged and in sight rather than waiting for the next fight.
+# and agent_budget. A call refused for room is given up for that fight, not
+# retried mid-fight; the next engagement calls as usual.
 spawner:
   trigger: on_alert
   calls_per_alert: 1

@@ -750,9 +750,10 @@ void unbounded_calls_are_spaced_capped_and_need_sight(CatalogCopy* catalog) {
 }
 
 // The shared budget: two callers engage on the same tick with room for one
-// wave. The lower net id is served, the other is refused without spending its
-// call -- and gets in the moment there is room. Killing the first caller does
-// not make room; only its wave dying does.
+// wave. The lower net id is served, the other is refused, and gives up for that
+// engagement: room freeing mid-fight does not bring a late wave. Its next
+// engagement calls. Killing the first caller does not make room; only its wave
+// dying does.
 void the_reinforce_budget_is_shared_and_outlives_callers(CatalogCopy* catalog) {
     const GameServerGameplayConfig config = catalog->load(
         reinforce_budget(2),
@@ -761,9 +762,10 @@ void the_reinforce_budget_is_shared_and_outlives_callers(CatalogCopy* catalog) {
     Server server(config, 7976);
     const std::uint32_t grunt_template = template_id_of(config, "chaser_grunt");
     const std::uint32_t first = server.create(grunt_template, {0.0f, 0.0f, 0.0f});
-    const std::uint32_t second = server.create(grunt_template, {0.0f, 0.0f, 3.0f});
+    const KernelVec3 second_home{0.0f, 0.0f, 3.0f};
+    const std::uint32_t second = server.create(grunt_template, second_home);
     require(first < second);
-    server.create_player(kInSight);
+    const std::uint32_t player = server.create_player(kInSight);
 
     require(step_until(&server, 10, [&] {
         return server.director().spawned_unit_count() == 2u;
@@ -782,9 +784,26 @@ void the_reinforce_budget_is_shared_and_outlives_callers(CatalogCopy* catalog) {
     require(server.director().reinforce_live_count() == 2u);
     require(server.director().spawned_unit_count() == 2u);
 
+    // Room again, mid-fight, and the refused caller still engaged and in
+    // sight: it has given up on this one.
     for (const std::uint32_t unit : first_wave) {
         server.destroy(unit);
     }
+    for (int tick = 0; tick < 60; ++tick) {
+        server.step();
+        const AlertSignal* signal = server.signal_for(second);
+        require(signal != nullptr && signal->sees_target);
+    }
+    require(server.director().reinforce_live_count() == 0u);
+    require(server.spawned_by(second).empty());
+
+    // The next engagement calls.
+    server.place(player, kOutOfSight);
+    require(step_until(&server, 400, [&] {
+        return server.signal_for(second) == nullptr;
+    }));
+    server.place(second, second_home);
+    server.place(player, kInSight);
     require(step_until(&server, 10, [&] {
         return server.spawned_by(second).size() == 2u;
     }));

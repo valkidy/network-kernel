@@ -183,8 +183,10 @@ public:
         // call again.
         std::uint32_t ticks_until_spawn = 0;
         std::uint32_t spawn_ordinal = 0;
-        // on_alert only: calls made since this engagement started.
+        // on_alert only: calls made since this engagement started, and whether
+        // one was refused for room -- which ends calling until the next.
         std::uint32_t calls_this_engagement = 0;
+        bool refused_this_engagement = false;
         // What this carrier has put out and not yet lost, which is what the
         // ceiling counts. Units outlive their carrier on purpose: despawning
         // what a player has just fought their way through, at the moment they
