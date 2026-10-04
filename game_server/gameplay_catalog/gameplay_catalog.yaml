@@ -72,6 +72,25 @@ player:
 # ceilings below cannot express.
 patrol_budget:
   max_live_agents: 48
+# Every unit an on_alert spawner has put out, server-wide, alive at once. Each
+# caller's own max_live_agents bounds one caller; this bounds all of them, so N
+# grunts spotting a player on the same tick cannot put out N waves. It counts
+# the units, not the callers: killing a caller does not hand its share back.
+reinforce_budget:
+  max_live_agents: 64
+# Every agent on the server. Patrols, nests and calls for help only fill room
+# that is left under it, and calls give way first. Mission and world rules, and
+# action-graph spawns, are counted but never refused -- so this must stay above
+# whatever they keep in the world, or nothing discretionary ever spawns.
+#
+# Sized from this map's discretionary ceilings: patrols 48 + calls 64 + nests
+# (12 each) + mission/world rules is about 170, and 256 leaves half again. At
+# -c opt that is ~2 ms of kernel tick (200 engaged agents measured 1.6 ms),
+# well inside 33 ms. 200 fighting agents near one party is the most the
+# snapshot path has been measured clean at, so 256 converging on one party is
+# past what has been measured; drop to 200 if that shows.
+agent_budget:
+  max_live_agents: 256
 patrols:
   - id: 1
     name: gingerbread_warband

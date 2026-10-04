@@ -89,11 +89,20 @@ public:
         root_ = fs::path(tmp != nullptr ? tmp : "/tmp") / "alert_spawner_catalog";
         fs::remove_all(root_);
         fs::copy(kCatalogDir, root_, fs::copy_options::recursive);
-        catalog_ = read_file(root_ / "gameplay_catalog.yaml");
-        grunt_ = read_file(root_ / kGruntFile);
+        shipping_catalog_ = read_file(root_ / "gameplay_catalog.yaml");
+        shipping_grunt_ = read_file(root_ / kGruntFile);
         nest_ = read_file(root_ / kNestFile);
+        // The cases author their own call for help and their own ceilings, so
+        // they start from the shipping files with those taken out.
+        catalog_ = cut(
+            shipping_catalog_,
+            "# Every unit an on_alert spawner",
+            "agent_budget:\n  max_live_agents: 256\n");
+        grunt_ = cut(shipping_grunt_, "# Calls for help:", {});
     }
 
+    const std::string& shipping_catalog() const { return shipping_catalog_; }
+    const std::string& shipping_grunt() const { return shipping_grunt_; }
     const std::string& grunt() const { return grunt_; }
     const std::string& nest() const { return nest_; }
 
@@ -149,7 +158,24 @@ public:
     }
 
 private:
+    // Removes from `from` up to and including `through`, or to the end when
+    // `through` is empty. Both have to be there: a fixture whose needle has
+    // gone would otherwise quietly test the shipping file instead.
+    static std::string cut(
+        const std::string& text, const std::string& from, const std::string& through) {
+        const std::size_t start = text.find(from);
+        require(start != std::string::npos);
+        if (through.empty()) {
+            return text.substr(0, start);
+        }
+        const std::size_t end = text.find(through, start);
+        require(end != std::string::npos);
+        return text.substr(0, start) + text.substr(end + through.size());
+    }
+
     fs::path root_;
+    std::string shipping_catalog_;
+    std::string shipping_grunt_;
     std::string catalog_;
     std::string grunt_;
     std::string nest_;
@@ -860,10 +886,35 @@ void world_rules_are_counted_not_refused(CatalogCopy* catalog) {
     }
 }
 
+// What ships: chaser_grunt calls two more grunts once per engagement, under
+// the 64 and 256 ceilings.
+void the_shipping_grunt_calls_for_help(CatalogCopy* catalog) {
+    const GameServerGameplayConfig config = catalog->load_whole(
+        catalog->shipping_catalog(), catalog->shipping_grunt(), catalog->nest());
+    require(config.reinforce_budget.max_live_agents == 64u);
+    require(config.agent_budget.max_live_agents == 256u);
+    const SpawnerCarrierConfig* grunt = carrier_named(config, "chaser_grunt");
+    require(grunt != nullptr);
+    require(grunt->spawner.trigger == SpawnerTrigger::kOnAlert);
+    require(grunt->spawner.calls_per_alert == 1u);
+    require(grunt->spawner.interval_ticks == 600u);
+    require(grunt->spawner.max_live_agents == 4u);
+    require(grunt->spawner.count_min == 2u && grunt->spawner.count_max == 2u);
+    require(grunt->spawner.composition.size() == 1u);
+    require(grunt->spawner.composition[0].entity_template_id ==
+            template_id_of(config, "chaser_grunt"));
+    // Under the server-wide ceiling with room for a wave on top of every
+    // discretionary ceiling it was sized from.
+    require(config.agent_budget.max_live_agents >=
+            config.patrol_budget.max_live_agents +
+                config.reinforce_budget.max_live_agents);
+}
+
 }  // namespace
 
 int main() {
     CatalogCopy catalog;
+    the_shipping_grunt_calls_for_help(&catalog);
     an_agent_carries_an_on_alert_spawner(&catalog);
     misauthored_on_alert_is_refused(&catalog);
     an_engagement_is_signalled_from_start_to_end(&catalog);

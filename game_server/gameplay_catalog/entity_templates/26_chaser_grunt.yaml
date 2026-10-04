@@ -82,3 +82,26 @@ ai:
     # well inside it or the grunt yo-yos on the boundary.
     leash_meters: 18.0
     leash_resume_meters: 6.0
+# Calls for help: on first spotting someone, two more grunts come out around it.
+#
+# Once per engagement, and no more often than every 20 s however its alert
+# flickers. Only while it can actually see its target: an engagement outlives
+# sight by up to two forget windows, and help arriving at empty ground reads as
+# a bug. The grunts it calls cannot call themselves, so this never chains.
+#
+# Everything a call puts out also counts against the catalog's reinforce_budget
+# and agent_budget, and a call refused for room tries again on each tick the
+# grunt is still engaged and in sight rather than waiting for the next fight.
+spawner:
+  trigger: on_alert
+  calls_per_alert: 1
+  interval_ticks: 600
+  # Two waves' worth from one grunt, so a second engagement can call while the
+  # first wave is still standing, and a third cannot.
+  max_live_agents: 4
+  radius: 4.0
+  count: {min: 2, max: 2}
+  composition:
+    - entity_template: chaser_grunt
+      min: 2
+      max: 2
