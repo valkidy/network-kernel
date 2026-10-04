@@ -100,7 +100,8 @@ AgentRuntimeManager::AgentRuntimeManager(
     // Not filtered by the preload list: a spawner is active because its
     // carrier is in the world, which is the whole point of putting the rule
     // on the carrier.
-    spawner_director_ = SpawnerDirector(config_.spawner_carriers);
+    spawner_director_ = SpawnerDirector(
+        config_.spawner_carriers, config_.reinforce_budget.max_live_agents);
     alert_carrier_template_ids_.clear();
     for (const SpawnerCarrierConfig& carrier : config_.spawner_carriers) {
         if (carrier.spawner.trigger == SpawnerTrigger::kOnAlert) {
@@ -230,6 +231,7 @@ void AgentRuntimeManager::collect_alert_signals() {
         }
         AlertSignal signal;
         signal.net_id = agent.net_id;
+        signal.entity_template_id = agent.actor_template_id;
         signal.engagement_started = started;
         // Off the frame the controllers decided on, not off their counters:
         // lost_target_ticks is zeroed by every state transition too, so attack
@@ -396,7 +398,9 @@ void AgentRuntimeManager::tick(float delta_seconds) {
     world_rule_director_.tick(kernel_, live_agent_count(actors));
 
     game_rule_director_.tick(kernel_);
-    spawner_director_.tick(kernel_);
+    // Last tick's engagement: the controllers that produced it have all run,
+    // and nothing has been created since.
+    spawner_director_.tick(kernel_, alert_signals_);
     // Re-taken because the three directors above all create, and the resync
     // exists to discover what they made -- that is the whole reason it runs
     // after them.

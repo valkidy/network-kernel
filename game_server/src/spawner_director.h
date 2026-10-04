@@ -133,6 +133,8 @@ struct SpawnerEntryRequest {
 // an engagement -- and so what lets the next one count its calls from zero.
 struct AlertSignal {
     std::uint32_t net_id = 0;
+    // Which carrier rule it runs, so the director never has to ask.
+    std::uint32_t entity_template_id = 0;
     // Idle or return to alert or attack, this tick. Attack falling back to
     // alert is not a new engagement: the agent never stopped being engaged.
     bool engagement_started = false;
@@ -157,15 +159,26 @@ std::string validate_spawner_config(const SpawnerConfig& spawner);
 // Runs one rule instance per live carrier.
 class SpawnerDirector {
 public:
-    explicit SpawnerDirector(std::vector<SpawnerCarrierConfig> carriers = {});
+    // `reinforce_max_live_agents` is the catalog's reinforce_budget: what every
+    // on_alert carrier together may have alive at once. Zero is unbounded.
+    explicit SpawnerDirector(
+        std::vector<SpawnerCarrierConfig> carriers = {},
+        std::uint32_t reinforce_max_live_agents = 0);
 
-    void tick(KernelHandle* kernel);
+    // `alerts` is the previous tick's engagement, as the agent runtime left it
+    // after its controllers ran. Read here, in the director phase, rather than
+    // acted on mid-controller, where the actor snapshot would already be stale.
+    void tick(KernelHandle* kernel, const std::vector<AlertSignal>& alerts = {});
 
     struct Instance {
         std::uint32_t carrier_net_id = 0;
         std::uint32_t entity_template_id = 0;
+        // A clock's countdown to its next wave; a caller's gap before it may
+        // call again.
         std::uint32_t ticks_until_spawn = 0;
         std::uint32_t spawn_ordinal = 0;
+        // on_alert only: calls made since this engagement started.
+        std::uint32_t calls_this_engagement = 0;
         // What this carrier has put out and not yet lost, which is what the
         // ceiling counts. Units outlive their carrier on purpose: despawning
         // what a player has just fought their way through, at the moment they
@@ -176,6 +189,9 @@ public:
     const std::vector<SpawnerCarrierConfig>& carriers() const;
     const std::vector<Instance>& instances() const;
     std::uint32_t spawned_unit_count() const;
+    // Units put out by on_alert calls and still alive, server-wide: what the
+    // reinforce budget is held against.
+    std::uint32_t reinforce_live_count() const;
 
     // The walks this tick's wave owes, moved out rather than copied: whoever
     // runs agents takes them once and owns them from then on. Left here they
@@ -184,6 +200,20 @@ public:
 
 private:
     const SpawnerCarrierConfig* carrier_for(std::uint32_t entity_template_id) const;
+    SpawnerTrigger trigger_of(const Instance& instance) const;
+    bool is_alert_carrier(std::uint32_t entity_template_id) const;
+    void tick_interval_carriers(KernelHandle* kernel);
+    void tick_alert_carriers(
+        KernelHandle* kernel, const std::vector<AlertSignal>& alerts);
+    // Creates one whole wave around the carrier and records it. Returns how
+    // many units were made; zero means nothing was spent.
+    std::uint32_t emit_wave(
+        KernelHandle* kernel,
+        Instance* instance,
+        const SpawnerCarrierConfig& carrier,
+        const KernelServerEntityState& carrier_state,
+        std::uint32_t count,
+        std::uint64_t* random_state);
 
     std::vector<SpawnerCarrierConfig> carriers_;
     std::vector<std::uint16_t> queried_entity_types_;
@@ -191,6 +221,13 @@ private:
     std::vector<KernelServerEntityState> query_buffer_;
     std::vector<SpawnerEntryRequest> pending_entries_;
     std::uint32_t spawned_unit_count_ = 0;
+    std::uint32_t reinforce_max_live_agents_ = 0;
+    // Alive units from on_alert calls, kept apart from the per-caller lists so
+    // a caller dying does not hand its share of the budget back.
+    std::vector<std::uint32_t> reinforce_live_net_ids_;
+    // Units any spawner put out whose own template calls for help: they may
+    // not, or calls would chain.
+    std::vector<std::uint32_t> cannot_call_net_ids_;
 };
 
 }  // namespace network_example::game_server

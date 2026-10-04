@@ -20,6 +20,7 @@
 #include "game_server/src/gameplay_config.h"
 #include "game_server/src/spawner_director.h"
 #include "kernel/public/kernel_api.h"
+#include "kernel/src/kernel_api_internal.h"
 
 namespace {
 
@@ -300,7 +301,13 @@ std::uint32_t template_id_of(
 // server's tick, then the kernel's, then the kernel's events back.
 class Server {
 public:
-    Server(const GameServerGameplayConfig& config, std::uint16_t port) {
+    Server(GameServerGameplayConfig config, std::uint16_t port) {
+        // Only what a case creates. The shipping mission puts three nests out
+        // the moment a player exists, preloaded or not, and their waves would
+        // be counted as calls.
+        config.game_rules.clear();
+        config.world_rule_spawns.clear();
+        config.patrols.clear();
         KernelConfig kernel_config{};
         kernel_config.mode = KernelMode_DedicatedServer;
         kernel_config.tick.server_tick_rate = 30;
@@ -389,6 +396,30 @@ public:
         vision.camp = KernelAgentCamp_PlayerSide;
         require(Kernel_ServerSetEntityVisionConfig(kernel_, net_id, &vision));
         return net_id;
+    }
+
+    const network_example::game_server::SpawnerDirector& director() const {
+        return game_server_->agent_runtime_manager().spawner_director();
+    }
+
+    void destroy(std::uint32_t net_id) {
+        KernelEntityLifecycleCommand command{};
+        command.struct_size = sizeof(command);
+        command.command_type = KernelEntityLifecycleCommandType_Destroy;
+        command.net_id = net_id;
+        Kernel_ServerEnqueueEntityLifecycle(
+            kernel_, KernelCommandSource_Internal, &command);
+    }
+
+    // What a carrier has put out and not yet lost, or empty if it has no rule
+    // running.
+    std::vector<std::uint32_t> spawned_by(std::uint32_t carrier) const {
+        for (const auto& instance : director().instances()) {
+            if (instance.carrier_net_id == carrier) {
+                return instance.spawned_net_ids;
+            }
+        }
+        return {};
     }
 
     void place(std::uint32_t net_id, const KernelVec3& position) {
@@ -484,6 +515,224 @@ void an_engagement_is_signalled_from_start_to_end(CatalogCopy* catalog) {
     require(again->engagement_started);
 }
 
+// A grunt's on_alert spawner with the knobs these cases turn.
+std::string grunt_spawner(
+    std::uint32_t calls_per_alert,
+    std::uint32_t interval_ticks,
+    std::uint32_t max_live_agents,
+    const std::string& unit = "gingerbread") {
+    return "\nspawner:\n"
+           "  trigger: on_alert\n"
+           "  calls_per_alert: " + std::to_string(calls_per_alert) + "\n"
+           "  interval_ticks: " + std::to_string(interval_ticks) + "\n"
+           "  max_live_agents: " + std::to_string(max_live_agents) + "\n"
+           "  radius: 4.0\n"
+           "  count: {min: 2, max: 2}\n"
+           "  composition:\n"
+           "    - entity_template: " + unit + "\n"
+           "      min: 2\n"
+           "      max: 2\n";
+}
+
+std::string reinforce_budget(std::uint32_t max_live_agents) {
+    return "\nreinforce_budget:\n  max_live_agents: " +
+        std::to_string(max_live_agents) + "\n";
+}
+
+constexpr KernelVec3 kInSight{-8.0f, 0.0f, 0.0f};
+constexpr KernelVec3 kOutOfSight{60.0f, 0.0f, 60.0f};
+
+// Steps until `done` or `limit` steps, and says which.
+template <typename Done>
+bool step_until(Server* server, int limit, Done done) {
+    for (int tick = 0; tick < limit; ++tick) {
+        if (done()) {
+            return true;
+        }
+        server->step();
+    }
+    return done();
+}
+
+// calls_per_alert: 1 is one call per engagement, not one per lifetime. The
+// second engagement calls again; the rest of the first one never does.
+void one_call_per_engagement(CatalogCopy* catalog) {
+    const GameServerGameplayConfig config = catalog->load(
+        reinforce_budget(64),
+        catalog->grunt() + grunt_spawner(1, 120, 0 + 8),
+        catalog->nest());
+    Server server(config, 7974);
+    const std::uint32_t grunt =
+        server.create(template_id_of(config, "chaser_grunt"), {0.0f, 0.0f, 0.0f});
+    const std::uint32_t player = server.create_player(kOutOfSight);
+
+    // Not engaged, so nothing, however long.
+    for (int tick = 0; tick < 150; ++tick) {
+        server.step();
+    }
+    require(server.director().spawned_unit_count() == 0u);
+
+    // Facing reset first: 150 idle ticks of patrol rotation have turned it.
+    server.place(grunt, {0.0f, 0.0f, 0.0f});
+    server.place(player, kInSight);
+    require(step_until(&server, 10, [&] {
+        return server.director().spawned_unit_count() == 2u;
+    }));
+    require(server.director().reinforce_live_count() == 2u);
+
+    // Well past the gap, still engaged and in sight: no second call.
+    for (int tick = 0; tick < 300; ++tick) {
+        server.step();
+    }
+    require(server.director().spawned_unit_count() == 2u);
+
+    // Let the engagement end -- the wave is taken away so it does not keep the
+    // player busy -- then a new one calls again.
+    server.place(player, kOutOfSight);
+    for (const std::uint32_t unit : server.spawned_by(grunt)) {
+        server.destroy(unit);
+    }
+    require(step_until(&server, 400, [&] {
+        return server.signal_for(grunt) == nullptr;
+    }));
+    require(server.director().spawned_unit_count() == 2u);
+    server.place(grunt, {0.0f, 0.0f, 0.0f});
+    server.place(player, kInSight);
+    require(step_until(&server, 10, [&] {
+        return server.director().spawned_unit_count() == 4u;
+    }));
+}
+
+// calls_per_alert: 0 calls again every interval_ticks while engaged and in
+// sight, up to the caller's own ceiling -- and never at empty ground.
+void unbounded_calls_are_spaced_capped_and_need_sight(CatalogCopy* catalog) {
+    const GameServerGameplayConfig config = catalog->load(
+        reinforce_budget(64),
+        catalog->grunt() + grunt_spawner(0, 60, 6),
+        catalog->nest());
+    Server server(config, 7975);
+    const std::uint32_t grunt =
+        server.create(template_id_of(config, "chaser_grunt"), {0.0f, 0.0f, 0.0f});
+    const std::uint32_t player = server.create_player(kInSight);
+
+    require(step_until(&server, 10, [&] {
+        return server.director().spawned_unit_count() == 2u;
+    }));
+    // The gap holds: nothing more for most of an interval.
+    for (int tick = 0; tick < 55; ++tick) {
+        server.step();
+        require(server.director().spawned_unit_count() == 2u);
+    }
+    require(step_until(&server, 10, [&] {
+        return server.director().spawned_unit_count() == 4u;
+    }));
+    require(step_until(&server, 70, [&] {
+        return server.director().spawned_unit_count() == 6u;
+    }));
+    // At the caller's ceiling of six: no fourth wave.
+    for (int tick = 0; tick < 200; ++tick) {
+        server.step();
+    }
+    require(server.director().spawned_unit_count() == 6u);
+
+    // Room again, but nobody in sight: the engagement's tail calls nobody.
+    // The control is the same room with the player back in sight. Sight is
+    // let go of before room is made: vision is a tick behind the transform, and
+    // the tick after the player leaves, the grunt did still see them.
+    server.place(player, kOutOfSight);
+    require(step_until(&server, 5, [&] {
+        const AlertSignal* signal = server.signal_for(grunt);
+        return signal != nullptr && !signal->sees_target;
+    }));
+    for (const std::uint32_t unit : server.spawned_by(grunt)) {
+        server.destroy(unit);
+    }
+    server.step();
+    require(server.signal_for(grunt) != nullptr);
+    while (server.signal_for(grunt) != nullptr) {
+        server.step();
+    }
+    require(server.director().spawned_unit_count() == 6u);
+    server.place(grunt, {0.0f, 0.0f, 0.0f});
+    server.place(player, kInSight);
+    require(step_until(&server, 10, [&] {
+        return server.director().spawned_unit_count() == 8u;
+    }));
+}
+
+// The shared budget: two callers engage on the same tick with room for one
+// wave. The lower net id is served, the other is refused without spending its
+// call -- and gets in the moment there is room. Killing the first caller does
+// not make room; only its wave dying does.
+void the_reinforce_budget_is_shared_and_outlives_callers(CatalogCopy* catalog) {
+    const GameServerGameplayConfig config = catalog->load(
+        reinforce_budget(2),
+        catalog->grunt() + grunt_spawner(1, 120, 0 + 8),
+        catalog->nest());
+    Server server(config, 7976);
+    const std::uint32_t grunt_template = template_id_of(config, "chaser_grunt");
+    const std::uint32_t first = server.create(grunt_template, {0.0f, 0.0f, 0.0f});
+    const std::uint32_t second = server.create(grunt_template, {0.0f, 0.0f, 3.0f});
+    require(first < second);
+    server.create_player(kInSight);
+
+    require(step_until(&server, 10, [&] {
+        return server.director().spawned_unit_count() == 2u;
+    }));
+    require(server.spawned_by(first).size() == 2u);
+    require(server.spawned_by(second).empty());
+    // Both engaged: the second was refused, not overlooked.
+    require(server.signal_for(first) != nullptr);
+    require(server.signal_for(second) != nullptr);
+
+    const std::vector<std::uint32_t> first_wave = server.spawned_by(first);
+    server.destroy(first);
+    for (int tick = 0; tick < 30; ++tick) {
+        server.step();
+    }
+    require(server.director().reinforce_live_count() == 2u);
+    require(server.director().spawned_unit_count() == 2u);
+
+    for (const std::uint32_t unit : first_wave) {
+        server.destroy(unit);
+    }
+    require(step_until(&server, 10, [&] {
+        return server.spawned_by(second).size() == 2u;
+    }));
+    require(server.director().reinforce_live_count() == 2u);
+}
+
+// What a call puts out cannot call: a grunt that calls grunts gets one wave,
+// though the grunts it called are carriers, engaged, and in sight.
+void called_units_cannot_call(CatalogCopy* catalog) {
+    const GameServerGameplayConfig config = catalog->load(
+        reinforce_budget(64),
+        catalog->grunt() + grunt_spawner(1, 30, 8, "chaser_grunt"),
+        catalog->nest());
+    Server server(config, 7977);
+    const std::uint32_t grunt =
+        server.create(template_id_of(config, "chaser_grunt"), {0.0f, 0.0f, 0.0f});
+    server.create_player(kInSight);
+
+    require(step_until(&server, 10, [&] {
+        return server.director().spawned_unit_count() == 2u;
+    }));
+    const std::vector<std::uint32_t> called = server.spawned_by(grunt);
+    require(called.size() == 2u);
+    bool a_called_unit_engaged = false;
+    for (int tick = 0; tick < 200; ++tick) {
+        server.step();
+        for (const std::uint32_t unit : called) {
+            const AlertSignal* signal = server.signal_for(unit);
+            a_called_unit_engaged = a_called_unit_engaged ||
+                (signal != nullptr && signal->sees_target);
+        }
+    }
+    // The control: they were in a position to call, and did not.
+    require(a_called_unit_engaged);
+    require(server.director().spawned_unit_count() == 2u);
+}
+
 }  // namespace
 
 int main() {
@@ -491,6 +740,10 @@ int main() {
     an_agent_carries_an_on_alert_spawner(&catalog);
     misauthored_on_alert_is_refused(&catalog);
     an_engagement_is_signalled_from_start_to_end(&catalog);
+    one_call_per_engagement(&catalog);
+    unbounded_calls_are_spaced_capped_and_need_sight(&catalog);
+    the_reinforce_budget_is_shared_and_outlives_callers(&catalog);
+    called_units_cannot_call(&catalog);
     std::printf("alert_spawner_test: PASS\n");
     return 0;
 }
