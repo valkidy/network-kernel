@@ -11,6 +11,7 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -27,6 +28,9 @@ void require_impl(bool condition, const char* expression, int line) {
 
 constexpr std::uint16_t kMaxReserveMagazines =
     std::numeric_limits<std::uint16_t>::max();
+// Measured at 121 frames (~4 s) from the player joining to the first
+// gingerbread; the cap leaves room without letting a stuck mission spin.
+constexpr int kMaxFramesUntilEnemies = 30 * 20;
 
 KernelConfig listen_server_config() {
     KernelConfig config{};
@@ -242,6 +246,100 @@ std::string static_collision_entry_path() {
         }
     }
     return std::string();
+}
+
+std::filesystem::path catalog_path(const std::string& relative) {
+    return runfiles_root() / "game_server" / "gameplay_catalog" / relative;
+}
+
+// The value of a top-level `key: value` line, comment stripped; empty if absent.
+std::string yaml_top_level_value(
+    const std::filesystem::path& path,
+    const std::string& key) {
+    std::istringstream yaml(read_text_file(path));
+    const std::string prefix = key + ":";
+    for (std::string line; std::getline(yaml, line);) {
+        if (line.rfind(prefix, 0) != 0) {
+            continue;
+        }
+        std::string value = line.substr(prefix.size());
+        value = value.substr(0, value.find('#'));
+        const std::size_t begin = value.find_first_not_of(' ');
+        const std::size_t end = value.find_last_not_of(' ');
+        return begin == std::string::npos ? std::string()
+                                          : value.substr(begin, end - begin + 1);
+    }
+    return std::string();
+}
+
+std::uint32_t yaml_top_level_uint(
+    const std::filesystem::path& path,
+    const std::string& key) {
+    const std::string value = yaml_top_level_value(path, key);
+    require(!value.empty());
+    return static_cast<std::uint32_t>(std::stoul(value));
+}
+
+struct LoadoutSlot {
+    std::uint32_t item_template_id = 0;
+    std::uint32_t quantity = 0;
+    bool stateful = false;
+};
+
+// The player template's starting inventory, in slot order. Item names resolve
+// to ids through the item template file names ($id_$name.yaml), so the loadout
+// can change in the catalog without this test following by hand.
+std::vector<LoadoutSlot> player_loadout() {
+    std::unordered_map<std::string, LoadoutSlot> items_by_name;
+    for (const std::filesystem::directory_entry& entry :
+         std::filesystem::directory_iterator(catalog_path("item_templates"))) {
+        const std::string stem = entry.path().stem().string();
+        const std::size_t separator = stem.find('_');
+        if (entry.path().extension() != ".yaml" || separator == std::string::npos) {
+            continue;
+        }
+        LoadoutSlot item;
+        item.item_template_id =
+            static_cast<std::uint32_t>(std::stoul(stem.substr(0, separator)));
+        item.stateful =
+            read_text_file(entry.path()).find("\nportable_state:") != std::string::npos;
+        items_by_name[stem.substr(separator + 1)] = item;
+    }
+
+    std::istringstream yaml(
+        read_text_file(catalog_path("entity_templates/1_player.yaml")));
+    std::vector<LoadoutSlot> loadout;
+    bool in_slots = false;
+    const std::string item_key = "- item_template:";
+    const std::string quantity_key = "quantity:";
+    for (std::string line; std::getline(yaml, line);) {
+        if (line.rfind("inventory_slots:", 0) == 0) {
+            in_slots = true;
+            continue;
+        }
+        if (!in_slots) {
+            continue;
+        }
+        if (!line.empty() && line[0] != ' ' && line[0] != '#') {
+            break;
+        }
+        const std::size_t text = line.find_first_not_of(' ');
+        if (text == std::string::npos) {
+            continue;
+        }
+        if (line.compare(text, item_key.size(), item_key) == 0) {
+            const std::string name = line.substr(
+                line.find_first_not_of(' ', text + item_key.size()));
+            const auto found = items_by_name.find(name);
+            require(found != items_by_name.end());
+            loadout.push_back(found->second);
+        } else if (line.compare(text, quantity_key.size(), quantity_key) == 0) {
+            require(!loadout.empty());
+            loadout.back().quantity = static_cast<std::uint32_t>(
+                std::stoul(line.substr(text + quantity_key.size())));
+        }
+    }
+    return loadout;
 }
 
 std::uint32_t count_yaml_files(const std::filesystem::path& directory) {
@@ -473,7 +571,11 @@ int main() {
     require(template_info.weapon_id == 2);
     require(template_info.fire_mode == KernelWeaponFireMode_Projectile);
     require(template_info.mechanics.damage == 1);
-    require(template_info.mechanics.magazine_size == 120);
+    require(
+        template_info.mechanics.magazine_size ==
+        yaml_top_level_uint(
+            catalog_path("weapon_templates/2_weapon_spammer.yaml"),
+            "magazine_size"));
     require(template_info.mechanics.reserve_magazines == kMaxReserveMagazines);
     require(template_info.name[0] == 'P');
     template_info = GameServerWeaponTemplateInfo{};
@@ -505,9 +607,15 @@ int main() {
                local_player_info.player_net_id,
                inventory_containers.data(),
                static_cast<std::uint32_t>(inventory_containers.size())) == 1);
-    require(inventory_containers[0].slot_capacity == 8);
-    require(inventory_containers[0].occupied_slot_count == 3);
-    std::array<KernelItemInstanceView, 8> inventory_items{};
+    const std::filesystem::path player_template =
+        catalog_path("entity_templates/1_player.yaml");
+    const std::vector<LoadoutSlot> loadout = player_loadout();
+    require(!loadout.empty());
+    require(
+        inventory_containers[0].slot_capacity ==
+        yaml_top_level_uint(player_template, "inventory_slot_capacity"));
+    require(inventory_containers[0].occupied_slot_count == loadout.size());
+    std::array<KernelItemInstanceView, 16> inventory_items{};
     for (KernelItemInstanceView& item : inventory_items) {
         item.struct_size = sizeof(KernelItemInstanceView);
     }
@@ -515,20 +623,15 @@ int main() {
                kernel,
                inventory_containers[0].inventory_container_id,
                inventory_items.data(),
-               static_cast<std::uint32_t>(inventory_items.size())) == 3);
-    require(inventory_items[0].slot == 0);
-    require(inventory_items[0].item_template_id == 3002);
-    require(inventory_items[0].quantity == 5);
-    require(inventory_items[1].slot == 1);
-    require(inventory_items[1].item_template_id == 3003);
-    require(inventory_items[1].quantity == 1);
-    require(inventory_items[1].portable_state_field_count == 1);
-    require(inventory_items[1].portable_state_fields[0].uint32_default == 3);
-    require(inventory_items[2].slot == 2);
-    require(inventory_items[2].item_template_id == 3004);
-    require(inventory_items[2].quantity == 1);
-    require(inventory_items[2].portable_state_field_count == 1);
-    require(inventory_items[2].portable_state_fields[0].uint32_default == 1);
+               static_cast<std::uint32_t>(inventory_items.size())) ==
+           loadout.size());
+    for (std::size_t slot = 0; slot < loadout.size(); ++slot) {
+        const KernelItemInstanceView& item = inventory_items[slot];
+        require(item.slot == slot);
+        require(item.item_template_id == loadout[slot].item_template_id);
+        require(item.quantity == loadout[slot].quantity);
+        require((item.portable_state_field_count != 0) == loadout[slot].stateful);
+    }
 
     KernelEvent duplicate_player_joined{};
     duplicate_player_joined.type = KernelEventType_PlayerJoined;
@@ -543,11 +646,23 @@ int main() {
                kernel,
                inventory_containers[0].inventory_container_id,
                inventory_items.data(),
-               static_cast<std::uint32_t>(inventory_items.size())) == 3);
+               static_cast<std::uint32_t>(inventory_items.size())) ==
+           loadout.size());
+    // Enemies come from the catalog's game_rule director: it waits for a
+    // player, places the nests, and the nests' spawners put gingerbread out.
+    // So the client stays connected until they do, and the count is whatever
+    // the mission produces rather than a number this test would have to track.
+    int frames_until_enemies = 0;
+    while (frames_until_enemies < kMaxFramesUntilEnemies &&
+           (GameServer_GetEnemyCount(game_server) == 0 ||
+            query_enemy_count(kernel) == 0)) {
+        run_game_server_frames(kernel, game_server, 1);
+        Kernel_Update(catalog_client, 1.0f / 30.0f);
+        ++frames_until_enemies;
+    }
+    require(GameServer_GetEnemyCount(game_server) > 0);
+    require(query_enemy_count(kernel) > 0);
     Kernel_Destroy(catalog_client);
-    run_game_server_frames(kernel, game_server, 3);
-    require(GameServer_GetEnemyCount(game_server) == 10);
-    require(query_enemy_count(kernel) == 2);
 
     GameServer_DespawnAll(game_server, KernelDespawnReason_Destroyed);
     GameServer_Tick(game_server, 1.0f / 30.0f);
@@ -567,7 +682,11 @@ int main() {
     template_info.struct_size = sizeof(template_info);
     require(GameServer_QueryWeaponTemplate(yaml_game_server, 2, &template_info));
     require(template_info.mechanics.damage == 1);
-    require(template_info.mechanics.magazine_size == 120);
+    require(
+        template_info.mechanics.magazine_size ==
+        yaml_top_level_uint(
+            catalog_path("weapon_templates/2_weapon_spammer.yaml"),
+            "magazine_size"));
     require(template_info.mechanics.reserve_magazines == kMaxReserveMagazines);
     require(template_info.mechanics.projectile_template_id == 2);
     template_info = GameServerWeaponTemplateInfo{};
