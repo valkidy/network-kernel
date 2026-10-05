@@ -44,7 +44,7 @@ animations:
   idle: 0
   chasing: 1
 vision:
-  collider_template: drone_vision_cone
+  collider_template: hive_airship_vision_cone
 ai:
   controller: chaser
   profile: default

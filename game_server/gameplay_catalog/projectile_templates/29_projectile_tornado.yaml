@@ -22,7 +22,7 @@ lifetime_ticks: 300
 sync_mode: local_predicted_deterministic
 damage_behavior:
   type: area_interval
-  damage_interval_ticks: 30
+  damage_interval_ticks: 15
   falloff: none
 collision_mask: hostile_side
 motion_collision_mask: terrain

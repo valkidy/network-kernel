@@ -1,0 +1,12 @@
+# What a flier sees: wider and further than a ground unit's 12 m, 90 degree
+# cone (sentry_grunt_vision_cone). Vision is a flat wedge on the ground plane --
+# height plays no part -- so flying 9 m up costs it nothing; this is what makes
+# a drone the first thing to spot a player.
+id: 40
+name: hive_airship_vision_cone
+shape: cone
+center: {x: 0.0, y: 0.0, z: 0.0}
+range: 35.0
+fov_degrees: 120.0
+purpose: vision
+layer: agent_vision
