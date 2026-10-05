@@ -3104,6 +3104,11 @@ AgentSentryConfig sentry_config_from_yaml(
 
     const YAML::Node sentry_node = node ? node["sentry"] : YAML::Node{};
     if (sentry_node) {
+        if (sentry_node["weapon_id"]) {
+            throw std::runtime_error(
+                "actor template sentry weapon_id was replaced by weapon_slot "
+                "(an index into weapon_slots): " + actor_template.name);
+        }
         reject_unknown_keys(
             sentry_node,
             {
@@ -3116,7 +3121,7 @@ AgentSentryConfig sentry_config_from_yaml(
                 "passive_patrol",
                 "patrol_extent_x_meters",
                 "patrol_input_magnitude",
-                "weapon_id",
+                "weapon_slot",
                 "animation_idle",
                 "animation_attack",
             },
@@ -3158,22 +3163,17 @@ AgentSentryConfig sentry_config_from_yaml(
             sentry.patrol_input_magnitude =
                 sentry_node["patrol_input_magnitude"].as<float>();
         }
-        if (sentry_node["weapon_id"]) {
-            const int authored_weapon_id = sentry_node["weapon_id"].as<int>();
-            if (authored_weapon_id < 0 || authored_weapon_id > UINT8_MAX) {
+        // The fired weapon is named by slot, not id, so the id is authored once
+        // in weapon_slots. Omitted, it is the active slot's weapon.
+        if (sentry_node["weapon_slot"]) {
+            const int authored_slot = sentry_node["weapon_slot"].as<int>();
+            if (authored_slot < 0 ||
+                authored_slot >= actor_template.weapon_slot_count) {
                 throw std::runtime_error(
-                    "actor template sentry weapon id is out of uint8 range: " +
+                    "actor template sentry weapon_slot is out of range: " +
                     actor_template.name);
             }
-            const auto weapon_id =
-                static_cast<std::uint8_t>(authored_weapon_id);
-            if (!weapons.configured[weapon_id] ||
-                !actor_template_has_weapon(actor_template, weapon_id)) {
-                throw std::runtime_error(
-                    "actor template sentry references unknown weapon id: " +
-                    actor_template.name);
-            }
-            sentry.weapon_id = weapon_id;
+            sentry.weapon_id = actor_template.weapon_ids[authored_slot];
         }
         if (sentry_node["animation_idle"]) {
             sentry.animation_idle = sentry_animation_from_yaml(

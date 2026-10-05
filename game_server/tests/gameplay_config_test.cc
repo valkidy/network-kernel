@@ -1201,7 +1201,6 @@ int main() {
         "    passive_patrol: true\n"
         "    patrol_extent_x_meters: 8.0\n"
         "    patrol_input_magnitude: 0.6\n"
-        "    weapon_id: 2\n"
         "    animation_idle: idle\n"
         "    animation_attack: chasing\n";
     const std::vector<std::uint8_t> data_driven_sentry_bundle =
@@ -1229,6 +1228,45 @@ int main() {
            data_driven_sentry.animation_idle);
     assert(data_driven_sentry.sentry.animation_attack ==
            data_driven_sentry.animation_chasing);
+
+    // sentry.weapon_slot picks a non-active slot to fire from; it names a
+    // slot, never a weapon id, and the retired weapon_id key is refused.
+    const auto load_sentry_yaml = [](const std::string& yaml) {
+        const std::vector<std::uint8_t> bundle =
+            make_entity_template_bundle_zip(yaml);
+        return network_example::game_server::
+            load_gameplay_config_from_bundle_memory(
+                bundle.data(),
+                static_cast<std::uint32_t>(bundle.size()),
+                "gameplay_catalog.yaml");
+    };
+    const std::string two_slot_sentry_yaml = replace_once(
+        data_driven_sentry_yaml, "  - 2\n", "  - 2\n  - 3\n");
+    require(load_sentry_yaml(two_slot_sentry_yaml)
+                .entity_templates[1].sentry.weapon_id == 2);
+    const network_example::game_server::GameServerGameplayConfig
+        slot_sentry_config = load_sentry_yaml(replace_once(
+            two_slot_sentry_yaml,
+            "    animation_idle: idle\n",
+            "    weapon_slot: 1\n    animation_idle: idle\n"));
+    require(slot_sentry_config.entity_templates[1].active_weapon_slot == 0);
+    require(slot_sentry_config.entity_templates[1].sentry.weapon_id == 3);
+    for (const std::string& rejected_sentry_line : {
+             std::string("    weapon_slot: 2\n"),
+             std::string("    weapon_slot: -1\n"),
+             std::string("    weapon_id: 2\n"),
+         }) {
+        bool rejected = false;
+        try {
+            (void)load_sentry_yaml(replace_once(
+                two_slot_sentry_yaml,
+                "    animation_idle: idle\n",
+                rejected_sentry_line + "    animation_idle: idle\n"));
+        } catch (const std::exception&) {
+            rejected = true;
+        }
+        require(rejected);
+    }
 
     for (const std::pair<std::string, std::string>& invalid_patrol_value : {
              std::pair<std::string, std::string>{
