@@ -53,6 +53,8 @@ inventory_slots:
   #  quantity: 1
   # - item_template: fungible_glyph_bottle
   #  quantity: 10
+  - item_template: fungible_tornado_bottle
+    quantity: 3
   - item_template: fungible_shockwave_bottle
     quantity: 3
   - item_template: fungible_frag_grenade_bottle
@@ -67,9 +69,6 @@ inventory_slots:
     quantity: 1
   # Last, so every slot index above it stays where it was.
   - item_template: fungible_pull_bottle
-    quantity: 3
-  # After the pull bottle for the same reason.
-  - item_template: fungible_tornado_bottle
     quantity: 3
 animations:
   idle: 0
