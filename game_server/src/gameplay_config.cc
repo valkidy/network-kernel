@@ -6431,28 +6431,42 @@ ProjectileTemplateConfig projectile_template_from_yaml(
         node["max_hit_count"] ? node["max_hit_count"].as<std::uint32_t>() : 1u;
 
     if (mechanics.projectile_type == KernelProjectileType_Beam) {
+        // Optional: all it may say is how long the beam outlives its last
+        // refresh. Its reach is the collider's box -- length along z, width
+        // the larger of x and y -- which the kernel reads from it too.
         const YAML::Node beam = node["beam"];
-        if (!beam) {
-            throw std::runtime_error(
-                "beam projectile template requires beam block: " +
-                projectile_template.name);
+        if (beam) {
+            for (const char* key : {"length", "radius"}) {
+                if (beam[key]) {
+                    throw std::runtime_error(
+                        std::string("beam.") + key +
+                        " is the collider's (an oriented box's half_extents), "
+                        "not the projectile's: " + projectile_template.name);
+                }
+            }
+            reject_unknown_keys(
+                beam,
+                {"lifetime_ticks"},
+                path,
+                source_kind,
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_PROJECTILE,
+                definition.projectile_template_id);
         }
-        reject_unknown_keys(
-            beam,
-            {
-                "length",
-                "radius",
-                "lifetime_ticks",
-            },
-            path,
-            source_kind,
-            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_PROJECTILE,
-            definition.projectile_template_id);
+        const ColliderTemplateConfig* beam_collider =
+            collider_template_from_id(colliders, mechanics.collider_template_id);
+        if (beam_collider == nullptr ||
+            (beam_collider->definition.shape_type != KernelColliderShapeType_Aabb &&
+             beam_collider->definition.shape_type !=
+                 KernelColliderShapeType_OrientedBox)) {
+            throw std::runtime_error(
+                "a beam's collider must be a box: " + projectile_template.name);
+        }
+        const KernelVec4& box = beam_collider->definition.shape_params;
         mechanics.beam.struct_size = sizeof(KernelBeamMechanicsDefinition);
-        mechanics.beam.length = beam["length"].as<float>();
-        mechanics.beam.radius = beam["radius"].as<float>();
+        mechanics.beam.length = box.z * 2.0f;
+        mechanics.beam.radius = std::max(box.x, box.y);
         mechanics.beam.lifetime_ticks =
-            beam["lifetime_ticks"] ? beam["lifetime_ticks"].as<std::uint32_t>() : 2u;
+            beam && beam["lifetime_ticks"] ? beam["lifetime_ticks"].as<std::uint32_t>() : 2u;
         // Derived, not authored. A beam's damage is the template's `damage`
         // read as "per tick", and its targets are the template's
         // `collision_mask` -- beam_system only ever reads these two copies, so

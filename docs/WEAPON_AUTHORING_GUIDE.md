@@ -507,14 +507,14 @@ collider_template: beam_oriented_box
 damage: 1                # per tick while the beam is up
 speed: 0.0
 lifetime_ticks: 0
-beam:
-  length: 8.0
-  radius: 0.25
+beam:                    # optional
   lifetime_ticks: 2      # optional, default 2
 ```
 
-The beam block carries no damage or mask of its own — both come from the
-top-level keys.
+The beam's reach is its collider's box: length is `half_extents.z × 2`, width
+the larger of `x` and `y`, so the collider must be an `oriented_box` (or an
+`aabb`). `beam.length` and `beam.radius` are refused. The beam block carries no
+damage or mask of its own either — both come from the top-level keys.
 
 ## Action templates
 

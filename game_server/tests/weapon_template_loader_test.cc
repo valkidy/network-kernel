@@ -221,8 +221,6 @@ void write_valid_templates(const std::filesystem::path& dir) {
         "collision_mask: hostile_side\nmax_hit_count: 1\n"
         "gravity: {x: 0.0, y: 0.0, z: 0.0}\n"
         "beam:\n"
-        "  length: 8.0\n"
-        "  radius: 0.25\n"
         "  lifetime_ticks: 2\n");
     write_file(
         dir / "rifle.yaml",
@@ -864,7 +862,6 @@ void collision_mask_expressions_are_loaded() {
         "collision_mask: 0\nmax_hit_count: 1\n"
         "gravity: {x: 0.0, y: 0.0, z: 0.0}\n"
         "beam:\n"
-        "  length: 8.0\n  radius: 0.25\n"
         "  lifetime_ticks: 2\n");
     config =
         network_example::game_server::load_gameplay_config_from_weapon_template_directory(
@@ -1116,6 +1113,42 @@ void area_effect_ground_follow_and_cylinder_are_authored() {
         "collision_mask: damageable\nmax_hit_count: 1\n"
         "gravity: {x: 0.0, y: 0.0, z: 0.0}\n");
     require(load_fails(standard_cylinder_dir));
+}
+
+// A beam's reach is its collider's box: the projectile only says how long the
+// beam outlives its last refresh.
+void a_beams_reach_is_its_colliders_box() {
+    const std::filesystem::path dir = tmp_dir("beam_from_collider");
+    write_valid_templates(dir);
+    const network_example::game_server::GameServerGameplayConfig config =
+        network_example::game_server::load_gameplay_config_from_weapon_template_directory(
+            dir.string());
+    // beam_oriented_box: half extents (0.25, 0.25, 4.0).
+    require(projectile_mechanics(config, 5).beam.length == 8.0f);
+    require(projectile_mechanics(config, 5).beam.radius == 0.25f);
+
+    const auto load_beam = [](const std::string& name,
+                              const std::string& collider,
+                              const std::string& block) {
+        const std::filesystem::path beam_dir = tmp_dir(name);
+        write_valid_templates(beam_dir);
+        write_file(
+            beam_dir.parent_path() / "projectile_templates" / "beam_rifle_beam.yaml",
+            "id: 5\nname: beam_rifle_beam\nkind: beam\ndamage: 1\n"
+            "sync_mode: server_snapshot_only\n"
+            "collider_template: " + collider + "\n"
+            "movement_model: linear\nhit_response: destroy\n"
+            "damage_shape: direct_hit\nspeed: 0.0\nlifetime_ticks: 0\n"
+            "collision_mask: hostile_side\nmax_hit_count: 1\n"
+            "gravity: {x: 0.0, y: 0.0, z: 0.0}\n" + block);
+        return beam_dir;
+    };
+    require(!load_fails(load_beam("beam_no_block", "beam_oriented_box", "")));
+    require(load_fails(load_beam(
+        "beam_length", "beam_oriented_box", "beam:\n  length: 8.0\n")));
+    require(load_fails(load_beam(
+        "beam_radius", "beam_oriented_box", "beam:\n  radius: 0.25\n")));
+    require(load_fails(load_beam("beam_sphere", "projectile_sphere", "")));
 }
 
 // A collider field its shape does not read is refused, not dropped.
@@ -2083,6 +2116,7 @@ int main() {
     area_effect_motion_collision_mask_is_authored();
     area_effect_ground_follow_and_cylinder_are_authored();
     collider_fields_the_shape_does_not_read_are_rejected();
+    a_beams_reach_is_its_colliders_box();
     catalog_file_loads_colliders();
     return 0;
 }
