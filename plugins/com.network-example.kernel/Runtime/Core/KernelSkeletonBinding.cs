@@ -94,7 +94,7 @@ namespace NetworkExample.Kernel
                  ++transformIndex)
             {
                 Transform candidate = descendants[transformIndex];
-                int boneIndex = manifest.IndexOf(StripNamespace(candidate.name));
+                int boneIndex = IndexOfBone(manifest, candidate.name);
                 if (boneIndex < 0)
                 {
                     continue;
@@ -194,7 +194,7 @@ namespace NetworkExample.Kernel
             }
             for (int index = 0; index < Bones.Length; ++index)
             {
-                if (StripNamespace(Bones[index].name) != manifest.Bones[index].Name)
+                if (!BoneNameMatches(Bones[index].name, manifest.Bones[index].Name))
                 {
                     error =
                         $"Bones[{index}] must map to " +
@@ -266,6 +266,41 @@ namespace NetworkExample.Kernel
         /// Drops an importer's namespace or path prefix, so "rig:JNT_Body" and
         /// "Armature|JNT_Body" both match the manifest's "JNT_Body".
         /// </summary>
+        /// <summary>
+        /// Whether a transform is the manifest bone of that name. Importers may
+        /// add a namespace ("mixamorig:Spine", "Armature|Spine") that the
+        /// manifest lacks, and a manifest generated from such a source keeps
+        /// the namespace the transform may have lost, so the names are
+        /// compared with the namespace stripped from both sides.
+        /// </summary>
+        private static bool BoneNameMatches(string transformName, string boneName)
+        {
+            return transformName == boneName ||
+                StripNamespace(transformName) == StripNamespace(boneName);
+        }
+
+        /// <summary>
+        /// The manifest bone a transform maps to: an exact name match first,
+        /// so two manifest bones that differ only by namespace stay distinct,
+        /// then a namespace-insensitive match.
+        /// </summary>
+        private static int IndexOfBone(KernelSkeletonManifest manifest, string transformName)
+        {
+            int exact = manifest.IndexOf(transformName);
+            if (exact >= 0)
+            {
+                return exact;
+            }
+            for (int index = 0; index < manifest.BoneCount; ++index)
+            {
+                if (BoneNameMatches(transformName, manifest.Bones[index].Name))
+                {
+                    return index;
+                }
+            }
+            return -1;
+        }
+
         private static string StripNamespace(string value)
         {
             int colon = value.LastIndexOf(':');
