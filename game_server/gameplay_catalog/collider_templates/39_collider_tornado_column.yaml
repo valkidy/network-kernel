@@ -1,11 +1,13 @@
-# The reach of the tornado: an upright column, 3 m across its radius and 2 m
-# above and below the funnel's centre. The funnel hovers 2 m up
-# (projectile 29's motion.hover_height), so the column stands on the ground and
-# reaches 4 m up.
+# The reach of the tornado: an upright column 3 m in radius, 15 m above and
+# below the funnel's centre. The funnel hovers 2 m up (projectile 29's
+# motion.hover_height), so the column reaches from the ground to 17 m: high
+# enough for a hive_airship's hull, which hovers from 14 m to 17 m, and a
+# beam_drone at 9 m. What it covers below the ground holds nothing it could
+# pull, since its mask is hostile_side, not terrain.
 id: 39
 name: tornado_column
 shape: cylinder
 radius: 3.0
-half_height: 2.0
+half_height: 15.0
 purpose: damage
 layer: area_effect

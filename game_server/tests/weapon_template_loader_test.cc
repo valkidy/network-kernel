@@ -1036,7 +1036,7 @@ void area_effect_ground_follow_and_cylinder_are_authored() {
     // The column is the collider's: radius and half height both.
     require(area.shape == KernelAreaEffectShape_Cylinder);
     require(area.radius == 3.0f);
-    require(area.half_height == 2.0f);
+    require(area.half_height == 15.0f);
     require(area.max_slope_degrees == 40.0f);
     require(area.step_up == 0.3f && area.probe_depth == 0.8f);
 
