@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- updates the gingerbread giant kernel skeleton generated from its client source GLB
+
+
+0.7.0 release notes:
+
 - updates gingerbread giant spawning and fixes Unity coordinates and rig knee hinges
 
 
