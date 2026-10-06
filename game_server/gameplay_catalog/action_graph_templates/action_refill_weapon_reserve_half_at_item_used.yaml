@@ -1,0 +1,14 @@
+# Refills half of the user's active weapon's reserve magazines (its MP
+# refills), rounded half up, at least one, never past the weapon template's
+# own reserve_magazines. A use with no active weapon, or with the reserve
+# already full, is refused and costs no item.
+#
+# The amount is a literal, like open_ui's ui_id: a potion that refills a
+# different share is its own graph. `count: N` refills a fixed number instead.
+id: action_refill_weapon_reserve_half_at_item_used
+parameters:
+  target: null
+actions:
+  - type: refill_weapon_reserve
+    target: params.target
+    percent: 50

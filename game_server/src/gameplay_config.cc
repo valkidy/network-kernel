@@ -308,6 +308,8 @@ void hash_projectile_template(
             hash_scalar(hash, action.ui_id);
             hash_scalar(hash, action.spawn_placement);
             hash_float(hash, action.pull_strength);
+            hash_scalar(hash, action.reserve_refill_count);
+            hash_scalar(hash, action.reserve_refill_percent);
             hash_scalar(hash, action.condition_type);
         }
     }
@@ -1941,6 +1943,8 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 "max_speed",
                 "ui_id",
                 "placement",
+                "count",
+                "percent",
             },
             path,
             source_kind,
@@ -2207,6 +2211,41 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 &compiled_action.target_parameter,
                 &compiled_action.status_parameter,
             };
+        } else if (compiled_action.action_type == "refill_weapon_reserve") {
+            // An item refilling the active weapon of whoever used it: a fixed
+            // number of reserve magazines, or a percentage of the template's.
+            if (action["projectile_template"] || action["position"] ||
+                action["direction"] || action["owner"] || action["amount"] ||
+                action["strength"] || action["status"] ||
+                action["operation"] || action["value"] ||
+                action["entity_template"] || action["item_template"] ||
+                action["quantity"] || action["collision_mask"] ||
+                action["lockout_ticks"] || action["ui_id"] ||
+                action["count"].IsDefined() == action["percent"].IsDefined()) {
+                throw std::runtime_error(
+                    "refill_weapon_reserve requires target and exactly one of "
+                    "count or percent, and nothing else: " + path);
+            }
+            if (action["count"]) {
+                const int count = action["count"].as<int>();
+                if (count <= 0 || count > UINT16_MAX) {
+                    throw std::runtime_error(
+                        "refill_weapon_reserve count must be 1 to 65535: " + path);
+                }
+                compiled_action.reserve_refill_count =
+                    static_cast<std::uint16_t>(count);
+            } else {
+                const int percent = action["percent"].as<int>();
+                if (percent <= 0 || percent > 100) {
+                    throw std::runtime_error(
+                        "refill_weapon_reserve percent must be 1 to 100: " + path);
+                }
+                compiled_action.reserve_refill_percent =
+                    static_cast<std::uint16_t>(percent);
+            }
+            compiled_action.target_parameter =
+                parameter_reference_from_yaml(action["target"], "target");
+            action_parameters = {&compiled_action.target_parameter};
         } else if (compiled_action.action_type == "open_ui") {
             // Who it opens for, and which one. Everything else a building's
             // interface does is game_server's, not the graph's.
@@ -6881,6 +6920,11 @@ void compile_projectile_trigger_binding(
                 "open_ui is only supported in on_activated: " +
                 projectile_template->name);
         }
+        if (action.action_type == "refill_weapon_reserve") {
+            throw std::runtime_error(
+                "refill_weapon_reserve is only supported in on_item_used: " +
+                projectile_template->name);
+        }
         if (action.action_type == "apply_pull") {
             compiled_action.target_source = entity_ref_source(
                 trigger_parameter_value(
@@ -7223,6 +7267,22 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
             }
             compiled_action.impulse_collision_mask = action.collision_mask;
             compiled_action.impulse_lockout_ticks = action.lockout_ticks;
+            continue;
+        }
+        if (action.action_type == "refill_weapon_reserve") {
+            // Mirrors the kernel: only an item's use has a user to refill.
+            if (trigger_name != "on_item_used") {
+                throw std::runtime_error(
+                    "refill_weapon_reserve is only supported in on_item_used: " +
+                    binding.action_graph_ref);
+            }
+            compiled_action.action_type =
+                KernelEntityTriggerActionType_RefillWeaponReserve;
+            compiled_action.target_source = entity_ref_source(
+                trigger_parameter_value(
+                    binding, graph_parameter(action.target_parameter)));
+            compiled_action.reserve_refill_count = action.reserve_refill_count;
+            compiled_action.reserve_refill_percent = action.reserve_refill_percent;
             continue;
         }
         if (action.action_type == "open_ui") {
@@ -8840,6 +8900,8 @@ std::uint64_t compute_gameplay_catalog_hash(
             hash_scalar(&hash, action.ui_id);
             hash_scalar(&hash, action.spawn_placement);
             hash_float(&hash, action.pull_strength);
+            hash_scalar(&hash, action.reserve_refill_count);
+            hash_scalar(&hash, action.reserve_refill_percent);
         }
     }
     std::vector<StatusEffectTemplateConfig> status_effect_templates =

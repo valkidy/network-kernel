@@ -17,6 +17,23 @@
 namespace network_example {
 namespace {
 
+// A refill is admitted only when it would refill something, so an item used
+// with no active weapon, or with that weapon's reserve already full, is
+// refused before the item is spent rather than spent on nothing.
+bool refill_has_room(
+    const World& world,
+    const ActionRefillWeaponReserveCommand& refill) {
+    const std::optional<entt::entity> target = world.find_entity(refill.target);
+    if (!target.has_value()) {
+        return false;
+    }
+    const WeaponState* weapon = world.registry().try_get<WeaponState>(*target);
+    const WeaponTuning* tuning = world.registry().try_get<WeaponTuning>(*target);
+    return weapon != nullptr && tuning != nullptr &&
+        weapon_reserve_refill_amount(
+            *weapon, *tuning, refill.count, refill.percent) != 0u;
+}
+
 enum class GameplayRequestContext {
     kInvalid,
     kInventoryItem,
@@ -463,6 +480,12 @@ std::optional<ActionGraphCommandBatch> prepare_item_graph_batch(
         return std::nullopt;
     }
     for (const ActionGraphCommand& command : commands) {
+        if (const auto* refill =
+                std::get_if<ActionRefillWeaponReserveCommand>(&command);
+            refill != nullptr &&
+            !refill_has_room(engine.simulation_world(), *refill)) {
+            return std::nullopt;
+        }
         const auto* damage = std::get_if<ActionApplyDamageCommand>(&command);
         const auto* health_change =
             std::get_if<ActionApplyHealthChangeCommand>(&command);
@@ -857,6 +880,16 @@ bool ItemGameplaySystem::submit_request(
                     goto record_outcome;
                 }
                 for (const ActionGraphCommand& command : commands) {
+                    if (const auto* refill =
+                            std::get_if<ActionRefillWeaponReserveCommand>(
+                                &command);
+                        refill != nullptr &&
+                        !refill_has_room(engine.world_, *refill)) {
+                        reject(
+                            &outcome,
+                            KernelGameplayRequestRejection_GraphRejected);
+                        goto record_outcome;
+                    }
                     const auto* damage =
                         std::get_if<ActionApplyDamageCommand>(&command);
                     const auto* health_change =

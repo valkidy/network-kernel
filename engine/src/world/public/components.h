@@ -539,6 +539,39 @@ struct WeaponTuning {
     std::array<WeaponMechanicsDefinition, kWeaponIdCount> definitions{};
 };
 
+// How many reserve magazines a refill puts into the active weapon: `count`, or
+// `percent` of the weapon template's reserve_magazines rounded half up and at
+// least 1, capped so the reserve never passes the template's. Zero when there
+// is nothing to refill -- no active weapon, or its reserve already full.
+inline std::uint16_t weapon_reserve_refill_amount(
+    const WeaponState& weapon,
+    const WeaponTuning& tuning,
+    std::uint16_t count,
+    std::uint16_t percent) {
+    if (weapon.active_weapon_slot >= weapon.weapon_slot_count ||
+        weapon.active_weapon_slot >= kWeaponSlotCount) {
+        return 0u;
+    }
+    const std::size_t slot = weapon.active_weapon_slot;
+    const std::uint32_t weapon_id = weapon.weapon_ids[slot];
+    if (weapon_id >= kWeaponIdCount || !tuning.configured[weapon_id]) {
+        return 0u;
+    }
+    const std::uint32_t max = tuning.definitions[weapon_id].reserve_magazines;
+    const std::uint32_t current = weapon.reserve_magazines[slot];
+    if (current >= max) {
+        return 0u;
+    }
+    std::uint32_t amount = count;
+    if (percent != 0u) {
+        amount = (max * percent + 50u) / 100u;
+        if (amount == 0u) {
+            amount = 1u;
+        }
+    }
+    return static_cast<std::uint16_t>(std::min(amount, max - current));
+}
+
 struct Hitbox {
     glm::vec3 center{0.0f, 0.0f, 0.0f};
     glm::vec3 half_extents{0.5f, 0.5f, 0.5f};
@@ -837,6 +870,16 @@ struct ActionOpenUiDefinition {
     ActionConditionType condition = ActionConditionType::kAlways;
 };
 
+// An item refilling its user's active weapon; see
+// KernelEntityTriggerActionType_RefillWeaponReserve. Exactly one of count and
+// percent is non-zero.
+struct ActionRefillWeaponReserveDefinition {
+    std::string target_parameter;
+    std::uint16_t count = 0;
+    std::uint16_t percent = 0;
+    ActionConditionType condition = ActionConditionType::kAlways;
+};
+
 struct ActionApplyStatusDefinition {
     std::string target_parameter;
     std::string status_parameter;
@@ -879,7 +922,8 @@ using ActionGraphAction = std::variant<
     ActionApplySpeedModifierDefinition,
     ActionSpawnEntityDefinition,
     ActionApplyPullDefinition,
-    ActionOpenUiDefinition>;
+    ActionOpenUiDefinition,
+    ActionRefillWeaponReserveDefinition>;
 
 struct ActionGraphTemplate {
     std::string id;

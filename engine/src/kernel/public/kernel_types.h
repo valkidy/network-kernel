@@ -13,6 +13,14 @@
  *     stays oldest-first as before -- except that a newcomer no longer evicts
  *     itself. KernelPropDefinition is embedded in KernelEntityTemplateDefinition,
  *     so every managed mirror of that shifts.
+ *     KernelEntityTriggerActionType gained _RefillWeaponReserve, and
+ *     KernelActionDefinition gained reserve_refill_count and
+ *     reserve_refill_percent, appended after pull_strength, read only by it:
+ *     an item's on_item_used refills the user's active weapon's reserve
+ *     magazines. A use that would refill nothing -- no active weapon, or its
+ *     reserve already full -- is rejected (GraphRejected) and costs no item.
+ *     KernelActionDefinition is embedded in every trigger definition, so
+ *     every managed mirror of those shifts.
  * 100: pull strength. KernelActionDefinition gained pull_strength, appended
  *     after spawn_placement and read only by apply_pull: a fixed number
  *     weighed against the target's impulse_resistance, as apply_impulse's
@@ -805,6 +813,10 @@ typedef enum KernelEntityTriggerActionType {
     /* A building's on_activated graph asking for its interface; see
      * KernelEventType_UiOpened. Entity on_activated triggers only. */
     KernelEntityTriggerActionType_OpenUi = 10,
+    /* Refills the target's active weapon's reserve_magazines (its MP
+     * refills), up to the weapon template's own reserve_magazines. Item
+     * on_item_used graphs only. */
+    KernelEntityTriggerActionType_RefillWeaponReserve = 11,
 } KernelEntityTriggerActionType;
 
 typedef enum KernelStatModifierOperation {
@@ -981,6 +993,12 @@ typedef struct KernelActionDefinition {
      * same strictly-greater test apply_impulse uses. It decides who is moved,
      * never how fast: the launch velocity comes from pull_* above. */
     float pull_strength;
+    /* refill_weapon_reserve only; zero on every other action. Exactly one is
+     * non-zero: a fixed number of reserve magazines, or a percentage
+     * (1-100) of the weapon template's reserve_magazines, rounded half up and
+     * at least 1. Either is capped at that template value. */
+    uint16_t reserve_refill_count;
+    uint16_t reserve_refill_percent;
 } KernelActionDefinition;
 
 typedef struct KernelActionTriggerDefinition {

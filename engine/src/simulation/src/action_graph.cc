@@ -486,6 +486,31 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
             });
             continue;
         }
+        if (action.action_type ==
+            KernelEntityTriggerActionType_RefillWeaponReserve) {
+            // An item's use, for the actor using it: no other event has one.
+            if (event_type != TriggerEventType::kItemUsed ||
+                (action.reserve_refill_count == 0u) ==
+                    (action.reserve_refill_percent == 0u) ||
+                action.reserve_refill_percent > 100u ||
+                action.target_source > KernelEntityRefSource_EventInstigator) {
+                return std::nullopt;
+            }
+            const std::string target_name = "target" + suffix;
+            binding.graph.parameters.push_back({target_name, std::monostate{}});
+            binding.graph.actions.push_back(ActionRefillWeaponReserveDefinition{
+                target_name,
+                action.reserve_refill_count,
+                action.reserve_refill_percent,
+                *condition,
+            });
+            binding.parameters.push_back({
+                target_name,
+                EntityRefExpression{static_cast<EntityRefSource>(
+                    action.target_source)},
+            });
+            continue;
+        }
         if (action.action_type == KernelEntityTriggerActionType_OpenUi) {
             // A building's interface opens when someone activates it, and for
             // them: no other event has an actor asking.
@@ -868,6 +893,22 @@ bool validate_action_graph_binding(
             }
             continue;
         }
+        if (const auto* refill =
+                std::get_if<ActionRefillWeaponReserveDefinition>(&action)) {
+            if ((refill->count == 0u) == (refill->percent == 0u) ||
+                refill->percent > 100u) {
+                return fail(
+                    error,
+                    "refill_weapon_reserve needs exactly one of count or "
+                    "percent (1-100)");
+            }
+            if (!validate_action_parameter(
+                    binding, refill->target_parameter, ParameterType::kEntityId,
+                    error)) {
+                return false;
+            }
+            continue;
+        }
         if (const auto* open_ui = std::get_if<ActionOpenUiDefinition>(&action)) {
             if (open_ui->ui_id == 0u) {
                 return fail(error, "open_ui requires a non-zero ui_id");
@@ -1099,6 +1140,28 @@ bool evaluate_action_graph(
                 spawn->quantity,
                 provenance,
                 spawn->placement,
+            });
+            continue;
+        }
+
+        if (const auto* refill =
+                std::get_if<ActionRefillWeaponReserveDefinition>(&action)) {
+            const ActionGraphParameterValue* target_value =
+                find_resolved_parameter(parameters, refill->target_parameter);
+            if (target_value == nullptr ||
+                !std::holds_alternative<EntityIdValue>(*target_value)) {
+                return fail(error, "refill_weapon_reserve action input type mismatch");
+            }
+            const NetId target = std::get<EntityIdValue>(*target_value).value;
+            if (target == 0u) {
+                return fail(error, "refill_weapon_reserve target must not be null");
+            }
+            commands->push_back(ActionRefillWeaponReserveCommand{
+                self,
+                target,
+                refill->count,
+                refill->percent,
+                provenance,
             });
             continue;
         }

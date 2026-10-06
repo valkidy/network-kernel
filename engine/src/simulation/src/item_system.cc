@@ -67,6 +67,13 @@ bool valid_item_graph_action(const KernelActionDefinition& action) {
                     std::numeric_limits<std::uint16_t>::max()) &&
             action.target_source <= KernelEntityRefSource_EventInstigator;
     }
+    if (action.action_type ==
+        KernelEntityTriggerActionType_RefillWeaponReserve) {
+        return (action.reserve_refill_count == 0u) !=
+                (action.reserve_refill_percent == 0u) &&
+            action.reserve_refill_percent <= 100u &&
+            action.target_source <= KernelEntityRefSource_EventInstigator;
+    }
     return false;
 }
 

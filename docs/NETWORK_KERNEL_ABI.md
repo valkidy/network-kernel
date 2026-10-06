@@ -15,7 +15,11 @@ version they do not support. The current native ABI version is
 `KERNEL_ABI_VERSION == 101u`; `kernel_types.h` is the authority. ABI 101
 appended `importance` to `KernelPropDefinition`: a full population group
 never evicts the member just spawned, and evicts the lowest importance first,
-the oldest within it. ABI 100 appended `pull_strength` to
+the oldest within it, and added `KernelEntityTriggerActionType_RefillWeaponReserve`
+with `reserve_refill_count` / `reserve_refill_percent` appended to
+`KernelActionDefinition`: an item's `on_item_used` refills the user's active
+weapon's reserve magazines, and a use that would refill nothing is rejected
+before the item is spent. ABI 100 appended `pull_strength` to
 `KernelActionDefinition`. ABI 98
 appended the tornado shape and motion fields to
 `KernelAreaEffectMechanicsDefinition`. ABI 99 appended `hover_height_meters`

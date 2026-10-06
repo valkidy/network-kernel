@@ -385,6 +385,10 @@ struct ActionGraphActionConfig {
     // open_ui only: which interface the building offers. A literal, like
     // apply_pull's numbers; see KernelActionDefinition::ui_id.
     std::uint32_t ui_id = 0;
+    // refill_weapon_reserve only: exactly one is non-zero. See
+    // KernelActionDefinition::reserve_refill_count.
+    std::uint16_t reserve_refill_count = 0;
+    std::uint16_t reserve_refill_percent = 0;
     // spawn_entity only: a KERNEL_SPAWN_PLACEMENT_*, authored as
     // `placement: exact | clear`.
     std::uint32_t spawn_placement = KERNEL_SPAWN_PLACEMENT_EXACT;

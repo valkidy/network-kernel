@@ -540,6 +540,15 @@ bool execute_action_graph_commands(
             }
             continue;
         }
+        if (const auto* refill =
+                std::get_if<ActionRefillWeaponReserveCommand>(&command)) {
+            if ((refill->count == 0u) == (refill->percent == 0u) ||
+                refill->percent > 100u ||
+                !world.find_entity(refill->target).has_value()) {
+                return false;
+            }
+            continue;
+        }
         if (const auto* pull = std::get_if<ActionApplyPullCommand>(&command)) {
             if (!world.find_entity(pull->target).has_value() ||
                 !pull_is_authorable(
@@ -1214,6 +1223,26 @@ bool execute_action_graph_commands(
                 found->multiplier = modifier->value;
             }
             recompute_speed(world, target);
+            continue;
+        }
+        if (const auto* refill =
+                std::get_if<ActionRefillWeaponReserveCommand>(&command)) {
+            // From what the target holds now, not when the item was used: a
+            // weapon swapped or a reserve filled in between refills nothing
+            // past the template's own count.
+            const entt::entity target = *world.find_entity(refill->target);
+            WeaponState* weapon = world.registry().try_get<WeaponState>(target);
+            const WeaponTuning* tuning =
+                world.registry().try_get<WeaponTuning>(target);
+            if (weapon == nullptr || tuning == nullptr) {
+                continue;
+            }
+            const std::uint16_t amount = weapon_reserve_refill_amount(
+                *weapon, *tuning, refill->count, refill->percent);
+            weapon->reserve_magazines[weapon->active_weapon_slot] =
+                static_cast<std::uint16_t>(
+                    weapon->reserve_magazines[weapon->active_weapon_slot] +
+                    amount);
             continue;
         }
         if (const auto* open_ui = std::get_if<ActionOpenUiCommand>(&command)) {
