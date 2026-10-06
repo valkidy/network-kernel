@@ -129,35 +129,63 @@ cylinder, both copy it.
 | 4 optional colliders | none to break: `TryRebuild` skips a template id of 0, so markers stop drawing their placeholder 0.5 m sphere. The warning rings are separate and stay |
 | 3, 5, 6, 7 | none |
 
-## Migration (after confirmation, new branch)
+## Migration
 
-1. **Cylinder becomes a collider shape.** Add `shape: cylinder` (`radius`,
-   `half_height`) to collider templates; area effects read shape, radius and
-   half height from it; `area_shape` and `half_height` leave the projectile
-   (rejected after the move). Tornado's column moves to collider 39.
-   - `materialize_projectile_collider` carries the cylinder into the
-     collider instance, so the live query reports what gameplay overlaps.
-   - The collider shape enum is ABI (`KernelColliderShapeType`), and so is
-     `Kernel_QueryColliderShapes`' shape view: adding `Cylinder` is an
-     additive ABI change, and the Unity debug draw needs to learn it.
-2. **Beam block.** Reject an authored `beam: {length, radius}` (catalog
-   error) so the oriented box is the only source. The ABI fields stay, unread,
-   to avoid a breaking ABI change; `WEAPON_AUTHORING_GUIDE.md` drops the block.
-3. **One radius rule.** One derivation shared by game_server and kernel, with
-   R4's rejection in front of it: an area collider must be a sphere or a
-   cylinder.
-4. **Optional colliders.** `collider_template` becomes optional for
-   `collision_mask: none` projectiles and for melee hit projectiles, whose
-   shape is the weapon's `melee_collider`. Drop the placeholder references.
-   - Open: melee's cone sits on the weapon, against R3. See below.
-5. **Hitscan projectiles.** Decide what `rifle_shot` / `shotgun_shot` use their
-   segment collider for (not yet traced) and either drop it or document it.
-6. **Unshare** `area_effect_sphere` into one collider per consumer, same size.
-7. **`kind` only.** Rewrite `fire_floor_area` to `kind:`; reject `type:` and
-   `projectile_type:` on projectiles.
+On `claude/rebuild-projectile-collider-data-ownership`. Every step changes the
+catalog hash, so the package's `bundle.bytes` needs a rebuild. No step changes
+a struct, so `KERNEL_ABI_VERSION` stays 100.
 
-Each step changes the catalog hash, so the package's `bundle.bytes` needs a
-rebuild after it. Step 1 also needs the Unity package's ABI version bumped.
+| Step | Status | Commit |
+|---|---|---|
+| 1 Cylinder collider shape | done | 559dd35 |
+| 2 Beam reach from the box | done | 7e8115b |
+| 3 One area radius rule | done | fa0d984 |
+| 4 Optional colliders | done | fa0d984 |
+| 5 Hitscan projectiles' segment collider | done with 4: never read, dropped | fa0d984 |
+| 6 Unshare `area_effect_sphere` | done | dd57d34 |
+| 7 One key for a projectile's kind | **pending a decision** (below) | -- |
+
+1. **Cylinder collider shape.** `KernelColliderShapeType_Cylinder` (6), laid
+   out like a capsule: `shape_params.x` half height, `.y` radius. Damage
+   purpose only, and only under an area effect (kernel and game_server both
+   refuse it elsewhere). game_server derives an area effect's shape, radius
+   and half height from its collider, which must be a sphere or a cylinder
+   with no `center`; `area_shape` and `half_height` on a projectile are
+   refused. A collider field its shape does not read is refused (R4).
+   - **As built, differs from the plan:** the kernel does not cross-check a
+     projectile's area mechanics against its collider. Kernel API tests and
+     non-game_server hosts hand it mechanics directly, so game_server is the
+     one place the reach is derived. Instead, `materialize_projectile_collider`
+     builds an area effect's collider instance from the *runtime* overlap
+     (shape, radius, half height, upright, centred on the field), so the query
+     reports what gameplay runs whatever the source. This also answers open
+     question 3.
+2. **Beam.** `beam.length` = box `half_extents.z × 2`, `beam.radius` =
+   max(x, y), derived by game_server; the collider must be an aabb or oriented
+   box. `beam.length` / `beam.radius` are refused; the block is optional and
+   holds only `lifetime_ticks`. The ABI fields stay, filled from the box.
+3. **Radius.** The kernel's area radius is the collider's radius or the
+   authored mechanics radius; its box half-extent fallback is gone.
+4. **Optional colliders.** Allowed where nothing reads one: a hitscan,
+   shotgun or melee weapon's shot (never spawned) and `collision_mask: none`
+   markers. Anything that collides still needs one. Weapon collider binding
+   may be 0 for a targeted strike. `melee_swing_marker` (collider 20), left
+   unused, is deleted.
+5. **Hitscan shot templates.** Traced: an instant weapon takes only `damage`
+   and `collision_mask` from its shot template and spawns nothing, so the
+   segment collider there was never read. Dropped in step 4.
+6. **Unshared.** `rocket_explosion` uses `rocket_explosion_sphere`
+   (collider 41, same 1 m); `area_effect_sphere` stays `fire_floor_area`'s.
+7. **Projectile kind key -- pending.** The plan said `kind` only; that came
+   from a miscount. Shipped templates use `type:` 15 times and `kind:` 8, and
+   `WEAPON_AUTHORING_GUIDE.md` documents `type`. Pick one, then refuse the
+   other two (`projectile_type` is unused).
+
+### Unity follow-up (not done here)
+
+- A Cylinder case in `NetworkDebugView.DrawColliderShape` and
+  `LineOfSightGeometry.SegmentHitsShape` (an area cylinder should not block
+  sight). The C# enum mirror lives in the package.
 
 ## Open questions
 
@@ -167,9 +195,6 @@ rebuild after it. Step 1 also needs the Unity package's ABI version bumped.
 2. **Client-side geometry copies.** Unity hardcodes three sizes the catalog
    owns (see "What Unity reads"). Should they read the catalog instead, or are
    they accepted as presentation tuning?
-3. **Area hitbox report.** A cylinder area's `Hitbox` is stored as a box
-   (radius, half height, radius). Should `Kernel_QueryColliderShapes` report
-   the cylinder itself once the shape exists?
 
 ## Verification
 
