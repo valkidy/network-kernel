@@ -15,7 +15,7 @@
 # area effect deals the graph's flat amount, so `damage` below is only a label.
 id: 17
 name: frag_blast
-kind: area_effect
+type: area_effect
 collider_template: frag_area_sphere
 damage: 1000
 lifetime_ticks: 30

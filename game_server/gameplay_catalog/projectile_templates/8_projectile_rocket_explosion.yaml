@@ -1,6 +1,6 @@
 id: 8
 name: rocket_explosion
-kind: area_effect
+type: area_effect
 collider_template: rocket_explosion_sphere
 # Read as damage per interval, dealt every damage_interval_ticks.
 damage: 45

@@ -7,7 +7,7 @@
 # with a graph binding submits none of its own, and this graph applies none.
 id: 27
 name: tent_collapse_blast
-kind: area_effect
+type: area_effect
 collider_template: tent_collapse_sphere
 damage: 1
 lifetime_ticks: 30

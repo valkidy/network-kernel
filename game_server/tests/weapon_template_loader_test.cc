@@ -154,7 +154,7 @@ void write_valid_templates(const std::filesystem::path& dir) {
         "      direction: event.direction\n");
     write_file(
         dir.parent_path() / "projectile_templates" / "rocket_explosion.yaml",
-        "id: 8\nname: rocket_explosion\nkind: area_effect\n"
+        "id: 8\nname: rocket_explosion\ntype: area_effect\n"
         "collider_template: area_effect_sphere\n"
         "damage: 45\n"
         "lifetime_ticks: 45\n"
@@ -973,7 +973,7 @@ void area_effect_motion_collision_mask_is_authored() {
 // that would leave it with nothing to do or a client unable to draw it.
 void area_effect_ground_follow_and_cylinder_are_authored() {
     const auto area_template_on = [](const std::string& collider) {
-        return "id: 4\nname: fire_floor_area\nkind: area_effect\n"
+        return "id: 4\nname: fire_floor_area\ntype: area_effect\n"
                "collider_template: " + collider + "\n"
                "damage: 12\n"
         "lifetime_ticks: 6\n"
@@ -1132,7 +1132,7 @@ void a_beams_reach_is_its_colliders_box() {
         write_valid_templates(beam_dir);
         write_file(
             beam_dir.parent_path() / "projectile_templates" / "beam_rifle_beam.yaml",
-            "id: 5\nname: beam_rifle_beam\nkind: beam\ndamage: 1\n"
+            "id: 5\nname: beam_rifle_beam\ntype: beam\ndamage: 1\n"
             "sync_mode: server_snapshot_only\n"
             "collider_template: " + collider + "\n"
             "movement_model: linear\nhit_response: destroy\n"
@@ -1183,6 +1183,23 @@ void a_collider_is_optional_only_where_nothing_reads_it() {
         "damage_shape: none\nspeed: 0.0\ncollision_mask: none\n"
         "sync_mode: server_snapshot_only\nlifetime_ticks: 20\n");
     require(!load_fails(marker_dir));
+}
+
+// A projectile says what it is with `type`; the old aliases are refused.
+void a_projectiles_kind_is_type_only() {
+    const auto load_marker = [](const std::string& name, const std::string& key) {
+        const std::filesystem::path dir = tmp_dir(name);
+        write_valid_templates(dir);
+        write_file(
+            dir.parent_path() / "projectile_templates" / "marker.yaml",
+            "id: 99\nname: marker\n" + key + ": standard\ndamage: 0\n"
+            "damage_shape: none\nspeed: 0.0\ncollision_mask: none\n"
+            "sync_mode: server_snapshot_only\nlifetime_ticks: 20\n");
+        return dir;
+    };
+    require(!load_fails(load_marker("kind_type", "type")));
+    require(load_fails(load_marker("kind_kind", "kind")));
+    require(load_fails(load_marker("kind_projectile_type", "projectile_type")));
 }
 
 // A collider field its shape does not read is refused, not dropped.
@@ -1725,7 +1742,7 @@ void derived_replication_is_authored() {
         "strike_marker");
     write_file(
         rocket_dir.parent_path() / "projectile_templates" / "rocket_explosion.yaml",
-        "id: 8\nname: rocket_explosion\nkind: area_effect\n"
+        "id: 8\nname: rocket_explosion\ntype: area_effect\n"
         "collider_template: area_effect_sphere\n"
         "damage: 45\nlifetime_ticks: 45\n"
         "damage_behavior:\n  type: area_interval\n"
@@ -2152,6 +2169,7 @@ int main() {
     collider_fields_the_shape_does_not_read_are_rejected();
     a_beams_reach_is_its_colliders_box();
     a_collider_is_optional_only_where_nothing_reads_it();
+    a_projectiles_kind_is_type_only();
     catalog_file_loads_colliders();
     return 0;
 }

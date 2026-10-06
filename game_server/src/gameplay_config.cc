@@ -6126,9 +6126,16 @@ ProjectileTemplateConfig projectile_template_from_yaml(
             "projectile template must not set both collision_query and collision_query_mode: " +
             projectile_template.name);
     }
-    mechanics.projectile_type = projectile_type_from_yaml(
-        node["projectile_type"] ? node["projectile_type"]
-                                : (node["type"] ? node["type"] : node["kind"]));
+    // One key for what a projectile is. `kind` and `projectile_type` were
+    // read as aliases of it; a second spelling is a second place to look.
+    for (const char* key : {"kind", "projectile_type"}) {
+        if (node[key]) {
+            throw std::runtime_error(
+                std::string("a projectile's kind is `type`, not `") + key +
+                "`: " + projectile_template.name);
+        }
+    }
+    mechanics.projectile_type = projectile_type_from_yaml(node["type"]);
     // Optional: left out, the template has no shape, which validation allows
     // only where nothing would read one.
     mechanics.collider_template_id = node["collider_template"]

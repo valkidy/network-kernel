@@ -14,7 +14,7 @@
 # submits no damage of its own, and the graph deals none.
 id: 29
 name: tornado
-kind: area_effect
+type: area_effect
 collider_template: tornado_column
 damage: 1
 speed: 6.0

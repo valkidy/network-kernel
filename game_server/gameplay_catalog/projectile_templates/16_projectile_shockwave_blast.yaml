@@ -8,7 +8,7 @@
 # submits no damage of its own, so the graph's amount is the real number.
 id: 16
 name: shockwave_blast
-kind: area_effect
+type: area_effect
 collider_template: shockwave_area_sphere
 damage: 20
 lifetime_ticks: 30

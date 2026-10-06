@@ -143,7 +143,7 @@ a struct, so `KERNEL_ABI_VERSION` stays 100.
 | 4 Optional colliders | done | fa0d984 |
 | 5 Hitscan projectiles' segment collider | done with 4: never read, dropped | fa0d984 |
 | 6 Unshare `area_effect_sphere` | done | dd57d34 |
-| 7 One key for a projectile's kind | **pending a decision** (below) | -- |
+| 7 One key for a projectile's kind: `type` | done | (this commit) |
 
 1. **Cylinder collider shape.** `KernelColliderShapeType_Cylinder` (6), laid
    out like a capsule: `shape_params.x` half height, `.y` radius. Damage
@@ -176,10 +176,9 @@ a struct, so `KERNEL_ABI_VERSION` stays 100.
    segment collider there was never read. Dropped in step 4.
 6. **Unshared.** `rocket_explosion` uses `rocket_explosion_sphere`
    (collider 41, same 1 m); `area_effect_sphere` stays `fire_floor_area`'s.
-7. **Projectile kind key -- pending.** The plan said `kind` only; that came
-   from a miscount. Shipped templates use `type:` 15 times and `kind:` 8, and
-   `WEAPON_AUTHORING_GUIDE.md` documents `type`. Pick one, then refuse the
-   other two (`projectile_type` is unused).
+7. **`type` only.** Decided 2026-10-06: `type`, the key the guide documents
+   and 15 of the shipped templates used. `kind` (8 templates, now rewritten)
+   and `projectile_type` (unused) are refused with a message naming `type`.
 
 ### Unity follow-up (not done here)
 
