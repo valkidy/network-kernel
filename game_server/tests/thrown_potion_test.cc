@@ -1,44 +1,27 @@
-// What a fungible_potion does when it is authored throwable, today.
+// A thrown fungible_potion (design #5, 2026-10-07): hitting an actor heals it
+// and uses the potion up; landing leaves a potion on the ground that can be
+// picked up again.
 //
-// The design ask (2026-10-07): a thrown potion that lands should be a potion on
-// the ground that can be picked back up; one that hits an actor should heal it.
-// This pins what the current runtime actually does with the two obvious ways
-// of authoring that, so the kernel change it needs can be scoped against
-// measured behaviour instead of a reading of the code.
+// The shipped catalog does this with no kernel change. Prop 218 `potion`
+// binds on_collision {actor | terrain | static_obstacle} to
+// action_heal_target_and_consume_self_at_collision, whose two actions are both
+// `when: event.has_target` -- an actor contact has a target, a landing has
+// none.
 //
-// The shipped catalog is copied and two files are overwritten: the item gets
-// [consumable, pickupable, throwable] and an item-backed prop, as the shipped
-// bottles have. The prop comes in two variants:
+// Measured before that graph existed, on main 78d9350 (P0, 12795b3):
 //
-//   plain  -- no triggers at all.
-//   heal   -- on_collision {actor | terrain | static_obstacle} heals
-//             event.target by 30, the natural first try at "heal on hit".
+//   - With no on_collision at all the potion never landed: a thrown prop is
+//     swept against the world only through that binding, so it fell through
+//     the ground for good (y < -40), could not be picked up, and the item was
+//     lost. The catalog now refuses that authoring; the first case below
+//     checks the refusal.
+//   - With a plain heal-the-target graph, a hit healed the ally but the potion
+//     flew on through it, landed and could be picked up again -- a reusable
+//     heal. The self-damage now ends it on the hit.
 //
-// Each variant runs two throws over the shipped ground plane:
-//
-//   at_ally   -- level, at a wounded player 4 m away.
-//   at_ground -- 40 degrees down, nobody near, then the thrower picks it up.
-//
-// The thrower is wounded too, so a heal landing on the wrong actor shows.
-//
-// Measured 2026-10-07 on main (78d9350); the requires below pin it:
-//
-//   Both variants load. The item side accepts the triple as authored.
-//
-//   plain -- the potion never lands. A thrown prop is swept against the world
-//     only if it has an on_collision binding, so this one falls through the
-//     ground plane and keeps falling (y < -40 after 2-3 s), InFlight forever.
-//     It cannot be picked up (InvalidContext) and the item is lost.
-//
-//   heal  -- hitting the ally heals it (50 -> 80) and the potion flies on
-//     through it, lands on the ground past it, and can be picked up again.
-//     That is a reusable heal: throw, walk over, pick up, throw. A throw at
-//     the ground lands, fires the same graph with target 0 (nothing to heal),
-//     and picks back up, merging into the stack. The thrower is never healed.
-//
-// What the design wants -- heal and be used up on an actor, stay a potion on
-// the ground -- needs the kernel to tell those two contacts apart; one
-// on_collision binding serves both today.
+// Two throws over the shipped ground plane: level at a wounded player 4 m
+// away, and 40 degrees down with nobody near, then a pickup. The thrower is
+// wounded too, so a heal landing on the wrong actor shows.
 
 #include <cmath>
 #include <cstdint>
@@ -90,30 +73,6 @@ void write_file(const fs::path& path, const std::string& text) {
     file << text;
 }
 
-const char* const kThrowablePotionItem = R"(id: 3002
-name: fungible_potion
-mode: fungible
-max_stack: 5
-capabilities: [consumable, pickupable, throwable]
-entity_template: potion
-world_interaction:
-  range: 3.0
-  line_of_sight_required: false
-throw:
-  mode: identity_preserving
-  trajectory_projectile: grenade_shell
-use:
-  quantity_cost: 1
-  cooldown_ticks: 0
-  destroy_when_empty: true
-triggers:
-  on_item_used:
-    action_graph: action_apply_health_change_at_item_used
-    parameters:
-      target: event.target
-      amount: 30
-)";
-
 const char* const kPlainPotionProp = R"(id: 218
 name: potion
 entity_type: prop
@@ -121,23 +80,9 @@ physics:
   collider_template: collision_damage_prop_hitbox
 )";
 
-const char* const kHealPotionProp = R"(id: 218
-name: potion
-entity_type: prop
-physics:
-  collider_template: collision_damage_prop_hitbox
-triggers:
-  on_collision:
-    collision_mask: actor | terrain | static_obstacle
-    action_graph: action_apply_health_change_at_item_used
-    parameters:
-      target: event.target
-      amount: 30
-)";
-
-// The shipped catalog with the potion swapped for a throwable one. Returns the
-// load error, or "" with *out filled.
-std::string load_variant(
+// The shipped catalog with the potion's prop overwritten. Returns the load
+// error, or "" with *out filled.
+std::string load_with_potion_prop(
     const std::string& name,
     const char* prop_yaml,
     gs::GameServerGameplayConfig* out) {
@@ -146,9 +91,6 @@ std::string load_variant(
     const fs::path root = fs::path(tmp) / ("catalog_" + name);
     fs::remove_all(root);
     fs::copy(runfiles_catalog(), root, fs::copy_options::recursive);
-    write_file(
-        root / "item_templates" / "3002_fungible_potion.yaml",
-        kThrowablePotionItem);
     write_file(root / "entity_templates" / "218_prop_potion.yaml", prop_yaml);
     try {
         *out = gs::load_gameplay_config_from_catalog_file(
@@ -295,6 +237,7 @@ struct Flight {
     KernelVec3 end_position{};
     std::uint16_t thrower_hp = 0;
     std::uint16_t ally_hp = 0;
+    std::uint8_t item_residency_at_end = 0;
 };
 
 Flight throw_and_watch(Arena* arena, const KernelVec3& direction, int ticks) {
@@ -336,6 +279,7 @@ Flight throw_and_watch(Arena* arena, const KernelVec3& direction, int ticks) {
     flight.end_position = prop.position;
     flight.thrower_hp = entity_state(arena->kernel, arena->thrower).hp;
     flight.ally_hp = arena->ally == 0 ? 0 : entity_state(arena->kernel, arena->ally).hp;
+    flight.item_residency_at_end = item_view(arena->kernel, flight.item).residency;
     return flight;
 }
 
@@ -417,55 +361,38 @@ VariantResult run_variant(
 }  // namespace
 
 int main() {
+    // Without terrain in on_collision a throw never lands: refused at load.
+    gs::GameServerGameplayConfig refused;
+    const std::string error = load_with_potion_prop("plain", kPlainPotionProp, &refused);
+    std::fprintf(stderr, "plain prop load: %s\n", error.c_str());
+    require(error.find("never lands") != std::string::npos);
+
+    const gs::GameServerGameplayConfig config = gs::default_game_server_gameplay_config();
     const std::vector<std::uint8_t> scene = read_ground_scene();
+    const VariantResult shipped = run_variant("shipped", config, scene, 8052);
 
-    gs::GameServerGameplayConfig plain_config;
-    const std::string plain_error = load_variant("plain", kPlainPotionProp, &plain_config);
-    std::fprintf(stderr, "plain load: %s\n", plain_error.empty() ? "ok" : plain_error.c_str());
-    gs::GameServerGameplayConfig heal_config;
-    const std::string heal_error = load_variant("heal", kHealPotionProp, &heal_config);
-    std::fprintf(stderr, "heal load: %s\n", heal_error.empty() ? "ok" : heal_error.c_str());
+    // At the ally: healed once, and the potion is used up on the hit -- it
+    // does not fly on and land.
+    require(shipped.at_ally.throw_outcome.status == KernelGameplayRequestStatus_Committed);
+    require(shipped.at_ally.ally_changed_tick > 0);
+    require(shipped.at_ally.ally_hp == kWoundedHp + 30u);
+    require(shipped.at_ally.placed_tick < 0);
+    require(!shipped.at_ally.prop_alive_at_end);
+    require(shipped.at_ally.item_residency_at_end == KernelItemResidency_Terminal);
+    require(shipped.at_ally.thrower_hp == kWoundedHp);
 
-    require(plain_error.empty());
-    require(heal_error.empty());
+    // At the ground: lands, heals nobody, stays a potion, and goes back into
+    // the stack.
+    require(shipped.at_ground.throw_outcome.status == KernelGameplayRequestStatus_Committed);
+    require(shipped.at_ground.placed_tick > 0);
+    require(std::fabs(shipped.at_ground.placed_at.y) < 0.5f);
+    require(shipped.at_ground.prop_alive_at_end);
+    require(shipped.at_ground.mode_at_end == KernelWorldItemMode_Placed);
+    require(shipped.at_ground.thrower_hp == kWoundedHp);
+    require(shipped.stack_quantity_after_throw == 1u);
+    require(shipped.pickup.status == KernelGameplayRequestStatus_Committed);
+    require(shipped.stack_quantity_after_pickup == 2u);
 
-    const VariantResult plain = run_variant("plain", plain_config, scene, 8052);
-    for (const Flight* flight : {&plain.at_ally, &plain.at_ground}) {
-        require(flight->throw_outcome.status == KernelGameplayRequestStatus_Committed);
-        // Never placed: it fell through the ground and is still falling.
-        require(flight->placed_tick < 0);
-        require(flight->prop_alive_at_end);
-        require(flight->mode_at_end == KernelWorldItemMode_InFlight);
-        require(flight->end_position.y < -10.0f);
-        require(flight->thrower_hp == kWoundedHp);
-    }
-    require(plain.at_ally.ally_changed_tick < 0);
-    require(plain.at_ally.ally_hp == kWoundedHp);
-    require(plain.pickup.status == KernelGameplayRequestStatus_Rejected);
-    require(plain.pickup.rejection_reason == KernelGameplayRequestRejection_InvalidContext);
-    require(plain.stack_quantity_after_throw == 1u);
-    require(plain.stack_quantity_after_pickup == 1u);
-
-    const VariantResult heal = run_variant("heal", heal_config, scene, 8054);
-    // At the ally: healed by the flight, and the potion survives it ...
-    require(heal.at_ally.throw_outcome.status == KernelGameplayRequestStatus_Committed);
-    require(heal.at_ally.ally_changed_tick > 0);
-    require(heal.at_ally.ally_hp == kWoundedHp + 30u);
-    require(heal.at_ally.prop_alive_after_ally_hit);
-    // ... flies on through, and lands on the ground beyond the ally.
-    require(heal.at_ally.placed_tick > heal.at_ally.ally_changed_tick);
-    require(heal.at_ally.placed_at.x > 4.0f);
-    require(std::fabs(heal.at_ally.placed_at.y) < 0.5f);
-    require(heal.at_ally.prop_alive_at_end);
-    require(heal.at_ally.mode_at_end == KernelWorldItemMode_Placed);
-    require(heal.at_ally.thrower_hp == kWoundedHp);
-    // At the ground: lands, heals nobody, and goes back into the stack.
-    require(heal.at_ground.placed_tick > 0);
-    require(std::fabs(heal.at_ground.placed_at.y) < 0.5f);
-    require(heal.at_ground.thrower_hp == kWoundedHp);
-    require(heal.stack_quantity_after_throw == 1u);
-    require(heal.pickup.status == KernelGameplayRequestStatus_Committed);
-    require(heal.stack_quantity_after_pickup == 2u);
-    std::puts("thrown_potion_probe_test passed");
+    std::puts("thrown_potion_test passed");
     return 0;
 }

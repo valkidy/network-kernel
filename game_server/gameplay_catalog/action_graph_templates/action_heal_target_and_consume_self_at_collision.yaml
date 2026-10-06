@@ -1,0 +1,25 @@
+# A thrown potion: hitting an actor heals it and uses the potion up; landing
+# on the ground does nothing, so the potion lies there to be picked up again.
+#
+# Both contacts fire the same on_collision binding. The landing one has no
+# target, and `when: event.has_target` is what tells them apart -- without it
+# the self-damage would break the potion on the ground too.
+#
+# The self-damage is what stops a hit potion flying on through the actor and
+# landing, which would make one potion a heal that can be thrown again and
+# again (measured before this graph, thrown_potion_test).
+id: action_heal_target_and_consume_self_at_collision
+parameters:
+  source: null
+  target: null
+  amount: 1
+  self_damage: 1
+actions:
+  - type: apply_health_change
+    target: params.target
+    amount: params.amount
+    when: event.has_target
+  - type: apply_damage
+    target: params.source
+    amount: params.self_damage
+    when: event.has_target

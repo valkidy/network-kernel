@@ -9432,6 +9432,29 @@ std::vector<std::string> validate_gameplay_config(
             errors.push_back(
                 "item-backed prop must not declare lifecycle or population");
         }
+        // A thrown prop is only ever swept against the world through its
+        // on_collision binding. Without terrain in that mask nothing lands
+        // it: it falls through the ground for good, cannot be picked up, and
+        // the item is lost (measured, thrown_potion_test).
+        if (entity_template != config.entity_templates.end() &&
+            item.definition.throw_policy.mode ==
+                KernelItemThrowMode_IdentityPreserving &&
+            (entity_template->collision_trigger_mask &
+             KERNEL_COLLISION_LAYER_TERRAIN) == 0u) {
+            errors.push_back(
+                "throwable item prop needs on_collision with terrain in its "
+                "collision_mask, or a throw never lands: " + item.name);
+        }
+    }
+    for (const EntityTemplateConfig& entity_template : config.entity_templates) {
+        if (entity_template.prop.throw_trajectory_projectile_template_id != 0u &&
+            (entity_template.collision_trigger_mask &
+             KERNEL_COLLISION_LAYER_TERRAIN) == 0u) {
+            errors.push_back(
+                "throwable prop needs on_collision with terrain in its "
+                "collision_mask, or a throw never lands: " +
+                entity_template.name);
+        }
     }
     const StaticCollisionSceneConfig& static_scene =
         config.static_collision_scene;

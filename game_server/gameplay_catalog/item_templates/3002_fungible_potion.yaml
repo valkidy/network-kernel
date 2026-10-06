@@ -2,9 +2,14 @@ id: 3002
 name: fungible_potion
 mode: fungible
 max_stack: 5
-capabilities: [consumable]
+capabilities: [consumable, pickupable, throwable]
+entity_template: potion
+world_interaction:
+  range: 3.0
+  line_of_sight_required: false
 throw:
-  mode: none
+  mode: identity_preserving
+  trajectory_projectile: grenade_shell
 use:
   quantity_cost: 1
   cooldown_ticks: 0

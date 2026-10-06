@@ -702,8 +702,8 @@ cc_test(
 )
 
 cc_test(
-    name = "thrown_potion_probe_test",
-    srcs = ["tests/thrown_potion_probe_test.cc"],
+    name = "thrown_potion_test",
+    srcs = ["tests/thrown_potion_test.cc"],
     data = glob([
         "gameplay_catalog/action_graph_templates/*.yaml",
         "gameplay_catalog/action_templates/*.yaml",

@@ -1,0 +1,24 @@
+# fungible_potion in the world: dropped, placed, or thrown.
+#
+# Thrown at an actor it heals it and is used up; on the ground it stays a
+# potion and can be picked up again. `actor` is every side, so a potion thrown
+# at an enemy heals the enemy -- narrow the mask to `player_side` to keep it
+# friendly. terrain is required: a thrown prop lands only through this
+# binding, and the catalog refuses a throwable prop without it.
+id: 218
+name: potion
+entity_type: prop
+health:
+  hp: 1
+  max_hp: 1
+physics:
+  collider_template: collision_damage_prop_hitbox
+triggers:
+  on_collision:
+    collision_mask: actor | terrain | static_obstacle
+    action_graph: action_heal_target_and_consume_self_at_collision
+    parameters:
+      source: self
+      target: event.target
+      amount: 30
+      self_damage: 1
