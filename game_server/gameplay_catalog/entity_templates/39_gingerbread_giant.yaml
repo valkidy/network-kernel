@@ -19,7 +19,7 @@ movement:
   max_yaw_degrees_per_second: 45.0
   collision_mask: terrain
 # The entity origin is the lowest bind foot, not SIM_Root: this rig's root sits
-# at the body, 9.13 m above the feet, and locomotion seats the pose by the bind
+# at the body, 8.92 m above the feet, and locomotion seats the pose by the bind
 # foot height. The GEO_* boxes span -1.6 m (the foot boxes) to 19.7 m above it
 # and 7.9 m either side.
 hitbox:
@@ -78,13 +78,12 @@ locomotion:
   body:
     follow_speed: 10.0
     slope_alignment: 0.0
-    # The legs are authored nearly straight (99.8% rest extension, 0.01 m of
-    # slack), so without a crouch every foothold below the body plane clamps
-    # the IK. 0.85 m bends them to ~86.5%, where biped_actor and
-    # quadruped_actor walk after their own crouch.
-    stance_crouch_meters: 0.85
+    # The rest pose bends the knees 30 degrees forward (96.5% rest extension;
+    # see the rig.yaml). 0.64 m of crouch takes them on to ~86%, where
+    # biped_actor and quadruped_actor walk after their own crouch.
+    stance_crouch_meters: 0.64
   leg_defaults:
-    step_height_meters: 0.18
+    step_height_meters: 3.18
     max_reach_ratio: 0.99
   legs:
     - id: leg0
