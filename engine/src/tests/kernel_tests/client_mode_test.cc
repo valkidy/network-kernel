@@ -5549,13 +5549,14 @@ void client_weapon_state_charges_unacknowledged_predicted_spends() {
     require(state.ammo == 5u);
     require((state.flags & KERNEL_LOCAL_WEAPON_STATE_FLAG_RELOADING) == 0u);
 
-    // An own record without the block acknowledges nothing and changes nothing.
+    // A snapshot part that does not carry the own record says nothing about
+    // the magazine: the own record rides exactly one part of a tick.
     client.record_predicted_ammo_spend(8, 72, 3, 2);
-    network_example::WorldSnapshot bare = snapshot;
-    bare.header.server_tick = 104;
-    bare.header.last_processed_input_seq = 9;
-    bare.entities[0].has_owner_weapon_state = false;
-    client.apply_authoritative_local_weapon(bare);
+    network_example::WorldSnapshot other_part = snapshot;
+    other_part.header.server_tick = 104;
+    other_part.header.last_processed_input_seq = 9;
+    other_part.entities.clear();
+    client.apply_authoritative_local_weapon(other_part);
     require(client.local_weapon_state(&state));
     require(state.authoritative_tick == 102u);
     require(state.ammo == 3u);
@@ -5564,6 +5565,25 @@ void client_weapon_state_charges_unacknowledged_predicted_spends() {
     client.record_predicted_ammo_spend(9, 72, 3, 10);
     require(client.local_weapon_state(&state));
     require(state.ammo == 0u);
+
+    // The own record without the block is the server saying the player holds
+    // no weapon (an empty loadout). The last weapon's magazine must not linger,
+    // nor the spends owed against it.
+    network_example::WorldSnapshot unarmed = snapshot;
+    unarmed.header.server_tick = 106;
+    unarmed.header.last_processed_input_seq = 9;
+    unarmed.entities[0].has_owner_weapon_state = false;
+    client.apply_authoritative_local_weapon(unarmed);
+    require(!client.local_weapon_state(&state));
+    require(client.predicted_ammo_spends_.empty());
+    // Armed again: reported from the new record alone.
+    snapshot.header.server_tick = 108;
+    snapshot.header.last_processed_input_seq = 9;
+    snapshot.entities[0].active_weapon_ammo = 2;
+    client.apply_authoritative_local_weapon(snapshot);
+    require(client.local_weapon_state(&state));
+    require(state.authoritative_ammo == 2u);
+    require(state.ammo == 2u);
 
     KernelLocalWeaponState too_small{};
     too_small.struct_size = sizeof(too_small) - 1u;

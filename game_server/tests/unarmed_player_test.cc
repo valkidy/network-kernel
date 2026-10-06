@@ -1,33 +1,20 @@
-// What a player with no weapon at all does when the client still sends Fire.
+// A player with no weapon at all: allowed (design D18, 2026-10-07), and able
+// to do nothing but play on items.
 //
-// The design ask (2026-10-07) is to let a player carry no weapon and play on
-// items alone. A YAML loadout cannot say that -- the loader refuses an empty
-// `weapon_slots` -- so the only way to get there today is at runtime, the way
-// a future drop-your-last-weapon would: Kernel_ServerSetEntityCombatState with
-// weapon_slot_count 0.
+// Two doors used to refuse an empty loadout -- the YAML loader (1-4
+// weapon_slots) and Kernel_ServerSetEntityCombatState (weapon_slot_count 0).
+// Both now let a player through; an agent still needs a weapon.
 //
-// The worry is weapon id 0. WeaponState answers "no active weapon" with id 0,
-// and id 0 is also the shipped Rifle. A client with no weapon still sends a
-// KernelPlayerInput whose selected_weapon defaults to 0. If anything resolves
-// that against the catalog instead of the loadout, an unarmed player fires a
-// rifle.
+// The worry with no weapon is weapon id 0. WeaponState answers "no active
+// weapon" with id 0, and id 0 is also the shipped Rifle; a client with nothing
+// selected still sends selected_weapon 0. Measured on main before the change
+// and pinned here: the loadout, not the catalog or the entity's mechanics,
+// decides what can fire. A weapon id not in the loadout -- 0, or a dropped
+// weapon's -- does nothing, even while its mechanics are still on the entity.
 //
-// The control fires the rifle while it is still in the loadout and shows a
-// grunt 8 m down the aim losing hp -- so an unharmed grunt later means "the
-// shot did not happen", not "the shot missed".
-//
-// Measured 2026-10-07 on main (78d9350); the requires below pin it:
-//
-//   An empty loadout cannot be reached. The YAML loader requires 1-4
-//   weapon_slots, and Kernel_ServerSetEntityCombatState refuses
-//   weapon_slot_count 0 and leaves the old loadout in place.
-//
-//   The id-0 worry does not bite on the fire path. With the staff as the only
-//   weapon, Fire with selected_weapon 0 does nothing -- no shot, no ammo, no
-//   action -- even while the rifle's mechanics are still on the entity, and
-//   the same for a dropped weapon's id (14) and for Reload. The loadout, not
-//   the catalog or the entity's mechanics, decides what can fire. The staff
-//   still fires.
+// The controls: the rifle hits a grunt 8 m down the aim while it is still in
+// the loadout, and the staff fires before and after the unarmed stretch -- so
+// an unharmed grunt means "the shot did not happen", not "the shot missed".
 //
 // Weapon mechanics are per entity: game_server sets each loadout weapon's with
 // Kernel_ServerSetEntityWeaponMechanics. A player made with
@@ -40,6 +27,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -65,14 +53,18 @@ constexpr float kTickSeconds = 1.0f / 30.0f;
 constexpr std::uint8_t kRifle = 0;
 constexpr std::uint8_t kMeteorStaff = 13;
 
-std::vector<std::uint8_t> read_ground_scene() {
+std::filesystem::path catalog_root() {
     const char* test_srcdir = std::getenv("TEST_SRCDIR");
     const char* test_workspace = std::getenv("TEST_WORKSPACE");
     require(test_srcdir != nullptr);
     require(test_workspace != nullptr);
-    const std::filesystem::path path = std::filesystem::path(test_srcdir) /
-        test_workspace / "game_server" / "gameplay_catalog" / "mesh_assets" /
-        "jolt" / "plane_200x200.joltmesh";
+    return std::filesystem::path(test_srcdir) / test_workspace / "game_server" /
+        "gameplay_catalog";
+}
+
+std::vector<std::uint8_t> read_ground_scene() {
+    const std::filesystem::path path =
+        catalog_root() / "mesh_assets" / "jolt" / "plane_200x200.joltmesh";
     std::ifstream file(path, std::ios::binary);
     require(file.good());
     return std::vector<std::uint8_t>(
@@ -170,6 +162,88 @@ void print_state(const char* label, Arena& arena) {
         me.action.action_template_id);
 }
 
+// The shipped catalog with one template's weapon_slots emptied. Returns the
+// load error, or "" with *out filled.
+std::string load_with_empty_weapon_slots(
+    const std::string& template_file,
+    gs::GameServerGameplayConfig* out) {
+    const char* tmp = std::getenv("TEST_TMPDIR");
+    require(tmp != nullptr);
+    const std::filesystem::path source = catalog_root();
+    const std::filesystem::path root =
+        std::filesystem::path(tmp) / ("catalog_" + template_file);
+    std::filesystem::remove_all(root);
+    std::filesystem::copy(source, root, std::filesystem::copy_options::recursive);
+    const std::filesystem::path path = root / "entity_templates" / template_file;
+    std::ifstream in(path);
+    require(in.good());
+    std::string text;
+    std::string line;
+    bool in_slots = false;
+    bool replaced = false;
+    while (std::getline(in, line)) {
+        if (line.rfind("weapon_slots:", 0) == 0) {
+            text += "weapon_slots: []\n";
+            in_slots = true;
+            replaced = true;
+            continue;
+        }
+        if (in_slots && line.rfind("  - ", 0) == 0) continue;
+        in_slots = false;
+        text += line + "\n";
+    }
+    in.close();
+    require(replaced);
+    std::ofstream(path, std::ios::trunc) << text;
+    try {
+        *out = gs::load_gameplay_config_from_catalog_file(
+            (root / "gameplay_catalog.yaml").string());
+    } catch (const std::exception& error) {
+        return error.what();
+    }
+    return "";
+}
+
+void loadout_yaml_allows_an_unarmed_player_only() {
+    gs::GameServerGameplayConfig unarmed;
+    const std::string player_error =
+        load_with_empty_weapon_slots("1_player.yaml", &unarmed);
+    std::fprintf(stderr, "player weapon_slots []: %s\n",
+                 player_error.empty() ? "ok" : player_error.c_str());
+    require(player_error.empty());
+    const KernelCombatStateDefinition combat = gs::make_player_combat_state(unarmed);
+    require(combat.weapon_slot_count == 0u);
+    require(combat.active_weapon_slot == 0u);
+    // The kernel takes the catalog, and a player spawned the way game_server
+    // spawns one takes the empty loadout.
+    {
+        KernelConfig kernel_config{};
+        kernel_config.mode = KernelMode_DedicatedServer;
+        kernel_config.tick.server_tick_rate = 30;
+        kernel_config.tick.snapshot_rate = 15;
+        kernel_config.max_events = 256;
+        kernel_config.max_render_states = 64;
+        KernelHandle* kernel = Kernel_Create(&kernel_config);
+        require(kernel != nullptr);
+        require(gs::load_kernel_gameplay_catalog(kernel, unarmed));
+        require(Kernel_StartDedicatedServer(kernel, 8057));
+        const std::uint32_t player = spawn_actor(
+            kernel, unarmed.player.actor_template_id, gs::kActorTypePlayer, 0u,
+            KernelVec3{0.0f, 1.0f, 0.0f});
+        KernelCombatStateDefinition spawn_combat = combat;
+        require(Kernel_ServerSetEntityCombatState(kernel, player, &spawn_combat));
+        Kernel_Update(kernel, kTickSeconds);
+        require(entity_state(kernel, player).weapon_slot_count == 0u);
+        Kernel_Destroy(kernel);
+    }
+
+    gs::GameServerGameplayConfig ignored;
+    const std::string agent_error =
+        load_with_empty_weapon_slots("26_chaser_grunt.yaml", &ignored);
+    std::fprintf(stderr, "chaser_grunt weapon_slots []: %s\n", agent_error.c_str());
+    require(agent_error.find("weapon_slots count must be 1 to 4") != std::string::npos);
+}
+
 }  // namespace
 
 int main() {
@@ -225,7 +299,6 @@ int main() {
     const std::uint16_t grunt_after_control = entity_state(arena.kernel, arena.grunt).hp;
     require(grunt_after_control < grunt_full);
 
-    // Unarm: nothing in any slot.
     KernelCombatStateDefinition combat = gs::make_player_combat_state(config);
     combat.hp = entity_state(arena.kernel, arena.player).hp;
     combat.active_weapon_slot = 0;
@@ -234,14 +307,6 @@ int main() {
         combat.ammo[slot] = 0;
         combat.reserve_magazines[slot] = 0;
     }
-    combat.weapon_slot_count = 0;
-    const bool unarm_accepted =
-        Kernel_ServerSetEntityCombatState(arena.kernel, arena.player, &combat);
-    arena.tick();
-    std::fprintf(stderr, "set 0 slots accepted=%d\n", unarm_accepted ? 1 : 0);
-    print_state("after set 0 slots", arena);
-    require(!unarm_accepted);
-    require(entity_state(arena.kernel, arena.player).weapon_slot_count == 4u);
 
     // The closest legal thing: the staff alone. The rifle's mechanics are
     // still on the entity, as they would be after a drop that only rewrote
@@ -296,12 +361,65 @@ int main() {
     print_state("after 60 idle ticks", arena);
     const std::uint16_t grunt_end = entity_state(arena.kernel, arena.grunt).hp;
 
+    // And its strike lands.
+    require(grunt_end < grunt_after_cleared);
+
+    // Unarmed: nothing in any slot.
+    combat.weapon_slot_count = 0;
+    combat.active_weapon_slot = 0;
+    combat.weapon_ids[0] = 0;
+    combat.ammo[0] = 0;
+    combat.reserve_magazines[0] = 0;
+    require(Kernel_ServerSetEntityCombatState(arena.kernel, arena.player, &combat));
+    arena.tick();
+    print_state("unarmed", arena);
+    require(entity_state(arena.kernel, arena.player).weapon_slot_count == 0u);
+    // An active slot that names a slot it does not have is still refused.
+    combat.active_weapon_slot = 1;
+    require(!Kernel_ServerSetEntityCombatState(arena.kernel, arena.player, &combat));
+    combat.active_weapon_slot = 0;
+    const std::uint16_t grunt_unarmed = entity_state(arena.kernel, arena.grunt).hp;
+    const auto still_unarmed = [&](const char* label) {
+        const KernelServerEntityState me = entity_state(arena.kernel, arena.player);
+        if (me.weapon_slot_count != 0u || me.action.action_template_id != 0u ||
+            entity_state(arena.kernel, arena.grunt).hp != grunt_unarmed) {
+            std::fprintf(stderr, "changed after: %s\n", label);
+            require(false);
+        }
+    };
+    // The rifle's mechanics are back on the entity, so only the empty loadout
+    // stands between selected_weapon 0 and a rifle shot.
+    {
+        KernelWeaponMechanicsDefinition mechanics = config.weapons.definitions[kRifle];
+        require(Kernel_ServerSetEntityWeaponMechanics(arena.kernel, arena.player, &mechanics));
+    }
+    arena.hold(kRifle, KernelActionBinding_PrimaryFire, 9);
+    print_state("unarmed, fire id 0", arena);
+    still_unarmed("unarmed fire id 0");
+    arena.hold(kMeteorStaff, KernelActionBinding_PrimaryFire, 2);
+    still_unarmed("unarmed fire id 13");
+    arena.hold(kRifle, KernelActionBinding_Reload, 1);
+    still_unarmed("unarmed reload");
+    arena.tick(60);
+    still_unarmed("unarmed, 60 idle ticks");
+
+    // Armed again, the staff fires.
+    combat.weapon_slot_count = 1;
+    combat.weapon_ids[0] = kMeteorStaff;
+    combat.ammo[0] = 2;
+    combat.reserve_magazines[0] = 6;
+    require(Kernel_ServerSetEntityCombatState(arena.kernel, arena.player, &combat));
+    arena.tick();
+    arena.hold(kMeteorStaff, KernelActionBinding_PrimaryFire, 2);
+    print_state("re-armed, fire id 13", arena);
+    require(entity_state(arena.kernel, arena.player).ammo[0] == 1u);
+
     std::fprintf(
         stderr,
         "grunt hp: full %u, armed rifle %u, id0 w/ mechanics %u, id0 cleared %u, end %u\n",
         grunt_full, grunt_after_control, grunt_after_id0, grunt_after_cleared, grunt_end);
-    // And its strike lands.
-    require(grunt_end < grunt_after_cleared);
-    std::puts("unarmed_fire_probe_test passed");
+
+    loadout_yaml_allows_an_unarmed_player_only();
+    std::puts("unarmed_player_test passed");
     return 0;
 }

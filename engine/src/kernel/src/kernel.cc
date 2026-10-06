@@ -5924,9 +5924,13 @@ bool KernelEngine::server_set_entity_combat_state(
     const KernelCombatStateDefinition& combat_state) {
     if (!running_ || !is_server_mode(config_.mode) || net_id == 0 ||
         combat_state.struct_size < sizeof(KernelCombatStateDefinition) ||
-        combat_state.weapon_slot_count == 0u ||
         combat_state.weapon_slot_count > KERNEL_MAX_WEAPON_SLOTS ||
-        combat_state.active_weapon_slot >= combat_state.weapon_slot_count ||
+        // No weapon at all is a loadout (a player playing on items alone);
+        // its active slot is 0 and names nothing, which every reader of
+        // WeaponState already treats as "no active weapon".
+        (combat_state.weapon_slot_count == 0u
+             ? combat_state.active_weapon_slot != 0u
+             : combat_state.active_weapon_slot >= combat_state.weapon_slot_count) ||
         combat_state.collider_template_id == 0 ||
         find_collider_template(
             collider_templates_,
@@ -9284,7 +9288,15 @@ void KernelEngine::apply_authoritative_local_weapon(const WorldSnapshot& snapsho
         return;
     }
     const EntitySnapshot* own = find_snapshot_entity(snapshot, local_player_net_id_);
-    if (own == nullptr || !own->has_owner_weapon_state) {
+    if (own == nullptr) {
+        return;
+    }
+    if (!own->has_owner_weapon_state) {
+        // The server leaves the block off when the active slot names no
+        // weapon -- the player is unarmed. Keeping the last one would report
+        // a weapon, and its rounds, the player no longer has.
+        authoritative_local_weapon_ = AuthoritativeLocalWeapon{};
+        predicted_ammo_spends_.clear();
         return;
     }
     authoritative_local_weapon_ = AuthoritativeLocalWeapon{

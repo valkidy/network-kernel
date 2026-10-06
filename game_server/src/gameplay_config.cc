@@ -4074,10 +4074,18 @@ ActorTemplateConfig actor_template_from_yaml(
         throw std::runtime_error(
             "actor template requires weapon_slots: " + actor_template.name);
     }
-    if (weapon_slots.size() == 0 || weapon_slots.size() > actor_template.weapon_ids.size()) {
+    // A player may start with no weapon at all and play on items alone; an
+    // agent always needs one, its controller fires the active slot.
+    const std::size_t min_weapon_slots =
+        actor_template.actor_type == kActorTypePlayer ? 0u : 1u;
+    if (weapon_slots.size() < min_weapon_slots ||
+        weapon_slots.size() > actor_template.weapon_ids.size()) {
         throw std::runtime_error(
-            "actor template weapon_slots count must be 1 to 4: " +
-            actor_template.name);
+            actor_template.actor_type == kActorTypePlayer
+                ? "actor template weapon_slots count must be 0 to 4: " +
+                      actor_template.name
+                : "actor template weapon_slots count must be 1 to 4: " +
+                      actor_template.name);
     }
     actor_template.weapon_slot_count =
         static_cast<std::uint8_t>(weapon_slots.size());
@@ -4101,7 +4109,10 @@ ActorTemplateConfig actor_template_from_yaml(
         node["active_weapon_slot"]
             ? static_cast<std::uint8_t>(node["active_weapon_slot"].as<int>())
             : 0;
-    if (actor_template.active_weapon_slot >= actor_template.weapon_slot_count) {
+    // With no weapon the only valid active slot is 0, which names none.
+    if (actor_template.weapon_slot_count == 0
+            ? actor_template.active_weapon_slot != 0
+            : actor_template.active_weapon_slot >= actor_template.weapon_slot_count) {
         throw std::runtime_error(
             "actor template active_weapon_slot is out of range: " +
             actor_template.name);
@@ -9513,9 +9524,14 @@ std::vector<std::string> validate_gameplay_config(
             actor_template.hitbox_half_extents.x <= 0.0f ||
             actor_template.hitbox_half_extents.y <= 0.0f ||
             actor_template.hitbox_half_extents.z <= 0.0f ||
-            actor_template.weapon_slot_count == 0 ||
+            // Only a player may be unarmed, and then slot 0 names nothing.
+            (actor_template.weapon_slot_count == 0 &&
+             actor_template.actor_type != kActorTypePlayer) ||
             actor_template.weapon_slot_count > actor_template.weapon_ids.size() ||
-            actor_template.active_weapon_slot >= actor_template.weapon_slot_count) {
+            (actor_template.weapon_slot_count == 0
+                 ? actor_template.active_weapon_slot != 0
+                 : actor_template.active_weapon_slot >=
+                       actor_template.weapon_slot_count)) {
             errors.push_back("actor template must be valid");
         }
         for (std::uint8_t slot = 0; slot < actor_template.weapon_slot_count; ++slot) {

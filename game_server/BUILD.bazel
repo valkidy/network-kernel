@@ -728,8 +728,8 @@ cc_test(
 )
 
 cc_test(
-    name = "unarmed_fire_probe_test",
-    srcs = ["tests/unarmed_fire_probe_test.cc"],
+    name = "unarmed_player_test",
+    srcs = ["tests/unarmed_player_test.cc"],
     data = glob([
         "gameplay_catalog/action_graph_templates/*.yaml",
         "gameplay_catalog/action_templates/*.yaml",
