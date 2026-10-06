@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- aligns Unity bindings with ABI 100 pull strength weighed against impulse resistance
+
+
+0.7.0 release notes:
+
 - aligns Unity bindings with ABI 99 ground-follow cylinder area effects and hover movement
 
 

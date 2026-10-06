@@ -24,7 +24,7 @@ namespace NetworkExample.Kernel.Editor
             KernelAbi.ValidateNativeAbi();
             GameServerAbi.ValidateNativeAbi();
             KernelAbiInfo info = KernelAbi.GetInfo();
-            Require(KernelConstants.AbiVersion == 99, "Managed kernel ABI version was not v99.");
+            Require(KernelConstants.AbiVersion == 100, "Managed kernel ABI version was not v100.");
             Require(
                 KernelLocalWeaponState.StructSize == 20 &&
                 info.local_weapon_state_size == KernelLocalWeaponState.StructSize,
@@ -123,7 +123,7 @@ namespace NetworkExample.Kernel.Editor
                 KernelConstants.MaxStaggerTicks == 300U,
                 "Kernel hit stagger ABI mismatch.");
             Require(
-                System.Runtime.InteropServices.Marshal.SizeOf<KernelActionTriggerDefinition>() == 1084 &&
+                System.Runtime.InteropServices.Marshal.SizeOf<KernelActionTriggerDefinition>() == 1116 &&
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("damage_stagger") >
                     (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("impulse_strength_vertical") &&
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelEntityTemplateDefinition>("stagger_immunity_ticks") >
@@ -167,7 +167,7 @@ namespace NetworkExample.Kernel.Editor
                 KernelProjectileReplication.Derived == (KernelProjectileReplication)1 &&
                 KernelProjectileLaunchType.Descent == (KernelProjectileLaunchType)1 &&
                 KernelProjectileLaunchDefinition.StructSize == 24 &&
-                KernelActionDefinition.StructSize == 124 &&
+                KernelActionDefinition.StructSize == 128 &&
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("spawn_lifetime_ticks") == 84 &&
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelProjectileLaunchDefinition>("fall_ticks") == 20 &&
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelProjectileMechanicsDefinition>("launch") ==
@@ -184,7 +184,7 @@ namespace NetworkExample.Kernel.Editor
                 KernelEventType.ShelterChanged == (KernelEventType)17 &&
                 KernelGameplayRequestRejectionReason.InstigatorSheltered == (KernelGameplayRequestRejectionReason)18 &&
                 KernelLocalActionResultReason.Sheltered == (KernelLocalActionResultReason)15 &&
-                KernelActionDefinition.StructSize == 124 &&
+                KernelActionDefinition.StructSize == 128 &&
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("ui_id") == 116 &&
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("spawn_placement") == 120 &&
                 System.Runtime.InteropServices.Marshal.SizeOf<KernelEvent>() == 48 &&
@@ -212,6 +212,10 @@ namespace NetworkExample.Kernel.Editor
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelMovementDefinition>("hover_height_meters") == 48 &&
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelMovementDefinition>("hover_vertical_speed_meters_per_second") == 52,
                 "Kernel ground-follow area effect and hover ABI mismatch.");
+            Require(
+                KernelActionDefinition.StructSize == 128 &&
+                (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("pull_strength") == 124,
+                "Kernel pull strength ABI mismatch.");
             RequireLANDiscovery();
             byte[] catalogBundleBytes = LoadGameplayCatalogBundleBytes();
 

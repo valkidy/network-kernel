@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 99;
+        public const uint AbiVersion = 100;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int LogMessageTextSize = 512;
@@ -1114,6 +1114,8 @@ namespace NetworkExample.Kernel
         public uint ui_id;
         // spawn_entity only (ABI 96): a KernelConstants.SpawnPlacement*.
         public uint spawn_placement;
+        // apply_pull only: moves targets whose impulse_resistance is lower.
+        public float pull_strength;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelActionDefinition>();
     }
