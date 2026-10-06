@@ -40,6 +40,10 @@ skeleton_asset(
     asset_id = 5,
 )
 
+# A skinned actor: raw/simplified_gingerbread_giant.glb and .rig.yaml are
+# GENERATED from the client source GLB in unity-network-example
+# (Assets/Presentation/ActorRigs/) by tools/kernel_skeleton_from_source.py --
+# regenerate them, never edit them by hand; --check reports drift.
 skeleton_asset(
     name = "simplified_gingerbread_giant",
     src = "raw/simplified_gingerbread_giant.glb",
