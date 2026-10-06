@@ -21,7 +21,7 @@ director:
         condition:
           type: player_count_at_least
           count: 1
-        next: [clear_the_nests]
+        next: [clear_the_nests, defeat_the_giant]
       # The objective is the nests themselves. Placing them here and waiting on
       # the same group being eliminated is the whole mission: three things in
       # the world, each putting gingerbread out until it is destroyed.
@@ -43,3 +43,16 @@ director:
         condition:
           type: group_eliminated
           group: nests
+      # A second objective alongside the nests, opened by the same player
+      # arrival. One giant, placed outside the nests' 30 m ring: its GEO_ boxes
+      # span 16 m across, and it should not land on top of one.
+      - id: defeat_the_giant
+        on_activate:
+          - type: spawn_group
+            group: giant
+            count: 1
+            entity_template: gingerbread_giant
+            position: {x: 0.0, y: 0.0, z: 60.0}
+        condition:
+          type: group_eliminated
+          group: giant

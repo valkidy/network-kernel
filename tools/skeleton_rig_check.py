@@ -6,11 +6,22 @@ three leg joints collide, or whose mid_axis_local is more than 60 degrees off
 the bind-pose bend plane. What it cannot see is a rig that is technically valid
 but numerically miserable: a limb so nearly straight that the IK has no stable
 bend direction, a pole vector that lies along the very axis it is meant to
-disambiguate, or a hinge that clears the 0.5 threshold by so little that a small
-authoring change will drop it below.
+disambiguate, a hinge that clears the 0.5 threshold by so little that a small
+authoring change will drop it below, or a hinge pointing the wrong way.
+
+The validator ignores the hinge's sign, but IKTwoBoneJob does not: a positive
+rotation about mid_axis opens the knee. A leg whose axis points along the bind
+bend normal cross(knee - hip, foot - knee) is folded backwards, and the pole
+then spins the whole limb 180 degrees about its length to point the knee where
+it asked. A box limb looks the same either way; a skinned foot faces backwards.
 
 Reads manifest_version 2 (see //tools:ozz_skeleton_manifest) for the rest pose
-and the entity template for the authored leg parameters:
+and the authored leg parameters from either a rig_version 2 .rig.yaml (--rig)
+or, for older rigs, the entity template (--template):
+
+    python3 tools/skeleton_rig_check.py \
+        --manifest=bazel-bin/game_server/gameplay_catalog/skeleton_assets/generated/simplified_gingerbread_giant.skeleton_manifest.json \
+        --rig=game_server/gameplay_catalog/skeleton_assets/raw/simplified_gingerbread_giant.rig.yaml
 
     python3 tools/skeleton_rig_check.py \
         --manifest=bazel-bin/game_server/gameplay_catalog/skeleton_assets/generated/simplified_tripod.skeleton_manifest.json \
@@ -142,10 +153,76 @@ def load_template_legs(path):
     return legs
 
 
+def parse_flow_map(text):
+    """{x: 1.0, y: 0.0, z: 0.0} -> [1.0, 0.0, 0.0]"""
+    parts = {}
+    for item in text.strip().strip("{}").split(","):
+        axis, number = item.split(":")
+        parts[axis.strip()] = float(number)
+    return [parts.get("x", 0.0), parts.get("y", 0.0), parts.get("z", 0.0)]
+
+
+def load_rig_legs(path):
+    """Leg block of a rig_version 2 .rig.yaml, in the template reader's keys.
+
+    Its legs are flow mappings that may wrap over several lines, and the knee
+    hinge is shared by every leg.
+    """
+    text = open(path, encoding="utf-8").read()
+    hinge = None
+    legs = []
+    entry = None
+    in_legs = False
+    for raw in text.splitlines():
+        stripped = raw.split("#", 1)[0].strip()
+        if not stripped:
+            continue
+        if stripped.startswith("knee_hinge_local:"):
+            hinge = parse_flow_map(stripped.split(":", 1)[1])
+            continue
+        if stripped == "legs:":
+            in_legs = True
+            continue
+        if not in_legs:
+            continue
+        if entry is None:
+            if not stripped.startswith("- {"):
+                break
+            entry = stripped[2:]
+        else:
+            entry += " " + stripped
+        if entry.count("{") == entry.count("}"):
+            body = entry.strip()[1:-1]
+            pole = None
+            if "pole_local:" in body:
+                body, pole_text = body.split("pole_local:", 1)
+                pole = parse_flow_map(pole_text)
+            fields = {}
+            for item in body.split(","):
+                if ":" in item:
+                    key, value = item.split(":", 1)
+                    fields[key.strip()] = value.strip()
+            leg = {
+                "id": fields.get("id"),
+                "hip_bone": fields.get("hip"),
+                "knee_bone": fields.get("knee"),
+                "foot_bone": fields.get("foot"),
+            }
+            if pole is not None:
+                leg["pole_local"] = pole
+            if hinge is not None:
+                leg["mid_axis_local"] = hinge
+            legs.append(leg)
+            entry = None
+    return legs
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", required=True)
-    parser.add_argument("--template", required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--rig")
+    source.add_argument("--template")
     args = parser.parse_args()
 
     manifest = json.load(open(args.manifest, encoding="utf-8"))
@@ -157,9 +234,10 @@ def main():
     bones = manifest["bones"]
     index_of = {bone["name"]: bone["index"] for bone in bones}
     positions, rotations = model_pose(bones)
-    legs = load_template_legs(args.template)
+    legs_path = args.rig or args.template
+    legs = load_rig_legs(legs_path) if args.rig else load_template_legs(legs_path)
     if not legs:
-        print(f"no legs found in {args.template}", file=sys.stderr)
+        print(f"no legs found in {legs_path}", file=sys.stderr)
         return 2
 
     errors = []
@@ -203,7 +281,8 @@ def main():
         hinge = unit(mat_apply(mat_transpose(rotations[knee_index]),
                                hinge_model))
         authored_axis = unit(leg.get("mid_axis_local", [0.0, 0.0, 1.0]))
-        alignment = abs(dot(hinge, authored_axis))
+        signed_alignment = dot(hinge, authored_axis)
+        alignment = abs(signed_alignment)
 
         pole = unit(leg.get("pole_local", [0.0, 0.0, 1.0]))
         limb_axis = unit(sub(foot, hip))
@@ -222,6 +301,13 @@ def main():
                 f"{HINGE_REJECT} but only just; the knee-local hinge is "
                 f"{fmt(hinge)}")
             status = "warn"
+
+        if alignment >= HINGE_REJECT and signed_alignment > 0.0:
+            errors.append(
+                f"{name}: mid_axis_local points along the bind bend normal "
+                f"{fmt(hinge)}, so the IK folds this knee backwards and the "
+                f"pole twists the limb 180 degrees; negate it for this leg")
+            status = "TWIST"
 
         if extension > REST_EXTENSION_WARN:
             warnings.append(
