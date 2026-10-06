@@ -41,6 +41,9 @@ enum class ColliderShapeType : std::uint8_t {
     kSegment = 3,
     kCone = 4,
     kCapsule = 5,
+    // Upright along world Y; radius in `radius`, half height in
+    // `capsule_half_height`. Only an area effect's collider is one.
+    kCylinder = 6,
 };
 
 struct ColliderWorldBounds {

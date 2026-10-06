@@ -453,22 +453,29 @@ Terrain authoring note: the ground is found with a ray straight down. Where two
 terrain boxes only meet edge to edge, a ray landing exactly on the seam hits
 neither and the field holds its height for that tick. Overlap terrain pieces.
 
-### area_shape: cylinder
+### A column: a cylinder collider
 
-The overlap is a sphere of the collider's radius by default. `area_shape:
-cylinder` makes it an upright column of that radius, `half_height` above and
-below the field's centre, so a target over the field but within its radius is
-left out. With a ground-following field, `half_height` equal to `hover_height`
-puts the column's foot on the ground.
+An area effect's reach is its collider's, all of it. A `sphere` collider gives
+a ball of its `radius`; a `cylinder` collider gives an upright column of its
+`radius`, `half_height` above and below the field's centre, so a target over
+the field but within its radius is left out. With a ground-following field,
+`half_height` equal to `hover_height` puts the column's foot on the ground.
 
 ```yaml
-area_shape: cylinder
+# collider_templates/<id>_collider_<name>.yaml
+shape: cylinder
+radius: 3.0
 half_height: 1.5
+purpose: damage
+layer: area_effect
 ```
 
-`half_height` is required with a cylinder and rejected without one, and both
-keys, like `motion`, are rejected on anything but an area effect. Falloff, if
-authored, still scales by the 3D distance from the centre, not from the axis.
+Nothing about the overlap is authored on the projectile: `area_shape` and
+`half_height` there are refused. An area effect's collider must be a sphere or
+a cylinder, and may not set `center` -- the overlap is centred on the field. A
+cylinder carries only the `damage` purpose and is refused on anything but an
+area effect. Falloff, if authored, still scales by the 3D distance from the
+centre, not from the axis.
 
 A field that only pulls (a tornado bound to `apply_pull`) still authors a
 non-zero `damage`: an area effect with a graph binding submits no damage of its

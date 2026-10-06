@@ -1,13 +1,11 @@
-# The reach of the tornado. An area effect's radius is its collider's radius
-# (kernel.cc derives area_radius from the template), so how wide the funnel
-# pulls from is authored here. How tall it reaches is the projectile's
-# half_height: the overlap is an upright column (area_shape: cylinder), not
-# this sphere.
+# The reach of the tornado: an upright column, 3 m across its radius and 2 m
+# above and below the funnel's centre. The funnel hovers 2 m up
+# (projectile 29's motion.hover_height), so the column stands on the ground and
+# reaches 4 m up.
 id: 39
 name: tornado_column
-shape: sphere
-center: {x: 0.0, y: 0.0, z: 0.0}
-half_extents: {x: 3.0, y: 14.0, z: 3.0}
+shape: cylinder
 radius: 3.0
+half_height: 2.0
 purpose: damage
 layer: area_effect

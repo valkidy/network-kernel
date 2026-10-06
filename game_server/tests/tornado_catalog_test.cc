@@ -216,7 +216,7 @@ void the_shipped_tornado_is_a_ground_following_column() {
     require(mechanics.area_effect.half_height == mechanics.area_effect.hover_height);
     require(mechanics.area_effect.motion_collision_mask ==
             KERNEL_COLLISION_LAYER_TERRAIN);
-    require(mechanics.area_effect.damage_interval_ticks == 30u);
+    require(mechanics.area_effect.damage_interval_ticks == 15u);
     require(mechanics.area_effect.lifetime_ticks == 300u);
     require(tornado->projectile_impact_trigger.action_graph_ref ==
             "action_tornado_pull");
@@ -327,6 +327,18 @@ void the_tornado_pulls_what_it_reaches_without_hurting_it() {
         require(std::fabs(live.front().position.y - (arena.ground + 2.0f)) < 0.1f);
         require(live.front().position.x >= previous_x);
         previous_x = live.front().position.x;
+        // The collider query reports the column the overlap runs -- upright,
+        // centred on the funnel, the collider's radius and half height -- not
+        // a sphere the overlap never was.
+        KernelColliderShapeQuery shape_query{};
+        shape_query.struct_size = sizeof(shape_query);
+        shape_query.entity_net_id = tornado_net_id;
+        KernelColliderShapeView shape{};
+        require(Kernel_QueryColliderShapes(arena.kernel, &shape_query, &shape, 1) == 1u);
+        require(shape.shape_type == KernelColliderShapeType_Cylinder);
+        require(shape.shape_params.x == 2.0f && shape.shape_params.y == 3.0f);
+        require(std::fabs(shape.world_center.y - live.front().position.y) < 0.001f);
+        require(shape.world_rotation.w == 1.0f);
 
         target_highest = std::max(
             target_highest, entity_state(arena.kernel, arena.target).position.y);
