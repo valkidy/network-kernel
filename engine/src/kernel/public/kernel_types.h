@@ -5,6 +5,14 @@
 #include <stdint.h>
 
 /*
+ * 101: items and wands, first part. KernelPropDefinition gained importance
+ *     (with three reserved bytes), appended after population_group_id: when
+ *     a population group is over max_alive, the member just spawned is never
+ *     the one evicted; of the rest, the lowest importance goes first and the
+ *     oldest within it. Zero, the default, ties every member, so eviction
+ *     stays oldest-first as before -- except that a newcomer no longer evicts
+ *     itself. KernelPropDefinition is embedded in KernelEntityTemplateDefinition,
+ *     so every managed mirror of that shifts.
  * 100: pull strength. KernelActionDefinition gained pull_strength, appended
  *     after spawn_placement and read only by apply_pull: a fixed number
  *     weighed against the target's impulse_resistance, as apply_impulse's
@@ -181,7 +189,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 100u
+#define KERNEL_ABI_VERSION 101u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -1105,6 +1113,12 @@ typedef struct KernelPropDefinition {
     uint32_t throw_trajectory_projectile_template_id;
     uint32_t lifetime_ticks;
     uint32_t population_group_id;
+    /* Which member of a full population group goes first: the lowest
+     * importance, oldest first within it. Never the member just spawned.
+     * Needs a population group. */
+    uint8_t importance;
+    uint8_t reserved0;
+    uint16_t reserved1;
 } KernelPropDefinition;
 
 typedef enum KernelAiControllerType {

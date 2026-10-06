@@ -1781,6 +1781,7 @@ bool EntityLifecycleSystem::create_entity(
                         engine.tick_loop_.current_tick(),
                         entity_template->prop.lifetime_ticks,
                         entity_template->prop.population_group_id,
+                        entity_template->prop.importance,
                     });
             }
         }
@@ -1966,7 +1967,7 @@ bool EntityLifecycleSystem::create_entity(
     if (entity_template != nullptr &&
         entity_template->prop.population_group_id != 0u) {
         enforce_prop_population_limit(
-            engine, entity_template->prop.population_group_id);
+            engine, entity_template->prop.population_group_id, net_id);
     }
     if (publish_snapshot) {
         engine.publish_snapshot();
@@ -2448,7 +2449,8 @@ void EntityLifecycleSystem::update_prop_lifetimes(
 
 void EntityLifecycleSystem::enforce_prop_population_limit(
     KernelEngine& engine,
-    std::uint32_t population_group_id) const {
+    std::uint32_t population_group_id,
+    NetId spawned_net_id) const {
     const auto rule = std::find_if(
         engine.prop_population_rules_.begin(),
         engine.prop_population_rules_.end(),
@@ -2459,30 +2461,41 @@ void EntityLifecycleSystem::enforce_prop_population_limit(
     if (rule == engine.prop_population_rules_.end()) {
         return;
     }
-    std::vector<std::tuple<std::uint32_t, NetId>> members;
+    // The member just spawned counts towards the cap but is never the one
+    // evicted: whoever put it down wants it, and a low-importance newcomer
+    // would otherwise remove itself on the tick it appeared. Of the rest, the
+    // lowest importance goes first and the oldest within it.
+    std::size_t alive = 0;
+    std::vector<std::tuple<std::uint8_t, std::uint32_t, NetId>> candidates;
     auto view = engine.world_.registry().view<NetworkIdentity, PropLifecycle>();
     for (const entt::entity entity : view) {
         const PropLifecycle& lifecycle = view.get<PropLifecycle>(entity);
         if (lifecycle.population_group_id != population_group_id) {
             continue;
         }
-        members.emplace_back(
+        ++alive;
+        const NetId net_id = view.get<NetworkIdentity>(entity).net_id;
+        if (net_id == spawned_net_id) {
+            continue;
+        }
+        candidates.emplace_back(
+            lifecycle.importance,
             lifecycle.spawn_tick,
-            view.get<NetworkIdentity>(entity).net_id);
+            net_id);
     }
-    std::sort(members.begin(), members.end());
-    // V1 fixes overflow handling to deterministic despawn-oldest. Add an
-    // authored overflow policy before supporting alternatives such as reject-new.
-    while (members.size() > rule->max_alive) {
-        const NetId oldest = std::get<1>(members.front());
-        members.erase(members.begin());
+    std::sort(candidates.begin(), candidates.end());
+    std::size_t next = 0;
+    while (alive > rule->max_alive && next < candidates.size()) {
+        const NetId evicted = std::get<2>(candidates[next]);
+        ++next;
+        --alive;
         // Capacity eviction is resource cleanup and bypasses gameplay
         // on_destroy_entity graphs to prevent spawn cascades, unless the group
         // opts in -- which the catalog allows only when no member's graph
         // spawns into any group, so there is no cascade to prevent.
         (void)destroy_entity_with_context(
             engine,
-            oldest,
+            evicted,
             KernelDespawnReason_CapacityEvicted,
             0u,
             0u,

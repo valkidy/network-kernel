@@ -603,6 +603,9 @@ struct PropLifecycle {
     std::uint32_t spawn_tick = 0;
     std::uint32_t remaining_lifetime_ticks = 0;
     std::uint32_t population_group_id = 0;
+    // KernelPropDefinition::importance: lower goes first when the group is
+    // over its cap.
+    std::uint8_t importance = 0;
 };
 
 enum class TriggerEventType : std::uint8_t {

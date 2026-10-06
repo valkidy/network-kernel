@@ -486,6 +486,7 @@ void hash_actor_template(
         actor_template.prop.throw_trajectory_projectile_template_id);
     hash_scalar(hash, actor_template.prop.lifetime_ticks);
     hash_scalar(hash, actor_template.prop.population_group_id);
+    hash_scalar(hash, actor_template.prop.importance);
     hash_scalar(hash, actor_template.skeleton.enabled);
     if (actor_template.skeleton.enabled) {
         hash_scalar(hash, actor_template.skeleton.skeleton_asset_id);
@@ -4801,7 +4802,7 @@ EntityTemplateConfig entity_template_from_yaml(
         if (node["lifecycle"]) {
             reject_unknown_keys(
                 node["lifecycle"],
-                {"lifetime_ticks", "population_group"},
+                {"lifetime_ticks", "population_group", "importance"},
                 path,
                 source_kind,
                 KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
@@ -4826,6 +4827,21 @@ EntityTemplateConfig entity_template_from_yaml(
                     prop_population_group_id_from_ref(
                         node["lifecycle"]["population_group"],
                         prop_population_rules);
+            }
+            // Who goes first when the group is full: lower first.
+            if (node["lifecycle"]["importance"]) {
+                if (!node["lifecycle"]["population_group"]) {
+                    throw std::runtime_error(
+                        "prop lifecycle importance requires population_group: " +
+                        path);
+                }
+                const int importance = node["lifecycle"]["importance"].as<int>();
+                if (importance < 0 || importance > UINT8_MAX) {
+                    throw std::runtime_error(
+                        "prop lifecycle importance must be 0 to 255: " + path);
+                }
+                entity_template.prop.importance =
+                    static_cast<std::uint8_t>(importance);
             }
         }
         // What going inside this building means: how many it holds, and
@@ -9384,6 +9400,10 @@ std::vector<std::string> validate_gameplay_config(
             (entity_template.prop.lifetime_ticks != 0u ||
              entity_template.prop.population_group_id != 0u)) {
             errors.push_back("only prop templates may declare lifecycle");
+        }
+        if (entity_template.prop.importance != 0u &&
+            entity_template.prop.population_group_id == 0u) {
+            errors.push_back("prop lifecycle importance requires a population group");
         }
         if (entity_template.prop.population_group_id != 0u &&
             std::find(

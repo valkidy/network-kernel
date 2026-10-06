@@ -3531,6 +3531,11 @@ bool KernelEngine::load_gameplay_catalog(
              entity_template.prop.population_group_id != 0u)) {
             return false;
         }
+        // Importance only orders a population group's evictions.
+        if (entity_template.prop.importance != 0u &&
+            entity_template.prop.population_group_id == 0u) {
+            return false;
+        }
         if (entity_template.entity_type == KernelEntityType_Prop &&
             entity_template.prop.struct_size != 0u) {
             const KernelPropInteractionDefinition& interaction =

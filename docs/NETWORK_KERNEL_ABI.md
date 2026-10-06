@@ -12,7 +12,11 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 99u`; `kernel_types.h` is the authority. ABI 98
+`KERNEL_ABI_VERSION == 101u`; `kernel_types.h` is the authority. ABI 101
+appended `importance` to `KernelPropDefinition`: a full population group
+never evicts the member just spawned, and evicts the lowest importance first,
+the oldest within it. ABI 100 appended `pull_strength` to
+`KernelActionDefinition`. ABI 98
 appended the tornado shape and motion fields to
 `KernelAreaEffectMechanicsDefinition`. ABI 99 appended `hover_height_meters`
 and `hover_vertical_speed_meters_per_second` to `KernelMovementDefinition` and

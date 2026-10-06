@@ -16,7 +16,7 @@ static void require_impl(int condition, const char* expression, int line) {
 #define require(condition) require_impl((condition) ? 1 : 0, #condition, __LINE__)
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 100u,
+    KERNEL_ABI_VERSION == 101u,
     "pull strength: KernelActionDefinition gained pull_strength");
 _Static_assert(
     offsetof(KernelActionDefinition, pull_strength) >
@@ -192,6 +192,10 @@ _Static_assert(
             offsetof(KernelActionDefinition, ui_id) &&
         KERNEL_SPAWN_PLACEMENT_EXACT == 0u && KERNEL_SPAWN_PLACEMENT_CLEAR == 1u,
     "spawn_placement is appended after ui_id; exact is the zero default");
+_Static_assert(
+    offsetof(KernelPropDefinition, importance) >
+        offsetof(KernelPropDefinition, population_group_id),
+    "the eviction importance is appended to KernelPropDefinition");
 _Static_assert(
     offsetof(KernelEntityTemplateDefinition, shelter_capacity) >
             offsetof(KernelEntityTemplateDefinition, knockdown_recovery_ticks) &&
