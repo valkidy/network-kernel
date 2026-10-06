@@ -1,11 +1,11 @@
 # 道具系統與法杖武器系統 實作計劃書
 
-狀態：**設計已定案（第九輪）。P1 實作中。** P0 量測測試已完成（見 §4）。
+狀態：**設計已定案（第九輪）。P1（K1–K4）已實作，分支 `claude/item-weapon-p1`，ABI 101。** P0 量測測試已完成（見 §4）。
 分支：本文件在 `claude/item-weapon-plan`；P0 測試在 `claude/p0-throw-and-unarmed-tests`（12795b3）。兩者都從 main 78d9350 分出，尚未 merge。
 最後更新：2026-10-07（第八輪：營地選項在 prop 模板、臨時營地比照帳篷、L1/R1 重複按不作用、其他玩家武器的封包評估）。
 
 本文件整理 2026-10-07 的需求草案與五輪討論。決策以 §2 為準；kernel / game_server / Unity 的分工在 §3；
-還沒定案的問題在 §8。
+實作中發現的問題記在對應章節；§8 列出待決問題。
 
 ---
 
@@ -103,8 +103,8 @@
    帶標記的物品保留；地圖武器和模板武器同類別時，換上模板的武器，地圖武器丟在腳下。
 5. 重生、加入時套用同一份模板。加入時還沒有模板，就用 `player.yaml` 的預設值。
 
-建議的營地 prop 設定：不寫 `health`（打不壞）、不加入 population group、壽命 0（永久）。
-「壽命 0 = 永久」是讀 code 的推論（倒數只對大於 0 的壽命遞減，`systems.cc:2422`），實作時要用測試確認。
+建議的營地 prop 設定：不寫 `health`（打不壞）、不寫 `lifecycle`（永久）。
+`lifetime_ticks: 0` 是載入錯誤（必須為正）；不寫 `lifetime_ticks` 才是永久。
 
 注意：
 - **格子是用「選了幾個選項」算，不是用 inventory 實際佔幾格。** 容器會先把同種 fungible 合併成一疊，例如選兩次 `[potion, 2]` 只佔一格。實際佔的格子只會比選的少。
@@ -160,9 +160,7 @@ K9 要改的 kernel 部分：
 
 ### 3.5 道具
 
-**投擲藥水（K2）。** 量測結果見 §4.1。要做到「打中 actor 補血並消耗掉，落地就留在地上變成道具」：
-- 把 `on_collision` 拆成「打中 actor」和「落地」兩種，或讓 binding 能指定只對哪一種觸發。
-- 打中 actor 時 prop 被消耗，不再穿過去。
+**投擲藥水（K2，已完成）。** 量測結果見 §4.1。做法：prop 218 `potion` 的 `on_collision` 跑 `action_heal_target_and_consume_self_at_collision`，補血和自傷兩個 action 都加 `when: event.has_target`：打中 actor 有 target，落地沒有。kernel 不需要拆碰撞事件。
 - **載入時檢查：** 可投擲的 item-backed prop 如果沒有包含 terrain 的 `on_collision`，就是載入錯誤。否則投出去就會永遠掉下去、物品消失。
 
 **mp_potion（K3）。** 新的 graph action `refill_weapon_reserve`：
@@ -317,10 +315,10 @@ kernel 不需要知道玩家在哪個模式：R2 在武器模式送 Fire 輸入�
 
 | # | 內容 | 規模 | ABI / schema |
 |---|---|---|---|
-| K1 | 建築 `importance` + 淘汰規則（D17），改 `systems.cc:2469` 的排序和候選範圍 | 小 | prop 模板定義多一個欄位 |
-| K2 | 投擲碰撞拆成打中 actor / 落地；打中時消耗；缺 `on_collision` 時載入錯誤 | 小到中 | 模板定義多欄位 |
-| K3 | `refill_weapon_reserve` graph action + 使用前檢查 | 小到中 | 新增型 |
-| K4 | 空手：放寬兩個入口、修 client 舊彈藥 bug、刪死 code | 小 | 無 |
+| K1 | 建築 `importance` + 淘汰規則（D17）。**已完成**（036f92a） | 小 | ABI 101：`KernelPropDefinition.importance` |
+| K2 | 可投擲 potion；缺 terrain 的 `on_collision` 時載入錯誤。**已完成**（c3cf49b），不需要改 kernel：graph 的 `when: event.has_target` 已能分開兩種碰撞 | 小 | 無 |
+| K3 | `refill_weapon_reserve` graph action + 使用前檢查 + `fungible_mp_potion`（3013）。**已完成**（ca547d8） | 小到中 | ABI 101：新 action type + 兩個欄位 |
+| K4 | 空手：放寬三個入口（loader 解析、`validate_gameplay_config`、`SetEntityCombatState`）、修 client 舊彈藥 bug、刪死 code。**已完成**（8e8ba53） | 小 | 無 |
 | K5 | 武器 item：依類別指定格子的武器容器、裝卸同步 `WeaponState` 和 mechanics、portable state 寫回、自動交換、只有玩家能撿 | **大** | 模板定義、新 API |
 | K6 | 給擁有者的武器配置和 reserve 同步；其他玩家記錄裡的武器 id（D27） | 中 | **snapshot schema + ABI** |
 | K7 | `charge` trigger mode | 中 | 新增型 |
@@ -373,9 +371,7 @@ catalog 驅動的測試要自己掛上武器 mechanics、載入地面場景，�
 
 ## 8. 待決問題
 
-| # | 問題 | 備註 |
-|---|---|---|
-| G1 | 「壽命 0 = 永久」需要測試確認 | §3.2 |
+目前沒有。實作中發現的問題記在對應的章節。
 
 ---
 
