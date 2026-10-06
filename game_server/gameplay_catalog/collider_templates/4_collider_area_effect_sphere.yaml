@@ -1,3 +1,4 @@
+# fire_floor_area's reach (rocket_explosion has its own, 41).
 id: 4
 name: area_effect_sphere
 shape: sphere

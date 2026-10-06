@@ -1,7 +1,7 @@
 id: 8
 name: rocket_explosion
 kind: area_effect
-collider_template: area_effect_sphere
+collider_template: rocket_explosion_sphere
 # Read as damage per interval, dealt every damage_interval_ticks.
 damage: 45
 lifetime_ticks: 45
