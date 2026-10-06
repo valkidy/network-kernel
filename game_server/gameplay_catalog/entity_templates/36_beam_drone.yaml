@@ -38,7 +38,7 @@ hitbox:
   center: {x: 0.0, y: 0.8, z: 0.0}
   half_extents: {x: 0.4, y: 0.8, z: 0.4}
 weapon_slots:
-  - 12
+  - 16
 active_weapon_slot: 0
 animations:
   idle: 0
@@ -56,7 +56,6 @@ ai:
     patrol_rotation_interval_ticks: 30
     patrol_rotation_min_degrees: 15.0
     patrol_rotation_max_degrees: 30.0
-    weapon_id: 12
     animation_idle: idle
     animation_attack: chasing
   chaser:

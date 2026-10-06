@@ -49,7 +49,6 @@ ai:
     patrol_rotation_interval_ticks: 30
     patrol_rotation_min_degrees: 15.0
     patrol_rotation_max_degrees: 30.0
-    weapon_id: 10
     animation_idle: idle
     # Despite the name this plays whenever the agent is *moving*, not when it
     # attacks -- the controller sets it from a non-zero move, and the swing
