@@ -19,4 +19,4 @@ actions:
     max_speed: 12.0
     # Who is moved, not how fast: a target is pulled only when this exceeds
     # its impulse_resistance, wherever it stands in the column.
-    strength: 10.0
+    strength: 20.0

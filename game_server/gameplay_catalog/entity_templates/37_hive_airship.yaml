@@ -20,7 +20,8 @@ health:
   hp: 3000
   max_hp: 3000
 # Nothing pushes an airship around.
-impulse_resistance: 1000.0
+# impulse_resistance: 1000.0
+impulse_resistance: 10.0
 movement:
   controller: hover
   move_speed_meters_per_second: 1.5
