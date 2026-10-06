@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- adds capsule and cylinder collider bindings and updates the gingerbread giant gameplay catalog
+
+
+0.7.0 release notes:
+
 - aligns Unity bindings with ABI 100 pull strength weighed against impulse resistance
 
 

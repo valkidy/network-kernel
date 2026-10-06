@@ -648,6 +648,8 @@ namespace NetworkExample.Kernel
         OrientedBox = 2,
         Segment = 3,
         Cone = 4,
+        Capsule = 5,
+        Cylinder = 6,
     }
 
     [Flags]

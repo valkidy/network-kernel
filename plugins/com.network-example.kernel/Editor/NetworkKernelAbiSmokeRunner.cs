@@ -216,6 +216,10 @@ namespace NetworkExample.Kernel.Editor
                 KernelActionDefinition.StructSize == 128 &&
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("pull_strength") == 124,
                 "Kernel pull strength ABI mismatch.");
+            Require(
+                KernelColliderShapeType.Capsule == (KernelColliderShapeType)5 &&
+                KernelColliderShapeType.Cylinder == (KernelColliderShapeType)6,
+                "Kernel capsule and cylinder collider enum mismatch.");
             RequireLANDiscovery();
             byte[] catalogBundleBytes = LoadGameplayCatalogBundleBytes();
 
