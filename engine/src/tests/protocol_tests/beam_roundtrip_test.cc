@@ -7,12 +7,26 @@
 // shooter's and are rebuilt by the kernel, so the decoder is expected to leave
 // position and rotation alone -- what it must not do is lose the reach or the
 // flag that says this record is a beam at all.
-#include <cassert>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <vector>
 #include "protocol/public/network_packets.h"
 #include "sync/public/snapshot.h"
+
+namespace {
+
+void require_impl(bool condition, const char* expression, int line) {
+    if (!condition) {
+        std::fprintf(stderr, "require failed at line %d: %s\n", line, expression);
+        std::abort();
+    }
+}
+
+}  // namespace
+
+#define require(condition) \
+    require_impl(static_cast<bool>(condition), #condition, __LINE__)
 
 namespace ne = network_example;
 
@@ -33,18 +47,18 @@ int main() {
     ne::WorldSnapshot decoded;
     const bool ok = ne::decode_snapshot_packet(bytes.data(), bytes.size(), &decoded);
     std::printf("decode ok=%d entities=%zu\n", ok ? 1 : 0, decoded.entities.size());
-    assert(ok);
-    assert(decoded.entities.size() == 1);
+    require(ok);
+    require(decoded.entities.size() == 1);
     const ne::EntitySnapshot& out = decoded.entities[0];
     std::printf("net_id=%u beam_effective_length=%.4f beam_flag=%d\n",
                 out.net_id,
                 out.beam_effective_length,
                 (out.state_flags & ne::kSnapshotStateFlagProjectileBeam) != 0 ? 1 : 0);
-    assert(out.net_id == 77);
-    assert((out.state_flags & ne::kSnapshotStateFlagProjectileBeam) != 0);
+    require(out.net_id == 77);
+    require((out.state_flags & ne::kSnapshotStateFlagProjectileBeam) != 0);
     // Centimetre quantisation: 13.75 m survives exactly, and nothing may drift
     // by more than half a centimetre.
-    assert(std::fabs(out.beam_effective_length - 13.75f) < 0.005f);
+    require(std::fabs(out.beam_effective_length - 13.75f) < 0.005f);
 
     // The whole point of the 6-byte record. net_id 4 + reach 2, and nothing
     // else: no position, rotation, velocity, state or flags.
@@ -55,7 +69,7 @@ int main() {
     // is what brings into existence.
     const std::size_t beam_cost = bytes.size() - empty_bytes.size();
     std::printf("beam costs %zu bytes over an empty snapshot\n", beam_cost);
-    assert(beam_cost == 6 + 4);
+    require(beam_cost == 6 + 4);
 
     // A reach past what the u16 can hold clamps instead of wrapping to nothing.
     ne::WorldSnapshot huge;
@@ -65,11 +79,11 @@ int main() {
     huge.entities.push_back(long_beam);
     const std::vector<std::uint8_t> huge_bytes = ne::encode_snapshot_packet(huge);
     ne::WorldSnapshot huge_decoded;
-    assert(ne::decode_snapshot_packet(
+    require(ne::decode_snapshot_packet(
         huge_bytes.data(), huge_bytes.size(), &huge_decoded));
-    assert(huge_decoded.entities.size() == 1);
+    require(huge_decoded.entities.size() == 1);
     std::printf("clamped reach=%.2f\n", huge_decoded.entities[0].beam_effective_length);
-    assert(huge_decoded.entities[0].beam_effective_length > 655.0f);
+    require(huge_decoded.entities[0].beam_effective_length > 655.0f);
 
     // A snapshot with no beam still carries exactly the four standard sections.
     ne::WorldSnapshot plain;
@@ -81,11 +95,11 @@ int main() {
     plain.entities.push_back(rocket);
     const std::vector<std::uint8_t> plain_bytes = ne::encode_snapshot_packet(plain);
     ne::WorldSnapshot plain_decoded;
-    assert(ne::decode_snapshot_packet(
+    require(ne::decode_snapshot_packet(
         plain_bytes.data(), plain_bytes.size(), &plain_decoded));
-    assert(plain_decoded.entities.size() == 1);
-    assert(plain_decoded.entities[0].beam_effective_length == 0.0f);
-    assert((plain_decoded.entities[0].state_flags &
+    require(plain_decoded.entities.size() == 1);
+    require(plain_decoded.entities[0].beam_effective_length == 0.0f);
+    require((plain_decoded.entities[0].state_flags &
             ne::kSnapshotStateFlagProjectileBeam) == 0);
     std::printf("OK\n");
     return 0;

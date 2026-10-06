@@ -1,7 +1,22 @@
-#include <cassert>
+#include <cstdio>
+#include <cstdlib>
 #include <string>
 
 #include "physics/public/physics_world.h"
+
+namespace {
+
+void require_impl(bool condition, const char* expression, int line) {
+    if (!condition) {
+        std::fprintf(stderr, "require failed at line %d: %s\n", line, expression);
+        std::abort();
+    }
+}
+
+}  // namespace
+
+#define require(condition) \
+    require_impl(static_cast<bool>(condition), #condition, __LINE__)
 
 namespace {
 
@@ -26,24 +41,24 @@ network_example::physics::CollisionObjectDescriptor actor(
 int main() {
     using namespace network_example::physics;
     PhysicsWorld world;
-    assert(world.valid());
+    require(world.valid());
     std::string error;
-    assert(world.upsert_object(actor(2, 20, 5.0f), &error));
-    assert(world.upsert_object(actor(1, 10, 5.0f), &error));
+    require(world.upsert_object(actor(2, 20, 5.0f), &error));
+    require(world.upsert_object(actor(1, 10, 5.0f), &error));
 
     RayCastRequest ray{};
     ray.origin = glm::vec3(0.0f);
     ray.direction = glm::vec3(1.0f, 0.0f, 0.0f);
     ray.max_distance = 10.0f;
     const auto hits = world.ray_cast_all(ray);
-    assert(hits.size() == 2);
-    assert(hits[0].identity.entity_net_id == 1);
-    assert(hits[1].identity.entity_net_id == 2);
+    require(hits.size() == 2);
+    require(hits[0].identity.entity_net_id == 1);
+    require(hits[1].identity.entity_net_id == 2);
 
     ray.filter.ignored_entity_net_id = 1;
     CollisionHit closest{};
-    assert(world.ray_cast_closest(ray, &closest));
-    assert(closest.identity.entity_net_id == 2);
+    require(world.ray_cast_closest(ray, &closest));
+    require(closest.identity.entity_net_id == 2);
 
     OverlapRequest overlap{};
     overlap.shape.type = CollisionShapeType::kSphere;
@@ -51,7 +66,7 @@ int main() {
     overlap.position = glm::vec3(5.0f, 0.0f, 0.0f);
     overlap.filter.ignored_collider_id = 20;
     const auto overlaps = world.overlap_all(overlap);
-    assert(overlaps.size() == 1);
-    assert(overlaps[0].identity.collider_id == 10);
+    require(overlaps.size() == 1);
+    require(overlaps[0].identity.collider_id == 10);
     return 0;
 }

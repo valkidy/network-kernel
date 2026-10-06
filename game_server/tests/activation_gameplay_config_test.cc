@@ -1,8 +1,23 @@
 #include <algorithm>
-#include <cassert>
+#include <cstdio>
+#include <cstdlib>
 
 #include "game_server/src/gameplay_config.h"
 #include "kernel/src/kernel.h"
+
+namespace {
+
+void require_impl(bool condition, const char* expression, int line) {
+    if (!condition) {
+        std::fprintf(stderr, "require failed at line %d: %s\n", line, expression);
+        std::abort();
+    }
+}
+
+}  // namespace
+
+#define require(condition) \
+    require_impl(static_cast<bool>(condition), #condition, __LINE__)
 
 int main() {
     const network_example::game_server::GameServerGameplayConfig config =
@@ -13,12 +28,12 @@ int main() {
         [](const network_example::game_server::EntityTemplateConfig& value) {
             return value.actor_template_id == 200;
         });
-    assert(prop != config.entity_templates.end());
-    assert(prop->entity_type == KernelEntityType_Prop);
-    assert(
+    require(prop != config.entity_templates.end());
+    require(prop->entity_type == KernelEntityType_Prop);
+    require(
         prop->activated_trigger.action_graph_ref ==
         "action_apply_damage_at_activated");
-    assert(
+    require(
         prop->destroy_entity_trigger.action_graph_ref ==
         "action_spawn_entity_at_destroy_entity");
 
@@ -30,22 +45,22 @@ int main() {
         [](const KernelEntityTemplateDefinition& value) {
             return value.entity_template_id == 200;
         });
-    assert(compiled != catalog.entity_templates.end());
-    assert(
+    require(compiled != catalog.entity_templates.end());
+    require(
         compiled->activated_trigger.action_type ==
         KernelEntityTriggerActionType_ApplyDamage);
-    assert(
+    require(
         compiled->activated_trigger.target_source ==
         KernelEntityRefSource_EventTarget);
-    assert(compiled->activated_trigger.damage_amount == 25);
-    assert(
+    require(compiled->activated_trigger.damage_amount == 25);
+    require(
         compiled->destroy_entity_trigger.action_type ==
         KernelEntityTriggerActionType_SpawnEntity);
-    assert(compiled->destroy_entity_trigger.spawn_entity_template_id == 201);
-    assert(
+    require(compiled->destroy_entity_trigger.spawn_entity_template_id == 201);
+    require(
         compiled->destroy_entity_trigger.position_source ==
         KernelEventVec3Source_Position);
-    assert(
+    require(
         compiled->destroy_entity_trigger.owner_source ==
         KernelEntityRefSource_EventInstigator);
 
@@ -55,8 +70,8 @@ int main() {
         [](const network_example::game_server::EntityTemplateConfig& value) {
             return value.actor_template_id == 201;
         });
-    assert(collision_prop != config.entity_templates.end());
-    assert(
+    require(collision_prop != config.entity_templates.end());
+    require(
         collision_prop->collision_trigger.action_graph_ref ==
         "action_apply_damage_at_collision");
     const auto compiled_collision = std::find_if(
@@ -65,31 +80,31 @@ int main() {
         [](const KernelEntityTemplateDefinition& value) {
             return value.entity_template_id == 201;
         });
-    assert(compiled_collision != catalog.entity_templates.end());
-    assert(
+    require(compiled_collision != catalog.entity_templates.end());
+    require(
         compiled_collision->collision_trigger_mask ==
         KERNEL_COLLISION_MASK_ACTOR);
-    assert(
+    require(
         (compiled_collision->component_flags &
          KERNEL_ENTITY_COMPONENT_HEALTH) != 0u);
-    assert(compiled_collision->combat.hp == 1);
-    assert(compiled_collision->combat.max_hp == 1);
-    assert(compiled_collision->collision_trigger.action_count == 2);
-    assert(
+    require(compiled_collision->combat.hp == 1);
+    require(compiled_collision->combat.max_hp == 1);
+    require(compiled_collision->collision_trigger.action_count == 2);
+    require(
         compiled_collision->collision_trigger.action_type ==
         KernelEntityTriggerActionType_ApplyDamage);
-    assert(
+    require(
         compiled_collision->collision_trigger.target_source ==
         KernelEntityRefSource_EventTarget);
-    assert(compiled_collision->collision_trigger.damage_amount == 1);
-    assert(
+    require(compiled_collision->collision_trigger.damage_amount == 1);
+    require(
         compiled_collision->collision_trigger.actions[0].target_source ==
         KernelEntityRefSource_Self);
-    assert(compiled_collision->collision_trigger.actions[0].damage_amount == 1);
-    assert(
+    require(compiled_collision->collision_trigger.actions[0].damage_amount == 1);
+    require(
         compiled_collision->collision_trigger.actions[1].target_source ==
         KernelEntityRefSource_EventTarget);
-    assert(compiled_collision->collision_trigger.actions[1].damage_amount == 25);
+    require(compiled_collision->collision_trigger.actions[1].damage_amount == 25);
 
     network_example::game_server::GameServerGameplayConfig invalid = config;
     auto invalid_prop = std::find_if(
@@ -98,7 +113,7 @@ int main() {
         [](const network_example::game_server::EntityTemplateConfig& value) {
             return value.actor_template_id == 200;
         });
-    assert(invalid_prop != invalid.entity_templates.end());
+    require(invalid_prop != invalid.entity_templates.end());
     invalid_prop->health_depleted_trigger.parameters[0].second = "event.target";
     bool invalid_event_expression_rejected = false;
     try {
@@ -109,7 +124,7 @@ int main() {
             std::string(error.what()).find("does not provide event.target") !=
             std::string::npos;
     }
-    assert(invalid_event_expression_rejected);
+    require(invalid_event_expression_rejected);
 
     const auto rocket = std::find_if(
         catalog.projectile_templates.begin(),
@@ -117,11 +132,11 @@ int main() {
         [](const KernelProjectileTemplateDefinition& value) {
             return value.projectile_template_id == 3;
         });
-    assert(rocket != catalog.projectile_templates.end());
-    assert(
+    require(rocket != catalog.projectile_templates.end());
+    require(
         rocket->mechanics.projectile_impact_trigger.action_type ==
         KernelEntityTriggerActionType_SpawnProjectile);
-    assert(
+    require(
         rocket->mechanics.projectile_impact_trigger
             .spawn_projectile_template_id == 8);
 
@@ -130,6 +145,6 @@ int main() {
     kernel_config.tick.server_tick_rate = 30;
     kernel_config.tick.snapshot_rate = 15;
     network_example::KernelEngine kernel(kernel_config);
-    assert(kernel.load_gameplay_catalog(catalog.definition));
+    require(kernel.load_gameplay_catalog(catalog.definition));
     return 0;
 }

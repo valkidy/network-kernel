@@ -544,7 +544,7 @@ bool execute_action_graph_commands(
             if (!world.find_entity(pull->target).has_value() ||
                 !pull_is_authorable(
                     pull->mode, pull->distance, pull->airtime_ticks,
-                    pull->max_speed) ||
+                    pull->max_speed, pull->strength) ||
                 !std::isfinite(pull->point.x) ||
                 !std::isfinite(pull->point.y) ||
                 !std::isfinite(pull->point.z)) {
@@ -1252,16 +1252,14 @@ bool execute_action_graph_commands(
                 engine.fixed_delta_seconds(),
                 movement_state != nullptr ? movement_state->gravity.y : -9.81f,
                 pull->max_speed);
-            // Weighed like a split impulse, on its larger axis. The speed is
-            // worked out per target, so a heavy one may shrug off being hauled
-            // across the whole radius and still be moved from close in.
+            // Weighed on the authored strength, not the launch: the launch is
+            // worked out per target, so weighing it would let where a target
+            // stands decide whether it is moved at all. Strictly greater, as
+            // apply_impulse is.
             const float resistance = world.registry().all_of<ImpulseResistance>(target)
                 ? world.registry().get<ImpulseResistance>(target).value
                 : 0.0f;
-            const float effective_strength = std::max(
-                std::sqrt(launch.x * launch.x + launch.z * launch.z),
-                std::fabs(launch.y));
-            if (!std::isfinite(resistance) || effective_strength <= resistance) {
+            if (!std::isfinite(resistance) || pull->strength <= resistance) {
                 continue;
             }
             // Replaced, not added to: what the target was already doing --

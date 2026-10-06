@@ -1,4 +1,5 @@
-#include <cassert>
+#include <cstdio>
+#include <cstdlib>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -7,11 +8,25 @@
 
 namespace {
 
+void require_impl(bool condition, const char* expression, int line) {
+    if (!condition) {
+        std::fprintf(stderr, "require failed at line %d: %s\n", line, expression);
+        std::abort();
+    }
+}
+
+}  // namespace
+
+#define require(condition) \
+    require_impl(static_cast<bool>(condition), #condition, __LINE__)
+
+namespace {
+
 network_example::Health& health(
     network_example::World& world,
     network_example::NetId net_id) {
     const auto entity = world.find_entity(net_id);
-    assert(entity.has_value());
+    require(entity.has_value());
     return world.registry().get<network_example::Health>(*entity);
 }
 
@@ -39,24 +54,24 @@ void confirm_after_grace_window() {
     network_example::DamagePipeline pipeline;
     std::vector<KernelEvent> events;
 
-    assert(pipeline.submit_hit(world, player, 77, 0, 3, 40, 1000));
-    assert(health(world, player).hp == 100);
-    assert(pipeline.pending_count() == 1);
+    require(pipeline.submit_hit(world, player, 77, 0, 3, 40, 1000));
+    require(health(world, player).hp == 100);
+    require(pipeline.pending_count() == 1);
     pipeline.confirm_ready(world, 100999, 3, &events);
-    assert(health(world, player).hp == 100);
-    assert(events.empty());
+    require(health(world, player).hp == 100);
+    require(events.empty());
 
     pipeline.confirm_ready(world, 101000, 4, &events);
-    assert(health(world, player).hp == 60);
-    assert(pipeline.pending_count() == 0);
-    assert(events.size() == 2);
-    assert(events[0].type == KernelEventType_HitConfirmed);
-    assert(events[1].type == KernelEventType_DamageApplied);
-    assert(events[1].code == 40);
-    assert(events[0].event_time_us == 1000);
-    assert(events[0].presentation_time_us == 1000);
-    assert(events[1].event_time_us == 1000);
-    assert(events[1].presentation_time_us == 1000);
+    require(health(world, player).hp == 60);
+    require(pipeline.pending_count() == 0);
+    require(events.size() == 2);
+    require(events[0].type == KernelEventType_HitConfirmed);
+    require(events[1].type == KernelEventType_DamageApplied);
+    require(events[1].code == 40);
+    require(events[0].event_time_us == 1000);
+    require(events[0].presentation_time_us == 1000);
+    require(events[1].event_time_us == 1000);
+    require(events[1].presentation_time_us == 1000);
 }
 
 void immediate_damage_request_applies_on_confirm() {
@@ -78,17 +93,17 @@ void immediate_damage_request_applies_on_confirm() {
         3000,
         glm::vec3{1.0f, 0.0f, 0.0f},
     });
-    assert(health(world, enemy).hp == 100);
+    require(health(world, enemy).hp == 100);
 
     pipeline.confirm_ready(world, 3000, 11, &events);
-    assert(health(world, enemy).hp == 65);
-    assert(events.size() == 2);
-    assert(events[0].type == KernelEventType_HitConfirmed);
-    assert(events[0].net_id == enemy);
-    assert(events[0].code == 3);
-    assert(events[1].type == KernelEventType_DamageApplied);
-    assert(events[1].net_id == enemy);
-    assert(events[1].code == 35);
+    require(health(world, enemy).hp == 65);
+    require(events.size() == 2);
+    require(events[0].type == KernelEventType_HitConfirmed);
+    require(events[0].net_id == enemy);
+    require(events[0].code == 3);
+    require(events[1].type == KernelEventType_DamageApplied);
+    require(events[1].net_id == enemy);
+    require(events[1].code == 35);
 }
 
 void drain_ready_damage_does_not_apply_health_until_damage_system() {
@@ -113,19 +128,19 @@ void drain_ready_damage_does_not_apply_health_until_damage_system() {
 
     const std::vector<network_example::ConfirmedDamage> ready =
         pipeline.drain_ready_damage(world, 3000);
-    assert(ready.size() == 1);
-    assert(ready[0].target_net_id == enemy);
-    assert(ready[0].source_code == 3);
-    assert(ready[0].damage == 35);
-    assert(ready[0].hit_position.x == 1.0f);
-    assert(health(world, enemy).hp == 100);
+    require(ready.size() == 1);
+    require(ready[0].target_net_id == enemy);
+    require(ready[0].source_code == 3);
+    require(ready[0].damage == 35);
+    require(ready[0].hit_position.x == 1.0f);
+    require(health(world, enemy).hp == 100);
 
     network_example::apply_damage_applications(world, ready, 11, &events);
-    assert(health(world, enemy).hp == 65);
-    assert(events.size() == 2);
-    assert(events[0].type == KernelEventType_HitConfirmed);
-    assert(events[1].type == KernelEventType_DamageApplied);
-    assert(events[1].code == 35);
+    require(health(world, enemy).hp == 65);
+    require(events.size() == 2);
+    require(events[0].type == KernelEventType_HitConfirmed);
+    require(events[1].type == KernelEventType_DamageApplied);
+    require(events[1].code == 35);
 }
 
 void damage_requests_apply_in_deterministic_order() {
@@ -163,15 +178,15 @@ void damage_requests_apply_in_deterministic_order() {
     });
 
     pipeline.confirm_ready(world, 1000, 3, &events);
-    assert(events.size() == 4);
-    assert(events[0].type == KernelEventType_HitConfirmed);
-    assert(events[0].net_id == first);
-    assert(events[1].type == KernelEventType_DamageApplied);
-    assert(events[1].net_id == first);
-    assert(events[2].type == KernelEventType_HitConfirmed);
-    assert(events[2].net_id == second);
-    assert(events[3].type == KernelEventType_DamageApplied);
-    assert(events[3].net_id == second);
+    require(events.size() == 4);
+    require(events[0].type == KernelEventType_HitConfirmed);
+    require(events[0].net_id == first);
+    require(events[1].type == KernelEventType_DamageApplied);
+    require(events[1].net_id == first);
+    require(events[2].type == KernelEventType_HitConfirmed);
+    require(events[2].net_id == second);
+    require(events[3].type == KernelEventType_DamageApplied);
+    require(events[3].net_id == second);
 }
 
 void dodge_cancels_pending_damage() {
@@ -181,14 +196,14 @@ void dodge_cancels_pending_damage() {
     network_example::DamagePipeline pipeline;
     std::vector<KernelEvent> events;
 
-    assert(pipeline.submit_hit(world, player, 77, 0, 3, 40, 100000));
+    require(pipeline.submit_hit(world, player, 77, 0, 3, 40, 100000));
     pipeline.ingest_defensive_input(
         1,
         defensive_input(InputButton_Dodge, 90000),
         120000);
     pipeline.confirm_ready(world, 200000, 6, &events);
-    assert(health(world, player).hp == 100);
-    assert(events.empty());
+    require(health(world, player).hp == 100);
+    require(events.empty());
 }
 
 void parry_reduces_pending_damage() {
@@ -198,15 +213,15 @@ void parry_reduces_pending_damage() {
     network_example::DamagePipeline pipeline;
     std::vector<KernelEvent> events;
 
-    assert(pipeline.submit_hit(world, player, 77, 0, 3, 41, 100000));
+    require(pipeline.submit_hit(world, player, 77, 0, 3, 41, 100000));
     pipeline.ingest_defensive_input(
         1,
         defensive_input(InputButton_Parry, 90000),
         120000);
     pipeline.confirm_ready(world, 200000, 6, &events);
-    assert(health(world, player).hp == 79);
-    assert(events.size() == 2);
-    assert(events[1].code == 21);
+    require(health(world, player).hp == 79);
+    require(events.size() == 2);
+    require(events[1].code == 21);
 }
 
 void reload_does_not_modify_pending_damage() {
@@ -219,12 +234,12 @@ void reload_does_not_modify_pending_damage() {
     reload_input.action_intent = KernelActionIntent{
         1u, KernelActionBinding_Reload, 0u, 0u};
 
-    assert(pipeline.submit_hit(world, player, 77, 0, 3, 40, 100000));
+    require(pipeline.submit_hit(world, player, 77, 0, 3, 40, 100000));
     pipeline.ingest_defensive_input(1, reload_input, 120000);
     pipeline.confirm_ready(world, 200000, 6, &events);
-    assert(health(world, player).hp == 60);
-    assert(events.size() == 2);
-    assert(events[1].code == 40);
+    require(health(world, player).hp == 60);
+    require(events.size() == 2);
+    require(events[1].code == 40);
 }
 
 void dodge_wins_over_parry() {
@@ -234,14 +249,14 @@ void dodge_wins_over_parry() {
     network_example::DamagePipeline pipeline;
     std::vector<KernelEvent> events;
 
-    assert(pipeline.submit_hit(world, player, 77, 0, 3, 40, 100000));
+    require(pipeline.submit_hit(world, player, 77, 0, 3, 40, 100000));
     pipeline.ingest_defensive_input(
         1,
         defensive_input(InputButton_Dodge | InputButton_Parry, 90000),
         120000);
     pipeline.confirm_ready(world, 200000, 6, &events);
-    assert(health(world, player).hp == 100);
-    assert(events.empty());
+    require(health(world, player).hp == 100);
+    require(events.empty());
 }
 
 void non_server_damage_applies_without_grace_window() {
@@ -251,11 +266,11 @@ void non_server_damage_applies_without_grace_window() {
     network_example::DamagePipeline pipeline;
     std::vector<KernelEvent> events;
 
-    assert(pipeline.submit_hit(world, player, 77, 2, 3, 40, 100000));
-    assert(pipeline.pending_count() == 1);
+    require(pipeline.submit_hit(world, player, 77, 2, 3, 40, 100000));
+    require(pipeline.pending_count() == 1);
     pipeline.confirm_ready(world, 100000, 6, &events);
-    assert(health(world, player).hp == 60);
-    assert(events.size() == 2);
+    require(health(world, player).hp == 60);
+    require(events.size() == 2);
 }
 
 }  // namespace

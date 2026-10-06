@@ -20,7 +20,8 @@ health:
   hp: 3000
   max_hp: 3000
 # Nothing pushes an airship around.
-impulse_resistance: 1000.0
+# impulse_resistance: 1000.0
+impulse_resistance: 10.0
 movement:
   controller: hover
   move_speed_meters_per_second: 1.5
@@ -44,7 +45,7 @@ animations:
   idle: 0
   chasing: 1
 vision:
-  collider_template: drone_vision_cone
+  collider_template: hive_airship_vision_cone
 ai:
   controller: chaser
   profile: default
@@ -54,7 +55,6 @@ ai:
     patrol_rotation_interval_ticks: 60
     patrol_rotation_min_degrees: 10.0
     patrol_rotation_max_degrees: 20.0
-    weapon_id: 16
     animation_idle: idle
     animation_attack: chasing
   chaser:

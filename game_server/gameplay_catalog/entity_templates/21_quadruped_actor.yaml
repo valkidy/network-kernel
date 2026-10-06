@@ -41,7 +41,6 @@ ai:
     passive_patrol: true
     patrol_extent_x_meters: 30.0
     patrol_input_magnitude: 1.0
-    weapon_id: 2
     animation_idle: idle
     animation_attack: chasing
 animations:

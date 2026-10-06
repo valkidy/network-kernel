@@ -1,9 +1,24 @@
 #include <array>
-#include <cassert>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <vector>
 
 #include "kernel/src/skeleton_presentation.h"
+
+namespace {
+
+void require_impl(bool condition, const char* expression, int line) {
+    if (!condition) {
+        std::fprintf(stderr, "require failed at line %d: %s\n", line, expression);
+        std::abort();
+    }
+}
+
+}  // namespace
+
+#define require(condition) \
+    require_impl(static_cast<bool>(condition), #condition, __LINE__)
 
 namespace {
 
@@ -39,31 +54,31 @@ void test_pose_history_bounds() {
     std::uint32_t sampled_tick = 0u;
 
     // Nothing recorded: the caller keeps its own fallback pose.
-    assert(!network_example::sample_skeleton_pose_history(
+    require(!network_example::sample_skeleton_pose_history(
         history, 500u, &sampled, &sampled_tick));
 
     record(1u, 100u, {transform(1.0f)}, 4u, &history);
-    assert(network_example::sample_skeleton_pose_history(
+    require(network_example::sample_skeleton_pose_history(
         history, 999u, &sampled, &sampled_tick));
-    assert(sampled_tick == 1u);
-    assert(near_equal(sampled[0].local_position.x, 1.0f));
+    require(sampled_tick == 1u);
+    require(near_equal(sampled[0].local_position.x, 1.0f));
 
     record(2u, 200u, {transform(2.0f)}, 4u, &history);
     record(3u, 300u, {transform(3.0f)}, 4u, &history);
 
     // Clamps to the held ends instead of extrapolating, matching how snapshot
     // interpolation clamps to its buffer.
-    assert(network_example::sample_skeleton_pose_history(
+    require(network_example::sample_skeleton_pose_history(
         history, 50u, &sampled, &sampled_tick));
-    assert(sampled_tick == 1u && near_equal(sampled[0].local_position.x, 1.0f));
-    assert(network_example::sample_skeleton_pose_history(
+    require(sampled_tick == 1u && near_equal(sampled[0].local_position.x, 1.0f));
+    require(network_example::sample_skeleton_pose_history(
         history, 900u, &sampled, &sampled_tick));
-    assert(sampled_tick == 3u && near_equal(sampled[0].local_position.x, 3.0f));
+    require(sampled_tick == 3u && near_equal(sampled[0].local_position.x, 3.0f));
 
     // Midpoint of the second interval.
-    assert(network_example::sample_skeleton_pose_history(
+    require(network_example::sample_skeleton_pose_history(
         history, 250u, &sampled, &sampled_tick));
-    assert(sampled_tick == 3u && near_equal(sampled[0].local_position.x, 2.5f));
+    require(sampled_tick == 3u && near_equal(sampled[0].local_position.x, 2.5f));
 }
 
 void test_pose_history_eviction() {
@@ -76,25 +91,25 @@ void test_pose_history_eviction() {
             4u,
             &history);
     }
-    assert(history.size == 4u);
+    require(history.size == 4u);
 
     std::vector<KernelBoneLocalTransform> sampled;
     std::uint32_t sampled_tick = 0u;
     // Ticks 1 and 2 were overwritten; the oldest held sample is tick 3.
-    assert(network_example::sample_skeleton_pose_history(
+    require(network_example::sample_skeleton_pose_history(
         history, 0u, &sampled, &sampled_tick));
-    assert(sampled_tick == 3u && near_equal(sampled[0].local_position.x, 3.0f));
-    assert(network_example::sample_skeleton_pose_history(
+    require(sampled_tick == 3u && near_equal(sampled[0].local_position.x, 3.0f));
+    require(network_example::sample_skeleton_pose_history(
         history, 450u, &sampled, &sampled_tick));
-    assert(near_equal(sampled[0].local_position.x, 4.5f));
+    require(near_equal(sampled[0].local_position.x, 4.5f));
 
     // Re-recording the newest tick replaces it rather than advancing the ring,
     // so ordering stays monotonic.
     record(6u, 600u, {transform(60.0f)}, 4u, &history);
-    assert(history.size == 4u);
-    assert(network_example::sample_skeleton_pose_history(
+    require(history.size == 4u);
+    require(network_example::sample_skeleton_pose_history(
         history, 600u, &sampled, &sampled_tick));
-    assert(sampled_tick == 6u && near_equal(sampled[0].local_position.x, 60.0f));
+    require(sampled_tick == 6u && near_equal(sampled[0].local_position.x, 60.0f));
 }
 
 void test_pose_history_rotation_interpolation() {
@@ -108,12 +123,12 @@ void test_pose_history_rotation_interpolation() {
 
     std::vector<KernelBoneLocalTransform> sampled;
     std::uint32_t sampled_tick = 0u;
-    assert(network_example::sample_skeleton_pose_history(
+    require(network_example::sample_skeleton_pose_history(
         history, 150u, &sampled, &sampled_tick));
     // Halfway between 0 and 90 degrees about Y is 45 degrees, i.e. a quaternion
     // of (sin 22.5, cos 22.5) -- a slerp, not a component lerp.
-    assert(near_equal(sampled[0].local_rotation.y, std::sin(0.39269908f)));
-    assert(near_equal(sampled[0].local_rotation.w, std::cos(0.39269908f)));
+    require(near_equal(sampled[0].local_rotation.y, std::sin(0.39269908f)));
+    require(near_equal(sampled[0].local_rotation.w, std::cos(0.39269908f)));
 }
 
 // The property the whole ring exists for: bone locals encode the foot relative
@@ -137,11 +152,11 @@ void test_planted_foot_survives_interpolation() {
             static_cast<std::uint64_t>(alpha * (133333.0f - 100000.0f));
         std::vector<KernelBoneLocalTransform> sampled;
         std::uint32_t sampled_tick = 0u;
-        assert(network_example::sample_skeleton_pose_history(
+        require(network_example::sample_skeleton_pose_history(
             history, time_us, &sampled, &sampled_tick));
         const float root =
             root_at_tick1 + (root_at_tick2 - root_at_tick1) * alpha;
-        assert(near_equal(root + sampled[0].local_position.x, foot_world, 0.001f));
+        require(near_equal(root + sampled[0].local_position.x, foot_world, 0.001f));
     }
 }
 
@@ -176,20 +191,20 @@ int main() {
 
     KernelSkeletonRenderStateResult result{};
     result.struct_size = sizeof(result);
-    assert(network_example::copy_skeleton_render_states(
+    require(network_example::copy_skeleton_render_states(
                poses, 0u, 900u, nullptr, 0u, nullptr, 0u, &result) == 0u);
-    assert(result.status == KERNEL_SKELETON_RENDER_STATUS_INSUFFICIENT_CAPACITY);
-    assert(result.required_state_count == 2u);
-    assert(result.required_bone_transform_count == 3u);
-    assert(result.written_state_count == 0u);
-    assert(result.source_tick == 8u);
-    assert(result.requested_render_time_us == 900u);
-    assert(result.evaluated_render_time_us == 800u);
+    require(result.status == KERNEL_SKELETON_RENDER_STATUS_INSUFFICIENT_CAPACITY);
+    require(result.required_state_count == 2u);
+    require(result.required_bone_transform_count == 3u);
+    require(result.written_state_count == 0u);
+    require(result.source_tick == 8u);
+    require(result.requested_render_time_us == 900u);
+    require(result.evaluated_render_time_us == 800u);
 
     std::array<KernelSkeletonRenderState, 2> states{};
     std::array<KernelBoneLocalTransform, 3> bones{};
     result.struct_size = sizeof(result);
-    assert(network_example::copy_skeleton_render_states(
+    require(network_example::copy_skeleton_render_states(
                poses,
                0u,
                900u,
@@ -198,15 +213,15 @@ int main() {
                bones.data(),
                2u,
                &result) == 1u);
-    assert(result.status == KERNEL_SKELETON_RENDER_STATUS_INSUFFICIENT_CAPACITY);
-    assert(result.written_bone_transform_count == 1u);
-    assert(states[0].entity_net_id == 7u);
-    assert(states[0].first_bone_transform == 0u);
-    assert(states[0].bone_count == 1u);
-    assert(bones[0].local_position.x == 1.0f);
+    require(result.status == KERNEL_SKELETON_RENDER_STATUS_INSUFFICIENT_CAPACITY);
+    require(result.written_bone_transform_count == 1u);
+    require(states[0].entity_net_id == 7u);
+    require(states[0].first_bone_transform == 0u);
+    require(states[0].bone_count == 1u);
+    require(bones[0].local_position.x == 1.0f);
 
     result.struct_size = sizeof(result);
-    assert(network_example::copy_skeleton_render_states(
+    require(network_example::copy_skeleton_render_states(
                poses,
                KERNEL_SKELETON_RENDER_RESULT_FLAG_AT_TIME,
                750u,
@@ -215,12 +230,12 @@ int main() {
                bones.data(),
                bones.size(),
                &result) == 2u);
-    assert(states[1].entity_net_id == 42u);
-    assert(states[1].pose_time_us == 600u);
-    assert(bones[1].local_position.x == 4.0f);
+    require(states[1].entity_net_id == 42u);
+    require(states[1].pose_time_us == 600u);
+    require(bones[1].local_position.x == 4.0f);
 
     result.struct_size = sizeof(result);
-    assert(network_example::copy_skeleton_render_states(
+    require(network_example::copy_skeleton_render_states(
                poses,
                KERNEL_SKELETON_RENDER_RESULT_FLAG_AT_TIME,
                900u,
@@ -229,15 +244,15 @@ int main() {
                bones.data(),
                bones.size(),
                &result) == 2u);
-    assert(result.status == KERNEL_SKELETON_RENDER_STATUS_SUCCESS);
-    assert(result.written_bone_transform_count == 3u);
-    assert(states[0].entity_net_id == 7u);
-    assert(states[1].entity_net_id == 42u);
-    assert(states[1].first_bone_transform == 1u);
-    assert(bones[1].local_position.x == 2.0f);
+    require(result.status == KERNEL_SKELETON_RENDER_STATUS_SUCCESS);
+    require(result.written_bone_transform_count == 3u);
+    require(states[0].entity_net_id == 7u);
+    require(states[1].entity_net_id == 42u);
+    require(states[1].first_bone_transform == 1u);
+    require(bones[1].local_position.x == 2.0f);
 
     result.struct_size = sizeof(result);
-    assert(network_example::copy_skeleton_render_states(
+    require(network_example::copy_skeleton_render_states(
                poses,
                0u,
                0u,
@@ -246,5 +261,5 @@ int main() {
                nullptr,
                0u,
                &result) == 0u);
-    assert(result.status == KERNEL_SKELETON_RENDER_STATUS_INVALID_ARGUMENT);
+    require(result.status == KERNEL_SKELETON_RENDER_STATUS_INVALID_ARGUMENT);
 }

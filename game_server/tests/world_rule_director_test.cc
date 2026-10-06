@@ -218,7 +218,7 @@ bool almost_equal(float lhs, float rhs, float tolerance = 0.001f) {
 void a_world_rule_fills_its_target_and_stops() {
     using network_example::game_server::WorldRuleDirector;
 
-    KernelHandle* kernel = start_server(7841);
+    KernelHandle* kernel = start_server(8031);
     WorldRuleDirector director({rule_of(3, 0.0f, 1)});
 
     director.tick(kernel, agent_count(kernel));
@@ -242,7 +242,7 @@ void a_world_rule_fills_its_target_and_stops() {
 void a_rule_at_strength_replaces_a_casualty_immediately() {
     using network_example::game_server::WorldRuleDirector;
 
-    KernelHandle* kernel = start_server(7842);
+    KernelHandle* kernel = start_server(8032);
     WorldRuleDirector director({rule_of(2, 0.0f, 10)});
 
     director.tick(kernel, agent_count(kernel));
@@ -268,7 +268,7 @@ void a_rule_at_strength_replaces_a_casualty_immediately() {
 void an_interval_separates_two_top_ups() {
     using network_example::game_server::WorldRuleDirector;
 
-    KernelHandle* kernel = start_server(7843);
+    KernelHandle* kernel = start_server(8033);
     WorldRuleDirector director({rule_of(4, 0.0f, 10)});
 
     // Told it is empty every tick, so the shortfall never closes.
@@ -289,7 +289,7 @@ void an_interval_separates_two_top_ups() {
 void placement_is_a_golden_angle_ring_that_advances() {
     using network_example::game_server::WorldRuleDirector;
 
-    KernelHandle* kernel = start_server(7844);
+    KernelHandle* kernel = start_server(8034);
     const network_example::game_server::WorldRuleSpawnConfig rule =
         rule_of(2, 5.0f, 1);
     WorldRuleDirector director({rule});
@@ -334,7 +334,7 @@ void placement_is_a_golden_angle_ring_that_advances() {
 void an_empty_rule_spawns_nothing() {
     using network_example::game_server::WorldRuleDirector;
 
-    KernelHandle* kernel = start_server(7845);
+    KernelHandle* kernel = start_server(8035);
     network_example::game_server::WorldRuleSpawnConfig no_target =
         rule_of(0, 0.0f, 1);
     network_example::game_server::WorldRuleSpawnConfig no_template =

@@ -37,6 +37,5 @@ ai:
     patrol_rotation_interval_ticks: 30
     patrol_rotation_min_degrees: 15.0
     patrol_rotation_max_degrees: 30.0
-    weapon_id: 2
     animation_idle: idle
     animation_attack: chasing

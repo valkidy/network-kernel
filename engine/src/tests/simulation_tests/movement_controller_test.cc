@@ -1,6 +1,7 @@
-#include <cassert>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <optional>
 #include <string>
 #include <vector>
@@ -11,6 +12,20 @@
 
 #include "physics/public/physics_world.h"
 #include "simulation/public/simulation.h"
+
+namespace {
+
+void require_impl(bool condition, const char* expression, int line) {
+    if (!condition) {
+        std::fprintf(stderr, "require failed at line %d: %s\n", line, expression);
+        std::abort();
+    }
+}
+
+}  // namespace
+
+#define require(condition) \
+    require_impl(static_cast<bool>(condition), #condition, __LINE__)
 
 namespace {
 
@@ -41,7 +56,7 @@ struct Fixture {
             glm::vec3{20.0f, 0.5f, 20.0f});
         player = world.spawn_player(7, spawn);
         const std::optional<entt::entity> found = world.find_entity(player);
-        assert(found.has_value());
+        require(found.has_value());
         entity = *found;
         MovementState& movement = world.registry().get<MovementState>(entity);
         movement.speed_meters_per_second = 5.0f;
@@ -90,7 +105,7 @@ struct Fixture {
         object.position = position;
         object.rotation = rotation;
         std::string error;
-        assert(physics.upsert_object(object, &error));
+        require(physics.upsert_object(object, &error));
     }
 
     void add_movement_obstacle(
@@ -110,7 +125,7 @@ struct Fixture {
         object.shape.capsule_half_height = 0.55f;
         object.position = position + glm::vec3{0.0f, 0.9f, 0.0f};
         std::string error;
-        assert(physics.upsert_object(object, &error));
+        require(physics.upsert_object(object, &error));
     }
 
     void sync_body() {
@@ -129,7 +144,7 @@ struct Fixture {
         object.shape.capsule_half_height = collider.capsule_half_height;
         object.position = transform.position + collider.local_center;
         std::string error;
-        assert(physics.upsert_object(object, &error));
+        require(physics.upsert_object(object, &error));
     }
 
     void tick(const KernelPlayerInput* input = nullptr) {
@@ -177,13 +192,13 @@ void grounded_falls_lands_once_and_stops_requerying() {
         fixture.world.registry().get<MovementState>(fixture.entity);
     const Transform& transform =
         fixture.world.registry().get<Transform>(fixture.entity);
-    assert(movement.ground_state == MovementState::GroundState::kGrounded);
-    assert(std::fabs(transform.position.y) < 0.02f);
-    assert(landed_event_count(fixture.events) == 1);
+    require(movement.ground_state == MovementState::GroundState::kGrounded);
+    require(std::fabs(transform.position.y) < 0.02f);
+    require(landed_event_count(fixture.events) == 1);
     const std::uint64_t query_count = fixture.stats.grounded_query_count;
     fixture.tick();
     fixture.tick();
-    assert(fixture.stats.grounded_query_count <= query_count + 1);
+    require(fixture.stats.grounded_query_count <= query_count + 1);
 }
 
 void grounded_initially_below_terrain_snaps_to_hit_position() {
@@ -197,10 +212,10 @@ void grounded_initially_below_terrain_snaps_to_hit_position() {
         fixture.world.registry().get<Transform>(fixture.entity);
     const Velocity& velocity =
         fixture.world.registry().get<Velocity>(fixture.entity);
-    assert(movement.ground_state == MovementState::GroundState::kGrounded);
-    assert(std::fabs(transform.position.y) < 0.02f);
-    assert(std::fabs(velocity.linear.y) < 0.0001f);
-    assert(landed_event_count(fixture.events) == 1);
+    require(movement.ground_state == MovementState::GroundState::kGrounded);
+    require(std::fabs(transform.position.y) < 0.02f);
+    require(std::fabs(velocity.linear.y) < 0.0001f);
+    require(landed_event_count(fixture.events) == 1);
 }
 
 void kinematic_blocks_on_wall_and_queries_ground_each_tick() {
@@ -220,10 +235,10 @@ void kinematic_blocks_on_wall_and_queries_ground_each_tick() {
         fixture.world.registry().get<Transform>(fixture.entity);
     const MovementState& movement =
         fixture.world.registry().get<MovementState>(fixture.entity);
-    assert(transform.position.x < 1.45f);
-    assert(movement.ground_state == MovementState::GroundState::kGrounded);
-    assert(fixture.stats.kinematic_move_count == 61);
-    assert(fixture.stats.grounded_query_count == 61);
+    require(transform.position.x < 1.45f);
+    require(movement.ground_state == MovementState::GroundState::kGrounded);
+    require(fixture.stats.kinematic_move_count == 61);
+    require(fixture.stats.grounded_query_count == 61);
 }
 
 void character_is_grounded_and_slides_along_wall() {
@@ -243,11 +258,11 @@ void character_is_grounded_and_slides_along_wall() {
         fixture.world.registry().get<Transform>(fixture.entity);
     const MovementState& movement =
         fixture.world.registry().get<MovementState>(fixture.entity);
-    assert(transform.position.x < 1.5f);
-    assert(transform.position.z > 3.0f);
-    assert(movement.ground_state == MovementState::GroundState::kGrounded);
-    assert(fixture.stats.character_move_count == 61);
-    assert(landed_event_count(fixture.events) == 1);
+    require(transform.position.x < 1.5f);
+    require(transform.position.z > 3.0f);
+    require(movement.ground_state == MovementState::GroundState::kGrounded);
+    require(fixture.stats.character_move_count == 61);
+    require(landed_event_count(fixture.events) == 1);
 }
 
 void character_recovers_from_initial_penetration() {
@@ -263,10 +278,10 @@ void character_recovers_from_initial_penetration() {
     }
     const glm::vec3 recovered =
         fixture.world.registry().get<Transform>(fixture.entity).position;
-    assert(std::isfinite(recovered.x));
-    assert(std::isfinite(recovered.y));
-    assert(std::isfinite(recovered.z));
-    assert(glm::distance(initial, recovered) > 0.01f);
+    require(std::isfinite(recovered.x));
+    require(std::isfinite(recovered.y));
+    require(std::isfinite(recovered.z));
+    require(glm::distance(initial, recovered) > 0.01f);
 }
 
 void character_steps_over_obstacle_while_kinematic_stops() {
@@ -295,8 +310,8 @@ void character_steps_over_obstacle_while_kinematic_stops() {
         kinematic.world.registry().get<Transform>(kinematic.entity).position.x;
     const float character_x =
         character.world.registry().get<Transform>(character.entity).position.x;
-    assert(kinematic_x < 1.5f);
-    assert(character_x > 3.0f);
+    require(kinematic_x < 1.5f);
+    require(character_x > 3.0f);
 }
 
 void character_blocks_against_other_actor_movement_body() {
@@ -310,7 +325,7 @@ void character_blocks_against_other_actor_movement_body() {
     }
     const float x =
         fixture.world.registry().get<Transform>(fixture.entity).position.x;
-    assert(x < 1.35f);
+    require(x < 1.35f);
 }
 
 void character_blocks_upward_motion_at_ceiling() {
@@ -327,7 +342,7 @@ void character_blocks_upward_motion_at_ceiling() {
     }
     const Transform& transform =
         fixture.world.registry().get<Transform>(fixture.entity);
-    assert(transform.position.y < 0.25f);
+    require(transform.position.y < 0.25f);
 }
 
 void character_replay_is_deterministic() {
@@ -341,11 +356,11 @@ void character_replay_is_deterministic() {
         input.input_seq = tick + 1;
         first.tick(&input);
         second.tick(&input);
-        assert(first.world.registry().get<Transform>(first.entity).position ==
+        require(first.world.registry().get<Transform>(first.entity).position ==
                second.world.registry().get<Transform>(second.entity).position);
-        assert(first.world.registry().get<Velocity>(first.entity).linear ==
+        require(first.world.registry().get<Velocity>(first.entity).linear ==
                second.world.registry().get<Velocity>(second.entity).linear);
-        assert(first.world.registry().get<MovementState>(first.entity).ground_state ==
+        require(first.world.registry().get<MovementState>(first.entity).ground_state ==
                second.world.registry().get<MovementState>(second.entity).ground_state);
     }
 }
@@ -380,12 +395,12 @@ void walkable_and_steep_slopes_follow_controller_policy() {
         kinematic.world.registry().get<Transform>(kinematic.entity);
     const Transform& character_transform =
         character.world.registry().get<Transform>(character.entity);
-    assert(kinematic_transform.position.y > 0.4f);
-    assert(character_transform.position.y > 0.4f);
-    assert(kinematic.world.registry()
+    require(kinematic_transform.position.y > 0.4f);
+    require(character_transform.position.y > 0.4f);
+    require(kinematic.world.registry()
                .get<MovementState>(kinematic.entity)
                .ground_state == MovementState::GroundState::kGrounded);
-    assert(character.world.registry()
+    require(character.world.registry()
                .get<MovementState>(character.entity)
                .ground_state == MovementState::GroundState::kGrounded);
 
@@ -404,8 +419,8 @@ void walkable_and_steep_slopes_follow_controller_policy() {
     }
     const Transform& steep_transform =
         steep.world.registry().get<Transform>(steep.entity);
-    assert(steep_transform.position.x < 1.2f);
-    assert(steep_transform.position.y < 0.4f);
+    require(steep_transform.position.x < 1.2f);
+    require(steep_transform.position.y < 0.4f);
 }
 
 }  // namespace

@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 #include <optional>
 #include <string>
 #include <utility>
@@ -56,7 +57,8 @@ KernelActionTriggerDefinition pull_trigger(
     std::uint8_t point_source,
     float distance,
     std::uint32_t airtime_ticks,
-    float max_speed) {
+    float max_speed,
+    float strength = 10.0f) {
     KernelActionTriggerDefinition trigger{};
     trigger.struct_size = sizeof(trigger);
     trigger.action_count = 1u;
@@ -72,6 +74,7 @@ KernelActionTriggerDefinition pull_trigger(
     action.pull_distance = distance;
     action.pull_airtime_ticks = airtime_ticks;
     action.pull_max_speed = max_speed;
+    action.pull_strength = strength;
     return trigger;
 }
 
@@ -110,6 +113,18 @@ void only_coherent_pulls_compile() {
     require(!compiles(KERNEL_PULL_MODE_TO_POINT,
                       KernelEventVec3Source_SubjectPosition, 0.0f, 25u, 0.0f));
     require(!compiles(7u, KernelEventVec3Source_SubjectPosition, 0.0f, 25u, 12.0f));
+    // Strength is the fixed number resistance is weighed against: positive
+    // and finite, or there is nothing to weigh.
+    for (const float strength :
+         {0.0f, -1.0f, std::numeric_limits<float>::infinity(),
+          std::numeric_limits<float>::quiet_NaN()}) {
+        require(!compile_action_trigger_definition(
+                     TriggerEventType::kProjectileImpact,
+                     pull_trigger(KERNEL_PULL_MODE_TO_POINT,
+                                  KernelEventVec3Source_SubjectPosition,
+                                  0.0f, 25u, 12.0f, strength))
+                     .has_value());
+    }
     // The subject position only exists on the projectile triggers; a
     // collision would hand the graph the world origin.
     require(!compiles(KERNEL_PULL_MODE_TO_POINT,
@@ -400,22 +415,26 @@ void max_speed_lands_it_short_on_the_same_line() {
     require(nearly(capped.velocity.x / capped.velocity.z, 6.0f / 8.0f));
 }
 
-void resistance_weighs_the_speed_this_target_needs() {
+void resistance_weighs_the_authored_strength_not_the_launch() {
     const auto trigger = pull_trigger(
         KERNEL_PULL_MODE_TO_POINT,
-        KernelEventVec3Source_SubjectPosition, 0.0f, 25u, 12.0f);
-    // Vertical is ~4.25 m/s at 25 ticks; horizontal is what distance buys.
-    // 6 m away needs 7.2 m/s, over a threshold of 6; 2 m needs 2.4, under it.
-    const Pulled far = pull(
-        trigger, glm::vec3{6.0f, 0.0f, 0.0f}, glm::vec3{0.0f},
-        glm::vec3{0.0f}, 6.0f);
-    const Pulled near = pull(
-        trigger, glm::vec3{2.0f, 0.0f, 0.0f}, glm::vec3{0.0f},
-        glm::vec3{0.0f}, 6.0f);
-    require(far.ok && near.ok);
-    require(far.locked);
-    require(!near.locked);
-    require(nearly(near.velocity.x, 0.0f));
+        KernelEventVec3Source_SubjectPosition, 0.0f, 25u, 12.0f, 10.0f);
+    // 6 m away launches at ~7.2 m/s, 2 m at ~4.25 (the vertical): both under
+    // the strength, and neither speed may decide the outcome. Equal to the
+    // strength resists, as apply_impulse's strictly-greater test does.
+    for (const float x : {6.0f, 2.0f}) {
+        const Pulled moved = pull(
+            trigger, glm::vec3{x, 0.0f, 0.0f}, glm::vec3{0.0f},
+            glm::vec3{0.0f}, 9.99f);
+        const Pulled held = pull(
+            trigger, glm::vec3{x, 0.0f, 0.0f}, glm::vec3{0.0f},
+            glm::vec3{0.0f}, 10.0f);
+        require(moved.ok && held.ok);
+        require(moved.locked);
+        require(nearly(moved.velocity.x, -x / (25.0f * kTick)));
+        require(!held.locked);
+        require(nearly(held.velocity.x, 0.0f));
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -481,7 +500,7 @@ int main() {
     a_ring_distance_puts_the_target_on_its_own_side();
     along_moves_a_signed_distance_on_the_horizontal();
     max_speed_lands_it_short_on_the_same_line();
-    resistance_weighs_the_speed_this_target_needs();
+    resistance_weighs_the_authored_strength_not_the_launch();
     an_area_effect_reports_its_centre_as_the_subject_position();
     return 0;
 }

@@ -818,6 +818,8 @@ struct ActionApplyPullDefinition {
     float distance = 0.0f;
     std::uint32_t airtime_ticks = 0;
     float max_speed = 0.0f;
+    // Weighed against impulse_resistance; never scales the launch.
+    float strength = 0.0f;
     ActionConditionType condition = ActionConditionType::kAlways;
 };
 

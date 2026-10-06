@@ -1,5 +1,5 @@
-#include <cassert>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <vector>
 
@@ -9,11 +9,25 @@
 
 namespace {
 
+void require_impl(bool condition, const char* expression, int line) {
+    if (!condition) {
+        std::fprintf(stderr, "require failed at line %d: %s\n", line, expression);
+        std::abort();
+    }
+}
+
+}  // namespace
+
+#define require(condition) \
+    require_impl(static_cast<bool>(condition), #condition, __LINE__)
+
+namespace {
+
 network_example::Health& health(
     network_example::World& world,
     network_example::NetId net_id) {
     const auto entity = world.find_entity(net_id);
-    assert(entity.has_value());
+    require(entity.has_value());
     return world.registry().get<network_example::Health>(*entity);
 }
 
@@ -21,7 +35,7 @@ network_example::Transform& transform(
     network_example::World& world,
     network_example::NetId net_id) {
     const auto entity = world.find_entity(net_id);
-    assert(entity.has_value());
+    require(entity.has_value());
     return world.registry().get<network_example::Transform>(*entity);
 }
 
@@ -29,7 +43,7 @@ network_example::ProjectileState& projectile_state(
     network_example::World& world,
     network_example::NetId net_id) {
     const auto entity = world.find_entity(net_id);
-    assert(entity.has_value());
+    require(entity.has_value());
     return world.registry().get<network_example::ProjectileState>(*entity);
 }
 
@@ -37,7 +51,7 @@ network_example::HomingState& homing_state(
     network_example::World& world,
     network_example::NetId net_id) {
     const auto entity = world.find_entity(net_id);
-    assert(entity.has_value());
+    require(entity.has_value());
     return world.registry().get<network_example::HomingState>(*entity);
 }
 
@@ -91,7 +105,7 @@ void configure_homing_weapon(
     network_example::World& world,
     network_example::NetId player) {
     const auto entity = world.find_entity(player);
-    assert(entity.has_value());
+    require(entity.has_value());
     network_example::WeaponTuning& tuning =
         world.registry().get_or_emplace<network_example::WeaponTuning>(*entity);
     tuning.configured[network_example::kWeaponId6] = true;
@@ -114,7 +128,7 @@ network_example::NetId spawn_player(
     const network_example::NetId player = world.spawn_player(owner_peer, position);
     health(world, player) = network_example::Health{100, 100};
     const auto entity = world.find_entity(player);
-    assert(entity.has_value());
+    require(entity.has_value());
     world.registry().get<network_example::Hitbox>(*entity) =
         network_example::Hitbox{{0.0f, 0.9f, 0.0f}, {0.35f, 0.9f, 0.35f}, 0};
     configure_homing_weapon(world, player);
@@ -127,7 +141,7 @@ network_example::NetId spawn_enemy(
     const network_example::NetId enemy = world.spawn_enemy(position);
     health(world, enemy) = network_example::Health{60, 60};
     const auto entity = world.find_entity(enemy);
-    assert(entity.has_value());
+    require(entity.has_value());
     world.registry().get<network_example::Hitbox>(*entity) =
         network_example::Hitbox{{0.0f, 0.8f, 0.0f}, {0.4f, 0.8f, 0.4f}, 0};
     return enemy;
@@ -162,17 +176,17 @@ void homing_projectile_spawns_and_boosts_deterministically() {
         &events);
 
     const network_example::NetId projectile = spawned_projectile(events);
-    assert(projectile != 0);
-    assert(projectile_state(world, projectile).action_instance_id == 7001);
-    assert(projectile_state(world, projectile).motion_model ==
+    require(projectile != 0);
+    require(projectile_state(world, projectile).action_instance_id == 7001);
+    require(projectile_state(world, projectile).motion_model ==
            network_example::ProjectileMotionModel::kHoming);
-    assert(homing_state(world, projectile).phase ==
+    require(homing_state(world, projectile).phase ==
            network_example::MissileGuidancePhase::kBoost);
 
     network_example::simulate_projectiles(world, 0.1f, 1, &events);
     const glm::vec3 boosted_position = transform(world, projectile).position;
-    assert(boosted_position.x > 0.49f && boosted_position.x < 0.51f);
-    assert(std::fabs(boosted_position.z) < 0.001f);
+    require(boosted_position.x > 0.49f && boosted_position.x < 0.51f);
+    require(std::fabs(boosted_position.z) < 0.001f);
 }
 
 void homing_projectile_guides_to_target_and_applies_damage() {
@@ -189,7 +203,7 @@ void homing_projectile_guides_to_target_and_applies_damage() {
         0,
         &events);
     const network_example::NetId projectile = spawned_projectile(events);
-    assert(projectile != 0);
+    require(projectile != 0);
 
     for (std::uint32_t tick = 1; tick <= 20 && world.find_entity(projectile).has_value();
          ++tick) {
@@ -201,8 +215,8 @@ void homing_projectile_guides_to_target_and_applies_damage() {
             &events);
     }
 
-    assert(health(world, enemy).hp < 60);
-    assert(!world.find_entity(projectile).has_value());
+    require(health(world, enemy).hp < 60);
+    require(!world.find_entity(projectile).has_value());
 }
 
 void homing_projectile_selects_targets_deterministically() {
@@ -212,7 +226,7 @@ void homing_projectile_selects_targets_deterministically() {
         spawn_enemy(world, glm::vec3{8.0f, 0.2f, 0.0f});
     const network_example::NetId nearer =
         spawn_enemy(world, glm::vec3{4.0f, 0.2f, 0.0f});
-    assert(nearer > farther);
+    require(nearer > farther);
 
     std::vector<KernelEvent> events;
     network_example::simulate_weapons(
@@ -221,14 +235,14 @@ void homing_projectile_selects_targets_deterministically() {
         0,
         &events);
     const network_example::NetId projectile = spawned_projectile(events);
-    assert(projectile != 0);
+    require(projectile != 0);
 
     network_example::simulate_projectiles(world, 0.1f, 1, &events);
     network_example::simulate_projectiles(world, 0.1f, 2, &events);
 
-    assert(homing_state(world, projectile).phase ==
+    require(homing_state(world, projectile).phase ==
            network_example::MissileGuidancePhase::kGuided);
-    assert(homing_state(world, projectile).target_net_id == nearer);
+    require(homing_state(world, projectile).target_net_id == nearer);
 }
 
 void homing_projectile_loses_invalid_target_without_retargeting() {
@@ -245,17 +259,17 @@ void homing_projectile_loses_invalid_target_without_retargeting() {
         0,
         &events);
     const network_example::NetId projectile = spawned_projectile(events);
-    assert(projectile != 0);
+    require(projectile != 0);
     network_example::simulate_projectiles(world, 0.1f, 1, &events);
     network_example::simulate_projectiles(world, 0.1f, 2, &events);
-    assert(homing_state(world, projectile).target_net_id == first);
+    require(homing_state(world, projectile).target_net_id == first);
 
-    assert(world.destroy(first));
+    require(world.destroy(first));
     network_example::simulate_projectiles(world, 0.1f, 3, &events);
 
-    assert(homing_state(world, projectile).phase ==
+    require(homing_state(world, projectile).phase ==
            network_example::MissileGuidancePhase::kLostTarget);
-    assert(homing_state(world, projectile).target_net_id == 0);
+    require(homing_state(world, projectile).target_net_id == 0);
 }
 
 }  // namespace

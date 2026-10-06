@@ -513,7 +513,8 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
                     action.pull_mode,
                     action.pull_distance,
                     action.pull_airtime_ticks,
-                    action.pull_max_speed)) {
+                    action.pull_max_speed,
+                    action.pull_strength)) {
                 return std::nullopt;
             }
             const std::string target_name = "target" + suffix;
@@ -527,6 +528,7 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
                 action.pull_distance,
                 action.pull_airtime_ticks,
                 action.pull_max_speed,
+                action.pull_strength,
                 *condition,
             });
             binding.parameters.push_back({
@@ -880,8 +882,8 @@ bool validate_action_graph_binding(
         if (const auto* pull = std::get_if<ActionApplyPullDefinition>(&action)) {
             if (!pull_is_authorable(
                     pull->mode, pull->distance, pull->airtime_ticks,
-                    pull->max_speed)) {
-                return fail(error, "apply_pull distance, airtime or max_speed out of range");
+                    pull->max_speed, pull->strength)) {
+                return fail(error, "apply_pull distance, airtime, max_speed or strength out of range");
             }
             if (!validate_action_parameter(
                     binding, pull->target_parameter, ParameterType::kEntityId, error) ||
@@ -1148,6 +1150,7 @@ bool evaluate_action_graph(
                 pull->distance,
                 pull->airtime_ticks,
                 pull->max_speed,
+                pull->strength,
                 provenance,
             });
             continue;

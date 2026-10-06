@@ -1,4 +1,3 @@
-#include <cassert>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -26,7 +25,7 @@ network_example::Health& health(
     network_example::World& world,
     network_example::NetId net_id) {
     const auto entity = world.find_entity(net_id);
-    assert(entity.has_value());
+    require(entity.has_value());
     return world.registry().get<network_example::Health>(*entity);
 }
 
@@ -53,7 +52,7 @@ network_example::NetId spawn_projectile_beam(
     const network_example::NetId net_id =
         world.spawn_projectile(owner_peer, origin, glm::vec3{0.0f, 0.0f, 0.0f});
     const auto entity = world.find_entity(net_id);
-    assert(entity.has_value());
+    require(entity.has_value());
     network_example::ProjectileState& projectile =
         world.registry().get<network_example::ProjectileState>(*entity);
     projectile.weapon_id = source_code;
@@ -114,7 +113,7 @@ void beam_damages_targets_with_dps_accumulator() {
             10,
             5,
             network_example::kCollisionLayerHostileSide);
-    assert(beam != 0);
+    require(beam != 0);
 
     network_example::DamagePipeline pipeline;
     std::vector<KernelEvent> events;
@@ -256,7 +255,7 @@ void beam_survives_continuous_refresh() {
     const network_example::NetId player =
         world.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
     const auto player_entity = world.find_entity(player);
-    assert(player_entity.has_value());
+    require(player_entity.has_value());
     health(world, player) = network_example::Health{100, 100};
     network_example::WeaponState& weapon =
         world.registry().get<network_example::WeaponState>(*player_entity);
@@ -357,7 +356,7 @@ void beam_transform_rotation_follows_aim() {
         network_example::simulate_beams(
             world, 1, 1.0f / 30.0f, 33333, &events, nullptr);
         const auto entity = world.find_entity(beam);
-        assert(entity.has_value());
+        require(entity.has_value());
         const network_example::Transform& transform =
             world.registry().get<network_example::Transform>(*entity);
         return transform.rotation * glm::vec3{0.0f, 0.0f, 1.0f};
@@ -397,7 +396,7 @@ network_example::NetId spawn_cover_prop(
         0,
         position);
     const auto entity = world.find_entity(net_id);
-    assert(entity.has_value());
+    require(entity.has_value());
     world.registry().emplace_or_replace<network_example::Health>(
         *entity, network_example::Health{100, 100});
     world.registry().emplace_or_replace<network_example::GameplaySide>(
@@ -429,7 +428,7 @@ void register_actor_hitbox(
     std::uint32_t side,
     std::uint32_t collider_id) {
     const auto entity = world.find_entity(net_id);
-    assert(entity.has_value());
+    require(entity.has_value());
     const network_example::Transform& transform =
         world.registry().get<network_example::Transform>(*entity);
     const network_example::Hitbox& hitbox =
@@ -652,7 +651,7 @@ void beam_effective_length_stops_at_cover() {
     std::vector<KernelEvent> events;
     network_example::simulate_beams(world, 1, 1.0f / 30.0f, 33333, &events, nullptr);
     const auto entity = world.find_entity(beam);
-    assert(entity.has_value());
+    require(entity.has_value());
     const network_example::ProjectileBeamRuntime& state =
         world.registry().get<network_example::ProjectileBeamRuntime>(*entity);
     // Cover spans x in [1.7, 2.3] and the sphere cast has radius 0.25, so

@@ -1,4 +1,3 @@
-#include <cassert>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
@@ -48,7 +47,7 @@ network_example::NetId spawn_armed_player(network_example::World& world) {
     const network_example::NetId player =
         world.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
     const auto entity = world.find_entity(player);
-    assert(entity.has_value());
+    require(entity.has_value());
     world.registry().get<network_example::Health>(*entity) =
         network_example::Health{100, 100};
 
@@ -109,7 +108,7 @@ network_example::ActionRuntimeState& action_state(
     network_example::World& world,
     network_example::NetId net_id) {
     const auto entity = world.find_entity(net_id);
-    assert(entity.has_value());
+    require(entity.has_value());
     return world.registry().get<network_example::ActionRuntimeState>(*entity);
 }
 

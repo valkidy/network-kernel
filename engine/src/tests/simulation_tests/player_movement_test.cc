@@ -1,5 +1,6 @@
-#include <cassert>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <optional>
 
 #include <entt/entt.hpp>
@@ -7,6 +8,20 @@
 
 #include "simulation/public/movement_solver.h"
 #include "simulation/public/simulation.h"
+
+namespace {
+
+void require_impl(bool condition, const char* expression, int line) {
+    if (!condition) {
+        std::fprintf(stderr, "require failed at line %d: %s\n", line, expression);
+        std::abort();
+    }
+}
+
+}  // namespace
+
+#define require(condition) \
+    require_impl(static_cast<bool>(condition), #condition, __LINE__)
 
 namespace {
 
@@ -38,7 +53,7 @@ void ground_following_velocity_ignores_unwalkable_normals() {
             kGravityY,
             kDelta);
     // Falls, rather than being flung: one frame of gravity, nothing more.
-    assert(std::abs(handled.y - kGravityY * kDelta) < 0.0001f);
+    require(std::abs(handled.y - kGravityY * kDelta) < 0.0001f);
 
     // A walkable slope still follows the ground: 2.5 m/s up a 50 degree face
     // rises at 2.5 * tan(50) = 2.979 m/s, and that is the most this can ever
@@ -55,8 +70,8 @@ void ground_following_velocity_ignores_unwalkable_normals() {
             0.0f,
             kGravityY,
             kDelta);
-    assert(std::abs(followed.y - 2.5f * std::tan(slope_radians)) < 0.001f);
-    assert(followed.y > 0.0f);
+    require(std::abs(followed.y - 2.5f * std::tan(slope_radians)) < 0.001f);
+    require(followed.y > 0.0f);
 
     // Airborne always falls, whatever normal is left over from before.
     const glm::vec3 falling =
@@ -68,7 +83,7 @@ void ground_following_velocity_ignores_unwalkable_normals() {
             -3.0f,
             kGravityY,
             kDelta);
-    assert(std::abs(falling.y - (-3.0f + kGravityY * kDelta)) < 0.0001f);
+    require(std::abs(falling.y - (-3.0f + kGravityY * kDelta)) < 0.0001f);
 }
 
 void movement_solver_clamps_diagonal_input() {
@@ -77,9 +92,9 @@ void movement_solver_clamps_diagonal_input() {
 
     const glm::vec3 movement = network_example::movement_solver::input_move_to_world(input);
 
-    assert(nearly_equal(movement.x, 0.6f));
-    assert(nearly_equal(movement.y, 0.0f));
-    assert(nearly_equal(movement.z, 0.8f));
+    require(nearly_equal(movement.x, 0.6f));
+    require(nearly_equal(movement.y, 0.0f));
+    require(nearly_equal(movement.z, 0.8f));
 }
 
 void movement_solver_applies_player_input_to_snapshot() {
@@ -90,12 +105,12 @@ void movement_solver_applies_player_input_to_snapshot() {
 
     network_example::movement_solver::apply_player_input(entity, input, 0.5f, 10.0f);
 
-    assert(nearly_equal(entity.velocity.x, 6.0f));
-    assert(nearly_equal(entity.velocity.y, 0.0f));
-    assert(nearly_equal(entity.velocity.z, 8.0f));
-    assert(nearly_equal(entity.position.x, 4.0f));
-    assert(nearly_equal(entity.position.y, 2.0f));
-    assert(nearly_equal(entity.position.z, 7.0f));
+    require(nearly_equal(entity.velocity.x, 6.0f));
+    require(nearly_equal(entity.velocity.y, 0.0f));
+    require(nearly_equal(entity.velocity.z, 8.0f));
+    require(nearly_equal(entity.position.x, 4.0f));
+    require(nearly_equal(entity.position.y, 2.0f));
+    require(nearly_equal(entity.position.z, 7.0f));
 }
 
 void simulate_player_movement_uses_solver_formula() {
@@ -103,7 +118,7 @@ void simulate_player_movement_uses_solver_formula() {
     const network_example::NetId player =
         world.spawn_player(7, glm::vec3{1.0f, 2.0f, 3.0f});
     const std::optional<entt::entity> entity = world.find_entity(player);
-    assert(entity.has_value());
+    require(entity.has_value());
     world.registry().get<network_example::MovementState>(*entity)
         .speed_meters_per_second = 10.0f;
 
@@ -119,12 +134,12 @@ void simulate_player_movement_uses_solver_formula() {
         world.registry().get<network_example::Transform>(*entity);
     const network_example::Velocity& velocity =
         world.registry().get<network_example::Velocity>(*entity);
-    assert(nearly_equal(velocity.linear.x, 6.0f));
-    assert(nearly_equal(velocity.linear.y, 0.0f));
-    assert(nearly_equal(velocity.linear.z, 8.0f));
-    assert(nearly_equal(transform.position.x, 4.0f));
-    assert(nearly_equal(transform.position.y, 2.0f));
-    assert(nearly_equal(transform.position.z, 7.0f));
+    require(nearly_equal(velocity.linear.x, 6.0f));
+    require(nearly_equal(velocity.linear.y, 0.0f));
+    require(nearly_equal(velocity.linear.z, 8.0f));
+    require(nearly_equal(transform.position.x, 4.0f));
+    require(nearly_equal(transform.position.y, 2.0f));
+    require(nearly_equal(transform.position.z, 7.0f));
 }
 
 }  // namespace

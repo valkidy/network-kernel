@@ -110,8 +110,9 @@ int main() {
     require(Kernel_SetStaticCollisionScene(kernel, &scene_config));
     require(Kernel_StartListenServer(kernel, 7952));
     network_example::game_server::GameServer game_server(kernel, config);
-    // What the host apps do before their first frame: without it no director
-    // runs, so no mission and no nests.
+    // What the host apps do before their first frame. It only checks that the
+    // catalog's preload_directors list names real directors; the list itself,
+    // applied when GameServer is constructed, is what runs the mission.
     require(game_server.preload_directors());
 
     std::array<KernelEvent, 4096> events{};

@@ -1,10 +1,25 @@
-#include <cassert>
+#include <cstdio>
+#include <cstdlib>
 
 #include <glm/glm.hpp>
 
 #include "sync/public/history_buffer.h"
 #include "sync/public/snapshot.h"
 #include "world/public/world.h"
+
+namespace {
+
+void require_impl(bool condition, const char* expression, int line) {
+    if (!condition) {
+        std::fprintf(stderr, "require failed at line %d: %s\n", line, expression);
+        std::abort();
+    }
+}
+
+}  // namespace
+
+#define require(condition) \
+    require_impl(static_cast<bool>(condition), #condition, __LINE__)
 
 int main() {
     network_example::World world;
@@ -18,7 +33,7 @@ int main() {
             glm::vec3{2.0f, 1.0f, 0.0f},
             glm::vec3{10.0f, 0.0f, 0.0f});
     const auto player_entity = world.find_entity(player);
-    assert(player_entity.has_value());
+    require(player_entity.has_value());
     world.registry().get<network_example::Velocity>(*player_entity).linear =
         glm::vec3{1.0f, 0.0f, 0.0f};
     world.registry().get<network_example::WeaponState>(*player_entity).is_reloading =
@@ -47,7 +62,7 @@ int main() {
     world.registry().get<network_example::Hitbox>(*player_entity) =
         network_example::Hitbox{{0.0f, 0.9f, 0.0f}, {0.35f, 0.9f, 0.35f}, 0};
     const auto enemy_entity = world.find_entity(enemy);
-    assert(enemy_entity.has_value());
+    require(enemy_entity.has_value());
     world.registry().get<network_example::Health>(*enemy_entity).hp = 25;
     world.registry().get<network_example::Health>(*enemy_entity).max_hp = 50;
     world.registry().get<network_example::Hitbox>(*enemy_entity) =
@@ -56,7 +71,7 @@ int main() {
         *enemy_entity,
         network_example::ReplicationState{9, 0x01020300u});
     const auto projectile_entity = world.find_entity(projectile);
-    assert(projectile_entity.has_value());
+    require(projectile_entity.has_value());
     network_example::ProjectileState& projectile_state =
         world.registry().get<network_example::ProjectileState>(*projectile_entity);
     projectile_state.spawn_tick = 7;
@@ -79,10 +94,10 @@ int main() {
 
     const network_example::WorldSnapshot snapshot =
         network_example::build_world_snapshot(world, 7, 233, 3);
-    assert(snapshot.header.server_tick == 7);
-    assert(snapshot.header.server_time_ms == 233);
-    assert(snapshot.header.last_processed_input_seq == 3);
-    assert(snapshot.entities.size() == 3);
+    require(snapshot.header.server_tick == 7);
+    require(snapshot.header.server_time_ms == 233);
+    require(snapshot.header.last_processed_input_seq == 3);
+    require(snapshot.entities.size() == 3);
     bool saw_player_flags = false;
     bool saw_enemy_state = false;
     bool saw_projectile_metadata = false;
@@ -119,24 +134,24 @@ int main() {
                     network_example::MissileGuidancePhase::kGuided);
         }
     }
-    assert(saw_player_flags);
-    assert(saw_enemy_state);
-    assert(saw_projectile_metadata);
+    require(saw_player_flags);
+    require(saw_enemy_state);
+    require(saw_projectile_metadata);
 
     network_example::HistoryBuffer history(2);
     history.write_frame(world, 7);
-    assert(history.find_frame(7) != nullptr);
-    assert(history.find_frame(7)->volumes.size() == 2);
-    assert(!history.empty());
+    require(history.find_frame(7) != nullptr);
+    require(history.find_frame(7)->volumes.size() == 2);
+    require(!history.empty());
     history.write_frame(world, 8);
     history.write_frame(world, 9);
-    assert(history.find_frame(7) == nullptr);
-    assert(history.find_frame(8) != nullptr);
-    assert(history.find_frame(9) != nullptr);
-    assert(history.oldest_tick() == 8);
-    assert(history.newest_tick() == 9);
-    assert(history.find_frame_clamped(0)->server_tick == 8);
-    assert(history.find_frame_clamped(99)->server_tick == 9);
+    require(history.find_frame(7) == nullptr);
+    require(history.find_frame(8) != nullptr);
+    require(history.find_frame(9) != nullptr);
+    require(history.oldest_tick() == 8);
+    require(history.newest_tick() == 9);
+    require(history.find_frame_clamped(0)->server_tick == 8);
+    require(history.find_frame_clamped(99)->server_tick == 9);
 
     network_example::HistoryBuffer raycast_history(4);
     raycast_history.write_frame(world, 10);
@@ -145,16 +160,16 @@ int main() {
     raycast_history.write_frame(world, 11);
 
     network_example::HistoricalHitResult hit;
-    assert(network_example::raycast_history_frame(
+    require(network_example::raycast_history_frame(
         *raycast_history.find_frame(10),
         glm::vec3{0.0f, 0.0f, 0.0f},
         glm::vec3{1.0f, 0.0f, 0.0f},
         10.0f,
         player,
         &hit));
-    assert(hit.net_id == enemy);
+    require(hit.net_id == enemy);
 
-    assert(!network_example::raycast_history_frame(
+    require(!network_example::raycast_history_frame(
         *raycast_history.find_frame(10),
         glm::vec3{0.0f, 0.0f, 0.0f},
         glm::vec3{1.0f, 0.0f, 0.0f},
@@ -168,12 +183,12 @@ int main() {
     const network_example::NetId dead_enemy =
         dead_world.spawn_enemy(glm::vec3{5.0f, 0.0f, 0.0f});
     const auto dead_enemy_entity = dead_world.find_entity(dead_enemy);
-    assert(dead_enemy_entity.has_value());
+    require(dead_enemy_entity.has_value());
     dead_world.registry().get<network_example::Health>(*dead_enemy_entity) =
         network_example::Health{50, 50};
     dead_world.registry().get<network_example::Hitbox>(*dead_enemy_entity) =
         network_example::Hitbox{{0.0f, 0.8f, 0.0f}, {0.4f, 0.8f, 0.4f}, 0};
-    assert(dead_world.apply_damage(dead_enemy, 50));
+    require(dead_world.apply_damage(dead_enemy, 50));
     const network_example::WorldSnapshot dead_snapshot =
         network_example::build_world_snapshot(dead_world, 1, 33, 0);
     bool saw_dead_flag = false;
@@ -182,10 +197,10 @@ int main() {
             saw_dead_flag = (entity.flags & network_example::kVisualFlagDead) != 0;
         }
     }
-    assert(saw_dead_flag);
+    require(saw_dead_flag);
     network_example::HistoryBuffer dead_history(1);
     dead_history.write_frame(dead_world, 1);
-    assert(!network_example::raycast_history_frame(
+    require(!network_example::raycast_history_frame(
         *dead_history.find_frame(1),
         glm::vec3{0.0f, 1.0f, 0.0f},
         glm::vec3{1.0f, 0.0f, 0.0f},
@@ -221,19 +236,19 @@ int main() {
     for (const network_example::EntitySnapshot& entity : movement_snapshot.entities) {
         if (entity.net_id == grounded_player) {
             saw_grounded = true;
-            assert((entity.flags & network_example::kVisualFlagGrounded) != 0u);
-            assert((entity.flags & network_example::kVisualFlagFalling) == 0u);
-            assert((entity.flags & network_example::kVisualFlagLanded) == 0u);
+            require((entity.flags & network_example::kVisualFlagGrounded) != 0u);
+            require((entity.flags & network_example::kVisualFlagFalling) == 0u);
+            require((entity.flags & network_example::kVisualFlagLanded) == 0u);
         }
         if (entity.net_id == airborne_player) {
             saw_airborne = true;
-            assert((entity.flags & network_example::kVisualFlagFalling) != 0u);
-            assert((entity.flags & network_example::kVisualFlagGrounded) == 0u);
+            require((entity.flags & network_example::kVisualFlagFalling) != 0u);
+            require((entity.flags & network_example::kVisualFlagGrounded) == 0u);
         }
     }
-    assert(saw_grounded && saw_airborne);
+    require(saw_grounded && saw_airborne);
     // The world path keeps the pulse: it renders every tick it is asked for.
-    assert((network_example::derived_visual_flags(
+    require((network_example::derived_visual_flags(
                 movement_world,
                 *movement_world.find_entity(grounded_player)) &
             network_example::kVisualFlagLanded) != 0u);

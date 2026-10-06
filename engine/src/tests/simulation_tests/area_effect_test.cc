@@ -1,4 +1,3 @@
-#include <cassert>
 #include <cmath>
 #include <cstdlib>
 #include <optional>
@@ -26,7 +25,7 @@ network_example::Health& health(
     network_example::World& world,
     network_example::NetId net_id) {
     const auto entity = world.find_entity(net_id);
-    assert(entity.has_value());
+    require(entity.has_value());
     return world.registry().get<network_example::Health>(*entity);
 }
 
@@ -36,7 +35,7 @@ network_example::NetId spawn_enemy(
     const network_example::NetId enemy = world.spawn_enemy(position);
     health(world, enemy) = network_example::Health{50, 50};
     const auto entity = world.find_entity(enemy);
-    assert(entity.has_value());
+    require(entity.has_value());
     world.registry().get<network_example::Hitbox>(*entity) =
         network_example::Hitbox{{0.0f, 0.5f, 0.0f}, {0.25f, 0.5f, 0.25f}, 0};
     return enemy;
@@ -64,7 +63,7 @@ network_example::NetId spawn_area_projectile(
     const network_example::NetId net_id =
         world.spawn_projectile(owner_peer, position, glm::vec3{0.0f, 0.0f, 0.0f});
     const auto entity = world.find_entity(net_id);
-    assert(entity.has_value());
+    require(entity.has_value());
     network_example::ProjectileState& projectile =
         world.registry().get<network_example::ProjectileState>(*entity);
     projectile.weapon_id = source_code;
@@ -161,7 +160,7 @@ void server_owned_area_effect_uses_player_damage_grace() {
         world.spawn_player(2, glm::vec3{1.0f, 0.0f, 0.0f});
     health(world, target) = network_example::Health{50, 50};
     const auto entity = world.find_entity(target);
-    assert(entity.has_value());
+    require(entity.has_value());
     world.registry().get<network_example::Hitbox>(*entity) =
         network_example::Hitbox{{0.0f, 0.5f, 0.0f}, {0.25f, 0.5f, 0.25f}, 0};
     spawn_area_projectile(
@@ -239,7 +238,7 @@ network_example::NetId spawn_cover_prop(
         0,
         position);
     const auto entity = world.find_entity(net_id);
-    assert(entity.has_value());
+    require(entity.has_value());
     world.registry().emplace_or_replace<network_example::Health>(
         *entity, network_example::Health{100, 100});
     world.registry().emplace_or_replace<network_example::PropWorldMode>(
@@ -587,7 +586,7 @@ void area_effect_spares_cover_on_a_side_it_does_not_attack() {
     const network_example::NetId net_id = spawn_area_projectile(
         world, 0, glm::vec3{0.0f, 0.5f, 0.0f}, 3.0f, 10, 0, 20, 7);
     const auto projectile_entity = world.find_entity(net_id);
-    assert(projectile_entity.has_value());
+    require(projectile_entity.has_value());
     // Authored to attack hostiles, and allowed to touch props at all.
     world.registry()
         .get<network_example::ProjectileAreaEffectRuntime>(*projectile_entity)

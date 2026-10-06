@@ -62,9 +62,11 @@ bool pull_is_authorable(
     std::uint32_t mode,
     float distance,
     std::uint32_t airtime_ticks,
-    float max_speed) {
+    float max_speed,
+    float strength) {
     if (!std::isfinite(distance) || !std::isfinite(max_speed) ||
-        max_speed <= 0.0f || airtime_ticks == 0u ||
+        max_speed <= 0.0f || !std::isfinite(strength) || strength <= 0.0f ||
+        airtime_ticks == 0u ||
         airtime_ticks > KERNEL_MAX_IMPULSE_LOCKOUT_TICKS) {
         return false;
     }
@@ -305,6 +307,7 @@ void hash_projectile_template(
             hash_float(hash, action.pull_max_speed);
             hash_scalar(hash, action.ui_id);
             hash_scalar(hash, action.spawn_placement);
+            hash_float(hash, action.pull_strength);
             hash_scalar(hash, action.condition_type);
         }
     }
@@ -2130,18 +2133,19 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
             // One of anchor (land near a point) or direction (move along a
             // heading); the numbers are literals, like lockout_ticks.
             if (action["projectile_template"] || action["position"] ||
-                action["owner"] || action["amount"] || action["strength"] ||
+                action["owner"] || action["amount"] ||
                 action["entity_template"] || action["item_template"] ||
                 action["quantity"] || action["lockout_ticks"] ||
                 action["collision_mask"] ||
                 static_cast<bool>(action["anchor"]) ==
                     static_cast<bool>(action["direction"]) ||
                 !action["airtime_ticks"] || !action["max_speed"] ||
+                !action["strength"] ||
                 (action["direction"] && !action["distance"])) {
                 throw std::runtime_error(
                     "apply_pull requires target, exactly one of anchor or "
-                    "direction, airtime_ticks and max_speed (and distance "
-                    "with direction): " + path);
+                    "direction, airtime_ticks, max_speed and strength (and "
+                    "distance with direction): " + path);
             }
             compiled_action.target_parameter =
                 parameter_reference_from_yaml(action["target"], "target");
@@ -2160,16 +2164,22 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
             compiled_action.pull_airtime_ticks =
                 action["airtime_ticks"].as<std::uint32_t>();
             compiled_action.pull_max_speed = action["max_speed"].as<float>();
+            // A literal, unlike apply_impulse's: it is the fixed number a
+            // target's impulse_resistance is weighed against, so it must not
+            // vary per binding.
+            compiled_action.pull_strength = action["strength"].as<float>();
             if (!pull_is_authorable(
                     compiled_action.pull_mode,
                     compiled_action.pull_distance,
                     compiled_action.pull_airtime_ticks,
-                    compiled_action.pull_max_speed)) {
+                    compiled_action.pull_max_speed,
+                    compiled_action.pull_strength)) {
                 throw std::runtime_error(
                     "apply_pull needs airtime_ticks in 1.." +
                     std::to_string(KERNEL_MAX_IMPULSE_LOCKOUT_TICKS) +
-                    ", a positive max_speed, and a non-negative distance "
-                    "with anchor or a non-zero one with direction: " + path);
+                    ", a positive max_speed and strength, and a non-negative "
+                    "distance with anchor or a non-zero one with direction: " +
+                    path);
             }
             action_parameters = {
                 &compiled_action.target_parameter,
@@ -3104,6 +3114,11 @@ AgentSentryConfig sentry_config_from_yaml(
 
     const YAML::Node sentry_node = node ? node["sentry"] : YAML::Node{};
     if (sentry_node) {
+        if (sentry_node["weapon_id"]) {
+            throw std::runtime_error(
+                "actor template sentry weapon_id was replaced by weapon_slot "
+                "(an index into weapon_slots): " + actor_template.name);
+        }
         reject_unknown_keys(
             sentry_node,
             {
@@ -3116,7 +3131,7 @@ AgentSentryConfig sentry_config_from_yaml(
                 "passive_patrol",
                 "patrol_extent_x_meters",
                 "patrol_input_magnitude",
-                "weapon_id",
+                "weapon_slot",
                 "animation_idle",
                 "animation_attack",
             },
@@ -3158,22 +3173,17 @@ AgentSentryConfig sentry_config_from_yaml(
             sentry.patrol_input_magnitude =
                 sentry_node["patrol_input_magnitude"].as<float>();
         }
-        if (sentry_node["weapon_id"]) {
-            const int authored_weapon_id = sentry_node["weapon_id"].as<int>();
-            if (authored_weapon_id < 0 || authored_weapon_id > UINT8_MAX) {
+        // The fired weapon is named by slot, not id, so the id is authored once
+        // in weapon_slots. Omitted, it is the active slot's weapon.
+        if (sentry_node["weapon_slot"]) {
+            const int authored_slot = sentry_node["weapon_slot"].as<int>();
+            if (authored_slot < 0 ||
+                authored_slot >= actor_template.weapon_slot_count) {
                 throw std::runtime_error(
-                    "actor template sentry weapon id is out of uint8 range: " +
+                    "actor template sentry weapon_slot is out of range: " +
                     actor_template.name);
             }
-            const auto weapon_id =
-                static_cast<std::uint8_t>(authored_weapon_id);
-            if (!weapons.configured[weapon_id] ||
-                !actor_template_has_weapon(actor_template, weapon_id)) {
-                throw std::runtime_error(
-                    "actor template sentry references unknown weapon id: " +
-                    actor_template.name);
-            }
-            sentry.weapon_id = weapon_id;
+            sentry.weapon_id = actor_template.weapon_ids[authored_slot];
         }
         if (sentry_node["animation_idle"]) {
             sentry.animation_idle = sentry_animation_from_yaml(
@@ -6655,6 +6665,7 @@ void compile_pull_action(
     compiled_action->pull_distance = action.pull_distance;
     compiled_action->pull_airtime_ticks = action.pull_airtime_ticks;
     compiled_action->pull_max_speed = action.pull_max_speed;
+    compiled_action->pull_strength = action.pull_strength;
     const bool bound = std::any_of(
         binding.parameters.begin(),
         binding.parameters.end(),
@@ -8715,6 +8726,7 @@ std::uint64_t compute_gameplay_catalog_hash(
             hash_float(&hash, action.pull_max_speed);
             hash_scalar(&hash, action.ui_id);
             hash_scalar(&hash, action.spawn_placement);
+            hash_float(&hash, action.pull_strength);
         }
     }
     std::vector<StatusEffectTemplateConfig> status_effect_templates =

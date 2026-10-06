@@ -8,7 +8,7 @@
 id: 216
 name: tent
 entity_type: prop
-impulse_resistance: 15.0
+impulse_resistance: 1000.0
 lifecycle:
   # Three minutes at 30 Hz, from the moment it exists. The first player to go
   # inside shortens what is left; nothing lengthens it.

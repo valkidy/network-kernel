@@ -14,7 +14,7 @@
 id: 208
 name: gingerbread_nest
 entity_type: prop
-impulse_resistance: 15.0
+impulse_resistance: 1000.0
 health:
   hp: 8000
   max_hp: 8000

@@ -1,4 +1,3 @@
-#include <cassert>
 #include <cstdio>
 #include <cstdlib>
 #include <optional>
@@ -50,7 +49,7 @@ network_example::NetId spawn_test_projectile(
     const network_example::NetId net_id =
         world.spawn_projectile(owner_peer, position, velocity);
     const auto entity = world.find_entity(net_id);
-    assert(entity.has_value());
+    require(entity.has_value());
     network_example::ProjectileState& projectile =
         world.registry().get<network_example::ProjectileState>(*entity);
     projectile.weapon_id = weapon_id;

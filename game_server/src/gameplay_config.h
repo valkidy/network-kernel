@@ -381,6 +381,7 @@ struct ActionGraphActionConfig {
     float pull_distance = 0.0f;
     std::uint32_t pull_airtime_ticks = 0;
     float pull_max_speed = 0.0f;
+    float pull_strength = 0.0f;
     // open_ui only: which interface the building offers. A literal, like
     // apply_pull's numbers; see KernelActionDefinition::ui_id.
     std::uint32_t ui_id = 0;

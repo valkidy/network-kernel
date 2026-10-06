@@ -1,4 +1,5 @@
-#include <cassert>
+#include <cstdio>
+#include <cstdlib>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -6,13 +7,27 @@
 #include "kernel/public/kernel_types.h"
 #include "simulation/public/simulation.h"
 
+namespace {
+
+void require_impl(bool condition, const char* expression, int line) {
+    if (!condition) {
+        std::fprintf(stderr, "require failed at line %d: %s\n", line, expression);
+        std::abort();
+    }
+}
+
+}  // namespace
+
+#define require(condition) \
+    require_impl(static_cast<bool>(condition), #condition, __LINE__)
+
 int main() {
     network_example::World world;
     const network_example::NetId player =
         world.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
     const network_example::NetId enemy = world.spawn_enemy(glm::vec3{5.0f, 0.0f, 0.0f});
     const auto player_entity = world.find_entity(player);
-    assert(player_entity.has_value());
+    require(player_entity.has_value());
     network_example::WeaponState& weapon =
         world.registry().get<network_example::WeaponState>(*player_entity);
     weapon.weapon_slot_count = 1;
@@ -31,7 +46,7 @@ int main() {
     world.registry().get<network_example::Hitbox>(*player_entity) =
         network_example::Hitbox{{0.0f, 0.9f, 0.0f}, {0.35f, 0.9f, 0.35f}, 0};
     const auto enemy_entity = world.find_entity(enemy);
-    assert(enemy_entity.has_value());
+    require(enemy_entity.has_value());
     world.registry().get<network_example::Health>(*enemy_entity) =
         network_example::Health{50, 50};
     world.registry().get<network_example::Hitbox>(*enemy_entity) =
@@ -54,12 +69,12 @@ int main() {
         &events,
         &damage_pipeline);
 
-    assert(world.registry().get<network_example::Health>(*enemy_entity).hp == 50);
+    require(world.registry().get<network_example::Health>(*enemy_entity).hp == 50);
     damage_pipeline.confirm_ready(world, 0, 0, &events);
 
     const network_example::Health& health =
         world.registry().get<network_example::Health>(*enemy_entity);
-    assert(health.hp == 25);
-    assert(events.size() == 3);
+    require(health.hp == 25);
+    require(events.size() == 3);
     return 0;
 }
