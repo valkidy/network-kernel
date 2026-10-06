@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- updates gingerbread giant spawning and fixes Unity coordinates and rig knee hinges
+
+
+0.7.0 release notes:
+
 - adds capsule and cylinder collider bindings and updates the gingerbread giant gameplay catalog
 
 
