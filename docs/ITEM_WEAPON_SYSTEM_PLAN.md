@@ -2,7 +2,7 @@
 
 狀態：**設計討論中（第五輪）。尚未開始實作。** P0 量測測試已完成（見 §4）。
 分支：本文件在 `claude/item-weapon-plan`；P0 測試在 `claude/p0-throw-and-unarmed-tests`（12795b3）。兩者都從 main 78d9350 分出，尚未 merge。
-最後更新：2026-10-07（第七輪：臨時營地的武器不算地圖武器；重新套用配裝保留帶標記的物品）。
+最後更新：2026-10-07（第八輪：營地選項在 prop 模板、臨時營地比照帳篷、L1/R1 重複按不作用、其他玩家武器的封包評估）。
 
 本文件整理 2026-10-07 的需求草案與五輪討論。決策以 §2 為準；kernel / game_server / Unity 的分工在 §3；
 還沒定案的問題在 §8。
@@ -63,6 +63,9 @@
 | D21 | 法杖操作分類：Rifle/Shotgun、Rocket、雷射（按住持續）維持不變；新增「按住蓄力、放開施法，未蓄滿放開視為取消」 | 需求 7c |
 | D22 | 從臨時營地拿到的武器**不算**「來自地圖的武器」，`drop_tag` 為 0。臨時營地是消耗性資源 | 第七輪（原 G6） |
 | D23 | 在初始營地重新套用配裝時，**只清掉 `drop_tag == 0` 的物品**，保留任務道具和地圖武器。地圖武器和模板武器同類別時，換上模板的武器，地圖武器丟在腳下（比照 D11） | 第七輪（原 G7） |
+| D24 | 初始營地的選項清單寫在營地 prop 模板上 | 第八輪（原 G2） |
+| D25 | 臨時營地的配置比照帳篷：壽命、shelter 容量，並與帳篷共用同一個 population group。誰先被淘汰由 D17 的 `importance` 決定 | 第八輪（原 G3）。main 上 `tent` group 上限 4 |
+| D26 | 已經在道具模式時短按 L1 不作用；已經在武器模式時短按 R1 也不作用 | 第八輪（原 G4） |
 
 ---
 
@@ -115,7 +118,7 @@
 - 每 tick 輸入的 `selected_weapon` 是**武器 id**，不是 slot 編號（`action_system.cc:271`）。
 - 武器 mechanics 是每個 entity 各自設的：game_server 對每一把呼叫 `Kernel_ServerSetEntityWeaponMechanics`。只用 `Kernel_ServerCreateEntity` 建出的玩家打不出任何東西（P0 量到）。
 - snapshot 只送 `active_weapon_slot` 和 `active_weapon_ammo`（`snapshot.h:91`），不送每格的武器 id，也不送 reserve。
-- `RenderEntityState` 沒有任何武器欄位：**其他玩家看不到你手上拿的是哪一把**。現在每個玩家的武器配置都一樣所以沒差；配置可變之後就有差（§8 G1）。
+- `RenderEntityState` 沒有任何武器欄位：**其他玩家看不到你手上拿的是哪一把**。現在每個玩家的武器配置都一樣所以沒差；配置可變之後就有差。封包成本評估見 §3.10。
 - inventory 只同步給容器的擁有者。
 
 設計：
@@ -251,9 +254,31 @@ kernel 不需要知道玩家在哪個模式：R2 在武器模式送 Fire 輸入�
 
 選單打開時，Cross / Triangle 用來切換選項，放開 L1 / R1 表示選定；這時不觸發撿拾和快速投擲。
 
-待確認：
-- 已經在道具模式時短按 L1 要做什麼：沒反應，還是切到下一個？
-- 發射雷射或蓄力中途快速投擲，kernel 會不會擋下來，還沒確認。
+已經在道具模式時短按 L1、已經在武器模式時短按 R1，都不作用（D26）。
+
+待確認：發射雷射或蓄力中途快速投擲，kernel 會不會擋下來，還沒確認。
+
+### 3.10 其他玩家手上的武器：封包成本評估（原 G1）
+
+數字出自 `SERVER_DATA_SYNC_PACKET_SIZE_REPORT.md`，以下是推算，不是量測：
+
+- 每個 client 每次 snapshot 的預算是 1,200 B，預設每秒 15 次（144 kbit/s）。
+- 其他玩家的記錄每筆 76 B；agent 走另一種記錄，不受影響。
+- 自己的記錄已經有 4 B 的武器區塊（active slot、reload 中、剩餘彈藥），只送給自己。
+- 4 人同隊時，每個 snapshot 最多帶 3 位隊友。
+
+| 做法 | 平常的成本 | 換武器時的成本 | 複雜度 |
+|---|---|---|---|
+| **A. snapshot 欄位：** 其他玩家的記錄多 1 B 武器 id | 每位隊友 +1 B，4 人時每個 snapshot 最多 +3 B，約佔預算 0.25%，每個 client 約 45 B/s | 0 | 低：跟 owner / health 區塊一樣只對玩家寫 |
+| B. 只在變更時送：可靠封包 + 進入 relevance 時附在 spawn 記錄裡 | 0 | 每次換武器，對每個看得到他的人送一個約 34 B 的封包（28 B 標頭 + 記錄） | 中：要處理進入 relevance、可靠封包和 snapshot 到達順序不一致（開火動作可能先用舊武器的外觀畫） |
+
+**建議 A。** 成本小到在預算裡看不出來，也不需要處理進入 relevance 和封包順序。
+武器 id 和同一筆記錄裡的 action timeline 一起到，開火動作不會配錯法杖。
+
+細節：
+- 送的是**武器 id**，不是 slot 編號。每個人的武器配置不同，對別人來說 slot 編號沒有意義。
+- 空手需要一個專用值（例如 255），因為 0 是 rifle 的 id。
+- 會改 snapshot schema，併進 K6 一起升，只升一次。
 
 ---
 
@@ -296,7 +321,7 @@ kernel 不需要知道玩家在哪個模式：R2 在武器模式送 Fire 輸入�
 | K3 | `refill_weapon_reserve` graph action + 使用前檢查 | 小到中 | 新增型 |
 | K4 | 空手：放寬兩個入口、修 client 舊彈藥 bug、刪死 code | 小 | 無 |
 | K5 | 武器 item：依類別指定格子的武器容器、裝卸同步 `WeaponState` 和 mechanics、portable state 寫回、自動交換、只有玩家能撿 | **大** | 模板定義、新 API |
-| K6 | 給擁有者的武器配置和 reserve 同步 | 中 | **snapshot schema + ABI** |
+| K6 | 給擁有者的武器配置和 reserve 同步；其他玩家記錄裡的武器 id（§3.10，待確認） | 中 | **snapshot schema + ABI** |
 | K7 | `charge` trigger mode | 中 | 新增型 |
 | K8 | 換下的武器自動 reload | 小到中 | 依 K6 |
 | K9 | 臨時營地容器：營地內的人看得到、`Transfer`、進出時同步 | 中到大 | 新封包、新 API |
@@ -349,11 +374,8 @@ catalog 驅動的測試要自己掛上武器 mechanics、載入地面場景，�
 
 | # | 問題 | 備註 |
 |---|---|---|
-| G1 | 其他玩家要不要看得到你手上拿的是哪一把武器 | `RenderEntityState` 現在沒有武器欄位；要的話是另一個 snapshot 欄位 |
-| G2 | 初始營地的選項清單寫在哪裡：營地 prop 模板，還是 catalog 層級的設定 | |
-| G3 | 臨時營地的 shelter 容量、壽命，以及是否和帳篷共用同一個 population group | 帳篷目前是 `tent` group，上限 4 |
-| G4 | 已經在道具模式時短按 L1 要做什麼 | |
-| G5 | 「壽命 0 = 永久」需要測試確認 | §3.2 |
+| G1 | 其他玩家的武器 id 採 A（snapshot 欄位）還是 B（變更時送） | 評估見 §3.10，建議 A |
+| G2 | 「壽命 0 = 永久」需要測試確認 | §3.2 |
 
 ---
 
