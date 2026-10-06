@@ -1,0 +1,93 @@
+id: 39
+name: gingerbread_giant
+entity_type: actor
+actor_type: agent
+camp: enemy_side
+collider_template: sentry_grunt_hit_aabb
+health:
+  hp: 500
+  max_hp: 500
+movement:
+  controller: character
+  move_speed_meters_per_second: 2.5
+  collider_template: monster_sim_movement_capsule
+  gravity: {x: 0.0, y: -9.81, z: 0.0}
+  max_slope_degrees: 50.0
+  step_height: 0.4
+  ground_probe_distance: 0.25
+  ground_snap_distance: 0.5
+  max_yaw_degrees_per_second: 45.0
+  collision_mask: terrain
+# The entity origin is the lowest bind foot, not SIM_Root: this rig's root sits
+# at the body, 9.13 m above the feet, and locomotion seats the pose by the bind
+# foot height. The GEO_* boxes span -1.6 m (the foot boxes) to 19.7 m above it
+# and 7.9 m either side.
+hitbox:
+  center: {x: 0.0, y: 9.0, z: 0.0}
+  half_extents: {x: 8.0, y: 10.7, z: 3.0}
+weapon_slots: [2]
+active_weapon_slot: 0
+vision:
+  collider_template: sentry_grunt_vision_cone
+ai:
+  controller: sentry
+  profile: monster_sim
+  sentry:
+    alert_ticks: 90
+    forget_ticks: 150
+    patrol_rotation_interval_ticks: 30
+    patrol_rotation_min_degrees: 15.0
+    patrol_rotation_max_degrees: 30.0
+    passive_patrol: true
+    patrol_extent_x_meters: 30.0
+    patrol_input_magnitude: 1.0
+    animation_idle: idle
+    animation_attack: chasing
+animations:
+  idle: 0
+  chasing: 1
+skeleton:
+  runtime_asset: skeleton_assets/generated/simplified_gingerbread_giant.ozz
+  source_manifest: skeleton_assets/generated/simplified_gingerbread_giant.skeleton_manifest.json
+  collision_flags: {purpose: limb | hit, layer: hostile_side}
+locomotion:
+  type: procedural_legged
+  input_deadzone: 0.01
+  gait:
+    type: displacement_threshold
+    # Same 1.95/18 as the other rigs: the timing follows move_speed, not leg
+    # length. See 21_quadruped_actor.yaml.
+    step_threshold_meters: 1.95
+    step_duration_ticks: 18
+    # Two legs, alternating, as on biped_actor. The arms are in the skeleton,
+    # not in this leg list, so they are not driven.
+    max_swinging_legs: 1
+    processing_order: [leg0, leg1]
+  foothold:
+    query: raycast
+    # The authored 30/90 baseline scaled from the ~18.2 m legs it was sized
+    # against to this rig's 6.26 m: 0.344x. See docs/LOCOMOTION_GAIT_TUNING.md.
+    query_start_height_meters: 10.3
+    query_distance_meters: 31.0
+    candidate_offsets_meters:
+      - {x: 0.0, z: 0.0}
+      - {x: 0.2, z: 0.0}
+      - {x: -0.2, z: 0.0}
+      - {x: 0.0, z: 0.2}
+      - {x: 0.0, z: -0.2}
+  body:
+    follow_speed: 10.0
+    slope_alignment: 0.0
+    # The legs are authored nearly straight (99.8% rest extension, 0.01 m of
+    # slack), so without a crouch every foothold below the body plane clamps
+    # the IK. 0.85 m bends them to ~86.5%, where biped_actor and
+    # quadruped_actor walk after their own crouch.
+    stance_crouch_meters: 0.85
+  leg_defaults:
+    step_height_meters: 0.18
+    max_reach_ratio: 0.99
+  legs:
+    - id: leg0
+      gait_group: 0
+    - id: leg1
+      gait_group: 1
