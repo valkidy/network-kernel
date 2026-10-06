@@ -5,7 +5,6 @@ name: grunt_claw_hit
 # collision_mask are authored in the same place as they are for a weapon that
 # does spawn something. The weapon template carries no damage of its own.
 type: standard
-collider_template: melee_swing_marker
 movement_model: linear
 sync_mode: server_snapshot_only
 hit_response: destroy

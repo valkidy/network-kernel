@@ -1509,14 +1509,12 @@ RuntimeProjectileTemplate to_runtime_projectile_template(
         projectile_template.has_collision_geometry = true;
         projectile_template.collision_geometry =
             projectile_collision_geometry_from_template(*collider_template);
+        // One rule, the collider's: a sphere's radius, a cylinder's radius.
+        // A box has none, and game_server refuses one under an area effect.
+        // An authored area_effect.radius below still wins, for a host that
+        // builds its mechanics without a catalog compiler.
         projectile_template.area_radius =
             collider_template_radius(*collider_template);
-        if (projectile_template.area_radius <= 0.0f) {
-            const glm::vec3 half_extents =
-                collider_template_half_extents(*collider_template);
-            projectile_template.area_radius =
-                std::max(half_extents.x, std::max(half_extents.y, half_extents.z));
-        }
     }
     projectile_template.collision_mask = mechanics.collision_mask;
     projectile_template.max_hit_count = mechanics.max_hit_count;
@@ -1907,7 +1905,6 @@ bool validate_projectile_mechanics(
         (mechanics.damage_shape == KernelProjectileDamageShape_None
              ? mechanics.damage != 0
              : mechanics.damage == 0) ||
-        mechanics.collider_template_id == 0 ||
         mechanics.max_hit_count == 0 ||
         !valid_trigger(mechanics.projectile_impact_trigger) ||
         !valid_trigger(mechanics.expired_trigger)) {
@@ -3693,10 +3690,16 @@ bool KernelEngine::load_gameplay_catalog(
             find_collider_template(
                 validated_collider_templates,
                 mechanics.collider_template_id);
-        if (projectile_collider == nullptr ||
-            projectile_collider->shape_type == KernelColliderShapeType_Cone ||
-            (projectile_collider->shape_type == KernelColliderShapeType_Cylinder &&
-             mechanics.projectile_type != KernelProjectileType_AreaEffect) ||
+        // Zero is a template with no collider: a marker that collides with
+        // nothing, or the shot an instant or melee weapon describes and never
+        // spawns. Every reader of it already treats a missing one as "no
+        // geometry". A non-zero id must name a shape it can use.
+        if ((mechanics.collider_template_id != 0u &&
+             projectile_collider == nullptr) ||
+            (projectile_collider != nullptr &&
+             (projectile_collider->shape_type == KernelColliderShapeType_Cone ||
+              (projectile_collider->shape_type == KernelColliderShapeType_Cylinder &&
+               mechanics.projectile_type != KernelProjectileType_AreaEffect))) ||
             ((mechanics.projectile_impact_trigger.struct_size != 0u ||
               mechanics.expired_trigger.struct_size != 0u) &&
              projectile_template_has_trigger_cycle(

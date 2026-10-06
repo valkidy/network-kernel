@@ -114,7 +114,6 @@ void write_valid_templates(const std::filesystem::path& dir) {
     write_file(
         dir.parent_path() / "projectile_templates" / "rifle_shot.yaml",
         "id: 10\nname: rifle_shot\ntype: standard\n"
-        "collider_template: rifle_segment\n"
         "movement_model: linear\nsync_mode: local_predicted_deterministic\n"
         "hit_response: destroy\ndamage_shape: direct_hit\ndamage: 25\n"
         "collision_mask: actor | limb | terrain | static_obstacle\n"
@@ -123,7 +122,6 @@ void write_valid_templates(const std::filesystem::path& dir) {
     write_file(
         dir.parent_path() / "projectile_templates" / "shotgun_shot.yaml",
         "id: 11\nname: shotgun_shot\ntype: standard\n"
-        "collider_template: shotgun_segment\n"
         "movement_model: linear\nsync_mode: local_predicted_deterministic\n"
         "hit_response: destroy\ndamage_shape: direct_hit\ndamage: 10\n"
         "collision_mask: actor | terrain | static_obstacle\n"
@@ -1151,6 +1149,42 @@ void a_beams_reach_is_its_colliders_box() {
     require(load_fails(load_beam("beam_sphere", "projectile_sphere", "")));
 }
 
+// No collision, no collider: an instant weapon's shot (never spawned) and a
+// marker (collides with nothing) leave it out; anything that collides may not.
+void a_collider_is_optional_only_where_nothing_reads_it() {
+    // write_valid_templates' rifle_shot and shotgun_shot have none.
+    require(!load_fails([] {
+        const std::filesystem::path dir = tmp_dir("shot_without_collider");
+        write_valid_templates(dir);
+        return dir;
+    }()));
+
+    const auto load_rocket = [](const std::string& name, const std::string& mask) {
+        const std::filesystem::path dir = tmp_dir(name);
+        write_valid_templates(dir);
+        write_file(
+            dir.parent_path() / "projectile_templates" / "rocket.yaml",
+            "id: 3\nname: rocket_projectile\ndamage: 45\n"
+            "sync_mode: server_snapshot_only\n"
+            "movement_model: linear\nhit_response: destroy\n"
+            "damage_shape: direct_hit\nspeed: 35.0\nlifetime_ticks: 75\n"
+            "collision_mask: " + mask + "\nmax_hit_count: 1\n"
+            "gravity: {x: 0.0, y: 0.0, z: 0.0}\n");
+        return dir;
+    };
+    // A spawned projectile that collides needs a shape to collide with.
+    require(load_fails(load_rocket("rocket_without_collider", "damageable")));
+    // A marker collides with nothing, so it does not.
+    const std::filesystem::path marker_dir = tmp_dir("marker_without_collider");
+    write_valid_templates(marker_dir);
+    write_file(
+        marker_dir.parent_path() / "projectile_templates" / "marker.yaml",
+        "id: 99\nname: marker\ntype: standard\ndamage: 0\n"
+        "damage_shape: none\nspeed: 0.0\ncollision_mask: none\n"
+        "sync_mode: server_snapshot_only\nlifetime_ticks: 20\n");
+    require(!load_fails(marker_dir));
+}
+
 // A collider field its shape does not read is refused, not dropped.
 void collider_fields_the_shape_does_not_read_are_rejected() {
     const auto load_with_collider = [](const std::string& name,
@@ -2117,6 +2151,7 @@ int main() {
     area_effect_ground_follow_and_cylinder_are_authored();
     collider_fields_the_shape_does_not_read_are_rejected();
     a_beams_reach_is_its_colliders_box();
+    a_collider_is_optional_only_where_nothing_reads_it();
     catalog_file_loads_colliders();
     return 0;
 }

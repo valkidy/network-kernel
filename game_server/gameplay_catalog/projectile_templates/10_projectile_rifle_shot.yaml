@@ -8,7 +8,6 @@ name: rifle_shot
 # It also names the asset a client draws the tracer from, through the same
 # projectile-template mapping every other weapon already uses.
 type: standard
-collider_template: rifle_segment
 movement_model: linear
 sync_mode: local_predicted_deterministic
 hit_response: destroy

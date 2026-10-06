@@ -6129,8 +6129,11 @@ ProjectileTemplateConfig projectile_template_from_yaml(
     mechanics.projectile_type = projectile_type_from_yaml(
         node["projectile_type"] ? node["projectile_type"]
                                 : (node["type"] ? node["type"] : node["kind"]));
-    mechanics.collider_template_id =
-        collider_template_id_from_ref(node["collider_template"], colliders);
+    // Optional: left out, the template has no shape, which validation allows
+    // only where nothing would read one.
+    mechanics.collider_template_id = node["collider_template"]
+        ? collider_template_id_from_ref(node["collider_template"], colliders)
+        : 0u;
     for (const char* key : {"area_shape", "half_height"}) {
         if (node[key]) {
             // Moved to the collider: a column is `shape: cylinder` with its
@@ -9456,7 +9459,10 @@ std::vector<std::string> validate_gameplay_config(
             KernelProjectileSyncMode_ServerSnapshotOnly) {
             errors.push_back("projectile sync mode must be valid");
         }
-        if (config.weapons.collider_template_ids[index] == 0) {
+        // A targeted strike lands a marker, which collides with nothing and
+        // so has no collider to bind.
+        if (config.weapons.collider_template_ids[index] == 0 &&
+            weapon.fire_mode != KernelWeaponFireMode_TargetedStrike) {
             errors.push_back("weapon collider template binding must be valid");
         }
     }
@@ -9724,6 +9730,19 @@ std::vector<std::string> validate_gameplay_config(
     }
     std::vector<std::uint32_t> projectile_template_ids;
     std::vector<std::string> projectile_template_names;
+    // The shots an instant or melee weapon describes and never spawns: their
+    // template carries damage, mask and hit count, and no shape -- the weapon's
+    // segment or cone is the shape.
+    std::vector<std::uint32_t> unspawned_shot_ids;
+    for (std::size_t id = 0; id < config.weapons.definitions.size(); ++id) {
+        const KernelWeaponMechanicsDefinition& weapon = config.weapons.definitions[id];
+        if (config.weapons.configured[id] &&
+            (weapon.fire_mode == KernelWeaponFireMode_Hitscan ||
+             weapon.fire_mode == KernelWeaponFireMode_Shotgun ||
+             weapon.fire_mode == KernelWeaponFireMode_Melee)) {
+            unspawned_shot_ids.push_back(weapon.projectile_template_id);
+        }
+    }
     for (const ProjectileTemplateConfig& projectile_template :
          config.projectile_templates) {
         const KernelProjectileTemplateDefinition& definition =
@@ -9748,10 +9767,20 @@ std::vector<std::string> validate_gameplay_config(
             (mechanics.damage_shape == KernelProjectileDamageShape_None
                  ? mechanics.damage != 0
                  : mechanics.damage == 0) ||
-            std::find(
-                collider_template_ids.begin(),
-                collider_template_ids.end(),
-                mechanics.collider_template_id) == collider_template_ids.end() ||
+            // No collider, no collision: a template may leave it out only
+            // when nothing it does would read one.
+            (mechanics.collider_template_id == 0u
+                 ? mechanics.collision_mask != KERNEL_COLLISION_MASK_NONE &&
+                       std::find(
+                           unspawned_shot_ids.begin(),
+                           unspawned_shot_ids.end(),
+                           definition.projectile_template_id) ==
+                           unspawned_shot_ids.end()
+                 : std::find(
+                       collider_template_ids.begin(),
+                       collider_template_ids.end(),
+                       mechanics.collider_template_id) ==
+                       collider_template_ids.end()) ||
             (mechanics.projectile_type == KernelProjectileType_Standard &&
              ((mechanics.speed <= 0.0f && !is_stationary_marker(mechanics) &&
                mechanics.launch.struct_size == 0u) ||

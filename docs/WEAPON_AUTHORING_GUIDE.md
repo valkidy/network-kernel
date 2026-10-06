@@ -137,7 +137,6 @@ The weapon's shot. `damage` is always the top-level key, whatever the type.
 id: 12
 name: smg_shot
 type: standard
-collider_template: rifle_segment
 damage: 18
 collision_mask: actor | terrain | static_obstacle
 damage_shape: direct_hit
@@ -145,8 +144,13 @@ speed: 200.0
 lifetime_ticks: 3
 ```
 
-**Required**: `id`, `name`, `collider_template`, `damage`, `speed`,
-`lifetime_ticks`
+**Required**: `id`, `name`, `damage`, `speed`, `lifetime_ticks`, and
+`collider_template` on anything that collides.
+
+`collider_template` is the projectile's shape, and is left out where nothing
+would read one: the shot of a hitscan, shotgun or melee weapon (never spawned;
+the weapon's segment or cone is the shape) and a marker (`collision_mask:
+none`). Anything else without one fails to load.
 
 **Optional**
 
@@ -239,7 +243,6 @@ forgot its speed still fails to load.
 id: 18
 name: meteor_marker
 type: standard
-collider_template: projectile_sphere
 damage: 0
 damage_shape: none
 speed: 0.0
