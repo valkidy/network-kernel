@@ -2760,6 +2760,9 @@ std::uint8_t collider_shape_type_from_yaml(const YAML::Node& node) {
     if (value == "capsule") {
         return KernelColliderShapeType_Capsule;
     }
+    if (value == "cylinder") {
+        return KernelColliderShapeType_Cylinder;
+    }
     throw std::runtime_error("unsupported collider shape: " + value);
 }
 
@@ -2888,7 +2891,8 @@ KernelVec4 collider_shape_params_from_yaml(
             0.0f,
         };
     }
-    if (shape_type == KernelColliderShapeType_Capsule) {
+    if (shape_type == KernelColliderShapeType_Capsule ||
+        shape_type == KernelColliderShapeType_Cylinder) {
         return KernelVec4{
             node["half_height"].as<float>(),
             node["radius"].as<float>(),
@@ -2897,6 +2901,51 @@ KernelVec4 collider_shape_params_from_yaml(
         };
     }
     return KernelVec4{};
+}
+
+// The keys a shape reads. Anything else authored on it would be silently
+// dropped -- a sphere's half_extents, a box's radius -- and a number that
+// looks like it sizes something but does not is how a tornado's height was
+// once authored where nothing read it. So it is refused instead.
+void reject_keys_the_shape_does_not_read(
+    std::uint8_t shape_type,
+    const YAML::Node& node,
+    const std::string& file) {
+    std::vector<std::string> read;
+    switch (shape_type) {
+        case KernelColliderShapeType_Aabb:
+        case KernelColliderShapeType_OrientedBox:
+            read = {"center", "half_extents"};
+            break;
+        case KernelColliderShapeType_Sphere:
+            read = {"center", "radius"};
+            break;
+        case KernelColliderShapeType_Segment:
+            read = {"radius"};
+            break;
+        case KernelColliderShapeType_Cone:
+            read = {"center", "range", "fov_degrees"};
+            break;
+        case KernelColliderShapeType_Capsule:
+            read = {"center", "half_height", "radius"};
+            break;
+        case KernelColliderShapeType_Cylinder:
+            // Centred on whatever carries it: an area effect's overlap is
+            // centred on the field, so an offset would be a second answer.
+            read = {"half_height", "radius"};
+            break;
+        default:
+            break;
+    }
+    for (const char* key :
+         {"center", "half_extents", "half_height", "radius", "range", "fov_degrees"}) {
+        if (node[key] &&
+            std::find(read.begin(), read.end(), key) == read.end()) {
+            throw std::runtime_error(
+                std::string("collider shape ") + node["shape"].as<std::string>() +
+                " does not read `" + key + "`: " + file);
+        }
+    }
 }
 
 void apply_default_non_weapon_config(GameServerGameplayConfig* config);
@@ -2965,6 +3014,7 @@ ColliderCatalogConfig load_collider_catalog_from_source(
         definition.struct_size = sizeof(KernelColliderTemplateDefinition);
         definition.template_id = node["id"].as<std::uint32_t>();
         definition.shape_type = collider_shape_type_from_yaml(node["shape"]);
+        reject_keys_the_shape_does_not_read(definition.shape_type, node, file);
         definition.center =
             node["center"] ? vec3_from_yaml(node["center"]) : KernelVec3{};
         definition.shape_params =
@@ -5506,19 +5556,6 @@ const ColliderTemplateConfig* collider_template_from_id(
     return nullptr;
 }
 
-float collider_template_radius_for_area(
-    const ColliderTemplateConfig& collider_template) {
-    const KernelColliderTemplateDefinition& definition =
-        collider_template.definition;
-    if (definition.shape_type == KernelColliderShapeType_Sphere ||
-        definition.shape_type == KernelColliderShapeType_Segment) {
-        return definition.shape_params.x;
-    }
-    return std::max(
-        definition.shape_params.x,
-        std::max(definition.shape_params.y, definition.shape_params.z));
-}
-
 TriggerBindingConfig trigger_binding_from_yaml(
     const YAML::Node& node,
     const std::string& path,
@@ -5910,34 +5947,43 @@ float positive_area_float_from_yaml(
     return value;
 }
 
-// The overlap's shape. A sphere is the default and needs nothing else; a
-// cylinder is an upright column that also needs its half height, which is the
-// one thing a sphere's radius does not already say.
-void area_effect_shape_from_yaml(
-    const YAML::Node& node,
+// An area effect's reach is its collider's, all of it: a sphere's radius, or a
+// cylinder's radius and half height. Nothing about the overlap is authored on
+// the projectile, so there is no second number to disagree with the first.
+// Only those two shapes are overlaps the field can run, and neither may be
+// offset, because the overlap is centred on the field itself.
+void area_effect_reach_from_collider(
+    const ColliderCatalogConfig& colliders,
     const std::string& template_name,
     KernelProjectileMechanicsDefinition* mechanics) {
-    const std::string shape =
-        node["area_shape"] ? node["area_shape"].as<std::string>() : "sphere";
-    if (shape == "sphere") {
-        if (node["half_height"]) {
-            throw std::runtime_error(
-                "half_height needs area_shape cylinder: " + template_name);
-        }
+    const ColliderTemplateConfig* collider =
+        collider_template_from_id(colliders, mechanics->collider_template_id);
+    if (collider == nullptr) {
+        throw std::runtime_error(
+            "area effect needs a collider template: " + template_name);
+    }
+    const KernelColliderTemplateDefinition& definition = collider->definition;
+    if (definition.center.x != 0.0f || definition.center.y != 0.0f ||
+        definition.center.z != 0.0f) {
+        throw std::runtime_error(
+            "an area effect's collider is centred on the field and cannot set "
+            "center: " + template_name);
+    }
+    if (definition.shape_type == KernelColliderShapeType_Sphere) {
         mechanics->area_effect.shape = KernelAreaEffectShape_Sphere;
+        mechanics->area_effect.radius = definition.shape_params.x;
+        mechanics->area_effect.half_height = 0.0f;
         return;
     }
-    if (shape != "cylinder") {
-        throw std::runtime_error(
-            "unsupported area_shape " + shape + ": " + template_name);
+    if (definition.shape_type == KernelColliderShapeType_Cylinder) {
+        mechanics->area_effect.shape = KernelAreaEffectShape_Cylinder;
+        mechanics->area_effect.radius = definition.shape_params.y;
+        mechanics->area_effect.half_height = definition.shape_params.x;
+        return;
     }
-    if (!node["half_height"]) {
-        throw std::runtime_error(
-            "area_shape cylinder needs half_height: " + template_name);
-    }
-    mechanics->area_effect.shape = KernelAreaEffectShape_Cylinder;
-    mechanics->area_effect.half_height = positive_area_float_from_yaml(
-        node["half_height"], 0.0f, "half_height", template_name);
+    throw std::runtime_error(
+        "an area effect's collider must be a sphere or a cylinder: " +
+        template_name);
 }
 
 // How a travelling field moves. Linear, the default, is the straight line its
@@ -6080,11 +6126,31 @@ ProjectileTemplateConfig projectile_template_from_yaml(
             "projectile template must not set both collision_query and collision_query_mode: " +
             projectile_template.name);
     }
-    mechanics.projectile_type = projectile_type_from_yaml(
-        node["projectile_type"] ? node["projectile_type"]
-                                : (node["type"] ? node["type"] : node["kind"]));
-    mechanics.collider_template_id =
-        collider_template_id_from_ref(node["collider_template"], colliders);
+    // One key for what a projectile is. `kind` and `projectile_type` were
+    // read as aliases of it; a second spelling is a second place to look.
+    for (const char* key : {"kind", "projectile_type"}) {
+        if (node[key]) {
+            throw std::runtime_error(
+                std::string("a projectile's kind is `type`, not `") + key +
+                "`: " + projectile_template.name);
+        }
+    }
+    mechanics.projectile_type = projectile_type_from_yaml(node["type"]);
+    // Optional: left out, the template has no shape, which validation allows
+    // only where nothing would read one.
+    mechanics.collider_template_id = node["collider_template"]
+        ? collider_template_id_from_ref(node["collider_template"], colliders)
+        : 0u;
+    for (const char* key : {"area_shape", "half_height"}) {
+        if (node[key]) {
+            // Moved to the collider: a column is `shape: cylinder` with its
+            // own radius and half_height (PROJECTILE_COLLIDER_DATA_OWNERSHIP).
+            throw std::runtime_error(
+                std::string(key) +
+                " is authored on the collider template (shape: cylinder), "
+                "not the projectile: " + projectile_template.name);
+        }
+    }
     if (node["replication"]) {
         const std::string replication = node["replication"].as<std::string>();
         if (replication == "derived") {
@@ -6242,10 +6308,8 @@ ProjectileTemplateConfig projectile_template_from_yaml(
         mechanics.max_hit_count = 1;
         mechanics.area_effect.struct_size =
             sizeof(KernelAreaEffectMechanicsDefinition);
-        const ColliderTemplateConfig* area_collider =
-            collider_template_from_id(colliders, mechanics.collider_template_id);
-        mechanics.area_effect.radius =
-            area_collider == nullptr ? 0.0f : collider_template_radius_for_area(*area_collider);
+        area_effect_reach_from_collider(
+            colliders, projectile_template.name, &mechanics);
         mechanics.area_effect.damage_per_interval = mechanics.damage;
         mechanics.area_effect.damage_interval_ticks =
             damage_behavior["damage_interval_ticks"].as<std::uint32_t>();
@@ -6271,13 +6335,21 @@ ProjectileTemplateConfig projectile_template_from_yaml(
         // damages them, so it has to be asked for rather than inherited.
         mechanics.area_effect.hit_instigator = static_cast<std::uint8_t>(
             node["hit_instigator"] && node["hit_instigator"].as<bool>() ? 1 : 0);
-        area_effect_shape_from_yaml(node, projectile_template.name, &mechanics);
         area_effect_motion_from_yaml(
             node, path, source_kind, projectile_template.name, &mechanics);
         return projectile_template;
     }
 
-    for (const char* key : {"area_shape", "half_height", "motion"}) {
+    if (const ColliderTemplateConfig* collider = collider_template_from_id(
+            colliders, mechanics.collider_template_id);
+        collider != nullptr &&
+        collider->definition.shape_type == KernelColliderShapeType_Cylinder) {
+        throw std::runtime_error(
+            "a cylinder collider is an area effect's reach only: " +
+            projectile_template.name);
+    }
+
+    for (const char* key : {"motion"}) {
         if (node[key]) {
             // A standard projectile's flight and a beam's reach are answered
             // by their own fields; these only shape an area effect's field.
@@ -6369,28 +6441,42 @@ ProjectileTemplateConfig projectile_template_from_yaml(
         node["max_hit_count"] ? node["max_hit_count"].as<std::uint32_t>() : 1u;
 
     if (mechanics.projectile_type == KernelProjectileType_Beam) {
+        // Optional: all it may say is how long the beam outlives its last
+        // refresh. Its reach is the collider's box -- length along z, width
+        // the larger of x and y -- which the kernel reads from it too.
         const YAML::Node beam = node["beam"];
-        if (!beam) {
-            throw std::runtime_error(
-                "beam projectile template requires beam block: " +
-                projectile_template.name);
+        if (beam) {
+            for (const char* key : {"length", "radius"}) {
+                if (beam[key]) {
+                    throw std::runtime_error(
+                        std::string("beam.") + key +
+                        " is the collider's (an oriented box's half_extents), "
+                        "not the projectile's: " + projectile_template.name);
+                }
+            }
+            reject_unknown_keys(
+                beam,
+                {"lifetime_ticks"},
+                path,
+                source_kind,
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_PROJECTILE,
+                definition.projectile_template_id);
         }
-        reject_unknown_keys(
-            beam,
-            {
-                "length",
-                "radius",
-                "lifetime_ticks",
-            },
-            path,
-            source_kind,
-            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_PROJECTILE,
-            definition.projectile_template_id);
+        const ColliderTemplateConfig* beam_collider =
+            collider_template_from_id(colliders, mechanics.collider_template_id);
+        if (beam_collider == nullptr ||
+            (beam_collider->definition.shape_type != KernelColliderShapeType_Aabb &&
+             beam_collider->definition.shape_type !=
+                 KernelColliderShapeType_OrientedBox)) {
+            throw std::runtime_error(
+                "a beam's collider must be a box: " + projectile_template.name);
+        }
+        const KernelVec4& box = beam_collider->definition.shape_params;
         mechanics.beam.struct_size = sizeof(KernelBeamMechanicsDefinition);
-        mechanics.beam.length = beam["length"].as<float>();
-        mechanics.beam.radius = beam["radius"].as<float>();
+        mechanics.beam.length = box.z * 2.0f;
+        mechanics.beam.radius = std::max(box.x, box.y);
         mechanics.beam.lifetime_ticks =
-            beam["lifetime_ticks"] ? beam["lifetime_ticks"].as<std::uint32_t>() : 2u;
+            beam && beam["lifetime_ticks"] ? beam["lifetime_ticks"].as<std::uint32_t>() : 2u;
         // Derived, not authored. A beam's damage is the template's `damage`
         // read as "per tick", and its targets are the template's
         // `collision_mask` -- beam_system only ever reads these two copies, so
@@ -9380,7 +9466,10 @@ std::vector<std::string> validate_gameplay_config(
             KernelProjectileSyncMode_ServerSnapshotOnly) {
             errors.push_back("projectile sync mode must be valid");
         }
-        if (config.weapons.collider_template_ids[index] == 0) {
+        // A targeted strike lands a marker, which collides with nothing and
+        // so has no collider to bind.
+        if (config.weapons.collider_template_ids[index] == 0 &&
+            weapon.fire_mode != KernelWeaponFireMode_TargetedStrike) {
             errors.push_back("weapon collider template binding must be valid");
         }
     }
@@ -9558,7 +9647,7 @@ std::vector<std::string> validate_gameplay_config(
             collider_template.definition;
         if (definition.struct_size < sizeof(KernelColliderTemplateDefinition) ||
             definition.template_id == 0 ||
-            definition.shape_type > KernelColliderShapeType_Capsule ||
+            definition.shape_type > KernelColliderShapeType_Cylinder ||
             definition.purpose_flags == 0 ||
             definition.layer_mask == 0 ||
             (definition.shape_type == KernelColliderShapeType_Aabb &&
@@ -9592,6 +9681,13 @@ std::vector<std::string> validate_gameplay_config(
                     definition.lifetime_ticks != 0u ||
                     (definition.purpose_flags &
                      KernelColliderPurpose_Movement) == 0u)) {
+            errors.push_back("collider template must be valid");
+        } else if (definition.shape_type == KernelColliderShapeType_Cylinder &&
+                   (definition.shape_params.x <= 0.0f ||
+                    definition.shape_params.y <= 0.0f ||
+                    definition.lifetime_ticks != 0u ||
+                    definition.purpose_flags != KernelColliderPurpose_Damage)) {
+            // Mirrors the kernel: an area effect's reach, never a body.
             errors.push_back("collider template must be valid");
         }
         collider_template_ids.push_back(definition.template_id);
@@ -9641,6 +9737,19 @@ std::vector<std::string> validate_gameplay_config(
     }
     std::vector<std::uint32_t> projectile_template_ids;
     std::vector<std::string> projectile_template_names;
+    // The shots an instant or melee weapon describes and never spawns: their
+    // template carries damage, mask and hit count, and no shape -- the weapon's
+    // segment or cone is the shape.
+    std::vector<std::uint32_t> unspawned_shot_ids;
+    for (std::size_t id = 0; id < config.weapons.definitions.size(); ++id) {
+        const KernelWeaponMechanicsDefinition& weapon = config.weapons.definitions[id];
+        if (config.weapons.configured[id] &&
+            (weapon.fire_mode == KernelWeaponFireMode_Hitscan ||
+             weapon.fire_mode == KernelWeaponFireMode_Shotgun ||
+             weapon.fire_mode == KernelWeaponFireMode_Melee)) {
+            unspawned_shot_ids.push_back(weapon.projectile_template_id);
+        }
+    }
     for (const ProjectileTemplateConfig& projectile_template :
          config.projectile_templates) {
         const KernelProjectileTemplateDefinition& definition =
@@ -9665,10 +9774,20 @@ std::vector<std::string> validate_gameplay_config(
             (mechanics.damage_shape == KernelProjectileDamageShape_None
                  ? mechanics.damage != 0
                  : mechanics.damage == 0) ||
-            std::find(
-                collider_template_ids.begin(),
-                collider_template_ids.end(),
-                mechanics.collider_template_id) == collider_template_ids.end() ||
+            // No collider, no collision: a template may leave it out only
+            // when nothing it does would read one.
+            (mechanics.collider_template_id == 0u
+                 ? mechanics.collision_mask != KERNEL_COLLISION_MASK_NONE &&
+                       std::find(
+                           unspawned_shot_ids.begin(),
+                           unspawned_shot_ids.end(),
+                           definition.projectile_template_id) ==
+                           unspawned_shot_ids.end()
+                 : std::find(
+                       collider_template_ids.begin(),
+                       collider_template_ids.end(),
+                       mechanics.collider_template_id) ==
+                       collider_template_ids.end()) ||
             (mechanics.projectile_type == KernelProjectileType_Standard &&
              ((mechanics.speed <= 0.0f && !is_stationary_marker(mechanics) &&
                mechanics.launch.struct_size == 0u) ||

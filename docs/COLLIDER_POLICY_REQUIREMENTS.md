@@ -41,7 +41,7 @@ and removes gameplay collider state.
 |---|---|
 | `weapon_template` | Fire mode, action/cadence policy, ammo, and references to projectile/segment templates. |
 | `projectile_template` | Movement, sync mode, lifetime, damage behavior, collision query mode, and collider reference. |
-| `collider_template` | Reusable shape geometry plus purpose/layer defaults. |
+| `collider_template` | All hit-query geometry -- shape and every dimension -- plus purpose/layer defaults. A field a shape does not read is refused at load. See `PROJECTILE_COLLIDER_DATA_OWNERSHIP.md`. |
 | `entity_template` | Actor/director composition, including hit, movement, and vision collider references. |
 
 Resolution is single-path by entity family:
@@ -62,6 +62,7 @@ state. They must not fall back to a second generic binding table.
 | AABB / oriented box | Actor hit volumes, beams, and box projectiles |
 | Sphere | Projectiles, overlaps, and area effects |
 | Capsule | Character movement and capsule queries |
+| Cylinder | Area-effect reach only (query shape, never a body); `shape_params.x` half height, `.y` radius |
 | Segment | Hitscan/shotgun traces and query-only rays |
 | Cone | Vision range/FOV debug and query semantics |
 | Static triangle mesh | Jolt static-world collision |

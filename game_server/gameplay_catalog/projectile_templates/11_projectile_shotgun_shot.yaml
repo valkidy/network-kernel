@@ -8,7 +8,6 @@ name: shotgun_shot
 # rays are fired and pellet_spread how wide the fan is, so the damage a full
 # hit deals is damage x pellet_count.
 type: standard
-collider_template: shotgun_segment
 movement_model: linear
 sync_mode: local_predicted_deterministic
 hit_response: destroy

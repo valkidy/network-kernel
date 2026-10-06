@@ -31,6 +31,5 @@ name: gingerbread_nest_hitbox
 shape: oriented_box
 center: {x: -0.77, y: 4.34, z: -0.32}
 half_extents: {x: 2.65, y: 4.34, z: 2.48}
-radius: 0.0
 purpose: hit
 layer: damageable

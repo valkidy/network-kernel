@@ -137,7 +137,6 @@ The weapon's shot. `damage` is always the top-level key, whatever the type.
 id: 12
 name: smg_shot
 type: standard
-collider_template: rifle_segment
 damage: 18
 collision_mask: actor | terrain | static_obstacle
 damage_shape: direct_hit
@@ -145,8 +144,13 @@ speed: 200.0
 lifetime_ticks: 3
 ```
 
-**Required**: `id`, `name`, `collider_template`, `damage`, `speed`,
-`lifetime_ticks`
+**Required**: `id`, `name`, `damage`, `speed`, `lifetime_ticks`, and
+`collider_template` on anything that collides.
+
+`collider_template` is the projectile's shape, and is left out where nothing
+would read one: the shot of a hitscan, shotgun or melee weapon (never spawned;
+the weapon's segment or cone is the shape) and a marker (`collision_mask:
+none`). Anything else without one fails to load.
 
 **Optional**
 
@@ -239,7 +243,6 @@ forgot its speed still fails to load.
 id: 18
 name: meteor_marker
 type: standard
-collider_template: projectile_sphere
 damage: 0
 damage_shape: none
 speed: 0.0
@@ -424,8 +427,9 @@ motion:
 ```
 
 The shipped example is `projectile_templates/29_projectile_tornado.yaml`: a
-3 m column (`collider_templates/39_collider_tornado_column.yaml`) that rides
-2 m up for 300 ticks and pulls hostiles once a second through
+column 3 m in radius reaching from the ground to 17 m
+(`collider_templates/39_collider_tornado_column.yaml`, high enough for flying
+units) that rides 2 m up for 300 ticks and pulls hostiles once a second through
 `action_graph_templates/action_tornado_pull.yaml`, which does `apply_pull`
 only. `fungible_tornado_bottle` (item 3012, prop 217) throws it: where the
 bottle breaks, the tornado rises and travels on along the level part of the
@@ -453,22 +457,29 @@ Terrain authoring note: the ground is found with a ray straight down. Where two
 terrain boxes only meet edge to edge, a ray landing exactly on the seam hits
 neither and the field holds its height for that tick. Overlap terrain pieces.
 
-### area_shape: cylinder
+### A column: a cylinder collider
 
-The overlap is a sphere of the collider's radius by default. `area_shape:
-cylinder` makes it an upright column of that radius, `half_height` above and
-below the field's centre, so a target over the field but within its radius is
-left out. With a ground-following field, `half_height` equal to `hover_height`
-puts the column's foot on the ground.
+An area effect's reach is its collider's, all of it. A `sphere` collider gives
+a ball of its `radius`; a `cylinder` collider gives an upright column of its
+`radius`, `half_height` above and below the field's centre, so a target over
+the field but within its radius is left out. With a ground-following field,
+`half_height` equal to `hover_height` puts the column's foot on the ground.
 
 ```yaml
-area_shape: cylinder
+# collider_templates/<id>_collider_<name>.yaml
+shape: cylinder
+radius: 3.0
 half_height: 1.5
+purpose: damage
+layer: area_effect
 ```
 
-`half_height` is required with a cylinder and rejected without one, and both
-keys, like `motion`, are rejected on anything but an area effect. Falloff, if
-authored, still scales by the 3D distance from the centre, not from the axis.
+Nothing about the overlap is authored on the projectile: `area_shape` and
+`half_height` there are refused. An area effect's collider must be a sphere or
+a cylinder, and may not set `center` -- the overlap is centred on the field. A
+cylinder carries only the `damage` purpose and is refused on anything but an
+area effect. Falloff, if authored, still scales by the 3D distance from the
+centre, not from the axis.
 
 A field that only pulls (a tornado bound to `apply_pull`) still authors a
 non-zero `damage`: an area effect with a graph binding submits no damage of its
@@ -500,14 +511,14 @@ collider_template: beam_oriented_box
 damage: 1                # per tick while the beam is up
 speed: 0.0
 lifetime_ticks: 0
-beam:
-  length: 8.0
-  radius: 0.25
+beam:                    # optional
   lifetime_ticks: 2      # optional, default 2
 ```
 
-The beam block carries no damage or mask of its own — both come from the
-top-level keys.
+The beam's reach is its collider's box: length is `half_extents.z × 2`, width
+the larger of `x` and `y`, so the collider must be an `oriented_box` (or an
+`aabb`). `beam.length` and `beam.radius` are refused. The beam block carries no
+damage or mask of its own either — both come from the top-level keys.
 
 ## Action templates
 

@@ -213,17 +213,27 @@ void the_shipped_tornado_is_a_ground_following_column() {
             KernelProjectileSyncMode_LocalPredictedDeterministic);
     require(mechanics.area_effect.shape == KernelAreaEffectShape_Cylinder);
     require(mechanics.area_effect.motion == KernelAreaEffectMotion_GroundFollow);
-    require(mechanics.area_effect.half_height == mechanics.area_effect.hover_height);
+    // From the ground to 17 m: the funnel's 2 m hover plus the column's 15 m
+    // half height, which reaches a hive_airship's hull (14 to 17 m).
+    require(mechanics.area_effect.half_height == 15.0f);
+    require(mechanics.area_effect.hover_height + mechanics.area_effect.half_height >=
+            17.0f);
     require(mechanics.area_effect.motion_collision_mask ==
             KERNEL_COLLISION_LAYER_TERRAIN);
-    require(mechanics.area_effect.damage_interval_ticks == 30u);
+    require(mechanics.area_effect.damage_interval_ticks == 15u);
     require(mechanics.area_effect.lifetime_ticks == 300u);
     require(tornado->projectile_impact_trigger.action_graph_ref ==
             "action_tornado_pull");
 }
 
-void the_tornado_pulls_what_it_reaches_without_hurting_it() {
-    const Catalog catalog = load_catalog();
+// The shipped scene and catalog, a player whose fire floor throws a tornado,
+// and whatever `spawn_targets` places, all settled on the ground.
+template <typename SpawnTargets>
+void open_arena(
+    Arena& arena,
+    const Catalog& catalog,
+    std::uint16_t port,
+    SpawnTargets spawn_targets) {
     const auto* tornado = find_projectile(catalog, "tornado");
     require(tornado != nullptr);
 
@@ -233,7 +243,6 @@ void the_tornado_pulls_what_it_reaches_without_hurting_it() {
     config.tick.snapshot_rate = 15;
     config.max_events = 4096;
     config.max_render_states = 256;
-    Arena arena;
     arena.kernel = Kernel_Create(&config);
     require(arena.kernel != nullptr);
     KernelStaticCollisionSceneConfig scene{};
@@ -244,30 +253,16 @@ void the_tornado_pulls_what_it_reaches_without_hurting_it() {
     scene.collider_id = catalog.config.static_collision_scene.collider_id;
     scene.collision_layer = catalog.config.static_collision_scene.collision_layer;
     require(Kernel_SetStaticCollisionScene(arena.kernel, &scene));
-    require(Kernel_StartDedicatedServer(arena.kernel, kPort));
+    require(Kernel_StartDedicatedServer(arena.kernel, port));
     // The kernel's own validation of the new mechanics runs here.
     require(Kernel_LoadGameplayCatalog(
         arena.kernel, &catalog.storage.definition, nullptr));
 
-    const network_example::game_server::ActorTemplateConfig* grunt = nullptr;
-    for (const auto& candidate : catalog.config.actor_templates) {
-        if (candidate.name == "chaser_grunt") {
-            grunt = &candidate;
-        }
-    }
-    require(grunt != nullptr);
     arena.player = spawn_actor(
         arena.kernel, catalog.config.player.actor_template_id,
         network_example::game_server::kActorTypePlayer,
         KernelVec3{0.0f, 1.0f, 0.0f});
-    arena.target = spawn_actor(
-        arena.kernel, grunt->actor_template_id,
-        network_example::game_server::kActorTypeAgent,
-        KernelVec3{8.0f, 1.0f, 0.0f});
-    arena.bystander = spawn_actor(
-        arena.kernel, grunt->actor_template_id,
-        network_example::game_server::kActorTypeAgent,
-        KernelVec3{0.0f, 1.0f, 30.0f});
+    spawn_targets(arena);
 
     require(catalog.config.weapons.configured[kFireFloor]);
     KernelWeaponMechanicsDefinition mechanics =
@@ -296,6 +291,28 @@ void the_tornado_pulls_what_it_reaches_without_hurting_it() {
     require(std::fabs(settled.velocity.y) < 0.05f);
     arena.ground = settled.position.y;
     require(projectiles(arena.kernel).empty());
+}
+
+void the_tornado_pulls_what_it_reaches_without_hurting_it() {
+    const Catalog catalog = load_catalog();
+    Arena arena;
+    open_arena(arena, catalog, kPort, [&](Arena& field) {
+        const network_example::game_server::ActorTemplateConfig* grunt = nullptr;
+        for (const auto& candidate : catalog.config.actor_templates) {
+            if (candidate.name == "chaser_grunt") {
+                grunt = &candidate;
+            }
+        }
+        require(grunt != nullptr);
+        field.target = spawn_actor(
+            field.kernel, grunt->actor_template_id,
+            network_example::game_server::kActorTypeAgent,
+            KernelVec3{8.0f, 1.0f, 0.0f});
+        field.bystander = spawn_actor(
+            field.kernel, grunt->actor_template_id,
+            network_example::game_server::kActorTypeAgent,
+            KernelVec3{0.0f, 1.0f, 30.0f});
+    });
 
     const std::uint16_t target_hp = entity_state(arena.kernel, arena.target).hp;
     const std::uint16_t bystander_hp = entity_state(arena.kernel, arena.bystander).hp;
@@ -327,6 +344,18 @@ void the_tornado_pulls_what_it_reaches_without_hurting_it() {
         require(std::fabs(live.front().position.y - (arena.ground + 2.0f)) < 0.1f);
         require(live.front().position.x >= previous_x);
         previous_x = live.front().position.x;
+        // The collider query reports the column the overlap runs -- upright,
+        // centred on the funnel, the collider's radius and half height -- not
+        // a sphere the overlap never was.
+        KernelColliderShapeQuery shape_query{};
+        shape_query.struct_size = sizeof(shape_query);
+        shape_query.entity_net_id = tornado_net_id;
+        KernelColliderShapeView shape{};
+        require(Kernel_QueryColliderShapes(arena.kernel, &shape_query, &shape, 1) == 1u);
+        require(shape.shape_type == KernelColliderShapeType_Cylinder);
+        require(shape.shape_params.x == 15.0f && shape.shape_params.y == 3.0f);
+        require(std::fabs(shape.world_center.y - live.front().position.y) < 0.001f);
+        require(shape.world_rotation.w == 1.0f);
 
         target_highest = std::max(
             target_highest, entity_state(arena.kernel, arena.target).position.y);
@@ -350,10 +379,63 @@ void the_tornado_pulls_what_it_reaches_without_hurting_it() {
     require(entity_state(arena.kernel, arena.bystander).hp == bystander_hp);
 }
 
+// The column reaches a hive_airship hovering 14 m up, and pulls it: across,
+// toward the funnel, at the height it holds -- a hover never takes the
+// vertical part of a launch. Nothing about the response is special-cased; it
+// is what the pull and the hover controller compute.
+void the_tornado_reaches_a_hovering_airship() {
+    const Catalog catalog = load_catalog();
+    std::uint32_t airship_template = 0;
+    for (const auto& candidate : catalog.config.actor_templates) {
+        if (candidate.name == "hive_airship") {
+            airship_template = candidate.actor_template_id;
+        }
+    }
+    require(airship_template != 0u);
+
+    Arena arena;
+    open_arena(arena, catalog, kPort + 1, [&](Arena& field) {
+        field.target = spawn_actor(
+            field.kernel, airship_template,
+            network_example::game_server::kActorTypeAgent,
+            KernelVec3{8.0f, 15.0f, 0.0f});
+    });
+    // Let it find its altitude.
+    arena.tick(150);
+    const KernelServerEntityState hovering = entity_state(arena.kernel, arena.target);
+    const float altitude = hovering.position.y - arena.ground;
+    require(altitude > 12.0f);
+    const std::uint16_t airship_hp = hovering.hp;
+
+    arena.fire(kFireFloor, KernelVec3{hovering.position.x, arena.ground + 1.0f, 0.0f});
+    float lowest = 1000.0f;
+    float highest = -1000.0f;
+    float moved = 0.0f;
+    for (int tick = 1; tick <= 120; ++tick) {
+        arena.tick();
+        const KernelServerEntityState state = entity_state(arena.kernel, arena.target);
+        lowest = std::min(lowest, state.position.y);
+        highest = std::max(highest, state.position.y);
+        moved = std::max(moved, horizontal_distance(state.position, hovering.position));
+    }
+    std::printf(
+        "airship: altitude %.2f m, pulled %.2f m across, height %.2f..%.2f\n",
+        altitude,
+        moved,
+        lowest - arena.ground,
+        highest - arena.ground);
+    // Pulled across...
+    require(moved > 0.5f);
+    // ...at the height it holds, and not hurt.
+    require(highest - lowest < 1.0f);
+    require(entity_state(arena.kernel, arena.target).hp == airship_hp);
+}
+
 }  // namespace
 
 int main() {
     the_shipped_tornado_is_a_ground_following_column();
     the_tornado_pulls_what_it_reaches_without_hurting_it();
+    the_tornado_reaches_a_hovering_airship();
     return 0;
 }

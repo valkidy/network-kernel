@@ -1695,6 +1695,12 @@ typedef enum KernelColliderShapeType {
     KernelColliderShapeType_Segment = 3,
     KernelColliderShapeType_Cone = 4,
     KernelColliderShapeType_Capsule = 5,
+    /* An upright column, laid out like a capsule: shape_params.x is the half
+     * height, .y the radius. A query shape only, for area effects: an area
+     * effect's overlap and the shape the collider query reports for it. Added
+     * without a version bump -- no struct changed, and a reader that does not
+     * know the value sees a shape it skips. */
+    KernelColliderShapeType_Cylinder = 6,
 } KernelColliderShapeType;
 
 typedef enum KernelColliderPurpose {

@@ -2,7 +2,6 @@
 id: 23
 name: sky_laser_marker
 type: standard
-collider_template: projectile_sphere
 damage: 0
 damage_shape: none
 speed: 0.0

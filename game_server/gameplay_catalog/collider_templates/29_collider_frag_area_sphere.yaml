@@ -4,7 +4,6 @@ id: 29
 name: frag_area_sphere
 shape: sphere
 center: {x: 0.0, y: 0.0, z: 0.0}
-half_extents: {x: 3.5, y: 3.5, z: 3.5}
 radius: 3.5
 purpose: damage
 layer: area_effect

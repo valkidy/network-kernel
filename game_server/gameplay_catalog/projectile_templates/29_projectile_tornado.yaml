@@ -14,7 +14,7 @@
 # submits no damage of its own, and the graph deals none.
 id: 29
 name: tornado
-kind: area_effect
+type: area_effect
 collider_template: tornado_column
 damage: 1
 speed: 6.0
@@ -26,10 +26,8 @@ damage_behavior:
   falloff: none
 collision_mask: hostile_side
 motion_collision_mask: terrain
-# The column stands on the ground: half_height equals hover_height, so it
-# reaches from the ground to 4 m up.
-area_shape: cylinder
-half_height: 2.0
+# Its reach, a column standing on the ground, is the collider's
+# (39_collider_tornado_column.yaml).
 motion:
   type: ground_follow
   hover_height: 2.0

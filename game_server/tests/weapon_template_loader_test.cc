@@ -114,7 +114,6 @@ void write_valid_templates(const std::filesystem::path& dir) {
     write_file(
         dir.parent_path() / "projectile_templates" / "rifle_shot.yaml",
         "id: 10\nname: rifle_shot\ntype: standard\n"
-        "collider_template: rifle_segment\n"
         "movement_model: linear\nsync_mode: local_predicted_deterministic\n"
         "hit_response: destroy\ndamage_shape: direct_hit\ndamage: 25\n"
         "collision_mask: actor | limb | terrain | static_obstacle\n"
@@ -123,7 +122,6 @@ void write_valid_templates(const std::filesystem::path& dir) {
     write_file(
         dir.parent_path() / "projectile_templates" / "shotgun_shot.yaml",
         "id: 11\nname: shotgun_shot\ntype: standard\n"
-        "collider_template: shotgun_segment\n"
         "movement_model: linear\nsync_mode: local_predicted_deterministic\n"
         "hit_response: destroy\ndamage_shape: direct_hit\ndamage: 10\n"
         "collision_mask: actor | terrain | static_obstacle\n"
@@ -156,7 +154,7 @@ void write_valid_templates(const std::filesystem::path& dir) {
         "      direction: event.direction\n");
     write_file(
         dir.parent_path() / "projectile_templates" / "rocket_explosion.yaml",
-        "id: 8\nname: rocket_explosion\nkind: area_effect\n"
+        "id: 8\nname: rocket_explosion\ntype: area_effect\n"
         "collider_template: area_effect_sphere\n"
         "damage: 45\n"
         "lifetime_ticks: 45\n"
@@ -221,8 +219,6 @@ void write_valid_templates(const std::filesystem::path& dir) {
         "collision_mask: hostile_side\nmax_hit_count: 1\n"
         "gravity: {x: 0.0, y: 0.0, z: 0.0}\n"
         "beam:\n"
-        "  length: 8.0\n"
-        "  radius: 0.25\n"
         "  lifetime_ticks: 2\n");
     write_file(
         dir / "rifle.yaml",
@@ -864,7 +860,6 @@ void collision_mask_expressions_are_loaded() {
         "collision_mask: 0\nmax_hit_count: 1\n"
         "gravity: {x: 0.0, y: 0.0, z: 0.0}\n"
         "beam:\n"
-        "  length: 8.0\n  radius: 0.25\n"
         "  lifetime_ticks: 2\n");
     config =
         network_example::game_server::load_gameplay_config_from_weapon_template_directory(
@@ -977,26 +972,32 @@ void area_effect_motion_collision_mask_is_authored() {
 // overlap. Each loads with its defaults, and each refuses the combinations
 // that would leave it with nothing to do or a client unable to draw it.
 void area_effect_ground_follow_and_cylinder_are_authored() {
-    const std::string area_template =
-        "id: 4\nname: fire_floor_area\ntype: area_effect\n"
-        "collider_template: area_effect_sphere\n"
-        "damage: 12\n"
+    const auto area_template_on = [](const std::string& collider) {
+        return "id: 4\nname: fire_floor_area\ntype: area_effect\n"
+               "collider_template: " + collider + "\n"
+               "damage: 12\n"
         "lifetime_ticks: 6\n"
         "damage_behavior:\n"
         "  type: area_interval\n"
         "  damage_interval_ticks: 2\n"
         "  falloff: none\n"
         "collision_mask: hostile_side\n";
+    };
     const std::string travelling =
         "speed: 6.0\nmotion_collision_mask: terrain\n"
         "sync_mode: local_predicted_deterministic\n";
-    const auto load_with = [&](const std::string& name, const std::string& extra) {
+    const auto load_on = [&](const std::string& name,
+                             const std::string& collider,
+                             const std::string& extra) {
         const std::filesystem::path dir = tmp_dir(name);
         write_valid_templates(dir);
         write_file(
             dir.parent_path() / "projectile_templates" / "fire_floor_area.yaml",
-            area_template + extra);
+            area_template_on(collider) + extra);
         return dir;
+    };
+    const auto load_with = [&](const std::string& name, const std::string& extra) {
+        return load_on(name, "area_effect_sphere", extra);
     };
 
     // Absent: a sphere that flies a straight line, as every template did.
@@ -1024,16 +1025,18 @@ void area_effect_ground_follow_and_cylinder_are_authored() {
     require(area.step_up == 0.5f && area.probe_depth == 0.5f);
 
     config = network_example::game_server::load_gameplay_config_from_weapon_template_directory(
-        load_with(
+        load_on(
             "tornado_full",
+            "tornado_column",
             travelling +
-                "area_shape: cylinder\nhalf_height: 1.5\n"
                 "motion:\n  type: ground_follow\n  hover_height: 1.5\n"
                 "  max_slope_degrees: 40\n  step_up: 0.3\n  probe_depth: 0.8\n")
             .string());
     area = projectile_mechanics(config, 4).area_effect;
+    // The column is the collider's: radius and half height both.
     require(area.shape == KernelAreaEffectShape_Cylinder);
-    require(area.half_height == 1.5f);
+    require(area.radius == 3.0f);
+    require(area.half_height == 15.0f);
     require(area.max_slope_degrees == 40.0f);
     require(area.step_up == 0.3f && area.probe_depth == 0.8f);
 
@@ -1074,9 +1077,12 @@ void area_effect_ground_follow_and_cylinder_are_authored() {
     require(load_fails(load_with(
         "tornado_linear_settings",
         travelling + "motion:\n  type: linear\n  hover_height: 1.5\n")));
-    require(load_fails(load_with("cylinder_no_height", "area_shape: cylinder\n")));
-    require(load_fails(load_with("sphere_with_height", "half_height: 1.0\n")));
-    require(load_fails(load_with("unknown_shape", "area_shape: cone\n")));
+    // The overlap's shape and height are the collider's, never the
+    // projectile's.
+    require(load_fails(load_with("area_shape_on_projectile", "area_shape: cylinder\n")));
+    require(load_fails(load_with("half_height_on_projectile", "half_height: 1.0\n")));
+    // Only a sphere or a cylinder is an overlap an area effect can run.
+    require(load_fails(load_on("box_area", "rocket_aabb", "")));
 
     // And none of it on anything but an area effect.
     const std::filesystem::path standard_dir = tmp_dir("tornado_standard");
@@ -1091,6 +1097,137 @@ void area_effect_ground_follow_and_cylinder_are_authored() {
         "area_shape: cylinder\n"
         "gravity: {x: 0.0, y: 0.0, z: 0.0}\n");
     require(load_fails(standard_dir));
+
+    // Nor a cylinder collider: it is an area effect's reach and nothing else.
+    const std::filesystem::path standard_cylinder_dir =
+        tmp_dir("tornado_standard_cylinder");
+    write_valid_templates(standard_cylinder_dir);
+    write_file(
+        standard_cylinder_dir.parent_path() / "projectile_templates" / "rocket.yaml",
+        "id: 3\nname: rocket_projectile\ndamage: 45\n"
+        "sync_mode: server_snapshot_only\ncollider_template: tornado_column\n"
+        "movement_model: linear\nhit_response: destroy\n"
+        "damage_shape: direct_hit\nspeed: 35.0\nlifetime_ticks: 75\n"
+        "collision_mask: damageable\nmax_hit_count: 1\n"
+        "gravity: {x: 0.0, y: 0.0, z: 0.0}\n");
+    require(load_fails(standard_cylinder_dir));
+}
+
+// A beam's reach is its collider's box: the projectile only says how long the
+// beam outlives its last refresh.
+void a_beams_reach_is_its_colliders_box() {
+    const std::filesystem::path dir = tmp_dir("beam_from_collider");
+    write_valid_templates(dir);
+    const network_example::game_server::GameServerGameplayConfig config =
+        network_example::game_server::load_gameplay_config_from_weapon_template_directory(
+            dir.string());
+    // beam_oriented_box: half extents (0.25, 0.25, 4.0).
+    require(projectile_mechanics(config, 5).beam.length == 8.0f);
+    require(projectile_mechanics(config, 5).beam.radius == 0.25f);
+
+    const auto load_beam = [](const std::string& name,
+                              const std::string& collider,
+                              const std::string& block) {
+        const std::filesystem::path beam_dir = tmp_dir(name);
+        write_valid_templates(beam_dir);
+        write_file(
+            beam_dir.parent_path() / "projectile_templates" / "beam_rifle_beam.yaml",
+            "id: 5\nname: beam_rifle_beam\ntype: beam\ndamage: 1\n"
+            "sync_mode: server_snapshot_only\n"
+            "collider_template: " + collider + "\n"
+            "movement_model: linear\nhit_response: destroy\n"
+            "damage_shape: direct_hit\nspeed: 0.0\nlifetime_ticks: 0\n"
+            "collision_mask: hostile_side\nmax_hit_count: 1\n"
+            "gravity: {x: 0.0, y: 0.0, z: 0.0}\n" + block);
+        return beam_dir;
+    };
+    require(!load_fails(load_beam("beam_no_block", "beam_oriented_box", "")));
+    require(load_fails(load_beam(
+        "beam_length", "beam_oriented_box", "beam:\n  length: 8.0\n")));
+    require(load_fails(load_beam(
+        "beam_radius", "beam_oriented_box", "beam:\n  radius: 0.25\n")));
+    require(load_fails(load_beam("beam_sphere", "projectile_sphere", "")));
+}
+
+// No collision, no collider: an instant weapon's shot (never spawned) and a
+// marker (collides with nothing) leave it out; anything that collides may not.
+void a_collider_is_optional_only_where_nothing_reads_it() {
+    // write_valid_templates' rifle_shot and shotgun_shot have none.
+    require(!load_fails([] {
+        const std::filesystem::path dir = tmp_dir("shot_without_collider");
+        write_valid_templates(dir);
+        return dir;
+    }()));
+
+    const auto load_rocket = [](const std::string& name, const std::string& mask) {
+        const std::filesystem::path dir = tmp_dir(name);
+        write_valid_templates(dir);
+        write_file(
+            dir.parent_path() / "projectile_templates" / "rocket.yaml",
+            "id: 3\nname: rocket_projectile\ndamage: 45\n"
+            "sync_mode: server_snapshot_only\n"
+            "movement_model: linear\nhit_response: destroy\n"
+            "damage_shape: direct_hit\nspeed: 35.0\nlifetime_ticks: 75\n"
+            "collision_mask: " + mask + "\nmax_hit_count: 1\n"
+            "gravity: {x: 0.0, y: 0.0, z: 0.0}\n");
+        return dir;
+    };
+    // A spawned projectile that collides needs a shape to collide with.
+    require(load_fails(load_rocket("rocket_without_collider", "damageable")));
+    // A marker collides with nothing, so it does not.
+    const std::filesystem::path marker_dir = tmp_dir("marker_without_collider");
+    write_valid_templates(marker_dir);
+    write_file(
+        marker_dir.parent_path() / "projectile_templates" / "marker.yaml",
+        "id: 99\nname: marker\ntype: standard\ndamage: 0\n"
+        "damage_shape: none\nspeed: 0.0\ncollision_mask: none\n"
+        "sync_mode: server_snapshot_only\nlifetime_ticks: 20\n");
+    require(!load_fails(marker_dir));
+}
+
+// A projectile says what it is with `type`; the old aliases are refused.
+void a_projectiles_kind_is_type_only() {
+    const auto load_marker = [](const std::string& name, const std::string& key) {
+        const std::filesystem::path dir = tmp_dir(name);
+        write_valid_templates(dir);
+        write_file(
+            dir.parent_path() / "projectile_templates" / "marker.yaml",
+            "id: 99\nname: marker\n" + key + ": standard\ndamage: 0\n"
+            "damage_shape: none\nspeed: 0.0\ncollision_mask: none\n"
+            "sync_mode: server_snapshot_only\nlifetime_ticks: 20\n");
+        return dir;
+    };
+    require(!load_fails(load_marker("kind_type", "type")));
+    require(load_fails(load_marker("kind_kind", "kind")));
+    require(load_fails(load_marker("kind_projectile_type", "projectile_type")));
+}
+
+// A collider field its shape does not read is refused, not dropped.
+void collider_fields_the_shape_does_not_read_are_rejected() {
+    const auto load_with_collider = [](const std::string& name,
+                                       const std::string& collider) {
+        const std::filesystem::path dir = tmp_dir(name);
+        write_valid_templates(dir);
+        write_file(
+            dir.parent_path() / "collider_templates" / "999_extra.yaml",
+            "id: 999\nname: extra\n" + collider + "purpose: damage\nlayer: area_effect\n");
+        return dir;
+    };
+    require(!load_fails(load_with_collider("sphere_ok", "shape: sphere\nradius: 2.0\n")));
+    require(load_fails(load_with_collider(
+        "sphere_half_extents",
+        "shape: sphere\nradius: 2.0\nhalf_extents: {x: 2.0, y: 9.0, z: 2.0}\n")));
+    require(load_fails(load_with_collider(
+        "box_radius",
+        "shape: aabb\nhalf_extents: {x: 1.0, y: 1.0, z: 1.0}\nradius: 0.0\n")));
+    require(!load_fails(load_with_collider(
+        "cylinder_ok", "shape: cylinder\nradius: 2.0\nhalf_height: 4.0\n")));
+    require(load_fails(load_with_collider(
+        "cylinder_center",
+        "shape: cylinder\nradius: 2.0\nhalf_height: 4.0\n"
+        "center: {x: 0.0, y: 1.0, z: 0.0}\n")));
+    require(load_fails(load_with_collider(
+        "cylinder_no_height", "shape: cylinder\nradius: 2.0\n")));
 }
 
 void subject_direction_needs_a_projectile_that_travels() {
@@ -1605,7 +1742,7 @@ void derived_replication_is_authored() {
         "strike_marker");
     write_file(
         rocket_dir.parent_path() / "projectile_templates" / "rocket_explosion.yaml",
-        "id: 8\nname: rocket_explosion\nkind: area_effect\n"
+        "id: 8\nname: rocket_explosion\ntype: area_effect\n"
         "collider_template: area_effect_sphere\n"
         "damage: 45\nlifetime_ticks: 45\n"
         "damage_behavior:\n  type: area_interval\n"
@@ -2029,6 +2166,10 @@ int main() {
     subject_direction_needs_a_projectile_that_travels();
     area_effect_motion_collision_mask_is_authored();
     area_effect_ground_follow_and_cylinder_are_authored();
+    collider_fields_the_shape_does_not_read_are_rejected();
+    a_beams_reach_is_its_colliders_box();
+    a_collider_is_optional_only_where_nothing_reads_it();
+    a_projectiles_kind_is_type_only();
     catalog_file_loads_colliders();
     return 0;
 }

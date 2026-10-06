@@ -1,0 +1,10 @@
+# rocket_explosion's reach. Its own collider, though the same size as
+# fire_floor_area's (area_effect_sphere): resizing one must not resize the
+# other.
+id: 41
+name: rocket_explosion_sphere
+shape: sphere
+center: {x: 0.0, y: 0.0, z: 0.0}
+radius: 1.0
+purpose: damage
+layer: area_effect

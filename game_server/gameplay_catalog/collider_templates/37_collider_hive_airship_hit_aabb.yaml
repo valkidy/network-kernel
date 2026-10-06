@@ -5,6 +5,5 @@ name: hive_airship_hit_aabb
 shape: aabb
 center: {x: 0.0, y: 1.5, z: 0.0}
 half_extents: {x: 3.0, y: 1.5, z: 3.0}
-radius: 0.0
 purpose: hit
 layer: hostile_side

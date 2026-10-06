@@ -3,7 +3,7 @@
 # graph would replace the falloff with a flat amount.
 id: 20
 name: meteor_blast
-kind: area_effect
+type: area_effect
 collider_template: meteor_blast_sphere
 damage: 60
 lifetime_ticks: 2

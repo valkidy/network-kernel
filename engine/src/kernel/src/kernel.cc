@@ -802,7 +802,8 @@ glm::vec3 collider_template_half_extents(
 
 float collider_template_radius(
     const KernelColliderTemplateDefinition& collider_template) {
-    return collider_template.shape_type == KernelColliderShapeType_Capsule
+    return collider_template.shape_type == KernelColliderShapeType_Capsule ||
+            collider_template.shape_type == KernelColliderShapeType_Cylinder
         ? collider_template.shape_params.y
         : collider_template.shape_params.x;
 }
@@ -817,6 +818,11 @@ glm::vec3 collider_template_bounding_half_extents(
             return collider_template_half_extents(collider_template);
         case KernelColliderShapeType_Sphere:
             return glm::vec3{collider_template.shape_params.x};
+        case KernelColliderShapeType_Cylinder:
+            return glm::vec3{
+                collider_template.shape_params.y,
+                collider_template.shape_params.x,
+                collider_template.shape_params.y};
         default:
             return glm::vec3{0.0f};
     }
@@ -841,7 +847,8 @@ KernelVec4 collider_instance_shape_params(const ColliderInstance& collider) {
             glm::length(collider.segment_end - collider.segment_start);
         return KernelVec4{length, collider.radius, 0.0f, 0.0f};
     }
-    if (collider.shape_type == ColliderShapeType::kCapsule) {
+    if (collider.shape_type == ColliderShapeType::kCapsule ||
+        collider.shape_type == ColliderShapeType::kCylinder) {
         return KernelVec4{
             collider.capsule_half_height,
             collider.radius,
@@ -972,6 +979,9 @@ ColliderShapeType to_collider_shape_type(std::uint8_t shape_type) {
     if (shape_type == KernelColliderShapeType_Capsule) {
         return ColliderShapeType::kCapsule;
     }
+    if (shape_type == KernelColliderShapeType_Cylinder) {
+        return ColliderShapeType::kCylinder;
+    }
     return ColliderShapeType::kAabb;
 }
 
@@ -987,6 +997,8 @@ std::uint8_t to_kernel_collider_shape_type(ColliderShapeType shape_type) {
             return KernelColliderShapeType_Cone;
         case ColliderShapeType::kCapsule:
             return KernelColliderShapeType_Capsule;
+        case ColliderShapeType::kCylinder:
+            return KernelColliderShapeType_Cylinder;
         case ColliderShapeType::kAabb:
         default:
             return KernelColliderShapeType_Aabb;
@@ -1069,6 +1081,15 @@ ColliderWorldBounds collider_world_bounds(const ColliderInstance& collider) {
             glm::vec3{
                 collider.radius,
                 collider.capsule_half_height + collider.radius,
+                collider.radius},
+        };
+    }
+    if (collider.shape_type == ColliderShapeType::kCylinder) {
+        return ColliderWorldBounds{
+            collider.world_center,
+            glm::vec3{
+                collider.radius,
+                collider.capsule_half_height,
                 collider.radius},
         };
     }
@@ -1488,14 +1509,12 @@ RuntimeProjectileTemplate to_runtime_projectile_template(
         projectile_template.has_collision_geometry = true;
         projectile_template.collision_geometry =
             projectile_collision_geometry_from_template(*collider_template);
+        // One rule, the collider's: a sphere's radius, a cylinder's radius.
+        // A box has none, and game_server refuses one under an area effect.
+        // An authored area_effect.radius below still wins, for a host that
+        // builds its mechanics without a catalog compiler.
         projectile_template.area_radius =
             collider_template_radius(*collider_template);
-        if (projectile_template.area_radius <= 0.0f) {
-            const glm::vec3 half_extents =
-                collider_template_half_extents(*collider_template);
-            projectile_template.area_radius =
-                std::max(half_extents.x, std::max(half_extents.y, half_extents.z));
-        }
     }
     projectile_template.collision_mask = mechanics.collision_mask;
     projectile_template.max_hit_count = mechanics.max_hit_count;
@@ -1886,7 +1905,6 @@ bool validate_projectile_mechanics(
         (mechanics.damage_shape == KernelProjectileDamageShape_None
              ? mechanics.damage != 0
              : mechanics.damage == 0) ||
-        mechanics.collider_template_id == 0 ||
         mechanics.max_hit_count == 0 ||
         !valid_trigger(mechanics.projectile_impact_trigger) ||
         !valid_trigger(mechanics.expired_trigger)) {
@@ -3620,7 +3638,7 @@ bool KernelEngine::load_gameplay_catalog(
         if (collider_template.struct_size <
                 sizeof(KernelColliderTemplateDefinition) ||
             collider_template.template_id == 0 ||
-            collider_template.shape_type > KernelColliderShapeType_Capsule ||
+            collider_template.shape_type > KernelColliderShapeType_Cylinder ||
             (collider_template.shape_type == KernelColliderShapeType_Aabb &&
              (collider_template.shape_params.x <= 0.0f ||
               collider_template.shape_params.y <= 0.0f ||
@@ -3652,7 +3670,14 @@ bool KernelEngine::load_gameplay_catalog(
               collider_template.shape_params.y <= 0.0f ||
               collider_template.lifetime_ticks != 0u ||
               (collider_template.purpose_flags &
-               KernelColliderPurpose_Movement) == 0u))) {
+               KernelColliderPurpose_Movement) == 0u)) ||
+            // A cylinder is an area effect's reach and nothing else: no body
+            // is ever one, so a damage purpose is the only one it may carry.
+            (collider_template.shape_type == KernelColliderShapeType_Cylinder &&
+             (collider_template.shape_params.x <= 0.0f ||
+              collider_template.shape_params.y <= 0.0f ||
+              collider_template.lifetime_ticks != 0u ||
+              collider_template.purpose_flags != KernelColliderPurpose_Damage))) {
             return false;
         }
         validated_collider_templates.push_back(collider_template);
@@ -3665,8 +3690,16 @@ bool KernelEngine::load_gameplay_catalog(
             find_collider_template(
                 validated_collider_templates,
                 mechanics.collider_template_id);
-        if (projectile_collider == nullptr ||
-            projectile_collider->shape_type == KernelColliderShapeType_Cone ||
+        // Zero is a template with no collider: a marker that collides with
+        // nothing, or the shot an instant or melee weapon describes and never
+        // spawns. Every reader of it already treats a missing one as "no
+        // geometry". A non-zero id must name a shape it can use.
+        if ((mechanics.collider_template_id != 0u &&
+             projectile_collider == nullptr) ||
+            (projectile_collider != nullptr &&
+             (projectile_collider->shape_type == KernelColliderShapeType_Cone ||
+              (projectile_collider->shape_type == KernelColliderShapeType_Cylinder &&
+               mechanics.projectile_type != KernelProjectileType_AreaEffect))) ||
             ((mechanics.projectile_impact_trigger.struct_size != 0u ||
               mechanics.expired_trigger.struct_size != 0u) &&
              projectile_template_has_trigger_cycle(
@@ -4748,6 +4781,26 @@ void KernelEngine::materialize_projectile_collider(NetId net_id) {
             world_.registry().get<ProjectileBeamRuntime>(*entity),
             &collider);
     }
+    // An area effect reports the overlap it runs, not the template it came
+    // from: the overlap is centred on the field and upright, and its size is
+    // the runtime's. A catalog built from game_server makes the two the same;
+    // a host that hands the kernel its own mechanics still gets the truth.
+    if (const ProjectileAreaEffectRuntime* area_effect =
+            world_.registry().try_get<ProjectileAreaEffectRuntime>(*entity)) {
+        const bool cylinder = area_effect->shape == AreaEffectShape::kCylinder;
+        collider.shape_type = cylinder
+            ? ColliderShapeType::kCylinder
+            : ColliderShapeType::kSphere;
+        collider.radius = area_effect->radius;
+        collider.capsule_half_height = cylinder ? area_effect->half_height : 0.0f;
+        collider.half_extents = glm::vec3{
+            area_effect->radius,
+            cylinder ? area_effect->half_height : area_effect->radius,
+            area_effect->radius};
+        collider.local_center = glm::vec3{0.0f};
+        collider.world_center = transform.position;
+        collider.world_rotation = glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
+    }
     collider.world_bounds = collider_world_bounds(collider);
     world_.collider_registry().upsert_entity_collider(
         identity.net_id,
@@ -4895,7 +4948,11 @@ void KernelEngine::refresh_collider_world_transform(ColliderInstance& collider) 
         return;
     }
     const Transform& transform = world_.registry().get<Transform>(*entity);
-    collider.world_rotation = transform.rotation * collider.local_rotation;
+    // An area effect's overlap stays upright however the field is turned.
+    collider.world_rotation =
+        world_.registry().all_of<ProjectileAreaEffectRuntime>(*entity)
+        ? glm::quat{1.0f, 0.0f, 0.0f, 0.0f}
+        : transform.rotation * collider.local_rotation;
     collider.world_center =
         transform.position + transform.rotation * collider.local_center;
     collider.world_bounds = collider_world_bounds(collider);

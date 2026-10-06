@@ -3,7 +3,6 @@ id: 31
 name: sky_laser_burn_sphere
 shape: sphere
 center: {x: 0.0, y: 0.0, z: 0.0}
-half_extents: {x: 1.5, y: 1.5, z: 1.5}
 radius: 1.5
 purpose: damage
 layer: area_effect

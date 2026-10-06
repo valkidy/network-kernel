@@ -3550,7 +3550,6 @@ int main() {
         "shape: aabb\n"
         "center: {x: 0.0, y: 0.0, z: 0.0}\n"
         "half_extents: {x: 1.0, y: 1.0, z: 1.0}\n"
-        "radius: 0.0\n"
         "purpose: hit\n"
         "layer: player_side\n"});
     duplicate_collider_files.push_back({
@@ -3559,7 +3558,6 @@ int main() {
         "name: b\n"
         "shape: sphere\n"
         "center: {x: 0.0, y: 0.0, z: 0.0}\n"
-        "half_extents: {x: 1.0, y: 1.0, z: 1.0}\n"
         "radius: 1.0\n"
         "purpose: damage\n"
         "layer: hostile_side\n"});

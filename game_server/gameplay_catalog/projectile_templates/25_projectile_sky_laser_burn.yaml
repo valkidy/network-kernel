@@ -1,7 +1,7 @@
 # Where the beam stands: 6 damage every 3 ticks for 1.5 s to anything inside.
 id: 25
 name: sky_laser_burn
-kind: area_effect
+type: area_effect
 collider_template: sky_laser_burn_sphere
 damage: 6
 lifetime_ticks: 45
