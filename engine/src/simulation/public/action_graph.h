@@ -103,9 +103,11 @@ inline bool pull_is_authorable(
     std::uint32_t mode,
     float distance,
     std::uint32_t airtime_ticks,
-    float max_speed) {
+    float max_speed,
+    float strength) {
     if (!std::isfinite(distance) || !std::isfinite(max_speed) ||
-        max_speed <= 0.0f || airtime_ticks == 0u ||
+        max_speed <= 0.0f || !std::isfinite(strength) || strength <= 0.0f ||
+        airtime_ticks == 0u ||
         airtime_ticks > KERNEL_MAX_IMPULSE_LOCKOUT_TICKS) {
         return false;
     }
@@ -124,7 +126,8 @@ inline bool pull_action_is_authorable(const KernelActionDefinition& action) {
             action.pull_mode,
             action.pull_distance,
             action.pull_airtime_ticks,
-            action.pull_max_speed)) {
+            action.pull_max_speed,
+            action.pull_strength)) {
         return false;
     }
     if (action.pull_mode == KERNEL_PULL_MODE_TO_POINT) {
@@ -288,6 +291,8 @@ struct ActionApplyPullCommand {
     float distance = 0.0f;
     std::uint32_t airtime_ticks = 0;
     float max_speed = 0.0f;
+    // Weighed against impulse_resistance; never scales the launch.
+    float strength = 0.0f;
     ActionExecutionProvenance provenance;
 };
 

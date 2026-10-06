@@ -5,6 +5,13 @@
 #include <stdint.h>
 
 /*
+ * 100: pull strength. KernelActionDefinition gained pull_strength, appended
+ *     after spawn_placement and read only by apply_pull: a fixed number
+ *     weighed against the target's impulse_resistance, as apply_impulse's
+ *     strength is, so which units a pull moves no longer depends on where
+ *     they stand. The launch velocity is still worked out per target and is
+ *     not scaled by it. KernelActionDefinition is embedded in every trigger
+ *     definition, so every managed mirror of those shifts.
  * 99: hover. KernelMovementControllerType gained _Hover, and
  *     KernelMovementDefinition gained hover_height_meters and
  *     hover_vertical_speed_meters_per_second, appended after
@@ -174,7 +181,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 99u
+#define KERNEL_ABI_VERSION 100u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -961,6 +968,11 @@ typedef struct KernelActionDefinition {
     /* spawn_entity only; zero on every other action. A KERNEL_SPAWN_PLACEMENT_*:
      * where the spawned entity is put relative to the position it was given. */
     uint32_t spawn_placement;
+    /* apply_pull only; zero on every other action. Finite and > 0. The pull
+     * moves a target only when this exceeds its impulse_resistance -- the
+     * same strictly-greater test apply_impulse uses. It decides who is moved,
+     * never how fast: the launch velocity comes from pull_* above. */
+    float pull_strength;
 } KernelActionDefinition;
 
 typedef struct KernelActionTriggerDefinition {

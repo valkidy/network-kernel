@@ -16,9 +16,12 @@ static void require_impl(int condition, const char* expression, int line) {
 #define require(condition) require_impl((condition) ? 1 : 0, #condition, __LINE__)
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 99u,
-    "hover: KernelMovementDefinition gained hover_height_meters and "
-    "hover_vertical_speed_meters_per_second");
+    KERNEL_ABI_VERSION == 100u,
+    "pull strength: KernelActionDefinition gained pull_strength");
+_Static_assert(
+    offsetof(KernelActionDefinition, pull_strength) >
+        offsetof(KernelActionDefinition, spawn_placement),
+    "pull_strength is appended after every field that existed before ABI 100");
 _Static_assert(
     offsetof(KernelMovementDefinition, hover_height_meters) >
             offsetof(KernelMovementDefinition, movement_collision_mask) &&
@@ -173,16 +176,17 @@ _Static_assert(
         offsetof(KernelSkeletonBindingDefinition, processing_order),
     "stance crouch is appended to the skeleton binding ABI");
 _Static_assert(
-    sizeof(KernelActionDefinition) == 84u + 16u + 16u + 8u,
+    sizeof(KernelActionDefinition) == 84u + 16u + 16u + 8u + 4u,
     "KernelActionDefinition ABI size: 84 bytes before ABI 94, plus the "
     "16-byte spawn lifetime and repeat block, plus ABI 95's 16-byte pull "
-    "block, plus ABI 96's ui_id and spawn_placement");
+    "block, plus ABI 96's ui_id and spawn_placement, plus ABI 100's "
+    "pull_strength");
 _Static_assert(
     sizeof(KernelActionTriggerDefinition) ==
-        764u + 8u * 16u + 8u * 16u + 8u * 8u,
+        764u + 8u * 16u + 8u * 16u + 8u * 8u + 8u * 4u,
     "KernelActionTriggerDefinition ABI size: its eight actions each grew by "
-    "the ABI 94 repeat block, the ABI 95 pull block and ABI 96's ui_id and "
-    "spawn_placement");
+    "the ABI 94 repeat block, the ABI 95 pull block, ABI 96's ui_id and "
+    "spawn_placement and ABI 100's pull_strength");
 _Static_assert(
     offsetof(KernelActionDefinition, spawn_placement) >
             offsetof(KernelActionDefinition, ui_id) &&

@@ -2776,6 +2776,7 @@ int main() {
             require(pull.pull_distance == 1.0f);
             require(pull.pull_airtime_ticks == 24u);
             require(pull.pull_max_speed == 12.0f);
+            require(pull.pull_strength == 10.0f);
         }
         require(found_pull_blast);
     }
@@ -2833,7 +2834,8 @@ int main() {
         "    direction: params.direction\n"
         "    distance: 1.0\n"
         "    airtime_ticks: 20\n"
-        "    max_speed: 10.0\n",
+        "    max_speed: 10.0\n"
+        "    strength: 10.0\n",
         "exactly one of anchor or direction"));
     // Moving zero metres along a heading.
     require(pull_graph_rejected(
@@ -2842,8 +2844,28 @@ int main() {
         "    direction: params.direction\n"
         "    distance: 0.0\n"
         "    airtime_ticks: 20\n"
-        "    max_speed: 10.0\n",
+        "    max_speed: 10.0\n"
+        "    strength: 10.0\n",
         "non-zero one with direction"));
+    // No strength: nothing to weigh impulse_resistance against.
+    require(pull_graph_rejected(
+        "  - type: apply_pull\n"
+        "    target: params.target\n"
+        "    anchor: params.anchor\n"
+        "    distance: 1.0\n"
+        "    airtime_ticks: 20\n"
+        "    max_speed: 10.0\n",
+        "max_speed and strength"));
+    // A zero strength would move nothing, not even a resistance-0 target.
+    require(pull_graph_rejected(
+        "  - type: apply_pull\n"
+        "    target: params.target\n"
+        "    anchor: params.anchor\n"
+        "    distance: 1.0\n"
+        "    airtime_ticks: 20\n"
+        "    max_speed: 10.0\n"
+        "    strength: 0.0\n",
+        "positive max_speed and strength"));
     // A pull-only field on another action is a typo, not a no-op.
     require(pull_graph_rejected(
         "  - type: apply_impulse\n"
@@ -2858,7 +2880,8 @@ int main() {
         "    target: params.target\n"
         "    anchor: params.anchor\n"
         "    airtime_ticks: 20\n"
-        "    max_speed: 10.0\n",
+        "    max_speed: 10.0\n"
+        "    strength: 10.0\n",
         "event.subject_position"));
 
     const std::vector<std::uint8_t> gameplay_bundle = make_gameplay_bundle_zip();
