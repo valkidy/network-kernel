@@ -1,11 +1,13 @@
 #include "transport/public/gns_transport.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <optional>
 #include <utility>
+#include <vector>
 
 #include <steam/isteamnetworkingutils.h>
 #include <steam/steamnetworkingsockets.h>
@@ -29,6 +31,42 @@ void clear_callback_owner(GnsTransport* transport) {
     if (callback_owner() == transport) {
         callback_owner() = nullptr;
     }
+}
+
+// GameNetworkingSockets is one instance per process, and RunCallbacks() from
+// any transport delivers the status changes of every connection in it. With a
+// server and a client transport in the same process, whichever polls first
+// used to receive both sides' callbacks through callback_owner(), so the other
+// never saw its own connection come up. Callbacks are routed to the transport
+// that owns the connection instead; the poller stays the fallback. Like the
+// rest of this transport, it assumes every instance is polled on one thread.
+std::vector<GnsTransport*>& active_transports() {
+    static std::vector<GnsTransport*> transports;
+    return transports;
+}
+
+void add_active_transport(GnsTransport* transport) {
+    std::vector<GnsTransport*>& transports = active_transports();
+    if (std::find(transports.begin(), transports.end(), transport) ==
+        transports.end()) {
+        transports.push_back(transport);
+    }
+}
+
+void remove_active_transport(GnsTransport* transport) {
+    std::vector<GnsTransport*>& transports = active_transports();
+    transports.erase(
+        std::remove(transports.begin(), transports.end(), transport),
+        transports.end());
+}
+
+// GameNetworkingSockets_Init() is a no-op once initialised and
+// GameNetworkingSockets_Kill() destroys the instance outright, so the first
+// transport to stop would tear the library down under every other one. Count
+// the transports holding it and kill it with the last.
+int& gns_user_count() {
+    static int count = 0;
+    return count;
 }
 
 bool is_valid_channel(std::uint8_t value) {
@@ -204,6 +242,7 @@ bool GnsTransport::StartClient(const char* address) {
     role_ = Role::kClient;
     interface_ = SteamNetworkingSockets();
     set_callback_owner(this);
+    add_active_transport(this);
     return true;
 }
 
@@ -237,6 +276,7 @@ bool GnsTransport::StartServer(std::uint16_t port) {
 
     role_ = Role::kServer;
     set_callback_owner(this);
+    add_active_transport(this);
     return true;
 }
 
@@ -263,8 +303,11 @@ void GnsTransport::Stop() {
     }
 
     clear_callback_owner(this);
+    remove_active_transport(this);
     if (initialized_) {
-        GameNetworkingSockets_Kill();
+        if (--gns_user_count() == 0) {
+            GameNetworkingSockets_Kill();
+        }
         initialized_ = false;
     }
 
@@ -331,11 +374,15 @@ bool GnsTransport::running() const {
 }
 
 bool GnsTransport::initialize_gns() {
+    if (initialized_) {
+        return true;
+    }
     SteamDatagramErrMsg error_message;
     if (!GameNetworkingSockets_Init(nullptr, error_message)) {
         return false;
     }
     initialized_ = true;
+    ++gns_user_count();
     SteamNetworkingUtils()->SetGlobalConfigValueInt32(
         k_ESteamNetworkingConfig_IP_AllowWithoutAuth,
         1);
@@ -486,6 +533,23 @@ void GnsTransport::erase_connection(ConnectionHandle connection) {
 }
 
 void GnsTransport::SteamNetConnectionStatusChangedCallback(void* callback_info) {
+    const auto* info =
+        static_cast<const SteamNetConnectionStatusChangedCallback_t*>(callback_info);
+    if (info != nullptr) {
+        // A connection accepted on a listen socket carries that socket for its
+        // whole life; one this process initiated carries none.
+        for (GnsTransport* transport : active_transports()) {
+            const bool owns =
+                info->m_info.m_hListenSocket != k_HSteamListenSocket_Invalid
+                    ? transport->listen_socket_ == info->m_info.m_hListenSocket
+                    : transport->server_connection_ != 0 &&
+                          transport->server_connection_ == info->m_hConn;
+            if (owns) {
+                transport->handle_connection_status_changed(callback_info);
+                return;
+            }
+        }
+    }
     if (callback_owner() != nullptr) {
         callback_owner()->handle_connection_status_changed(callback_info);
     }

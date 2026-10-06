@@ -1,10 +1,9 @@
 #include "game_server/src/game_server.h"
 
 #include <array>
-#include <cassert>
 #include <cstdint>
-#include <cstdlib>
 #include <cstdio>
+#include <cstdlib>
 #include <limits>
 
 #include "kernel/public/kernel_api.h"
@@ -196,16 +195,16 @@ KernelPlayerInput stationary_input(std::uint32_t input_seq) {
 int main() {
     KernelConfig unstarted_config = listen_server_config();
     KernelHandle* unstarted_kernel = Kernel_Create(&unstarted_config);
-    assert(unstarted_kernel != nullptr);
+    require(unstarted_kernel != nullptr);
     network_example::game_server::GameServer unstarted_game_server(
         unstarted_kernel,
         single_spawn_gameplay_config());
     // Preloading only checks the configured templates since the directors
     // moved into game_server (5ff45bd); it no longer creates a kernel entity,
     // so an unstarted kernel does not fail it. Ticking still puts out nothing.
-    assert(unstarted_game_server.preload_directors());
+    require(unstarted_game_server.preload_directors());
     unstarted_game_server.tick(1.0f / 30.0f);
-    assert(unstarted_game_server.agent_runtime_manager().agent_count() == 0);
+    require(unstarted_game_server.agent_runtime_manager().agent_count() == 0);
     Kernel_Destroy(unstarted_kernel);
 
     KernelConfig config = listen_server_config();

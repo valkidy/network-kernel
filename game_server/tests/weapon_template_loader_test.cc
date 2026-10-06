@@ -1,8 +1,7 @@
 #include "game_server/src/gameplay_config.h"
 
-#include <cassert>
-#include <cstdio>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -12,20 +11,34 @@
 
 namespace {
 
+void require_impl(bool condition, const char* expression, int line) {
+    if (!condition) {
+        std::fprintf(stderr, "require failed at line %d: %s\n", line, expression);
+        std::abort();
+    }
+}
+
+}  // namespace
+
+#define require(condition) \
+    require_impl(static_cast<bool>(condition), #condition, __LINE__)
+
+namespace {
+
 constexpr std::uint16_t kMaxReserveMagazines =
     std::numeric_limits<std::uint16_t>::max();
 
 std::filesystem::path runfiles_root() {
     const char* test_srcdir = std::getenv("TEST_SRCDIR");
     const char* test_workspace = std::getenv("TEST_WORKSPACE");
-    assert(test_srcdir != nullptr);
-    assert(test_workspace != nullptr);
+    require(test_srcdir != nullptr);
+    require(test_workspace != nullptr);
     return std::filesystem::path(test_srcdir) / test_workspace;
 }
 
 std::filesystem::path tmp_dir(const std::string& name) {
     const char* test_tmpdir = std::getenv("TEST_TMPDIR");
-    assert(test_tmpdir != nullptr);
+    require(test_tmpdir != nullptr);
     const std::filesystem::path root = std::filesystem::path(test_tmpdir) / name;
     std::filesystem::remove_all(root);
     const std::filesystem::path path = root / "weapon_templates";
@@ -36,7 +49,7 @@ std::filesystem::path tmp_dir(const std::string& name) {
 void write_file(const std::filesystem::path& path, const std::string& text) {
     std::filesystem::create_directories(path.parent_path());
     std::ofstream file(path);
-    assert(file.good());
+    require(file.good());
     file << text;
 }
 
@@ -288,15 +301,15 @@ void valid_repo_templates_load_all_slots() {
         network_example::game_server::
             load_gameplay_config_from_weapon_template_directory(dir.string());
 
-    assert(config.weapons.definitions[network_example::game_server::kWeaponRifle].fire_mode ==
+    require(config.weapons.definitions[network_example::game_server::kWeaponRifle].fire_mode ==
            KernelWeaponFireMode_Hitscan);
-    assert(config.weapons.definitions[network_example::game_server::kWeaponRifle]
+    require(config.weapons.definitions[network_example::game_server::kWeaponRifle]
                .reserve_magazines == 6);
-    assert(config.weapons.definitions[network_example::game_server::kWeaponRifle]
+    require(config.weapons.definitions[network_example::game_server::kWeaponRifle]
                .segment_collider_template_id == 5);
-    assert(config.weapons.definitions[network_example::game_server::kWeaponShotgun]
+    require(config.weapons.definitions[network_example::game_server::kWeaponShotgun]
                .segment_collider_template_id == 6);
-    assert(config.weapons.definitions[network_example::game_server::kWeaponRocket]
+    require(config.weapons.definitions[network_example::game_server::kWeaponRocket]
                .projectile_template_id == 3);
     bool found_rocket_explosion_template = false;
     const network_example::game_server::KernelGameplayCatalogStorage storage =
@@ -308,71 +321,71 @@ void valid_repo_templates_load_all_slots() {
         if (projectile_template.weapon_id == network_example::game_server::kWeaponSpammer ||
             projectile_template.weapon_id ==
                 network_example::game_server::kWeaponHomingMissile) {
-            assert(projectile_template.mechanics.collider_template_id == 7);
+            require(projectile_template.mechanics.collider_template_id == 7);
         }
         // The grenade shell has been a box (projectile_aabb) since ca61488.
         if (projectile_template.weapon_id == network_example::game_server::kWeaponGrenade) {
-            assert(projectile_template.mechanics.collider_template_id == 16);
+            require(projectile_template.mechanics.collider_template_id == 16);
         }
         if (projectile_template.weapon_id == network_example::game_server::kWeaponRocket) {
-            assert(projectile_template.mechanics.collider_template_id == 3);
-            assert(projectile_template.mechanics
+            require(projectile_template.mechanics.collider_template_id == 3);
+            require(projectile_template.mechanics
                        .projectile_impact_trigger.action_type ==
                    KernelEntityTriggerActionType_SpawnProjectile);
-            assert(projectile_template.mechanics.projectile_impact_trigger
+            require(projectile_template.mechanics.projectile_impact_trigger
                        .spawn_projectile_template_id == 8);
-            assert(projectile_template.mechanics.collision_query_mode ==
+            require(projectile_template.mechanics.collision_query_mode ==
                    KernelProjectileCollisionQueryMode_Auto);
         }
         if (projectile_template.projectile_template_id == 8) {
             found_rocket_explosion_template = true;
-            assert(projectile_template.mechanics.projectile_type ==
+            require(projectile_template.mechanics.projectile_type ==
                    KernelProjectileType_AreaEffect);
-            assert(projectile_template.mechanics.area_effect.damage_interval_ticks == 45);
-            assert(projectile_template.mechanics.area_effect.lifetime_ticks == 45);
-            assert(projectile_template.mechanics.damage == 45);
+            require(projectile_template.mechanics.area_effect.damage_interval_ticks == 45);
+            require(projectile_template.mechanics.area_effect.lifetime_ticks == 45);
+            require(projectile_template.mechanics.damage == 45);
         }
     }
-    assert(found_rocket_explosion_template);
-    assert(config.weapons.definitions[network_example::game_server::kWeaponSpammer]
+    require(found_rocket_explosion_template);
+    require(config.weapons.definitions[network_example::game_server::kWeaponSpammer]
                .damage == 1);
-    assert(config.weapons.definitions[network_example::game_server::kWeaponSpammer]
+    require(config.weapons.definitions[network_example::game_server::kWeaponSpammer]
                .magazine_size == 3);
-    assert(config.weapons.definitions[network_example::game_server::kWeaponSpammer]
+    require(config.weapons.definitions[network_example::game_server::kWeaponSpammer]
                .reserve_magazines == kMaxReserveMagazines);
-    assert(config.weapons.definitions[network_example::game_server::kWeaponSpammer]
+    require(config.weapons.definitions[network_example::game_server::kWeaponSpammer]
                .projectile_template_id == 2);
-    assert(config.weapons.definitions[network_example::game_server::kWeaponFireFloor]
+    require(config.weapons.definitions[network_example::game_server::kWeaponFireFloor]
                .fire_mode == KernelWeaponFireMode_Projectile);
-    assert(config.weapons.collider_template_ids
+    require(config.weapons.collider_template_ids
                [network_example::game_server::kWeaponFireFloor] == 4);
-    assert(config.weapons.definitions[network_example::game_server::kWeaponFireFloor]
+    require(config.weapons.definitions[network_example::game_server::kWeaponFireFloor]
                .projectile_template_id == 4);
-    assert(config.weapons.definitions[network_example::game_server::kWeaponBeamRifle]
+    require(config.weapons.definitions[network_example::game_server::kWeaponBeamRifle]
                .fire_mode == KernelWeaponFireMode_Projectile);
-    assert(config.weapons.collider_template_ids
+    require(config.weapons.collider_template_ids
                [network_example::game_server::kWeaponBeamRifle] == 8);
-    assert(config.weapons.definitions[network_example::game_server::kWeaponBeamRifle]
+    require(config.weapons.definitions[network_example::game_server::kWeaponBeamRifle]
                .projectile_template_id == 5);
-    assert(config.weapons.definitions[network_example::game_server::kWeaponHomingMissile]
+    require(config.weapons.definitions[network_example::game_server::kWeaponHomingMissile]
                .projectile_template_id == 6);
-    assert(config.weapons.configured[network_example::game_server::kWeaponGrenade]);
-    assert(config.weapons.projectile_sync_modes
+    require(config.weapons.configured[network_example::game_server::kWeaponGrenade]);
+    require(config.weapons.projectile_sync_modes
                [network_example::game_server::kWeaponGrenade] ==
            KernelProjectileSyncMode_LocalPredictedDeterministic);
-    assert(config.weapons.names[network_example::game_server::kWeaponGrenade] ==
+    require(config.weapons.names[network_example::game_server::kWeaponGrenade] ==
            "Grenade Launcher");
-    assert(config.weapons.projectile_sync_modes
+    require(config.weapons.projectile_sync_modes
                [network_example::game_server::kWeaponRocket] ==
            KernelProjectileSyncMode_HybridDeterministicThenSnapshot);
-    assert(config.weapons.projectile_sync_modes
+    require(config.weapons.projectile_sync_modes
                [network_example::game_server::kWeaponHomingMissile] ==
            KernelProjectileSyncMode_HybridDeterministicThenSnapshot);
-    assert(config.weapons.names[network_example::game_server::kWeaponFireFloor] ==
+    require(config.weapons.names[network_example::game_server::kWeaponFireFloor] ==
            "Fire Floor");
-    assert(config.weapons.names[network_example::game_server::kWeaponBeamRifle] ==
+    require(config.weapons.names[network_example::game_server::kWeaponBeamRifle] ==
            "Beam Rifle");
-    assert(config.weapons.names[network_example::game_server::kWeaponHomingMissile] ==
+    require(config.weapons.names[network_example::game_server::kWeaponHomingMissile] ==
            "Homing Missile");
     // Every action template on disk, plus the catalog's shared reload. Counted
     // rather than hardcoded: the directory grows with every weapon.
@@ -385,15 +398,15 @@ void valid_repo_templates_load_all_slots() {
             ++action_template_files;
         }
     }
-    assert(action_template_files > 0);
-    assert(config.action_templates.size() == action_template_files + 1);
-    assert(config.weapons.definitions[network_example::game_server::kWeaponRifle]
+    require(action_template_files > 0);
+    require(config.action_templates.size() == action_template_files + 1);
+    require(config.weapons.definitions[network_example::game_server::kWeaponRifle]
                .fire_action_template_id == 4096);
-    assert(config.weapons.definitions[network_example::game_server::kWeaponRocket]
+    require(config.weapons.definitions[network_example::game_server::kWeaponRocket]
                .fire_action_template_id == 4099);
-    assert(config.weapons.definitions[network_example::game_server::kWeaponBeamRifle]
+    require(config.weapons.definitions[network_example::game_server::kWeaponBeamRifle]
                .fire_action_template_id == 4101);
-    assert(storage.definition.action_template_count ==
+    require(storage.definition.action_template_count ==
            config.action_templates.size());
     // By id, not by index: the load order follows the enumerated files.
     const auto action_by_id = [&config](std::uint32_t action_template_id)
@@ -406,13 +419,13 @@ void valid_repo_templates_load_all_slots() {
         }
         std::abort();
     };
-    assert(action_by_id(4099).commit_offset_ticks == 3);
-    assert(action_by_id(4099).commit_interval_ticks == 30);
-    assert(action_by_id(4101).trigger_mode == KernelActionTriggerMode_Hold);
-    assert(action_by_id(4101).hold_input_timeout_ticks == 6);
+    require(action_by_id(4099).commit_offset_ticks == 3);
+    require(action_by_id(4099).commit_interval_ticks == 30);
+    require(action_by_id(4101).trigger_mode == KernelActionTriggerMode_Hold);
+    require(action_by_id(4101).hold_input_timeout_ticks == 6);
     network_example::game_server::GameServerGameplayConfig changed_action = config;
     ++changed_action.action_templates[0].definition.commit_interval_ticks;
-    assert(network_example::game_server::compute_gameplay_catalog_hash(changed_action) !=
+    require(network_example::game_server::compute_gameplay_catalog_hash(changed_action) !=
            config.weapons.catalog_hash);
     bool found_segment = false;
     bool found_sphere = false;
@@ -421,31 +434,31 @@ void valid_repo_templates_load_all_slots() {
          config.colliders.templates) {
         if (collider.definition.template_id == 6) {
             found_segment = true;
-            assert(collider.definition.shape_type == KernelColliderShapeType_Segment);
+            require(collider.definition.shape_type == KernelColliderShapeType_Segment);
             // A weapon segment declares no reach, no scatter, and no lifetime:
             // all three are decided at fire time. Only an optional thickness
             // survives, and shotgun_segment does not author one.
-            assert(collider.definition.shape_params.x == 0.0f);
-            assert(collider.definition.shape_params.y == 0.0f);
-            assert(collider.definition.shape_params.z == 0.0f);
-            assert(collider.definition.lifetime_ticks == 0);
+            require(collider.definition.shape_params.x == 0.0f);
+            require(collider.definition.shape_params.y == 0.0f);
+            require(collider.definition.shape_params.z == 0.0f);
+            require(collider.definition.lifetime_ticks == 0);
         }
         if (collider.definition.template_id == 7) {
             found_sphere = true;
-            assert(collider.definition.shape_type == KernelColliderShapeType_Sphere);
-            assert(collider.definition.shape_params.x == 0.5f);
+            require(collider.definition.shape_type == KernelColliderShapeType_Sphere);
+            require(collider.definition.shape_params.x == 0.5f);
         }
         if (collider.definition.template_id == 8) {
             found_beam = true;
-            assert(collider.definition.shape_type == KernelColliderShapeType_OrientedBox);
-            assert(collider.definition.shape_params.x == 0.25f);
-            assert(collider.definition.shape_params.y == 0.25f);
-            assert(collider.definition.shape_params.z == 4.0f);
+            require(collider.definition.shape_type == KernelColliderShapeType_OrientedBox);
+            require(collider.definition.shape_params.x == 0.25f);
+            require(collider.definition.shape_params.y == 0.25f);
+            require(collider.definition.shape_params.z == 4.0f);
         }
     }
-    assert(found_segment);
-    assert(found_sphere);
-    assert(found_beam);
+    require(found_segment);
+    require(found_sphere);
+    require(found_beam);
 }
 
 void projectile_collision_query_modes_are_loaded() {
@@ -466,9 +479,9 @@ void projectile_collision_query_modes_are_loaded() {
         network_example::game_server::load_gameplay_config_from_weapon_template_directory(
             dir.string());
 
-    assert(projectile_mechanics(config, 2).collision_query_mode ==
+    require(projectile_mechanics(config, 2).collision_query_mode ==
            KernelProjectileCollisionQueryMode_Auto);
-    assert(projectile_mechanics(config, 3).collision_query_mode ==
+    require(projectile_mechanics(config, 3).collision_query_mode ==
            KernelProjectileCollisionQueryMode_Overlap);
 }
 
@@ -484,17 +497,17 @@ void invalid_templates_are_rejected() {
         (void)network_example::game_server::
             load_gameplay_config_from_weapon_template_directory(
                 legacy_dir.string());
-        assert(false);
+        require(false);
     } catch (const network_example::game_server::DataLoadError& error) {
-        assert(
+        require(
             error.error_code ==
             KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNKNOWN_FIELD);
-        assert(error.field == "cooldown_ticks");
-        assert(error.template_kind ==
+        require(error.field == "cooldown_ticks");
+        require(error.template_kind ==
                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_WEAPON);
-        assert(error.template_id == 0);
-        assert(error.line > 0);
-        assert(error.column > 0);
+        require(error.template_id == 0);
+        require(error.line > 0);
+        require(error.column > 0);
     }
 
     const std::filesystem::path finite_press_dir = tmp_dir("finite_press");
@@ -507,7 +520,7 @@ void invalid_templates_are_rejected() {
         "commit_offset_ticks: 0\ncommit_interval_ticks: 2\n"
         "max_commit_count: 3\nrecovery_ticks: 0\n"
         "hold_input_timeout_ticks: 0\n");
-    assert(!load_fails(finite_press_dir));
+    require(!load_fails(finite_press_dir));
 
     const std::filesystem::path zero_fire_interval_dir =
         tmp_dir("zero_fire_interval");
@@ -526,18 +539,18 @@ void invalid_templates_are_rejected() {
         (void)network_example::game_server::
             load_gameplay_config_from_weapon_template_directory(
                 zero_fire_interval_dir.string());
-        assert(false);
+        require(false);
     } catch (const network_example::game_server::DataLoadError& error) {
-        assert(
+        require(
             error.error_code ==
             KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_INVALID_NUMERIC_RANGE);
-        assert(error.path == zero_fire_action.string());
-        assert(error.field == "commit_interval_ticks");
-        assert(error.template_kind ==
+        require(error.path == zero_fire_action.string());
+        require(error.field == "commit_interval_ticks");
+        require(error.template_kind ==
                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTION);
-        assert(error.template_id == 4096);
-        assert(error.line > 0);
-        assert(error.column > 0);
+        require(error.template_id == 4096);
+        require(error.line > 0);
+        require(error.column > 0);
     }
 
     const std::filesystem::path invalid_press_dir = tmp_dir("invalid_press");
@@ -550,7 +563,7 @@ void invalid_templates_are_rejected() {
         "commit_offset_ticks: 0\ncommit_interval_ticks: 2\n"
         "max_commit_count: 0\nrecovery_ticks: 0\n"
         "hold_input_timeout_ticks: 1\n");
-    assert(load_fails(invalid_press_dir));
+    require(load_fails(invalid_press_dir));
 
     const std::filesystem::path missing_policy_dir = tmp_dir("missing_policy");
     write_valid_templates(missing_policy_dir);
@@ -559,7 +572,7 @@ void invalid_templates_are_rejected() {
         "id: 0\nname: Rifle\nweapon_type: hitscan\nmagazine_size: 30\n"
         "damage: 25\nmax_range: 100.0\n"
         "segment_collider: rifle_segment\n");
-    assert(load_fails(missing_policy_dir));
+    require(load_fails(missing_policy_dir));
 
     const std::filesystem::path dangling_action_dir = tmp_dir("dangling_action");
     write_valid_templates(dangling_action_dir);
@@ -568,7 +581,7 @@ void invalid_templates_are_rejected() {
         "id: 0\nname: Rifle\nweapon_type: hitscan\nmagazine_size: 30\n"
         "damage: 25\nfire_action_template: missing_action\n"
         "max_range: 100.0\nsegment_collider: rifle_segment\n");
-    assert(load_fails(dangling_action_dir));
+    require(load_fails(dangling_action_dir));
 
     const std::filesystem::path duplicate_action_dir = tmp_dir("duplicate_action");
     write_valid_templates(duplicate_action_dir);
@@ -578,7 +591,7 @@ void invalid_templates_are_rejected() {
         "flags: [cancel_on_death]\nammo_cost_per_commit: 1\n"
         "commit_offset_ticks: 0\ncommit_interval_ticks: 1\nmax_commit_count: 1\n"
         "recovery_ticks: 0\nhold_input_timeout_ticks: 0\n");
-    assert(load_fails(duplicate_action_dir));
+    require(load_fails(duplicate_action_dir));
 
     const std::filesystem::path invalid_action_dir = tmp_dir("invalid_action");
     write_valid_templates(invalid_action_dir);
@@ -588,7 +601,7 @@ void invalid_templates_are_rejected() {
         "flags: [cancel_on_release]\nammo_cost_per_commit: 1\n"
         "commit_offset_ticks: 0\ncommit_interval_ticks: 0\nmax_commit_count: 0\n"
         "recovery_ticks: 4\nhold_input_timeout_ticks: 6\n");
-    assert(load_fails(invalid_action_dir));
+    require(load_fails(invalid_action_dir));
 
     const std::filesystem::path duplicate_dir = tmp_dir("duplicate");
     write_valid_templates(duplicate_dir);
@@ -596,7 +609,7 @@ void invalid_templates_are_rejected() {
         duplicate_dir / "duplicate.yaml",
         "id: 4\nname: Duplicate\nweapon_type: hitscan\nmagazine_size: 1\n"
         "damage: 1\nmax_range: 1.0\n");
-    assert(load_fails(duplicate_dir));
+    require(load_fails(duplicate_dir));
 
     const std::filesystem::path duplicate_name_dir = tmp_dir("duplicate_name");
     write_valid_templates(duplicate_name_dir);
@@ -605,7 +618,7 @@ void invalid_templates_are_rejected() {
         "id: 4\nname: Rifle\nweapon_type: hitscan\nmagazine_size: 1\n"
         "damage: 1\nmax_range: 1.0\n"
         "segment_collider: rifle_segment\n");
-    assert(load_fails(duplicate_name_dir));
+    require(load_fails(duplicate_name_dir));
 
     const std::filesystem::path unknown_weapon_field_dir =
         tmp_dir("unknown_weapon_field");
@@ -615,7 +628,7 @@ void invalid_templates_are_rejected() {
         "id: 0\nname: Rifle\nweapon_type: hitscan\nmagazine_size: 30\n"
         "damage: 25\nmax_range: 100.0\n"
         "segment_collider: rifle_segment\nruntime_instance_id: 9\n");
-    assert(load_fails(unknown_weapon_field_dir));
+    require(load_fails(unknown_weapon_field_dir));
 
     const std::filesystem::path unknown_area_field_dir =
         tmp_dir("unknown_area_field");
@@ -628,7 +641,7 @@ void invalid_templates_are_rejected() {
         "  radius: 2.0\n  damage_per_interval: 12\n  damage_interval_ticks: 2\n"
         "  lifetime_ticks: 6\n  spawn_distance: 1.0\n  collision_mask: hostile_side\n"
         "  current_tick: 123\n");
-    assert(load_fails(unknown_area_field_dir));
+    require(load_fails(unknown_area_field_dir));
 
     const std::filesystem::path unknown_beam_field_dir =
         tmp_dir("unknown_beam_field");
@@ -640,7 +653,7 @@ void invalid_templates_are_rejected() {
         "  collider_template: beam_oriented_box\n"
         "  length: 8.0\n  radius: 0.25\n"
         "  lifetime_ticks: 2\n  collision_mask: hostile_side\n  owner: player\n");
-    assert(load_fails(unknown_beam_field_dir));
+    require(load_fails(unknown_beam_field_dir));
 
     const std::filesystem::path unknown_homing_field_dir =
         tmp_dir("unknown_homing_field");
@@ -666,7 +679,7 @@ void invalid_templates_are_rejected() {
         "  acceleration: 20.0\n"
         "  max_speed: 30.0\n"
         "  owner_entity_id: 99\n");
-    assert(load_fails(unknown_homing_field_dir));
+    require(load_fails(unknown_homing_field_dir));
 
     const std::filesystem::path hitscan_projectile_dir = tmp_dir("hitscan_projectile");
     write_valid_templates(hitscan_projectile_dir);
@@ -675,14 +688,14 @@ void invalid_templates_are_rejected() {
         "id: 0\nname: Bad Rifle\nweapon_type: hitscan\nmagazine_size: 30\n"
         "damage: 25\nmax_range: 100.0\n"
         "projectile: {speed: 10.0}\n");
-    assert(load_fails(hitscan_projectile_dir));
+    require(load_fails(hitscan_projectile_dir));
 
     const std::filesystem::path missing_beam_dir = tmp_dir("missing_beam");
     write_valid_templates(missing_beam_dir);
     write_file(
         missing_beam_dir / "beam_rifle.yaml",
         "id: 5\nname: Beam\nweapon_type: beam\nmagazine_size: 1\n");
-    assert(load_fails(missing_beam_dir));
+    require(load_fails(missing_beam_dir));
 
     const std::filesystem::path invalid_beam_dir = tmp_dir("invalid_beam");
     write_valid_templates(invalid_beam_dir);
@@ -692,7 +705,7 @@ void invalid_templates_are_rejected() {
         "beam:\n"
         "  length: 0.0\n  radius: 0.25\n"
         "  lifetime_ticks: 2\n");
-    assert(load_fails(invalid_beam_dir));
+    require(load_fails(invalid_beam_dir));
 
     const std::filesystem::path beam_on_hitscan_dir = tmp_dir("beam_on_hitscan");
     write_valid_templates(beam_on_hitscan_dir);
@@ -701,7 +714,7 @@ void invalid_templates_are_rejected() {
         "id: 0\nname: Bad Rifle\nweapon_type: hitscan\nmagazine_size: 30\n"
         "damage: 25\nmax_range: 100.0\n"
         "beam: {length: 8.0}\n");
-    assert(load_fails(beam_on_hitscan_dir));
+    require(load_fails(beam_on_hitscan_dir));
 
     const std::filesystem::path homing_dir = tmp_dir("homing");
     write_valid_templates(homing_dir);
@@ -712,7 +725,7 @@ void invalid_templates_are_rejected() {
         "movement_model: homing\nhit_response: destroy\n"
         "damage_shape: direct_hit\nspeed: 1.0\nlifetime_ticks: 30\n"
         "collision_mask: damageable\nmax_hit_count: 1\n");
-    assert(load_fails(homing_dir));
+    require(load_fails(homing_dir));
 
     const std::filesystem::path invalid_homing_dir = tmp_dir("invalid_homing");
     write_valid_templates(invalid_homing_dir);
@@ -735,7 +748,7 @@ void invalid_templates_are_rejected() {
         "  max_turn_degrees_per_tick: 12.0\n"
         "  acceleration: 10.0\n"
         "  max_speed: 20.0\n");
-    assert(load_fails(invalid_homing_dir));
+    require(load_fails(invalid_homing_dir));
 
     const std::filesystem::path homing_on_linear_dir = tmp_dir("homing_on_linear");
     write_valid_templates(homing_on_linear_dir);
@@ -747,7 +760,7 @@ void invalid_templates_are_rejected() {
         "damage_shape: direct_hit\nspeed: 1.0\nlifetime_ticks: 30\n"
         "collision_mask: damageable\nmax_hit_count: 1\n"
         "homing: {homing_mode: fire_and_forget}\n");
-    assert(load_fails(homing_on_linear_dir));
+    require(load_fails(homing_on_linear_dir));
 
     const std::filesystem::path bounce_dir = tmp_dir("bounce");
     write_valid_templates(bounce_dir);
@@ -758,7 +771,7 @@ void invalid_templates_are_rejected() {
         "movement_model: linear\nhit_response: bounce\n"
         "damage_shape: direct_hit\nspeed: 1.0\nlifetime_ticks: 30\n"
         "collision_mask: damageable\nmax_hit_count: 1\n");
-    assert(load_fails(bounce_dir));
+    require(load_fails(bounce_dir));
 
     const std::filesystem::path invalid_sync_dir = tmp_dir("invalid_sync");
     write_valid_templates(invalid_sync_dir);
@@ -769,7 +782,7 @@ void invalid_templates_are_rejected() {
         "movement_model: linear\nhit_response: destroy\n"
         "damage_shape: direct_hit\nspeed: 1.0\nlifetime_ticks: 30\n"
         "collision_mask: damageable\nmax_hit_count: 1\n");
-    assert(load_fails(invalid_sync_dir));
+    require(load_fails(invalid_sync_dir));
 
     const std::filesystem::path removed_radius_dir = tmp_dir("removed_radius");
     write_valid_templates(removed_radius_dir);
@@ -783,7 +796,7 @@ void invalid_templates_are_rejected() {
             + removed_radius_key
             + ": 3.0\ncollision_mask: damageable\nmax_hit_count: 1\n"
               "gravity: {x: 0.0, y: 0.0, z: 0.0}\n");
-    assert(load_fails(removed_radius_dir));
+    require(load_fails(removed_radius_dir));
 
     const std::filesystem::path area_effect_sphere_shape_dir =
         tmp_dir("area_effect_sphere_shape");
@@ -797,7 +810,7 @@ void invalid_templates_are_rejected() {
         "damage_shape: explosion\nspeed: 35.0\nlifetime_ticks: 75\n"
         "collision_mask: damageable\nmax_hit_count: 1\n"
         "gravity: {x: 0.0, y: 0.0, z: 0.0}\n");
-    assert(load_fails(area_effect_sphere_shape_dir));
+    require(load_fails(area_effect_sphere_shape_dir));
 
     const std::filesystem::path unknown_projectile_dir =
         tmp_dir("unknown_projectile_template");
@@ -806,7 +819,7 @@ void invalid_templates_are_rejected() {
         unknown_projectile_dir / "rocket.yaml",
         "id: 3\nname: Rocket\nweapon_type: projectile\nmagazine_size: 6\n"
         "projectile_template: missing_projectile\n");
-    assert(load_fails(unknown_projectile_dir));
+    require(load_fails(unknown_projectile_dir));
 
     const std::filesystem::path cone_projectile_dir =
         tmp_dir("cone_projectile_collider");
@@ -819,7 +832,7 @@ void invalid_templates_are_rejected() {
         "damage_shape: direct_hit\nspeed: 35.0\nlifetime_ticks: 75\n"
         "collision_mask: damageable\nmax_hit_count: 1\n"
         "gravity: {x: 0.0, y: 0.0, z: 0.0}\n");
-    assert(load_fails(cone_projectile_dir));
+    require(load_fails(cone_projectile_dir));
 }
 
 void collision_mask_expressions_are_loaded() {
@@ -836,7 +849,7 @@ void collision_mask_expressions_are_loaded() {
     network_example::game_server::GameServerGameplayConfig config =
         network_example::game_server::load_gameplay_config_from_weapon_template_directory(
             none_dir.string());
-    assert(projectile_mechanics(config, 3).collision_mask ==
+    require(projectile_mechanics(config, 3).collision_mask ==
            KERNEL_COLLISION_MASK_NONE);
 
     const std::filesystem::path zero_dir = tmp_dir("mask_zero");
@@ -856,7 +869,7 @@ void collision_mask_expressions_are_loaded() {
     config =
         network_example::game_server::load_gameplay_config_from_weapon_template_directory(
             zero_dir.string());
-    assert(projectile_mechanics(config, 5).beam.collision_mask ==
+    require(projectile_mechanics(config, 5).beam.collision_mask ==
            KERNEL_COLLISION_MASK_NONE);
 
     const std::filesystem::path expression_dir = tmp_dir("mask_expression");
@@ -875,7 +888,7 @@ void collision_mask_expressions_are_loaded() {
     config =
         network_example::game_server::load_gameplay_config_from_weapon_template_directory(
             expression_dir.string());
-    assert(projectile_mechanics(config, 4).area_effect.collision_mask ==
+    require(projectile_mechanics(config, 4).area_effect.collision_mask ==
            (KERNEL_COLLISION_LAYER_HOSTILE_SIDE | KERNEL_COLLISION_LAYER_PLAYER_SIDE));
 }
 
@@ -911,7 +924,7 @@ void area_effect_motion_collision_mask_is_authored() {
     network_example::game_server::GameServerGameplayConfig config =
         network_example::game_server::load_gameplay_config_from_weapon_template_directory(
             default_dir.string());
-    assert(projectile_mechanics(config, 4).area_effect.motion_collision_mask ==
+    require(projectile_mechanics(config, 4).area_effect.motion_collision_mask ==
            KERNEL_COLLISION_MASK_NONE);
 
     const std::filesystem::path authored_dir = tmp_dir("motion_mask_authored");
@@ -922,11 +935,11 @@ void area_effect_motion_collision_mask_is_authored() {
     config =
         network_example::game_server::load_gameplay_config_from_weapon_template_directory(
             authored_dir.string());
-    assert(projectile_mechanics(config, 4).area_effect.motion_collision_mask ==
+    require(projectile_mechanics(config, 4).area_effect.motion_collision_mask ==
            KERNEL_COLLISION_MASK_STATIC_WORLD);
     // The mask that says who it affects is untouched by the one that says what
     // stops it.
-    assert(projectile_mechanics(config, 4).area_effect.collision_mask ==
+    require(projectile_mechanics(config, 4).area_effect.collision_mask ==
            KERNEL_COLLISION_LAYER_HOSTILE_SIDE);
 
     // Only the static world can stop it: actors and props are what it affects.
@@ -935,7 +948,7 @@ void area_effect_motion_collision_mask_is_authored() {
     write_file(
         actor_dir.parent_path() / "projectile_templates" / "fire_floor_area.yaml",
         area_template + "speed: 6.0\nmotion_collision_mask: hostile_side\n");
-    assert(load_fails(actor_dir));
+    require(load_fails(actor_dir));
 
     // A field that never moves has nothing to be stopped.
     const std::filesystem::path still_dir = tmp_dir("motion_mask_still");
@@ -943,7 +956,7 @@ void area_effect_motion_collision_mask_is_authored() {
     write_file(
         still_dir.parent_path() / "projectile_templates" / "fire_floor_area.yaml",
         area_template + "motion_collision_mask: terrain\n");
-    assert(load_fails(still_dir));
+    require(load_fails(still_dir));
 
     // And no other projectile type answers this question twice.
     const std::filesystem::path standard_dir = tmp_dir("motion_mask_standard");
@@ -957,7 +970,7 @@ void area_effect_motion_collision_mask_is_authored() {
         "collision_mask: damageable\nmax_hit_count: 1\n"
         "motion_collision_mask: terrain\n"
         "gravity: {x: 0.0, y: 0.0, z: 0.0}\n");
-    assert(load_fails(standard_dir));
+    require(load_fails(standard_dir));
 }
 
 // A tornado's two extras: a ground-following ride and an upright-column
@@ -992,10 +1005,10 @@ void area_effect_ground_follow_and_cylinder_are_authored() {
             load_with("tornado_default", "").string());
     KernelAreaEffectMechanicsDefinition area =
         projectile_mechanics(config, 4).area_effect;
-    assert(area.shape == KernelAreaEffectShape_Sphere);
-    assert(area.motion == KernelAreaEffectMotion_Linear);
-    assert(area.half_height == 0.0f && area.hover_height == 0.0f);
-    assert(area.max_slope_degrees == 0.0f);
+    require(area.shape == KernelAreaEffectShape_Sphere);
+    require(area.motion == KernelAreaEffectMotion_Linear);
+    require(area.half_height == 0.0f && area.hover_height == 0.0f);
+    require(area.max_slope_degrees == 0.0f);
 
     // Authored with only what it must name; the rest takes the character
     // controller's numbers.
@@ -1005,10 +1018,10 @@ void area_effect_ground_follow_and_cylinder_are_authored() {
             travelling + "motion:\n  type: ground_follow\n  hover_height: 1.5\n")
             .string());
     area = projectile_mechanics(config, 4).area_effect;
-    assert(area.motion == KernelAreaEffectMotion_GroundFollow);
-    assert(area.hover_height == 1.5f);
-    assert(area.max_slope_degrees == 50.0f);
-    assert(area.step_up == 0.5f && area.probe_depth == 0.5f);
+    require(area.motion == KernelAreaEffectMotion_GroundFollow);
+    require(area.hover_height == 1.5f);
+    require(area.max_slope_degrees == 50.0f);
+    require(area.step_up == 0.5f && area.probe_depth == 0.5f);
 
     config = network_example::game_server::load_gameplay_config_from_weapon_template_directory(
         load_with(
@@ -1019,13 +1032,13 @@ void area_effect_ground_follow_and_cylinder_are_authored() {
                 "  max_slope_degrees: 40\n  step_up: 0.3\n  probe_depth: 0.8\n")
             .string());
     area = projectile_mechanics(config, 4).area_effect;
-    assert(area.shape == KernelAreaEffectShape_Cylinder);
-    assert(area.half_height == 1.5f);
-    assert(area.max_slope_degrees == 40.0f);
-    assert(area.step_up == 0.3f && area.probe_depth == 0.8f);
+    require(area.shape == KernelAreaEffectShape_Cylinder);
+    require(area.half_height == 1.5f);
+    require(area.max_slope_degrees == 40.0f);
+    require(area.step_up == 0.3f && area.probe_depth == 0.8f);
 
     // Server-only drawing is the other mode a client can live with.
-    assert(!load_fails(load_with(
+    require(!load_fails(load_with(
         "tornado_snapshot_only",
         "speed: 6.0\nmotion_collision_mask: terrain\n"
         "sync_mode: server_snapshot_only\n"
@@ -1033,37 +1046,37 @@ void area_effect_ground_follow_and_cylinder_are_authored() {
 
     const std::string ride = "motion:\n  type: ground_follow\n  hover_height: 1.5\n";
     // Nothing to follow without travel.
-    assert(load_fails(load_with(
+    require(load_fails(load_with(
         "tornado_still",
         "motion_collision_mask: terrain\nsync_mode: local_predicted_deterministic\n" +
             ride)));
     // Nothing to probe without terrain in the mask.
-    assert(load_fails(load_with(
+    require(load_fails(load_with(
         "tornado_no_terrain",
         "speed: 6.0\nmotion_collision_mask: static_obstacle\n"
         "sync_mode: local_predicted_deterministic\n" +
             ride)));
     // Hybrid's correction re-anchors through the straight-line formula.
-    assert(load_fails(load_with(
+    require(load_fails(load_with(
         "tornado_hybrid",
         "speed: 6.0\nmotion_collision_mask: terrain\n"
         "sync_mode: hybrid_deterministic_then_snapshot\n" +
             ride)));
-    assert(load_fails(load_with(
+    require(load_fails(load_with(
         "tornado_no_hover",
         travelling + "motion:\n  type: ground_follow\n")));
-    assert(load_fails(load_with(
+    require(load_fails(load_with(
         "tornado_flat_slope",
         travelling + ride + "  max_slope_degrees: 90\n")));
-    assert(load_fails(load_with(
+    require(load_fails(load_with(
         "tornado_unknown_key",
         travelling + ride + "  bounce: true\n")));
-    assert(load_fails(load_with(
+    require(load_fails(load_with(
         "tornado_linear_settings",
         travelling + "motion:\n  type: linear\n  hover_height: 1.5\n")));
-    assert(load_fails(load_with("cylinder_no_height", "area_shape: cylinder\n")));
-    assert(load_fails(load_with("sphere_with_height", "half_height: 1.0\n")));
-    assert(load_fails(load_with("unknown_shape", "area_shape: cone\n")));
+    require(load_fails(load_with("cylinder_no_height", "area_shape: cylinder\n")));
+    require(load_fails(load_with("sphere_with_height", "half_height: 1.0\n")));
+    require(load_fails(load_with("unknown_shape", "area_shape: cone\n")));
 
     // And none of it on anything but an area effect.
     const std::filesystem::path standard_dir = tmp_dir("tornado_standard");
@@ -1077,7 +1090,7 @@ void area_effect_ground_follow_and_cylinder_are_authored() {
         "collision_mask: damageable\nmax_hit_count: 1\n"
         "area_shape: cylinder\n"
         "gravity: {x: 0.0, y: 0.0, z: 0.0}\n");
-    assert(load_fails(standard_dir));
+    require(load_fails(standard_dir));
 }
 
 void subject_direction_needs_a_projectile_that_travels() {
@@ -1126,7 +1139,7 @@ void subject_direction_needs_a_projectile_that_travels() {
     const network_example::game_server::GameServerGameplayConfig config =
         network_example::game_server::load_gameplay_config_from_weapon_template_directory(
             moving_dir.string());
-    assert(projectile_mechanics(config, 4)
+    require(projectile_mechanics(config, 4)
                .projectile_impact_trigger.actions[0]
                .direction_source == KernelEventVec3Source_SubjectDirection);
 
@@ -1137,7 +1150,7 @@ void subject_direction_needs_a_projectile_that_travels() {
     write_file(
         still_dir.parent_path() / "projectile_templates" / "fire_floor_area.yaml",
         area_template + still_triggers);
-    assert(load_fails(still_dir));
+    require(load_fails(still_dir));
 }
 
 // Speed 0 is a marker: something that holds a place and fires on_expired
@@ -1173,21 +1186,21 @@ void stationary_marker_loads_only_when_inert() {
                 .string());
     const KernelProjectileMechanicsDefinition& mechanics =
         projectile_mechanics(config, 40);
-    assert(mechanics.speed == 0.0f);
-    assert(mechanics.collision_mask == KERNEL_COLLISION_MASK_NONE);
-    assert(mechanics.expired_trigger.action_count == 1u);
+    require(mechanics.speed == 0.0f);
+    require(mechanics.collision_mask == KERNEL_COLLISION_MASK_NONE);
+    require(mechanics.expired_trigger.action_count == 1u);
 
     const bool hits_terrain = load_fails(marker_dir(
         "marker_hits_terrain", "speed: 0.0\ncollision_mask: terrain\n"));
-    assert(hits_terrain);
+    require(hits_terrain);
     const bool falls = load_fails(marker_dir(
         "marker_falls",
         "speed: 0.0\ncollision_mask: none\n"
         "gravity: {x: 0.0, y: -9.8, z: 0.0}\n"));
-    assert(falls);
+    require(falls);
     const bool backwards = load_fails(marker_dir(
         "marker_negative_speed", "speed: -1.0\ncollision_mask: none\n"));
-    assert(backwards);
+    require(backwards);
 }
 
 // An area effect expires without queuing a trigger, so on_expired on one used
@@ -1219,7 +1232,7 @@ void area_effect_rejects_on_expired() {
         impact_dir.parent_path() / "projectile_templates" / "fire_floor_area.yaml",
         area_template + binding("on_projectile_impact"));
     const bool impact_failed = load_fails(impact_dir);
-    assert(!impact_failed);
+    require(!impact_failed);
 
     const std::filesystem::path expired_dir = tmp_dir("area_on_expired");
     write_valid_templates(expired_dir);
@@ -1227,7 +1240,7 @@ void area_effect_rejects_on_expired() {
         expired_dir.parent_path() / "projectile_templates" / "fire_floor_area.yaml",
         area_template + binding("on_expired"));
     const bool expired_failed = load_fails(expired_dir);
-    assert(expired_failed);
+    require(expired_failed);
 }
 
 // launch: descent derives start and speed from a landing target. Each rejected
@@ -1259,15 +1272,15 @@ void descent_launch_is_authored() {
                 .string());
     const KernelProjectileMechanicsDefinition& mechanics =
         projectile_mechanics(config, 41);
-    assert(mechanics.launch.struct_size == sizeof(KernelProjectileLaunchDefinition));
-    assert(mechanics.launch.launch_type == KernelProjectileLaunchType_Descent);
-    assert(mechanics.launch.elevation_min_degrees == 75.0f);
-    assert(mechanics.launch.elevation_max_degrees == 85.0f);
-    assert(mechanics.launch.height == 40.0f);
-    assert(mechanics.launch.fall_ticks == 15u);
-    assert(mechanics.speed == 0.0f);
+    require(mechanics.launch.struct_size == sizeof(KernelProjectileLaunchDefinition));
+    require(mechanics.launch.launch_type == KernelProjectileLaunchType_Descent);
+    require(mechanics.launch.elevation_min_degrees == 75.0f);
+    require(mechanics.launch.elevation_max_degrees == 85.0f);
+    require(mechanics.launch.height == 40.0f);
+    require(mechanics.launch.fall_ticks == 15u);
+    require(mechanics.speed == 0.0f);
     // Not authored, and nothing else is accepted.
-    assert(mechanics.sync_mode == KernelProjectileSyncMode_ServerSnapshotOnly);
+    require(mechanics.sync_mode == KernelProjectileSyncMode_ServerSnapshotOnly);
 
     const network_example::game_server::GameServerGameplayConfig fixed =
         network_example::game_server::load_gameplay_config_from_weapon_template_directory(
@@ -1277,8 +1290,8 @@ void descent_launch_is_authored() {
                 "launch:\n  type: descent\n  elevation_degrees: 80\n"
                 "  height: 40.0\n  fall_ticks: 15\n")
                 .string());
-    assert(projectile_mechanics(fixed, 41).launch.elevation_min_degrees == 80.0f);
-    assert(projectile_mechanics(fixed, 41).launch.elevation_max_degrees == 80.0f);
+    require(projectile_mechanics(fixed, 41).launch.elevation_min_degrees == 80.0f);
+    require(projectile_mechanics(fixed, 41).launch.elevation_max_degrees == 80.0f);
 
     struct Rejected {
         const char* name;
@@ -1310,7 +1323,7 @@ void descent_launch_is_authored() {
         if (!failed) {
             std::fprintf(stderr, "descent variant loaded: %s\n", variant.name);
         }
-        assert(failed);
+        require(failed);
     }
 
     // A muzzle-fired weapon would drop the projectile onto its own shooter.
@@ -1322,7 +1335,7 @@ void descent_launch_is_authored() {
         "fire_action_template: rocket_fire\n"
         "projectile_template: meteor_body\n");
     const bool muzzle_failed = load_fails(weapon_dir);
-    assert(muzzle_failed);
+    require(muzzle_failed);
 }
 
 // weapon_type: targeted_strike lands its projectile template on a point. It
@@ -1370,10 +1383,10 @@ void targeted_strike_weapon_is_authored() {
                 "max_range: 35.0\nprojectile_template: strike_marker\n")
                 .string());
     const KernelWeaponMechanicsDefinition& weapon = config.weapons.definitions[3];
-    assert(config.weapons.configured[3]);
-    assert(weapon.fire_mode == KernelWeaponFireMode_TargetedStrike);
-    assert(weapon.max_range == 35.0f);
-    assert(weapon.projectile_template_id == 40u);
+    require(config.weapons.configured[3]);
+    require(weapon.fire_mode == KernelWeaponFireMode_TargetedStrike);
+    require(weapon.max_range == 35.0f);
+    require(weapon.projectile_template_id == 40u);
 
     // A descent template may be landed directly; the muzzle rule does not
     // apply to a weapon that never fires from the muzzle.
@@ -1384,23 +1397,23 @@ void targeted_strike_weapon_is_authored() {
                 "sync_mode: server_snapshot_only\n",
                 "max_range: 35.0\nprojectile_template: meteor_body\n")
                 .string());
-    assert(direct.weapons.definitions[3].projectile_template_id == 41u);
+    require(direct.weapons.definitions[3].projectile_template_id == 41u);
 
     const bool no_range = load_fails(strike_dir(
         "strike_no_range",
         "sync_mode: server_snapshot_only\n",
         "projectile_template: strike_marker\n"));
-    assert(no_range);
+    require(no_range);
     const bool predicted = load_fails(strike_dir(
         "strike_predicted_marker",
         "sync_mode: hybrid_deterministic_then_snapshot\n",
         "max_range: 35.0\nprojectile_template: strike_marker\n"));
-    assert(predicted);
+    require(predicted);
     const bool beam = load_fails(strike_dir(
         "strike_beam",
         "sync_mode: server_snapshot_only\n",
         "max_range: 35.0\nprojectile_template: beam_rifle_beam\n"));
-    assert(beam);
+    require(beam);
 }
 
 // repeat and lifetime_ticks on a spawn_projectile graph action reach the
@@ -1456,11 +1469,11 @@ void spawn_repeat_is_authored() {
                 .string());
     const KernelActionDefinition& action =
         projectile_mechanics(config, 40).expired_trigger.actions[0];
-    assert(action.spawn_lifetime_ticks == 10u);
-    assert(action.repeat_count_min == 10u);
-    assert(action.repeat_count_max == 15u);
-    assert(action.repeat_scatter_radius == 6.0f);
-    assert(action.repeat_stagger_lifetime_ticks == 60u);
+    require(action.spawn_lifetime_ticks == 10u);
+    require(action.repeat_count_min == 10u);
+    require(action.repeat_count_max == 15u);
+    require(action.repeat_scatter_radius == 6.0f);
+    require(action.repeat_stagger_lifetime_ticks == 60u);
 
     struct Rejected {
         const char* name;
@@ -1480,7 +1493,7 @@ void spawn_repeat_is_authored() {
         if (!failed) {
             std::fprintf(stderr, "repeat variant loaded: %s\n", variant.name);
         }
-        assert(failed);
+        require(failed);
     }
 
     // On any other action it is refused, not ignored. The graph is unbound,
@@ -1504,10 +1517,10 @@ void spawn_repeat_is_authored() {
     };
     const bool plain_damage_failed =
         load_fails(damage_graph_dir("damage_graph_plain", ""));
-    assert(!plain_damage_failed);
+    require(!plain_damage_failed);
     const bool repeated_damage_failed = load_fails(damage_graph_dir(
         "damage_graph_repeat", "    repeat:\n      count: 3\n"));
-    assert(repeated_damage_failed);
+    require(repeated_damage_failed);
 }
 
 // replication: derived is only accepted where a client can derive it: below a
@@ -1562,9 +1575,9 @@ void derived_replication_is_authored() {
                 "collision_mask: terrain | static_obstacle\nreplication: derived\n",
                 "strike_marker")
                 .string());
-    assert(projectile_mechanics(config, 41).replication ==
+    require(projectile_mechanics(config, 41).replication ==
            KernelProjectileReplication_Derived);
-    assert(projectile_mechanics(config, 40).replication ==
+    require(projectile_mechanics(config, 40).replication ==
            KernelProjectileReplication_Replicated);
 
     // Its end would depend on actors only the server sees move.
@@ -1572,18 +1585,18 @@ void derived_replication_is_authored() {
         "derived_hits_actors",
         "collision_mask: terrain | hostile_side\nreplication: derived\n",
         "strike_marker"));
-    assert(hits_actors);
+    require(hits_actors);
     // Fired directly, it has no root for a client to hold.
     const bool fired_directly = load_fails(chain_dir(
         "derived_fired_directly",
         "collision_mask: terrain | static_obstacle\nreplication: derived\n",
         "meteor_body"));
-    assert(fired_directly);
+    require(fired_directly);
     const bool bad_value = load_fails(chain_dir(
         "derived_bad_value",
         "collision_mask: terrain | static_obstacle\nreplication: sometimes\n",
         "strike_marker"));
-    assert(bad_value);
+    require(bad_value);
 
     // A rocket is not a root: its impact point is decided in flight.
     const std::filesystem::path rocket_dir = chain_dir(
@@ -1600,7 +1613,7 @@ void derived_replication_is_authored() {
         "collision_mask: damageable\n"
         "replication: derived\n");
     const bool under_rocket = load_fails(rocket_dir);
-    assert(under_rocket);
+    require(under_rocket);
 }
 
 void area_effect_speed_is_authored() {
@@ -1609,7 +1622,7 @@ void area_effect_speed_is_authored() {
     network_example::game_server::GameServerGameplayConfig config =
         network_example::game_server::load_gameplay_config_from_weapon_template_directory(
             default_dir.string());
-    assert(projectile_mechanics(config, 4).speed == 0.0f);
+    require(projectile_mechanics(config, 4).speed == 0.0f);
 
     const std::filesystem::path moving_dir = tmp_dir("area_speed_moving");
     write_valid_templates(moving_dir);
@@ -1629,10 +1642,10 @@ void area_effect_speed_is_authored() {
     config =
         network_example::game_server::load_gameplay_config_from_weapon_template_directory(
             moving_dir.string());
-    assert(projectile_mechanics(config, 4).speed == 6.0f);
+    require(projectile_mechanics(config, 4).speed == 6.0f);
     // The motion model stays linear whatever the speed: homing is still a
     // standard-projectile-only model.
-    assert(projectile_mechanics(config, 4).motion_model ==
+    require(projectile_mechanics(config, 4).motion_model ==
            KernelProjectileMotionModel_Linear);
 
     const std::filesystem::path negative_dir = tmp_dir("area_speed_negative");
@@ -1640,7 +1653,7 @@ void area_effect_speed_is_authored() {
     write_file(
         negative_dir.parent_path() / "projectile_templates" / "fire_floor_area.yaml",
         moving_template + "speed: -1.0\n");
-    assert(load_fails(negative_dir));
+    require(load_fails(negative_dir));
 }
 
 void area_effect_hit_instigator_is_authored() {
@@ -1649,7 +1662,7 @@ void area_effect_hit_instigator_is_authored() {
     network_example::game_server::GameServerGameplayConfig config =
         network_example::game_server::load_gameplay_config_from_weapon_template_directory(
             default_dir.string());
-    assert(projectile_mechanics(config, 4).area_effect.hit_instigator == 0u);
+    require(projectile_mechanics(config, 4).area_effect.hit_instigator == 0u);
 
     const std::filesystem::path authored_dir = tmp_dir("hit_instigator_authored");
     write_valid_templates(authored_dir);
@@ -1668,7 +1681,7 @@ void area_effect_hit_instigator_is_authored() {
     config =
         network_example::game_server::load_gameplay_config_from_weapon_template_directory(
             authored_dir.string());
-    assert(projectile_mechanics(config, 4).area_effect.hit_instigator == 1u);
+    require(projectile_mechanics(config, 4).area_effect.hit_instigator == 1u);
 
     const std::filesystem::path standard_dir = tmp_dir("hit_instigator_standard");
     write_valid_templates(standard_dir);
@@ -1681,7 +1694,7 @@ void area_effect_hit_instigator_is_authored() {
         "collision_mask: damageable\nmax_hit_count: 1\n"
         "hit_instigator: true\n"
         "gravity: {x: 0.0, y: 0.0, z: 0.0}\n");
-    assert(load_fails(standard_dir));
+    require(load_fails(standard_dir));
 }
 
 void area_effect_sync_mode_is_authored_not_forced() {
@@ -1706,7 +1719,7 @@ void area_effect_sync_mode_is_authored_not_forced() {
     network_example::game_server::GameServerGameplayConfig config =
         network_example::game_server::load_gameplay_config_from_weapon_template_directory(
             default_dir.string());
-    assert(projectile_mechanics(config, 4).sync_mode ==
+    require(projectile_mechanics(config, 4).sync_mode ==
            KernelProjectileSyncMode_ServerSnapshotOnly);
 
     const std::filesystem::path predicted_dir = tmp_dir("area_sync_predicted");
@@ -1717,7 +1730,7 @@ void area_effect_sync_mode_is_authored_not_forced() {
     config =
         network_example::game_server::load_gameplay_config_from_weapon_template_directory(
             predicted_dir.string());
-    assert(projectile_mechanics(config, 4).sync_mode ==
+    require(projectile_mechanics(config, 4).sync_mode ==
            KernelProjectileSyncMode_LocalPredictedDeterministic);
 
     const std::filesystem::path invalid_dir = tmp_dir("area_sync_invalid");
@@ -1725,7 +1738,7 @@ void area_effect_sync_mode_is_authored_not_forced() {
     write_file(
         invalid_dir.parent_path() / "projectile_templates" / "fire_floor_area.yaml",
         area_effect_template("sync_mode: remote_magic\n"));
-    assert(load_fails(invalid_dir));
+    require(load_fails(invalid_dir));
 
     // The three the area effect really does own are rejected rather than
     // accepted and overwritten.
@@ -1741,7 +1754,7 @@ void area_effect_sync_mode_is_authored_not_forced() {
             overridden_dir.parent_path() / "projectile_templates" /
                 "fire_floor_area.yaml",
             area_effect_template(overridden_field));
-        assert(load_fails(overridden_dir));
+        require(load_fails(overridden_dir));
     }
 }
 
@@ -1756,7 +1769,7 @@ void malformed_collision_masks_are_rejected() {
         "damage_shape: direct_hit\nspeed: 35.0\nlifetime_ticks: 75\n"
         "collision_mask: ghost\nmax_hit_count: 1\n"
         "gravity: {x: 0.0, y: 0.0, z: 0.0}\n");
-    assert(load_fails(unknown_dir));
+    require(load_fails(unknown_dir));
 
     const std::filesystem::path empty_token_dir = tmp_dir("mask_empty_token");
     write_valid_templates(empty_token_dir);
@@ -1769,7 +1782,7 @@ void malformed_collision_masks_are_rejected() {
         "collision_mask: hostile_side |\n"
         "max_hit_count: 1\n"
         "gravity: {x: 0.0, y: 0.0, z: 0.0}\n");
-    assert(load_fails(empty_token_dir));
+    require(load_fails(empty_token_dir));
 
     const std::filesystem::path area_static_dir =
         tmp_dir("area_static_mask");
@@ -1786,7 +1799,7 @@ void malformed_collision_masks_are_rejected() {
         "  damage_interval_ticks: 2\n"
         "  falloff: none\n"
         "collision_mask: hostile_side | terrain\n");
-    assert(load_fails(area_static_dir));
+    require(load_fails(area_static_dir));
 }
 
 void catalog_file_loads_colliders() {
@@ -1796,8 +1809,8 @@ void catalog_file_loads_colliders() {
     const network_example::game_server::GameServerGameplayConfig config =
         network_example::game_server::load_gameplay_config_from_catalog_file(
             catalog_file.string());
-    assert(config.weapons.catalog_version == 16);
-    assert(config.weapons.catalog_hash != 0);
+    require(config.weapons.catalog_version == 16);
+    require(config.weapons.catalog_hash != 0);
     // Every collider_templates/*.yaml; counted, since the directory grows.
     std::size_t collider_files = 0;
     for (const std::filesystem::directory_entry& entry :
@@ -1807,9 +1820,9 @@ void catalog_file_loads_colliders() {
             ++collider_files;
         }
     }
-    assert(collider_files > 0);
-    assert(config.colliders.templates.size() == collider_files);
-    assert(config.colliders.bindings.empty());
+    require(collider_files > 0);
+    require(config.colliders.templates.size() == collider_files);
+    require(config.colliders.bindings.empty());
 }
 
 // An instant weapon's shot template describes the shot without spawning it, so
@@ -1827,26 +1840,26 @@ void instant_weapon_keeps_its_fire_mode_and_segment() {
         config.weapons.definitions[network_example::game_server::kWeaponRifle];
     const KernelWeaponMechanicsDefinition& shotgun =
         config.weapons.definitions[network_example::game_server::kWeaponShotgun];
-    assert(rifle.projectile_template_id == 10);
-    assert(shotgun.projectile_template_id == 11);
+    require(rifle.projectile_template_id == 10);
+    require(shotgun.projectile_template_id == 11);
 
     // Everything the projectile branch would have changed, and did not.
-    assert(rifle.fire_mode == KernelWeaponFireMode_Hitscan);
-    assert(shotgun.fire_mode == KernelWeaponFireMode_Shotgun);
-    assert(rifle.segment_collider_template_id == 5);
-    assert(shotgun.segment_collider_template_id == 6);
+    require(rifle.fire_mode == KernelWeaponFireMode_Hitscan);
+    require(shotgun.fire_mode == KernelWeaponFireMode_Shotgun);
+    require(rifle.segment_collider_template_id == 5);
+    require(shotgun.segment_collider_template_id == 6);
     // collider_template_ids keeps the segment, not the shot template's collider.
-    assert(
+    require(
         config.weapons.collider_template_ids[
             network_example::game_server::kWeaponRifle] == 5);
-    assert(
+    require(
         config.weapons.collider_template_ids[
             network_example::game_server::kWeaponShotgun] == 6);
-    assert(
+    require(
         config.weapons.projectile_sync_modes[
             network_example::game_server::kWeaponRifle] ==
         KernelProjectileSyncMode_HybridDeterministicThenSnapshot);
-    assert(shotgun.pellet_count == 5);
+    require(shotgun.pellet_count == 5);
 
     // Both shot templates reach the catalog, which is what lets a client find
     // the asset it draws a tracer from.
@@ -1862,7 +1875,7 @@ void instant_weapon_keeps_its_fire_mode_and_segment() {
             ++found_shots;
         }
     }
-    assert(found_shots == 2);
+    require(found_shots == 2);
 }
 
 // Reload timing is per weapon, and it lives in an action template rather than a
@@ -1892,24 +1905,24 @@ void weapons_name_their_own_reload_action() {
 
     // Each weapon reaches a different template, and the durations are the ones
     // the weapon templates used to state in a `reload_ticks` nothing read.
-    assert(reload_offset_of(reload_of(network_example::game_server::kWeaponRifle)) == 30);
-    assert(reload_offset_of(reload_of(network_example::game_server::kWeaponShotgun)) == 45);
-    assert(reload_offset_of(reload_of(network_example::game_server::kWeaponRocket)) == 75);
-    assert(reload_offset_of(reload_of(network_example::game_server::kWeaponGrenade)) == 90);
-    assert(reload_offset_of(
+    require(reload_offset_of(reload_of(network_example::game_server::kWeaponRifle)) == 30);
+    require(reload_offset_of(reload_of(network_example::game_server::kWeaponShotgun)) == 45);
+    require(reload_offset_of(reload_of(network_example::game_server::kWeaponRocket)) == 75);
+    require(reload_offset_of(reload_of(network_example::game_server::kWeaponGrenade)) == 90);
+    require(reload_offset_of(
                reload_of(network_example::game_server::kWeaponHomingMissile)) == 60);
 
     // Distinct templates, and none of them the catalog's shared fallback --
     // except the grunts' claw (10) and slam (11), which name `shared_reload`
     // themselves: a bottomless AI weapon has no reload of its own to author.
-    assert(reload_of(network_example::game_server::kWeaponRifle) !=
+    require(reload_of(network_example::game_server::kWeaponRifle) !=
            reload_of(network_example::game_server::kWeaponShotgun));
     for (std::size_t id = 0; id < config.weapons.definitions.size(); ++id) {
         if (!config.weapons.configured[id]) {
             continue;
         }
         const bool names_shared_reload = id == 10u || id == 11u;
-        assert(
+        require(
             (config.weapons.definitions[id].reload_action_template_id == 4199u) ==
             names_shared_reload);
     }
@@ -1927,7 +1940,7 @@ void weapons_without_a_reload_action_fall_back_to_the_shared_one() {
 
     for (std::size_t id = 0; id < config.weapons.definitions.size(); ++id) {
         if (config.weapons.configured[id]) {
-            assert(config.weapons.definitions[id].reload_action_template_id == 4199u);
+            require(config.weapons.definitions[id].reload_action_template_id == 4199u);
         }
     }
 }
@@ -1947,36 +1960,36 @@ void damage_is_authored_once_per_projectile_template() {
     // Beam: `damage` read as per-tick, copied into the block the runtime uses.
     const KernelProjectileMechanicsDefinition& beam_rifle =
         projectile_mechanics(config, 5);
-    assert(beam_rifle.damage == 1);
-    assert(beam_rifle.beam.damage_per_tick == beam_rifle.damage);
+    require(beam_rifle.damage == 1);
+    require(beam_rifle.beam.damage_per_tick == beam_rifle.damage);
 
     // Area effect: `damage` read as per-interval, likewise.
     const KernelProjectileMechanicsDefinition& fire_floor =
         projectile_mechanics(config, 4);
-    assert(fire_floor.damage == 12);
-    assert(fire_floor.area_effect.damage_per_interval == fire_floor.damage);
+    require(fire_floor.damage == 12);
+    require(fire_floor.area_effect.damage_per_interval == fire_floor.damage);
 
     // An instant weapon is no different: its shot template owns the number, and
     // the weapon definition mirrors it rather than authoring a second one.
     const KernelProjectileMechanicsDefinition& rifle_shot =
         projectile_mechanics(config, 10);
-    assert(rifle_shot.damage == 45);
-    assert(config.weapons.definitions[network_example::game_server::kWeaponRifle]
+    require(rifle_shot.damage == 45);
+    require(config.weapons.definitions[network_example::game_server::kWeaponRifle]
                .damage == rifle_shot.damage);
     const KernelProjectileMechanicsDefinition& shotgun_shot =
         projectile_mechanics(config, 11);
-    assert(shotgun_shot.damage == 10);
-    assert(config.weapons
+    require(shotgun_shot.damage == 10);
+    require(config.weapons
                .definitions[network_example::game_server::kWeaponShotgun]
                .damage == shotgun_shot.damage);
 
     // collision_mask travels the same way, and the shotgun still does not ask
     // for limbs while the rifle does.
-    assert(config.weapons.definitions[network_example::game_server::kWeaponRifle]
+    require(config.weapons.definitions[network_example::game_server::kWeaponRifle]
                .collision_mask == rifle_shot.collision_mask);
-    assert((config.weapons.definitions[network_example::game_server::kWeaponRifle]
+    require((config.weapons.definitions[network_example::game_server::kWeaponRifle]
                 .collision_mask & KERNEL_COLLISION_LAYER_LIMB) != 0u);
-    assert((config.weapons
+    require((config.weapons
                 .definitions[network_example::game_server::kWeaponShotgun]
                 .collision_mask & KERNEL_COLLISION_LAYER_LIMB) == 0u);
 
@@ -1989,7 +2002,7 @@ void damage_is_authored_once_per_projectile_template() {
         "id: 0\nname: Rifle\nweapon_type: hitscan\nmagazine_size: 30\n"
         "fire_action_template: rifle_fire\nmax_range: 100.0\n"
         "segment_collider: rifle_segment\n");
-    assert(load_fails(no_shot_dir));
+    require(load_fails(no_shot_dir));
 }
 
 }  // namespace

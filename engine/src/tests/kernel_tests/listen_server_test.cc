@@ -1,10 +1,20 @@
 #include <array>
-#include <cassert>
+#include <cstdio>
+#include <cstdlib>
 
 #include "kernel/public/kernel_api.h"
 #include "world/public/components.h"
 
 namespace {
+
+void require_impl(bool condition, const char* expression, int line) {
+    if (!condition) {
+        std::fprintf(stderr, "require failed at line %d: %s\n", line, expression);
+        std::abort();
+    }
+}
+
+#define require(condition) require_impl((condition), #condition, __LINE__)
 
 RenderEntityState find_player(const std::array<RenderEntityState, 16>& states, std::uint32_t count) {
     for (std::uint32_t index = 0; index < count; ++index) {
@@ -13,7 +23,7 @@ RenderEntityState find_player(const std::array<RenderEntityState, 16>& states, s
             return states[index];
         }
     }
-    assert(false);
+    require(false);
     return RenderEntityState{};
 }
 
@@ -50,7 +60,7 @@ RenderEntityState find_entity(
             return states[index];
         }
     }
-    assert(false);
+    require(false);
     return RenderEntityState{};
 }
 
@@ -64,7 +74,7 @@ RenderEntityState find_projectile_action(
             return states[index];
         }
     }
-    assert(false);
+    require(false);
     return RenderEntityState{};
 }
 
@@ -90,7 +100,7 @@ KernelServerEntityState find_server_entity(
             return states[index];
         }
     }
-    assert(false);
+    require(false);
     return KernelServerEntityState{};
 }
 
@@ -291,7 +301,7 @@ void load_minimal_gameplay_catalog(KernelHandle* kernel) {
     catalog.entity_templates = entity_templates.data();
     catalog.entity_template_count =
         static_cast<std::uint32_t>(entity_templates.size());
-    assert(Kernel_LoadGameplayCatalog(kernel, &catalog, nullptr));
+    require(Kernel_LoadGameplayCatalog(kernel, &catalog, nullptr));
 }
 
 void configure_local_player(KernelHandle* kernel, std::uint32_t player_net_id) {
@@ -314,8 +324,8 @@ void configure_local_player(KernelHandle* kernel, std::uint32_t player_net_id) {
     combat.reserve_magazines[1] = 3;
     combat.ammo[2] = 6;
     combat.reserve_magazines[2] = 3;
-    assert(Kernel_ServerSetEntityCombatState(kernel, player_net_id, &combat));
-    assert(Kernel_ServerSetEntityActorTemplate(kernel, player_net_id, 1u));
+    require(Kernel_ServerSetEntityCombatState(kernel, player_net_id, &combat));
+    require(Kernel_ServerSetEntityActorTemplate(kernel, player_net_id, 1u));
 
     KernelWeaponMechanicsDefinition rifle{};
     rifle.struct_size = sizeof(rifle);
@@ -328,14 +338,14 @@ void configure_local_player(KernelHandle* kernel, std::uint32_t player_net_id) {
     rifle.segment_collider_template_id = 5;
     rifle.fire_action_template_id = 4001u;
     rifle.reload_action_template_id = 4002u;
-    assert(Kernel_ServerSetEntityWeaponMechanics(kernel, player_net_id, &rifle));
+    require(Kernel_ServerSetEntityWeaponMechanics(kernel, player_net_id, &rifle));
 
     KernelWeaponMechanicsDefinition grenade = projectile_weapon(2);
-    assert(Kernel_ServerSetEntityWeaponMechanics(kernel, player_net_id, &grenade));
+    require(Kernel_ServerSetEntityWeaponMechanics(kernel, player_net_id, &grenade));
     KernelWeaponMechanicsDefinition rocket = projectile_weapon(3);
     rocket.magazine_size = 6;
     rocket.damage = 45;
-    assert(Kernel_ServerSetEntityWeaponMechanics(kernel, player_net_id, &rocket));
+    require(Kernel_ServerSetEntityWeaponMechanics(kernel, player_net_id, &rocket));
 }
 
 /*
@@ -356,12 +366,12 @@ void catalog_loaded_before_the_server_starts_survives_the_reset() {
     config.tick.snapshot_rate = 30;
 
     KernelHandle* kernel = Kernel_Create(&config);
-    assert(kernel != nullptr);
+    require(kernel != nullptr);
     load_minimal_gameplay_catalog(kernel);
-    assert(Kernel_StartListenServer(kernel, 7778));
+    require(Kernel_StartListenServer(kernel, 7778));
 
     KernelLocalPlayerInfo local_info{};
-    assert(Kernel_GetLocalPlayerInfo(kernel, &local_info));
+    require(Kernel_GetLocalPlayerInfo(kernel, &local_info));
     configure_local_player(kernel, local_info.player_net_id);
     Kernel_Update(kernel, 1.0f / 30.0f);
 
@@ -381,7 +391,7 @@ void catalog_loaded_before_the_server_starts_survives_the_reset() {
         results.data(),
         static_cast<std::uint32_t>(results.size()));
     for (std::uint32_t index = 0; index < result_count; ++index) {
-        assert(results[index].result != KernelLocalActionResultType_Rejected);
+        require(results[index].result != KernelLocalActionResultType_Rejected);
     }
 
     std::array<KernelEvent, 16> fire_events{};
@@ -395,7 +405,7 @@ void catalog_loaded_before_the_server_starts_survives_the_reset() {
             saw_fire_confirmed ||
             fire_events[index].type == KernelEventType_FireConfirmed;
     }
-    assert(saw_fire_confirmed);
+    require(saw_fire_confirmed);
 
     Kernel_Destroy(kernel);
 }
@@ -411,8 +421,8 @@ int main() {
     config.tick.snapshot_rate = 30;
 
     KernelHandle* kernel = Kernel_Create(&config);
-    assert(kernel != nullptr);
-    assert(Kernel_StartListenServer(kernel, 7777));
+    require(kernel != nullptr);
+    require(Kernel_StartListenServer(kernel, 8048));
     load_minimal_gameplay_catalog(kernel);
 
     std::array<KernelEvent, 16> events{};
@@ -426,36 +436,36 @@ int main() {
         saw_player_spawned =
             saw_player_spawned || events[index].type == KernelEventType_EntitySpawned;
     }
-    assert(saw_player_joined);
-    assert(saw_player_spawned);
+    require(saw_player_joined);
+    require(saw_player_spawned);
 
     std::array<RenderEntityState, 16> before_states{};
     std::uint32_t before_count = Kernel_GetRenderStates(
         kernel,
         before_states.data(),
         static_cast<std::uint32_t>(before_states.size()));
-    assert(before_count == 0);
+    require(before_count == 0);
     KernelLocalPlayerInfo local_info{};
-    assert(Kernel_GetLocalPlayerInfo(kernel, &local_info));
+    require(Kernel_GetLocalPlayerInfo(kernel, &local_info));
     configure_local_player(kernel, local_info.player_net_id);
     Kernel_Update(kernel, 0.0f);
     before_count = Kernel_GetRenderStates(
         kernel,
         before_states.data(),
         static_cast<std::uint32_t>(before_states.size()));
-    assert(before_count == 0);
+    require(before_count == 0);
     Kernel_Update(kernel, 1.0f / 30.0f);
     before_count = Kernel_GetRenderStates(
         kernel,
         before_states.data(),
         static_cast<std::uint32_t>(before_states.size()));
-    assert(before_count == 1);
-    assert(!has_non_player_state(before_states, before_count));
+    require(before_count == 1);
+    require(!has_non_player_state(before_states, before_count));
     const RenderEntityState before_player =
         find_player(before_states, before_count);
-    assert(local_info.player_net_id == before_player.net_id);
-    assert(before_player.hp == 100);
-    assert(before_player.max_hp == 100);
+    require(local_info.player_net_id == before_player.net_id);
+    require(before_player.hp == 100);
+    require(before_player.max_hp == 100);
     std::array<KernelServerEntityState, 16> queried_players{};
     for (KernelServerEntityState& state : queried_players) {
         state.struct_size = sizeof(KernelServerEntityState);
@@ -465,14 +475,14 @@ int main() {
         1,
         queried_players.data(),
         static_cast<std::uint32_t>(queried_players.size()));
-    assert(player_query_count == 1);
+    require(player_query_count == 1);
     const KernelServerEntityState queried_player =
         find_server_entity(queried_players, player_query_count, before_player.net_id);
-    assert(queried_player.valid != 0u);
-    assert(queried_player.entity_type == 1);
-    assert(queried_player.actor_type == KernelActorType_Player);
-    assert(queried_player.hp == 100);
-    assert(queried_player.max_hp == 100);
+    require(queried_player.valid != 0u);
+    require(queried_player.entity_type == 1);
+    require(queried_player.actor_type == KernelActorType_Player);
+    require(queried_player.hp == 100);
+    require(queried_player.max_hp == 100);
 
     KernelPlayerInput input{};
     input.input_seq = 1;
@@ -487,13 +497,13 @@ int main() {
         kernel,
         predicted_states.data(),
         static_cast<std::uint32_t>(predicted_states.size()));
-    assert(predicted_count == 1);
-    assert(!has_non_player_state(predicted_states, predicted_count));
+    require(predicted_count == 1);
+    require(!has_non_player_state(predicted_states, predicted_count));
     const RenderEntityState predicted_player =
         find_player(predicted_states, predicted_count);
-    assert(predicted_player.position.x == before_player.position.x);
-    assert(predicted_player.hp == 100);
-    assert(predicted_player.max_hp == 100);
+    require(predicted_player.position.x == before_player.position.x);
+    require(predicted_player.hp == 100);
+    require(predicted_player.max_hp == 100);
 
     Kernel_Update(kernel, 1.0f / 30.0f);
 
@@ -502,12 +512,12 @@ int main() {
         kernel,
         after_states.data(),
         static_cast<std::uint32_t>(after_states.size()));
-    assert(after_count == 1);
-    assert(!has_non_player_state(after_states, after_count));
+    require(after_count == 1);
+    require(!has_non_player_state(after_states, after_count));
     const RenderEntityState after_player = find_player(after_states, after_count);
-    assert(after_player.position.x > before_player.position.x);
-    assert(after_player.hp == 100);
-    assert(after_player.max_hp == 100);
+    require(after_player.position.x > before_player.position.x);
+    require(after_player.hp == 100);
+    require(after_player.max_hp == 100);
 
     Kernel_Update(kernel, 1.0f / 30.0f);
     std::array<RenderEntityState, 16> held_states{};
@@ -516,7 +526,7 @@ int main() {
         held_states.data(),
         static_cast<std::uint32_t>(held_states.size()));
     const RenderEntityState held_player = find_player(held_states, held_count);
-    assert(held_player.position.x > after_player.position.x);
+    require(held_player.position.x > after_player.position.x);
 
     KernelPlayerInput fire_input{};
     fire_input.input_seq = 2;
@@ -538,9 +548,9 @@ int main() {
         saw_fire_confirmed =
             saw_fire_confirmed ||
             combat_events[index].type == KernelEventType_FireConfirmed;
-        assert(combat_events[index].type != KernelEventType_DamageApplied);
+        require(combat_events[index].type != KernelEventType_DamageApplied);
     }
-    assert(saw_fire_confirmed);
+    require(saw_fire_confirmed);
 
     KernelPlayerInput projectile_input{};
     projectile_input.input_seq = 3;
@@ -556,7 +566,7 @@ int main() {
         kernel,
         before_projectile_states.data(),
         static_cast<std::uint32_t>(before_projectile_states.size()));
-    assert(!has_projectile_action(
+    require(!has_projectile_action(
         before_projectile_states,
         before_projectile_count,
         projectile_input.action_intent.action_instance_id));
@@ -572,7 +582,7 @@ int main() {
         predicted_projectile_states,
         predicted_projectile_count,
         projectile_input.action_intent.action_instance_id);
-    assert(predicted_projectile.entity_id != 0);
+    require(predicted_projectile.entity_id != 0);
 
     std::array<KernelEvent, 16> projectile_events{};
     const std::uint32_t projectile_event_count = Kernel_PollEvents(
@@ -588,11 +598,11 @@ int main() {
         if (projectile_events[index].type == KernelEventType_EntitySpawned &&
             projectile_events[index].net_id != local_info.player_net_id) {
             projectile_net_id = projectile_events[index].net_id;
-            assert(projectile_events[index].code == 3);
+            require(projectile_events[index].code == 3);
         }
     }
-    assert(saw_projectile_fire_confirmed);
-    assert(projectile_net_id != 0);
+    require(saw_projectile_fire_confirmed);
+    require(projectile_net_id != 0);
 
     std::array<RenderEntityState, 16> projectile_states{};
     const std::uint32_t projectile_count = Kernel_GetRenderStates(
@@ -601,9 +611,9 @@ int main() {
         static_cast<std::uint32_t>(projectile_states.size()));
     const RenderEntityState projectile_state =
         find_entity(projectile_states, projectile_count, projectile_net_id);
-    assert(projectile_state.entity_type == 3);
-    assert(projectile_state.entity_id == predicted_projectile.entity_id);
-    assert(projectile_state.action_instance_id ==
+    require(projectile_state.entity_type == 3);
+    require(projectile_state.entity_id == predicted_projectile.entity_id);
+    require(projectile_state.action_instance_id ==
            projectile_input.action_intent.action_instance_id);
 
     Kernel_Update(kernel, 1.0f / 30.0f);
@@ -614,8 +624,8 @@ int main() {
         static_cast<std::uint32_t>(moved_projectile_states.size()));
     const RenderEntityState moved_projectile_state =
         find_entity(moved_projectile_states, moved_projectile_count, projectile_net_id);
-    assert(moved_projectile_state.entity_type == 3);
-    assert(moved_projectile_state.position.x > projectile_state.position.x);
+    require(moved_projectile_state.entity_type == 3);
+    require(moved_projectile_state.position.x > projectile_state.position.x);
 
     KernelPlayerInput rocket_input{};
     rocket_input.input_seq = 4;
@@ -631,7 +641,7 @@ int main() {
         kernel,
         before_rocket_states.data(),
         static_cast<std::uint32_t>(before_rocket_states.size()));
-    assert(!has_projectile_action(
+    require(!has_projectile_action(
         before_rocket_states,
         before_rocket_count,
         rocket_input.action_intent.action_instance_id));
@@ -646,7 +656,7 @@ int main() {
         predicted_rocket_states,
         predicted_rocket_count,
         rocket_input.action_intent.action_instance_id);
-    assert(predicted_rocket.entity_id != 0);
+    require(predicted_rocket.entity_id != 0);
     std::array<KernelEvent, 16> rocket_events{};
     const std::uint32_t rocket_event_count = Kernel_PollEvents(
         kernel,
@@ -657,10 +667,10 @@ int main() {
         if (rocket_events[index].type == KernelEventType_EntitySpawned &&
             rocket_events[index].net_id != local_info.player_net_id) {
             rocket_net_id = rocket_events[index].net_id;
-            assert(rocket_events[index].code == 3);
+            require(rocket_events[index].code == 3);
         }
     }
-    assert(rocket_net_id != 0);
+    require(rocket_net_id != 0);
 
     std::array<RenderEntityState, 16> rocket_states{};
     const std::uint32_t rocket_count = Kernel_GetRenderStates(
@@ -669,9 +679,9 @@ int main() {
         static_cast<std::uint32_t>(rocket_states.size()));
     const RenderEntityState rocket_state =
         find_entity(rocket_states, rocket_count, rocket_net_id);
-    assert(rocket_state.entity_type == 3);
-    assert(rocket_state.entity_id == predicted_rocket.entity_id);
-    assert(rocket_state.action_instance_id ==
+    require(rocket_state.entity_type == 3);
+    require(rocket_state.entity_id == predicted_rocket.entity_id);
+    require(rocket_state.action_instance_id ==
            rocket_input.action_intent.action_instance_id);
 
     KernelPlayerInput rejected_projectile_input{};
@@ -687,7 +697,7 @@ int main() {
         kernel,
         rejected_predicted_states.data(),
         static_cast<std::uint32_t>(rejected_predicted_states.size()));
-    assert(!has_projectile_action(
+    require(!has_projectile_action(
         rejected_predicted_states,
         rejected_predicted_count,
         rejected_projectile_input.action_intent.action_instance_id));
@@ -697,7 +707,7 @@ int main() {
         kernel,
         rejected_after_states.data(),
         static_cast<std::uint32_t>(rejected_after_states.size()));
-    assert(has_projectile_action(
+    require(has_projectile_action(
         rejected_after_states,
         rejected_after_count,
         rejected_projectile_input.action_intent.action_instance_id));
@@ -710,8 +720,8 @@ int main() {
     enemy_create.animation_state = 4;
     enemy_create.visual_flags = 8;
     std::uint32_t enemy_net_id = 0;
-    assert(Kernel_ServerCreateEntity(kernel, &enemy_create, &enemy_net_id));
-    assert(enemy_net_id != 0);
+    require(Kernel_ServerCreateEntity(kernel, &enemy_create, &enemy_net_id));
+    require(enemy_net_id != 0);
     std::array<KernelServerEntityState, 16> queried_enemies{};
     for (KernelServerEntityState& state : queried_enemies) {
         state.struct_size = sizeof(KernelServerEntityState);
@@ -721,14 +731,14 @@ int main() {
         1,
         queried_enemies.data(),
         static_cast<std::uint32_t>(queried_enemies.size()));
-    assert(enemy_query_count >= 2);
+    require(enemy_query_count >= 2);
     const KernelServerEntityState queried_enemy =
         find_server_entity(queried_enemies, enemy_query_count, enemy_net_id);
-    assert(queried_enemy.valid != 0u);
-    assert(queried_enemy.entity_type == 1);
-    assert(queried_enemy.actor_type == KernelActorType_Agent);
-    assert(queried_enemy.position.x == enemy_create.position.x);
-    assert(queried_enemy.position.y == enemy_create.position.y);
+    require(queried_enemy.valid != 0u);
+    require(queried_enemy.entity_type == 1);
+    require(queried_enemy.actor_type == KernelActorType_Agent);
+    require(queried_enemy.position.x == enemy_create.position.x);
+    require(queried_enemy.position.y == enemy_create.position.y);
 
     Kernel_Update(kernel, 0.0f);
     std::array<RenderEntityState, 16> spawned_states{};
@@ -736,39 +746,39 @@ int main() {
         kernel,
         spawned_states.data(),
         static_cast<std::uint32_t>(spawned_states.size()));
-    assert(!has_entity(spawned_states, spawned_count, enemy_net_id));
+    require(!has_entity(spawned_states, spawned_count, enemy_net_id));
 
     Kernel_Update(kernel, 1.0f / 30.0f);
     spawned_count = Kernel_GetRenderStates(
         kernel,
         spawned_states.data(),
         static_cast<std::uint32_t>(spawned_states.size()));
-    assert(spawned_count >= 2);
+    require(spawned_count >= 2);
     const RenderEntityState first_enemy_render =
         find_entity(spawned_states, spawned_count, enemy_net_id);
     KernelServerEntityState finalized_enemy{};
     finalized_enemy.struct_size = sizeof(finalized_enemy);
-    assert(Kernel_ServerGetEntityState(
+    require(Kernel_ServerGetEntityState(
         kernel,
         enemy_net_id,
         &finalized_enemy));
-    assert(finalized_enemy.position.y < enemy_create.position.y);
-    assert(first_enemy_render.position.x == finalized_enemy.position.x);
-    assert(first_enemy_render.position.y == finalized_enemy.position.y);
-    assert(first_enemy_render.position.z == finalized_enemy.position.z);
+    require(finalized_enemy.position.y < enemy_create.position.y);
+    require(first_enemy_render.position.x == finalized_enemy.position.x);
+    require(first_enemy_render.position.y == finalized_enemy.position.y);
+    require(first_enemy_render.position.z == finalized_enemy.position.z);
 
     KernelServerEntityCreateInfo far_enemy_create = enemy_create;
     far_enemy_create.position = KernelVec3{100.0f, 25.0f, 0.0f};
     std::uint32_t far_enemy_net_id = 0;
-    assert(Kernel_ServerCreateEntity(kernel, &far_enemy_create, &far_enemy_net_id));
-    assert(far_enemy_net_id != 0);
+    require(Kernel_ServerCreateEntity(kernel, &far_enemy_create, &far_enemy_net_id));
+    require(far_enemy_net_id != 0);
     Kernel_Update(kernel, 1.0f / 30.0f);
     std::array<RenderEntityState, 16> filtered_states{};
     const std::uint32_t filtered_count = Kernel_GetRenderStates(
         kernel,
         filtered_states.data(),
         static_cast<std::uint32_t>(filtered_states.size()));
-    assert(!has_entity(filtered_states, filtered_count, far_enemy_net_id));
+    require(!has_entity(filtered_states, filtered_count, far_enemy_net_id));
 
     std::array<KernelEvent, 16> spawn_events{};
     const std::uint32_t spawn_event_count = Kernel_PollEvents(
@@ -782,13 +792,13 @@ int main() {
             (spawn_events[index].type == KernelEventType_EntitySpawned &&
              spawn_events[index].net_id == enemy_net_id);
     }
-    assert(saw_enemy_spawned);
+    require(saw_enemy_spawned);
 
-    assert(Kernel_ServerDestroyEntity(
+    require(Kernel_ServerDestroyEntity(
         kernel,
         enemy_net_id,
         KernelDespawnReason_Destroyed));
-    assert(Kernel_ServerDestroyEntity(
+    require(Kernel_ServerDestroyEntity(
         kernel,
         far_enemy_net_id,
         KernelDespawnReason_Destroyed));
@@ -799,8 +809,8 @@ int main() {
         kernel,
         despawned_states.data(),
         static_cast<std::uint32_t>(despawned_states.size()));
-    assert(!has_entity(despawned_states, despawned_count, enemy_net_id));
-    assert(!has_entity(despawned_states, despawned_count, far_enemy_net_id));
+    require(!has_entity(despawned_states, despawned_count, enemy_net_id));
+    require(!has_entity(despawned_states, despawned_count, far_enemy_net_id));
 
     Kernel_Destroy(kernel);
     return 0;

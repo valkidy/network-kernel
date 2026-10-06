@@ -1,13 +1,28 @@
 #include <algorithm>
-#include <cassert>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <iterator>
 #include <string>
 #include <vector>
 
 #include "physics/public/physics_world.h"
+
+namespace {
+
+void require_impl(bool condition, const char* expression, int line) {
+    if (!condition) {
+        std::fprintf(stderr, "require failed at line %d: %s\n", line, expression);
+        std::abort();
+    }
+}
+
+}  // namespace
+
+#define require(condition) \
+    require_impl(static_cast<bool>(condition), #condition, __LINE__)
 
 namespace {
 
@@ -31,7 +46,7 @@ using network_example::physics::ShapeCastRequest;
 
 std::vector<std::uint8_t> read_bytes(const char* path) {
     std::ifstream input(path, std::ios::binary);
-    assert(input.good());
+    require(input.good());
     return std::vector<std::uint8_t>(
         std::istreambuf_iterator<char>(input),
         std::istreambuf_iterator<char>());
@@ -97,17 +112,17 @@ CollisionObjectDescriptor plain(
 
 void populate(PhysicsWorld* world) {
     std::string error;
-    assert(world->upsert_object(actor(
+    require(world->upsert_object(actor(
         2,
         20,
         glm::vec3(5.0f, 2.0f, 0.0f),
         network_example::physics::kGameplayCategoryHostileSide), &error));
-    assert(world->upsert_object(actor(
+    require(world->upsert_object(actor(
         1,
         10,
         glm::vec3(5.0f, 2.0f, 0.0f),
         network_example::physics::kGameplayCategoryPlayerSide), &error));
-    assert(world->upsert_object(actor(
+    require(world->upsert_object(actor(
         4,
         40,
         glm::vec3(5.0f, 2.0f, 0.0f),
@@ -118,7 +133,7 @@ void populate(PhysicsWorld* world) {
         glm::vec3(2.0f, 2.0f, 0.0f),
         network_example::physics::kGameplayCategoryHostileSide);
     disabled.enabled = false;
-    assert(world->upsert_object(disabled, &error));
+    require(world->upsert_object(disabled, &error));
 }
 
 void populate_query_fixture(
@@ -132,7 +147,7 @@ void populate_query_fixture(
         const std::uint32_t gameplay_category = index < player_count
             ? network_example::physics::kGameplayCategoryPlayerSide
             : network_example::physics::kGameplayCategoryHostileSide;
-        assert(world->upsert_object(actor(
+        require(world->upsert_object(actor(
             index + 1,
             index + 1,
             glm::vec3(2.0f + static_cast<float>(index), y, 0.0f),
@@ -156,22 +171,22 @@ CollisionQueryStats run_shape_query_fixture(
     request.filter.gameplay_category_mask = gameplay_category_mask;
     world->reset_query_stats();
     for (std::uint32_t query = 0; query < 200; ++query) {
-        assert(world->shape_cast_all(request).size() == expected_hits);
+        require(world->shape_cast_all(request).size() == expected_hits);
     }
     return world->query_stats();
 }
 
 void require_equal(const std::vector<CollisionHit>& lhs, const std::vector<CollisionHit>& rhs) {
-    assert(lhs.size() == rhs.size());
+    require(lhs.size() == rhs.size());
     for (std::size_t index = 0; index < lhs.size(); ++index) {
-        assert(lhs[index].identity.entity_net_id == rhs[index].identity.entity_net_id);
-        assert(lhs[index].identity.collider_id == rhs[index].identity.collider_id);
-        assert(lhs[index].identity.hit_zone == rhs[index].identity.hit_zone);
-        assert(lhs[index].distance == rhs[index].distance);
-        assert(lhs[index].fraction == rhs[index].fraction);
-        assert(lhs[index].position == rhs[index].position);
-        assert(lhs[index].normal == rhs[index].normal);
-        assert(lhs[index].subshape_id == rhs[index].subshape_id);
+        require(lhs[index].identity.entity_net_id == rhs[index].identity.entity_net_id);
+        require(lhs[index].identity.collider_id == rhs[index].identity.collider_id);
+        require(lhs[index].identity.hit_zone == rhs[index].identity.hit_zone);
+        require(lhs[index].distance == rhs[index].distance);
+        require(lhs[index].fraction == rhs[index].fraction);
+        require(lhs[index].position == rhs[index].position);
+        require(lhs[index].normal == rhs[index].normal);
+        require(lhs[index].subshape_id == rhs[index].subshape_id);
     }
 }
 
@@ -194,7 +209,7 @@ void closest_shape_cast_matches_the_all_hit_front() {
         object.shape.half_extents = glm::vec3{0.25f, 0.5f, 0.5f};
         object.position = glm::vec3{x, 0.0f, 0.0f};
         std::string error;
-        assert(world.upsert_object(object, &error));
+        require(world.upsert_object(object, &error));
     };
     place(11, 2.0f);
     place(12, 5.0f);
@@ -210,21 +225,21 @@ void closest_shape_cast_matches_the_all_hit_front() {
         1u << static_cast<std::uint32_t>(CollisionObjectKind::kStaticObstacle);
 
     CollisionHit closest{};
-    assert(world.shape_cast_closest(request, &closest));
+    require(world.shape_cast_closest(request, &closest));
     const std::vector<CollisionHit> all = world.shape_cast_all(request);
-    assert(all.size() == 2);
-    assert(closest.identity.entity_net_id == all.front().identity.entity_net_id);
-    assert(closest.identity.entity_net_id == 11);
+    require(all.size() == 2);
+    require(closest.identity.entity_net_id == all.front().identity.entity_net_id);
+    require(closest.identity.entity_net_id == 11);
 
     // The nearest object is excluded, so the answer is the one behind it -- not
     // "no hit", which is what a collector that filtered afterwards would say.
     request.filter.ignored_entity_net_id = 11;
     CollisionHit skipped{};
-    assert(world.shape_cast_closest(request, &skipped));
-    assert(skipped.identity.entity_net_id == 12);
+    require(world.shape_cast_closest(request, &skipped));
+    require(skipped.identity.entity_net_id == 12);
     const std::vector<CollisionHit> filtered = world.shape_cast_all(request);
-    assert(filtered.size() == 1);
-    assert(skipped.identity.entity_net_id ==
+    require(filtered.size() == 1);
+    require(skipped.identity.entity_net_id ==
            filtered.front().identity.entity_net_id);
 
     // Nothing left to hit at all.
@@ -233,7 +248,7 @@ void closest_shape_cast_matches_the_all_hit_front() {
         network_example::physics::kGameplayCategoryPlayerSide;
     CollisionHit unused{};
     request.filter.collision_mask = 0;
-    assert(!world.shape_cast_closest(request, &unused));
+    require(!world.shape_cast_closest(request, &unused));
 }
 
 // A ray down onto the top of a long tilted slab, well away from its centre.
@@ -255,7 +270,7 @@ void ray_normal_on_a_rotated_box_is_the_face_it_hit() {
     constexpr float kAngle = 0.5235987756f;  // 30 degrees
     slab.rotation = glm::angleAxis(kAngle, glm::vec3(0.0f, 0.0f, 1.0f));
     std::string error;
-    assert(world.upsert_object(slab, &error));
+    require(world.upsert_object(slab, &error));
 
     for (const float x : {-3.0f, 0.0f, 3.0f}) {
         RayCastRequest ray{};
@@ -265,10 +280,10 @@ void ray_normal_on_a_rotated_box_is_the_face_it_hit() {
         ray.filter.collision_mask =
             network_example::physics::collision_layer_bit(CollisionLayer::kTerrain);
         CollisionHit hit{};
-        assert(world.ray_cast_closest(ray, &hit));
-        assert(std::abs(hit.normal.x - -std::sin(kAngle)) < 0.001f);
-        assert(std::abs(hit.normal.y - std::cos(kAngle)) < 0.001f);
-        assert(std::abs(hit.normal.z) < 0.001f);
+        require(world.ray_cast_closest(ray, &hit));
+        require(std::abs(hit.normal.x - -std::sin(kAngle)) < 0.001f);
+        require(std::abs(hit.normal.y - std::cos(kAngle)) < 0.001f);
+        require(std::abs(hit.normal.z) < 0.001f);
     }
 }
 
@@ -279,7 +294,7 @@ void cylinder_overlap_is_bounded_by_its_height_and_is_never_a_body() {
     PhysicsWorld world(PhysicsWorldConfig{0});
     std::string error;
     const auto add = [&](std::uint32_t id, const glm::vec3& position) {
-        assert(world.upsert_object(
+        require(world.upsert_object(
             plain(
                 id,
                 id,
@@ -310,17 +325,17 @@ void cylinder_overlap_is_bounded_by_its_height_and_is_never_a_body() {
     request.shape.type = CollisionShapeType::kCylinder;
     request.shape.radius = 2.0f;
     request.shape.capsule_half_height = 1.0f;
-    assert(ids(world.overlap_all(request)) == std::vector<std::uint32_t>{1});
+    require(ids(world.overlap_all(request)) == std::vector<std::uint32_t>{1});
 
     request.shape.type = CollisionShapeType::kSphere;
-    assert((ids(world.overlap_all(request)) == std::vector<std::uint32_t>{1, 2}));
+    require((ids(world.overlap_all(request)) == std::vector<std::uint32_t>{1, 2}));
 
     // Thinner than Jolt's default edge rounding: still a valid query.
     request.shape.type = CollisionShapeType::kCylinder;
     request.shape.radius = 0.01f;
     request.shape.capsule_half_height = 0.01f;
     request.position = glm::vec3(1.5f, 0.0f, 0.0f);
-    assert(ids(world.overlap_all(request)) == std::vector<std::uint32_t>{1});
+    require(ids(world.overlap_all(request)) == std::vector<std::uint32_t>{1});
 
     CollisionObjectDescriptor column = plain(
         9,
@@ -331,8 +346,8 @@ void cylinder_overlap_is_bounded_by_its_height_and_is_never_a_body() {
     column.shape.type = CollisionShapeType::kCylinder;
     column.shape.radius = 1.0f;
     column.shape.capsule_half_height = 1.0f;
-    assert(!world.upsert_object(column, &error));
-    assert(error == "a cylinder is a query shape, not a body");
+    require(!world.upsert_object(column, &error));
+    require(error == "a cylinder is a query shape, not a body");
 }
 
 void side_less_query_reaches_categorised_objects() {
@@ -355,7 +370,7 @@ void side_less_query_reaches_categorised_objects() {
     cover.shape.half_extents = glm::vec3{0.5f, 0.5f, 0.5f};
     cover.position = glm::vec3{2.0f, 0.0f, 0.0f};
     std::string error;
-    assert(world.upsert_object(cover, &error));
+    require(world.upsert_object(cover, &error));
 
     RayCastRequest ray;
     ray.origin = glm::vec3{0.0f, 0.0f, 0.0f};
@@ -368,28 +383,28 @@ void side_less_query_reaches_categorised_objects() {
         (1u << static_cast<std::uint32_t>(CollisionObjectKind::kTerrain)) |
         (1u << static_cast<std::uint32_t>(CollisionObjectKind::kStaticObstacle));
     ray.filter.gameplay_category_mask = 0;
-    assert(world.ray_cast_all(ray).size() == 1);
+    require(world.ray_cast_all(ray).size() == 1);
 
     // Naming a category the object does not carry still excludes it: an empty
     // mask means "unconstrained", not "match anything I ask for". player_side
     // and hostile_side are disjoint, so this must not reach the cover.
     ray.filter.gameplay_category_mask =
         network_example::physics::kGameplayCategoryPlayerSide;
-    assert(world.ray_cast_all(ray).empty());
+    require(world.ray_cast_all(ray).empty());
 }
 
 }  // namespace
 
 int main(int argc, char** argv) {
-    assert(argc == 2);
+    require(argc == 2);
     const std::vector<std::uint8_t> terrain = read_bytes(argv[1]);
 
     PhysicsWorld world0(PhysicsWorldConfig{0});
     PhysicsWorld world2(PhysicsWorldConfig{2});
-    assert(world0.valid());
-    assert(world2.valid());
-    assert(world0.query_worker_count() == 0);
-    assert(world2.query_worker_count() == 2);
+    require(world0.valid());
+    require(world2.valid());
+    require(world0.query_worker_count() == 0);
+    require(world2.query_worker_count() == 2);
 
     ray_normal_on_a_rotated_box_is_the_face_it_hit();
     cylinder_overlap_is_bounded_by_its_height_and_is_never_a_body();
@@ -402,8 +417,8 @@ int main(int argc, char** argv) {
         CollisionLayer::kTerrain,
     };
     std::string error;
-    assert(world0.load_static_scene(terrain, terrain_identity, &error));
-    assert(world2.load_static_scene(terrain, terrain_identity, &error));
+    require(world0.load_static_scene(terrain, terrain_identity, &error));
+    require(world2.load_static_scene(terrain, terrain_identity, &error));
     populate(&world0);
     populate(&world2);
 
@@ -416,19 +431,19 @@ int main(int argc, char** argv) {
     const std::vector<CollisionHit> hits0 = world0.ray_cast_all(ray);
     const std::vector<CollisionHit> hits2 = world2.ray_cast_all(ray);
     require_equal(hits0, hits2);
-    assert(hits0.size() == 3);
-    assert(hits0[0].identity.entity_net_id == 1);
-    assert(hits0[1].identity.entity_net_id == 2);
-    assert(hits0[2].identity.entity_net_id == 4);
+    require(hits0.size() == 3);
+    require(hits0[0].identity.entity_net_id == 1);
+    require(hits0[1].identity.entity_net_id == 2);
+    require(hits0[2].identity.entity_net_id == 4);
 
     ray.filter.ignored_entity_net_id = 1;
     const std::vector<CollisionHit> excluded = world0.ray_cast_all(ray);
-    assert(excluded.size() == 2);
-    assert(excluded[0].identity.entity_net_id == 2);
+    require(excluded.size() == 2);
+    require(excluded[0].identity.entity_net_id == 2);
 
     CollisionHit closest{};
-    assert(world0.ray_cast_closest(ray, &closest));
-    assert(closest.identity.entity_net_id == 2);
+    require(world0.ray_cast_closest(ray, &closest));
+    require(closest.identity.entity_net_id == 2);
 
     ShapeCastRequest shape_cast{};
     shape_cast.shape.type = CollisionShapeType::kSphere;
@@ -436,45 +451,45 @@ int main(int argc, char** argv) {
     shape_cast.start = glm::vec3(0.0f, 2.0f, 0.0f);
     shape_cast.displacement = glm::vec3(10.0f, 0.0f, 0.0f);
     shape_cast.filter = ray.filter;
-    assert(world0.shape_cast_closest(shape_cast, &closest));
+    require(world0.shape_cast_closest(shape_cast, &closest));
 
     OverlapRequest overlap{};
     overlap.shape.type = CollisionShapeType::kSphere;
     overlap.shape.radius = 1.0f;
     overlap.position = glm::vec3(5.0f, 2.0f, 0.0f);
     overlap.filter = ray.filter;
-    assert(world0.overlap_all(overlap).size() == 2);
+    require(world0.overlap_all(overlap).size() == 2);
 
     ray.filter.ignored_entity_net_id = 0;
     ray.filter.gameplay_category_mask =
         network_example::physics::kGameplayCategoryHostileSide;
     shape_cast.filter = ray.filter;
     overlap.filter = ray.filter;
-    assert(world0.ray_cast_all(ray).size() == 1);
-    assert(world0.shape_cast_all(shape_cast).size() == 1);
-    assert(world0.overlap_all(overlap).size() == 1);
+    require(world0.ray_cast_all(ray).size() == 1);
+    require(world0.shape_cast_all(shape_cast).size() == 1);
+    require(world0.overlap_all(overlap).size() == 1);
 
     ray.filter.gameplay_category_mask =
         network_example::physics::kGameplayCategoryDamageable;
     shape_cast.filter = ray.filter;
     overlap.filter = ray.filter;
-    assert(world0.ray_cast_all(ray).size() == 3);
-    assert(world0.shape_cast_all(shape_cast).size() == 3);
-    assert(world0.overlap_all(overlap).size() == 3);
+    require(world0.ray_cast_all(ray).size() == 3);
+    require(world0.shape_cast_all(shape_cast).size() == 3);
+    require(world0.overlap_all(overlap).size() == 3);
 
     ray.filter.gameplay_category_mask = 0;
     shape_cast.filter = ray.filter;
     overlap.filter = ray.filter;
-    assert(world0.ray_cast_all(ray).empty());
-    assert(world0.shape_cast_all(shape_cast).empty());
-    assert(world0.overlap_all(overlap).empty());
+    require(world0.ray_cast_all(ray).empty());
+    require(world0.shape_cast_all(shape_cast).empty());
+    require(world0.overlap_all(overlap).empty());
 
-    assert(world0.set_object_transform(
+    require(world0.set_object_transform(
         20,
         glm::vec3(8.0f, 2.0f, 0.0f),
         glm::quat(1.0f, 0.0f, 0.0f, 0.0f)));
-    assert(world0.remove_object(20));
-    assert(!world0.remove_object(20));
+    require(world0.remove_object(20));
+    require(!world0.remove_object(20));
 
     RayCastRequest terrain_ray{};
     terrain_ray.origin = glm::vec3(0.0f, 20.0f, 0.0f);
@@ -483,8 +498,8 @@ int main(int argc, char** argv) {
     terrain_ray.filter.collision_mask =
         network_example::physics::collision_layer_bit(CollisionLayer::kTerrain);
     terrain_ray.filter.gameplay_category_mask = 0;
-    assert(world0.ray_cast_closest(terrain_ray, &closest));
-    assert(closest.identity.kind == CollisionObjectKind::kTerrain);
+    require(world0.ray_cast_closest(terrain_ray, &closest));
+    require(closest.identity.kind == CollisionObjectKind::kTerrain);
 
     PhysicsWorld normal_world(PhysicsWorldConfig{0});
     CollisionObjectDescriptor tilted = actor(
@@ -498,7 +513,7 @@ int main(int argc, char** argv) {
         0.0f,
         0.0f,
         std::sin(kHalfAngleRadians));
-    assert(normal_world.upsert_object(tilted, &error));
+    require(normal_world.upsert_object(tilted, &error));
     RayCastRequest normal_ray{};
     normal_ray.origin = glm::vec3(0.0f, 3.0f, 0.0f);
     normal_ray.direction = glm::vec3(0.0f, -1.0f, 0.0f);
@@ -508,19 +523,19 @@ int main(int argc, char** argv) {
             CollisionLayer::kDamageable);
     normal_ray.filter.gameplay_category_mask =
         network_example::physics::kGameplayCategoryNeutral;
-    assert(normal_world.ray_cast_closest(normal_ray, &closest));
-    assert(std::abs(closest.normal.x) > 0.4f);
-    assert(closest.normal.y > 0.8f && closest.normal.y < 0.9f);
+    require(normal_world.ray_cast_closest(normal_ray, &closest));
+    require(std::abs(closest.normal.x) > 0.4f);
+    require(closest.normal.y > 0.8f && closest.normal.y < 0.9f);
 
     std::vector<std::uint8_t> corrupt = terrain;
     corrupt[0] ^= 0xffu;
-    assert(!world0.load_static_scene(corrupt, terrain_identity, &error));
+    require(!world0.load_static_scene(corrupt, terrain_identity, &error));
     corrupt = terrain;
     corrupt.resize(corrupt.size() - 1);
-    assert(!world0.load_static_scene(corrupt, terrain_identity, &error));
+    require(!world0.load_static_scene(corrupt, terrain_identity, &error));
 
     PhysicsWorld balanced_fixture(PhysicsWorldConfig{0, true});
-    assert(balanced_fixture.valid());
+    require(balanced_fixture.valid());
     populate_query_fixture(&balanced_fixture, 12, 12, 50.0f);
     const CollisionQueryStats balanced_none = run_shape_query_fixture(
         &balanced_fixture, 50.0f, 0, 0);
@@ -534,24 +549,24 @@ int main(int argc, char** argv) {
         50.0f,
         network_example::physics::kGameplayCategoryDamageable,
         24);
-    assert(balanced_none.shape_cast_query_count == 200);
-    assert(balanced_hostile.shape_cast_query_count == 200);
-    assert(balanced_damageable.shape_cast_query_count == 200);
-    assert(balanced_none.damageable_actor_broadphase_layers_accepted == 0);
-    assert(balanced_hostile.damageable_actor_broadphase_layers_accepted > 0);
-    assert(balanced_damageable.damageable_actor_broadphase_layers_accepted > 0);
-    assert(balanced_none.raw_jolt_hits_collected == 0);
-    assert(balanced_hostile.raw_jolt_hits_collected * 2 ==
+    require(balanced_none.shape_cast_query_count == 200);
+    require(balanced_hostile.shape_cast_query_count == 200);
+    require(balanced_damageable.shape_cast_query_count == 200);
+    require(balanced_none.damageable_actor_broadphase_layers_accepted == 0);
+    require(balanced_hostile.damageable_actor_broadphase_layers_accepted > 0);
+    require(balanced_damageable.damageable_actor_broadphase_layers_accepted > 0);
+    require(balanced_none.raw_jolt_hits_collected == 0);
+    require(balanced_hostile.raw_jolt_hits_collected * 2 ==
            balanced_damageable.raw_jolt_hits_collected);
-    assert(balanced_hostile.final_hits_accepted * 2 ==
+    require(balanced_hostile.final_hits_accepted * 2 ==
            balanced_damageable.final_hits_accepted);
-    assert(balanced_hostile.player_object_layers_accepted == 0);
-    assert(balanced_hostile.hostile_object_layers_accepted > 0);
-    assert(balanced_damageable.player_object_layers_accepted > 0);
-    assert(balanced_damageable.hostile_object_layers_accepted > 0);
+    require(balanced_hostile.player_object_layers_accepted == 0);
+    require(balanced_hostile.hostile_object_layers_accepted > 0);
+    require(balanced_damageable.player_object_layers_accepted > 0);
+    require(balanced_damageable.hostile_object_layers_accepted > 0);
 
     PhysicsWorld production_fixture(PhysicsWorldConfig{0, true});
-    assert(production_fixture.valid());
+    require(production_fixture.valid());
     populate_query_fixture(&production_fixture, 1, 23, 100.0f);
     const CollisionQueryStats production_hostile = run_shape_query_fixture(
         &production_fixture,
@@ -563,13 +578,13 @@ int main(int argc, char** argv) {
         100.0f,
         network_example::physics::kGameplayCategoryDamageable,
         24);
-    assert(production_hostile.raw_jolt_hits_collected <
+    require(production_hostile.raw_jolt_hits_collected <
            production_damageable.raw_jolt_hits_collected);
-    assert(production_damageable.raw_jolt_hits_collected -
+    require(production_damageable.raw_jolt_hits_collected -
            production_hostile.raw_jolt_hits_collected == 200);
 
     PhysicsWorld movement_world(PhysicsWorldConfig{0});
-    assert(movement_world.valid());
+    require(movement_world.valid());
     CollisionObjectDescriptor floor{};
     floor.identity = CollisionObjectIdentity{
         0,
@@ -581,7 +596,7 @@ int main(int argc, char** argv) {
     floor.shape.type = CollisionShapeType::kBox;
     floor.shape.half_extents = glm::vec3{10.0f, 0.5f, 10.0f};
     floor.position = glm::vec3{0.0f, -0.5f, 0.0f};
-    assert(movement_world.upsert_object(floor, &error));
+    require(movement_world.upsert_object(floor, &error));
 
     CollisionObjectDescriptor movement_body{};
     movement_body.identity = CollisionObjectIdentity{
@@ -595,11 +610,11 @@ int main(int argc, char** argv) {
     movement_body.shape.radius = 0.35f;
     movement_body.shape.capsule_half_height = 0.55f;
     movement_body.position = glm::vec3{3.0f, 0.9f, 0.0f};
-    assert(movement_world.upsert_object(movement_body, &error));
+    require(movement_world.upsert_object(movement_body, &error));
     CollisionObjectDescriptor invalid_capsule = movement_body;
     invalid_capsule.identity.collider_id = 102;
     invalid_capsule.shape.radius = 0.0f;
-    assert(!movement_world.upsert_object(invalid_capsule, &error));
+    require(!movement_world.upsert_object(invalid_capsule, &error));
 
     RayCastRequest movement_ray{};
     movement_ray.origin = glm::vec3{0.0f, 0.9f, 0.0f};
@@ -607,11 +622,11 @@ int main(int argc, char** argv) {
     movement_ray.max_distance = 10.0f;
     movement_ray.filter.collision_mask =
         network_example::physics::kMovementCollisionMask;
-    assert(movement_world.ray_cast_closest(movement_ray, &closest));
-    assert(closest.identity.collider_id == 101);
+    require(movement_world.ray_cast_closest(movement_ray, &closest));
+    require(closest.identity.collider_id == 101);
     movement_ray.filter.collision_mask =
         network_example::physics::kCollisionMaskAll;
-    assert(!movement_world.ray_cast_closest(movement_ray, &closest));
+    require(!movement_world.ray_cast_closest(movement_ray, &closest));
 
     CharacterDescriptor character{};
     character.character_id = 7;
@@ -620,7 +635,7 @@ int main(int argc, char** argv) {
     character.shape.radius = 0.35f;
     character.shape.capsule_half_height = 0.55f;
     character.max_slope_degrees = 50.0f;
-    assert(movement_world.upsert_character(character, &error));
+    require(movement_world.upsert_character(character, &error));
     CharacterMoveRequest move{};
     move.character_id = 7;
     move.current_position = glm::vec3{0.0f, 2.0f, 0.0f};
@@ -633,17 +648,17 @@ int main(int argc, char** argv) {
     CharacterMoveResult move_result{};
     for (int tick = 0; tick < 120; ++tick) {
         move.linear_velocity.y += -9.81f * move.delta_seconds;
-        assert(movement_world.move_character(move, &move_result, &error));
+        require(movement_world.move_character(move, &move_result, &error));
         move.current_position = move_result.position;
         move.linear_velocity = move_result.linear_velocity;
         if (move_result.ground_state == CharacterGroundState::kGrounded) {
             break;
         }
     }
-    assert(move_result.ground_state == CharacterGroundState::kGrounded);
-    assert(move_result.position.y > -0.01f);
-    assert(movement_world.remove_character(7));
-    assert(!movement_world.move_character(move, &move_result, &error));
+    require(move_result.ground_state == CharacterGroundState::kGrounded);
+    require(move_result.position.y > -0.01f);
+    require(movement_world.remove_character(7));
+    require(!movement_world.move_character(move, &move_result, &error));
 
     // Broad phase node budget regression. Jolt sizes its quad tree node
     // allocator from the max body count and only reclaims nodes during a tree
@@ -653,7 +668,7 @@ int main(int argc, char** argv) {
     // the whole Unity editor after a few minutes of play. Both loops below run
     // well past that budget, so a regression here aborts the test process.
     PhysicsWorld churn_world;
-    assert(churn_world.valid());
+    require(churn_world.valid());
 
     // 1. Re-upserting unchanged shapes must move the bodies in place rather than
     //    recreate them. This mirrors KernelEngine::sync_client_render_colliders,
@@ -670,7 +685,7 @@ int main(int argc, char** argv) {
     constexpr int kChurnFrames = 3000;
     for (int frame = 0; frame < kChurnFrames; ++frame) {
         for (std::uint32_t index = 0; index < kChurnColliders; ++index) {
-            assert(churn_world.upsert_object(actor(
+            require(churn_world.upsert_object(actor(
                 200 + index,
                 800 + index,
                 glm::vec3(
@@ -684,8 +699,8 @@ int main(int argc, char** argv) {
     churn_ray.origin = glm::vec3(0.0f, 2.0f, 0.99f);
     churn_ray.direction = glm::vec3(1.0f, 0.0f, 0.0f);
     churn_ray.max_distance = 20.0f;
-    assert(churn_world.ray_cast_closest(churn_ray, &closest));
-    assert(closest.identity.collider_id == 800);
+    require(churn_world.ray_cast_closest(churn_ray, &closest));
+    require(closest.identity.collider_id == 800);
 
     // 2. Genuine spawn/despawn churn -- entities entering and leaving relevance --
     //    does consume nodes, and optimize_broad_phase() is what hands them back.
@@ -696,42 +711,42 @@ int main(int argc, char** argv) {
     for (std::uint32_t wave = 0; wave < 4000; ++wave) {
         const std::uint32_t first_id = 1000 + wave * kWaveSize;
         for (std::uint32_t index = 0; index < kWaveSize; ++index) {
-            assert(churn_world.upsert_object(actor(
+            require(churn_world.upsert_object(actor(
                 first_id + index,
                 first_id + index,
                 glm::vec3(-6.0f - static_cast<float>(index), 2.0f, 0.0f),
                 network_example::physics::kGameplayCategoryPlayerSide), &error));
         }
         for (std::uint32_t index = 0; index < kWaveSize; ++index) {
-            assert(churn_world.remove_object(first_id + index));
+            require(churn_world.remove_object(first_id + index));
         }
         churn_world.optimize_broad_phase();
     }
     // The long-lived bodies are still where the first loop left them.
-    assert(churn_world.ray_cast_closest(churn_ray, &closest));
-    assert(closest.identity.collider_id == 800);
+    require(churn_world.ray_cast_closest(churn_ray, &closest));
+    require(closest.identity.collider_id == 800);
 
     // Per-bone limb colliders occupy a layer of their own, in both the object
     // and the broad phase sense. The matrix below is the whole point of that
     // separation: a query written before limbs existed must return exactly what
     // it returned before, and must not walk the limb subtree to do so.
     PhysicsWorld limb_world(PhysicsWorldConfig{0, true});
-    assert(limb_world.valid());
+    require(limb_world.valid());
     constexpr float kLimbY = 200.0f;
     for (std::uint32_t index = 0; index < 3; ++index) {
-        assert(limb_world.upsert_object(
+        require(limb_world.upsert_object(
             limb(
                 9,
                 900 + index,
                 glm::vec3(2.0f + static_cast<float>(index), kLimbY, 0.0f)),
             &error));
     }
-    assert(limb_world.upsert_object(actor(
+    require(limb_world.upsert_object(actor(
         9,
         910,
         glm::vec3(6.0f, kLimbY, 0.0f),
         network_example::physics::kGameplayCategoryHostileSide), &error));
-    assert(limb_world.upsert_object(
+    require(limb_world.upsert_object(
         plain(
             9,
             911,
@@ -739,7 +754,7 @@ int main(int argc, char** argv) {
             CollisionObjectKind::kActorMovement,
             CollisionLayer::kActorMovement),
         &error));
-    assert(limb_world.upsert_object(
+    require(limb_world.upsert_object(
         plain(
             0,
             912,
@@ -761,12 +776,12 @@ int main(int argc, char** argv) {
     limb_world.reset_query_stats();
     const std::vector<CollisionHit> default_hits =
         limb_world.ray_cast_all(limb_ray);
-    assert(default_hits.size() == 2);
-    assert(default_hits[0].identity.collider_id == 910);
-    assert(default_hits[1].identity.collider_id == 912);
+    require(default_hits.size() == 2);
+    require(default_hits[0].identity.collider_id == 910);
+    require(default_hits[1].identity.collider_id == 912);
     CollisionQueryStats limb_stats = limb_world.query_stats();
-    assert(limb_stats.actor_limb_broadphase_layers_accepted == 0);
-    assert(limb_stats.actor_limb_object_layers_accepted == 0);
+    require(limb_stats.actor_limb_broadphase_layers_accepted == 0);
+    require(limb_stats.actor_limb_object_layers_accepted == 0);
 
     // 2. The movement mask likewise: terrain, static obstacles and other
     //    movement capsules, but never a limb. A walker steps over legs.
@@ -775,26 +790,26 @@ int main(int argc, char** argv) {
     limb_world.reset_query_stats();
     const std::vector<CollisionHit> movement_hits =
         limb_world.ray_cast_all(limb_ray);
-    assert(movement_hits.size() == 2);
-    assert(movement_hits[0].identity.collider_id == 911);
-    assert(movement_hits[1].identity.collider_id == 912);
+    require(movement_hits.size() == 2);
+    require(movement_hits[0].identity.collider_id == 911);
+    require(movement_hits[1].identity.collider_id == 912);
     limb_stats = limb_world.query_stats();
-    assert(limb_stats.actor_limb_broadphase_layers_accepted == 0);
-    assert(limb_stats.actor_limb_object_layers_accepted == 0);
+    require(limb_stats.actor_limb_broadphase_layers_accepted == 0);
+    require(limb_stats.actor_limb_object_layers_accepted == 0);
 
     // 3. Naming the layer is what buys the limbs, and it buys only the limbs.
     limb_ray.filter.collision_mask = limb_bit;
     limb_world.reset_query_stats();
     const std::vector<CollisionHit> limb_hits = limb_world.ray_cast_all(limb_ray);
-    assert(limb_hits.size() == 3);
+    require(limb_hits.size() == 3);
     for (std::size_t index = 0; index < limb_hits.size(); ++index) {
-        assert(limb_hits[index].identity.kind == CollisionObjectKind::kActorLimb);
-        assert(limb_hits[index].identity.collider_id == 900 + index);
+        require(limb_hits[index].identity.kind == CollisionObjectKind::kActorLimb);
+        require(limb_hits[index].identity.collider_id == 900 + index);
     }
     limb_stats = limb_world.query_stats();
-    assert(limb_stats.actor_limb_broadphase_layers_accepted > 0);
-    assert(limb_stats.actor_limb_object_layers_accepted > 0);
-    assert(limb_stats.damageable_actor_broadphase_layers_accepted == 0);
+    require(limb_stats.actor_limb_broadphase_layers_accepted > 0);
+    require(limb_stats.actor_limb_object_layers_accepted > 0);
+    require(limb_stats.damageable_actor_broadphase_layers_accepted == 0);
 
     // 4. The mask and the kind gate independently: a caller that names the layer
     //    but masks the kind out gets nothing, which is what keeps the kernel's
@@ -802,15 +817,15 @@ int main(int argc, char** argv) {
     limb_ray.filter.object_kind_mask =
         ~(1u << static_cast<std::uint32_t>(CollisionObjectKind::kActorLimb));
     limb_world.reset_query_stats();
-    assert(limb_world.ray_cast_all(limb_ray).empty());
+    require(limb_world.ray_cast_all(limb_ray).empty());
     limb_stats = limb_world.query_stats();
-    assert(limb_stats.actor_limb_broadphase_layers_accepted == 0);
+    require(limb_stats.actor_limb_broadphase_layers_accepted == 0);
 
     // 5. Opting in is additive, not exclusive.
     limb_ray.filter.object_kind_mask = 0xffffffffu;
     limb_ray.filter.collision_mask =
         network_example::physics::kCollisionMaskAll | limb_bit;
-    assert(limb_world.ray_cast_all(limb_ray).size() == 5);
+    require(limb_world.ray_cast_all(limb_ray).size() == 5);
 
     side_less_query_reaches_categorised_objects();
     closest_shape_cast_matches_the_all_hit_front();

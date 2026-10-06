@@ -3,9 +3,9 @@
 // test pins the rebuild to what the server actually simulated: the reconstructed
 // far end has to land where the replicated endpoint used to, or the beam is
 // drawn somewhere the damage did not happen.
-#include <cassert>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <optional>
 #include <vector>
 
@@ -21,6 +21,20 @@
 #include "protocol/public/network_packets.h"
 #include "simulation/public/simulation.h"
 #include "sync/public/snapshot.h"
+
+namespace {
+
+void require_impl(bool condition, const char* expression, int line) {
+    if (!condition) {
+        std::fprintf(stderr, "require failed at line %d: %s\n", line, expression);
+        std::abort();
+    }
+}
+
+}  // namespace
+
+#define require(condition) \
+    require_impl(static_cast<bool>(condition), #condition, __LINE__)
 
 namespace ne = network_example;
 
@@ -53,7 +67,7 @@ const ne::EntitySnapshot& find_entity(
             return entity;
         }
     }
-    assert(false && "entity missing from snapshot");
+    require(false && "entity missing from snapshot");
     std::abort();
 }
 
@@ -91,7 +105,7 @@ ServerBeam build_server_beam(
     const glm::vec3& aim) {
     const ne::NetId shooter = world->spawn_player(1, shooter_position);
     const std::optional<entt::entity> shooter_entity = world->find_entity(shooter);
-    assert(shooter_entity.has_value());
+    require(shooter_entity.has_value());
     world->registry().get<ne::Transform>(*shooter_entity).position =
         shooter_position;
     world->registry().emplace_or_replace<ne::ActionInputState>(*shooter_entity)
@@ -101,7 +115,7 @@ ServerBeam build_server_beam(
         world->registry().get<ne::Transform>(*shooter_entity));
     const ne::NetId beam = world->spawn_projectile(1, origin, glm::vec3{0.0f});
     const std::optional<entt::entity> beam_entity = world->find_entity(beam);
-    assert(beam_entity.has_value());
+    require(beam_entity.has_value());
     ne::ProjectileBeamRuntime& runtime =
         world->registry().emplace<ne::ProjectileBeamRuntime>(*beam_entity);
     runtime.shooter_net_id = shooter;
@@ -122,7 +136,7 @@ ne::WorldSnapshot replicate(ne::KernelEngine* client, const ne::World& world) {
     const std::vector<std::uint8_t> bytes =
         ne::encode_snapshot_packet(server_snapshot);
     ne::WorldSnapshot decoded;
-    assert(ne::decode_snapshot_packet(bytes.data(), bytes.size(), &decoded));
+    require(ne::decode_snapshot_packet(bytes.data(), bytes.size(), &decoded));
     client->resolve_client_beam_geometry(&decoded);
     return decoded;
 }
@@ -144,7 +158,7 @@ void reconstructed_endpoint_matches_the_server() {
 
     const ne::WorldSnapshot decoded = replicate(&client, world);
     const ne::EntitySnapshot& beam = find_entity(decoded, ids.beam);
-    assert((beam.state_flags & ne::kSnapshotStateFlagProjectileBeam) != 0);
+    require((beam.state_flags & ne::kSnapshotStateFlagProjectileBeam) != 0);
 
     const std::optional<entt::entity> beam_entity = world.find_entity(ids.beam);
     const ne::ProjectileBeamRuntime& runtime =
@@ -156,14 +170,14 @@ void reconstructed_endpoint_matches_the_server() {
         "origin server=(%.3f,%.3f,%.3f) client=(%.3f,%.3f,%.3f)\n",
         runtime.origin.x, runtime.origin.y, runtime.origin.z,
         beam.position.x, beam.position.y, beam.position.z);
-    assert(near_vec3(beam.position, runtime.origin));
+    require(near_vec3(beam.position, runtime.origin));
 
     const glm::vec3 client_end = rendered_beam_end(beam);
     std::printf(
         "end server=(%.3f,%.3f,%.3f) client=(%.3f,%.3f,%.3f)\n",
         server_end.x, server_end.y, server_end.z,
         client_end.x, client_end.y, client_end.z);
-    assert(near_vec3(client_end, server_end));
+    require(near_vec3(client_end, server_end));
 }
 
 void a_blocked_beam_replicates_the_short_reach() {
@@ -190,9 +204,9 @@ void a_blocked_beam_replicates_the_short_reach() {
     const ne::WorldSnapshot decoded = replicate(&client, world);
     const ne::EntitySnapshot& beam = find_entity(decoded, ids.beam);
     std::printf("blocked reach=%.3f\n", beam.beam_effective_length);
-    assert(std::fabs(beam.beam_effective_length - 2.5f) < kEpsilon);
+    require(std::fabs(beam.beam_effective_length - 2.5f) < kEpsilon);
     // Stops at the wall, not at the authored 8 m.
-    assert(near_vec3(
+    require(near_vec3(
         rendered_beam_end(beam),
         runtime.origin + aim * 2.5f));
 }
@@ -227,7 +241,7 @@ void a_culled_shooter_falls_back_to_its_last_aim() {
     const std::vector<std::uint8_t> bytes =
         ne::encode_snapshot_packet(server_snapshot);
     ne::WorldSnapshot decoded;
-    assert(ne::decode_snapshot_packet(bytes.data(), bytes.size(), &decoded));
+    require(ne::decode_snapshot_packet(bytes.data(), bytes.size(), &decoded));
     client.resolve_client_beam_geometry(&decoded);
 
     const ne::EntitySnapshot& beam = find_entity(decoded, ids.beam);
@@ -237,8 +251,8 @@ void a_culled_shooter_falls_back_to_its_last_aim() {
         "fallback origin=(%.3f,%.3f,%.3f) reach=%.3f\n",
         beam.position.x, beam.position.y, beam.position.z,
         beam.beam_effective_length);
-    assert(near_vec3(beam.position, expected_origin));
-    assert(near_vec3(rendered_beam_end(beam), expected_origin + aim * 8.0f));
+    require(near_vec3(beam.position, expected_origin));
+    require(near_vec3(rendered_beam_end(beam), expected_origin + aim * 8.0f));
 }
 
 // A beam a snapshot mentions before its spawn batch has landed has no shooter to
@@ -259,8 +273,8 @@ void an_unattached_beam_collapses_instead_of_pointing_at_nothing() {
     const ne::WorldSnapshot decoded = replicate(&client, world);
     const ne::EntitySnapshot& beam = find_entity(decoded, ids.beam);
     std::printf("unattached reach=%.3f\n", beam.beam_effective_length);
-    assert(beam.beam_effective_length == 0.0f);
-    assert(near_vec3(rendered_beam_end(beam), glm::vec3{0.0f, 0.0f, 0.0f}));
+    require(beam.beam_effective_length == 0.0f);
+    require(near_vec3(rendered_beam_end(beam), glm::vec3{0.0f, 0.0f, 0.0f}));
 }
 
 // Interpolation moved from the endpoint to the reach. Halfway between a 2 m and
@@ -279,8 +293,8 @@ void interpolation_blends_the_reach() {
 
     const ne::EntitySnapshot mid = ne::interpolate_snapshot_entity(from, to, 0.5f);
     std::printf("interpolated reach=%.3f\n", mid.beam_effective_length);
-    assert(std::fabs(mid.beam_effective_length - 4.0f) < kEpsilon);
-    assert(near_vec3(rendered_beam_end(mid), glm::vec3{0.0f, 1.0f, 4.0f}));
+    require(std::fabs(mid.beam_effective_length - 4.0f) < kEpsilon);
+    require(near_vec3(rendered_beam_end(mid), glm::vec3{0.0f, 1.0f, 4.0f}));
 }
 
 }  // namespace

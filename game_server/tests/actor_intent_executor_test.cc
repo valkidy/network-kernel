@@ -1,14 +1,27 @@
 #include "game_server/src/actor_intent_executor.h"
 
 #include <array>
-#include <cassert>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 
 #include "ai_intent.h"
 #include "game_server/src/gameplay_config.h"
 
 namespace {
+
+void require_impl(bool condition, const char* expression, int line) {
+    if (!condition) {
+        std::fprintf(stderr, "require failed at line %d: %s\n", line, expression);
+        std::abort();
+    }
+}
+
+#define require(condition) require_impl((condition), #condition, __LINE__)
+
+constexpr std::uint32_t kTestFireActionTemplateId = 100;
+constexpr std::uint32_t kTestReloadActionTemplateId = 101;
 
 KernelConfig server_config() {
     KernelConfig config{};
@@ -52,9 +65,33 @@ KernelProjectileTemplateDefinition projectile_template() {
     return projectile;
 }
 
+KernelActionTemplateDefinition fire_action_template() {
+    KernelActionTemplateDefinition action{};
+    action.struct_size = sizeof(action);
+    action.action_template_id = kTestFireActionTemplateId;
+    action.trigger_mode = KernelActionTriggerMode_Press;
+    action.ammo_cost_per_commit = 1;
+    action.max_commit_count = 1;
+    return action;
+}
+
+KernelActionTemplateDefinition reload_action_template() {
+    KernelActionTemplateDefinition action{};
+    action.struct_size = sizeof(action);
+    action.action_template_id = kTestReloadActionTemplateId;
+    action.trigger_mode = KernelActionTriggerMode_Press;
+    action.commit_offset_ticks = 3;
+    action.max_commit_count = 1;
+    return action;
+}
+
 void load_catalog(KernelHandle* kernel) {
     const KernelColliderTemplateDefinition collider = collider_template();
     const KernelProjectileTemplateDefinition projectile = projectile_template();
+    const std::array<KernelActionTemplateDefinition, 2> actions = {
+        fire_action_template(),
+        reload_action_template(),
+    };
     KernelGameplayCatalogDefinition catalog{};
     catalog.struct_size = sizeof(catalog);
     catalog.catalog_version = 1;
@@ -63,7 +100,9 @@ void load_catalog(KernelHandle* kernel) {
     catalog.collider_template_count = 1;
     catalog.projectile_templates = &projectile;
     catalog.projectile_template_count = 1;
-    assert(Kernel_LoadGameplayCatalog(kernel, &catalog, nullptr));
+    catalog.action_templates = actions.data();
+    catalog.action_template_count = static_cast<std::uint32_t>(actions.size());
+    require(Kernel_LoadGameplayCatalog(kernel, &catalog, nullptr));
 }
 
 std::uint32_t create_actor(KernelHandle* kernel, const KernelVec3& position) {
@@ -74,8 +113,8 @@ std::uint32_t create_actor(KernelHandle* kernel, const KernelVec3& position) {
     create_info.position = position;
     create_info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
     std::uint32_t net_id = 0;
-    assert(Kernel_ServerCreateEntity(kernel, &create_info, &net_id));
-    assert(net_id != 0);
+    require(Kernel_ServerCreateEntity(kernel, &create_info, &net_id));
+    require(net_id != 0);
     return net_id;
 }
 
@@ -97,7 +136,7 @@ void set_combat(
     combat.hitbox_half_extents = KernelVec3{0.4f, 0.8f, 0.4f};
     combat.ammo[0] = ammo;
     combat.reserve_magazines[0] = reserve_magazines;
-    assert(Kernel_ServerSetEntityCombatState(kernel, net_id, &combat));
+    require(Kernel_ServerSetEntityCombatState(kernel, net_id, &combat));
 }
 
 void set_weapon(KernelHandle* kernel, std::uint32_t net_id) {
@@ -108,14 +147,16 @@ void set_weapon(KernelHandle* kernel, std::uint32_t net_id) {
     weapon.magazine_size = 2;
     weapon.damage = 1;
     weapon.projectile_template_id = 3;
-    assert(Kernel_ServerSetEntityWeaponMechanics(kernel, net_id, &weapon));
+    weapon.fire_action_template_id = kTestFireActionTemplateId;
+    weapon.reload_action_template_id = kTestReloadActionTemplateId;
+    require(Kernel_ServerSetEntityWeaponMechanics(kernel, net_id, &weapon));
 }
 
 KernelServerEntityState query_state(KernelHandle* kernel, std::uint32_t net_id) {
     KernelServerEntityState state{};
     state.struct_size = sizeof(state);
-    assert(Kernel_ServerGetEntityState(kernel, net_id, &state));
-    assert(state.valid != 0u);
+    require(Kernel_ServerGetEntityState(kernel, net_id, &state));
+    require(state.valid != 0u);
     return state;
 }
 
@@ -153,8 +194,8 @@ int main() {
             24.0f,
             gravity,
             3.0f);
-    assert(low_arc.has_value());
-    assert(low_arc->aim_direction.y > 0.0f);
+    require(low_arc.has_value());
+    require(low_arc->aim_direction.y > 0.0f);
     const float flight_seconds = low_arc->flight_seconds;
     const KernelVec3 solved_position{
         low_arc->aim_direction.x * 24.0f * flight_seconds,
@@ -162,17 +203,17 @@ int main() {
             0.5f * gravity.y * flight_seconds * flight_seconds,
         low_arc->aim_direction.z * 24.0f * flight_seconds,
     };
-    assert(std::fabs(solved_position.x - 20.0f) < 0.001f);
-    assert(std::fabs(solved_position.y) < 0.001f);
-    assert(std::fabs(solved_position.z) < 0.001f);
-    assert(!network_example::game_server::solve_low_ballistic_aim(
+    require(std::fabs(solved_position.x - 20.0f) < 0.001f);
+    require(std::fabs(solved_position.y) < 0.001f);
+    require(std::fabs(solved_position.z) < 0.001f);
+    require(!network_example::game_server::solve_low_ballistic_aim(
                 {0.0f, 0.0f, 0.0f},
                 {100.0f, 0.0f, 0.0f},
                 24.0f,
                 gravity,
                 3.0f)
                 .has_value());
-    assert(!network_example::game_server::solve_low_ballistic_aim(
+    require(!network_example::game_server::solve_low_ballistic_aim(
                 {0.0f, 0.0f, 0.0f},
                 {58.0f, 0.0f, 0.0f},
                 24.0f,
@@ -182,29 +223,32 @@ int main() {
 
     KernelConfig config = server_config();
     KernelHandle* kernel = Kernel_Create(&config);
-    assert(kernel != nullptr);
-    assert(Kernel_StartDedicatedServer(kernel, 7777));
+    require(kernel != nullptr);
+    require(Kernel_StartDedicatedServer(kernel, 8044));
     load_catalog(kernel);
 
     const std::uint32_t actor = create_actor(kernel, {0.0f, 0.0f, 0.0f});
     const std::uint32_t target = create_actor(kernel, {5.0f, 0.0f, 0.0f});
+    // Combat state is what gives an actor its hitbox; without it the target's
+    // aim point is its feet, not the 0.8 m hitbox centre checked below.
+    set_combat(kernel, target, 0, 0);
     set_weapon(kernel, actor);
 
-    assert(std::fabs(Kernel_GetFixedDeltaSeconds(kernel) - 1.0f / 30.0f) <
+    require(std::fabs(Kernel_GetFixedDeltaSeconds(kernel) - 1.0f / 30.0f) <
            0.0001f);
     KernelVec3 launch_position{};
-    assert(Kernel_ServerGetProjectileLaunchPosition(
+    require(Kernel_ServerGetProjectileLaunchPosition(
         kernel,
         actor,
         &launch_position));
-    assert(std::fabs(launch_position.x) < 0.0001f);
-    assert(std::fabs(launch_position.y - 1.0f) < 0.0001f);
-    assert(std::fabs(launch_position.z) < 0.0001f);
+    require(std::fabs(launch_position.x) < 0.0001f);
+    require(std::fabs(launch_position.y - 1.0f) < 0.0001f);
+    require(std::fabs(launch_position.z) < 0.0001f);
     KernelVec3 target_aim_point{};
-    assert(Kernel_ServerGetEntityAimPoint(kernel, target, &target_aim_point));
-    assert(std::fabs(target_aim_point.x - 5.0f) < 0.0001f);
-    assert(std::fabs(target_aim_point.y - 0.8f) < 0.0001f);
-    assert(std::fabs(target_aim_point.z) < 0.0001f);
+    require(Kernel_ServerGetEntityAimPoint(kernel, target, &target_aim_point));
+    require(std::fabs(target_aim_point.x - 5.0f) < 0.0001f);
+    require(std::fabs(target_aim_point.y - 0.8f) < 0.0001f);
+    require(std::fabs(target_aim_point.z) < 0.0001f);
 
     network_example::game_server::AgentRuntimeState enemy;
     enemy.net_id = actor;
@@ -219,11 +263,11 @@ int main() {
         &enemy,
         attack,
         perception(kernel, actor, target, {5.0f, 0.0f, 0.0f}));
-    assert(result.status == network_example::ai::IntentStatus::kRunning);
-    assert(result.submitted_input);
+    require(result.status == network_example::ai::IntentStatus::kRunning);
+    require(result.submitted_input);
     Kernel_Update(kernel, 1.0f / 30.0f);
     KernelServerEntityState state = query_state(kernel, actor);
-    assert(state.ammo[0] == 1);
+    require(state.ammo[0] == 1);
 
     set_combat(kernel, actor, 0, 2);
     auto reload = actor_intent("Reload", actor);
@@ -232,11 +276,11 @@ int main() {
         &enemy,
         reload,
         perception(kernel, actor, target, {5.0f, 0.0f, 0.0f}));
-    assert(result.status == network_example::ai::IntentStatus::kRunning);
-    assert(result.submitted_input);
+    require(result.status == network_example::ai::IntentStatus::kRunning);
+    require(result.submitted_input);
     Kernel_Update(kernel, 1.0f / 30.0f);
     state = query_state(kernel, actor);
-    assert(state.is_reloading != 0u);
+    require(state.is_reloading != 0u);
 
     set_combat(kernel, actor, 2, 4);
     auto missing_target = actor_intent("AttackTarget", actor);
@@ -245,12 +289,12 @@ int main() {
         &enemy,
         missing_target,
         perception(kernel, actor, 0, {0.0f, 0.0f, 0.0f}));
-    assert(result.status == network_example::ai::IntentStatus::kFailed);
-    assert(!result.submitted_input);
-    assert(result.report.missing_data.size() == 1);
+    require(result.status == network_example::ai::IntentStatus::kFailed);
+    require(!result.submitted_input);
+    require(result.report.missing_data.size() == 1);
     Kernel_Update(kernel, 1.0f / 30.0f);
     state = query_state(kernel, actor);
-    assert(state.ammo[0] == 2);
+    require(state.ammo[0] == 2);
 
     auto unsupported = actor_intent("FindCover", actor);
     result = executor.execute(
@@ -258,10 +302,10 @@ int main() {
         &enemy,
         unsupported,
         perception(kernel, actor, target, {5.0f, 0.0f, 0.0f}));
-    assert(result.status == network_example::ai::IntentStatus::kFailed);
-    assert(!result.submitted_input);
-    assert(result.report.missing_actions.size() == 1);
-    assert(result.report.missing_executors.size() == 1);
+    require(result.status == network_example::ai::IntentStatus::kFailed);
+    require(!result.submitted_input);
+    require(result.report.missing_actions.size() == 1);
+    require(result.report.missing_executors.size() == 1);
 
     const std::uint32_t empty_actor = create_actor(kernel, {1.0f, 0.0f, 0.0f});
     set_weapon(kernel, empty_actor);
@@ -273,13 +317,13 @@ int main() {
         &empty_enemy,
         actor_intent("AttackTarget", empty_actor),
         perception(kernel, empty_actor, target, {5.0f, 0.0f, 0.0f}));
-    assert(result.status == network_example::ai::IntentStatus::kFailed);
-    assert(!result.submitted_input);
-    assert(result.report.missing_actions.size() == 1);
+    require(result.status == network_example::ai::IntentStatus::kFailed);
+    require(!result.submitted_input);
+    require(result.report.missing_actions.size() == 1);
     Kernel_Update(kernel, 1.0f / 30.0f);
     state = query_state(kernel, empty_actor);
-    assert(state.ammo[0] == 0);
-    assert(state.reserve_magazines[0] == 0);
+    require(state.ammo[0] == 0);
+    require(state.reserve_magazines[0] == 0);
 
     network_example::game_server::ActorIntentExecutorConfig ballistic_config;
     ballistic_config.weapon_id =
@@ -302,11 +346,11 @@ int main() {
         &ballistic_enemy,
         actor_intent("AttackTarget", ballistic_actor),
         perception(kernel, ballistic_actor, target, {20.0f, 0.0f, 0.0f}));
-    assert(result.status == network_example::ai::IntentStatus::kRunning);
-    assert(result.submitted_input);
+    require(result.status == network_example::ai::IntentStatus::kRunning);
+    require(result.submitted_input);
     Kernel_Update(kernel, 1.0f / 30.0f);
     state = query_state(kernel, ballistic_actor);
-    assert(state.ammo[0] == 1);
+    require(state.ammo[0] == 1);
 
     const std::uint32_t unreachable_actor =
         create_actor(kernel, {0.0f, 0.0f, 0.0f});
@@ -319,14 +363,14 @@ int main() {
         &unreachable_enemy,
         actor_intent("AttackTarget", unreachable_actor),
         perception(kernel, unreachable_actor, target, {100.0f, 0.0f, 0.0f}));
-    assert(result.status == network_example::ai::IntentStatus::kFailed);
-    assert(!result.submitted_input);
-    assert(result.ballistic_solution_unavailable);
-    assert(result.report.missing_data.size() == 1);
-    assert(result.report.missing_data[0] == "Data.BallisticAimSolution");
+    require(result.status == network_example::ai::IntentStatus::kFailed);
+    require(!result.submitted_input);
+    require(result.ballistic_solution_unavailable);
+    require(result.report.missing_data.size() == 1);
+    require(result.report.missing_data[0] == "Data.BallisticAimSolution");
     Kernel_Update(kernel, 1.0f / 30.0f);
     state = query_state(kernel, unreachable_actor);
-    assert(state.ammo[0] == 2);
+    require(state.ammo[0] == 2);
 
     Kernel_Destroy(kernel);
     return 0;

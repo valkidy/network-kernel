@@ -1,5 +1,4 @@
 #include <array>
-#include <cassert>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
@@ -67,16 +66,16 @@ Signature* load_symbol(void* library, const char* name) {
             name,
             error == nullptr ? "symbol is null" : error);
     }
-    assert(error == nullptr);
-    assert(symbol != nullptr);
+    require(error == nullptr);
+    require(symbol != nullptr);
     return reinterpret_cast<Signature*>(symbol);
 }
 
 std::filesystem::path runfiles_root() {
     const char* test_srcdir = std::getenv("TEST_SRCDIR");
     const char* test_workspace = std::getenv("TEST_WORKSPACE");
-    assert(test_srcdir != nullptr);
-    assert(test_workspace != nullptr);
+    require(test_srcdir != nullptr);
+    require(test_workspace != nullptr);
     return std::filesystem::path(test_srcdir) / test_workspace;
 }
 
@@ -93,7 +92,7 @@ std::filesystem::path find_shared_library() {
         }
     }
 
-    assert(false);
+    require(false);
     return {};
 }
 
@@ -115,7 +114,7 @@ void verify_exported_symbols(
 #if defined(__APPLE__)
     const std::string command = "nm -gU " + shell_quote(library_path.string());
     FILE* pipe = popen(command.c_str(), "r");
-    assert(pipe != nullptr);
+    require(pipe != nullptr);
 
     std::array<char, 1024> line{};
     std::vector<std::string> unexpected_symbols;
@@ -137,8 +136,8 @@ void verify_exported_symbols(
     }
 
     const int status = pclose(pipe);
-    assert(status == 0);
-    assert(unexpected_symbols.empty());
+    require(status == 0);
+    require(unexpected_symbols.empty());
 #endif
 }
 
@@ -149,7 +148,7 @@ int main() {
     verify_exported_symbols(library_path);
 
     void* library = dlopen(library_path.c_str(), RTLD_NOW | RTLD_LOCAL);
-    assert(library != nullptr);
+    require(library != nullptr);
 
     auto* kernel_get_abi_info =
         load_symbol<bool(KernelAbiInfo*, std::uint32_t)>(library, "Kernel_GetAbiInfo");
@@ -524,7 +523,7 @@ int main() {
 
     KernelAbiInfo abi_info{};
     require(kernel_get_abi_info(&abi_info, sizeof(abi_info)));
-    assert(abi_info.abi_version == KERNEL_ABI_VERSION);
+    require(abi_info.abi_version == KERNEL_ABI_VERSION);
     static_assert(
         (KERNEL_CAPABILITY_LOCAL_SHELTER_STATE & KERNEL_CAPABILITY_LOG_CAPTURE) == 0,
         "Shelter state and log capture must use distinct capability bits.");
@@ -536,22 +535,22 @@ int main() {
         KernelLogMessage messages[4]{};
         require(kernel_poll_log_messages(messages, 4u) <= 4u);
     }
-    assert(abi_info.kernel_config_size == sizeof(KernelConfig));
-    assert(abi_info.player_input_size == sizeof(KernelPlayerInput));
-    assert(abi_info.render_entity_state_size == sizeof(RenderEntityState));
-    assert(abi_info.bone_local_transform_size ==
+    require(abi_info.kernel_config_size == sizeof(KernelConfig));
+    require(abi_info.player_input_size == sizeof(KernelPlayerInput));
+    require(abi_info.render_entity_state_size == sizeof(RenderEntityState));
+    require(abi_info.bone_local_transform_size ==
            sizeof(KernelBoneLocalTransform));
-    assert(abi_info.skeleton_render_state_size ==
+    require(abi_info.skeleton_render_state_size ==
            sizeof(KernelSkeletonRenderState));
-    assert(abi_info.skeleton_render_state_result_size ==
+    require(abi_info.skeleton_render_state_result_size ==
            sizeof(KernelSkeletonRenderStateResult));
-    assert(abi_info.skeleton_asset_definition_size ==
+    require(abi_info.skeleton_asset_definition_size ==
            sizeof(KernelSkeletonAssetDefinition));
-    assert(abi_info.skeleton_binding_definition_size ==
+    require(abi_info.skeleton_binding_definition_size ==
            sizeof(KernelSkeletonBindingDefinition));
-    assert(abi_info.skeleton_leg_definition_size ==
+    require(abi_info.skeleton_leg_definition_size ==
            sizeof(KernelSkeletonLegDefinition));
-    assert(abi_info.status_effect_view_size == sizeof(KernelStatusEffectView));
+    require(abi_info.status_effect_view_size == sizeof(KernelStatusEffectView));
     // Fetched again under require: the call above sits inside assert(), which
     // an opt build compiles out along with the call itself.
     KernelAbiInfo weapon_abi_info{};
@@ -560,112 +559,112 @@ int main() {
             sizeof(KernelLocalWeaponState));
     require((weapon_abi_info.capability_flags &
              KERNEL_CAPABILITY_LOCAL_WEAPON_STATE) != 0u);
-    assert((abi_info.capability_flags &
+    require((abi_info.capability_flags &
             KERNEL_CAPABILITY_SKELETON_RENDER_STATES) != 0u);
-    assert((abi_info.capability_flags &
+    require((abi_info.capability_flags &
             KERNEL_CAPABILITY_SKELETON_BIND_POSE) != 0u);
-    assert(kernel_get_skeleton_bind_pose(
+    require(kernel_get_skeleton_bind_pose(
                nullptr, 1u, UINT64_C(1), nullptr, 0u) == 0u);
     KernelSkeletonRenderStateResult skeleton_result{};
     skeleton_result.struct_size = sizeof(skeleton_result);
-    assert(kernel_get_skeleton_render_states(
+    require(kernel_get_skeleton_render_states(
                nullptr, nullptr, 0u, nullptr, 0u, &skeleton_result) == 0u);
-    assert(skeleton_result.status ==
+    require(skeleton_result.status ==
            KERNEL_SKELETON_RENDER_STATUS_INVALID_ARGUMENT);
-    assert(abi_info.kernel_event_size == sizeof(KernelEvent));
-    assert((abi_info.capability_flags & KERNEL_CAPABILITY_ENTITY_LIFECYCLE_EVENTS) != 0);
-    assert(kernel_poll_entity_lifecycle_events(nullptr, nullptr, 0) == 0);
-    assert(kernel_poll_local_action_results(nullptr, nullptr, 0) == 0);
-    assert(kernel_poll_remote_action_presentation_events(nullptr, nullptr, 0) == 0);
-    assert(kernel_query_status_effects(nullptr, 1u, nullptr, 0u) == 0u);
-    assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(abi_info.server_entity_create_info_size ==
+    require(abi_info.kernel_event_size == sizeof(KernelEvent));
+    require((abi_info.capability_flags & KERNEL_CAPABILITY_ENTITY_LIFECYCLE_EVENTS) != 0);
+    require(kernel_poll_entity_lifecycle_events(nullptr, nullptr, 0) == 0);
+    require(kernel_poll_local_action_results(nullptr, nullptr, 0) == 0);
+    require(kernel_poll_remote_action_presentation_events(nullptr, nullptr, 0) == 0);
+    require(kernel_query_status_effects(nullptr, 1u, nullptr, 0u) == 0u);
+    require(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
+    require(abi_info.server_entity_create_info_size ==
            sizeof(KernelServerEntityCreateInfo));
-    assert(abi_info.server_entity_state_size == sizeof(KernelServerEntityState));
-    assert(abi_info.item_template_definition_size ==
+    require(abi_info.server_entity_state_size == sizeof(KernelServerEntityState));
+    require(abi_info.item_template_definition_size ==
            sizeof(KernelItemTemplateDefinition));
-    assert(abi_info.gameplay_request_size == sizeof(KernelGameplayRequest));
-    assert(abi_info.gameplay_request_outcome_size ==
+    require(abi_info.gameplay_request_size == sizeof(KernelGameplayRequest));
+    require(abi_info.gameplay_request_outcome_size ==
            sizeof(KernelGameplayRequestOutcome));
-    assert(abi_info.item_instance_view_size == sizeof(KernelItemInstanceView));
-    assert(abi_info.inventory_container_view_size ==
+    require(abi_info.item_instance_view_size == sizeof(KernelItemInstanceView));
+    require(abi_info.inventory_container_view_size ==
            sizeof(KernelInventoryContainerView));
-    assert(abi_info.inventory_delta_size == sizeof(KernelInventoryDelta));
-    assert((abi_info.capability_flags &
+    require(abi_info.inventory_delta_size == sizeof(KernelInventoryDelta));
+    require((abi_info.capability_flags &
             KERNEL_CAPABILITY_ITEM_PROP_SYSTEM) != 0u);
-    assert(abi_info.weapon_mechanics_definition_size ==
+    require(abi_info.weapon_mechanics_definition_size ==
            sizeof(KernelWeaponMechanicsDefinition));
-    assert(abi_info.actor_template_definition_size ==
+    require(abi_info.actor_template_definition_size ==
            sizeof(KernelActorTemplateDefinition));
-    assert(abi_info.entity_template_definition_size ==
+    require(abi_info.entity_template_definition_size ==
            sizeof(KernelEntityTemplateDefinition));
-    assert(abi_info.entity_ai_definition_size ==
+    require(abi_info.entity_ai_definition_size ==
            sizeof(KernelEntityAiDefinition));
-    assert(abi_info.action_template_definition_size ==
+    require(abi_info.action_template_definition_size ==
            sizeof(KernelActionTemplateDefinition));
-    assert(abi_info.action_runtime_view_size == sizeof(KernelActionRuntimeView));
-    assert((abi_info.capability_flags & KERNEL_CAPABILITY_ACTION_TIMELINE) != 0);
-    assert(abi_info.local_action_result_size == sizeof(KernelLocalActionResult));
-    assert(
+    require(abi_info.action_runtime_view_size == sizeof(KernelActionRuntimeView));
+    require((abi_info.capability_flags & KERNEL_CAPABILITY_ACTION_TIMELINE) != 0);
+    require(abi_info.local_action_result_size == sizeof(KernelLocalActionResult));
+    require(
         abi_info.remote_action_presentation_event_size ==
         sizeof(KernelRemoteActionPresentationEvent));
-    assert((abi_info.capability_flags & KERNEL_CAPABILITY_LOCAL_ACTION_RESULTS) != 0);
-    assert(
+    require((abi_info.capability_flags & KERNEL_CAPABILITY_LOCAL_ACTION_RESULTS) != 0);
+    require(
         (abi_info.capability_flags &
          KERNEL_CAPABILITY_REMOTE_ACTION_PRESENTATION) != 0);
-    assert(abi_info.action_intent_size == sizeof(KernelActionIntent));
-    assert(abi_info.action_input_size == sizeof(KernelActionInput));
-    assert((abi_info.capability_flags & KERNEL_CAPABILITY_ACTION_INTENTS) != 0);
-    assert(abi_info.projectile_mechanics_definition_size ==
+    require(abi_info.action_intent_size == sizeof(KernelActionIntent));
+    require(abi_info.action_input_size == sizeof(KernelActionInput));
+    require((abi_info.capability_flags & KERNEL_CAPABILITY_ACTION_INTENTS) != 0);
+    require(abi_info.projectile_mechanics_definition_size ==
            sizeof(KernelProjectileMechanicsDefinition));
-    assert(abi_info.area_effect_mechanics_definition_size ==
+    require(abi_info.area_effect_mechanics_definition_size ==
            sizeof(KernelAreaEffectMechanicsDefinition));
-    assert(abi_info.beam_mechanics_definition_size ==
+    require(abi_info.beam_mechanics_definition_size ==
            sizeof(KernelBeamMechanicsDefinition));
-    assert(abi_info.homing_mechanics_definition_size ==
+    require(abi_info.homing_mechanics_definition_size ==
            sizeof(KernelHomingMechanicsDefinition));
-    assert(abi_info.homing_state_size == sizeof(KernelHomingState));
-    assert(abi_info.lan_discovery_server_config_size ==
+    require(abi_info.homing_state_size == sizeof(KernelHomingState));
+    require(abi_info.lan_discovery_server_config_size ==
            sizeof(KernelLANDiscoveryServerConfig));
-    assert(abi_info.lan_discovery_query_config_size ==
+    require(abi_info.lan_discovery_query_config_size ==
            sizeof(KernelLANDiscoveryQueryConfig));
-    assert(abi_info.lan_discovery_result_size ==
+    require(abi_info.lan_discovery_result_size ==
            sizeof(KernelLANDiscoveryResult));
-    assert(abi_info.combat_state_definition_size ==
+    require(abi_info.combat_state_definition_size ==
            sizeof(KernelCombatStateDefinition));
-    assert(abi_info.gameplay_catalog_load_result_size ==
+    require(abi_info.gameplay_catalog_load_result_size ==
            sizeof(KernelGameplayCatalogLoadResult));
-    assert(abi_info.gameplay_catalog_load_options_size ==
+    require(abi_info.gameplay_catalog_load_options_size ==
            sizeof(KernelGameplayCatalogLoadOptions));
-    assert(abi_info.agent_vision_config_size == sizeof(KernelAgentVisionConfig));
-    assert(abi_info.vision_state_query_size == sizeof(KernelVisionStateQuery));
-    assert(abi_info.vision_state_view_size == sizeof(KernelVisionStateView));
-    assert(
+    require(abi_info.agent_vision_config_size == sizeof(KernelAgentVisionConfig));
+    require(abi_info.vision_state_query_size == sizeof(KernelVisionStateQuery));
+    require(abi_info.vision_state_view_size == sizeof(KernelVisionStateView));
+    require(
         abi_info.gameplay_catalog_manifest_size ==
         sizeof(KernelGameplayCatalogManifest));
-    assert(
+    require(
         abi_info.gameplay_catalog_sync_status_size ==
         sizeof(KernelGameplayCatalogSyncStatus));
-    assert((abi_info.capability_flags & KERNEL_CAPABILITY_LISTEN_SERVER_MODE) != 0);
-    assert((abi_info.capability_flags & KERNEL_CAPABILITY_LOCAL_PLAYER_INFO) != 0);
-    assert((abi_info.capability_flags & KERNEL_CAPABILITY_SERVER_ENTITY_CREATE) != 0);
-    assert((abi_info.capability_flags & KERNEL_CAPABILITY_LAG_COMPENSATED_PROJECTILE) != 0);
-    assert((abi_info.capability_flags & KERNEL_CAPABILITY_EVENT_PRESENTATION_TIME) != 0);
-    assert((abi_info.capability_flags & KERNEL_CAPABILITY_RENDER_STATES_AT_TIME) != 0);
-    assert((abi_info.capability_flags & KERNEL_CAPABILITY_SERVER_MECHANICS_CONFIG) != 0);
-    assert((abi_info.capability_flags & KERNEL_CAPABILITY_WEAPON_METADATA_QUERY) != 0);
-    assert((abi_info.capability_flags & KERNEL_CAPABILITY_PROJECTILE_RESPONSE_MASKS) != 0);
-    assert((abi_info.capability_flags & KERNEL_CAPABILITY_HOMING_PROJECTILES) != 0);
-    assert((abi_info.capability_flags & KERNEL_CAPABILITY_LAN_DISCOVERY) != 0);
-    assert((abi_info.capability_flags & KERNEL_CAPABILITY_VISION_STATE_QUERY) != 0);
-    assert(
+    require((abi_info.capability_flags & KERNEL_CAPABILITY_LISTEN_SERVER_MODE) != 0);
+    require((abi_info.capability_flags & KERNEL_CAPABILITY_LOCAL_PLAYER_INFO) != 0);
+    require((abi_info.capability_flags & KERNEL_CAPABILITY_SERVER_ENTITY_CREATE) != 0);
+    require((abi_info.capability_flags & KERNEL_CAPABILITY_LAG_COMPENSATED_PROJECTILE) != 0);
+    require((abi_info.capability_flags & KERNEL_CAPABILITY_EVENT_PRESENTATION_TIME) != 0);
+    require((abi_info.capability_flags & KERNEL_CAPABILITY_RENDER_STATES_AT_TIME) != 0);
+    require((abi_info.capability_flags & KERNEL_CAPABILITY_SERVER_MECHANICS_CONFIG) != 0);
+    require((abi_info.capability_flags & KERNEL_CAPABILITY_WEAPON_METADATA_QUERY) != 0);
+    require((abi_info.capability_flags & KERNEL_CAPABILITY_PROJECTILE_RESPONSE_MASKS) != 0);
+    require((abi_info.capability_flags & KERNEL_CAPABILITY_HOMING_PROJECTILES) != 0);
+    require((abi_info.capability_flags & KERNEL_CAPABILITY_LAN_DISCOVERY) != 0);
+    require((abi_info.capability_flags & KERNEL_CAPABILITY_VISION_STATE_QUERY) != 0);
+    require(
         (abi_info.capability_flags & KERNEL_CAPABILITY_GAMEPLAY_CATALOG_SYNC) !=
         0);
-    assert(!kernel_get_abi_info(nullptr, sizeof(abi_info)));
-    assert(!kernel_get_abi_info(&abi_info, sizeof(abi_info) - 1));
+    require(!kernel_get_abi_info(nullptr, sizeof(abi_info)));
+    require(!kernel_get_abi_info(&abi_info, sizeof(abi_info) - 1));
 
     KernelLANDiscoveryHandle* discovery = kernel_lan_discovery_create();
-    assert(discovery != nullptr);
+    require(discovery != nullptr);
     kernel_lan_discovery_destroy(discovery);
     kernel_lan_discovery_destroy(nullptr);
 
@@ -688,28 +687,28 @@ int main() {
     require(!kernel_get_build_info(nullptr, sizeof(build_info)));
     require(!kernel_get_build_info(&build_info, sizeof(build_info) - 1));
     GameServerAbiInfo game_server_abi_info{};
-    assert(game_server_get_abi_info(
+    require(game_server_get_abi_info(
         &game_server_abi_info,
         sizeof(game_server_abi_info)));
-    assert(game_server_abi_info.abi_version == GAME_SERVER_ABI_VERSION);
-    assert(game_server_abi_info.weapon_template_info_size ==
+    require(game_server_abi_info.abi_version == GAME_SERVER_ABI_VERSION);
+    require(game_server_abi_info.weapon_template_info_size ==
            sizeof(GameServerWeaponTemplateInfo));
-    assert(game_server_abi_info.gameplay_catalog_load_result_size ==
+    require(game_server_abi_info.gameplay_catalog_load_result_size ==
            sizeof(KernelGameplayCatalogLoadResult));
-    assert(
+    require(
         (game_server_abi_info.capability_flags &
          GAME_SERVER_CAPABILITY_ENEMY_MANAGER) != 0);
-    assert(
+    require(
         (game_server_abi_info.capability_flags &
          GAME_SERVER_CAPABILITY_WEAPON_TEMPLATE_QUERY) != 0);
-    assert(!game_server_get_abi_info(nullptr, sizeof(game_server_abi_info)));
-    assert(!game_server_get_abi_info(
+    require(!game_server_get_abi_info(nullptr, sizeof(game_server_abi_info)));
+    require(!game_server_get_abi_info(
         &game_server_abi_info,
         sizeof(game_server_abi_info) - 1));
     KernelLocalPlayerInfo local_info{};
-    assert(!kernel_get_local_player_info(nullptr, &local_info));
+    require(!kernel_get_local_player_info(nullptr, &local_info));
 
-    assert(kernel_create(nullptr) == nullptr);
+    require(kernel_create(nullptr) == nullptr);
 
     KernelConfig config{};
     config.mode = KernelMode_ListenServer;
@@ -717,23 +716,23 @@ int main() {
     config.tick.snapshot_rate = 30;
 
     KernelHandle* kernel = kernel_create(&config);
-    assert(kernel != nullptr);
-    assert(kernel_get_skeleton_bind_pose(
+    require(kernel != nullptr);
+    require(kernel_get_skeleton_bind_pose(
                kernel, 999u, UINT64_C(1), nullptr, 0u) == 0u);
-    require(kernel_start_listen_server(kernel, 7777));
+    require(kernel_start_listen_server(kernel, 8047));
     GameServerHandle* game_server = game_server_create(kernel);
-    assert(game_server != nullptr);
-    assert(game_server_create_with_weapon_template_directory(kernel, nullptr) == nullptr);
+    require(game_server != nullptr);
+    require(game_server_create_with_weapon_template_directory(kernel, nullptr) == nullptr);
     GameServerWeaponTemplateInfo template_info{};
     template_info.struct_size = sizeof(template_info);
-    assert(game_server_query_weapon_template(game_server, 4, &template_info));
-    assert(template_info.mechanics.fire_mode == KernelWeaponFireMode_Projectile);
-    assert(template_info.mechanics.projectile_template_id != 0u);
-    assert(kernel_get_local_player_info(kernel, &local_info));
-    assert(local_info.peer_id == 1);
-    assert(local_info.player_net_id != 0);
-    assert(local_info.has_welcome != 0u);
-    assert(local_info.connected != 0u);
+    require(game_server_query_weapon_template(game_server, 4, &template_info));
+    require(template_info.mechanics.fire_mode == KernelWeaponFireMode_Projectile);
+    require(template_info.mechanics.projectile_template_id != 0u);
+    require(kernel_get_local_player_info(kernel, &local_info));
+    require(local_info.peer_id == 1);
+    require(local_info.player_net_id != 0);
+    require(local_info.has_welcome != 0u);
+    require(local_info.connected != 0u);
     std::array<KernelEvent, 16> events{};
     std::uint32_t event_count = kernel_poll_events(
         kernel,
@@ -758,7 +757,7 @@ int main() {
     local_combat.move_speed_meters_per_second = 5.0f;
     local_combat.hitbox_center = KernelVec3{0.0f, 0.9f, 0.0f};
     local_combat.hitbox_half_extents = KernelVec3{0.35f, 0.9f, 0.35f};
-    assert(kernel_server_set_entity_combat_state(
+    require(kernel_server_set_entity_combat_state(
         kernel,
         local_info.player_net_id,
         &local_combat));
@@ -770,8 +769,8 @@ int main() {
     create_info.position = KernelVec3{2.0f, 0.0f, 0.0f};
     create_info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
     std::uint32_t enemy = 0;
-    assert(kernel_server_create_entity(kernel, &create_info, &enemy));
-    assert(enemy != 0);
+    require(kernel_server_create_entity(kernel, &create_info, &enemy));
+    require(enemy != 0);
     KernelCombatStateDefinition combat_state{};
     combat_state.struct_size = sizeof(combat_state);
     combat_state.hp = 240;
@@ -784,7 +783,7 @@ int main() {
     combat_state.hitbox_half_extents = KernelVec3{0.4f, 0.8f, 0.4f};
     combat_state.ammo[0] = 3;
     combat_state.reserve_magazines[0] = 6;
-    assert(kernel_server_set_entity_combat_state(kernel, enemy, &combat_state));
+    require(kernel_server_set_entity_combat_state(kernel, enemy, &combat_state));
     KernelWeaponMechanicsDefinition rocket{};
     rocket.struct_size = sizeof(rocket);
     rocket.weapon_id = 3;
@@ -795,31 +794,31 @@ int main() {
     rocket.fire_action_template_id = 1001u;
     rocket.reload_action_template_id = 2001u;
     rocket.projectile_template_id = 3;
-    assert(kernel_server_validate_mechanics_config(&rocket));
-    assert(!kernel_server_set_entity_weapon_mechanics(kernel, enemy, &rocket));
+    require(kernel_server_validate_mechanics_config(&rocket));
+    require(!kernel_server_set_entity_weapon_mechanics(kernel, enemy, &rocket));
     KernelWeaponMechanicsDefinition queried_weapon{};
     queried_weapon.struct_size = sizeof(queried_weapon);
-    assert(!kernel_server_get_entity_weapon_mechanics(
+    require(!kernel_server_get_entity_weapon_mechanics(
         kernel, enemy, 3, &queried_weapon));
-    assert(kernel_server_set_entity_state(kernel, enemy, 4, 8));
+    require(kernel_server_set_entity_state(kernel, enemy, 4, 8));
     KernelServerEntityState server_state{};
     server_state.struct_size = sizeof(server_state);
-    assert(kernel_server_get_entity_state(kernel, enemy, &server_state));
-    assert(server_state.net_id == enemy);
-    assert(server_state.hp == 240);
-    assert(server_state.max_hp == 240);
-    assert(server_state.animation_state == 4);
-    assert(kernel_server_set_entity_health(kernel, enemy, 123));
+    require(kernel_server_get_entity_state(kernel, enemy, &server_state));
+    require(server_state.net_id == enemy);
+    require(server_state.hp == 240);
+    require(server_state.max_hp == 240);
+    require(server_state.animation_state == 4);
+    require(kernel_server_set_entity_health(kernel, enemy, 123));
     server_state = KernelServerEntityState{};
     server_state.struct_size = sizeof(server_state);
-    assert(kernel_server_get_entity_state(kernel, enemy, &server_state));
-    assert(server_state.hp == 123);
-    assert(server_state.max_hp == 240);
-    assert(kernel_server_destroy_entity(
+    require(kernel_server_get_entity_state(kernel, enemy, &server_state));
+    require(server_state.hp == 123);
+    require(server_state.max_hp == 240);
+    require(kernel_server_destroy_entity(
         kernel,
         enemy,
         KernelDespawnReason_Destroyed));
-    assert(!kernel_server_clear_entity_weapon_mechanics(kernel, enemy, 3));
+    require(!kernel_server_clear_entity_weapon_mechanics(kernel, enemy, 3));
 
     KernelPlayerInput input{};
     input.input_seq = 1;
@@ -836,7 +835,7 @@ int main() {
         kernel,
         states.data(),
         static_cast<std::uint32_t>(states.size()));
-    assert(state_count >= 1);
+    require(state_count >= 1);
     bool saw_local_player_health = false;
     for (std::uint32_t index = 0; index < state_count; ++index) {
         if (states[index].net_id == local_info.player_net_id) {
@@ -844,8 +843,8 @@ int main() {
                 states[index].hp == 100 && states[index].max_hp == 100;
         }
     }
-    assert(saw_local_player_health);
-    assert(kernel_get_render_states_at_time(
+    require(saw_local_player_health);
+    require(kernel_get_render_states_at_time(
                kernel,
                33333,
                states.data(),
@@ -855,7 +854,7 @@ int main() {
         kernel,
         events.data(),
         static_cast<std::uint32_t>(events.size()));
-    assert(event_count >= 1);
+    require(event_count >= 1);
     for (std::uint32_t index = 0; index < event_count; ++index) {
         game_server_handle_event(game_server, &events[index]);
     }
@@ -890,11 +889,11 @@ int main() {
     require(game_server_get_enemy_count(game_server) > 0u);
     game_server_despawn_all(game_server, KernelDespawnReason_Destroyed);
     game_server_tick(game_server, 1.0f / 30.0f);
-    assert(game_server_get_enemy_count(game_server) == 0);
+    require(game_server_get_enemy_count(game_server) == 0);
     kernel_update(kernel, 1.0f / 30.0f);
 
     game_server_destroy(game_server);
     kernel_destroy(kernel);
-    assert(dlclose(library) == 0);
+    require(dlclose(library) == 0);
     return 0;
 }

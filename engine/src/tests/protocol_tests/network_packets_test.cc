@@ -1,5 +1,4 @@
 #include <algorithm>
-#include <cassert>
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
@@ -591,38 +590,38 @@ int main() {
             42u, 3u, 255u, glm::vec3{-4.0f, 0.5f, 8.125f}});
         const std::vector<std::uint8_t> encoded =
             network_example::encode_locomotion_step_batch_packet(steps, 12u);
-        assert(!encoded.empty());
+        require(!encoded.empty());
         network_example::LocomotionStepBatchPacket decoded;
-        assert(network_example::decode_locomotion_step_batch_packet(
+        require(network_example::decode_locomotion_step_batch_packet(
             encoded.data(), encoded.size(), &decoded));
-        assert(decoded.server_tick == steps.server_tick);
-        assert(decoded.records.size() == steps.records.size());
+        require(decoded.server_tick == steps.server_tick);
+        require(decoded.records.size() == steps.records.size());
         for (std::size_t index = 0; index < steps.records.size(); ++index) {
-            assert(decoded.records[index].net_id ==
+            require(decoded.records[index].net_id ==
                    steps.records[index].net_id);
-            assert(decoded.records[index].leg_index ==
+            require(decoded.records[index].leg_index ==
                    steps.records[index].leg_index);
-            assert(decoded.records[index].start_tick_delta ==
+            require(decoded.records[index].start_tick_delta ==
                    steps.records[index].start_tick_delta);
-            assert(decoded.records[index].landing_target_world ==
+            require(decoded.records[index].landing_target_world ==
                    steps.records[index].landing_target_world);
         }
         // An empty batch is never put on the wire, a leg outside the rig's
         // limit is rejected rather than indexed with, and a truncated payload
         // does not decode.
-        assert(network_example::encode_locomotion_step_batch_packet(
+        require(network_example::encode_locomotion_step_batch_packet(
                    network_example::LocomotionStepBatchPacket{}, 0u).empty());
         network_example::LocomotionStepBatchPacket bad_leg;
         bad_leg.server_tick = 1;
         bad_leg.records.push_back(network_example::LocomotionStepRecord{
             42u, KERNEL_MAX_SKELETON_LEGS, 0u, glm::vec3{0.0f}});
-        assert(network_example::encode_locomotion_step_batch_packet(
+        require(network_example::encode_locomotion_step_batch_packet(
                    bad_leg, 0u).empty());
         network_example::LocomotionStepBatchPacket truncated;
-        assert(!network_example::decode_locomotion_step_batch_packet(
+        require(!network_example::decode_locomotion_step_batch_packet(
             encoded.data(), encoded.size() - 1u, &truncated));
         // And a snapshot must not be mistaken for one: they share a channel.
-        assert(!network_example::decode_snapshot_packet(
+        require(!network_example::decode_snapshot_packet(
             encoded.data(), encoded.size(), nullptr));
     }
 
@@ -639,29 +638,29 @@ int main() {
 
     const std::vector<std::uint8_t> input_packet =
         network_example::encode_player_input_packet(3, input, 42);
-    assert(input_packet.size() == 85u);
+    require(input_packet.size() == 85u);
     network_example::PeerId decoded_player = 0;
     KernelPlayerInput decoded_input{};
-    assert(network_example::decode_player_input_packet(
+    require(network_example::decode_player_input_packet(
         input_packet.data(),
         input_packet.size(),
         &decoded_player,
         &decoded_input));
-    assert(decoded_player == 3);
-    assert(decoded_input.input_seq == input.input_seq);
-    assert(decoded_input.client_action_time_us == input.client_action_time_us);
-    assert(decoded_input.action_intent.action_instance_id ==
+    require(decoded_player == 3);
+    require(decoded_input.input_seq == input.input_seq);
+    require(decoded_input.client_action_time_us == input.client_action_time_us);
+    require(decoded_input.action_intent.action_instance_id ==
            input.action_intent.action_instance_id);
-    assert(decoded_input.action_intent.binding_id ==
+    require(decoded_input.action_intent.binding_id ==
            input.action_intent.binding_id);
-    assert(decoded_input.action_input.action_instance_id ==
+    require(decoded_input.action_input.action_instance_id ==
            input.action_input.action_instance_id);
-    assert(decoded_input.action_input.held == input.action_input.held);
-    assert(nearly_equal(decoded_input.move.x, input.move.x));
-    assert(nearly_equal(decoded_input.move.y, input.move.y));
-    assert(nearly_equal(decoded_input.aim_dir.x, input.aim_dir.x));
-    assert(decoded_input.buttons == input.buttons);
-    assert(decoded_input.selected_weapon == input.selected_weapon);
+    require(decoded_input.action_input.held == input.action_input.held);
+    require(nearly_equal(decoded_input.move.x, input.move.x));
+    require(nearly_equal(decoded_input.move.y, input.move.y));
+    require(nearly_equal(decoded_input.aim_dir.x, input.aim_dir.x));
+    require(decoded_input.buttons == input.buttons);
+    require(decoded_input.selected_weapon == input.selected_weapon);
 
     network_example::WorldSnapshot snapshot;
     snapshot.header.server_tick = 9;
@@ -735,7 +734,7 @@ int main() {
 
     const std::vector<std::uint8_t> snapshot_packet =
         network_example::encode_snapshot_packet(snapshot, 43);
-    assert(network_example::estimate_snapshot_packet_size(snapshot) ==
+    require(network_example::estimate_snapshot_packet_size(snapshot) ==
            snapshot_packet.size());
     require(network_example::estimate_snapshot_entity_size(player) == 122u);
     network_example::EntitySnapshot owner_without_action = player;
@@ -750,56 +749,56 @@ int main() {
             network_example::estimate_snapshot_entity_size(owner_unarmed) + 4u);
     // Agents ride their own, narrower record; see the agent section in
     // network_packets.cc.
-    assert(network_example::estimate_snapshot_entity_size(enemy) == 32u);
+    require(network_example::estimate_snapshot_entity_size(enemy) == 32u);
     network_example::EntitySnapshot active_enemy = enemy;
     active_enemy.action_template_id = 1002;
     active_enemy.action_phase = KernelActionPhase_Active;
-    assert(network_example::estimate_snapshot_entity_size(active_enemy) == 52u);
-    assert(network_example::estimate_snapshot_entity_size(compact_projectile) == 34u);
-    assert(network_example::estimate_snapshot_entity_size(hybrid_projectile) == 46u);
+    require(network_example::estimate_snapshot_entity_size(active_enemy) == 52u);
+    require(network_example::estimate_snapshot_entity_size(compact_projectile) == 34u);
+    require(network_example::estimate_snapshot_entity_size(hybrid_projectile) == 46u);
     network_example::WorldSnapshot decoded_snapshot;
-    assert(network_example::decode_snapshot_packet(
+    require(network_example::decode_snapshot_packet(
         snapshot_packet.data(),
         snapshot_packet.size(),
         &decoded_snapshot));
-    assert(decoded_snapshot.header.server_tick == 9);
-    assert(decoded_snapshot.header.server_time_ms == 300);
-    assert(decoded_snapshot.header.last_processed_input_seq == 7);
-    assert(decoded_snapshot.entities.size() == 5);
-    assert(decoded_snapshot.entities[4].item_template_id == 0u);
-    assert(decoded_snapshot.entities[4].item_instance_id == 0u);
-    assert(decoded_snapshot.entities[4].hp == 50u);
-    assert(decoded_snapshot.entities[4].max_hp == 100u);
-    assert(decoded_snapshot.entities[0].net_id == 4);
-    assert(decoded_snapshot.entities[0].type == network_example::EntityType::kActor);
-    assert(decoded_snapshot.entities[0].actor_type ==
+    require(decoded_snapshot.header.server_tick == 9);
+    require(decoded_snapshot.header.server_time_ms == 300);
+    require(decoded_snapshot.header.last_processed_input_seq == 7);
+    require(decoded_snapshot.entities.size() == 5);
+    require(decoded_snapshot.entities[4].item_template_id == 0u);
+    require(decoded_snapshot.entities[4].item_instance_id == 0u);
+    require(decoded_snapshot.entities[4].hp == 50u);
+    require(decoded_snapshot.entities[4].max_hp == 100u);
+    require(decoded_snapshot.entities[0].net_id == 4);
+    require(decoded_snapshot.entities[0].type == network_example::EntityType::kActor);
+    require(decoded_snapshot.entities[0].actor_type ==
            network_example::ActorType::kPlayer);
-    assert(decoded_snapshot.entities[0].owner_peer == 3);
-    assert(nearly_equal(decoded_snapshot.entities[0].rotation.w, 1.0f));
-    assert(decoded_snapshot.entities[0].hp == 88);
-    assert(decoded_snapshot.entities[0].max_hp == 120);
-    assert(nearly_equal(decoded_snapshot.entities[0].aim_direction.z, 1.0f));
-    assert(decoded_snapshot.entities[0].action_template_id == 1001);
-    assert(decoded_snapshot.entities[0].action_instance_id == 7001);
-    assert(decoded_snapshot.entities[0].action_phase == KernelActionPhase_Windup);
-    assert(decoded_snapshot.entities[0].action_start_tick == 8);
-    assert(decoded_snapshot.entities[0].has_authoritative_movement_state);
-    assert(decoded_snapshot.entities[0].ground_state == 1);
-    assert(nearly_equal(decoded_snapshot.entities[0].ground_normal.y, 1.0f));
-    assert(decoded_snapshot.entities[0].supporting_entity_net_id == 99);
-    assert(decoded_snapshot.entities[0].supporting_collider_id == 123);
-    assert((decoded_snapshot.entities[0].state_flags &
+    require(decoded_snapshot.entities[0].owner_peer == 3);
+    require(nearly_equal(decoded_snapshot.entities[0].rotation.w, 1.0f));
+    require(decoded_snapshot.entities[0].hp == 88);
+    require(decoded_snapshot.entities[0].max_hp == 120);
+    require(nearly_equal(decoded_snapshot.entities[0].aim_direction.z, 1.0f));
+    require(decoded_snapshot.entities[0].action_template_id == 1001);
+    require(decoded_snapshot.entities[0].action_instance_id == 7001);
+    require(decoded_snapshot.entities[0].action_phase == KernelActionPhase_Windup);
+    require(decoded_snapshot.entities[0].action_start_tick == 8);
+    require(decoded_snapshot.entities[0].has_authoritative_movement_state);
+    require(decoded_snapshot.entities[0].ground_state == 1);
+    require(nearly_equal(decoded_snapshot.entities[0].ground_normal.y, 1.0f));
+    require(decoded_snapshot.entities[0].supporting_entity_net_id == 99);
+    require(decoded_snapshot.entities[0].supporting_collider_id == 123);
+    require((decoded_snapshot.entities[0].state_flags &
             network_example::kSnapshotStateFlagHpUnknown) == 0u);
-    assert(decoded_snapshot.entities[1].net_id == 6);
-    assert(decoded_snapshot.entities[1].type == network_example::EntityType::kActor);
-    assert(decoded_snapshot.entities[1].actor_type ==
+    require(decoded_snapshot.entities[1].net_id == 6);
+    require(decoded_snapshot.entities[1].type == network_example::EntityType::kActor);
+    require(decoded_snapshot.entities[1].actor_type ==
            network_example::ActorType::kAgent);
-    assert(nearly_equal(decoded_snapshot.entities[1].rotation.y, 1.0f));
-    assert((decoded_snapshot.entities[1].state_flags &
+    require(nearly_equal(decoded_snapshot.entities[1].rotation.y, 1.0f));
+    require((decoded_snapshot.entities[1].state_flags &
             network_example::kSnapshotStateFlagHpUnknown) != 0u);
-    assert(decoded_snapshot.entities[1].hp == 0);
-    assert(decoded_snapshot.entities[1].max_hp == 0);
-    assert(!decoded_snapshot.entities[1].has_authoritative_movement_state);
+    require(decoded_snapshot.entities[1].hp == 0);
+    require(decoded_snapshot.entities[1].max_hp == 0);
+    require(!decoded_snapshot.entities[1].has_authoritative_movement_state);
 
     // Decoded again under require: the decode above sits inside assert(), which
     // an opt build compiles out along with the call itself.
@@ -833,27 +832,27 @@ int main() {
         bad_slot_packet.data(),
         bad_slot_packet.size(),
         &bad_slot_decoded));
-    assert(decoded_snapshot.entities[2].net_id == 5);
-    assert(decoded_snapshot.entities[2].type == network_example::EntityType::kProjectile);
-    assert(decoded_snapshot.entities[2].owner_peer == 0);
-    assert(nearly_equal(decoded_snapshot.entities[2].position.x, 1.0f));
-    assert(!nearly_equal(decoded_snapshot.entities[2].rotation.w, 0.5f));
-    assert(nearly_equal(decoded_snapshot.entities[2].velocity.z, 6.0f));
-    assert(decoded_snapshot.entities[2].spawn_tick == 0);
-    assert(decoded_snapshot.entities[2].action_instance_id == 0);
-    assert(decoded_snapshot.entities[3].net_id == 7);
-    assert(decoded_snapshot.entities[3].type == network_example::EntityType::kProjectile);
-    assert(decoded_snapshot.entities[3].owner_peer == 3);
-    assert(decoded_snapshot.entities[3].spawn_tick == 12);
-    assert(decoded_snapshot.entities[3].action_instance_id == 1234);
-    assert((decoded_snapshot.entities[3].state_flags &
+    require(decoded_snapshot.entities[2].net_id == 5);
+    require(decoded_snapshot.entities[2].type == network_example::EntityType::kProjectile);
+    require(decoded_snapshot.entities[2].owner_peer == 0);
+    require(nearly_equal(decoded_snapshot.entities[2].position.x, 1.0f));
+    require(!nearly_equal(decoded_snapshot.entities[2].rotation.w, 0.5f));
+    require(nearly_equal(decoded_snapshot.entities[2].velocity.z, 6.0f));
+    require(decoded_snapshot.entities[2].spawn_tick == 0);
+    require(decoded_snapshot.entities[2].action_instance_id == 0);
+    require(decoded_snapshot.entities[3].net_id == 7);
+    require(decoded_snapshot.entities[3].type == network_example::EntityType::kProjectile);
+    require(decoded_snapshot.entities[3].owner_peer == 3);
+    require(decoded_snapshot.entities[3].spawn_tick == 12);
+    require(decoded_snapshot.entities[3].action_instance_id == 1234);
+    require((decoded_snapshot.entities[3].state_flags &
             network_example::kSnapshotStateFlagProjectileHybridCorrection) != 0u);
-    assert(decoded_snapshot.entities[4].net_id == 8);
-    assert(decoded_snapshot.entities[4].item_template_id == 501);
-    assert(decoded_snapshot.entities[4].item_instance_id == 9001);
-    assert(decoded_snapshot.entities[4].world_item_mode ==
+    require(decoded_snapshot.entities[4].net_id == 8);
+    require(decoded_snapshot.entities[4].item_template_id == 501);
+    require(decoded_snapshot.entities[4].item_instance_id == 9001);
+    require(decoded_snapshot.entities[4].world_item_mode ==
            KernelWorldItemMode_Carrying);
-    assert(decoded_snapshot.entities[4].carrier_entity_id == 4);
+    require(decoded_snapshot.entities[4].carrier_entity_id == 4);
 
     KernelEvent reliable_event{};
     reliable_event.type = KernelEventType_PlayerLeft;
@@ -866,18 +865,18 @@ int main() {
     const std::vector<std::uint8_t> reliable_event_packet =
         network_example::encode_reliable_event_packet(reliable_event, 44);
     KernelEvent decoded_event{};
-    assert(network_example::decode_reliable_event_packet(
+    require(network_example::decode_reliable_event_packet(
         reliable_event_packet.data(),
         reliable_event_packet.size(),
         &decoded_event));
-    assert(decoded_event.type == KernelEventType_PlayerLeft);
-    assert(decoded_event.tick == 19);
-    assert(decoded_event.net_id == 23);
-    assert(decoded_event.peer_id == 4);
-    assert(decoded_event.code == 99);
-    assert(decoded_event.event_time_us == 123456);
-    assert(decoded_event.presentation_time_us == 234567);
-    assert(!network_example::decode_reliable_event_packet(
+    require(decoded_event.type == KernelEventType_PlayerLeft);
+    require(decoded_event.tick == 19);
+    require(decoded_event.net_id == 23);
+    require(decoded_event.peer_id == 4);
+    require(decoded_event.code == 99);
+    require(decoded_event.event_time_us == 123456);
+    require(decoded_event.presentation_time_us == 234567);
+    require(!network_example::decode_reliable_event_packet(
         input_packet.data(),
         input_packet.size(),
         &decoded_event));
@@ -899,27 +898,27 @@ int main() {
     spawn.carrier_entity_id = 4;
     const std::vector<std::uint8_t> spawn_packet =
         network_example::encode_entity_spawn_packet(spawn, 45);
-    assert(spawn_packet.size() == 101u);
+    require(spawn_packet.size() == 101u);
     network_example::EntitySpawnPacket decoded_spawn{};
-    assert(network_example::decode_entity_spawn_packet(
+    require(network_example::decode_entity_spawn_packet(
         spawn_packet.data(),
         spawn_packet.size(),
         &decoded_spawn));
-    assert(decoded_spawn.net_id == 41);
-    assert(decoded_spawn.entity_type == network_example::EntityType::kActor);
-    assert(decoded_spawn.actor_type == network_example::ActorType::kAgent);
-    assert(decoded_spawn.owner_peer == 9);
-    assert(decoded_spawn.server_tick == 12);
-    assert(decoded_spawn.actor_template_id == 2);
-    assert(decoded_spawn.entity_template_id == 200);
-    assert(decoded_spawn.collider_template_id == 300);
-    assert(decoded_spawn.item_template_id == 501);
-    assert(decoded_spawn.item_instance_id == 9001);
-    assert(decoded_spawn.world_item_mode == KernelWorldItemMode_Carrying);
-    assert(decoded_spawn.carrier_entity_id == 4);
-    assert(nearly_equal(decoded_spawn.position.y, 4.0f));
-    assert(nearly_equal(decoded_spawn.rotation.w, 1.0f));
-    assert(!network_example::decode_entity_spawn_packet(
+    require(decoded_spawn.net_id == 41);
+    require(decoded_spawn.entity_type == network_example::EntityType::kActor);
+    require(decoded_spawn.actor_type == network_example::ActorType::kAgent);
+    require(decoded_spawn.owner_peer == 9);
+    require(decoded_spawn.server_tick == 12);
+    require(decoded_spawn.actor_template_id == 2);
+    require(decoded_spawn.entity_template_id == 200);
+    require(decoded_spawn.collider_template_id == 300);
+    require(decoded_spawn.item_template_id == 501);
+    require(decoded_spawn.item_instance_id == 9001);
+    require(decoded_spawn.world_item_mode == KernelWorldItemMode_Carrying);
+    require(decoded_spawn.carrier_entity_id == 4);
+    require(nearly_equal(decoded_spawn.position.y, 4.0f));
+    require(nearly_equal(decoded_spawn.rotation.w, 1.0f));
+    require(!network_example::decode_entity_spawn_packet(
         reliable_event_packet.data(),
         reliable_event_packet.size(),
         &decoded_spawn));
@@ -931,13 +930,13 @@ int main() {
     const std::vector<std::uint8_t> despawn_packet =
         network_example::encode_entity_despawn_packet(despawn, 46);
     network_example::EntityDespawnPacket decoded_despawn{};
-    assert(network_example::decode_entity_despawn_packet(
+    require(network_example::decode_entity_despawn_packet(
         despawn_packet.data(),
         despawn_packet.size(),
         &decoded_despawn));
-    assert(decoded_despawn.net_id == 41);
-    assert(decoded_despawn.server_tick == 18);
-    assert(decoded_despawn.reason == KernelDespawnReason_OutOfRange);
+    require(decoded_despawn.net_id == 41);
+    require(decoded_despawn.server_tick == 18);
+    require(decoded_despawn.reason == KernelDespawnReason_OutOfRange);
 
     network_example::EntityTemplateUpdatePacket template_update{};
     template_update.net_id = 41;
@@ -946,14 +945,14 @@ int main() {
     const std::vector<std::uint8_t> template_update_packet =
         network_example::encode_entity_template_update_packet(template_update, 49);
     network_example::EntityTemplateUpdatePacket decoded_template_update{};
-    assert(network_example::decode_entity_template_update_packet(
+    require(network_example::decode_entity_template_update_packet(
         template_update_packet.data(),
         template_update_packet.size(),
         &decoded_template_update));
-    assert(decoded_template_update.net_id == 41);
-    assert(decoded_template_update.server_tick == 21);
-    assert(decoded_template_update.actor_template_id == 2);
-    assert(!network_example::decode_entity_template_update_packet(
+    require(decoded_template_update.net_id == 41);
+    require(decoded_template_update.server_tick == 21);
+    require(decoded_template_update.actor_template_id == 2);
+    require(!network_example::decode_entity_template_update_packet(
         despawn_packet.data(),
         despawn_packet.size(),
         &decoded_template_update));
@@ -976,26 +975,26 @@ int main() {
     const std::vector<std::uint8_t> batch_packet =
         network_example::encode_projectile_spawn_batch_packet(batch, 47);
     network_example::ProjectileSpawnBatchPacket decoded_batch{};
-    assert(network_example::decode_projectile_spawn_batch_packet(
+    require(network_example::decode_projectile_spawn_batch_packet(
         batch_packet.data(),
         batch_packet.size(),
         &decoded_batch));
-    assert(decoded_batch.server_tick == 77);
-    assert(decoded_batch.server_time_us == 77000);
-    assert(decoded_batch.catalog_hash == 0x8877665544332211ull);
-    assert(decoded_batch.groups.size() == 1);
-    assert(decoded_batch.groups[0].projectile_template_id == 3);
-    assert(decoded_batch.groups[0].records.size() == 1);
-    assert(decoded_batch.groups[0].records[0].projectile_net_id == 101);
-    assert(decoded_batch.groups[0].records[0].owner_net_id == 11);
-    assert(decoded_batch.groups[0].records[0].owner_peer == 7);
-    assert(decoded_batch.groups[0].records[0].action_instance_id == 1234);
-    assert(nearly_equal(decoded_batch.groups[0].records[0].spawn_position.y, 2.0f));
-    assert(nearly_equal(decoded_batch.groups[0].records[0].initial_velocity.z, 6.0f));
+    require(decoded_batch.server_tick == 77);
+    require(decoded_batch.server_time_us == 77000);
+    require(decoded_batch.catalog_hash == 0x8877665544332211ull);
+    require(decoded_batch.groups.size() == 1);
+    require(decoded_batch.groups[0].projectile_template_id == 3);
+    require(decoded_batch.groups[0].records.size() == 1);
+    require(decoded_batch.groups[0].records[0].projectile_net_id == 101);
+    require(decoded_batch.groups[0].records[0].owner_net_id == 11);
+    require(decoded_batch.groups[0].records[0].owner_peer == 7);
+    require(decoded_batch.groups[0].records[0].action_instance_id == 1234);
+    require(nearly_equal(decoded_batch.groups[0].records[0].spawn_position.y, 2.0f));
+    require(nearly_equal(decoded_batch.groups[0].records[0].initial_velocity.z, 6.0f));
 
     std::vector<std::uint8_t> bad_batch_crc = batch_packet;
     bad_batch_crc.back() ^= 0xffu;
-    assert(!network_example::decode_projectile_spawn_batch_packet(
+    require(!network_example::decode_projectile_spawn_batch_packet(
         bad_batch_crc.data(),
         bad_batch_crc.size(),
         &decoded_batch));
@@ -1013,23 +1012,23 @@ int main() {
         network_example::encode_local_action_result_batch_packet(
             local_results,
             21);
-    assert(local_result_packet.size() == 28u + 8u + 12u);
+    require(local_result_packet.size() == 28u + 8u + 12u);
     network_example::LocalActionResultBatchPacket decoded_local_results{};
-    assert(network_example::decode_local_action_result_batch_packet(
+    require(network_example::decode_local_action_result_batch_packet(
         local_result_packet.data(),
         local_result_packet.size(),
         &decoded_local_results));
-    assert(decoded_local_results.server_tick == 44);
-    assert(decoded_local_results.records.size() == 1);
-    assert(decoded_local_results.records[0].action_instance_id == 7001);
-    assert(decoded_local_results.records[0].confirmed_commit_count == 2);
-    assert(decoded_local_results.records[0].result ==
+    require(decoded_local_results.server_tick == 44);
+    require(decoded_local_results.records.size() == 1);
+    require(decoded_local_results.records[0].action_instance_id == 7001);
+    require(decoded_local_results.records[0].confirmed_commit_count == 2);
+    require(decoded_local_results.records[0].result ==
            KernelLocalActionResultType_Corrected);
     local_results.records.resize(97u);
-    assert(network_example::encode_local_action_result_batch_packet(
+    require(network_example::encode_local_action_result_batch_packet(
                local_results, 22).size() == 1200u);
     local_results.records.resize(98u);
-    assert(network_example::encode_local_action_result_batch_packet(
+    require(network_example::encode_local_action_result_batch_packet(
                local_results, 23).size() == 1212u);
 
     network_example::RemoteActionPresentationBatchPacket presentation{};
@@ -1048,18 +1047,18 @@ int main() {
         network_example::encode_remote_action_presentation_batch_packet(
             presentation,
             22);
-    assert(presentation_packet.size() == 28u + 8u + 28u);
+    require(presentation_packet.size() == 28u + 8u + 28u);
     network_example::RemoteActionPresentationBatchPacket decoded_presentation{};
-    assert(network_example::decode_remote_action_presentation_batch_packet(
+    require(network_example::decode_remote_action_presentation_batch_packet(
         presentation_packet.data(),
         presentation_packet.size(),
         &decoded_presentation));
-    assert(decoded_presentation.records.size() == 1);
-    assert(decoded_presentation.records[0].actor_net_id == 101);
-    assert(decoded_presentation.records[0].commit_count == 3);
-    assert(decoded_presentation.records[0].server_tick_delta == 2);
-    assert(decoded_presentation.records[0].status_effect_id == 0u);
-    assert(decoded_presentation.records[0].duration_ticks == 0u);
+    require(decoded_presentation.records.size() == 1);
+    require(decoded_presentation.records[0].actor_net_id == 101);
+    require(decoded_presentation.records[0].commit_count == 3);
+    require(decoded_presentation.records[0].server_tick_delta == 2);
+    require(decoded_presentation.records[0].status_effect_id == 0u);
+    require(decoded_presentation.records[0].duration_ticks == 0u);
 
     presentation.records.clear();
     presentation.records.push_back(KernelRemoteActionPresentationEvent{
@@ -1080,18 +1079,18 @@ int main() {
         network_example::encode_remote_action_presentation_batch_packet(
             presentation,
             23);
-    assert(status_presentation_packet.size() == 28u + 8u + 28u);
-    assert(network_example::decode_remote_action_presentation_batch_packet(
+    require(status_presentation_packet.size() == 28u + 8u + 28u);
+    require(network_example::decode_remote_action_presentation_batch_packet(
         status_presentation_packet.data(),
         status_presentation_packet.size(),
         &decoded_presentation));
-    assert(decoded_presentation.records.size() == 1u);
-    assert(decoded_presentation.records[0].event_type ==
+    require(decoded_presentation.records.size() == 1u);
+    require(decoded_presentation.records[0].event_type ==
            KernelRemoteActionPresentationEventType_StatusApplied);
-    assert(decoded_presentation.records[0].status_effect_id == 1001u);
-    assert(decoded_presentation.records[0].status_instance_id == 77u);
-    assert(decoded_presentation.records[0].status_channel_id == 0u);
-    assert(decoded_presentation.records[0].duration_ticks == 0u);
+    require(decoded_presentation.records[0].status_effect_id == 1001u);
+    require(decoded_presentation.records[0].status_instance_id == 77u);
+    require(decoded_presentation.records[0].status_channel_id == 0u);
+    require(decoded_presentation.records[0].duration_ticks == 0u);
 
     presentation.records.clear();
     presentation.records.push_back(KernelRemoteActionPresentationEvent{
@@ -1112,7 +1111,7 @@ int main() {
         network_example::encode_remote_action_presentation_batch_packet(
             presentation,
             24);
-    assert(!network_example::decode_remote_action_presentation_batch_packet(
+    require(!network_example::decode_remote_action_presentation_batch_packet(
         invalid_status_presentation_packet.data(),
         invalid_status_presentation_packet.size(),
         &decoded_presentation));
@@ -1129,15 +1128,15 @@ int main() {
         2,
     });
     presentation.records.resize(58u);
-    assert(network_example::encode_remote_action_presentation_batch_packet(
+    require(network_example::encode_remote_action_presentation_batch_packet(
                presentation, 25).size() == 1660u);
     presentation.records.resize(59u);
-    assert(network_example::encode_remote_action_presentation_batch_packet(
+    require(network_example::encode_remote_action_presentation_batch_packet(
                presentation, 26).size() == 1688u);
 
     std::vector<std::uint8_t> bad_presentation_count = presentation_packet;
     bad_presentation_count[32] = 2u;
-    assert(!network_example::decode_remote_action_presentation_batch_packet(
+    require(!network_example::decode_remote_action_presentation_batch_packet(
         bad_presentation_count.data(),
         bad_presentation_count.size(),
         &decoded_presentation));
@@ -1156,14 +1155,14 @@ int main() {
     const std::vector<std::uint8_t> gameplay_request_packet =
         network_example::encode_gameplay_request_packet(gameplay_request, 26);
     KernelGameplayRequest decoded_gameplay_request{};
-    assert(network_example::decode_gameplay_request_packet(
+    require(network_example::decode_gameplay_request_packet(
         gameplay_request_packet.data(),
         gameplay_request_packet.size(),
         &decoded_gameplay_request));
-    assert(decoded_gameplay_request.request_id == 10001);
-    assert(decoded_gameplay_request.domain_action == KernelDomainAction_Consume);
-    assert(decoded_gameplay_request.selected_item_instance_id == 9001);
-    assert(decoded_gameplay_request.requested_quantity == 2);
+    require(decoded_gameplay_request.request_id == 10001);
+    require(decoded_gameplay_request.domain_action == KernelDomainAction_Consume);
+    require(decoded_gameplay_request.selected_item_instance_id == 9001);
+    require(decoded_gameplay_request.requested_quantity == 2);
 
     KernelGameplayRequestOutcome gameplay_outcome{};
     gameplay_outcome.struct_size = sizeof(gameplay_outcome);
@@ -1178,15 +1177,15 @@ int main() {
         network_example::encode_gameplay_request_outcome_packet(
             gameplay_outcome, 27);
     KernelGameplayRequestOutcome decoded_gameplay_outcome{};
-    assert(network_example::decode_gameplay_request_outcome_packet(
+    require(network_example::decode_gameplay_request_outcome_packet(
         gameplay_outcome_packet.data(),
         gameplay_outcome_packet.size(),
         &decoded_gameplay_outcome));
-    assert(decoded_gameplay_outcome.status ==
+    require(decoded_gameplay_outcome.status ==
            KernelGameplayRequestStatus_Committed);
-    assert(decoded_gameplay_outcome.graph_outcome ==
+    require(decoded_gameplay_outcome.graph_outcome ==
            KernelGameplayGraphOutcome_Succeeded);
-    assert(decoded_gameplay_outcome.committed_quantity == 2);
+    require(decoded_gameplay_outcome.committed_quantity == 2);
 
     network_example::InventoryDeltaBatchPacket inventory_batch;
     inventory_batch.inventory_container_id = 70;
@@ -1207,24 +1206,24 @@ int main() {
     inventory_batch.records.push_back(remove);
     const auto inventory_packet =
         network_example::encode_inventory_delta_batch_packet(inventory_batch, 28);
-    assert(inventory_packet.size() == 97u);
+    require(inventory_packet.size() == 97u);
     network_example::InventoryDeltaBatchPacket decoded_inventory;
-    assert(network_example::decode_inventory_delta_batch_packet(
+    require(network_example::decode_inventory_delta_batch_packet(
         inventory_packet.data(), inventory_packet.size(), &decoded_inventory));
-    assert(decoded_inventory.first_revision == 4);
-    assert(decoded_inventory.records.size() == 2);
-    assert(decoded_inventory.records[0].item.portable_values[0] == 12u);
+    require(decoded_inventory.first_revision == 4);
+    require(decoded_inventory.records.size() == 2);
+    require(decoded_inventory.records[0].item.portable_values[0] == 12u);
 
     network_example::InventorySnapshotRequestPacket snapshot_request{70, 3};
     const auto snapshot_request_bytes =
         network_example::encode_inventory_snapshot_request_packet(
             snapshot_request, 29);
-    assert(snapshot_request_bytes.size() == 44u);
+    require(snapshot_request_bytes.size() == 44u);
     network_example::InventorySnapshotRequestPacket decoded_snapshot_request;
-    assert(network_example::decode_inventory_snapshot_request_packet(
+    require(network_example::decode_inventory_snapshot_request_packet(
         snapshot_request_bytes.data(), snapshot_request_bytes.size(),
         &decoded_snapshot_request));
-    assert(decoded_snapshot_request.client_revision == 3);
+    require(decoded_snapshot_request.client_revision == 3);
 
     network_example::InventorySnapshotPagePacket inventory_snapshot;
     inventory_snapshot.inventory_container_id = 70;
@@ -1236,13 +1235,13 @@ int main() {
     const auto inventory_snapshot_bytes =
         network_example::encode_inventory_snapshot_page_packet(
             inventory_snapshot, 30);
-    assert(inventory_snapshot_bytes.size() == 89u);
+    require(inventory_snapshot_bytes.size() == 89u);
     network_example::InventorySnapshotPagePacket decoded_inventory_snapshot;
-    assert(network_example::decode_inventory_snapshot_page_packet(
+    require(network_example::decode_inventory_snapshot_page_packet(
         inventory_snapshot_bytes.data(), inventory_snapshot_bytes.size(),
         &decoded_inventory_snapshot));
-    assert(decoded_inventory_snapshot.entries.size() == 1);
-    assert(decoded_inventory_snapshot.entries[0].slot == 2);
+    require(decoded_inventory_snapshot.entries.size() == 1);
+    require(decoded_inventory_snapshot.entries[0].slot == 2);
 
     network_example::PropStateChangeBatchPacket prop_changes;
     prop_changes.server_tick = 50;
@@ -1261,23 +1260,23 @@ int main() {
     prop_changes.records.push_back(prop_change);
     const auto prop_change_bytes =
         network_example::encode_prop_state_change_batch_packet(prop_changes, 31);
-    assert(prop_change_bytes.size() == 88u);
+    require(prop_change_bytes.size() == 88u);
     network_example::PropStateChangeBatchPacket decoded_prop_changes;
-    assert(network_example::decode_prop_state_change_batch_packet(
+    require(network_example::decode_prop_state_change_batch_packet(
         prop_change_bytes.data(), prop_change_bytes.size(),
         &decoded_prop_changes));
-    assert(decoded_prop_changes.records[0].world_mode ==
+    require(decoded_prop_changes.records[0].world_mode ==
         KernelWorldItemMode_InFlight);
-    assert(decoded_prop_changes.records[0].hp == 3u);
-    assert(decoded_prop_changes.records[0].max_hp == 5u);
+    require(decoded_prop_changes.records[0].hp == 3u);
+    require(decoded_prop_changes.records[0].max_hp == 5u);
     network_example::PropStateChangeBatchPacket invalid_prop_health = prop_changes;
     invalid_prop_health.records[0].hp = 6;
-    assert(network_example::encode_prop_state_change_batch_packet(
+    require(network_example::encode_prop_state_change_batch_packet(
                invalid_prop_health, 32).empty());
 
     std::vector<std::uint8_t> bad_header = input_packet;
     bad_header[0] = 0;
-    assert(!network_example::decode_player_input_packet(
+    require(!network_example::decode_player_input_packet(
         bad_header.data(),
         bad_header.size(),
         &decoded_player,
@@ -1285,28 +1284,28 @@ int main() {
 
     std::vector<std::uint8_t> bad_crc = input_packet;
     bad_crc.back() ^= 0xffu;
-    assert(!network_example::decode_player_input_packet(
+    require(!network_example::decode_player_input_packet(
         bad_crc.data(),
         bad_crc.size(),
         &decoded_player,
         &decoded_input));
     std::vector<std::uint8_t> bad_reliable_crc = reliable_event_packet;
     bad_reliable_crc.back() ^= 0xffu;
-    assert(!network_example::decode_reliable_event_packet(
+    require(!network_example::decode_reliable_event_packet(
         bad_reliable_crc.data(),
         bad_reliable_crc.size(),
         &decoded_event));
 
     std::vector<std::uint8_t> bad_size = input_packet;
     bad_size.pop_back();
-    assert(!network_example::decode_player_input_packet(
+    require(!network_example::decode_player_input_packet(
         bad_size.data(),
         bad_size.size(),
         &decoded_player,
         &decoded_input));
     std::vector<std::uint8_t> bad_reliable_size = reliable_event_packet;
     bad_reliable_size.pop_back();
-    assert(!network_example::decode_reliable_event_packet(
+    require(!network_example::decode_reliable_event_packet(
         bad_reliable_size.data(),
         bad_reliable_size.size(),
         &decoded_event));

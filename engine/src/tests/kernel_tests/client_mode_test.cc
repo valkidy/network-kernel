@@ -1,6 +1,5 @@
 #include <algorithm>
 #include <array>
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -456,13 +455,13 @@ void presentation_gate_releases_at_render_time() {
         100000});
 
     std::array<KernelEvent, 4> events{};
-    assert(engine.poll_events(events.data(), static_cast<std::uint32_t>(events.size())) == 0);
+    require(engine.poll_events(events.data(), static_cast<std::uint32_t>(events.size())) == 0);
 
     network_example::WorldSnapshot early_snapshot;
     early_snapshot.header.server_tick = 2;
     engine.handle_client_snapshot(early_snapshot);
     engine.rebuild_render_states();
-    assert(engine.poll_events(events.data(), static_cast<std::uint32_t>(events.size())) == 0);
+    require(engine.poll_events(events.data(), static_cast<std::uint32_t>(events.size())) == 0);
 
     network_example::WorldSnapshot later_snapshot;
     later_snapshot.header.server_tick = 10;
@@ -471,10 +470,10 @@ void presentation_gate_releases_at_render_time() {
 
     const std::uint32_t event_count =
         engine.poll_events(events.data(), static_cast<std::uint32_t>(events.size()));
-    assert(event_count == 1);
-    assert(events[0].type == KernelEventType_DamageApplied);
-    assert(events[0].event_time_us == 100000);
-    assert(events[0].presentation_time_us == 100000);
+    require(event_count == 1);
+    require(events[0].type == KernelEventType_DamageApplied);
+    require(events[0].event_time_us == 100000);
+    require(events[0].presentation_time_us == 100000);
 }
 
 void clock_sync_ping_pong_updates_peer_offset() {
@@ -511,11 +510,11 @@ void clock_sync_ping_pong_updates_peer_offset() {
     event.payload = network_example::encode_ping_pong_packet(pong, 1);
     engine.handle_server_ping_pong(event);
 
-    assert(session.has_clock_sync);
-    assert(session.pending_clock_sync_nonce == 0);
-    assert(session.clock_offset_us == -40500);
-    assert(session.last_clock_sync_rtt_us == 19000);
-    assert(engine.convert_client_action_time_to_server_time(7, 180500, 120000) ==
+    require(session.has_clock_sync);
+    require(session.pending_clock_sync_nonce == 0);
+    require(session.clock_offset_us == -40500);
+    require(session.last_clock_sync_rtt_us == 19000);
+    require(engine.convert_client_action_time_to_server_time(7, 180500, 120000) ==
            140000);
 }
 
@@ -538,7 +537,7 @@ void compensation_clamps_not_rejects_client_local_time() {
     session.clock_offset_us = -50000;
 
     const std::uint64_t received_server_time_us = 200000;
-    assert(engine.convert_client_action_time_to_server_time(
+    require(engine.convert_client_action_time_to_server_time(
                7,
                180000,
                received_server_time_us) == 130000);
@@ -555,8 +554,8 @@ void compensation_clamps_not_rejects_client_local_time() {
             received_server_time_us),
         true,
     };
-    assert(engine.compensated_action_time_us(within_window) == 130000);
-    assert(engine.rewind_tick_for_input(within_window) == 130);
+    require(engine.compensated_action_time_us(within_window) == 130000);
+    require(engine.rewind_tick_for_input(within_window) == 130);
 
     input.client_action_time_us = 100000;
     network_example::QueuedInput older_than_window{
@@ -569,8 +568,8 @@ void compensation_clamps_not_rejects_client_local_time() {
             received_server_time_us),
         true,
     };
-    assert(engine.compensated_action_time_us(older_than_window) == 100000);
-    assert(engine.rewind_tick_for_input(older_than_window) == 100);
+    require(engine.compensated_action_time_us(older_than_window) == 100000);
+    require(engine.rewind_tick_for_input(older_than_window) == 100);
 
     input.client_action_time_us = 275000;
     network_example::QueuedInput newer_than_receive{
@@ -583,11 +582,11 @@ void compensation_clamps_not_rejects_client_local_time() {
             received_server_time_us),
         true,
     };
-    assert(engine.compensated_action_time_us(newer_than_receive) == 200000);
-    assert(engine.rewind_tick_for_input(newer_than_receive) == 200);
+    require(engine.compensated_action_time_us(newer_than_receive) == 200000);
+    require(engine.rewind_tick_for_input(newer_than_receive) == 200);
 
     session.has_clock_sync = false;
-    assert(engine.convert_client_action_time_to_server_time(
+    require(engine.convert_client_action_time_to_server_time(
                7,
                180000,
                received_server_time_us) == received_server_time_us);
@@ -602,7 +601,7 @@ void client_replies_to_clock_sync_ping() {
     network_example::KernelEngine engine(config);
     engine.reset_runtime_state(KernelMode_Client);
     engine.transport_ = std::make_unique<network_example::LoopbackTransport>();
-    assert(engine.transport_->StartServer(7777));
+    require(engine.transport_->StartServer(7777));
     engine.client_local_time_us_ = 456000;
 
     network_example::TransportEvent event;
@@ -612,22 +611,22 @@ void client_replies_to_clock_sync_ping() {
         network_example::PingPongPacket{9, 123000, 0, 0},
         2);
     engine.handle_client_ping_pong(event);
-    assert(engine.has_client_clock_sync_);
-    assert(engine.client_clock_offset_us_ == -333000);
+    require(engine.has_client_clock_sync_);
+    require(engine.client_clock_offset_us_ == -333000);
 
     auto* loopback =
         static_cast<network_example::LoopbackTransport*>(engine.transport_.get());
     network_example::TransportEvent reply;
-    assert(loopback->PollClientEvent(reply));
+    require(loopback->PollClientEvent(reply));
     network_example::PingPongPacket decoded_reply;
-    assert(network_example::decode_ping_pong_packet(
+    require(network_example::decode_ping_pong_packet(
         reply.payload.data(),
         reply.payload.size(),
         &decoded_reply));
-    assert(decoded_reply.nonce == 9);
-    assert(decoded_reply.server_send_time_us == 123000);
-    assert(decoded_reply.client_receive_time_us == 456000);
-    assert(decoded_reply.client_send_time_us == 456000);
+    require(decoded_reply.nonce == 9);
+    require(decoded_reply.server_send_time_us == 123000);
+    require(decoded_reply.client_receive_time_us == 456000);
+    require(decoded_reply.client_send_time_us == 456000);
 }
 
 void client_applies_server_tick_config_from_welcome() {
@@ -935,7 +934,7 @@ void render_states_at_time_interpolates_and_clamps() {
 
     network_example::KernelEngine empty_engine(config);
     std::array<RenderEntityState, 4> states{};
-    assert(empty_engine.get_render_states_at_time(
+    require(empty_engine.get_render_states_at_time(
                31000,
                states.data(),
                static_cast<std::uint32_t>(states.size())) == 0);
@@ -976,24 +975,24 @@ void render_states_at_time_interpolates_and_clamps() {
         31000,
         states.data(),
         static_cast<std::uint32_t>(states.size()));
-    assert(count == 1);
-    assert(states[0].net_id == 42);
-    assert(states[0].position.x > 9.99f);
-    assert(states[0].position.x < 10.01f);
+    require(count == 1);
+    require(states[0].net_id == 42);
+    require(states[0].position.x > 9.99f);
+    require(states[0].position.x < 10.01f);
 
     count = engine.get_render_states_at_time(
         25000,
         states.data(),
         static_cast<std::uint32_t>(states.size()));
-    assert(count == 1);
-    assert(states[0].position.x == 0.0f);
+    require(count == 1);
+    require(states[0].position.x == 0.0f);
 
     count = engine.get_render_states_at_time(
         40000,
         states.data(),
         static_cast<std::uint32_t>(states.size()));
-    assert(count == 1);
-    assert(states[0].position.x == 20.0f);
+    require(count == 1);
+    require(states[0].position.x == 20.0f);
 
     network_example::KernelEngine single_snapshot_engine(config);
     single_snapshot_engine.reset_runtime_state(KernelMode_Client);
@@ -1019,9 +1018,9 @@ void render_states_at_time_interpolates_and_clamps() {
         999999,
         states.data(),
         static_cast<std::uint32_t>(states.size()));
-    assert(count == 1);
-    assert(states[0].net_id == 77);
-    assert(states[0].position.x == 7.0f);
+    require(count == 1);
+    require(states[0].net_id == 77);
+    require(states[0].position.x == 7.0f);
 }
 
 void remote_projectile_uses_interpolated_past_timeline() {
@@ -1074,17 +1073,17 @@ void remote_projectile_uses_interpolated_past_timeline() {
         31000,
         states.data(),
         static_cast<std::uint32_t>(states.size()));
-    assert(count == 2);
+    require(count == 2);
     bool saw_projectile = false;
     for (std::uint32_t index = 0; index < count; ++index) {
         if (states[index].net_id == 43) {
             saw_projectile = true;
-            assert(states[index].entity_type == 3);
-            assert(states[index].position.x > 109.99f);
-            assert(states[index].position.x < 110.01f);
+            require(states[index].entity_type == 3);
+            require(states[index].position.x > 109.99f);
+            require(states[index].position.x < 110.01f);
         }
     }
-    assert(saw_projectile);
+    require(saw_projectile);
 }
 
 void local_projectile_snapshot_fast_forwards_and_preserves_correction() {
@@ -1122,33 +1121,33 @@ void local_projectile_snapshot_fast_forwards_and_preserves_correction() {
         glm::vec3{5.0f, 0.0f, 0.0f},
         glm::vec3{100.0f, 0.0f, 0.0f}));
 
-    assert(engine.predicted_projectiles_.size() == 1);
+    require(engine.predicted_projectiles_.size() == 1);
     const network_example::KernelEngine::PredictedProjectile& bound =
         engine.predicted_projectiles_[0];
-    assert(bound.entity_id == 9000);
-    assert(bound.net_id == 55);
-    assert(bound.bound);
-    assert(bound.spawn_position.x == 5.0f);
-    assert(bound.initial_velocity.x == 100.0f);
-    assert(bound.age_ticks == 10u);
-    assert(bound.position.x > 5.99f);
-    assert(bound.position.x < 6.01f);
-    assert(bound.correction_offset.x > 0.19f);
-    assert(bound.correction_offset.x < 0.21f);
+    require(bound.entity_id == 9000);
+    require(bound.net_id == 55);
+    require(bound.bound);
+    require(bound.spawn_position.x == 5.0f);
+    require(bound.initial_velocity.x == 100.0f);
+    require(bound.age_ticks == 10u);
+    require(bound.position.x > 5.99f);
+    require(bound.position.x < 6.01f);
+    require(bound.correction_offset.x > 0.19f);
+    require(bound.correction_offset.x < 0.21f);
 
     engine.rebuild_render_states();
-    assert(engine.render_states_.size() == 1);
-    assert(engine.render_states_[0].entity_id == 9000);
-    assert(engine.render_states_[0].net_id == 55);
-    assert(engine.render_states_[0].position.x > 6.19f);
-    assert(engine.render_states_[0].position.x < 6.21f);
+    require(engine.render_states_.size() == 1);
+    require(engine.render_states_[0].entity_id == 9000);
+    require(engine.render_states_[0].net_id == 55);
+    require(engine.render_states_[0].position.x > 6.19f);
+    require(engine.render_states_[0].position.x < 6.21f);
 
     engine.rebuild_render_states();
-    assert(engine.render_states_.size() == 1);
-    assert(engine.render_states_[0].position.x > 6.19f);
-    assert(engine.render_states_[0].position.x < 6.21f);
-    assert(bound.correction_offset.x > 0.19f);
-    assert(bound.correction_offset.x < 0.21f);
+    require(engine.render_states_.size() == 1);
+    require(engine.render_states_[0].position.x > 6.19f);
+    require(engine.render_states_[0].position.x < 6.21f);
+    require(bound.correction_offset.x > 0.19f);
+    require(bound.correction_offset.x < 0.21f);
 }
 
 void homing_projectile_snapshot_extrapolation_is_bounded() {
@@ -1185,13 +1184,13 @@ void homing_projectile_snapshot_extrapolation_is_bounded() {
         glm::vec3{5.0f, 0.0f, 0.0f},
         glm::vec3{100.0f, 0.0f, 0.0f}));
 
-    assert(engine.predicted_projectiles_.size() == 1);
+    require(engine.predicted_projectiles_.size() == 1);
     const network_example::KernelEngine::PredictedProjectile& bound =
         engine.predicted_projectiles_[0];
-    assert(bound.bound);
-    assert(bound.age_ticks == 200u);
-    assert(bound.position.x > 24.99f);
-    assert(bound.position.x < 25.01f);
+    require(bound.bound);
+    require(bound.age_ticks == 200u);
+    require(bound.position.x > 24.99f);
+    require(bound.position.x < 25.01f);
 }
 
 void render_query_uses_query_independent_local_presentation() {
@@ -5706,8 +5705,8 @@ int main() {
     config.tick.snapshot_rate = 15;
 
     KernelHandle* kernel = Kernel_Create(&config);
-    assert(kernel != nullptr);
-    assert(Kernel_StartClient(kernel, "127.0.0.1:9"));
+    require(kernel != nullptr);
+    require(Kernel_StartClient(kernel, "127.0.0.1:9"));
 
     KernelPlayerInput input{};
     input.input_seq = 1;
@@ -5723,7 +5722,7 @@ int main() {
     for (std::uint32_t index = 0; index < event_count; ++index) {
         saw_error = saw_error || events[index].type == KernelEventType_Error;
     }
-    assert(saw_error);
+    require(saw_error);
 
     Kernel_Destroy(kernel);
     return 0;

@@ -8,9 +8,9 @@
 //
 // That is a trade, not a free win -- in open air it pays for two casts instead
 // of one. These are the numbers that say whether it is worth it.
-#include <cassert>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -18,6 +18,20 @@
 
 #include "physics/public/physics_world.h"
 #include "simulation/public/simulation.h"
+
+namespace {
+
+void require_impl(bool condition, const char* expression, int line) {
+    if (!condition) {
+        std::fprintf(stderr, "require failed at line %d: %s\n", line, expression);
+        std::abort();
+    }
+}
+
+}  // namespace
+
+#define require(condition) \
+    require_impl(static_cast<bool>(condition), #condition, __LINE__)
 
 namespace ne = network_example;
 
@@ -37,7 +51,7 @@ ne::NetId add_actor(
     std::uint32_t collider_id) {
     const ne::NetId net_id = world.spawn_enemy(position);
     const auto entity = world.find_entity(net_id);
-    assert(entity.has_value());
+    require(entity.has_value());
     world.registry().get<ne::Health>(*entity) = ne::Health{10000, 10000};
     ne::physics::CollisionObjectDescriptor object;
     object.identity = ne::physics::CollisionObjectIdentity{
@@ -50,7 +64,7 @@ ne::NetId add_actor(
     object.shape.half_extents = glm::vec3{0.35f, 0.9f, 0.35f};
     object.position = position;
     std::string error;
-    assert(physics.upsert_object(object, &error));
+    require(physics.upsert_object(object, &error));
     return net_id;
 }
 
@@ -80,13 +94,13 @@ void run(const Scenario& scenario, int ticks) {
         wall.shape.half_extents = glm::vec3{0.25f, 3.0f, 3.0f};
         wall.position = glm::vec3{scenario.wall_distance, 0.5f, 0.0f};
         std::string error;
-        assert(physics.upsert_object(wall, &error));
+        require(physics.upsert_object(wall, &error));
     }
 
     const ne::NetId beam_net_id =
         world.spawn_projectile(1, glm::vec3{0.0f, 0.5f, 0.0f}, glm::vec3{0.0f});
     const auto beam_entity = world.find_entity(beam_net_id);
-    assert(beam_entity.has_value());
+    require(beam_entity.has_value());
     world.registry().get<ne::ProjectileState>(*beam_entity).max_lifetime_ticks = 0;
     world.registry().emplace<ne::ProjectileBeamRuntime>(
         *beam_entity,

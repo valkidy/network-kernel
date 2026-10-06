@@ -32,7 +32,7 @@ constexpr float kTickSeconds = 1.0f / 30.0f;
 // Fire Floor: the catalog's weapon that casts an area effect. The tornado has
 // no weapon of its own yet, so this test points Fire Floor at it.
 constexpr std::uint8_t kFireFloor = 4;
-constexpr std::uint16_t kPort = 7997;
+constexpr std::uint16_t kPort = 8030;
 
 void require_impl(bool condition, int line, const char* text) {
     if (condition) {
