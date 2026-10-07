@@ -267,6 +267,7 @@ cc_shared_library(
             "-Wl,-exported_symbol,_Kernel_ServerSetItemDropTag",
             "-Wl,-exported_symbol,_Kernel_ServerClearUntaggedItems",
             "-Wl,-exported_symbol,_Kernel_ServerDropInventoryItem",
+            "-Wl,-exported_symbol,_Kernel_ServerDropTaggedItems",
             "-Wl,-exported_symbol,_Kernel_ServerCreateWeaponContainer",
             "-Wl,-exported_symbol,_Kernel_ServerCreateStockContainer",
             "-Wl,-exported_symbol,_Kernel_SendGameMessage",

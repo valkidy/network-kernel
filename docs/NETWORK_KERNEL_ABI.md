@@ -46,7 +46,11 @@ adds the container kind to inventory snapshot pages. Drop tags (K12):
 `KernelInventoryChange_DropTag` (bit 3) joined `_All`. New exports:
 `Kernel_ServerSetItemDropTag`, `Kernel_ServerClearUntaggedItems` and
 `Kernel_ServerDropInventoryItem` (an inventory item onto the ground as
-itself, resting on the terrain beneath the given point). Fungible stacks merge only on an equal tag; a split keeps its
+itself, resting on the terrain beneath the given point), and
+`Kernel_ServerDropTaggedItems` (every tagged item an owner holds, on a 1 m
+ring round a point, or round the owner -- its entry point when sheltered;
+the kernel also calls it for a disconnecting player, and removes that player's
+containers). Fungible stacks merge only on an equal tag; a split keeps its
 source's. Packet schema 29 carries the tag in inventory records. Camps (K9):
 `KernelInventoryContainerKind_Stock` (2) and `Kernel_ServerCreateStockContainer`
 (a camp's stock: weapons and items in any slot, removed with its owner);

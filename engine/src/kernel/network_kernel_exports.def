@@ -68,6 +68,7 @@ EXPORTS
     Kernel_ServerSetItemDropTag
     Kernel_ServerClearUntaggedItems
     Kernel_ServerDropInventoryItem
+    Kernel_ServerDropTaggedItems
     Kernel_ServerCreateWeaponContainer
     Kernel_ServerCreateStockContainer
     Kernel_SendGameMessage

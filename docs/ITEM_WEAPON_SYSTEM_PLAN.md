@@ -268,7 +268,9 @@ Unity 端（不在這個 repo）：slot 數 0 時的動畫、瞄準 IK、HUD 需
   這也套用到 D23 的「地圖武器丟到腳下」。
 - 武器離開武器容器時，彈匣和 reserve 會先寫回 item（`rebuild_weapon_loadout`）。
 - 現有 API 不能直接用的原因：`Kernel_ServerCreateWorldItem` 會建立新的物品（id 不同、portable state 不帶過去）；Place 會拒絕已經死亡的玩家（`InstigatorDead`）。
-- 仍未處理：死亡時丟下 carry 中的 prop；玩家離線（`PlayerLeft`）時身上的帶標記物品不會掉落。
+- **離線掉落（2026-10-08，使用者決定方案 A、任務道具掉在原地）**：kernel 在斷線處理中、刪除玩家之前，用同一個 `Kernel_ServerDropTaggedItems` 放下帶標記的物品（在建築裡時用進入時的位置），然後刪除這個玩家的所有容器。沒有標記的物品跟著玩家消失。之前斷線路徑直接刪除玩家，容器和物品會一直留在 item store 裡沒有擁有者。
+  死亡掉落也改呼叫同一個 API（game_server 不再自己排位置），兩者的排法一致。已經在死亡時掉落過的，斷線時不會再掉一次。測試：`disconnect_drop_test`。
+- 仍未處理：死亡時丟下 carry 中的 prop。
 
 ### 3.9 操作介面（Unity）
 

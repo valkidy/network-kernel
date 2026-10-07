@@ -429,6 +429,23 @@ bool Kernel_ServerCreateWeaponContainer(
     KernelInventoryContainerId* out_container_id);
 
 /*
+ * Drops every item whose drop tag is not NONE, from every container
+ * `owner_entity_id` owns, onto the ground as itself (see
+ * Kernel_ServerDropInventoryItem): spread on a 1 m ring round `position`, or,
+ * when `position` is null, round the owner -- where it went in, if it is
+ * inside a building. Untagged items stay. *out_dropped_count (optional) is how
+ * many went down. False on a client or for an unknown owner (ABI 101).
+ *
+ * What a death drops (game_server calls it), and what the kernel itself drops
+ * when a player disconnects, before the player is removed.
+ */
+bool Kernel_ServerDropTaggedItems(
+    KernelHandle* kernel,
+    uint32_t owner_entity_id,
+    const KernelVec3* position,
+    uint32_t* out_dropped_count);
+
+/*
  * Creates a stock container (ABI 101; KernelInventoryContainerKind_Stock) of
  * `slot_capacity` slots owned by `owner_entity_id` -- a camp. It holds
  * anything, is sent only to those inside its owner (and never to its owner,

@@ -50,7 +50,8 @@
  *     bytes), appended; KernelItemTemplateDefinition's reserved_weapon became
  *     default_drop_tag; KernelInventoryChange gained _DropTag, now part of
  *     _All. Kernel_ServerSetItemDropTag, Kernel_ServerClearUntaggedItems and
- *     Kernel_ServerDropInventoryItem were added. Packet schema 29 carries the
+ *     Kernel_ServerDropInventoryItem were added (and later
+ *     Kernel_ServerDropTaggedItems, which a disconnect also runs). Packet schema 29 carries the
  *     tag in inventory records.
  *     Camps (K9): KernelInventoryContainerKind_Stock and
  *     Kernel_ServerCreateStockContainer; KernelDomainAction_Transfer takes

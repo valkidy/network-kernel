@@ -154,43 +154,10 @@ void GameServer::drop_tagged_items(std::uint32_t net_id) const {
     if (kernel_ == nullptr) {
         return;
     }
-    KernelServerEntityState me{};
-    me.struct_size = sizeof(me);
-    if (!Kernel_ServerGetEntityState(kernel_, net_id, &me)) {
-        return;
-    }
-    std::vector<KernelItemInstanceId> tagged;
-    KernelInventoryContainerView owned[4]{};
-    for (KernelInventoryContainerView& view : owned) view.struct_size = sizeof(view);
-    const std::uint32_t count =
-        Kernel_CopyOwnedInventoryContainers(kernel_, net_id, owned, 4u);
-    for (std::uint32_t index = 0; index < count; ++index) {
-        std::vector<KernelItemInstanceView> held(owned[index].slot_capacity);
-        for (KernelItemInstanceView& view : held) view.struct_size = sizeof(view);
-        held.resize(Kernel_CopyInventorySlots(
-            kernel_, owned[index].inventory_container_id, held.data(),
-            static_cast<std::uint32_t>(held.size())));
-        for (const KernelItemInstanceView& item : held) {
-            if (item.drop_tag != KERNEL_DROP_TAG_NONE) {
-                tagged.push_back(item.item_instance_id);
-            }
-        }
-    }
-    // Spread on a ring round where they fell, so no two land in one spot; the
-    // kernel puts each on the ground beneath its point.
-    constexpr float kRadius = 1.0f;
-    constexpr float kTwoPi = 6.28318530718f;
-    for (std::size_t index = 0; index < tagged.size(); ++index) {
-        const float angle = kTwoPi * static_cast<float>(index) /
-            static_cast<float>(tagged.size());
-        const KernelVec3 at{
-            me.position.x + kRadius * std::cos(angle),
-            me.position.y,
-            me.position.z + kRadius * std::sin(angle)};
-        std::uint32_t prop = 0;
-        if (!Kernel_ServerDropInventoryItem(kernel_, tagged[index], &at, &prop)) {
-            spdlog::warn("death drop failed player={} item={}", net_id, tagged[index]);
-        }
+    // Round where the player fell; the kernel spreads and grounds them.
+    std::uint32_t dropped = 0;
+    if (!Kernel_ServerDropTaggedItems(kernel_, net_id, nullptr, &dropped)) {
+        spdlog::warn("death drop failed player={}", net_id);
     }
 }
 

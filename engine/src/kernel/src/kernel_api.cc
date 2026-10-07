@@ -1029,6 +1029,18 @@ bool Kernel_ServerDropInventoryItem(
     });
 }
 
+bool Kernel_ServerDropTaggedItems(
+    KernelHandle* kernel,
+    uint32_t owner_entity_id,
+    const KernelVec3* position,
+    uint32_t* out_dropped_count) {
+    return abi_call("Kernel_ServerDropTaggedItems", false, [&]() {
+        return kernel != nullptr &&
+            kernel->engine->server_drop_tagged_items(
+                owner_entity_id, position, out_dropped_count);
+    });
+}
+
 bool Kernel_ServerCreateWeaponContainer(
     KernelHandle* kernel,
     uint32_t owner_entity_id,

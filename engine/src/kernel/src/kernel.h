@@ -287,6 +287,10 @@ public:
         KernelItemInstanceId id,
         const KernelVec3& position,
         std::uint32_t* out_prop_entity_id);
+    bool server_drop_tagged_items(
+        std::uint32_t owner_entity_id,
+        const KernelVec3* position,
+        std::uint32_t* out_dropped_count);
     bool server_create_stock_container(
         std::uint32_t owner_entity_id,
         std::uint32_t slot_capacity,

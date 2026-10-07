@@ -5543,6 +5543,71 @@ bool KernelEngine::server_drop_inventory_item(
     return true;
 }
 
+bool KernelEngine::server_drop_tagged_items(
+    std::uint32_t owner_entity_id,
+    const KernelVec3* position,
+    std::uint32_t* out_dropped_count) {
+    if (out_dropped_count != nullptr) *out_dropped_count = 0u;
+    const std::optional<entt::entity> owner = world_.find_entity(owner_entity_id);
+    if (!is_server_mode(config_.mode) || !owner.has_value()) {
+        return false;
+    }
+    glm::vec3 centre{0.0f};
+    if (position != nullptr) {
+        centre = glm::vec3{position->x, position->y, position->z};
+    } else if (const Sheltered* sheltered =
+                   world_.registry().try_get<Sheltered>(*owner);
+               sheltered != nullptr && sheltered->shelter_net_id != 0u) {
+        // Inside a building its position is the building's; where it went in
+        // is outside, and is where it would come out.
+        centre = sheltered->entry_position;
+    } else if (const Transform* transform =
+                   world_.registry().try_get<Transform>(*owner)) {
+        centre = transform->position;
+    }
+    if (!std::isfinite(centre.x) || !std::isfinite(centre.y) ||
+        !std::isfinite(centre.z)) {
+        return false;
+    }
+    std::vector<KernelItemInstanceId> tagged;
+    for (const KernelInventoryContainerId container_id :
+         item_store_.containers_for_owner(owner_entity_id)) {
+        const InventoryContainerRecord* container =
+            item_store_.find_container(container_id);
+        if (container == nullptr) continue;
+        for (const KernelItemInstanceId item_id : container->slots) {
+            const ItemInstanceRecord* item = item_store_.find_item(item_id);
+            if (item != nullptr && !item->terminal &&
+                item->drop_tag != KERNEL_DROP_TAG_NONE) {
+                tagged.push_back(item_id);
+            }
+        }
+    }
+    // A ring, so no two land in one spot; each settles onto the ground under
+    // its own point.
+    constexpr float kRadius = 1.0f;
+    constexpr float kTwoPi = 6.28318530718f;
+    std::uint32_t dropped = 0;
+    for (std::size_t index = 0; index < tagged.size(); ++index) {
+        const float angle =
+            kTwoPi * static_cast<float>(index) / static_cast<float>(tagged.size());
+        const KernelVec3 at{
+            centre.x + kRadius * std::cos(angle),
+            centre.y,
+            centre.z + kRadius * std::sin(angle)};
+        std::uint32_t prop = 0;
+        if (server_drop_inventory_item(tagged[index], at, &prop)) {
+            ++dropped;
+        } else {
+            spdlog::warn(
+                "tagged item not dropped owner={} item={}", owner_entity_id,
+                tagged[index]);
+        }
+    }
+    if (out_dropped_count != nullptr) *out_dropped_count = dropped;
+    return true;
+}
+
 bool KernelEngine::server_create_stock_container(
     std::uint32_t owner_entity_id,
     std::uint32_t slot_capacity,
@@ -7131,6 +7196,17 @@ void KernelEngine::handle_server_disconnect(const TransportEvent& transport_even
         0,
     };
     events_.push_back(player_left);
+
+    // What it carries that outlives it -- quest items, map weapons -- goes
+    // down where it stood, as a death would put it; the rest goes with it, and
+    // so do its containers, so nothing is left owned by no one.
+    const NetId leaving = session->player;
+    (void)server_drop_tagged_items(leaving, nullptr, nullptr);
+    for (const KernelInventoryContainerId container_id :
+         item_store_.containers_for_owner(leaving)) {
+        (void)item_store_.destroy_container(container_id);
+        synced_weapon_revisions_.erase(container_id);
+    }
 
     // Current server mechanism removes the disconnected player immediately.
     // A later policy may preserve selected entities while clearing transient state.

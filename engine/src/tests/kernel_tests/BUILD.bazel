@@ -34,6 +34,12 @@ cc_test(
 )
 
 cc_test(
+    name = "disconnect_drop_test",
+    srcs = ["disconnect_drop_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
+cc_test(
     name = "camp_container_sync_test",
     srcs = ["camp_container_sync_test.cc"],
     deps = ["//engine/src/kernel:kernel"],
