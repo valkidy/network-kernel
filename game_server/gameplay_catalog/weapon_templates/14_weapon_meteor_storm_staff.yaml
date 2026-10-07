@@ -1,6 +1,8 @@
 # Calls 10-15 meteors down within 6 m of the aimed point over two seconds.
 id: 14
 name: Meteor Storm Staff
+# Weapon container slot 0-3 (wand, scepter, staff, tome / their gun twins).
+category: 3
 weapon_type: targeted_strike
 magazine_size: 1
 reserve_magazines: 4

@@ -313,6 +313,11 @@ struct WeaponCatalogConfig {
     std::array<std::string, kWeaponIdCount> names{};
     std::array<std::uint8_t, kWeaponIdCount> projectile_sync_modes{};
     std::array<std::uint32_t, kWeaponIdCount> collider_template_ids{};
+    // `category:` 0..KERNEL_WEAPON_CATEGORY_COUNT-1, the weapon container slot
+    // a weapon item of this weapon goes in. Numbers, not names: the same four
+    // slots serve wands and guns. Needed only by weapons a weapon item names.
+    std::array<bool, kWeaponIdCount> has_category{};
+    std::array<std::uint8_t, kWeaponIdCount> categories{};
 };
 
 struct ActionTemplateConfig {
@@ -423,6 +428,8 @@ struct StatusEffectTemplateConfig {
 struct ItemTemplateConfig {
     std::string name;
     std::string entity_template_ref;
+    // `weapon:` -- the weapon template this item is; empty for anything else.
+    std::string weapon_ref;
     std::string charge_field_ref;
     TriggerBindingConfig item_used_trigger;
     KernelItemTemplateDefinition definition{};

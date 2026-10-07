@@ -1,0 +1,13 @@
+# The Shotgun as an item: picked up into its owner's weapon container at the
+# weapon's category slot, swapped out to the ground by another of the same
+# category, dropped with Place. Its magazine and reserve travel with it.
+id: 3021
+name: stateful_weapon_shotgun
+mode: stateful
+max_stack: 1
+capabilities: [pickupable, deployable]
+entity_template: weapon_pickup
+world_interaction:
+  range: 2.5
+  line_of_sight_required: false
+weapon: Shotgun

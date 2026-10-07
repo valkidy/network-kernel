@@ -3,6 +3,8 @@
 # no charge.
 id: 13
 name: Meteor Staff
+# Weapon container slot 0-3 (wand, scepter, staff, tome / their gun twins).
+category: 1
 weapon_type: targeted_strike
 magazine_size: 3
 reserve_magazines: 6

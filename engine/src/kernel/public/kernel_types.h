@@ -29,6 +29,10 @@
  *     the body. Behind KERNEL_CAPABILITY_GAME_MESSAGES; KernelAbiInfo gained
  *     game_message_size, appended. Packet schema 27 adds the GameMessage
  *     packet.
+ *     Weapon items: KernelItemTemplateDefinition gained is_weapon, weapon_id,
+ *     weapon_category and a reserved byte, appended after item_used_trigger.
+ *     KernelItemTemplateDefinition is embedded in nothing, but its size
+ *     changes, so a mirror sized to 100 is refused.
  * 100: pull strength. KernelActionDefinition gained pull_strength, appended
  *     after spawn_placement and read only by apply_pull: a fixed number
  *     weighed against the target's impulse_resistance, as apply_impulse's
@@ -1066,6 +1070,16 @@ typedef struct KernelStatusEffectDefinition {
 
 #define KERNEL_MAX_PORTABLE_STATE_FIELDS 8
 
+/* Weapon items (ABI 101). A weapon container has one slot per category, and
+ * the slot index is the category: a number, so the same rule serves wands and
+ * guns alike. */
+#define KERNEL_WEAPON_CATEGORY_COUNT 4u
+/* Portable state field ids every weapon item carries: the FNV-1a hash of
+ * "weapon_ammo" and "weapon_reserve", the same name hash every authored
+ * portable state field id is. */
+#define KERNEL_PORTABLE_FIELD_WEAPON_AMMO UINT32_C(0x8cf0d7ec)
+#define KERNEL_PORTABLE_FIELD_WEAPON_RESERVE UINT32_C(0xd9861da6)
+
 typedef struct KernelPortableStateFieldDefinition {
     uint32_t field_id;
     uint8_t type;
@@ -1109,6 +1123,16 @@ typedef struct KernelItemTemplateDefinition {
     KernelPortableStateFieldDefinition
         portable_state_fields[KERNEL_MAX_PORTABLE_STATE_FIELDS];
     KernelActionTriggerDefinition item_used_trigger;
+    /* A weapon item (ABI 101) when is_weapon is 1: an item that is a weapon.
+     * It lives in its owner's weapon container at slot weapon_category (one
+     * weapon per category), and while it is there weapon_id is in the
+     * owner's loadout. It must be stateful, and carries its magazine and
+     * reserve in the portable state fields KERNEL_PORTABLE_FIELD_WEAPON_AMMO
+     * and _RESERVE (uint32), whose defaults are a fresh weapon's. */
+    uint8_t is_weapon;
+    uint8_t weapon_id;
+    uint8_t weapon_category;
+    uint8_t reserved_weapon;
 } KernelItemTemplateDefinition;
 
 typedef struct KernelPropInteractionDefinition {

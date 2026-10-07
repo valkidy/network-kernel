@@ -1,5 +1,7 @@
 id: 2
 name: Projectile Spammer
+# Weapon container slot 0-3 (wand, scepter, staff, tome / their gun twins).
+category: 0
 weapon_type: projectile
 magazine_size: 3
 reserve_magazines: 65535

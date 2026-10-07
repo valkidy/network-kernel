@@ -2559,6 +2559,7 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
             "beam",
             "fire_action_template",
             "reload_action_template",
+            "category",
         },
         path,
         source_kind,
@@ -5747,7 +5748,7 @@ ItemTemplateConfig item_template_from_yaml(
         node,
         {"id", "name", "mode", "max_stack", "capabilities",
          "entity_template", "world_interaction", "throw", "use", "portable_state",
-         "triggers"},
+         "triggers", "weapon"},
         path,
         source_kind,
         KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ITEM);
@@ -5757,6 +5758,9 @@ ItemTemplateConfig item_template_from_yaml(
     }
     ItemTemplateConfig item;
     item.name = node["name"].as<std::string>();
+    if (node["weapon"]) {
+        item.weapon_ref = node["weapon"].as<std::string>();
+    }
     KernelItemTemplateDefinition& definition = item.definition;
     definition.struct_size = sizeof(definition);
     definition.item_template_id = node["id"].as<std::uint32_t>();
@@ -5951,6 +5955,71 @@ std::vector<ItemTemplateConfig> load_item_templates_from_source(
             return lhs.definition.item_template_id < rhs.definition.item_template_id;
         });
     return items;
+}
+
+// `weapon:` on an item template. Binds the weapon and its category, and gives
+// the item the two portable state fields the kernel keeps its magazine and
+// reserve in, defaulting to a fresh weapon's.
+void resolve_weapon_item_templates(
+    const WeaponCatalogConfig& weapons,
+    std::vector<ItemTemplateConfig>* item_templates) {
+    for (ItemTemplateConfig& item : *item_templates) {
+        if (item.weapon_ref.empty()) {
+            continue;
+        }
+        std::optional<std::uint8_t> weapon_id;
+        for (std::size_t index = 0; index < weapons.names.size(); ++index) {
+            if (weapons.configured[index] &&
+                (weapons.names[index] == item.weapon_ref ||
+                 std::to_string(index) == item.weapon_ref)) {
+                weapon_id = static_cast<std::uint8_t>(index);
+            }
+        }
+        if (!weapon_id.has_value()) {
+            throw std::runtime_error(
+                "item weapon references an unknown weapon: " + item.name);
+        }
+        if (!weapons.has_category[*weapon_id]) {
+            throw std::runtime_error(
+                "a weapon an item names needs a category: " + item.name);
+        }
+        KernelItemTemplateDefinition& definition = item.definition;
+        if (definition.portable_state_field_count + 2u >
+            KERNEL_MAX_PORTABLE_STATE_FIELDS) {
+            throw std::runtime_error(
+                "weapon item has no room for its ammo and reserve fields: " +
+                item.name);
+        }
+        for (std::uint32_t index = 0; index < definition.portable_state_field_count;
+             ++index) {
+            const std::uint32_t field_id =
+                definition.portable_state_fields[index].field_id;
+            if (field_id == KERNEL_PORTABLE_FIELD_WEAPON_AMMO ||
+                field_id == KERNEL_PORTABLE_FIELD_WEAPON_RESERVE) {
+                throw std::runtime_error(
+                    "weapon_ammo and weapon_reserve are the weapon's own fields: " +
+                    item.name);
+            }
+        }
+        const KernelWeaponMechanicsDefinition& weapon =
+            weapons.definitions[*weapon_id];
+        definition.is_weapon = 1u;
+        definition.weapon_id = *weapon_id;
+        definition.weapon_category = weapons.categories[*weapon_id];
+        for (const auto& [field_id, value] :
+             {std::pair{KERNEL_PORTABLE_FIELD_WEAPON_AMMO,
+                        static_cast<std::uint32_t>(weapon.magazine_size)},
+              std::pair{KERNEL_PORTABLE_FIELD_WEAPON_RESERVE,
+                        static_cast<std::uint32_t>(weapon.reserve_magazines)}}) {
+            KernelPortableStateFieldDefinition& field =
+                definition.portable_state_fields[
+                    definition.portable_state_field_count++];
+            field = KernelPortableStateFieldDefinition{};
+            field.field_id = field_id;
+            field.type = KernelPortableStateType_Uint32;
+            field.uint32_default = value;
+        }
+    }
 }
 
 void resolve_inventory_item_template_references(
@@ -7821,6 +7890,18 @@ WeaponCatalogConfig load_weapon_catalog_from_source(
         weapons.projectile_sync_modes[weapon.weapon_id] =
             projectile_sync_mode_from_weapon_yaml(document);
         weapons.names[weapon.weapon_id] = name;
+        if (document["category"]) {
+            const int category = document["category"].as<int>();
+            if (category < 0 ||
+                category >= static_cast<int>(KERNEL_WEAPON_CATEGORY_COUNT)) {
+                throw std::runtime_error(
+                    "weapon category must be 0 to " +
+                    std::to_string(KERNEL_WEAPON_CATEGORY_COUNT - 1u) + ": " + file);
+            }
+            weapons.has_category[weapon.weapon_id] = true;
+            weapons.categories[weapon.weapon_id] =
+                static_cast<std::uint8_t>(category);
+        }
     }
     return weapons;
 }
@@ -8162,6 +8243,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     }
     resolve_inventory_item_template_references(
         config.item_templates, &config.entity_templates);
+    resolve_weapon_item_templates(config.weapons, &config.item_templates);
     config.actor_templates =
         actor_templates_from_entity_templates(config.entity_templates);
 
@@ -8916,6 +8998,8 @@ std::uint64_t compute_gameplay_catalog_hash(const WeaponCatalogConfig& weapons) 
         hash_string(&hash, weapons.names[index]);
         hash_scalar(&hash, weapons.projectile_sync_modes[index]);
         hash_scalar(&hash, weapons.collider_template_ids[index]);
+        hash_scalar(&hash, weapons.has_category[index]);
+        hash_scalar(&hash, weapons.categories[index]);
         hash_weapon(&hash, weapons.definitions[index]);
     }
     return hash == 0 ? kFnvOffsetBasis : hash;
@@ -9072,6 +9156,9 @@ std::uint64_t compute_gameplay_catalog_hash(
         hash_scalar(&hash, definition.use_policy.charge_field_id);
         hash_scalar(&hash, definition.use_policy.cooldown_ticks);
         hash_scalar(&hash, definition.use_policy.destroy_when_empty);
+        hash_scalar(&hash, definition.is_weapon);
+        hash_scalar(&hash, definition.weapon_id);
+        hash_scalar(&hash, definition.weapon_category);
         hash_scalar(&hash, definition.portable_state_field_count);
         for (std::uint32_t index = 0;
              index < definition.portable_state_field_count;
@@ -9605,6 +9692,14 @@ std::vector<std::string> validate_gameplay_config(
         // on_collision binding. Without terrain in that mask nothing lands
         // it: it falls through the ground for good, cannot be picked up, and
         // the item is lost (measured, thrown_potion_test).
+        if (item.definition.is_weapon != 0u &&
+            (item.definition.item_mode != KernelItemMode_Stateful ||
+             (item.definition.capability_flags &
+              (KernelItemCapability_Consumable | KernelItemCapability_Throwable)) != 0u)) {
+            errors.push_back(
+                "weapon item must be stateful and neither consumable nor "
+                "throwable: " + item.name);
+        }
         if (entity_template != config.entity_templates.end() &&
             item.definition.throw_policy.mode ==
                 KernelItemThrowMode_IdentityPreserving &&

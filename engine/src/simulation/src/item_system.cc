@@ -133,6 +133,36 @@ bool validate_item_template(
         KERNEL_MAX_PORTABLE_STATE_FIELDS) {
         return set_error(error, "too many portable state fields");
     }
+    if (definition.is_weapon > 1u) {
+        return set_error(error, "is_weapon must be 0 or 1");
+    }
+    if (definition.is_weapon != 0u) {
+        // A weapon is one thing with its own magazine: stateful, never used up
+        // or thrown, and carrying the two fields the kernel keeps its state in.
+        bool has_ammo = false;
+        bool has_reserve = false;
+        for (std::uint32_t index = 0; index < definition.portable_state_field_count;
+             ++index) {
+            const KernelPortableStateFieldDefinition& field =
+                definition.portable_state_fields[index];
+            if (field.type != KernelPortableStateType_Uint32) continue;
+            has_ammo |= field.field_id == KERNEL_PORTABLE_FIELD_WEAPON_AMMO;
+            has_reserve |= field.field_id == KERNEL_PORTABLE_FIELD_WEAPON_RESERVE;
+        }
+        if (definition.item_mode != KernelItemMode_Stateful ||
+            definition.weapon_category >= KERNEL_WEAPON_CATEGORY_COUNT ||
+            (definition.capability_flags &
+             (KernelItemCapability_Consumable | KernelItemCapability_Throwable)) != 0u ||
+            !has_ammo || !has_reserve) {
+            return set_error(
+                error,
+                "weapon item must be stateful, not consumable or throwable, "
+                "with a category below KERNEL_WEAPON_CATEGORY_COUNT and uint32 "
+                "weapon_ammo and weapon_reserve fields");
+        }
+    } else if (definition.weapon_id != 0u || definition.weapon_category != 0u) {
+        return set_error(error, "only a weapon item names a weapon");
+    }
     std::unordered_set<std::uint32_t> field_ids;
     bool has_health_projection = false;
     for (std::uint32_t index = 0;

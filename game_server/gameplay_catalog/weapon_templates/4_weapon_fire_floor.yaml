@@ -1,5 +1,7 @@
 id: 4
 name: Fire Floor
+# Weapon container slot 0-3 (wand, scepter, staff, tome / their gun twins).
+category: 3
 weapon_type: area_effect
 magazine_size: 3
 fire_action_template: fire_floor_cast

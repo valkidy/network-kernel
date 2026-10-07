@@ -7,6 +7,8 @@
 #   as the authoritative action input so client prediction follows the same arc.
 id: 7
 name: Grenade Launcher
+# Weapon container slot 0-3 (wand, scepter, staff, tome / their gun twins).
+category: 1
 weapon_type: projectile
 magazine_size: 6
 fire_action_template: grenade_launcher_fire

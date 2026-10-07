@@ -1,0 +1,8 @@
+# Any weapon item lying in the world: dropped, swapped out, or placed on the
+# map. One prop for every weapon; the client draws the weapon the item names
+# (its item template's weapon), not this template.
+id: 220
+name: weapon_pickup
+entity_type: prop
+physics:
+  collider_template: collision_damage_prop_hitbox
