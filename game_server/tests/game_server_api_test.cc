@@ -602,11 +602,18 @@ int main() {
     for (KernelInventoryContainerView& container : inventory_containers) {
         container.struct_size = sizeof(KernelInventoryContainerView);
     }
+    // The item container and, since P3, the weapon container that holds the
+    // template's weapons as weapon items.
     require(Kernel_CopyOwnedInventoryContainers(
                kernel,
                local_player_info.player_net_id,
                inventory_containers.data(),
-               static_cast<std::uint32_t>(inventory_containers.size())) == 1);
+               static_cast<std::uint32_t>(inventory_containers.size())) == 2);
+    if (inventory_containers[0].container_kind != KernelInventoryContainerKind_Items) {
+        std::swap(inventory_containers[0], inventory_containers[1]);
+    }
+    require(inventory_containers[0].container_kind == KernelInventoryContainerKind_Items);
+    require(inventory_containers[1].container_kind == KernelInventoryContainerKind_Weapons);
     const std::filesystem::path player_template =
         catalog_path("entity_templates/1_player.yaml");
     const std::vector<LoadoutSlot> loadout = player_loadout();
@@ -637,11 +644,15 @@ int main() {
     duplicate_player_joined.type = KernelEventType_PlayerJoined;
     duplicate_player_joined.net_id = local_player_info.player_net_id;
     GameServer_HandleEvent(game_server, &duplicate_player_joined);
+    // A second join makes neither container again.
     require(Kernel_CopyOwnedInventoryContainers(
                kernel,
                local_player_info.player_net_id,
                inventory_containers.data(),
-               static_cast<std::uint32_t>(inventory_containers.size())) == 1);
+               static_cast<std::uint32_t>(inventory_containers.size())) == 2);
+    if (inventory_containers[0].container_kind != KernelInventoryContainerKind_Items) {
+        std::swap(inventory_containers[0], inventory_containers[1]);
+    }
     require(Kernel_CopyInventorySlots(
                kernel,
                inventory_containers[0].inventory_container_id,

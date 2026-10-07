@@ -255,6 +255,9 @@ struct ActorTemplateConfig {
     // one inventory slot when picked, and may be picked more than once. Props
     // only; empty for anything that is not a loadout camp.
     std::vector<InventorySlotConfig> loadout_options;
+    // The weapon items a loadout camp offers (D5); a player picks at most one
+    // per category. Quantity is always 1.
+    std::vector<InventorySlotConfig> loadout_weapon_options;
     std::uint16_t animation_idle = 0;
     std::uint16_t animation_chasing = 0;
     AgentSentryConfig sentry{};

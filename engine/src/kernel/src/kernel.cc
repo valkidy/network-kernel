@@ -6261,6 +6261,15 @@ bool KernelEngine::server_set_entity_combat_state(
         weapon.weapon_ids[slot] = combat_state.weapon_ids[slot];
         weapon.ammo[slot] = combat_state.ammo[slot];
         weapon.reserve_magazines[slot] = combat_state.reserve_magazines[slot];
+        // These slots are not items; nothing here may be written back to one.
+        weapon.item_ids[slot] = 0u;
+    }
+    // An owner with a weapon container is armed with what it holds, whatever
+    // this call said: rebuild from it now.
+    if (const InventoryContainerRecord* weapons =
+            item_store_.find_weapon_container_for_owner(net_id)) {
+        synced_weapon_revisions_.erase(weapons->inventory_container_id);
+        sync_weapon_loadouts();
     }
     if (net_id == local_player_net_id_) {
         local_player_move_speed_meters_per_second_ =

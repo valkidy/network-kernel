@@ -381,6 +381,12 @@ void hash_actor_template(
         hash_scalar(hash, option.item_template_id);
         hash_scalar(hash, option.quantity);
     }
+    hash_scalar(
+        hash,
+        static_cast<std::uint32_t>(actor_template.loadout_weapon_options.size()));
+    for (const InventorySlotConfig& option : actor_template.loadout_weapon_options) {
+        hash_scalar(hash, option.item_template_id);
+    }
     hash_scalar(hash, actor_template.animation_idle);
     hash_scalar(hash, actor_template.animation_chasing);
     hash_scalar(hash, actor_template.sentry.alert_ticks);
@@ -4902,7 +4908,7 @@ EntityTemplateConfig entity_template_from_yaml(
         if (node["loadout"]) {
             reject_unknown_keys(
                 node["loadout"],
-                {"options"},
+                {"options", "weapons"},
                 path,
                 source_kind,
                 KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
@@ -4936,6 +4942,20 @@ EntityTemplateConfig entity_template_from_yaml(
                     option_node["item_template"].as<std::string>();
                 option.quantity = option_node["quantity"].as<std::uint32_t>();
                 entity_template.loadout_options.push_back(std::move(option));
+            }
+            // Weapon items by name; a player takes at most one per category.
+            if (const YAML::Node weapons = node["loadout"]["weapons"]) {
+                if (!weapons.IsSequence() || weapons.size() > kMaxLoadoutOptions) {
+                    throw std::runtime_error(
+                        "loadout weapons must be a sequence of at most " +
+                        std::to_string(kMaxLoadoutOptions) + " weapon items: " + path);
+                }
+                for (const YAML::Node& weapon_node : weapons) {
+                    InventorySlotConfig weapon;
+                    weapon.item_template_ref = weapon_node.as<std::string>();
+                    weapon.quantity = 1;
+                    entity_template.loadout_weapon_options.push_back(std::move(weapon));
+                }
             }
         }
         // What going inside this building means: how many it holds, and
@@ -6027,6 +6047,15 @@ void resolve_inventory_item_template_references(
     const std::vector<ItemTemplateConfig>& item_templates,
     std::vector<EntityTemplateConfig>* entity_templates) {
     for (EntityTemplateConfig& entity_template : *entity_templates) {
+        for (InventorySlotConfig& weapon : entity_template.loadout_weapon_options) {
+            for (const ItemTemplateConfig& candidate : item_templates) {
+                if (candidate.name == weapon.item_template_ref ||
+                    std::to_string(candidate.definition.item_template_id) ==
+                        weapon.item_template_ref) {
+                    weapon.item_template_id = candidate.definition.item_template_id;
+                }
+            }
+        }
         for (InventorySlotConfig& option : entity_template.loadout_options) {
             const auto item = std::find_if(
                 item_templates.begin(),
@@ -9727,6 +9756,36 @@ std::vector<std::string> validate_gameplay_config(
         }
     }
     for (const EntityTemplateConfig& entity_template : config.entity_templates) {
+        for (const InventorySlotConfig& weapon : entity_template.loadout_weapon_options) {
+            const auto item = std::find_if(
+                config.item_templates.begin(),
+                config.item_templates.end(),
+                [&weapon](const ItemTemplateConfig& candidate) {
+                    return candidate.definition.item_template_id ==
+                        weapon.item_template_id;
+                });
+            if (item == config.item_templates.end() ||
+                item->definition.is_weapon == 0u) {
+                errors.push_back(
+                    "loadout weapon must name a weapon item: " +
+                    entity_template.name + " " + weapon.item_template_ref);
+            }
+        }
+        for (const InventorySlotConfig& option : entity_template.loadout_options) {
+            const auto item = std::find_if(
+                config.item_templates.begin(),
+                config.item_templates.end(),
+                [&option](const ItemTemplateConfig& candidate) {
+                    return candidate.definition.item_template_id ==
+                        option.item_template_id;
+                });
+            if (item != config.item_templates.end() &&
+                item->definition.is_weapon != 0u) {
+                errors.push_back(
+                    "a weapon item is offered under loadout weapons, not options: " +
+                    entity_template.name + " " + option.item_template_ref);
+            }
+        }
         if (!entity_template.loadout_options.empty() &&
             entity_template.entity_type != KernelEntityType_Prop) {
             errors.push_back(

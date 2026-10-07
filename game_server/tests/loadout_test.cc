@@ -74,11 +74,18 @@ struct Entry {
     std::uint16_t quantity = 0;
 };
 
+struct WeaponOption {
+    std::uint32_t item_template_id = 0;
+    std::uint8_t category = 0;
+};
+
 struct Offers {
     std::uint32_t camp = 0;
     std::uint8_t capacity = 0;
     std::vector<Entry> options;
+    std::vector<WeaponOption> weapon_options;
     std::vector<Entry> current;
+    std::vector<std::uint32_t> current_weapons;
 };
 
 // Parses an OFFERS body exactly, or fails the test.
@@ -98,11 +105,25 @@ Offers parse_offers(const KernelGameMessage& message) {
         at += 6;
     }
     require(end - at >= 1);
+    const std::uint8_t weapon_option_count = *at++;
+    for (std::uint8_t index = 0; index < weapon_option_count; ++index) {
+        require(end - at >= 5);
+        offers.weapon_options.push_back(WeaponOption{read_u32(at), at[4]});
+        at += 5;
+    }
+    require(end - at >= 1);
     const std::uint8_t current_count = *at++;
     for (std::uint8_t index = 0; index < current_count; ++index) {
         require(end - at >= 6);
         offers.current.push_back(Entry{read_u32(at), read_u16(at + 4)});
         at += 6;
+    }
+    require(end - at >= 1);
+    const std::uint8_t current_weapon_count = *at++;
+    for (std::uint8_t index = 0; index < current_weapon_count; ++index) {
+        require(end - at >= 4);
+        offers.current_weapons.push_back(read_u32(at));
+        at += 4;
     }
     require(at == end);
     return offers;
@@ -114,6 +135,7 @@ struct Harness {
     std::uint32_t player = 0;
     std::uint32_t peer = 0;
     std::uint64_t next_request = 1;
+    std::uint8_t last_weapon_picks = 0;
     std::array<KernelEvent, 4096> events{};
 
     void step(int count = 1) {
@@ -171,26 +193,45 @@ struct Harness {
         KernelGameMessage reply{};
         require(Kernel_PollGameMessages(kernel, &reply, 1) == 1u);
         require(reply.message_type == GAME_SERVER_MESSAGE_LOADOUT_RESULT);
-        require(reply.payload_size == 6u);
+        require(reply.payload_size == 7u);
+        last_weapon_picks = reply.payload[6];
         return {reply.payload[4], reply.payload[5]};
     }
 
     std::pair<std::uint8_t, std::uint8_t> select(
-        std::uint32_t camp, const std::vector<std::uint8_t>& picks) {
+        std::uint32_t camp, const std::vector<std::uint8_t>& picks,
+        const std::vector<std::uint8_t>& weapon_picks = {}) {
         std::vector<std::uint8_t> body;
         for (int shift = 0; shift < 32; shift += 8) {
             body.push_back(static_cast<std::uint8_t>((camp >> shift) & 0xffu));
         }
         body.push_back(static_cast<std::uint8_t>(picks.size()));
         body.insert(body.end(), picks.begin(), picks.end());
+        body.push_back(static_cast<std::uint8_t>(weapon_picks.size()));
+        body.insert(body.end(), weapon_picks.begin(), weapon_picks.end());
         return select_raw(body);
+    }
+
+    // The weapon ids in hand, in loadout (category) order.
+    std::vector<std::uint32_t> weapons() {
+        const KernelServerEntityState me = state_of(player);
+        return std::vector<std::uint32_t>(
+            me.weapon_ids, me.weapon_ids + me.weapon_slot_count);
     }
 
     // Item template id -> total quantity in the player's inventory.
     std::map<std::uint32_t, std::uint32_t> inventory() {
+        KernelInventoryContainerView owned[2]{};
+        for (KernelInventoryContainerView& view : owned) view.struct_size = sizeof(view);
+        const std::uint32_t owned_count =
+            Kernel_CopyOwnedInventoryContainers(kernel, player, owned, 2);
         KernelInventoryContainerView container{};
-        container.struct_size = sizeof(container);
-        require(Kernel_CopyOwnedInventoryContainers(kernel, player, &container, 1) == 1u);
+        for (std::uint32_t index = 0; index < owned_count; ++index) {
+            if (owned[index].container_kind == KernelInventoryContainerKind_Items) {
+                container = owned[index];
+            }
+        }
+        require(container.inventory_container_id != 0u);
         std::vector<KernelItemInstanceView> items(64);
         for (KernelItemInstanceView& item : items) item.struct_size = sizeof(item);
         const std::uint32_t count = Kernel_CopyInventorySlots(
@@ -273,10 +314,14 @@ int main() {
     }
     require(camp != 0u);
 
-    // The default loadout before any pick.
+    // The default loadout before any pick: the template's items, and its
+    // weapons as weapon items, packed in category order (rifle 0, meteor
+    // staff 1, sky laser 2, meteor storm staff 3).
     const std::map<std::uint32_t, std::uint32_t> defaults = harness.inventory();
     require(defaults.count(tornado) == 1u);
     require(defaults.count(potion) == 0u);
+    const std::vector<std::uint32_t> default_weapons = harness.weapons();
+    require((default_weapons == std::vector<std::uint32_t>{0u, 13u, 15u, 14u}));
 
     // Activating it sends the offer: every option, the slot cap, no pick yet.
     harness.stand_near(camp, 2.0f);
@@ -291,14 +336,44 @@ int main() {
                 camp_template->loadout_options[index].quantity);
     }
     require(offers.current.empty());
+    require(offers.current_weapons.empty());
     require(offers.options[0].item_template_id == potion);
     require(offers.options[1].item_template_id == mp_potion);
+    require(offers.weapon_options.size() == camp_template->loadout_weapon_options.size());
+    const auto weapon_option = [&](const std::string& name) -> std::uint8_t {
+        const std::uint32_t id = item_id(config, name);
+        for (std::size_t index = 0; index < offers.weapon_options.size(); ++index) {
+            if (offers.weapon_options[index].item_template_id == id) {
+                return static_cast<std::uint8_t>(index);
+            }
+        }
+        require(false);
+        return 0;
+    };
+    const std::uint8_t pick_rifle = weapon_option("stateful_weapon_rifle");
+    const std::uint8_t pick_shotgun = weapon_option("stateful_weapon_shotgun");
+    const std::uint8_t pick_beam = weapon_option("stateful_weapon_beam_rifle");
+    require(offers.weapon_options[pick_rifle].category == 0u);
+    require(offers.weapon_options[pick_shotgun].category == 0u);
+    require(offers.weapon_options[pick_beam].category == 2u);
+
+    // Items with no weapons: the items, and unarmed (D18).
+    {
+        auto [items_only, items_only_count] = harness.select(camp, {0});
+        require(items_only == GAME_SERVER_LOADOUT_RESULT_APPLIED);
+        require(items_only_count == 1u);
+        require(harness.last_weapon_picks == 0u);
+        require(harness.weapons().empty());
+    }
 
     // A pick replaces the inventory at once. Option 0 twice: two picks, one
     // slot each, 3 + 3 potions.
-    auto [result, picked] = harness.select(camp, {0, 0, 1});
+    auto [result, picked] = harness.select(camp, {0, 0, 1}, {pick_beam, pick_rifle});
     require(result == GAME_SERVER_LOADOUT_RESULT_APPLIED);
     require(picked == 3u);
+    require(harness.last_weapon_picks == 2u);
+    const std::vector<std::uint32_t> picked_weapons{0u, 5u};
+    require(harness.weapons() == picked_weapons);
     std::map<std::uint32_t, std::uint32_t> held = harness.inventory();
     require(held[potion] == 6u);
     require(held[mp_potion] == 2u);
@@ -309,12 +384,20 @@ int main() {
     require(offers.current.size() == 3u);
     require(offers.current[0].item_template_id == potion);
     require(offers.current[2].item_template_id == mp_potion);
+    require(offers.current_weapons.size() == 2u);
 
     // Refusals change nothing.
     const auto unchanged = [&]() {
         const std::map<std::uint32_t, std::uint32_t> now = harness.inventory();
         require(now == held);
+        require(harness.weapons() == picked_weapons);
     };
+    // Two weapons of one category: one slot, so refused.
+    require(harness.select(camp, {0}, {pick_rifle, pick_shotgun}).first ==
+            GAME_SERVER_LOADOUT_RESULT_CATEGORY_TAKEN);
+    unchanged();
+    require(harness.select(camp, {0}, {99}).first == GAME_SERVER_LOADOUT_RESULT_BAD_OPTION);
+    unchanged();
     require(harness.select(camp, {0, 99}).first == GAME_SERVER_LOADOUT_RESULT_BAD_OPTION);
     unchanged();
     std::vector<std::uint8_t> too_many(player_template->inventory_slot_capacity + 1u, 1u);
@@ -376,6 +459,13 @@ int main() {
     harness.step(respawn_ticks);
     require(harness.state_of(harness.player).hp != 0u);
     require(harness.inventory() == held);
+    // The picked weapons, fresh.
+    require(harness.weapons() == picked_weapons);
+    {
+        const KernelServerEntityState me = harness.state_of(harness.player);
+        require(me.ammo[0] == config.weapons.definitions[0].magazine_size);
+        require(me.reserve_magazines[1] == config.weapons.definitions[5].reserve_magazines);
+    }
 
     // A dead player cannot pick.
     harness.stand_near(camp, 2.0f);
@@ -388,6 +478,7 @@ int main() {
     require(reset == GAME_SERVER_LOADOUT_RESULT_APPLIED);
     require(reset_count == 0u);
     require(harness.inventory() == defaults);
+    require(harness.weapons() == default_weapons);
 
     Kernel_Destroy(kernel);
     std::puts("loadout_test passed");

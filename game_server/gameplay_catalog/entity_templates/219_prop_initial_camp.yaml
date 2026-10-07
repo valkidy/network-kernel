@@ -1,7 +1,7 @@
 # The initial camp (design D1-D5): where a player picks the loadout every
-# respawn gives them. Unlimited -- each pick is one of the options below, fills
-# one inventory slot, and may be repeated, up to the player's
-# inventory_slot_capacity.
+# respawn gives them. Unlimited -- each item pick is one of the options below,
+# fills one inventory slot, and may be repeated, up to the player's
+# inventory_slot_capacity; weapons are picked at most one per category.
 #
 # No health and no lifecycle, so nothing removes it. For now the game rule
 # puts it in the scene at the start; a scene file will later.
@@ -36,3 +36,11 @@ loadout:
       quantity: 3
     - item_template: fungible_tent_kit
       quantity: 1
+  weapons:
+    - stateful_weapon_rifle
+    - stateful_weapon_shotgun
+    - stateful_weapon_meteor_staff
+    - stateful_weapon_rocket
+    - stateful_weapon_sky_laser
+    - stateful_weapon_beam_rifle
+    - stateful_weapon_meteor_storm_staff

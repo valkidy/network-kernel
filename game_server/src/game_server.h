@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <set>
+#include <vector>
 
 #include "game_server/src/agent_runtime_manager.h"
 #include "game_server/src/gameplay_config.h"
@@ -46,6 +47,9 @@ private:
         std::uint32_t net_id,
         const ActorTemplateConfig& actor_template,
         bool reset_inventory) const;
+    // The player's weapon container, filled from its loadout's weapons or the
+    // template default's weapon items; refilled fresh when `reset`.
+    bool configure_player_weapons(std::uint32_t net_id, bool reset) const;
     void revive_player(std::uint32_t net_id, float delta_seconds);
     // Puts the catalog's scene_props in the world, once the kernel takes
     // them; tried every tick until it has.
@@ -59,6 +63,11 @@ private:
     LoadoutDirector loadout_;
     std::set<std::uint32_t> players_;
     bool scene_props_placed_ = false;
+    // Players carry their weapons as items when every weapon of the player
+    // template's default loadout has a weapon item (P3); these are those
+    // items, in loadout order. Otherwise players keep the template loadout.
+    bool weapons_are_items_ = false;
+    std::vector<std::uint32_t> default_weapon_items_;
 };
 
 }  // namespace network_example::game_server

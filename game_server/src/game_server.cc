@@ -17,9 +17,31 @@ GameServer::GameServer(KernelHandle* kernel, GameServerGameplayConfig config)
           const ActorTemplateConfig* actor_template =
               find_actor_template(config_, config_.player.actor_template_id);
           return actor_template != nullptr &&
-              configure_player_inventory(player, *actor_template, true);
+              configure_player_inventory(player, *actor_template, true) &&
+              configure_player_weapons(player, true);
       }) {
     load_kernel_gameplay_catalog(kernel_, config_);
+    // The default loadout as weapon items: every template weapon needs one.
+    if (const ActorTemplateConfig* player_template =
+            find_actor_template(config_, config_.player.actor_template_id)) {
+        weapons_are_items_ = true;
+        for (std::uint8_t slot = 0; slot < player_template->weapon_slot_count; ++slot) {
+            const std::uint32_t weapon_id = player_template->weapon_ids[slot];
+            std::uint32_t item_template_id = 0;
+            for (const ItemTemplateConfig& item : config_.item_templates) {
+                if (item.definition.is_weapon != 0u &&
+                    item.definition.weapon_id == weapon_id) {
+                    item_template_id = item.definition.item_template_id;
+                }
+            }
+            if (item_template_id == 0u) {
+                weapons_are_items_ = false;
+                default_weapon_items_.clear();
+                break;
+            }
+            default_weapon_items_.push_back(item_template_id);
+        }
+    }
 }
 
 void GameServer::handle_event(const KernelEvent& event) {
@@ -166,7 +188,17 @@ void GameServer::configure_player(std::uint32_t net_id, bool reset_inventory) co
             config_.weapons.definitions[actor_template->weapon_ids[slot]];
         Kernel_ServerSetEntityWeaponMechanics(kernel_, net_id, &weapon);
     }
+    // Any weapon item may end up in hand, so every weapon with a category is
+    // configured up front. Mechanics alone fire nothing: only the loadout --
+    // the weapon container -- decides what can fire.
+    for (const ItemTemplateConfig& item : config_.item_templates) {
+        if (item.definition.is_weapon == 0u) continue;
+        const KernelWeaponMechanicsDefinition& weapon =
+            config_.weapons.definitions[item.definition.weapon_id];
+        Kernel_ServerSetEntityWeaponMechanics(kernel_, net_id, &weapon);
+    }
     configure_player_inventory(net_id, *actor_template, reset_inventory);
+    configure_player_weapons(net_id, reset_inventory);
 }
 
 bool GameServer::configure_player_inventory(
@@ -195,9 +227,9 @@ bool GameServer::configure_player_inventory(
         return false;
     }
     // The loadout picked at a camp, or the template's default.
-    const std::vector<InventorySlotConfig>* picked = loadout_.loadout_of(net_id);
+    const PlayerLoadout* picked = loadout_.loadout_of(net_id);
     const std::vector<InventorySlotConfig>& slots =
-        picked != nullptr ? *picked : actor_template.inventory_slots;
+        picked != nullptr ? picked->items : actor_template.inventory_slots;
     for (const InventorySlotConfig& slot : slots) {
         KernelItemInstanceId item_instance_id = 0;
         if (!Kernel_ServerCreateInventoryItem(
@@ -210,6 +242,44 @@ bool GameServer::configure_player_inventory(
         }
     }
     return true;
+}
+
+bool GameServer::configure_player_weapons(std::uint32_t net_id, bool reset) const {
+    if (kernel_ == nullptr || !weapons_are_items_) {
+        return true;
+    }
+    KernelInventoryContainerId weapons = 0;
+    KernelInventoryContainerView owned[4]{};
+    for (KernelInventoryContainerView& view : owned) view.struct_size = sizeof(view);
+    const std::uint32_t count =
+        Kernel_CopyOwnedInventoryContainers(kernel_, net_id, owned, 4u);
+    for (std::uint32_t index = 0; index < count; ++index) {
+        if (owned[index].container_kind == KernelInventoryContainerKind_Weapons) {
+            weapons = owned[index].inventory_container_id;
+        }
+    }
+    if (weapons != 0u) {
+        // A join keeps what it has; a respawn or a new pick starts fresh.
+        if (!reset) {
+            return true;
+        }
+        if (!Kernel_ServerClearInventoryContainer(kernel_, weapons)) {
+            return false;
+        }
+    } else if (!Kernel_ServerCreateWeaponContainer(kernel_, net_id, &weapons)) {
+        return false;
+    }
+    const PlayerLoadout* picked = loadout_.loadout_of(net_id);
+    const std::vector<std::uint32_t>& weapon_items =
+        picked != nullptr ? picked->weapon_items : default_weapon_items_;
+    bool all_placed = true;
+    for (const std::uint32_t item_template_id : weapon_items) {
+        KernelItemInstanceId item = 0;
+        // Two default weapons of one category: the second has no slot.
+        all_placed &= Kernel_ServerCreateInventoryItem(
+            kernel_, item_template_id, 1u, weapons, &item);
+    }
+    return all_placed;
 }
 
 }  // namespace network_example::game_server

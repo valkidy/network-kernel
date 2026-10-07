@@ -1,6 +1,7 @@
 #include "game_server/src/loadout_director.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <utility>
 
@@ -80,13 +81,19 @@ void LoadoutDirector::handle_message(const KernelGameMessage& message) {
     if (message.message_type != GAME_SERVER_MESSAGE_LOADOUT_SELECT) {
         return;
     }
-    if (message.payload_size < 5u) {
+    // u32 camp, u8 n, n item picks, u8 m, m weapon picks.
+    if (message.payload_size < 6u) {
         reply(message.peer, 0u, GAME_SERVER_LOADOUT_RESULT_MALFORMED, 0u);
         return;
     }
     const std::uint32_t camp = read_u32(message.payload);
     const std::uint32_t pick_count = message.payload[4];
-    if (message.payload_size != 5u + pick_count) {
+    if (message.payload_size < 6u + pick_count) {
+        reply(message.peer, camp, GAME_SERVER_LOADOUT_RESULT_MALFORMED, 0u);
+        return;
+    }
+    const std::uint32_t weapon_pick_count = message.payload[5u + pick_count];
+    if (message.payload_size != 6u + pick_count + weapon_pick_count) {
         reply(message.peer, camp, GAME_SERVER_LOADOUT_RESULT_MALFORMED, 0u);
         return;
     }
@@ -122,18 +129,37 @@ void LoadoutDirector::handle_message(const KernelGameMessage& message) {
         reply(message.peer, camp, GAME_SERVER_LOADOUT_RESULT_TOO_MANY_PICKS, 0u);
         return;
     }
-    std::vector<InventorySlotConfig> picked;
-    picked.reserve(pick_count);
+    PlayerLoadout picked;
+    picked.items.reserve(pick_count);
     for (std::uint32_t index = 0; index < pick_count; ++index) {
         const std::uint8_t option = message.payload[5u + index];
         if (option >= camp_config->loadout_options.size()) {
             reply(message.peer, camp, GAME_SERVER_LOADOUT_RESULT_BAD_OPTION, 0u);
             return;
         }
-        picked.push_back(camp_config->loadout_options[option]);
+        picked.items.push_back(camp_config->loadout_options[option]);
     }
-    // No picks: back to the player template's default.
-    if (picked.empty()) {
+    // One weapon per category: the container has one slot for each.
+    std::array<bool, KERNEL_WEAPON_CATEGORY_COUNT> category_taken{};
+    for (std::uint32_t index = 0; index < weapon_pick_count; ++index) {
+        const std::uint8_t option = message.payload[6u + pick_count + index];
+        if (option >= camp_config->loadout_weapon_options.size()) {
+            reply(message.peer, camp, GAME_SERVER_LOADOUT_RESULT_BAD_OPTION, 0u);
+            return;
+        }
+        const std::uint32_t item_template_id =
+            camp_config->loadout_weapon_options[option].item_template_id;
+        const std::uint8_t category = weapon_category_of(item_template_id);
+        if (category >= KERNEL_WEAPON_CATEGORY_COUNT || category_taken[category]) {
+            reply(message.peer, camp,
+                  GAME_SERVER_LOADOUT_RESULT_CATEGORY_TAKEN, 0u);
+            return;
+        }
+        category_taken[category] = true;
+        picked.weapon_items.push_back(item_template_id);
+    }
+    // No picks at all: back to the player template's default.
+    if (picked.items.empty() && picked.weapon_items.empty()) {
         loadouts_.erase(message.player_net_id);
     } else {
         loadouts_[message.player_net_id] = std::move(picked);
@@ -143,10 +169,21 @@ void LoadoutDirector::handle_message(const KernelGameMessage& message) {
         return;
     }
     reply(message.peer, camp, GAME_SERVER_LOADOUT_RESULT_APPLIED,
-          static_cast<std::uint8_t>(pick_count));
+          static_cast<std::uint8_t>(pick_count),
+          static_cast<std::uint8_t>(weapon_pick_count));
 }
 
-const std::vector<InventorySlotConfig>* LoadoutDirector::loadout_of(
+std::uint8_t LoadoutDirector::weapon_category_of(std::uint32_t item_template_id) const {
+    for (const ItemTemplateConfig& item : config_.item_templates) {
+        if (item.definition.item_template_id == item_template_id &&
+            item.definition.is_weapon != 0u) {
+            return item.definition.weapon_category;
+        }
+    }
+    return KERNEL_WEAPON_CATEGORY_COUNT;
+}
+
+const PlayerLoadout* LoadoutDirector::loadout_of(
     std::uint32_t player) const {
     const auto found = loadouts_.find(player);
     return found == loadouts_.end() ? nullptr : &found->second;
@@ -181,8 +218,20 @@ void LoadoutDirector::send_offers(
     write_u8(&body, static_cast<std::uint8_t>(
         std::min<std::uint32_t>(player_template->inventory_slot_capacity, 255u)));
     write_entries(&body, camp_config->loadout_options);
-    const std::vector<InventorySlotConfig>* current = loadout_of(player);
-    write_entries(&body, current == nullptr ? std::vector<InventorySlotConfig>{} : *current);
+    write_u8(&body, static_cast<std::uint8_t>(camp_config->loadout_weapon_options.size()));
+    for (const InventorySlotConfig& weapon : camp_config->loadout_weapon_options) {
+        write_u32(&body, weapon.item_template_id);
+        write_u8(&body, weapon_category_of(weapon.item_template_id));
+    }
+    const PlayerLoadout* current = loadout_of(player);
+    write_entries(&body, current == nullptr ? std::vector<InventorySlotConfig>{} : current->items);
+    const std::vector<std::uint32_t> no_weapons;
+    const std::vector<std::uint32_t>& current_weapons =
+        current == nullptr ? no_weapons : current->weapon_items;
+    write_u8(&body, static_cast<std::uint8_t>(current_weapons.size()));
+    for (const std::uint32_t weapon : current_weapons) {
+        write_u32(&body, weapon);
+    }
     Kernel_ServerSendGameMessage(
         kernel_,
         peer,
@@ -195,11 +244,13 @@ void LoadoutDirector::reply(
     std::uint32_t peer,
     std::uint32_t camp,
     std::uint8_t result,
-    std::uint8_t pick_count) const {
+    std::uint8_t pick_count,
+    std::uint8_t weapon_pick_count) const {
     std::vector<std::uint8_t> body;
     write_u32(&body, camp);
     write_u8(&body, result);
     write_u8(&body, pick_count);
+    write_u8(&body, weapon_pick_count);
     Kernel_ServerSendGameMessage(
         kernel_,
         peer,

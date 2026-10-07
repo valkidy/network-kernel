@@ -26,25 +26,34 @@
  * LOADOUT_OFFERS, server -> client. Sent when the player activates a loadout
  * camp; it is also the client's cue to open the loadout UI.
  *   u32 camp_net_id
- *   u8  slot_capacity        how many options the player may pick
- *   u8  option_count         1..32
+ *   u8  slot_capacity        how many item options the player may pick
+ *   u8  option_count         item options, 1..32
  *   option_count x { u32 item_template_id; u16 quantity; }
- *   u8  current_count        the player's current loadout, 0 = the default
+ *   u8  weapon_option_count  weapon options, 0..32
+ *   weapon_option_count x { u32 item_template_id; u8 category; }
+ *   u8  current_count        the player's current item picks, 0 = the default
  *   current_count x { u32 item_template_id; u16 quantity; }
+ *   u8  current_weapon_count the player's current weapon picks
+ *   current_weapon_count x u32 item_template_id
  *
- * LOADOUT_SELECT, client -> server. The options picked, by index into the
- * camp's option list; an index may repeat. Each pick fills one inventory slot.
+ * LOADOUT_SELECT, client -> server. Picks by index into the camp's lists. An
+ * item index may repeat, each pick filling one inventory slot; at most one
+ * weapon per category. No picks at all restores the default; item picks with
+ * no weapon picks leave the player unarmed.
  *   u32 camp_net_id
- *   u8  pick_count           0..slot_capacity; 0 restores the default
+ *   u8  pick_count           0..slot_capacity
  *   pick_count x u8 option_index
+ *   u8  weapon_pick_count    0..4
+ *   weapon_pick_count x u8 weapon_option_index
  *
  * LOADOUT_RESULT, server -> client. The answer to every LOADOUT_SELECT.
  *   u32 camp_net_id
  *   u8  result               GAME_SERVER_LOADOUT_RESULT_*
- *   u8  pick_count           how many picks were applied (0 unless APPLIED)
+ *   u8  pick_count           item picks applied (0 unless APPLIED)
+ *   u8  weapon_pick_count    weapon picks applied (0 unless APPLIED)
  *
- * An applied loadout replaces the player's inventory at once and is what every
- * later respawn gives them. It lasts until they leave the session.
+ * An applied loadout replaces the player's inventory and weapons at once and
+ * is what every later respawn gives them. It lasts until they leave.
  */
 #define GAME_SERVER_MESSAGE_LOADOUT_OFFERS 1u
 #define GAME_SERVER_MESSAGE_LOADOUT_SELECT 2u
@@ -58,6 +67,7 @@
 #define GAME_SERVER_LOADOUT_RESULT_BAD_OPTION 5u
 #define GAME_SERVER_LOADOUT_RESULT_DEAD 6u
 #define GAME_SERVER_LOADOUT_RESULT_APPLY_FAILED 7u
+#define GAME_SERVER_LOADOUT_RESULT_CATEGORY_TAKEN 8u
 
 #ifdef __cplusplus
 extern "C" {
