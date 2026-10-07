@@ -59,6 +59,9 @@ _Static_assert(
         KernelLocalActionResultReason_Sheltered == 15,
     "the ABI 96 enum values are appended");
 _Static_assert(
+    KernelLocalActionResultReason_ItemAction == 16,
+    "the ABI 101 enum value is appended");
+_Static_assert(
     offsetof(KernelEvent, related_net_id) >
             offsetof(KernelEvent, health_delta) &&
         sizeof(KernelEvent) == 48u,

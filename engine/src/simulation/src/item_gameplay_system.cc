@@ -1428,6 +1428,22 @@ bool ItemGameplaySystem::submit_request(
     }
 
 record_outcome:
+    // An item that takes the hands ends a weapon action under way: a throw
+    // mid-charge or mid-beam goes, and the charge or beam stops. Picking up
+    // and activating do not take the hands.
+    if (outcome.status == KernelGameplayRequestStatus_Committed &&
+        (request.domain_action == KernelDomainAction_Throw ||
+         request.domain_action == KernelDomainAction_Consume ||
+         request.domain_action == KernelDomainAction_Place ||
+         request.domain_action == KernelDomainAction_Carry)) {
+        if (const std::optional<entt::entity> hands =
+                engine.world_.find_entity(request.instigator_net_id)) {
+            engine.world_.registry().emplace_or_replace<PendingActionInterrupt>(
+                *hands,
+                PendingActionInterrupt{static_cast<std::uint16_t>(
+                    KernelLocalActionResultReason_ItemAction)});
+        }
+    }
     engine.processed_gameplay_requests_.push_back(outcome);
     engine.pending_gameplay_request_outcomes_.push_back(outcome);
     return true;

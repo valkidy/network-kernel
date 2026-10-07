@@ -62,7 +62,9 @@ inside the entity that owns it; packet schema 30 adds `InventoryContainerClosed`
 passed; an earlier release cancels and spends nothing. The held weapon now
 follows the input's `selected_weapon` while no action is under way, and a
 weapon put away refills from one reserve if it stays away for its reload
-action's `commit_offset_ticks` (K8). ABI 100 appended `pull_strength` to
+action's `commit_offset_ticks` (K8).
+`KernelLocalActionResultReason_ItemAction` (16): a committed Throw, Consume,
+Place or Carry request ends the weapon action under way. ABI 100 appended `pull_strength` to
 `KernelActionDefinition`. ABI 98
 appended the tornado shape and motion fields to
 `KernelAreaEffectMechanicsDefinition`. ABI 99 appended `hover_height_meters`

@@ -62,6 +62,8 @@
  *     The weapon in hand now follows the input's selected_weapon whenever no
  *     action is under way (it used to move only on a commit), and a weapon
  *     put away reloads itself if it stays away for its reload time (K8).
+ *     KernelLocalActionResultReason_ItemAction: a Throw, Consume, Place or
+ *     Carry request ends the weapon action under way.
  * 100: pull strength. KernelActionDefinition gained pull_strength, appended
  *     after spawn_placement and read only by apply_pull: a fixed number
  *     weighed against the target's impulse_resistance, as apply_impulse's
@@ -1292,6 +1294,10 @@ typedef enum KernelLocalActionResultReason {
     KernelLocalActionResultReason_KnockedBack = 14,
     /* Inside a building: no actions until it comes out. */
     KernelLocalActionResultReason_Sheltered = 15,
+    /* The hands went to an item (ABI 101): a Throw, Consume, Place or Carry
+     * request committed while a weapon action -- a charge, a beam -- was
+     * under way, and ended it. A charge not yet cast costs nothing. */
+    KernelLocalActionResultReason_ItemAction = 16,
 } KernelLocalActionResultReason;
 
 typedef enum KernelRemoteActionPresentationEventType {

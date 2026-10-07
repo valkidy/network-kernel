@@ -658,6 +658,49 @@ void interrupt_sheltered_actions(
     }
 }
 
+// An item request that took the hands (PendingActionInterrupt) ends the
+// weapon action under way. One that has committed -- a beam that has been
+// firing -- goes into its recovery as any ending does; a charge not yet cast
+// simply ends, with nothing spent.
+void interrupt_actions_for_items(
+    World& world,
+    std::uint32_t current_tick,
+    std::vector<ActionOutcome>* outcomes) {
+    std::vector<entt::entity> pending;
+    for (const entt::entity entity : world.registry().view<PendingActionInterrupt>()) {
+        pending.push_back(entity);
+    }
+    for (const entt::entity entity : pending) {
+        const auto reason = static_cast<KernelLocalActionResultReason>(
+            world.registry().get<PendingActionInterrupt>(entity).reason);
+        world.registry().remove<PendingActionInterrupt>(entity);
+        ActionRuntimeState* action =
+            world.registry().try_get<ActionRuntimeState>(entity);
+        if (action == nullptr ||
+            (action->phase != KernelActionPhase_Windup &&
+             action->phase != KernelActionPhase_Active)) {
+            continue;
+        }
+        push_outcome(
+            world,
+            entity,
+            *action,
+            current_tick,
+            ActionOutcomeType::Corrected,
+            reason,
+            outcomes);
+        const RuntimeActionTemplate* action_template =
+            world.find_action_template(action->action_template_id);
+        if (action->commit_count > 0u && action_template != nullptr) {
+            enter_recovery(world, entity, *action, *action_template, current_tick);
+        } else {
+            release_action_resources(world, entity, *action);
+            reset_action(*action);
+        }
+        update_visual_flags(world, entity);
+    }
+}
+
 }  // namespace
 
 std::vector<ActionCommit> simulate_actions(
@@ -668,6 +711,7 @@ std::vector<ActionCommit> simulate_actions(
     std::vector<ActionCommit> commits;
     interrupt_staggered_actions(world, current_tick, outcomes);
     interrupt_sheltered_actions(world, current_tick, outcomes);
+    interrupt_actions_for_items(world, current_tick, outcomes);
     std::unordered_set<entt::entity> touched;
     for (const QueuedInput& queued_input : inputs) {
         const entt::entity entity = input_entity(world, queued_input);

@@ -503,6 +503,13 @@ struct ActionInputState {
     glm::vec3 aim_direction{1.0f, 0.0f, 0.0f};
 };
 
+// Set by a committed item request that takes the hands (Throw, Consume,
+// Place, Carry); the next action pass ends whatever weapon action is under
+// way with `reason`, then removes this.
+struct PendingActionInterrupt {
+    std::uint16_t reason = 0;
+};
+
 struct ActionRuntimeState {
     std::uint32_t action_template_id = 0;
     std::uint32_t action_instance_id = 0;
