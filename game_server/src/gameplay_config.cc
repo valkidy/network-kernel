@@ -9610,6 +9610,24 @@ const ActorTemplateConfig* find_actor_template(
     return nullptr;
 }
 
+std::uint32_t weapon_charge_ticks(
+    const GameServerGameplayConfig& config,
+    std::uint16_t weapon_id) {
+    if (weapon_id > UINT8_MAX || !config.weapons.configured[weapon_id]) {
+        return 0u;
+    }
+    const std::uint32_t fire_action =
+        config.weapons.definitions[weapon_id].fire_action_template_id;
+    for (const ActionTemplateConfig& action : config.action_templates) {
+        if (action.definition.action_template_id == fire_action) {
+            return action.definition.trigger_mode == KernelActionTriggerMode_Charge
+                ? action.definition.commit_offset_ticks
+                : 0u;
+        }
+    }
+    return 0u;
+}
+
 std::uint8_t active_weapon_id(const ActorTemplateConfig& actor_template) {
     if (actor_template.weapon_slot_count == 0 ||
         actor_template.active_weapon_slot >= actor_template.weapon_slot_count) {

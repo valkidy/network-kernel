@@ -171,8 +171,23 @@ ActorIntentExecutionResult ActorIntentExecutor::execute(
             result.status = ai::IntentStatus::kRunning;
             return result;
         }
-        input.action_input = KernelActionInput{
-            perception.self_state.action.action_instance_id, 1u, 0u, 0u};
+        // A hold weapon is held for as long as the attack lasts. A charge
+        // is held until it is charged and then let go, which is the cast:
+        // counted in this actor's own held inputs, one a tick, with one to
+        // spare so the release never lands a tick early and cancels it.
+        std::uint8_t held = 1u;
+        const std::uint32_t instance =
+            perception.self_state.action.action_instance_id;
+        if (config_.charge_ticks != 0u) {
+            if (actor->charging_action_instance_id != instance) {
+                actor->charging_action_instance_id = instance;
+                actor->charge_inputs = 0u;
+            }
+            if (++actor->charge_inputs > config_.charge_ticks) {
+                held = 0u;
+            }
+        }
+        input.action_input = KernelActionInput{instance, held, 0u, 0u};
     } else {
         const std::uint32_t action_instance_id = actor->next_action_instance_id++;
         if (actor->next_action_instance_id == 0u) {

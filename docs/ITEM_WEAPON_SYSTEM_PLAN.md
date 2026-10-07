@@ -224,6 +224,9 @@ Unity 端（不在這個 repo）：slot 數 0 時的動畫、瞄準 IK、HUD 需
   - 放開的那個 tick：蓄滿就施法（扣 MP、走一般的 commit）；沒蓄滿就取消（`Cancelled`），不扣 MP、也不進 recovery，可以馬上再按。
   - 蓄力中死亡、換武器、輸入中斷，一律取消，不受 cancel flags 影響（蓄力時還沒花任何東西）。`cancel_on_release` 對 charge 沒有作用。
   - shipped catalog 的 meteor staff（`meteor_staff_cast`）已改成 charge：蓄力 20 tick（0.67 秒），放開時施法。只有玩家用這把武器。
+  - **AI 使用蓄力武器**：AI 原本只送 `held = 1`（為了雷射這種按住持續的武器），所以蓄力武器永遠放不出來。
+    現在 game_server 從武器的 fire action 讀出蓄力時間（`weapon_charge_ticks`），AI 按住蓄滿後多等 1 tick 再放開（避免早一個 tick 放開被判定取消），放開時用當下重算的瞄準方向施法。測試：`ai_charge_test`（對照組：舊行為 2 秒內都沒施法；新行為第 22 tick 施法）。
+  - 已知但未處理：停止送輸入的單位，動作可能不會被推進到超時，AI 可能卡在動作中（hold 武器也有同樣的風險），見對話記錄的方案 C。
   - 沒有加 capability flag：ABI 101 還沒發佈，而 package 要求 ABI 完全一致。
 - **K8 換下的武器自動 reload**：
   - **前提的修正**：server 端「手上的武器」（`active_weapon_slot`）原本只在 commit（開火、reload）時才更新，所以單純切換武器，server 不知道。

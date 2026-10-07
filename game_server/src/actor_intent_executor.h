@@ -16,6 +16,10 @@ namespace network_example::game_server {
 struct ActorIntentExecutorConfig {
     std::uint16_t weapon_id = UINT16_MAX;
     BallisticAimProfile ballistic_aim;
+    // Non-zero for a weapon whose fire action charges (D21): an attack is
+    // held this long and then released, which is when it casts. A charge
+    // never released never casts.
+    std::uint32_t charge_ticks = 0;
 };
 
 struct ActorIntentExecutionResult {

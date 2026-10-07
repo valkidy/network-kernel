@@ -610,6 +610,13 @@ const ActorTemplateConfig* find_actor_template(
     std::uint32_t actor_template_id);
 std::uint8_t active_weapon_id(const ActorTemplateConfig& actor_template);
 
+// How long `weapon_id`'s fire action charges before a release casts it
+// (trigger_mode charge, design D21): its commit_offset_ticks. 0 for any other
+// trigger mode, or a weapon the catalog does not configure.
+std::uint32_t weapon_charge_ticks(
+    const GameServerGameplayConfig& config,
+    std::uint16_t weapon_id);
+
 // The field id a portable state field named `name` gets: what the kernel's
 // KERNEL_PORTABLE_FIELD_* constants are, for the names it reserves.
 std::uint32_t item_portable_state_field_id(const std::string& name);
