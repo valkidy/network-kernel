@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <spdlog/spdlog.h>
 #include <utility>
 
 namespace network_example::game_server {
@@ -11,7 +12,13 @@ GameServer::GameServer(KernelHandle* kernel, GameServerGameplayConfig config)
       config_(std::move(config)),
       agent_runtime_manager_(kernel, config_),
       respawn_(config_.player.respawn),
-      shelter_(kernel) {
+      shelter_(kernel),
+      loadout_(kernel, config_, [this](std::uint32_t player) {
+          const ActorTemplateConfig* actor_template =
+              find_actor_template(config_, config_.player.actor_template_id);
+          return actor_template != nullptr &&
+              configure_player_inventory(player, *actor_template, true);
+      }) {
     load_kernel_gameplay_catalog(kernel_, config_);
 }
 
@@ -32,14 +39,50 @@ void GameServer::handle_event(const KernelEvent& event) {
         respawn_.on_player_died(event.net_id);
     }
     shelter_.handle_event(event);
+    loadout_.handle_event(event);
     agent_runtime_manager_.handle_event(event);
 }
 
 void GameServer::tick(float delta_seconds) {
+    place_scene_props();
+    if (kernel_ != nullptr) {
+        KernelGameMessage messages[8]{};
+        std::uint32_t count = 0;
+        while ((count = Kernel_ServerPollGameMessages(kernel_, messages, 8u)) != 0u) {
+            for (std::uint32_t index = 0; index < count; ++index) {
+                loadout_.handle_message(messages[index]);
+            }
+        }
+    }
     for (const std::uint32_t net_id : respawn_.advance(delta_seconds)) {
         revive_player(net_id, delta_seconds);
     }
     agent_runtime_manager_.tick(delta_seconds);
+}
+
+void GameServer::place_scene_props() {
+    if (scene_props_placed_ || kernel_ == nullptr) {
+        return;
+    }
+    // All or nothing per attempt: a kernel not yet serving refuses the first,
+    // and nothing has been placed to place twice.
+    for (const ScenePropConfig& scene_prop : config_.scene_props) {
+        KernelServerEntityCreateInfo create{};
+        create.struct_size = sizeof(create);
+        create.entity_type = KernelEntityType_Prop;
+        create.entity_template_id = scene_prop.entity_template_id;
+        create.position = scene_prop.position;
+        create.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+        std::uint32_t net_id = 0;
+        if (!Kernel_ServerCreateEntity(kernel_, &create, &net_id)) {
+            if (&scene_prop == &config_.scene_props.front()) {
+                return;
+            }
+            spdlog::warn(
+                "scene prop not placed template={}", scene_prop.entity_template_id);
+        }
+    }
+    scene_props_placed_ = true;
 }
 
 void GameServer::revive_player(std::uint32_t net_id, float delta_seconds) {
@@ -151,7 +194,11 @@ bool GameServer::configure_player_inventory(
                    &container_id)) {
         return false;
     }
-    for (const InventorySlotConfig& slot : actor_template.inventory_slots) {
+    // The loadout picked at a camp, or the template's default.
+    const std::vector<InventorySlotConfig>* picked = loadout_.loadout_of(net_id);
+    const std::vector<InventorySlotConfig>& slots =
+        picked != nullptr ? *picked : actor_template.inventory_slots;
+    for (const InventorySlotConfig& slot : slots) {
         KernelItemInstanceId item_instance_id = 0;
         if (!Kernel_ServerCreateInventoryItem(
                 kernel_,

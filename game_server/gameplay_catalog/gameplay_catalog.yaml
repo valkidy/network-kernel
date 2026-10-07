@@ -48,6 +48,12 @@ static_collision_scene:
   scene_id: 1
   collider_id: 2147483649
   collision_layer: 1
+# Props placed once the server is running, before any mission: a stand-in for
+# the scene file that will place a map's fixed props. The initial camp sits
+# beside the spawn point, so the first thing a player can do is pick a loadout.
+scene_props:
+  - entity_template: initial_camp
+    position: {x: 6.0, y: 0.0, z: 0.0}
 player:
   entity_template: player
   # A dead player comes back delay_seconds later, height_offset metres above

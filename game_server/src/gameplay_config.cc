@@ -374,6 +374,13 @@ void hash_actor_template(
         hash_scalar(hash, slot.item_template_id);
         hash_scalar(hash, slot.quantity);
     }
+    hash_scalar(
+        hash,
+        static_cast<std::uint32_t>(actor_template.loadout_options.size()));
+    for (const InventorySlotConfig& option : actor_template.loadout_options) {
+        hash_scalar(hash, option.item_template_id);
+        hash_scalar(hash, option.quantity);
+    }
     hash_scalar(hash, actor_template.animation_idle);
     hash_scalar(hash, actor_template.animation_chasing);
     hash_scalar(hash, actor_template.sentry.alert_ticks);
@@ -2992,6 +2999,11 @@ void apply_default_non_weapon_config(GameServerGameplayConfig* config);
 void apply_catalog_player_config(
     const YAML::Node& document,
     GameServerGameplayConfig* config);
+void apply_catalog_scene_props_config(
+    const YAML::Node& document,
+    GameServerGameplayConfig* config,
+    const std::string& path,
+    std::uint32_t source_kind);
 void apply_catalog_director_preload_config(
     const YAML::Node& document,
     GameServerGameplayConfig* config);
@@ -4776,6 +4788,7 @@ EntityTemplateConfig entity_template_from_yaml(
                 "carry_offset",
                 "lifecycle",
                 "shelter",
+                "loadout",
                 "triggers",
                 "spawner",
             },
@@ -4881,6 +4894,46 @@ EntityTemplateConfig entity_template_from_yaml(
                 }
                 entity_template.prop.importance =
                     static_cast<std::uint8_t>(importance);
+            }
+        }
+        // A loadout camp: what a player may pick to fill their inventory.
+        if (node["loadout"]) {
+            reject_unknown_keys(
+                node["loadout"],
+                {"options"},
+                path,
+                source_kind,
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+                entity_template.actor_template_id);
+            const YAML::Node options = node["loadout"]["options"];
+            if (!options || !options.IsSequence() || options.size() == 0 ||
+                options.size() > kMaxLoadoutOptions) {
+                throw std::runtime_error(
+                    "loadout options must be a sequence of 1 to " +
+                    std::to_string(kMaxLoadoutOptions) + " entries: " + path);
+            }
+            for (const YAML::Node& option_node : options) {
+                if (!option_node.IsMap()) {
+                    throw std::runtime_error(
+                        "loadout option must be a mapping: " + path);
+                }
+                reject_unknown_keys(
+                    option_node,
+                    {"item_template", "quantity"},
+                    path,
+                    source_kind,
+                    KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+                    entity_template.actor_template_id);
+                if (!option_node["item_template"] || !option_node["quantity"]) {
+                    throw std::runtime_error(
+                        "loadout option requires item_template and quantity: " +
+                        path);
+                }
+                InventorySlotConfig option;
+                option.item_template_ref =
+                    option_node["item_template"].as<std::string>();
+                option.quantity = option_node["quantity"].as<std::uint32_t>();
+                entity_template.loadout_options.push_back(std::move(option));
             }
         }
         // What going inside this building means: how many it holds, and
@@ -5904,6 +5957,19 @@ void resolve_inventory_item_template_references(
     const std::vector<ItemTemplateConfig>& item_templates,
     std::vector<EntityTemplateConfig>* entity_templates) {
     for (EntityTemplateConfig& entity_template : *entity_templates) {
+        for (InventorySlotConfig& option : entity_template.loadout_options) {
+            const auto item = std::find_if(
+                item_templates.begin(),
+                item_templates.end(),
+                [&option](const ItemTemplateConfig& candidate) {
+                    return candidate.name == option.item_template_ref ||
+                        std::to_string(candidate.definition.item_template_id) ==
+                            option.item_template_ref;
+                });
+            if (item != item_templates.end()) {
+                option.item_template_id = item->definition.item_template_id;
+            }
+        }
         for (InventorySlotConfig& slot : entity_template.inventory_slots) {
             const auto item = std::find_if(
                 item_templates.begin(),
@@ -7849,6 +7915,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             "reinforce_budget",
             "agent_budget",
             "navigation_mesh",
+            "scene_props",
         },
         path,
         source.source_kind(),
@@ -8099,6 +8166,8 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
         actor_templates_from_entity_templates(config.entity_templates);
 
     apply_catalog_player_config(document, &config);
+    apply_catalog_scene_props_config(
+        document, &config, path, source.source_kind());
     apply_catalog_director_preload_config(document, &config);
     apply_catalog_patrol_config(
         document, &config, path, source.source_kind());
@@ -8118,6 +8187,37 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
 void apply_default_non_weapon_config(GameServerGameplayConfig* config) {
     config->player = PlayerGameplayDefinition{};
     apply_default_actor_templates(config);
+}
+
+void apply_catalog_scene_props_config(
+    const YAML::Node& document,
+    GameServerGameplayConfig* config,
+    const std::string& path,
+    std::uint32_t source_kind) {
+    const YAML::Node props = document["scene_props"];
+    if (!props) {
+        return;
+    }
+    if (!props.IsSequence()) {
+        throw std::runtime_error("scene_props must be a sequence: " + path);
+    }
+    for (const YAML::Node& prop : props) {
+        reject_unknown_keys(
+            prop,
+            {"entity_template", "position"},
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+        if (!prop["entity_template"] || !prop["position"]) {
+            throw std::runtime_error(
+                "scene prop requires entity_template and position: " + path);
+        }
+        ScenePropConfig scene_prop;
+        scene_prop.entity_template_id = entity_template_ref_from_yaml(
+            prop["entity_template"], config->entity_templates);
+        scene_prop.position = vec3_from_yaml(prop["position"]);
+        config->scene_props.push_back(scene_prop);
+    }
 }
 
 void apply_catalog_player_config(
@@ -8992,6 +9092,13 @@ std::uint64_t compute_gameplay_catalog_hash(
         }
     }
     hash_scalar(&hash, config.player.actor_template_id);
+    hash_scalar(&hash, static_cast<std::uint32_t>(config.scene_props.size()));
+    for (const ScenePropConfig& scene_prop : config.scene_props) {
+        hash_scalar(&hash, scene_prop.entity_template_id);
+        hash_float(&hash, scene_prop.position.x);
+        hash_float(&hash, scene_prop.position.y);
+        hash_float(&hash, scene_prop.position.z);
+    }
     hash_float(&hash, config.player.respawn.delay_seconds);
     hash_float(&hash, config.player.respawn.height_offset_meters);
     hash_float(&hash, config.player.respawn.invulnerable_seconds);
@@ -9508,7 +9615,50 @@ std::vector<std::string> validate_gameplay_config(
                 "collision_mask, or a throw never lands: " + item.name);
         }
     }
+    for (const ScenePropConfig& scene_prop : config.scene_props) {
+        const auto entity_template = std::find_if(
+            config.entity_templates.begin(),
+            config.entity_templates.end(),
+            [&scene_prop](const EntityTemplateConfig& candidate) {
+                return candidate.actor_template_id == scene_prop.entity_template_id;
+            });
+        if (entity_template == config.entity_templates.end() ||
+            entity_template->entity_type != KernelEntityType_Prop ||
+            !std::isfinite(scene_prop.position.x) ||
+            !std::isfinite(scene_prop.position.y) ||
+            !std::isfinite(scene_prop.position.z)) {
+            errors.push_back("scene prop must name a prop template at a finite position");
+        }
+    }
     for (const EntityTemplateConfig& entity_template : config.entity_templates) {
+        if (!entity_template.loadout_options.empty() &&
+            entity_template.entity_type != KernelEntityType_Prop) {
+            errors.push_back(
+                "only prop templates may offer a loadout: " + entity_template.name);
+        }
+        for (const InventorySlotConfig& option : entity_template.loadout_options) {
+            const auto item = std::find_if(
+                config.item_templates.begin(),
+                config.item_templates.end(),
+                [&option](const ItemTemplateConfig& candidate) {
+                    return candidate.definition.item_template_id ==
+                        option.item_template_id;
+                });
+            if (item == config.item_templates.end()) {
+                errors.push_back(
+                    "loadout option must reference a valid item: " +
+                    entity_template.name + " " + option.item_template_ref);
+                continue;
+            }
+            if (option.quantity == 0 ||
+                option.quantity > item->definition.max_stack ||
+                (item->definition.item_mode == KernelItemMode_Stateful &&
+                 option.quantity != 1)) {
+                errors.push_back(
+                    "loadout option quantity must be 1 to the item's max_stack: " +
+                    entity_template.name + " " + option.item_template_ref);
+            }
+        }
         if (entity_template.prop.throw_trajectory_projectile_template_id != 0u &&
             (entity_template.collision_trigger_mask &
              KERNEL_COLLISION_LAYER_TERRAIN) == 0u) {

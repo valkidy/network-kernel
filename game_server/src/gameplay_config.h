@@ -251,6 +251,10 @@ struct ActorTemplateConfig {
     std::uint8_t active_weapon_slot = 0;
     std::uint16_t inventory_slot_capacity = 0;
     std::vector<InventorySlotConfig> inventory_slots;
+    // A loadout camp's offer (design D24): each entry is one choice that fills
+    // one inventory slot when picked, and may be picked more than once. Props
+    // only; empty for anything that is not a loadout camp.
+    std::vector<InventorySlotConfig> loadout_options;
     std::uint16_t animation_idle = 0;
     std::uint16_t animation_chasing = 0;
     AgentSentryConfig sentry{};
@@ -445,6 +449,14 @@ struct StaticCollisionSceneConfig {
     std::uint32_t collision_layer = 0;
 };
 
+// A prop game_server puts in the world once the server is running, before any
+// mission does -- the initial camp. A stand-in for the scene file that will
+// place a map's fixed props; authored as `scene_props:` at catalog top level.
+struct ScenePropConfig {
+    std::uint32_t entity_template_id = 0;
+    KernelVec3 position{};
+};
+
 struct ReinforceBudgetConfig {
     std::uint32_t max_live_agents = 0;
 };
@@ -468,6 +480,7 @@ struct GameServerGameplayConfig {
     // Per-carrier ceilings bound one caller; this bounds N callers. Zero is
     // unbounded, and a catalog with any on_alert spawner must author it.
     ReinforceBudgetConfig reinforce_budget;
+    std::vector<ScenePropConfig> scene_props;
     // Every agent on the server. Spawners that fill room when there is room --
     // patrols, nests, on_alert -- are held to it; mission and world rules and
     // action-graph spawns count toward it but are never refused, so it is a
@@ -570,6 +583,10 @@ const ActorTemplateConfig* find_actor_template(
     const GameServerGameplayConfig& config,
     std::uint32_t actor_template_id);
 std::uint8_t active_weapon_id(const ActorTemplateConfig& actor_template);
+
+// The most options one loadout camp may offer: the offer list has to fit one
+// game message (GAME_SERVER_MESSAGE_LOADOUT_OFFERS).
+inline constexpr std::size_t kMaxLoadoutOptions = 32;
 
 KernelCombatStateDefinition make_player_combat_state(
     const GameServerGameplayConfig& config);

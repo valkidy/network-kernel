@@ -1,0 +1,10 @@
+# A loadout camp asking for its interface. game_server answers the
+# activation with the camp's offer (GAME_SERVER_MESSAGE_LOADOUT_OFFERS), which
+# is the client's cue to open the loadout UI; ui_id 2 names that UI.
+id: action_open_loadout_ui
+parameters:
+  target: null
+actions:
+  - type: open_ui
+    target: params.target
+    ui_id: 2
