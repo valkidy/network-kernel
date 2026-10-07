@@ -1,6 +1,6 @@
 # 道具系統與法杖武器系統 實作計劃書
 
-狀態：**設計已定案（第九輪）。P1（K1–K4）已實作，分支 `claude/item-weapon-p1`，ABI 101。** P0 量測測試已完成（見 §4）。
+狀態：**設計已定案（第九輪）。P1（K1–K4）已實作（`claude/item-weapon-p1`）；P2（K10 + 配裝模板，道具部分）已實作（`claude/item-weapon-p2`，疊在 P1 之上）。ABI 101、packet schema 27。** P0 量測測試已完成（見 §4）。
 分支：本文件在 `claude/item-weapon-plan`；P0 測試在 `claude/p0-throw-and-unarmed-tests`（12795b3）。兩者都從 main 78d9350 分出，尚未 merge。
 最後更新：2026-10-07（第八輪：營地選項在 prop 模板、臨時營地比照帳篷、L1/R1 重複按不作用、其他玩家武器的封包評估）。
 
@@ -67,6 +67,7 @@
 | D25 | 臨時營地的配置比照帳篷：壽命、shelter 容量，並與帳篷共用同一個 population group。誰先被淘汰由 D17 的 `importance` 決定 | 第八輪（原 G3）。main 上 `tent` group 上限 4 |
 | D26 | 已經在道具模式時短按 L1 不作用；已經在武器模式時短按 R1 也不作用 | 第八輪（原 G4） |
 | D27 | 其他玩家手上的武器用 snapshot 欄位同步（§3.10 的 A）：隊友記錄多 1 B 武器 id，空手用專用值。併進 K6 | 第九輪（原 G1） |
+| D28 | 初始營地由 catalog 頂層的 `scene_props:` 放進場景，game_server 在 kernel 開始執行後的第一個 tick 放置。這是未來 scene file 的替代品。game rule 放不了：等待節點不能生成東西、一個節點只能有一個效果，而永遠不完成的節點會讓整個 rule 永遠無法完成 | P2 實作時決定 |
 
 ---
 
@@ -90,18 +91,21 @@
 
 ### 3.2 初始營地與配裝模板（D1–D6）
 
-流程：
+流程（P2 已實作，`game_server/src/loadout_director.cc`）：
 
-1. 初始營地是場景裡的 prop（目前由 game rule 生成）。`on_activated` 綁定 `open_ui {ui_id: loadout}`，沿用帳篷的 UI 開啟流程。
-   不需要 shelter，也不需要容器同步：玩家站在互動範圍內就能打開 UI。
-2. Unity 顯示選項清單，玩家選好後透過 **K10** 把整份選擇送給 game_server。
-3. game_server 驗證：
-   - 選項數 ≤ `inventory_slot_capacity`；
-   - 每個選項都在營地的選項清單裡，quantity ≤ 該道具的 `max_stack`；
-   - 每個武器類別最多一把，而且武器的類別要對。
-4. 驗證通過就記成這個玩家的配裝模板，並**立刻套用**（D3）：清掉兩個容器裡 `drop_tag == 0` 的物品，再依模板建立（D23）。
-   帶標記的物品保留；地圖武器和模板武器同類別時，換上模板的武器，地圖武器丟在腳下。
-5. 重生、加入時套用同一份模板。加入時還沒有模板，就用 `player.yaml` 的預設值。
+1. 初始營地是 prop 219 `initial_camp`，由 `scene_props:` 放進場景（D28）。`on_activated` 綁 `open_ui {ui_id: 2}`。
+   不需要 shelter，也不需要容器同步。任何模板有 `loadout:` 的 prop 都是配裝營地。
+2. 玩家互動後，game_server 透過 K10 送 `GAME_SERVER_MESSAGE_LOADOUT_OFFERS` 給他，這也是 client 打開 UI 的訊號。
+3. client 送 `LOADOUT_SELECT`，用選項的 index 指名；index 可以重複，一次挑選佔一格。
+4. game_server 驗證：
+   - 目標是配裝營地；
+   - 玩家還活著，且距離在營地的互動範圍 + 1 m 內；
+   - 挑選數 ≤ `inventory_slot_capacity`；
+   - 每個 index 都有效。
+5. 驗證通過就記成這個玩家的配裝模板，並**立刻套用**（D3）：清空道具容器，再依模板建立。0 個挑選代表回到預設。回 `LOADOUT_RESULT`。
+6. 重生時套用同一份模板；玩家離線就忘掉（重連要重選，D6）。還沒選的玩家用 `player.yaml` 的預設值。
+
+訊息格式和結果碼寫在 `game_server/public/game_server_types.h`（`GAME_SERVER_MESSAGE_LOADOUT_*`、`GAME_SERVER_LOADOUT_RESULT_*`），有 `GAME_SERVER_CAPABILITY_LOADOUT_MESSAGES` 標記。Unity 照這份實作。
 
 建議的營地 prop 設定：不寫 `health`（打不壞）、不寫 `lifecycle`（永久）。
 `lifetime_ticks: 0` 是載入錯誤（必須為正）；不寫 `lifetime_ticks` 才是永久。
@@ -324,7 +328,7 @@ kernel 不需要知道玩家在哪個模式：R2 在武器模式送 Fire 輸入�
 | K7 | `charge` trigger mode | 中 | 新增型 |
 | K8 | 換下的武器自動 reload | 小到中 | 依 K6 |
 | K9 | 臨時營地容器：營地內的人看得到、`Transfer`、進出時同步 | 中到大 | 新封包、新 API |
-| K10 | client 傳給 game_server 的通用訊息（kernel 只轉送） | 小到中 | 新增型 |
+| K10 | client 和 game_server 之間的通用訊息，雙向（kernel 只轉送）。**已完成**（7096283） | 小到中 | ABI 101 內新增（capability bit 50）；packet schema 27 |
 | K11 | （之後）帶標記物品的死亡掉落：原封不動移到地上、散開 | 中 | 新 API |
 | K12 | item instance 的 uint8 `drop_tag`：建立時帶入、跟著物品走、疊加要求相同 | 小到中 | 建立 API 多一個參數、item view 多一個欄位 |
 
@@ -338,7 +342,7 @@ kernel 不需要知道玩家在哪個模式：R2 在武器模式送 Fire 輸入�
 |---|---|---|
 | P0 | 量測現行行為 | **已完成**（§4） |
 | P1 | K1、K2、K3、K4 | 都是小改動、彼此獨立，不用升 snapshot schema |
-| P2 | K10 + game_server 配裝模板（先只有道具） | 初始營地可以先用現有的武器配置跑起來 |
+| P2 | K10 + game_server 配裝模板（先只有道具）。**已完成**（0b799fa） | 初始營地可以先用現有的武器配置跑起來 |
 | P3 | K5 + K6，配裝模板加上武器 | 最大的一塊，snapshot schema 在這裡升一次 |
 | P4 | K9 臨時營地 | 依賴 shelter 流程（已在 main） |
 | P5 | K7、K8 | K8 依賴 K6 |
