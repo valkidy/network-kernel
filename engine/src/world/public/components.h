@@ -427,6 +427,11 @@ struct WeaponState {
     // container; 0 for a loadout authored on the template. The slot's ammo
     // and reserve are written back to that item, wherever it has gone.
     std::array<std::uint64_t, kWeaponSlotCount> item_ids{};
+    // Holstered auto-reload (K8, D21): the tick each slot was put away, while
+    // it is away. Taking it back out after its reload time refills it as a
+    // reload would have, one reserve for a full magazine.
+    std::array<std::uint32_t, kWeaponSlotCount> holstered_tick{};
+    std::array<bool, kWeaponSlotCount> holstered{};
     NetId active_effect_net_id = 0;
     bool is_reloading = false;
 };

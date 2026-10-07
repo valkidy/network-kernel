@@ -1600,7 +1600,7 @@ bool valid_action_template_definition(
         KernelActionTemplateFlag_CancelBeforeFirstCommit;
     if (definition.struct_size < sizeof(KernelActionTemplateDefinition) ||
         definition.action_template_id == 0u ||
-        definition.trigger_mode > KernelActionTriggerMode_Hold ||
+        definition.trigger_mode > KernelActionTriggerMode_Charge ||
         (definition.flags & ~kKnownFlags) != 0u ||
         (definition.max_commit_count != 1u &&
          definition.commit_interval_ticks == 0u)) {
@@ -1609,6 +1609,13 @@ bool valid_action_template_definition(
     if (definition.trigger_mode == KernelActionTriggerMode_Press) {
         return definition.max_commit_count >= 1u &&
                definition.hold_input_timeout_ticks == 0u;
+    }
+    if (definition.trigger_mode == KernelActionTriggerMode_Charge) {
+        // commit_offset_ticks is the charge time: a charge of nothing would
+        // be a press that fires on release.
+        return definition.max_commit_count == 1u &&
+               definition.commit_offset_ticks > 0u &&
+               definition.hold_input_timeout_ticks > 0u;
     }
     return definition.hold_input_timeout_ticks > 0u;
 }
@@ -1664,6 +1671,8 @@ ActionTemplateConfig action_template_from_yaml(
         definition.trigger_mode = KernelActionTriggerMode_Press;
     } else if (trigger_mode == "hold") {
         definition.trigger_mode = KernelActionTriggerMode_Hold;
+    } else if (trigger_mode == "charge") {
+        definition.trigger_mode = KernelActionTriggerMode_Charge;
     } else {
         throw DataLoadError(
             KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_INVALID_ENUM_VALUE,

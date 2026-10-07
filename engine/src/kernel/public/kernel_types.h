@@ -57,6 +57,10 @@
  *     from the stock of the building the instigator is inside. A stock goes
  *     to whoever is inside its owner; packet schema 30 adds
  *     InventoryContainerClosed for a container a client no longer sees.
+ *     KernelActionTriggerMode_Charge (K7): hold to charge, release to cast.
+ *     The weapon in hand now follows the input's selected_weapon whenever no
+ *     action is under way (it used to move only on a commit), and a weapon
+ *     put away reloads itself if it stays away for its reload time (K8).
  * 100: pull strength. KernelActionDefinition gained pull_strength, appended
  *     after spawn_placement and read only by apply_pull: a fixed number
  *     weighed against the target's impulse_resistance, as apply_impulse's
@@ -1245,9 +1249,15 @@ typedef enum KernelActionBinding {
     KernelActionBinding_Reload = 1,
 } KernelActionBinding;
 
+/* Charge (ABI 101, design D21): hold to charge, release to cast. The cast
+ * happens on the tick the release arrives, if the press has been held for
+ * commit_offset_ticks; a release before that cancels it, and nothing is
+ * spent. Held input must keep arriving within hold_input_timeout_ticks, as
+ * for Hold. One cast per press: max_commit_count is 1. */
 typedef enum KernelActionTriggerMode {
     KernelActionTriggerMode_Press = 0,
     KernelActionTriggerMode_Hold = 1,
+    KernelActionTriggerMode_Charge = 2,
 } KernelActionTriggerMode;
 
 typedef enum KernelActionPhase {

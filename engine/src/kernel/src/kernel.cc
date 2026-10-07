@@ -1681,7 +1681,7 @@ bool validate_action_template(
         KernelActionTemplateFlag_CancelBeforeFirstCommit;
     if (definition.struct_size < sizeof(KernelActionTemplateDefinition) ||
         definition.action_template_id == 0u ||
-        definition.trigger_mode > KernelActionTriggerMode_Hold ||
+        definition.trigger_mode > KernelActionTriggerMode_Charge ||
         (definition.flags & ~kKnownFlags) != 0u ||
         (definition.max_commit_count != 1u &&
          definition.commit_interval_ticks == 0u)) {
@@ -1690,6 +1690,13 @@ bool validate_action_template(
     if (definition.trigger_mode == KernelActionTriggerMode_Press) {
         return definition.max_commit_count >= 1u &&
                definition.hold_input_timeout_ticks == 0u;
+    }
+    if (definition.trigger_mode == KernelActionTriggerMode_Charge) {
+        // commit_offset_ticks is the charge time: a charge of nothing would
+        // be a press that fires on release.
+        return definition.max_commit_count == 1u &&
+               definition.commit_offset_ticks > 0u &&
+               definition.hold_input_timeout_ticks > 0u;
     }
     return definition.hold_input_timeout_ticks > 0u;
 }
@@ -5639,11 +5646,13 @@ void KernelEngine::rebuild_weapon_loadout(const InventoryContainerRecord& contai
                     static_cast<std::uint16_t>(field.uint32_default);
             }
         }
-        // A weapon that stays keeps its cadence.
+        // A weapon that stays keeps its cadence, and its holstered reload.
         for (std::size_t old = 0; old < before.weapon_slot_count; ++old) {
             if (before.weapon_ids[old] == definition->weapon_id) {
                 rebuilt.next_primary_commit_tick[slot] =
                     before.next_primary_commit_tick[old];
+                rebuilt.holstered[slot] = before.holstered[old];
+                rebuilt.holstered_tick[slot] = before.holstered_tick[old];
             }
         }
         if (had_active && definition->weapon_id == active_id) {

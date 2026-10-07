@@ -216,12 +216,22 @@ Unity 端（不在這個 repo）：slot 數 0 時的動畫、瞄準 IK、HUD 需
 
 ### 3.7 法杖操作（D21，K7、K8）
 
-- **K7 蓄力施法：** 新的 trigger mode `charge`。現在只有 Press 和 Hold（`kernel_types.h:1137`）。
-  - 按住時開始累積，放開時如果累積的 tick 夠了才施法；不夠就取消，不扣 MP。
-  - server 本來就從輸入序列知道按了多久，順手驗證幾乎沒有成本。
-  - 新增 enum 值是新增型的 ABI，用 capability flag 擋住。
-- **K8 換下的武器自動 reload：** 每格記錄「reload 完成的 tick」，換回這把武器時再檢查，到了就補滿 MP、扣一次 reserve。
-  計算是 deterministic 的，client 可以自己算。等 K6 完成後再做。
+實作（P5，已完成）：
+
+- **K7 蓄力施法**：action 模板的 `trigger_mode: charge`（`KernelActionTriggerMode_Charge` = 2）。
+  - `commit_offset_ticks` 是蓄力時間；`max_commit_count` 必須是 1；`hold_input_timeout_ticks` 必須大於 0（和 hold 一樣，按住時要持續送 held 輸入）。
+  - 按住時停在 Windup，不會自己施法，蓄滿後繼續按住也一樣。
+  - 放開的那個 tick：蓄滿就施法（扣 MP、走一般的 commit）；沒蓄滿就取消（`Cancelled`），不扣 MP、也不進 recovery，可以馬上再按。
+  - 蓄力中死亡、換武器、輸入中斷，一律取消，不受 cancel flags 影響（蓄力時還沒花任何東西）。`cancel_on_release` 對 charge 沒有作用。
+  - shipped catalog 沒有改任何武器；要讓某個法杖蓄力，把它的 fire action 改成 charge（見測試裡的 `meteor_staff_cast` 範例）。
+  - 沒有加 capability flag：ABI 101 還沒發佈，而 package 要求 ABI 完全一致。
+- **K8 換下的武器自動 reload**：
+  - **前提的修正**：server 端「手上的武器」（`active_weapon_slot`）原本只在 commit（開火、reload）時才更新，所以單純切換武器，server 不知道。
+    現在只要沒有動作進行中（Windup / Active），就跟著輸入的 `selected_weapon` 切換。這也讓 D27 其他玩家看到的手持武器在切換時就更新，不必等開火。
+  - 換下時記錄 tick（`WeaponState.holstered_tick`）；換回時，如果離開的時間 ≥ 該武器 reload action 的 `commit_offset_ticks`、彈匣沒滿、還有 reserve，就補滿並扣一次 reserve，和 reload 的結果相同。
+  - 只用 tick 計算，client 可以自己算出一樣的結果。
+  - 武器配置重建時（撿武器、營地領取），留下來的武器保留換下的記錄。武器離開配置再回來（丟到地上又撿回）則不保留。
+- 測試：`charge_and_holster_test`。
 
 ### 3.8 死亡掉落（D19，K11、K12）
 
@@ -344,8 +354,8 @@ kernel 不需要知道玩家在哪個模式：R2 在武器模式送 Fire 輸入�
 | K4 | 空手：放寬三個入口（loader 解析、`validate_gameplay_config`、`SetEntityCombatState`）、修 client 舊彈藥 bug、刪死 code。**已完成**（8e8ba53） | 小 | 無 |
 | K5 | 武器 item：依類別指定格子的武器容器、裝卸同步 `WeaponState`、portable state 寫回、自動交換、只有玩家能撿。**已完成**（69f32e6、daaf88d、167fbd6） | **大** | ABI 101：item 模板多 4 個欄位、`Kernel_ServerCreateWeaponContainer`、容器 view 的 `container_kind` |
 | K6 | 給擁有者的武器配置和 reserve 同步（沿用 inventory 同步，零新封包）；每個玩家記錄裡的武器 id（D27）。**已完成**（438c822） | 中 | snapshot schema 28、packet schema 28；`RenderEntityState` 大小不變 |
-| K7 | `charge` trigger mode | 中 | 新增型 |
-| K8 | 換下的武器自動 reload | 小到中 | 依 K6 |
+| K7 | `charge` trigger mode。**已完成**（P5） | 中 | 新增型：`KernelActionTriggerMode_Charge` |
+| K8 | 換下的武器自動 reload。**已完成**（P5）；server 的手持武器改為跟著輸入的選擇 | 小到中 | 無 ABI 結構變動 |
 | K9 | 臨時營地容器：營地內的人看得到、`Transfer`、進出時同步。**已完成**（P4） | 中到大 | packet schema 30（`InventoryContainerClosed`）；`KernelInventoryContainerKind_Stock`、`KernelDomainAction_Transfer`、`Kernel_ServerCreateStockContainer` |
 | K10 | client 和 game_server 之間的通用訊息，雙向（kernel 只轉送）。**已完成**（7096283） | 小到中 | ABI 101 內新增（capability bit 50）；packet schema 27 |
 | K11 | 帶標記物品的死亡掉落：原封不動移到地上、散開。**已完成** | 小 | 沒有新 API；`Kernel_ServerDropInventoryItem` 改為落在 terrain 上 |
