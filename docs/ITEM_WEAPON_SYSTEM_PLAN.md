@@ -414,7 +414,20 @@ catalog 驅動的測試要自己掛上武器 mechanics、載入地面場景，�
 
 ## 8. 待決問題
 
-目前沒有。實作中發現的問題記在對應的章節。
+實作中發現的問題記在對應的章節。以下是決定先不處理、但要記住的：
+
+### 8.1 純 client 沒有本地武器狀態預測（2026-10-08，先維持現狀）
+
+**現況：** 純 client（連到 dedicated server，不是 listen host）的 kernel 不把自己的玩家放進 `world_`，所以沒有 `WeaponState` / `WeaponTuning`，`predict_local_action` 一開始就退出（2026-09-30 兩個 process 實測：server 扣彈 6→5，client 預測仍是 6、沒有預測投射物）。
+`Kernel_GetLocalWeaponState` 在純 client 上有手持武器 id（snapshot 28 的 `held_weapon_id`）和 server 的彈藥、reload 旗標，但都是延遲值（約單程延遲 + 一個 snapshot 間隔，100 ms ping、15 Hz 約 100–120 ms），沒有預測扣彈、冷卻、蓄力扣 MP、換回武器時的自動 reload。其他武器的彈藥可從武器 item 的 portable state 讀到，同樣延遲。listen host 本人有完整預測，不受影響。
+
+**決定：** 方案 1，維持現狀。Unity 在按下時就自己播開火、蓄力、投擲的表現；彈藥 UI 用 server 的值。被道具打斷時，Unity 送出投擲就先停止蓄力表現，不等 Corrected。
+
+**之後要做時的選項：**
+- 方案 2（輕量預測）：client 用 catalog 的武器 / action 模板加 snapshot 的武器狀態，預測扣彈、冷卻、蓄力、換回時的自動 reload，經 `Kernel_GetLocalWeaponState` 回傳，server 值回來再校正。不改封包，中等成本。不預測投射物。
+- 方案 3（完整預測）：把自己的玩家放進 client 的 `world_`，掛上從 snapshot 鏡像的武器狀態，沿用 listen host 的預測路徑（含投射物）。成本大、牽涉校正與同步順序。
+
+**何時重新評估：** dedicated server 成為主要遊玩模式、彈藥 UI 延遲被玩家注意到（→ 方案 2），或需要預測投射物，例如 PvP、高延遲下火箭手感（→ 方案 3）。
 
 ---
 
