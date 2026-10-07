@@ -313,6 +313,15 @@ struct ActionRefillWeaponReserveCommand {
     ActionExecutionProvenance provenance;
 };
 
+// The target may not act while status instance status_instance_id stands.
+// Only a status lifecycle batch fills that id, as for a speed modifier.
+struct ActionApplyBlockActionsCommand {
+    NetId source = 0;
+    NetId target = 0;
+    std::uint32_t status_instance_id = 0;
+    ActionExecutionProvenance provenance;
+};
+
 using ActionGraphCommand = std::variant<
     ActionSpawnProjectileCommand,
     ActionApplyDamageCommand,
@@ -324,7 +333,8 @@ using ActionGraphCommand = std::variant<
     ActionSpawnEntityCommand,
     ActionApplyPullCommand,
     ActionOpenUiCommand,
-    ActionRefillWeaponReserveCommand>;
+    ActionRefillWeaponReserveCommand,
+    ActionApplyBlockActionsCommand>;
 
 struct ActionGraphQueuedTrigger {
     CompiledActionGraphBinding binding;

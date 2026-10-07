@@ -487,6 +487,26 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
             continue;
         }
         if (action.action_type ==
+            KernelEntityTriggerActionType_ApplyBlockActions) {
+            // Only a status's on_apply has an instance for the block to live
+            // as long as, and only its own subject to hold.
+            if (event_type != TriggerEventType::kStatusApplied ||
+                (action.target_source != KernelEntityRefSource_Self &&
+                 action.target_source != KernelEntityRefSource_EventSubject)) {
+                return std::nullopt;
+            }
+            const std::string target_name = "target" + suffix;
+            binding.graph.parameters.push_back({target_name, std::monostate{}});
+            binding.graph.actions.push_back(ActionApplyBlockActionsDefinition{
+                target_name, *condition});
+            binding.parameters.push_back({
+                target_name,
+                EntityRefExpression{static_cast<EntityRefSource>(
+                    action.target_source)},
+            });
+            continue;
+        }
+        if (action.action_type ==
             KernelEntityTriggerActionType_RefillWeaponReserve) {
             // An item's use, for the actor using it: no other event has one.
             if (event_type != TriggerEventType::kItemUsed ||
@@ -893,6 +913,15 @@ bool validate_action_graph_binding(
             }
             continue;
         }
+        if (const auto* block =
+                std::get_if<ActionApplyBlockActionsDefinition>(&action)) {
+            if (!validate_action_parameter(
+                    binding, block->target_parameter, ParameterType::kEntityId,
+                    error)) {
+                return false;
+            }
+            continue;
+        }
         if (const auto* refill =
                 std::get_if<ActionRefillWeaponReserveDefinition>(&action)) {
             if ((refill->count == 0u) == (refill->percent == 0u) ||
@@ -1140,6 +1169,27 @@ bool evaluate_action_graph(
                 spawn->quantity,
                 provenance,
                 spawn->placement,
+            });
+            continue;
+        }
+
+        if (const auto* block =
+                std::get_if<ActionApplyBlockActionsDefinition>(&action)) {
+            const ActionGraphParameterValue* target_value =
+                find_resolved_parameter(parameters, block->target_parameter);
+            if (target_value == nullptr ||
+                !std::holds_alternative<EntityIdValue>(*target_value)) {
+                return fail(error, "apply_block_actions action input type mismatch");
+            }
+            const NetId target = std::get<EntityIdValue>(*target_value).value;
+            if (target == 0u) {
+                return fail(error, "apply_block_actions target must not be null");
+            }
+            commands->push_back(ActionApplyBlockActionsCommand{
+                action_source(self, event),
+                target,
+                provenance.status_instance_id,
+                provenance,
             });
             continue;
         }

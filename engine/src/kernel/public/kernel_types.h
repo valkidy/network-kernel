@@ -5,6 +5,13 @@
 #include <stdint.h>
 
 /*
+ * 102: status-bound crowd control (the water bubble). KernelEntityTriggerActionType
+ *     gained _ApplyBlockActions: a status on_apply action that, for as long as
+ *     that status instance stands, refuses its target new actions and ends the
+ *     one under way. It has no fields of its own -- its lifetime is the
+ *     status's -- so KernelActionDefinition is unchanged.
+ *     KernelLocalActionResultReason gained _StatusBlocked, the reason both the
+ *     refusal and the interrupt report.
  * 101: items and wands, first part. KernelPropDefinition gained importance
  *     (with three reserved bytes), appended after population_group_id: when
  *     a population group is over max_alive, the member just spawned is never
@@ -240,7 +247,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 101u
+#define KERNEL_ABI_VERSION 102u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -871,6 +878,10 @@ typedef enum KernelEntityTriggerActionType {
      * refills), up to the weapon template's own reserve_magazines. Item
      * on_item_used graphs only. */
     KernelEntityTriggerActionType_RefillWeaponReserve = 11,
+    /* While the status instance whose on_apply ran it stands, its target may
+     * not start an action and the one under way is ended. Status on_apply
+     * graphs only, targeting the status's own subject (ABI 102). */
+    KernelEntityTriggerActionType_ApplyBlockActions = 12,
 } KernelEntityTriggerActionType;
 
 typedef enum KernelStatModifierOperation {
@@ -1298,6 +1309,10 @@ typedef enum KernelLocalActionResultReason {
      * request committed while a weapon action -- a charge, a beam -- was
      * under way, and ended it. A charge not yet cast costs nothing. */
     KernelLocalActionResultReason_ItemAction = 16,
+    /* A status effect holds the actor (apply_block_actions, ABI 102): no new
+     * action while it stands, and the one under way was ended without its
+     * recovery. */
+    KernelLocalActionResultReason_StatusBlocked = 17,
 } KernelLocalActionResultReason;
 
 typedef enum KernelRemoteActionPresentationEventType {

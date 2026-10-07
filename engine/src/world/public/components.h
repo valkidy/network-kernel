@@ -918,6 +918,13 @@ struct ActionApplySpeedModifierDefinition {
     ActionConditionType condition = ActionConditionType::kAlways;
 };
 
+// KernelEntityTriggerActionType_ApplyBlockActions. Status on_apply only, like
+// a speed modifier: the block lives exactly as long as that status instance.
+struct ActionApplyBlockActionsDefinition {
+    std::string target_parameter;
+    ActionConditionType condition = ActionConditionType::kAlways;
+};
+
 struct ActionSpawnEntityDefinition {
     std::string entity_template_parameter;
     std::string position_parameter;
@@ -942,7 +949,8 @@ using ActionGraphAction = std::variant<
     ActionSpawnEntityDefinition,
     ActionApplyPullDefinition,
     ActionOpenUiDefinition,
-    ActionRefillWeaponReserveDefinition>;
+    ActionRefillWeaponReserveDefinition,
+    ActionApplyBlockActionsDefinition>;
 
 struct ActionGraphTemplate {
     std::string id;
@@ -998,6 +1006,11 @@ struct ActiveStatusEffect {
     std::uint32_t expire_tick = 0;
     std::uint32_t next_tick = 0;
     std::uint16_t stack_count = 1u;
+    // Set by this instance's on_apply running apply_block_actions. Kept on the
+    // instance rather than in a list beside it, as speed modifiers are, so
+    // every path that ends the instance -- expiry, removal, replacement, a
+    // revive dropping them all -- ends the block with it.
+    bool blocks_actions = false;
 };
 
 struct SpeedModifier {

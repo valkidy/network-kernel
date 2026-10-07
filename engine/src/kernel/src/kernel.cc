@@ -3060,9 +3060,12 @@ bool KernelEngine::load_gameplay_catalog(
                 const bool damage_or_health =
                     std::holds_alternative<ActionApplyDamageDefinition>(action) ||
                     std::holds_alternative<ActionApplyHealthChangeDefinition>(action);
-                const bool speed_modifier =
-                    std::holds_alternative<ActionApplySpeedModifierDefinition>(action);
-                if (!damage_or_health && !(allow_speed_modifier && speed_modifier)) {
+                // A block is part of a status instance's lifetime exactly as a
+                // speed modifier is, so it is allowed exactly where one is.
+                const bool status_bound =
+                    std::holds_alternative<ActionApplySpeedModifierDefinition>(action) ||
+                    std::holds_alternative<ActionApplyBlockActionsDefinition>(action);
+                if (!damage_or_health && !(allow_speed_modifier && status_bound)) {
                     return false;
                 }
             }
@@ -3082,8 +3085,10 @@ bool KernelEngine::load_gameplay_catalog(
                 return false;
             }
             if (trigger.action_count == 0u &&
-                trigger.action_type ==
-                    KernelEntityTriggerActionType_ApplySpeedModifier &&
+                (trigger.action_type ==
+                     KernelEntityTriggerActionType_ApplySpeedModifier ||
+                 trigger.action_type ==
+                     KernelEntityTriggerActionType_ApplyBlockActions) &&
                 trigger.target_source != KernelEntityRefSource_Self &&
                 trigger.target_source != KernelEntityRefSource_EventSubject) {
                 return false;
@@ -3101,8 +3106,10 @@ bool KernelEngine::load_gameplay_catalog(
                         scale_amount)) {
                     return false;
                 }
-                if (action.action_type ==
-                        KernelEntityTriggerActionType_ApplySpeedModifier &&
+                if ((action.action_type ==
+                         KernelEntityTriggerActionType_ApplySpeedModifier ||
+                     action.action_type ==
+                         KernelEntityTriggerActionType_ApplyBlockActions) &&
                     action.target_source != KernelEntityRefSource_Self &&
                     action.target_source != KernelEntityRefSource_EventSubject) {
                     return false;

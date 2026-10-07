@@ -560,6 +560,9 @@ bool apply_stagger(
 
 bool is_staggered(const World& world, entt::entity entity, std::uint32_t current_tick);
 
+// Some active status instance on the actor ran apply_block_actions.
+bool status_blocks_actions(const World& world, entt::entity entity);
+
 // Gives the actor its template's StaggerProfile, or takes it away when the
 // template authors none. Both ways an actor gets a template call this: the
 // entity-create path and set_actor_template, which is the only one a player
@@ -581,8 +584,10 @@ void clear_stagger(World& world, entt::entity entity);
 
 // Why this actor may not start a new action right now, or
 // KernelLocalActionResultReason_None. Sheltered outranks the rest: inside a
-// building nothing else can be happening to it. Staggered outranks KnockedBack
-// so a hit that does both reports the one that also interrupted.
+// building nothing else can be happening to it. A status block comes next: it
+// is what a bubble or a stun holds the actor with for its whole duration, so
+// it is the answer while it stands. Staggered outranks KnockedBack so a hit
+// that does both reports the one that also interrupted.
 KernelLocalActionResultReason action_block_reason(
     const World& world,
     entt::entity entity,

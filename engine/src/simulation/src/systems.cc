@@ -335,6 +335,13 @@ bool prepare_status_lifecycle_trigger(
                     } else {
                         side_effect_target = modifier->target;
                     }
+                } else if (const auto* block =
+                               std::get_if<ActionApplyBlockActionsCommand>(&command)) {
+                    side_effect_target =
+                        event_type == TriggerEventType::kStatusApplied &&
+                            block->target == target
+                        ? block->target
+                        : 0u;
                 } else {
                     side_effect_target = 0u;
                 }
@@ -392,7 +399,17 @@ bool prepare_status_lifecycle_trigger(
     for (const ActionGraphCommand& command : batch.commands) {
         if (!std::holds_alternative<ActionApplyDamageCommand>(command) &&
             !std::holds_alternative<ActionApplyHealthChangeCommand>(command) &&
-            !std::holds_alternative<ActionApplySpeedModifierCommand>(command)) {
+            !std::holds_alternative<ActionApplySpeedModifierCommand>(command) &&
+            !std::holds_alternative<ActionApplyBlockActionsCommand>(command)) {
+            return false;
+        }
+        // Held on the instance this on_apply belongs to, so only that event
+        // and only its own subject: there is nothing else to hold it on.
+        if (const auto* block =
+                std::get_if<ActionApplyBlockActionsCommand>(&command);
+            block != nullptr &&
+            (event_type != TriggerEventType::kStatusApplied ||
+             block->target != target)) {
             return false;
         }
         if (const auto* modifier =
@@ -720,6 +737,14 @@ bool execute_action_graph_commands(
                         lifecycle_batches.push_back(std::move(*prepared.batch));
                     }
                 }
+            }
+            continue;
+        }
+        if (const auto* block =
+                std::get_if<ActionApplyBlockActionsCommand>(&command)) {
+            if (block->source == 0u || block->status_instance_id == 0u ||
+                !world.find_entity(block->target).has_value()) {
+                return false;
             }
             continue;
         }
@@ -1223,6 +1248,29 @@ bool execute_action_graph_commands(
                 found->multiplier = modifier->value;
             }
             recompute_speed(world, target);
+            continue;
+        }
+        if (const auto* block =
+                std::get_if<ActionApplyBlockActionsCommand>(&command)) {
+            const entt::entity target = *world.find_entity(block->target);
+            if (world.registry().get<EntityKind>(target).type != EntityType::kActor) {
+                continue;
+            }
+            // As for a speed modifier: an on_apply always runs with its
+            // instance already active, so a missing one is a broken batch.
+            ActiveStatusEffect* active = nullptr;
+            if (StatusEffectState* status_state =
+                    world.registry().try_get<StatusEffectState>(target)) {
+                for (ActiveStatusEffect& candidate : status_state->active) {
+                    if (candidate.instance_id == block->status_instance_id) {
+                        active = &candidate;
+                    }
+                }
+            }
+            if (active == nullptr) {
+                return false;
+            }
+            active->blocks_actions = true;
             continue;
         }
         if (const auto* refill =

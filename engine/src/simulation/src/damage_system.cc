@@ -87,6 +87,15 @@ bool apply_stagger(
     return true;
 }
 
+bool status_blocks_actions(const World& world, entt::entity entity) {
+    const StatusEffectState* state = world.registry().try_get<StatusEffectState>(entity);
+    return state != nullptr &&
+        std::any_of(
+            state->active.begin(),
+            state->active.end(),
+            [](const ActiveStatusEffect& active) { return active.blocks_actions; });
+}
+
 bool is_staggered(const World& world, entt::entity entity, std::uint32_t current_tick) {
     const StaggerState* state = world.registry().try_get<StaggerState>(entity);
     return state != nullptr && current_tick < state->until_tick;
@@ -138,6 +147,9 @@ KernelLocalActionResultReason action_block_reason(
     std::uint32_t current_tick) {
     if (world.registry().all_of<Sheltered>(entity)) {
         return KernelLocalActionResultReason_Sheltered;
+    }
+    if (status_blocks_actions(world, entity)) {
+        return KernelLocalActionResultReason_StatusBlocked;
     }
     if (is_staggered(world, entity, current_tick)) {
         return KernelLocalActionResultReason_Staggered;

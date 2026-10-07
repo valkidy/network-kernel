@@ -16,8 +16,12 @@ static void require_impl(int condition, const char* expression, int line) {
 #define require(condition) require_impl((condition) ? 1 : 0, #condition, __LINE__)
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 101u,
-    "pull strength: KernelActionDefinition gained pull_strength");
+    KERNEL_ABI_VERSION == 102u,
+    "status-bound crowd control: apply_block_actions");
+_Static_assert(
+    KernelEntityTriggerActionType_ApplyBlockActions == 12 &&
+        KernelLocalActionResultReason_StatusBlocked == 17,
+    "the ABI 102 enum values are appended");
 _Static_assert(
     offsetof(KernelActionDefinition, pull_strength) >
         offsetof(KernelActionDefinition, spawn_placement),
