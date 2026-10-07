@@ -87,6 +87,10 @@ struct EntitySnapshot {
     // build_relevant_snapshot keeps it only on the receiving session's own
     // player: nobody else's HUD shows another player's magazine. Only the active
     // slot travels, because that is the only one a HUD reads.
+    // Schema 28: the weapon a player holds, for every client that sees the
+    // player (KERNEL_HELD_WEAPON_NONE when unarmed). Players only.
+    bool has_held_weapon = false;
+    std::uint8_t held_weapon_id = kHeldWeaponNone;
     bool has_owner_weapon_state = false;
     std::uint8_t active_weapon_slot = 0;
     std::uint8_t weapon_state_flags = 0;

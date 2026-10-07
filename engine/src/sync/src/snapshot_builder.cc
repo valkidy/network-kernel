@@ -99,6 +99,15 @@ WorldSnapshot build_world_snapshot(
         }
         if (world.registry().all_of<WeaponState>(entity)) {
             const WeaponState& weapon = world.registry().get<WeaponState>(entity);
+            if (entity_snapshot.actor_type == ActorType::kPlayer) {
+                entity_snapshot.has_held_weapon = true;
+                entity_snapshot.held_weapon_id =
+                    weapon.active_weapon_slot < weapon.weapon_slot_count &&
+                            weapon.active_weapon_slot < kWeaponSlotCount
+                        ? static_cast<std::uint8_t>(
+                              weapon.weapon_ids[weapon.active_weapon_slot])
+                        : kHeldWeaponNone;
+            }
             // An actor with no configured weapon has no magazine to report, and
             // leaving the block off is what tells the client so.
             if (weapon.active_weapon_slot < weapon.weapon_slot_count &&

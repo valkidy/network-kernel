@@ -29,7 +29,17 @@ game-defined `message_type` and an opaque body of at most
 reads the body, and a server reports the sender from the session. Each queue
 holds 256 messages; one past that is dropped with Error event code 34.
 `KernelAbiInfo` appended `game_message_size`; packet schema 27 adds the
-GameMessage packet (31). ABI 100 appended `pull_strength` to
+GameMessage packet (31). ABI 101 also adds weapon items and weapon
+containers: `KernelItemTemplateDefinition` appended `is_weapon`, `weapon_id`,
+`weapon_category` and a reserved byte; `KERNEL_WEAPON_CATEGORY_COUNT` (4),
+`KERNEL_PORTABLE_FIELD_WEAPON_AMMO` / `_RESERVE` and `KERNEL_HELD_WEAPON_NONE`
+(255; no weapon may use the id) are new; `Kernel_ServerCreateWeaponContainer`
+gives an owner a weapon container whose contents are its loadout;
+`KernelInventoryContainerView.reserved0` became `container_kind`; and
+`RenderEntityState`'s reserved bytes after `shelter_seat` became
+`held_weapon_id` and `has_held_weapon` (size unchanged). Snapshot schema 28
+sends the held weapon on every player record (one byte); packet schema 28
+adds the container kind to inventory snapshot pages. ABI 100 appended `pull_strength` to
 `KernelActionDefinition`. ABI 98
 appended the tornado shape and motion fields to
 `KernelAreaEffectMechanicsDefinition`. ABI 99 appended `hover_height_meters`

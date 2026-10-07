@@ -58,6 +58,7 @@ constexpr std::size_t kActorMovementPayloadSize = 22;
 constexpr std::size_t kActorWeaponStatePayloadSize = 4;
 constexpr std::size_t kActorImpulseLockoutPayloadSize = 8;
 constexpr std::size_t kActorShelterPayloadSize = 5;
+constexpr std::size_t kActorHeldWeaponPayloadSize = 1;
 constexpr std::size_t kProjectileCompactSnapshotPayloadSize = 34;
 // net_id 4 + effective_length 2. No position, rotation or velocity: a beam does
 // not move, and its origin and aim are the shooter's, which every snapshot
@@ -265,6 +266,9 @@ enum ActorSnapshotRecordFlag : std::uint16_t {
     // one. Schema 27 appends its seat (u8) and sends it for every actor, not
     // only the receiving session's own player.
     kActorSnapshotHasShelter = 1u << 8,
+    // Schema 28. The weapon a player holds (u8, KERNEL_HELD_WEAPON_NONE when
+    // unarmed), on every player record.
+    kActorSnapshotHasHeldWeapon = 1u << 9,
 };
 
 bool is_actor_entity_type(EntityType type) {
@@ -297,6 +301,9 @@ std::uint16_t actor_record_flags(const EntitySnapshot& entity) {
     }
     if (entity.shelter_net_id != 0u) {
         flags |= kActorSnapshotHasShelter;
+    }
+    if (entity.actor_type == ActorType::kPlayer && entity.has_held_weapon) {
+        flags |= kActorSnapshotHasHeldWeapon;
     }
     return flags;
 }
@@ -650,6 +657,9 @@ std::vector<std::uint8_t> encode_snapshot_packet(
                         payload.write_u32(entity->shelter_net_id);
                         payload.write_u8(entity->shelter_seat);
                     }
+                    if ((record_flags & kActorSnapshotHasHeldWeapon) != 0u) {
+                        payload.write_u8(entity->held_weapon_id);
+                    }
                     break;
                 }
                 case SnapshotSectionType::kActorAgent: {
@@ -903,6 +913,13 @@ bool decode_snapshot_packet(
                             return false;
                         }
                     }
+                    if ((record_flags & kActorSnapshotHasHeldWeapon) != 0u) {
+                        if (entity.actor_type != ActorType::kPlayer ||
+                            !reader.read_u8(&entity.held_weapon_id)) {
+                            return false;
+                        }
+                        entity.has_held_weapon = true;
+                    }
                     break;
                 }
                 case SnapshotSectionType::kActorAgent: {
@@ -1130,6 +1147,9 @@ std::size_t estimate_snapshot_entity_size(const EntitySnapshot& entity) {
                         : 0u) +
                    ((actor_record_flags(entity) & kActorSnapshotHasShelter) != 0u
                         ? kActorShelterPayloadSize
+                        : 0u) +
+                   ((actor_record_flags(entity) & kActorSnapshotHasHeldWeapon) != 0u
+                        ? kActorHeldWeaponPayloadSize
                         : 0u);
         case SnapshotSectionType::kActorAgent: {
             const std::uint8_t flags = agent_record_flags(entity);
@@ -2118,6 +2138,7 @@ std::vector<std::uint8_t> encode_inventory_snapshot_page_packet(
     payload.write_u32(packet.slot_capacity);
     payload.write_u16(packet.page_index);
     payload.write_u16(packet.page_count);
+    payload.write_u8(packet.container_kind);
     payload.write_u16(static_cast<std::uint16_t>(packet.entries.size()));
     for (const InventorySnapshotEntry& entry : packet.entries) {
         if (entry.slot >= packet.slot_capacity || !valid_wire_item(entry.item)) {
@@ -2141,7 +2162,7 @@ bool decode_inventory_snapshot_page_packet(
         !protocol_internal::unwrap_packet(
             data, size, MessageType::kInventorySnapshotPage,
             &payload, &payload_size) ||
-        payload_size < 30u || payload_size > kMaxInventoryPacketPayloadSize) {
+        payload_size < 31u || payload_size > kMaxInventoryPacketPayloadSize) {
         return false;
     }
     InventorySnapshotPagePacket packet;
@@ -2152,7 +2173,9 @@ bool decode_inventory_snapshot_page_packet(
         !reader.read_u64(&packet.revision) ||
         !reader.read_u32(&packet.slot_capacity) ||
         !reader.read_u16(&packet.page_index) ||
-        !reader.read_u16(&packet.page_count) || !reader.read_u16(&count) ||
+        !reader.read_u16(&packet.page_count) ||
+        !reader.read_u8(&packet.container_kind) || !reader.read_u16(&count) ||
+        packet.container_kind > KernelInventoryContainerKind_Weapons ||
         packet.inventory_container_id == 0u || packet.owner_entity_id == 0u ||
         packet.slot_capacity == 0u || packet.page_count == 0u ||
         packet.page_index >= packet.page_count) {

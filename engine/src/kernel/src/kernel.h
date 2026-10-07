@@ -554,6 +554,9 @@ private:
         // occupant standing outside.
         NetId shelter_net_id = 0;
         std::uint8_t shelter_seat = 0;
+        // What a player holds, as of the last record that said (schema 28).
+        bool has_held_weapon = false;
+        std::uint8_t held_weapon_id = KERNEL_HELD_WEAPON_NONE;
         bool active = false;
     };
 
@@ -700,6 +703,10 @@ private:
         std::uint8_t active_weapon_slot = 0;
         std::uint8_t flags = 0;
         std::uint16_t ammo = 0;
+        // The weapon in hand by id (schema 28), for a client with no loadout
+        // of its own to turn the slot into one; KERNEL_HELD_WEAPON_NONE if
+        // the record did not say.
+        std::uint8_t held_weapon_id = KERNEL_HELD_WEAPON_NONE;
     };
 
     // Unacknowledged spends are bounded by the input window the server has not

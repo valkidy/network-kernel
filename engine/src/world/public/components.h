@@ -286,6 +286,9 @@ struct AgentRuntime {
 struct AgentSentryRuntime {};
 
 inline constexpr std::size_t kWeaponSlotCount = 4;
+// The held-weapon id of an unarmed player: KERNEL_HELD_WEAPON_NONE, which
+// this layer does not include.
+inline constexpr std::uint8_t kHeldWeaponNone = 255;
 inline constexpr std::size_t kWeaponIdCount = 256;
 inline constexpr std::uint8_t kWeaponSlot0 = 0;
 inline constexpr std::uint8_t kWeaponSlot1 = 1;

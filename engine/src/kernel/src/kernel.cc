@@ -321,6 +321,7 @@ std::uint64_t elapsed_cost_us(
 }
 
 constexpr PeerId kLocalListenPeerId = 1;
+static_assert(kHeldWeaponNone == KERNEL_HELD_WEAPON_NONE);
 constexpr PeerId kServerPeerId = 0;
 constexpr std::uint32_t kClientNonce = 0x4d330001u;
 constexpr std::uint32_t kMaxCompensationWindowUs = 100000u;
@@ -7045,6 +7046,7 @@ void KernelEngine::handle_client_inventory_snapshot_page(
         assembly.container.slot_capacity = packet.slot_capacity;
         assembly.container.revision = packet.revision;
         assembly.container.sync_state = KernelInventorySyncState_Syncing;
+        assembly.container.container_kind = packet.container_kind;
         assembly.page_count = packet.page_count;
         assembly.received_pages.assign(packet.page_count, false);
     }
@@ -9580,9 +9582,16 @@ bool KernelEngine::local_weapon_state(KernelLocalWeaponState* out_state) const {
     // spawned from the same template the server used, is what turns one into
     // the other; without it every spend counts, since there is nothing to tell
     // them apart by.
-    const bool weapon_known = weapon != nullptr &&
+    const bool loadout_known = weapon != nullptr &&
         slot < weapon->weapon_slot_count && slot < kWeaponSlotCount;
-    const std::uint32_t weapon_id = weapon_known ? weapon->weapon_ids[slot] : 0u;
+    // A pure client has no loadout of its own; the snapshot names the weapon
+    // in hand (schema 28), which is also right after a pickup or a swap.
+    const bool held_known =
+        authoritative_local_weapon_.held_weapon_id != KERNEL_HELD_WEAPON_NONE;
+    const bool weapon_known = held_known || loadout_known;
+    const std::uint32_t weapon_id = held_known
+        ? authoritative_local_weapon_.held_weapon_id
+        : loadout_known ? weapon->weapon_ids[slot] : 0u;
     std::uint32_t spent = 0u;
     for (const PredictedAmmoSpend& spend : predicted_ammo_spends_) {
         if (!weapon_known || spend.weapon_id == weapon_id) {
@@ -9628,6 +9637,8 @@ void KernelEngine::apply_authoritative_local_weapon(const WorldSnapshot& snapsho
         own->active_weapon_slot,
         own->weapon_state_flags,
         own->active_weapon_ammo,
+        own->has_held_weapon ? own->held_weapon_id
+                             : static_cast<std::uint8_t>(KERNEL_HELD_WEAPON_NONE),
     };
     // Everything up to last_processed_input_seq is already inside the magazine
     // the server just reported, so charging it again would count it twice.
@@ -14992,6 +15003,10 @@ void KernelEngine::rebuild_render_states_from_snapshot(
         replicated->active = true;
         replicated->shelter_net_id = entity.shelter_net_id;
         replicated->shelter_seat = entity.shelter_seat;
+        if (entity.has_held_weapon) {
+            replicated->has_held_weapon = true;
+            replicated->held_weapon_id = entity.held_weapon_id;
+        }
         if (!use_reliable_prop_state) {
             replicated->position = entity.position;
             replicated->rotation = entity.rotation;
@@ -15099,6 +15114,10 @@ void KernelEngine::rebuild_render_states_from_snapshot(
         }
         render_states_.back().shelter_net_id = entity.shelter_net_id;
         render_states_.back().shelter_seat = entity.shelter_seat;
+        if (entity.has_held_weapon) {
+            render_states_.back().has_held_weapon = 1u;
+            render_states_.back().held_weapon_id = entity.held_weapon_id;
+        }
     }
 
     // The derived chains, stepped to the render instant and drawn there.
@@ -15451,6 +15470,7 @@ bool KernelEngine::send_inventory_snapshot(
         page.slot_capacity = container->slot_capacity;
         page.page_index = static_cast<std::uint16_t>(page_index);
         page.page_count = static_cast<std::uint16_t>(page_count_size);
+        page.container_kind = container->kind;
         if (begin < end) {
             page.entries.assign(entries.begin() + begin, entries.begin() + end);
         }

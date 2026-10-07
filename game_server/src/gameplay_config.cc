@@ -2529,10 +2529,11 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
     const std::string& path,
     std::uint32_t source_kind) {
     const int authored_id = node["id"].as<int>();
-    if (authored_id < 0 || authored_id > UINT8_MAX) {
+    // 255 is KERNEL_HELD_WEAPON_NONE, what an unarmed player holds.
+    if (authored_id < 0 || authored_id >= static_cast<int>(KERNEL_HELD_WEAPON_NONE)) {
         throw DataLoadError(
             KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_INVALID_NUMERIC_RANGE,
-            "weapon id must be in uint8 range",
+            "weapon id must be 0 to 254",
             path,
             "id",
             source_kind,

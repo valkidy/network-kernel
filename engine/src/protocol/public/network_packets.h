@@ -142,6 +142,8 @@ struct InventorySnapshotPagePacket {
     std::uint32_t slot_capacity = 0;
     std::uint16_t page_index = 0;
     std::uint16_t page_count = 0;
+    // Packet schema 28: KernelInventoryContainerKind.
+    std::uint8_t container_kind = 0;
     std::vector<InventorySnapshotEntry> entries;
 };
 

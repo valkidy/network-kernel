@@ -39,6 +39,13 @@
  *     container was). An owner with a weapon container is armed with exactly
  *     what it holds; Pickup puts a weapon item there and swaps one of the
  *     same category to the picker's feet, and only players pick weapons up.
+ *     RenderEntityState's reserved_shelter0 became held_weapon_id and the low
+ *     byte of reserved_shelter1 became has_held_weapon (the struct's size and
+ *     every other offset are unchanged): what each player holds, so every
+ *     client can draw it (design D27). Snapshot schema 28 sends it, one byte
+ *     per player record; KernelLocalWeaponState reports it as weapon_id on a
+ *     client. Packet schema 28 adds the container kind to an inventory
+ *     snapshot page.
  * 100: pull strength. KernelActionDefinition gained pull_strength, appended
  *     after spawn_placement and read only by apply_pull: a fixed number
  *     weighed against the target's impulse_resistance, as apply_impulse's
@@ -1080,6 +1087,9 @@ typedef struct KernelStatusEffectDefinition {
  * the slot index is the category: a number, so the same rule serves wands and
  * guns alike. */
 #define KERNEL_WEAPON_CATEGORY_COUNT 4u
+/* RenderEntityState::held_weapon_id of an unarmed player. No weapon may use
+ * this id. */
+#define KERNEL_HELD_WEAPON_NONE 255u
 /* Portable state field ids every weapon item carries: the FNV-1a hash of
  * "weapon_ammo" and "weapon_reserve", the same name hash every authored
  * portable state field id is. */
@@ -1556,8 +1566,14 @@ typedef struct RenderEntityState {
      */
     uint32_t shelter_net_id;
     uint8_t shelter_seat;
-    uint8_t reserved_shelter0;
-    uint16_t reserved_shelter1;
+    /* ABI 101, in what were reserved bytes: the weapon a player is holding,
+     * for drawing it in their hands. has_held_weapon is 1 for a player whose
+     * snapshot said, and held_weapon_id is then the weapon id, or
+     * KERNEL_HELD_WEAPON_NONE when the player is unarmed. 0 and 0 for
+     * anything else. */
+    uint8_t held_weapon_id;
+    uint8_t has_held_weapon;
+    uint8_t reserved_shelter1;
 } RenderEntityState;
 
 typedef struct KernelBoneLocalTransform {
