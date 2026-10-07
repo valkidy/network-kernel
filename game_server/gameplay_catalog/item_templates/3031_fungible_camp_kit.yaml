@@ -1,0 +1,17 @@
+# Thrown, it becomes a temporary camp (field_camp) where it lands.
+id: 3031
+name: fungible_camp_kit
+mode: fungible
+max_stack: 1
+capabilities: [pickupable, throwable]
+entity_template: camp_kit
+world_interaction:
+  range: 3.0
+  line_of_sight_required: false
+throw:
+  mode: identity_preserving
+  trajectory_projectile: grenade_shell
+use:
+  quantity_cost: 0
+  cooldown_ticks: 0
+  destroy_when_empty: false

@@ -160,16 +160,24 @@ P3 實作紀錄：
 | 搶最後一個 | 沿用現有規則：先 commit 的贏，後到的收到穩定的拒絕 |
 | 營地被毀 | kernel 在銷毀建築前就先把裡面的人放出來（帳篷 K3 已做），之後容器和庫存一起刪掉 |
 
-K9 要改的 kernel 部分：
+實作（K9，P4 已完成）：
 
-1. 「誰能看到這個容器」現在是 `owner_entity_id != session->player`，散在 `kernel.cc` 四處（5612、6543、15081、15146）。
-   集中成一個 `can_observe_container(session, container)`。
-2. 進入營地時送一次完整的容器內容，並建立這個人的同步進度；之後沿用增量同步。
-3. 離開營地時，client 丟掉營地容器的副本。client 已經知道自己的 `shelter_net_id`，可能不需要新封包，要確認。
-4. client 端查詢「目前看得到的容器」的 API（現有的 `CopyOwnedInventoryContainers` 只列出自己的）。
-5. `Transfer` domain action。
-
-依 `ITEM_PROP_CLIENT_SERVER_SYNC_POLICY.md:20`，現行設計明確不同步給旁觀者、不做 chest。K9 等於第一次開放這件事，要同步更新那份文件。
+- **營地**：`camp_kit`（222，由 item 3031 `fungible_camp_kit` 投擲）落地後生成 `field_camp`（223）。壽命、shelter、population group 都和帳篷相同（D25）。初始營地的選項加了 `fungible_camp_kit`。
+- **庫存設定**：寫在營地 prop 模板的 `camp.stock`。每一筆佔一格，`quantity` 是那一格的數量（stateful 物品固定 1，fungible 物品 1 到 `max_stack`）。loader 拒絕：任務道具（D22）、沒有 shelter 的模板、非 prop 模板。
+- **建立庫存**：game_server 收到營地的 `EntitySpawned` 時，用 `Kernel_ServerCreateStockContainer` 建立營地擁有的 stock 容器並放入物品。
+  listen host 會收到兩次 spawn（server 和自己的 client 各一次），已經有容器就略過。
+- **新的容器類型** `KernelInventoryContainerKind_Stock`（2）：武器和道具都能放、任何格子都可以。一般道具容器不收武器，武器容器只收武器，所以營地需要第三種。
+- **誰看得到**：`can_observe_container`——擁有者，或 `Sheltered.shelter_net_id == 容器擁有者` 的人。三處檢查（snapshot、delta、snapshot 請求）都改用它。
+- **進出同步**：進入營地後下一次 flush 送完整 snapshot；在裡面時送 delta；離開或容器消失時送 `InventoryContainerClosed`（packet 32，packet schema 30），client 丟掉副本，再進來重新送完整 snapshot。client 不靠自己的 shelter 狀態推斷，因為 snapshot（不可靠）和 inventory 封包（可靠）可能亂序。
+- **client 查詢**：不需要新 API，`Kernel_CopyOwnedInventoryContainers(kernel, 營地 net id, ...)` 就會列出營地的庫存（只在營地裡面時有）。
+- **領取**：`KernelDomainAction_Transfer`（7）。`selected_item_instance_id` = 庫存裡的物品，`requested_quantity`（0 = 全部）。
+  - 只有在擁有該容器的建築裡面才能領（否則 `NotAuthorized`），在營地裡時這是除了「再次啟動營地離開」之外唯一允許的請求。
+  - 只能拿到自己身上：道具進道具容器（先補滿相容的堆疊，剩下的佔一個空格），武器進武器容器的類別格。
+  - 武器的類別格已經有武器時，舊的丟在進入營地的位置（`Sheltered.entry_position`，也就是離開時出來的地方），比照 D11。
+  - 自己的物品不能放回去（`NotAuthorized`）；超過剩餘數量是 `InvalidQuantity`；放不下是 `InventoryFull`。全有或全無。
+  - 先 commit 的贏：請求是依序處理的，後到的會拿到穩定的拒絕。
+- **營地被毀**：kernel 先把裡面的人放出來，再刪除建築。現在刪除任何 entity 時，也會刪掉它擁有的容器和裡面的物品。
+- 測試：`camp_container_sync_test`（kernel，同步與關閉）、`camp_test`（game_server，端對端）。
 
 ### 3.5 道具
 
@@ -338,7 +346,7 @@ kernel 不需要知道玩家在哪個模式：R2 在武器模式送 Fire 輸入�
 | K6 | 給擁有者的武器配置和 reserve 同步（沿用 inventory 同步，零新封包）；每個玩家記錄裡的武器 id（D27）。**已完成**（438c822） | 中 | snapshot schema 28、packet schema 28；`RenderEntityState` 大小不變 |
 | K7 | `charge` trigger mode | 中 | 新增型 |
 | K8 | 換下的武器自動 reload | 小到中 | 依 K6 |
-| K9 | 臨時營地容器：營地內的人看得到、`Transfer`、進出時同步 | 中到大 | 新封包、新 API |
+| K9 | 臨時營地容器：營地內的人看得到、`Transfer`、進出時同步。**已完成**（P4） | 中到大 | packet schema 30（`InventoryContainerClosed`）；`KernelInventoryContainerKind_Stock`、`KernelDomainAction_Transfer`、`Kernel_ServerCreateStockContainer` |
 | K10 | client 和 game_server 之間的通用訊息，雙向（kernel 只轉送）。**已完成**（7096283） | 小到中 | ABI 101 內新增（capability bit 50）；packet schema 27 |
 | K11 | 帶標記物品的死亡掉落：原封不動移到地上、散開。**已完成** | 小 | 沒有新 API；`Kernel_ServerDropInventoryItem` 改為落在 terrain 上 |
 | K12 | item instance 的 uint8 `drop_tag`：建立時帶入、跟著物品走、疊加要求相同；重新套用配裝只清 tag 0（D23）。**已完成**（3488b19） | 小到中 | ABI 101：item view 多 `drop_tag`、模板的 `default_drop_tag`、三個新 API；packet schema 29 |

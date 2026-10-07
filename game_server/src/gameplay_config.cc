@@ -387,6 +387,11 @@ void hash_actor_template(
     for (const InventorySlotConfig& option : actor_template.loadout_weapon_options) {
         hash_scalar(hash, option.item_template_id);
     }
+    hash_scalar(hash, static_cast<std::uint32_t>(actor_template.camp_stock.size()));
+    for (const InventorySlotConfig& entry : actor_template.camp_stock) {
+        hash_scalar(hash, entry.item_template_id);
+        hash_scalar(hash, entry.quantity);
+    }
     hash_scalar(hash, actor_template.animation_idle);
     hash_scalar(hash, actor_template.animation_chasing);
     hash_scalar(hash, actor_template.sentry.alert_ticks);
@@ -4797,6 +4802,7 @@ EntityTemplateConfig entity_template_from_yaml(
                 "lifecycle",
                 "shelter",
                 "loadout",
+                "camp",
                 "triggers",
                 "spawner",
             },
@@ -4956,6 +4962,43 @@ EntityTemplateConfig entity_template_from_yaml(
                     weapon.quantity = 1;
                     entity_template.loadout_weapon_options.push_back(std::move(weapon));
                 }
+            }
+        }
+        // A temporary camp: the stock its occupants take from.
+        if (node["camp"]) {
+            reject_unknown_keys(
+                node["camp"],
+                {"stock"},
+                path,
+                source_kind,
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+                entity_template.actor_template_id);
+            const YAML::Node stock = node["camp"]["stock"];
+            if (!stock || !stock.IsSequence() || stock.size() == 0 ||
+                stock.size() > kMaxCampStock) {
+                throw std::runtime_error(
+                    "camp stock must be a sequence of 1 to " +
+                    std::to_string(kMaxCampStock) + " entries: " + path);
+            }
+            for (const YAML::Node& entry_node : stock) {
+                if (!entry_node.IsMap()) {
+                    throw std::runtime_error("camp stock entry must be a mapping: " + path);
+                }
+                reject_unknown_keys(
+                    entry_node,
+                    {"item_template", "quantity"},
+                    path,
+                    source_kind,
+                    KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+                    entity_template.actor_template_id);
+                if (!entry_node["item_template"] || !entry_node["quantity"]) {
+                    throw std::runtime_error(
+                        "camp stock entry requires item_template and quantity: " + path);
+                }
+                InventorySlotConfig entry;
+                entry.item_template_ref = entry_node["item_template"].as<std::string>();
+                entry.quantity = entry_node["quantity"].as<std::uint32_t>();
+                entity_template.camp_stock.push_back(std::move(entry));
             }
         }
         // What going inside this building means: how many it holds, and
@@ -6063,6 +6106,15 @@ void resolve_inventory_item_template_references(
                     std::to_string(candidate.definition.item_template_id) ==
                         weapon.item_template_ref) {
                     weapon.item_template_id = candidate.definition.item_template_id;
+                }
+            }
+        }
+        for (InventorySlotConfig& entry : entity_template.camp_stock) {
+            for (const ItemTemplateConfig& candidate : item_templates) {
+                if (candidate.name == entry.item_template_ref ||
+                    std::to_string(candidate.definition.item_template_id) ==
+                        entry.item_template_ref) {
+                    entry.item_template_id = candidate.definition.item_template_id;
                 }
             }
         }
@@ -9858,6 +9910,45 @@ std::vector<std::string> validate_gameplay_config(
                 errors.push_back(
                     "a quest item cannot be a loadout option: " +
                     entity_template.name + " " + option.item_template_ref);
+            }
+        }
+        if (!entity_template.camp_stock.empty() &&
+            (entity_template.entity_type != KernelEntityType_Prop ||
+             entity_template.shelter_capacity == 0u)) {
+            // Only those inside see the stock, so a camp nobody can enter
+            // would hold it for no one.
+            errors.push_back(
+                "camp stock needs a prop template with a shelter: " +
+                entity_template.name);
+        }
+        for (const InventorySlotConfig& entry : entity_template.camp_stock) {
+            const auto item = std::find_if(
+                config.item_templates.begin(),
+                config.item_templates.end(),
+                [&entry](const ItemTemplateConfig& candidate) {
+                    return candidate.definition.item_template_id ==
+                        entry.item_template_id;
+                });
+            if (item == config.item_templates.end()) {
+                errors.push_back(
+                    "camp stock entry must reference a valid item: " +
+                    entity_template.name + " " + entry.item_template_ref);
+                continue;
+            }
+            if (entry.quantity == 0 ||
+                entry.quantity > item->definition.max_stack ||
+                (item->definition.item_mode == KernelItemMode_Stateful &&
+                 entry.quantity != 1)) {
+                errors.push_back(
+                    "camp stock quantity must be 1 to the item's max_stack: " +
+                    entity_template.name + " " + entry.item_template_ref);
+            }
+            // What a camp hands out is a consumable resource, never a quest
+            // item or a map weapon (D22).
+            if (item->definition.default_drop_tag != KERNEL_DROP_TAG_NONE) {
+                errors.push_back(
+                    "a quest item cannot be camp stock: " +
+                    entity_template.name + " " + entry.item_template_ref);
             }
         }
         if (!entity_template.loadout_options.empty() &&

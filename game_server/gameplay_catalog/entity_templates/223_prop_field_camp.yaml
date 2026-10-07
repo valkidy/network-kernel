@@ -1,0 +1,45 @@
+# A temporary camp (design D7, D8, D25): a tent with a shared stock.
+#
+# Laid out like the tent -- same lifetime, shelter and population group, so
+# tents and camps together are capped by the tent rule, and which goes first
+# is the group's eviction order (importance, then age).
+#
+# camp.stock is what it holds: each entry fills one slot, `quantity` of an
+# item (1 for a stateful one, up to max_stack for a fungible one). Made when
+# the camp appears; shared by everyone, finite, and take-only (Transfer from
+# inside). Only those inside the camp are sent it. When the camp goes, so does
+# whatever is left in it. Quest items cannot be stock (D22).
+id: 223
+name: field_camp
+entity_type: prop
+impulse_resistance: 1000.0
+lifecycle:
+  lifetime_ticks: 5400
+  population_group: tent
+health:
+  hp: 600
+  max_hp: 600
+physics:
+  collider_template: tent_hitbox
+shelter:
+  capacity: 4
+  hide_occupants_from_vision: true
+interaction:
+  capabilities: [interactable]
+  range: 2.5
+  line_of_sight_required: false
+triggers:
+  on_activated:
+    action_graph: action_open_camp_ui
+    parameters:
+      target: event.instigator
+camp:
+  stock:
+    - item_template: fungible_potion
+      quantity: 3
+    - item_template: fungible_mp_potion
+      quantity: 2
+    - item_template: fungible_frag_grenade_bottle
+      quantity: 2
+    - item_template: stateful_weapon_shotgun
+      quantity: 1

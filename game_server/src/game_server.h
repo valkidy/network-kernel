@@ -55,6 +55,10 @@ private:
     // ground around them (D19, K11); the untagged stay for the respawn to
     // replace.
     void drop_tagged_items(std::uint32_t net_id) const;
+    // A temporary camp that just appeared gets its stock (D8, K9): a
+    // container it owns, one slot per camp.stock entry. Anything else
+    // spawned is left alone.
+    void stock_camp(std::uint32_t net_id) const;
     // Puts the catalog's scene_props in the world, once the kernel takes
     // them; tried every tick until it has.
     void place_scene_props();

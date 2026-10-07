@@ -58,6 +58,8 @@ void GameServer::handle_event(const KernelEvent& event) {
     } else if (event.type == KernelEventType_PlayerLeft) {
         players_.erase(event.net_id);
         respawn_.on_player_left(event.net_id);
+    } else if (event.type == KernelEventType_EntitySpawned) {
+        stock_camp(event.net_id);
     } else if (event.type == KernelEventType_EntityDied &&
                players_.find(event.net_id) != players_.end()) {
         drop_tagged_items(event.net_id);
@@ -188,6 +190,49 @@ void GameServer::drop_tagged_items(std::uint32_t net_id) const {
         std::uint32_t prop = 0;
         if (!Kernel_ServerDropInventoryItem(kernel_, tagged[index], &at, &prop)) {
             spdlog::warn("death drop failed player={} item={}", net_id, tagged[index]);
+        }
+    }
+}
+
+void GameServer::stock_camp(std::uint32_t net_id) const {
+    if (kernel_ == nullptr || net_id == 0u) {
+        return;
+    }
+    KernelServerEntityState state{};
+    state.struct_size = sizeof(state);
+    if (!Kernel_ServerGetEntityState(kernel_, net_id, &state) ||
+        state.entity_type != KernelEntityType_Prop) {
+        return;
+    }
+    const EntityTemplateConfig* camp = nullptr;
+    for (const EntityTemplateConfig& candidate : config_.entity_templates) {
+        if (candidate.actor_template_id == state.entity_template_id &&
+            !candidate.camp_stock.empty()) {
+            camp = &candidate;
+        }
+    }
+    if (camp == nullptr) {
+        return;
+    }
+    // A listen host hears of a spawn twice (the server's and its own client's
+    // copy); one stock.
+    if (Kernel_CopyOwnedInventoryContainers(kernel_, net_id, nullptr, 0u) != 0u) {
+        return;
+    }
+    KernelInventoryContainerId stock = 0;
+    if (!Kernel_ServerCreateStockContainer(
+            kernel_, net_id, static_cast<std::uint32_t>(camp->camp_stock.size()),
+            &stock)) {
+        spdlog::warn("camp stock container not made camp={}", net_id);
+        return;
+    }
+    for (const InventorySlotConfig& entry : camp->camp_stock) {
+        KernelItemInstanceId item = 0;
+        if (!Kernel_ServerCreateInventoryItem(
+                kernel_, entry.item_template_id, entry.quantity, stock, &item)) {
+            spdlog::warn(
+                "camp stock item not made camp={} item_template={}",
+                net_id, entry.item_template_id);
         }
     }
 }

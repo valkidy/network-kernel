@@ -5536,6 +5536,21 @@ bool KernelEngine::server_drop_inventory_item(
     return true;
 }
 
+bool KernelEngine::server_create_stock_container(
+    std::uint32_t owner_entity_id,
+    std::uint32_t slot_capacity,
+    KernelInventoryContainerId* out_container_id) {
+    if (!is_server_mode(config_.mode) || out_container_id == nullptr ||
+        !world_.find_entity(owner_entity_id).has_value()) {
+        return false;
+    }
+    const auto created = item_store_.create_container(
+        owner_entity_id, slot_capacity, KernelInventoryContainerKind_Stock);
+    if (!created.has_value()) return false;
+    *out_container_id = *created;
+    return true;
+}
+
 bool KernelEngine::server_create_weapon_container(
     std::uint32_t owner_entity_id,
     KernelInventoryContainerId* out_container_id) {
@@ -6929,7 +6944,7 @@ void KernelEngine::poll_transport() {
                     item_store_.find_container(
                         inventory_request.inventory_container_id);
                 if (container == nullptr ||
-                    container->owner_entity_id != session->player) {
+                    !can_observe_container(*session, *container)) {
                     push_event(KernelEventType_Error, 0, transport_event.peer, 33);
                     continue;
                 }
@@ -7416,6 +7431,16 @@ void KernelEngine::handle_client_reliable_event(const TransportEvent& transport_
             &inventory_snapshot)) {
         record_packet_deserialization_cost(elapsed_cost_us(decode_start));
         handle_client_inventory_snapshot_page(inventory_snapshot);
+        return;
+    }
+    InventoryContainerClosedPacket inventory_closed;
+    decode_start = std::chrono::steady_clock::now();
+    if (decode_inventory_container_closed_packet(
+            transport_event.payload.data(),
+            transport_event.payload.size(),
+            &inventory_closed)) {
+        record_packet_deserialization_cost(elapsed_cost_us(decode_start));
+        handle_client_inventory_container_closed(inventory_closed);
         return;
     }
     InventoryDeltaBatchPacket inventory_delta;
@@ -15533,7 +15558,7 @@ bool KernelEngine::send_inventory_snapshot(
     if (session == nullptr || !session->welcomed) return false;
     const InventoryContainerRecord* container =
         item_store_.find_container(container_id);
-    if (container == nullptr || container->owner_entity_id != session->player) {
+    if (container == nullptr || !can_observe_container(*session, *container)) {
         return false;
     }
     std::vector<InventorySnapshotEntry> entries;
@@ -15599,7 +15624,7 @@ bool KernelEngine::send_inventory_delta_batch(
     if (session == nullptr || !session->welcomed || deltas.empty()) return false;
     const InventoryContainerRecord* container =
         item_store_.find_container(container_id);
-    if (container == nullptr || container->owner_entity_id != session->player) {
+    if (container == nullptr || !can_observe_container(*session, *container)) {
         return false;
     }
     InventoryDeltaBatchPacket batch;
@@ -15639,13 +15664,101 @@ bool KernelEngine::send_inventory_delta_batch(
     return true;
 }
 
+bool KernelEngine::can_observe_container(
+    const PeerSession& session,
+    const InventoryContainerRecord& container) const {
+    if (session.player == 0u) {
+        return false;
+    }
+    if (container.owner_entity_id == session.player) {
+        return true;
+    }
+    const std::optional<entt::entity> player = world_.find_entity(session.player);
+    const Sheltered* sheltered = player.has_value()
+        ? world_.registry().try_get<Sheltered>(*player)
+        : nullptr;
+    return sheltered != nullptr && sheltered->shelter_net_id != 0u &&
+        sheltered->shelter_net_id == container.owner_entity_id;
+}
+
+std::vector<KernelInventoryContainerId> KernelEngine::observed_containers(
+    const PeerSession& session) const {
+    std::vector<KernelInventoryContainerId> observed =
+        item_store_.containers_for_owner(session.player);
+    const std::optional<entt::entity> player = world_.find_entity(session.player);
+    const Sheltered* sheltered = player.has_value()
+        ? world_.registry().try_get<Sheltered>(*player)
+        : nullptr;
+    if (sheltered != nullptr && sheltered->shelter_net_id != 0u) {
+        for (const KernelInventoryContainerId id :
+             item_store_.containers_for_owner(sheltered->shelter_net_id)) {
+            observed.push_back(id);
+        }
+    }
+    return observed;
+}
+
+bool KernelEngine::send_inventory_container_closed(
+    PeerSession* session,
+    KernelInventoryContainerId container_id) {
+    if (session == nullptr || !session->welcomed) return false;
+    const std::vector<std::uint8_t> packet = encode_inventory_container_closed_packet(
+        InventoryContainerClosedPacket{container_id}, next_packet_sequence_++);
+    ITransport* target_transport =
+        session->peer == kLocalListenPeerId && listen_server_transport_ != nullptr
+        ? static_cast<ITransport*>(listen_server_transport_)
+        : transport_.get();
+    if (packet.empty() || target_transport == nullptr ||
+        !target_transport->Send(
+            session->peer,
+            packet.data(),
+            static_cast<std::uint32_t>(packet.size()),
+            SendMode::kReliable,
+            ChannelId::kReliableEvent)) {
+        return false;
+    }
+    record_sent_packet(
+        static_cast<std::uint32_t>(packet.size()),
+        SendMode::kReliable,
+        ChannelId::kReliableEvent);
+    return true;
+}
+
+void KernelEngine::handle_client_inventory_container_closed(
+    const InventoryContainerClosedPacket& packet) {
+    // A listen host's store is the authority's own; only a pure client holds
+    // copies to drop.
+    if (config_.mode != KernelMode_Client) {
+        return;
+    }
+    (void)item_store_.destroy_container(packet.inventory_container_id);
+    client_inventory_sync_states_.erase(packet.inventory_container_id);
+    client_inventory_snapshot_assemblies_.erase(packet.inventory_container_id);
+    client_inventory_resync_pending_.erase(packet.inventory_container_id);
+}
+
 void KernelEngine::flush_inventory_replication() {
     const auto flush_session = [&](PeerSession* session) {
         if (session == nullptr || !session->welcomed || session->player == 0u) {
             return;
         }
-        for (const KernelInventoryContainerId container_id :
-             item_store_.containers_for_owner(session->player)) {
+        const std::vector<KernelInventoryContainerId> observed =
+            observed_containers(*session);
+        // What it saw and no longer does -- a camp it left, a container that
+        // is gone -- is closed, so its client drops the copy and a return
+        // starts over from a full snapshot.
+        for (auto cursor = session->inventory_revisions.begin();
+             cursor != session->inventory_revisions.end();) {
+            if (std::find(observed.begin(), observed.end(), cursor->first) ==
+                    observed.end() ||
+                item_store_.find_container(cursor->first) == nullptr) {
+                (void)send_inventory_container_closed(session, cursor->first);
+                cursor = session->inventory_revisions.erase(cursor);
+            } else {
+                ++cursor;
+            }
+        }
+        for (const KernelInventoryContainerId container_id : observed) {
             const InventoryContainerRecord* container =
                 item_store_.find_container(container_id);
             if (container == nullptr) continue;

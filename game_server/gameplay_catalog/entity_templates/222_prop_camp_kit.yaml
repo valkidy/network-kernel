@@ -1,0 +1,21 @@
+# A temporary camp in flight: thrown like the tent kit, it unfolds into
+# field_camp where it lands, set down clear of whatever is there.
+id: 222
+name: camp_kit
+entity_type: prop
+health:
+  hp: 1
+  max_hp: 1
+physics:
+  collider_template: collision_damage_prop_hitbox
+triggers:
+  on_collision:
+    collision_mask: terrain|static_obstacle
+    action_graph: action_spawn_building_and_damage_self_at_collision
+    parameters:
+      template: field_camp
+      position: event.position
+      direction: event.direction
+      owner: self
+      source: self
+      self_damage: 1

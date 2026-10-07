@@ -52,6 +52,11 @@
  *     _All. Kernel_ServerSetItemDropTag, Kernel_ServerClearUntaggedItems and
  *     Kernel_ServerDropInventoryItem were added. Packet schema 29 carries the
  *     tag in inventory records.
+ *     Camps (K9): KernelInventoryContainerKind_Stock and
+ *     Kernel_ServerCreateStockContainer; KernelDomainAction_Transfer takes
+ *     from the stock of the building the instigator is inside. A stock goes
+ *     to whoever is inside its owner; packet schema 30 adds
+ *     InventoryContainerClosed for a container a client no longer sees.
  * 100: pull strength. KernelActionDefinition gained pull_strength, appended
  *     after spawn_placement and read only by apply_pull: a fixed number
  *     weighed against the target's impulse_resistance, as apply_impulse's
@@ -765,6 +770,12 @@ typedef enum KernelDomainAction {
     KernelDomainAction_Place = 4,
     KernelDomainAction_Carry = 5,
     KernelDomainAction_Activate = 6,
+    /* Takes requested_quantity (0 = all) of selected_item_instance_id out of
+     * a camp's stock -- a container owned by the building the instigator is
+     * inside -- into the instigator's own inventory, or its weapon container
+     * for a weapon, whose same-category weapon goes to where it entered (ABI
+     * 101). Take-only: nothing goes the other way. */
+    KernelDomainAction_Transfer = 7,
 } KernelDomainAction;
 
 typedef enum KernelItemResidencyKind {
@@ -829,8 +840,9 @@ typedef enum KernelGameplayRequestRejectionReason {
     KernelGameplayRequestRejection_GraphRejected = 16,
     /* The instigator's health is zero: the dead do not use, throw or pick up. */
     KernelGameplayRequestRejection_InstigatorDead = 17,
-    /* The instigator is inside a building. The only request it may make is
-     * to activate that same building, which is how it asks to leave. */
+    /* The instigator is inside a building. The only requests it may make
+     * are to activate that same building, which is how it asks to leave, and
+     * to Transfer from that building's stock. */
     KernelGameplayRequestRejection_InstigatorSheltered = 18,
 } KernelGameplayRequestRejectionReason;
 
@@ -1725,10 +1737,13 @@ typedef struct KernelInventoryContainerView {
 /* What a container holds. A weapon container (ABI 101) has
  * KERNEL_WEAPON_CATEGORY_COUNT slots, holds only weapon items, each at the
  * slot its category names, and is its owner's loadout: what is in it is what
- * the owner can fire. */
+ * the owner can fire. A stock container (ABI 101) is a camp's: it holds
+ * weapons and items alike, in any slot, and goes to whoever is inside the
+ * building that owns it; they take from it with KernelDomainAction_Transfer. */
 typedef enum KernelInventoryContainerKind {
     KernelInventoryContainerKind_Items = 0,
     KernelInventoryContainerKind_Weapons = 1,
+    KernelInventoryContainerKind_Stock = 2,
 } KernelInventoryContainerKind;
 
 typedef enum KernelInventorySyncState {

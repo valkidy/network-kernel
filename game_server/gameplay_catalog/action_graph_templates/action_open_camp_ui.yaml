@@ -1,0 +1,11 @@
+# A temporary camp's interface, for whoever activated it. Activating from
+# outside also takes the player inside (game_server's ShelterDirector), and
+# only those inside are sent the camp's stock (K9); ui_id 3 names the camp UI,
+# which lists the stock and asks for Transfer. Activating again comes out.
+id: action_open_camp_ui
+parameters:
+  target: null
+actions:
+  - type: open_ui
+    target: params.target
+    ui_id: 3

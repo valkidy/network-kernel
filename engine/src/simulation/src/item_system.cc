@@ -276,7 +276,7 @@ std::optional<KernelInventoryContainerId> ItemStore::create_container(
     std::uint8_t kind) {
     if (owner_entity_id == 0 || slot_capacity == 0 ||
         slot_capacity > std::numeric_limits<std::uint16_t>::max() ||
-        kind > KernelInventoryContainerKind_Weapons ||
+        kind > KernelInventoryContainerKind_Stock ||
         (kind == KernelInventoryContainerKind_Weapons &&
          (slot_capacity != KERNEL_WEAPON_CATEGORY_COUNT ||
           find_weapon_container_for_owner(owner_entity_id) != nullptr))) {
@@ -301,10 +301,11 @@ std::optional<std::uint16_t> ItemStore::find_empty_slot(
     const KernelItemTemplateDefinition& definition,
     std::optional<std::uint16_t> preferred_slot) const {
     // Weapons and items never mix, and a weapon has exactly one place: the
-    // slot its category names.
+    // slot its category names. A camp's stock holds both, anywhere.
     const bool weapon_container =
         container.kind == KernelInventoryContainerKind_Weapons;
-    if (weapon_container != (definition.is_weapon != 0u)) {
+    if (container.kind != KernelInventoryContainerKind_Stock &&
+        weapon_container != (definition.is_weapon != 0u)) {
         return std::nullopt;
     }
     if (weapon_container) {
@@ -722,6 +723,139 @@ std::optional<KernelItemInstanceId> ItemStore::transfer_world_to_inventory(
     return source_id;
 }
 
+std::optional<KernelItemInstanceId> ItemStore::transfer_to_container(
+    KernelItemInstanceId source_id,
+    std::uint32_t quantity,
+    KernelInventoryContainerId container_id) {
+    ItemInstanceRecord* source = find_item(source_id);
+    auto destination = containers_.find(container_id);
+    if (source == nullptr || source->terminal ||
+        source->residency.kind != KernelItemResidency_Inventory ||
+        source->residency.container_id == container_id ||
+        destination == containers_.end() || quantity == 0u ||
+        quantity > source->quantity) {
+        return std::nullopt;
+    }
+    const KernelItemTemplateDefinition* definition =
+        find_template(source->item_template_id);
+    if (definition == nullptr) {
+        return std::nullopt;
+    }
+    std::vector<KernelItemInstanceId> stacks;
+    std::uint64_t room = 0;
+    if (definition->item_mode == KernelItemMode_Fungible) {
+        for (const KernelItemInstanceId candidate_id : destination->second.slots) {
+            const ItemInstanceRecord* candidate = find_item(candidate_id);
+            if (candidate != nullptr && !candidate->terminal &&
+                candidate->item_template_id == source->item_template_id &&
+                compatible_runtime_state(*candidate, *source) &&
+                candidate->quantity < definition->max_stack) {
+                stacks.push_back(candidate_id);
+                room += definition->max_stack - candidate->quantity;
+            }
+        }
+    }
+    const std::uint32_t merged =
+        static_cast<std::uint32_t>(std::min<std::uint64_t>(quantity, room));
+    const std::uint32_t rest = quantity - merged;
+    const std::optional<std::uint16_t> empty_slot = rest == 0u
+        ? std::optional<std::uint16_t>{}
+        : find_empty_slot(destination->second, *definition, std::nullopt);
+    if (rest != 0u && !empty_slot.has_value()) {
+        return std::nullopt;
+    }
+    // Nothing has moved yet; from here every step succeeds.
+    KernelItemInstanceId result = 0;
+    std::uint32_t left = merged;
+    for (const KernelItemInstanceId stack_id : stacks) {
+        if (left == 0u) break;
+        ItemInstanceRecord* stack = find_item(stack_id);
+        const std::uint32_t moved =
+            std::min<std::uint32_t>(left, definition->max_stack - stack->quantity);
+        stack->quantity += moved;
+        left -= moved;
+        publish_delta(
+            &destination->second,
+            KernelInventoryDeltaType_Update,
+            stack->residency.slot,
+            stack->residency.slot,
+            stack,
+            KernelInventoryChange_Quantity);
+        if (result == 0u) result = stack_id;
+    }
+    source = find_item(source_id);
+    if (rest == 0u) {
+        if (quantity == source->quantity) {
+            (void)terminate(source_id);
+        } else {
+            source->quantity -= quantity;
+            auto origin = containers_.find(source->residency.container_id);
+            publish_delta(
+                &origin->second,
+                KernelInventoryDeltaType_Update,
+                source->residency.slot,
+                source->residency.slot,
+                source,
+                KernelInventoryChange_Quantity);
+        }
+        return result;
+    }
+    if (quantity == source->quantity) {
+        // All of it leaves: the source itself moves, keeping its id.
+        remove_from_inventory(source);
+        source->quantity = rest;
+        source->residency = ItemResidency{
+            KernelItemResidency_Inventory,
+            container_id,
+            *empty_slot,
+            0,
+            KernelWorldItemMode_Placed,
+            0,
+        };
+        destination->second.slots[*empty_slot] = source_id;
+        publish_delta(
+            &destination->second,
+            KernelInventoryDeltaType_Add,
+            *empty_slot,
+            *empty_slot,
+            source);
+        return result != 0u ? result : source_id;
+    }
+    // Part of a stack: the rest of the move is a new stack like it.
+    source->quantity -= quantity;
+    {
+        auto origin = containers_.find(source->residency.container_id);
+        publish_delta(
+            &origin->second,
+            KernelInventoryDeltaType_Update,
+            source->residency.slot,
+            source->residency.slot,
+            source,
+            KernelInventoryChange_Quantity);
+    }
+    const KernelItemInstanceId id = next_item_instance_id_++;
+    ItemInstanceRecord copy = *find_item(source_id);
+    copy.item_instance_id = id;
+    copy.quantity = rest;
+    copy.residency = ItemResidency{
+        KernelItemResidency_Inventory,
+        container_id,
+        *empty_slot,
+        0,
+        KernelWorldItemMode_Placed,
+        0,
+    };
+    auto inserted = items_.emplace(id, std::move(copy));
+    destination->second.slots[*empty_slot] = id;
+    publish_delta(
+        &destination->second,
+        KernelInventoryDeltaType_Add,
+        *empty_slot,
+        *empty_slot,
+        &inserted.first->second);
+    return result != 0u ? result : id;
+}
+
 std::optional<ItemConsumeResult> ItemStore::consume(
     KernelItemInstanceId id,
     std::uint32_t current_tick) {
@@ -1019,6 +1153,16 @@ bool ItemStore::clear_container(KernelInventoryContainerId id) {
             (void)terminate(item_id);
         }
     }
+    return true;
+}
+
+bool ItemStore::destroy_container(KernelInventoryContainerId id) {
+    if (!clear_container(id)) {
+        return false;
+    }
+    containers_.erase(id);
+    pending_deltas_.erase(id);
+    delta_history_.erase(id);
     return true;
 }
 

@@ -94,6 +94,7 @@ constexpr std::size_t kStatusEffectStateRecordPayloadSize = 24;
 constexpr std::size_t kGameplayRequestPayloadSize = 60;
 constexpr std::size_t kGameplayRequestOutcomePayloadSize = 32;
 constexpr std::size_t kInventorySnapshotRequestPayloadSize = 16;
+constexpr std::size_t kInventoryContainerClosedPayloadSize = 8;
 constexpr std::size_t kMaxInventoryPacketPayloadSize = 16u * 1024u;
 
 constexpr float kTwoPi = 6.283185307179586f;
@@ -2132,6 +2133,39 @@ bool decode_inventory_snapshot_request_packet(
     return true;
 }
 
+std::vector<std::uint8_t> encode_inventory_container_closed_packet(
+    const InventoryContainerClosedPacket& packet,
+    std::uint32_t sequence) {
+    if (packet.inventory_container_id == 0u) return {};
+    protocol_internal::PacketWriter payload;
+    payload.write_u64(packet.inventory_container_id);
+    return protocol_internal::wrap_packet(
+        MessageType::kInventoryContainerClosed, payload.bytes(), sequence);
+}
+
+bool decode_inventory_container_closed_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    InventoryContainerClosedPacket* out_packet) {
+    const std::uint8_t* payload = nullptr;
+    std::size_t payload_size = 0;
+    InventoryContainerClosedPacket packet;
+    if (out_packet == nullptr ||
+        !protocol_internal::unwrap_packet(
+            data, size, MessageType::kInventoryContainerClosed,
+            &payload, &payload_size) ||
+        payload_size != kInventoryContainerClosedPayloadSize) {
+        return false;
+    }
+    protocol_internal::PacketReader reader(payload, payload_size);
+    if (!reader.read_u64(&packet.inventory_container_id) ||
+        packet.inventory_container_id == 0u || !reader.done()) {
+        return false;
+    }
+    *out_packet = packet;
+    return true;
+}
+
 std::vector<std::uint8_t> encode_inventory_snapshot_page_packet(
     const InventorySnapshotPagePacket& packet,
     std::uint32_t sequence) {
@@ -2184,7 +2218,7 @@ bool decode_inventory_snapshot_page_packet(
         !reader.read_u16(&packet.page_index) ||
         !reader.read_u16(&packet.page_count) ||
         !reader.read_u8(&packet.container_kind) || !reader.read_u16(&count) ||
-        packet.container_kind > KernelInventoryContainerKind_Weapons ||
+        packet.container_kind > KernelInventoryContainerKind_Stock ||
         packet.inventory_container_id == 0u || packet.owner_entity_id == 0u ||
         packet.slot_capacity == 0u || packet.page_count == 0u ||
         packet.page_index >= packet.page_count) {

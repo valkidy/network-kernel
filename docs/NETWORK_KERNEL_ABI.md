@@ -47,7 +47,13 @@ adds the container kind to inventory snapshot pages. Drop tags (K12):
 `Kernel_ServerSetItemDropTag`, `Kernel_ServerClearUntaggedItems` and
 `Kernel_ServerDropInventoryItem` (an inventory item onto the ground as
 itself, resting on the terrain beneath the given point). Fungible stacks merge only on an equal tag; a split keeps its
-source's. Packet schema 29 carries the tag in inventory records. ABI 100 appended `pull_strength` to
+source's. Packet schema 29 carries the tag in inventory records. Camps (K9):
+`KernelInventoryContainerKind_Stock` (2) and `Kernel_ServerCreateStockContainer`
+(a camp's stock: weapons and items in any slot, removed with its owner);
+`KernelDomainAction_Transfer` (7) takes from the stock of the building the
+instigator is inside. A container is now sent to its owner and to whoever is
+inside the entity that owns it; packet schema 30 adds `InventoryContainerClosed`
+(32), after which the client drops its copy. ABI 100 appended `pull_strength` to
 `KernelActionDefinition`. ABI 98
 appended the tornado shape and motion fields to
 `KernelAreaEffectMechanicsDefinition`. ABI 99 appended `hover_height_meters`

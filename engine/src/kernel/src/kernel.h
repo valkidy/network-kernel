@@ -48,6 +48,7 @@ struct PropStateChangeRecord;
 struct EntityTemplateUpdatePacket;
 struct InventoryDeltaBatchPacket;
 struct InventorySnapshotPagePacket;
+struct InventoryContainerClosedPacket;
 struct InventorySnapshotRequestPacket;
 struct LocalActionResultBatchPacket;
 struct LocomotionStepBatchPacket;
@@ -286,6 +287,10 @@ public:
         KernelItemInstanceId id,
         const KernelVec3& position,
         std::uint32_t* out_prop_entity_id);
+    bool server_create_stock_container(
+        std::uint32_t owner_entity_id,
+        std::uint32_t slot_capacity,
+        KernelInventoryContainerId* out_container_id);
     bool server_create_weapon_container(
         std::uint32_t owner_entity_id,
         KernelInventoryContainerId* out_container_id);
@@ -1042,6 +1047,18 @@ private:
     bool send_inventory_snapshot(
         PeerSession* session,
         KernelInventoryContainerId container_id);
+    // Who sees a container (K9): its owner, and whoever is inside the
+    // building that owns it -- a camp's stock goes to its occupants only.
+    bool can_observe_container(
+        const PeerSession& session,
+        const InventoryContainerRecord& container) const;
+    std::vector<KernelInventoryContainerId> observed_containers(
+        const PeerSession& session) const;
+    bool send_inventory_container_closed(
+        PeerSession* session,
+        KernelInventoryContainerId container_id);
+    void handle_client_inventory_container_closed(
+        const InventoryContainerClosedPacket& packet);
     bool send_inventory_delta_batch(
         PeerSession* session,
         KernelInventoryContainerId container_id,

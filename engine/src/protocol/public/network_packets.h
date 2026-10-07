@@ -134,6 +134,10 @@ struct InventorySnapshotRequestPacket {
     std::uint64_t client_revision = 0;
 };
 
+struct InventoryContainerClosedPacket {
+    KernelInventoryContainerId inventory_container_id = 0;
+};
+
 struct InventorySnapshotEntry {
     std::uint16_t slot = 0;
     InventoryWireItem item;
@@ -431,6 +435,14 @@ bool decode_inventory_snapshot_request_packet(
     const std::uint8_t* data,
     std::size_t size,
     InventorySnapshotRequestPacket* out_packet);
+
+std::vector<std::uint8_t> encode_inventory_container_closed_packet(
+    const InventoryContainerClosedPacket& packet,
+    std::uint32_t sequence = 0);
+bool decode_inventory_container_closed_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    InventoryContainerClosedPacket* out_packet);
 
 std::vector<std::uint8_t> encode_inventory_snapshot_page_packet(
     const InventorySnapshotPagePacket& packet,

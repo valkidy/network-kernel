@@ -114,6 +114,16 @@ public:
     std::optional<KernelItemInstanceId> transfer_world_to_inventory(
         KernelItemInstanceId source_id,
         KernelInventoryContainerId container_id);
+    // Moves `quantity` of an inventory item into another container (K9: from
+    // a camp's stock onto a player). Fungible quantity tops up compatible
+    // stacks there first and the rest takes one empty slot; a weapon takes its
+    // category's slot. All or nothing: nullopt, and nothing moved, when it does
+    // not fit. Returns the item now holding what moved -- the source itself
+    // when all of it went to a slot of its own.
+    std::optional<KernelItemInstanceId> transfer_to_container(
+        KernelItemInstanceId source_id,
+        std::uint32_t quantity,
+        KernelInventoryContainerId container_id);
     std::optional<ItemConsumeResult> consume(
         KernelItemInstanceId id,
         std::uint32_t current_tick);
@@ -149,6 +159,11 @@ public:
     // slot. The container itself stays, empty. False if there is no such
     // container.
     bool clear_container(KernelInventoryContainerId id);
+    // Terminates every item in the container and then removes the container
+    // itself, with its delta history: a camp's stock when the camp goes, or a
+    // client's copy of a container it no longer sees. False if there is no
+    // such container.
+    bool destroy_container(KernelInventoryContainerId id);
 
     std::vector<KernelInventoryDelta> take_inventory_deltas(
         KernelInventoryContainerId container_id,

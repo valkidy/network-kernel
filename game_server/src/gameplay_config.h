@@ -258,6 +258,11 @@ struct ActorTemplateConfig {
     // The weapon items a loadout camp offers (D5); a player picks at most one
     // per category. Quantity is always 1.
     std::vector<InventorySlotConfig> loadout_weapon_options;
+    // A temporary camp's stock (D7, D8): each entry fills one slot of a
+    // container the camp owns, made when the camp appears. Shared, finite and
+    // take-only; seen only by whoever is inside (K9). Props with a shelter
+    // only.
+    std::vector<InventorySlotConfig> camp_stock;
     std::uint16_t animation_idle = 0;
     std::uint16_t animation_chasing = 0;
     AgentSentryConfig sentry{};
@@ -612,6 +617,8 @@ std::uint32_t item_portable_state_field_id(const std::string& name);
 // The most options one loadout camp may offer: the offer list has to fit one
 // game message (GAME_SERVER_MESSAGE_LOADOUT_OFFERS).
 inline constexpr std::size_t kMaxLoadoutOptions = 32;
+// The most entries one camp's stock may hold (one slot each).
+inline constexpr std::size_t kMaxCampStock = 64;
 
 KernelCombatStateDefinition make_player_combat_state(
     const GameServerGameplayConfig& config);

@@ -19,6 +19,8 @@ run an authoritative Item graph.
 | Catalog schema, templates, capabilities, portable field order and policies | Connecting peer | Existing reliable session catalog bundle | Handshake/hash mismatch only | Session |
 | Owned Inventory initial state | Container owner only | Reliable `InventorySnapshotPage(26)` | Once after welcomed/catalog-ready; again on resync | Owner, never observers |
 | Owned Inventory mutations | Container owner only | Reliable `InventoryDeltaBatch(24)` | At most one batch per container per server tick; no packet while idle | Owner, never observers |
+| Camp stock initial state and mutations (K9) | Whoever is inside the camp that owns it | Same `InventorySnapshotPage(26)` / `InventoryDeltaBatch(24)` | Full snapshot on entering; deltas while inside | `Sheltered.shelter_net_id == owner` |
+| Container closed (K9) | A session that saw a container and no longer does | Reliable `InventoryContainerClosed(32)` | On leaving the camp, or when the container is gone | That session |
 | Inventory resync request | Server | Reliable `InventorySnapshotRequest(25)` | Once when a client detects a gap, until a snapshot completes | Owning session validated server-side |
 | Entity/Prop lifecycle and static metadata | Relevant clients | Reliable entity spawn/despawn | Enter/leave relevance; metadata once per relevance lifetime | Existing world relevance filter |
 | Carry, Place, Throw and settle mode transitions | Relevant clients | Reliable `PropStateChangeBatch(27)` | Coalesced by Prop and flushed once per tick | Existing world relevance filter |
@@ -33,9 +35,17 @@ not overtake a newly created Prop.
 
 ## Inventory wire contract
 
-An Inventory container is synchronized only when
-`container.owner_entity_id == session.player`. The first version deliberately
-does not synchronize chests, trades, observers, or delegated access.
+An Inventory container is synchronized when
+`container.owner_entity_id == session.player`, or (K9, packet schema 30) when
+the session's player is inside the building that owns it
+(`Sheltered.shelter_net_id == container.owner_entity_id`) -- a camp's stock.
+That is the only observer rule: there are still no trades or delegated access,
+and a stock is take-only (`KernelDomainAction_Transfer`). When a session stops
+seeing a container -- it left the camp, or the container was destroyed with its
+owner -- the server sends `InventoryContainerClosed` and forgets that session's
+cursor; the client drops its copy, and coming back starts from a full
+snapshot. A snapshot request for a container the session does not see is
+refused (error 33).
 
 `InventorySnapshotPage` carries container ID, owner entity, revision,
 capacity, page index/count, and occupied entries. Empty containers still send

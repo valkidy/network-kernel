@@ -1040,6 +1040,18 @@ bool Kernel_ServerCreateWeaponContainer(
     });
 }
 
+bool Kernel_ServerCreateStockContainer(
+    KernelHandle* kernel,
+    uint32_t owner_entity_id,
+    uint32_t slot_capacity,
+    KernelInventoryContainerId* out_container_id) {
+    return abi_call("Kernel_ServerCreateStockContainer", false, [&]() {
+        return kernel != nullptr &&
+            kernel->engine->server_create_stock_container(
+                owner_entity_id, slot_capacity, out_container_id);
+    });
+}
+
 bool Kernel_SendGameMessage(
     KernelHandle* kernel,
     uint32_t message_type,

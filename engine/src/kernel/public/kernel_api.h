@@ -428,6 +428,19 @@ bool Kernel_ServerCreateWeaponContainer(
     uint32_t owner_entity_id,
     KernelInventoryContainerId* out_container_id);
 
+/*
+ * Creates a stock container (ABI 101; KernelInventoryContainerKind_Stock) of
+ * `slot_capacity` slots owned by `owner_entity_id` -- a camp. It holds
+ * anything, is sent only to those inside its owner (and never to its owner,
+ * which is not a player), and goes when its owner does, with whatever is
+ * left in it. False on a client or for an unknown owner.
+ */
+bool Kernel_ServerCreateStockContainer(
+    KernelHandle* kernel,
+    uint32_t owner_entity_id,
+    uint32_t slot_capacity,
+    KernelInventoryContainerId* out_container_id);
+
 bool Kernel_SendGameMessage(
     KernelHandle* kernel,
     uint32_t message_type,

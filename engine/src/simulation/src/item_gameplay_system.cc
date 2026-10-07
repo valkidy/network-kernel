@@ -99,7 +99,7 @@ bool begin_thrown_prop_motion(
 
 bool valid_domain_action(std::uint8_t action) {
     return action >= KernelDomainAction_Consume &&
-        action <= KernelDomainAction_Activate;
+        action <= KernelDomainAction_Transfer;
 }
 
 bool action_allowed_in_context(
@@ -559,10 +559,12 @@ bool ItemGameplaySystem::submit_request(
     } else if (const Sheltered* sheltered =
                    engine.world_.registry().try_get<Sheltered>(*instigator);
                sheltered != nullptr &&
+               request.domain_action != KernelDomainAction_Transfer &&
                (request.domain_action != KernelDomainAction_Activate ||
                 request.target_net_id != sheltered->shelter_net_id)) {
-        // From inside, the one thing to ask is to activate the building
-        // again, which is how an occupant asks to come out.
+        // From inside, the things to ask are to activate the building again,
+        // which is how an occupant asks to come out, and to take from its
+        // stock.
         reject(&outcome, KernelGameplayRequestRejection_InstigatorSheltered);
     } else {
         ScopeTransferTransaction transfer_transaction(engine, &outcome);
@@ -586,6 +588,82 @@ bool ItemGameplaySystem::submit_request(
         }
         if (request.selected_item_instance_id != 0u && item == nullptr) {
             reject(&outcome, KernelGameplayRequestRejection_UnknownItem);
+            goto record_outcome;
+        }
+
+        if (request.domain_action == KernelDomainAction_Transfer) {
+            // Out of a camp's stock (K9, D7): only from the building the
+            // instigator is inside, only onto itself.
+            if (item == nullptr || request.selected_item_instance_id == 0u ||
+                item->terminal ||
+                item->residency.kind != KernelItemResidency_Inventory) {
+                reject(&outcome, KernelGameplayRequestRejection_UnknownItem);
+                goto record_outcome;
+            }
+            const InventoryContainerRecord* stock =
+                engine.item_store_.find_container(item->residency.container_id);
+            const Sheltered* inside =
+                engine.world_.registry().try_get<Sheltered>(*instigator);
+            if (stock == nullptr || inside == nullptr ||
+                inside->shelter_net_id == 0u ||
+                stock->owner_entity_id != inside->shelter_net_id) {
+                reject(&outcome, KernelGameplayRequestRejection_NotAuthorized);
+                goto record_outcome;
+            }
+            const KernelItemTemplateDefinition* definition =
+                engine.item_store_.find_template(item->item_template_id);
+            if (definition == nullptr) {
+                reject(&outcome, KernelGameplayRequestRejection_UnknownItem);
+                goto record_outcome;
+            }
+            const std::uint32_t quantity = request.requested_quantity == 0u
+                ? item->quantity
+                : request.requested_quantity;
+            if (quantity > item->quantity) {
+                reject(&outcome, KernelGameplayRequestRejection_InvalidQuantity);
+                goto record_outcome;
+            }
+            const bool weapon_item = definition->is_weapon != 0u;
+            if (weapon_item &&
+                !engine.world_.registry().all_of<PlayerTag>(*instigator)) {
+                reject(&outcome, KernelGameplayRequestRejection_NotAuthorized);
+                goto record_outcome;
+            }
+            const InventoryContainerRecord* own = weapon_item
+                ? engine.item_store_.find_weapon_container_for_owner(
+                      request.instigator_net_id)
+                : engine.item_store_.find_container_for_owner(
+                      request.instigator_net_id);
+            if (own == nullptr) {
+                reject(&outcome, KernelGameplayRequestRejection_InventoryFull);
+                goto record_outcome;
+            }
+            // One weapon per category: the one held there goes down where
+            // the taker went in, which is where it comes out (D11).
+            if (weapon_item && definition->weapon_category < own->slots.size() &&
+                own->slots[definition->weapon_category] != 0u) {
+                const KernelVec3 entry{
+                    inside->entry_position.x,
+                    inside->entry_position.y,
+                    inside->entry_position.z};
+                std::uint32_t swapped_prop = 0;
+                if (!engine.server_drop_inventory_item(
+                        own->slots[definition->weapon_category], entry, &swapped_prop)) {
+                    reject(&outcome, KernelGameplayRequestRejection_InventoryFull);
+                    goto record_outcome;
+                }
+            }
+            const KernelInventoryContainerId own_id = own->inventory_container_id;
+            const auto taken = engine.item_store_.transfer_to_container(
+                item->item_instance_id, quantity, own_id);
+            if (!taken.has_value()) {
+                reject(&outcome, KernelGameplayRequestRejection_InventoryFull);
+                goto record_outcome;
+            }
+            outcome.status = KernelGameplayRequestStatus_Committed;
+            outcome.item_instance_id = *taken;
+            outcome.committed_quantity = quantity;
+            outcome.rejection_reason = KernelGameplayRequestRejection_None;
             goto record_outcome;
         }
 

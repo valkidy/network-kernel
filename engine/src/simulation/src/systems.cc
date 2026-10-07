@@ -2812,6 +2812,14 @@ bool EntityLifecycleSystem::destroy_entity_with_context(
     if (world_item_id != 0u) {
         (void)engine.item_store_.terminate(world_item_id);
     }
+    // What it owned goes with it: a camp's stock vanishes with the camp (D7).
+    // Its occupants are already out, and the next inventory flush tells
+    // their clients the container is closed.
+    for (const KernelInventoryContainerId container_id :
+         engine.item_store_.containers_for_owner(net_id)) {
+        (void)engine.item_store_.destroy_container(container_id);
+        engine.synced_weapon_revisions_.erase(container_id);
+    }
     engine.pending_first_physics_actors_.erase(net_id);
     engine.vision_configs_.erase(net_id);
     engine.vision_states_.erase(net_id);
