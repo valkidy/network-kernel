@@ -277,6 +277,19 @@ public:
         std::int32_t health_delta,
         std::uint64_t event_time_us);
     bool submit_gameplay_request(const KernelGameplayRequest& request);
+    // Weapon containers (ABI 101): an owner's loadout is what its weapon
+    // container holds. See sync_weapon_loadouts.
+    bool server_create_weapon_container(
+        std::uint32_t owner_entity_id,
+        KernelInventoryContainerId* out_container_id);
+    // Rebuilds the WeaponState of every owner whose weapon container changed
+    // since the last call. Cheap when nothing did; called after anything that
+    // can move a weapon item and at the start of every tick.
+    void sync_weapon_loadouts();
+    // Copies each equipped weapon's magazine and reserve onto its item: the
+    // reserve always, the magazine only once the weapon is out of hand (the
+    // snapshot already reports the one in hand). End of every tick.
+    void write_back_weapon_states();
     // Game messages; see Kernel_SendGameMessage.
     bool send_game_message(
         std::uint32_t message_type,
@@ -1242,6 +1255,11 @@ private:
     // Game messages waiting for game_server (server) and for the local player
     // (client, or a listen host's own player). Bounded; see
     // enqueue_game_message.
+    // Weapon container -> the revision its owner's WeaponState was last built
+    // from.
+    std::unordered_map<KernelInventoryContainerId, std::uint64_t>
+        synced_weapon_revisions_;
+    void rebuild_weapon_loadout(const InventoryContainerRecord& container);
     std::deque<KernelGameMessage> server_game_messages_;
     std::deque<KernelGameMessage> client_game_messages_;
     void enqueue_game_message(

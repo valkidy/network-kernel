@@ -942,13 +942,67 @@ bool ItemGameplaySystem::submit_request(
         }
 
         if (action == KernelDomainAction_Pickup) {
-            const InventoryContainerRecord* container =
-                engine.item_store_.find_container_for_owner(
-                    request.instigator_net_id);
+            // A weapon goes to the weapon container, at its category's slot,
+            // and only a player picks one up (design D13).
+            const bool weapon_item = item_template->is_weapon != 0u;
+            if (weapon_item) {
+                const std::optional<entt::entity> picker =
+                    engine.world_.find_entity(request.instigator_net_id);
+                if (!picker.has_value() ||
+                    !engine.world_.registry().all_of<PlayerTag>(*picker)) {
+                    reject(&outcome, KernelGameplayRequestRejection_NotAuthorized);
+                    goto record_outcome;
+                }
+            }
+            const InventoryContainerRecord* container = weapon_item
+                ? engine.item_store_.find_weapon_container_for_owner(
+                      request.instigator_net_id)
+                : engine.item_store_.find_container_for_owner(
+                      request.instigator_net_id);
             if (container == nullptr) {
                 reject(&outcome, KernelGameplayRequestRejection_InventoryFull);
                 goto record_outcome;
             }
+            // One weapon per category: the one in that slot goes to the
+            // picker's feet (D11). Its magazine is written back to it when the
+            // loadout is rebuilt, after this request.
+            KernelItemInstanceId swapped_out = 0;
+            std::uint32_t swapped_prop = 0;
+            if (weapon_item &&
+                container->slots[item_template->weapon_category] != 0u) {
+                swapped_out = container->slots[item_template->weapon_category];
+                const ItemInstanceRecord* held =
+                    engine.item_store_.find_item(swapped_out);
+                const KernelItemTemplateDefinition* held_template = held == nullptr
+                    ? nullptr
+                    : engine.item_store_.find_template(held->item_template_id);
+                const std::optional<entt::entity> picker =
+                    engine.world_.find_entity(request.instigator_net_id);
+                const glm::vec3 feet =
+                    engine.world_.registry().get<Transform>(*picker).position;
+                const auto prop = held_template == nullptr
+                    ? std::optional<std::uint32_t>{}
+                    : spawn_prop(
+                          engine,
+                          *held_template,
+                          KernelVec3{feet.x, feet.y, feet.z});
+                if (!prop.has_value() ||
+                    !engine.item_store_.move_to_world(
+                        swapped_out, *prop, KernelWorldItemMode_Placed)) {
+                    if (prop.has_value()) {
+                        EntityLifecycleSystem{}.destroy_entity(
+                            engine, *prop, KernelDespawnReason_Destroyed);
+                    }
+                    reject(&outcome, KernelGameplayRequestRejection_InventoryFull);
+                    goto record_outcome;
+                }
+                swapped_prop = *prop;
+                (void)decorate_item_prop(
+                    engine, swapped_prop, *engine.item_store_.find_item(swapped_out));
+            }
+            // Re-read: dropping the old weapon touched the container.
+            container = engine.item_store_.find_container(
+                container->inventory_container_id);
             const KernelItemInstanceId source_item_id = item->item_instance_id;
             const std::uint32_t source_quantity = item->quantity;
             const std::vector<KernelPortableStateFieldDefinition>
@@ -974,6 +1028,13 @@ bool ItemGameplaySystem::submit_request(
                     engine.item_store_.find_item(source_item_id);
                 if (source != nullptr && !source->terminal) {
                     source->portable_state = portable_state_before;
+                }
+                // Put the swapped-out weapon back where it was.
+                if (swapped_out != 0u &&
+                    engine.item_store_.move_to_inventory(
+                        swapped_out, container->inventory_container_id)) {
+                    EntityLifecycleSystem{}.destroy_entity(
+                        engine, swapped_prop, KernelDespawnReason_Destroyed);
                 }
                 reject(&outcome, KernelGameplayRequestRejection_InventoryFull);
                 goto record_outcome;

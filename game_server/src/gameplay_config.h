@@ -591,6 +591,10 @@ const ActorTemplateConfig* find_actor_template(
     std::uint32_t actor_template_id);
 std::uint8_t active_weapon_id(const ActorTemplateConfig& actor_template);
 
+// The field id a portable state field named `name` gets: what the kernel's
+// KERNEL_PORTABLE_FIELD_* constants are, for the names it reserves.
+std::uint32_t item_portable_state_field_id(const std::string& name);
+
 // The most options one loadout camp may offer: the offer list has to fit one
 // game message (GAME_SERVER_MESSAGE_LOADOUT_OFFERS).
 inline constexpr std::size_t kMaxLoadoutOptions = 32;

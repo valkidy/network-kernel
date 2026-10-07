@@ -420,6 +420,10 @@ struct WeaponState {
     // reload logic decrements it like any other count and must not special-case 65535.
     std::array<std::uint16_t, kWeaponSlotCount> reserve_magazines{};
     std::array<std::uint32_t, kWeaponSlotCount> next_primary_commit_tick{};
+    // The weapon item each slot is, when the loadout comes from a weapon
+    // container; 0 for a loadout authored on the template. The slot's ammo
+    // and reserve are written back to that item, wherever it has gone.
+    std::array<std::uint64_t, kWeaponSlotCount> item_ids{};
     NetId active_effect_net_id = 0;
     bool is_reloading = false;
 };

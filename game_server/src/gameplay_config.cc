@@ -10819,4 +10819,8 @@ KernelCombatStateDefinition make_player_combat_state(
 }
 
 
+std::uint32_t item_portable_state_field_id(const std::string& name) {
+    return portable_state_field_id(name);
+}
+
 }  // namespace network_example::game_server

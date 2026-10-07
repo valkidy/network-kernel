@@ -33,6 +33,12 @@
  *     weapon_category and a reserved byte, appended after item_used_trigger.
  *     KernelItemTemplateDefinition is embedded in nothing, but its size
  *     changes, so a mirror sized to 100 is refused.
+ *     Weapon containers: Kernel_ServerCreateWeaponContainer, and
+ *     KernelInventoryContainerView's reserved0 became container_kind
+ *     (KernelInventoryContainerKind; 0 is the item container every
+ *     container was). An owner with a weapon container is armed with exactly
+ *     what it holds; Pickup puts a weapon item there and swaps one of the
+ *     same category to the picker's feet, and only players pick weapons up.
  * 100: pull strength. KernelActionDefinition gained pull_strength, appended
  *     after spawn_placement and read only by apply_pull: a fixed number
  *     weighed against the target's impulse_resistance, as apply_impulse's
@@ -1675,9 +1681,19 @@ typedef struct KernelInventoryContainerView {
     uint32_t occupied_slot_count;
     uint64_t revision;
     uint8_t sync_state;
-    uint8_t reserved0;
+    /* KernelInventoryContainerKind (ABI 101; was reserved, always 0). */
+    uint8_t container_kind;
     uint16_t reserved1;
 } KernelInventoryContainerView;
+
+/* What a container holds. A weapon container (ABI 101) has
+ * KERNEL_WEAPON_CATEGORY_COUNT slots, holds only weapon items, each at the
+ * slot its category names, and is its owner's loadout: what is in it is what
+ * the owner can fire. */
+typedef enum KernelInventoryContainerKind {
+    KernelInventoryContainerKind_Items = 0,
+    KernelInventoryContainerKind_Weapons = 1,
+} KernelInventoryContainerKind;
 
 typedef enum KernelInventorySyncState {
     KernelInventorySyncState_NotAvailable = 0,

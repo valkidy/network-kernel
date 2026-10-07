@@ -386,6 +386,20 @@ uint32_t Kernel_PollGameplayRequestOutcomes(
  *
  * The poll calls fill whole KernelGameMessage records and return how many.
  */
+/*
+ * Creates `owner_entity_id`'s weapon container (ABI 101): KERNEL_WEAPON_CATEGORY_COUNT
+ * slots, weapon items only, each at its category's slot. From then on the
+ * owner's loadout is what the container holds -- an empty one is unarmed --
+ * and a weapon item's magazine and reserve live on the item whenever it is
+ * not in hand. A weapon picked up goes here; one already in that slot goes to
+ * the picker's feet. Players only pick weapons up. False on a client, for an
+ * owner with no weapon state, or one that already has a weapon container.
+ */
+bool Kernel_ServerCreateWeaponContainer(
+    KernelHandle* kernel,
+    uint32_t owner_entity_id,
+    KernelInventoryContainerId* out_container_id);
+
 bool Kernel_SendGameMessage(
     KernelHandle* kernel,
     uint32_t message_type,

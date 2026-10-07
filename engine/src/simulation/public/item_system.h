@@ -38,6 +38,8 @@ struct InventoryContainerRecord {
     std::uint32_t slot_capacity = 0;
     std::vector<KernelItemInstanceId> slots;
     std::uint64_t revision = 0;
+    // KernelInventoryContainerKind.
+    std::uint8_t kind = KernelInventoryContainerKind_Items;
 };
 
 struct ItemConsumeResult {
@@ -57,7 +59,8 @@ public:
 
     std::optional<KernelInventoryContainerId> create_container(
         std::uint32_t owner_entity_id,
-        std::uint32_t slot_capacity);
+        std::uint32_t slot_capacity,
+        std::uint8_t kind = KernelInventoryContainerKind_Items);
 
     std::optional<KernelItemInstanceId> create_inventory_item(
         std::uint32_t item_template_id,
@@ -77,8 +80,20 @@ public:
     ItemInstanceRecord* find_item(KernelItemInstanceId id);
     const InventoryContainerRecord* find_container(
         KernelInventoryContainerId id) const;
+    // The owner's item container; never its weapon container.
     const InventoryContainerRecord* find_container_for_owner(
         std::uint32_t owner_entity_id) const;
+    const InventoryContainerRecord* find_weapon_container_for_owner(
+        std::uint32_t owner_entity_id) const;
+    // Every weapon container, for keeping loadouts in step with them.
+    std::vector<const InventoryContainerRecord*> weapon_containers() const;
+    // Writes a uint32 portable state field of a live item, wherever it is,
+    // publishing an Update delta when it sits in a container. False if the
+    // item has no such field; true without a delta when the value is unchanged.
+    bool set_portable_uint32(
+        KernelItemInstanceId id,
+        std::uint32_t field_id,
+        std::uint32_t value);
     std::vector<KernelInventoryContainerId> containers_for_owner(
         std::uint32_t owner_entity_id) const;
 
@@ -146,6 +161,7 @@ public:
 private:
     std::optional<std::uint16_t> find_empty_slot(
         const InventoryContainerRecord& container,
+        const KernelItemTemplateDefinition& definition,
         std::optional<std::uint16_t> preferred_slot) const;
     void remove_from_inventory(ItemInstanceRecord* item);
     void publish_delta(

@@ -272,9 +272,14 @@ bool ItemStore::set_templates(
 
 std::optional<KernelInventoryContainerId> ItemStore::create_container(
     std::uint32_t owner_entity_id,
-    std::uint32_t slot_capacity) {
+    std::uint32_t slot_capacity,
+    std::uint8_t kind) {
     if (owner_entity_id == 0 || slot_capacity == 0 ||
-        slot_capacity > std::numeric_limits<std::uint16_t>::max()) {
+        slot_capacity > std::numeric_limits<std::uint16_t>::max() ||
+        kind > KernelInventoryContainerKind_Weapons ||
+        (kind == KernelInventoryContainerKind_Weapons &&
+         (slot_capacity != KERNEL_WEAPON_CATEGORY_COUNT ||
+          find_weapon_container_for_owner(owner_entity_id) != nullptr))) {
         return std::nullopt;
     }
     const KernelInventoryContainerId id = next_container_id_++;
@@ -286,13 +291,30 @@ std::optional<KernelInventoryContainerId> ItemStore::create_container(
             slot_capacity,
             std::vector<KernelItemInstanceId>(slot_capacity, 0),
             0,
+            kind,
         });
     return id;
 }
 
 std::optional<std::uint16_t> ItemStore::find_empty_slot(
     const InventoryContainerRecord& container,
+    const KernelItemTemplateDefinition& definition,
     std::optional<std::uint16_t> preferred_slot) const {
+    // Weapons and items never mix, and a weapon has exactly one place: the
+    // slot its category names.
+    const bool weapon_container =
+        container.kind == KernelInventoryContainerKind_Weapons;
+    if (weapon_container != (definition.is_weapon != 0u)) {
+        return std::nullopt;
+    }
+    if (weapon_container) {
+        const std::uint16_t slot = definition.weapon_category;
+        if (slot >= container.slots.size() || container.slots[slot] != 0 ||
+            (preferred_slot.has_value() && *preferred_slot != slot)) {
+            return std::nullopt;
+        }
+        return slot;
+    }
     if (preferred_slot.has_value()) {
         if (*preferred_slot >= container.slots.size() ||
             container.slots[*preferred_slot] != 0) {
@@ -322,7 +344,7 @@ std::optional<KernelItemInstanceId> ItemStore::create_inventory_item(
         return std::nullopt;
     }
     const std::optional<std::uint16_t> slot =
-        find_empty_slot(container->second, preferred_slot);
+        find_empty_slot(container->second, *definition, preferred_slot);
     if (!slot.has_value()) {
         return std::nullopt;
     }
@@ -422,9 +444,66 @@ const InventoryContainerRecord* ItemStore::find_container_for_owner(
         containers_.begin(),
         containers_.end(),
         [owner_entity_id](const auto& entry) {
-            return entry.second.owner_entity_id == owner_entity_id;
+            return entry.second.owner_entity_id == owner_entity_id &&
+                entry.second.kind == KernelInventoryContainerKind_Items;
         });
     return found == containers_.end() ? nullptr : &found->second;
+}
+
+const InventoryContainerRecord* ItemStore::find_weapon_container_for_owner(
+    std::uint32_t owner_entity_id) const {
+    const auto found = std::find_if(
+        containers_.begin(),
+        containers_.end(),
+        [owner_entity_id](const auto& entry) {
+            return entry.second.owner_entity_id == owner_entity_id &&
+                entry.second.kind == KernelInventoryContainerKind_Weapons;
+        });
+    return found == containers_.end() ? nullptr : &found->second;
+}
+
+std::vector<const InventoryContainerRecord*> ItemStore::weapon_containers() const {
+    std::vector<const InventoryContainerRecord*> result;
+    for (const auto& [id, container] : containers_) {
+        if (container.kind == KernelInventoryContainerKind_Weapons) {
+            result.push_back(&container);
+        }
+    }
+    return result;
+}
+
+bool ItemStore::set_portable_uint32(
+    KernelItemInstanceId id,
+    std::uint32_t field_id,
+    std::uint32_t value) {
+    ItemInstanceRecord* item = find_item(id);
+    if (item == nullptr || item->terminal) {
+        return false;
+    }
+    for (KernelPortableStateFieldDefinition& field : item->portable_state) {
+        if (field.field_id != field_id ||
+            field.type != KernelPortableStateType_Uint32) {
+            continue;
+        }
+        if (field.uint32_default == value) {
+            return true;
+        }
+        field.uint32_default = value;
+        if (item->residency.kind == KernelItemResidency_Inventory) {
+            auto container = containers_.find(item->residency.container_id);
+            if (container != containers_.end()) {
+                publish_delta(
+                    &container->second,
+                    KernelInventoryDeltaType_Update,
+                    item->residency.slot,
+                    item->residency.slot,
+                    item,
+                    KernelInventoryChange_PortableState);
+            }
+        }
+        return true;
+    }
+    return false;
 }
 
 std::vector<KernelInventoryContainerId> ItemStore::containers_for_owner(
@@ -590,7 +669,7 @@ std::optional<KernelItemInstanceId> ItemStore::transfer_world_to_inventory(
     }
     const bool needs_slot = available < source->quantity;
     const std::optional<std::uint16_t> empty_slot =
-        needs_slot ? find_empty_slot(container->second, std::nullopt)
+        needs_slot ? find_empty_slot(container->second, *definition, std::nullopt)
                    : std::optional<std::uint16_t>{};
     if (needs_slot && !empty_slot.has_value()) {
         return std::nullopt;
@@ -796,12 +875,14 @@ bool ItemStore::move_to_inventory(
     std::optional<std::uint16_t> preferred_slot) {
     ItemInstanceRecord* item = find_item(id);
     auto container = containers_.find(container_id);
-    if (item == nullptr || item->terminal ||
+    const KernelItemTemplateDefinition* definition =
+        item == nullptr ? nullptr : find_template(item->item_template_id);
+    if (item == nullptr || item->terminal || definition == nullptr ||
         container == containers_.end()) {
         return false;
     }
     const std::optional<std::uint16_t> slot =
-        find_empty_slot(container->second, preferred_slot);
+        find_empty_slot(container->second, *definition, preferred_slot);
     if (!slot.has_value()) {
         return false;
     }
@@ -1002,6 +1083,7 @@ bool ItemStore::apply_replica_snapshot(
         view.slot_capacity,
         std::vector<KernelItemInstanceId>(view.slot_capacity, 0u),
         view.revision,
+        view.container_kind,
     };
     for (const KernelItemInstanceView& item_view : item_views) {
         ItemInstanceRecord item;
@@ -1152,6 +1234,7 @@ KernelInventoryContainerView ItemStore::container_view(
         [](KernelItemInstanceId item) { return item != 0; }));
     view.revision = container->revision;
     view.sync_state = KernelInventorySyncState_Ready;
+    view.container_kind = container->kind;
     return view;
 }
 

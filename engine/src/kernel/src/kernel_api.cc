@@ -998,6 +998,17 @@ uint32_t Kernel_PollGameplayRequestOutcomes(
     });
 }
 
+bool Kernel_ServerCreateWeaponContainer(
+    KernelHandle* kernel,
+    uint32_t owner_entity_id,
+    KernelInventoryContainerId* out_container_id) {
+    return abi_call("Kernel_ServerCreateWeaponContainer", false, [&]() {
+        return kernel != nullptr &&
+            kernel->engine->server_create_weapon_container(
+                owner_entity_id, out_container_id);
+    });
+}
+
 bool Kernel_SendGameMessage(
     KernelHandle* kernel,
     uint32_t message_type,

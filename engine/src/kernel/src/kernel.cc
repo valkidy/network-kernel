@@ -5443,8 +5443,145 @@ bool KernelEngine::server_activate_entity(
 
 bool KernelEngine::server_clear_inventory_container(
     KernelInventoryContainerId container_id) {
-    return is_server_mode(config_.mode) &&
-        item_store_.clear_container(container_id);
+    if (!is_server_mode(config_.mode) || !item_store_.clear_container(container_id)) {
+        return false;
+    }
+    sync_weapon_loadouts();
+    return true;
+}
+
+bool KernelEngine::server_create_weapon_container(
+    std::uint32_t owner_entity_id,
+    KernelInventoryContainerId* out_container_id) {
+    if (!is_server_mode(config_.mode) || out_container_id == nullptr) {
+        return false;
+    }
+    const std::optional<entt::entity> owner = world_.find_entity(owner_entity_id);
+    if (!owner.has_value() || !world_.registry().all_of<WeaponState>(*owner)) {
+        return false;
+    }
+    const auto created = item_store_.create_container(
+        owner_entity_id,
+        KERNEL_WEAPON_CATEGORY_COUNT,
+        KernelInventoryContainerKind_Weapons);
+    if (!created.has_value()) return false;
+    *out_container_id = *created;
+    // From here the container is the loadout, even empty.
+    sync_weapon_loadouts();
+    return true;
+}
+
+void KernelEngine::sync_weapon_loadouts() {
+    if (!is_server_mode(config_.mode)) {
+        return;
+    }
+    for (const InventoryContainerRecord* container : item_store_.weapon_containers()) {
+        const auto synced =
+            synced_weapon_revisions_.find(container->inventory_container_id);
+        if (synced != synced_weapon_revisions_.end() &&
+            synced->second == container->revision) {
+            continue;
+        }
+        rebuild_weapon_loadout(*container);
+        // Re-read: rebuilding writes weapon state back to items, which may
+        // touch this container's revision.
+        const InventoryContainerRecord* after =
+            item_store_.find_container(container->inventory_container_id);
+        if (after != nullptr) {
+            synced_weapon_revisions_[after->inventory_container_id] = after->revision;
+        }
+    }
+}
+
+void KernelEngine::rebuild_weapon_loadout(const InventoryContainerRecord& container) {
+    const std::optional<entt::entity> owner =
+        world_.find_entity(container.owner_entity_id);
+    if (!owner.has_value() || !world_.registry().all_of<WeaponState>(*owner)) {
+        return;
+    }
+    WeaponState& weapon = world_.registry().get<WeaponState>(*owner);
+    // The weapons leaving hand keep what they had: write every equipped
+    // slot back to its item first, wherever that item now is.
+    for (std::size_t slot = 0; slot < weapon.weapon_slot_count && slot < kWeaponSlotCount;
+         ++slot) {
+        if (weapon.item_ids[slot] == 0u) continue;
+        item_store_.set_portable_uint32(
+            weapon.item_ids[slot], KERNEL_PORTABLE_FIELD_WEAPON_AMMO, weapon.ammo[slot]);
+        item_store_.set_portable_uint32(
+            weapon.item_ids[slot],
+            KERNEL_PORTABLE_FIELD_WEAPON_RESERVE,
+            weapon.reserve_magazines[slot]);
+    }
+    const bool had_active = weapon.active_weapon_slot < weapon.weapon_slot_count;
+    const std::uint32_t active_id =
+        had_active ? weapon.weapon_ids[weapon.active_weapon_slot] : 0u;
+    const WeaponState before = weapon;
+    WeaponState rebuilt{};
+    rebuilt.active_effect_net_id = before.active_effect_net_id;
+    // Packed in category order: the loadout is the occupied slots, and the
+    // fire path finds a weapon by id among the first weapon_slot_count.
+    for (std::size_t category = 0; category < container.slots.size(); ++category) {
+        const KernelItemInstanceId item_id = container.slots[category];
+        const ItemInstanceRecord* item =
+            item_id == 0u ? nullptr : item_store_.find_item(item_id);
+        const KernelItemTemplateDefinition* definition =
+            item == nullptr ? nullptr : item_store_.find_template(item->item_template_id);
+        if (definition == nullptr || definition->is_weapon == 0u) continue;
+        const std::size_t slot = rebuilt.weapon_slot_count++;
+        rebuilt.weapon_ids[slot] = definition->weapon_id;
+        rebuilt.item_ids[slot] = item_id;
+        for (const KernelPortableStateFieldDefinition& field : item->portable_state) {
+            if (field.field_id == KERNEL_PORTABLE_FIELD_WEAPON_AMMO) {
+                rebuilt.ammo[slot] = static_cast<std::uint16_t>(field.uint32_default);
+            } else if (field.field_id == KERNEL_PORTABLE_FIELD_WEAPON_RESERVE) {
+                rebuilt.reserve_magazines[slot] =
+                    static_cast<std::uint16_t>(field.uint32_default);
+            }
+        }
+        // A weapon that stays keeps its cadence.
+        for (std::size_t old = 0; old < before.weapon_slot_count; ++old) {
+            if (before.weapon_ids[old] == definition->weapon_id) {
+                rebuilt.next_primary_commit_tick[slot] =
+                    before.next_primary_commit_tick[old];
+            }
+        }
+        if (had_active && definition->weapon_id == active_id) {
+            rebuilt.active_weapon_slot = static_cast<std::uint8_t>(slot);
+            rebuilt.is_reloading = before.is_reloading;
+        }
+    }
+    weapon = rebuilt;
+}
+
+void KernelEngine::write_back_weapon_states() {
+    if (!is_server_mode(config_.mode)) {
+        return;
+    }
+    auto view = world_.registry().view<WeaponState>();
+    for (const entt::entity entity : view) {
+        const WeaponState& weapon = view.get<WeaponState>(entity);
+        for (std::size_t slot = 0; slot < weapon.weapon_slot_count && slot < kWeaponSlotCount;
+             ++slot) {
+            if (weapon.item_ids[slot] == 0u) continue;
+            item_store_.set_portable_uint32(
+                weapon.item_ids[slot],
+                KERNEL_PORTABLE_FIELD_WEAPON_RESERVE,
+                weapon.reserve_magazines[slot]);
+            if (slot != weapon.active_weapon_slot) {
+                item_store_.set_portable_uint32(
+                    weapon.item_ids[slot],
+                    KERNEL_PORTABLE_FIELD_WEAPON_AMMO,
+                    weapon.ammo[slot]);
+            }
+        }
+    }
+    // Writing back moves revisions; that is not a loadout change.
+    for (const InventoryContainerRecord* container : item_store_.weapon_containers()) {
+        auto synced = synced_weapon_revisions_.find(container->inventory_container_id);
+        if (synced != synced_weapon_revisions_.end()) {
+            synced->second = container->revision;
+        }
+    }
 }
 
 bool KernelEngine::server_create_inventory_container(
@@ -5477,6 +5614,7 @@ bool KernelEngine::server_create_inventory_item(
         container_id);
     if (!created.has_value()) return false;
     *out_item_instance_id = *created;
+    sync_weapon_loadouts();
     return true;
 }
 
@@ -5537,7 +5675,11 @@ bool KernelEngine::server_create_world_item(
 bool KernelEngine::server_submit_gameplay_request(
     const KernelGameplayRequest& request) {
     if (!is_server_mode(config_.mode)) return false;
-    return ItemGameplaySystem{}.submit_request(*this, request);
+    const bool submitted = ItemGameplaySystem{}.submit_request(*this, request);
+    // A pickup, swap or drop of a weapon item changes a loadout now, not on
+    // the next tick: the very next input may fire it.
+    sync_weapon_loadouts();
+    return submitted;
 }
 
 bool KernelEngine::submit_gameplay_request(
@@ -6499,6 +6641,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     pending_network_gameplay_outcomes_.clear();
     server_game_messages_.clear();
     client_game_messages_.clear();
+    synced_weapon_revisions_.clear();
     physics_entity_colliders_.clear();
     prediction_proxy_collider_ids_.clear();
     prediction_obstacle_collider_ids_.clear();
@@ -12552,6 +12695,7 @@ void KernelEngine::simulate_tick() {
     EntityLifecycleSystem{}.update_prop_lifetimes(*this);
     const std::size_t queue_depth = command_queue_.size();
     const std::size_t processed_command_count = drain_simulation_commands();
+    sync_weapon_loadouts();
     advance_predicted_projectiles(fixed_delta);
     advance_predicted_throws(fixed_delta);
     for (const QueuedInput& pending_input : pending_inputs_) {
@@ -12769,6 +12913,9 @@ void KernelEngine::simulate_tick() {
     if (wrote_snapshot) {
         publish_snapshot();
     }
+    // Before the inventory flush, so a reserve spent or refilled this tick
+    // reaches the owner with it.
+    write_back_weapon_states();
     flush_inventory_replication();
     flush_prop_state_changes();
     flush_actor_impulses();
