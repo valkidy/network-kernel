@@ -3,6 +3,10 @@
 // held = 1, so a charge never went off: the control below runs that old
 // behaviour (charge_ticks 0) and shows no cast in two seconds of attacking.
 //
+// An agent that gives up mid-charge is not left stuck in it: the kernel's
+// input-free weapons pass every tick times the charge out, and the next
+// intent goes through.
+//
 // A dedicated server with the shipped catalog: a chaser grunt given the
 // meteor staff (whose cast charges for 20 ticks), aiming at a player on the
 // ground 6 m away, driven straight through ActorIntentExecutor tick by tick.
@@ -81,9 +85,13 @@ std::uint32_t spawn(
 
 // Attacks for up to `ticks` ticks with `charge_ticks`; returns the tick the
 // staff's charge was spent on, or -1.
+// With `abandon_after` > 0 the agent stops attacking after that many ticks,
+// mid-charge, and asks to reload instead while the player keeps sending input
+// every tick -- so the tick is never input-free. Returns the tick the reload
+// starts on, or -1 if the abandoned charge leaves the agent stuck.
 int attack(
     const gs::GameServerGameplayConfig& config, std::uint32_t charge_ticks,
-    std::uint16_t port, int ticks) {
+    std::uint16_t port, int ticks, int abandon_after = 0) {
     const std::vector<std::uint8_t> scene = read_ground_scene();
     KernelConfig kernel_config{};
     kernel_config.mode = KernelMode_DedicatedServer;
@@ -129,7 +137,8 @@ int attack(
         combat.reserve_magazines[slot] = 0;
     }
     combat.weapon_ids[0] = kMeteorStaff;
-    combat.ammo[0] = 3;
+    // One short of full when abandoning, so a reload has something to do.
+    combat.ammo[0] = abandon_after > 0 ? 2 : 3;
     combat.reserve_magazines[0] = 6;
     require(Kernel_ServerSetEntityCombatState(kernel, agent, &combat));
     for (int index = 0; index < 20; ++index) Kernel_Update(kernel, kTickSeconds);
@@ -144,6 +153,33 @@ int attack(
     intent.scope = network_example::ai::IntentScope::kActor;
     intent.type = "AttackTarget";
     intent.subject = agent;
+    if (abandon_after > 0) {
+        network_example::ai::ScopedIntent reload = intent;
+        reload.type = "Reload";
+        std::uint32_t player_seq = 1;
+        int reload_tick = -1;
+        for (int tick = 1; tick <= ticks && reload_tick < 0; ++tick) {
+            gs::SentryPerceptionSnapshot perception;
+            perception.self_state = state_of(kernel, agent);
+            perception.has_self_state = true;
+            perception.has_visible_target = true;
+            perception.target_id = player;
+            perception.has_target_position = true;
+            perception.target_position = state_of(kernel, player).position;
+            executor.execute(
+                kernel, &runtime, tick <= abandon_after ? intent : reload, perception);
+            KernelPlayerInput idle{};
+            idle.input_seq = player_seq++;
+            idle.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
+            require(Kernel_ServerSubmitEntityInput(kernel, player, &idle));
+            Kernel_Update(kernel, kTickSeconds);
+            const KernelServerEntityState after = state_of(kernel, agent);
+            require(after.ammo[0] == 2u);  // the abandoned charge never cast
+            if (tick > abandon_after && after.is_reloading != 0u) reload_tick = tick;
+        }
+        Kernel_Destroy(kernel);
+        return reload_tick;
+    }
     int cast_tick = -1;
     for (int tick = 1; tick <= ticks && cast_tick < 0; ++tick) {
         gs::SentryPerceptionSnapshot perception;
@@ -182,6 +218,14 @@ int main() {
     std::printf("charge %u: cast at tick %d\n", charge, cast);
     require(cast > static_cast<int>(charge));
     require(cast <= static_cast<int>(charge) + 4);
+
+    // Abandoned mid-charge while the world keeps receiving input: the charge
+    // times out (hold_input_timeout_ticks 6) on the kernel's own every-tick
+    // pass, and the agent's next intent goes through.
+    const int reloaded = attack(config, charge, 8067, 60, 5);
+    std::printf("abandoned after 5: reload starts at tick %d\n", reloaded);
+    require(reloaded > 5);
+    require(reloaded <= 5 + 6 + 3);
 
     std::puts("ai_charge_test passed");
     return 0;
