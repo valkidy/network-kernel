@@ -186,7 +186,7 @@ void a_target_other_than_the_subject_is_refused() {
             {{"action_graph_templates/action_test_block.yaml", kBlockGraph},
              {"status_effect_templates/1901_status_effect_test_block.yaml",
               status_yaml("on_apply", "event.instigator")}}),
-        "status action block target must be self or event.subject"));
+        "status action block or suspension target must be self or event.subject"));
 }
 
 void a_field_of_its_own_is_refused() {
@@ -241,6 +241,139 @@ void an_entity_trigger_is_refused() {
                 .empty());
 }
 
+const std::string kSuspendGraph =
+    "id: action_test_suspend\n"
+    "parameters:\n"
+    "  target: null\n"
+    "actions:\n"
+    "  - type: apply_suspend_movement\n"
+    "    target: params.target\n"
+    "    rise_speed: 1.5\n"
+    "    drift_speed: 0.5\n";
+
+std::string suspend_status_yaml(const std::string& trigger) {
+    return "id: " + std::to_string(kStatusId) +
+        "\n"
+        "name: test_block\n"
+        "kind: status_effect\n"
+        "channel: test_block\n"
+        "duration_ticks: 60\n"
+        "interval_ticks: 15\n"
+        "replace_policy: replace\n"
+        "triggers:\n"
+        "  " + trigger + ":\n"
+        "    action_graph: action_test_suspend\n"
+        "    parameters:\n"
+        "      target: event.subject\n";
+}
+
+// A prop whose on_collision applies the status with the hit's direction --
+// the water balloon's shape.
+std::string balloon_prop(const std::string& direction_line) {
+    return "id: 1903\n"
+        "name: test_balloon\n"
+        "entity_type: prop\n"
+        "health:\n"
+        "  hp: 3\n"
+        "  max_hp: 3\n"
+        "physics:\n"
+        "  collider_template: rocket_aabb\n"
+        "triggers:\n"
+        "  on_collision:\n"
+        "    action_graph: action_test_apply_directed\n"
+        "    collision_mask: actor\n"
+        "    parameters:\n"
+        "      target: event.target\n"
+        "      status: test_block\n" + direction_line;
+}
+
+const std::string kDirectedApplyGraph =
+    "id: action_test_apply_directed\n"
+    "parameters:\n"
+    "  target: null\n"
+    "  status: test_block\n"
+    "  direction: null\n"
+    "actions:\n"
+    "  - type: apply_status\n"
+    "    target: params.target\n"
+    "    status: params.status\n"
+    "    direction: params.direction\n";
+
+void a_suspension_in_on_apply_loads_with_its_speeds() {
+    const fs::path catalog = catalog_with(
+        "suspend_on_apply",
+        {{"action_graph_templates/action_test_suspend.yaml", kSuspendGraph},
+         {"status_effect_templates/1901_status_effect_test_block.yaml",
+          suspend_status_yaml("on_apply")}});
+    const gs::KernelGameplayCatalogStorage built = gs::build_kernel_gameplay_catalog(
+        gs::load_gameplay_config_from_catalog_file(catalog.string()));
+    const KernelStatusEffectDefinition* status = find_status(built);
+    require(status != nullptr);
+    const KernelActionDefinition& action = status->on_apply_trigger.actions[0];
+    require(action.action_type == KernelEntityTriggerActionType_ApplySuspendMovement);
+    require(action.suspend_rise_speed == 1.5f);
+    require(action.suspend_drift_speed == 0.5f);
+    require(kernel_accepts(built));
+}
+
+void a_suspension_anywhere_else_or_too_fast_is_refused() {
+    require(refused_for(
+        catalog_with(
+            "suspend_on_tick",
+            {{"action_graph_templates/action_test_suspend.yaml", kSuspendGraph},
+             {"status_effect_templates/1901_status_effect_test_block.yaml",
+              suspend_status_yaml("on_tick")}}),
+        "apply_suspend_movement is only valid in status on_apply"));
+    std::string fast = kSuspendGraph;
+    fast.replace(fast.find("rise_speed: 1.5"), 15, "rise_speed: 25.0");
+    require(refused_for(
+        catalog_with(
+            "suspend_too_fast",
+            {{"action_graph_templates/action_test_suspend.yaml", fast},
+             {"status_effect_templates/1901_status_effect_test_block.yaml",
+              suspend_status_yaml("on_apply")}}),
+        "rise_speed and drift_speed must be"));
+    require(refused_for(
+        catalog_with(
+            "suspend_extra_field",
+            {{"action_graph_templates/action_test_suspend.yaml",
+              kSuspendGraph + "    lockout_ticks: 30\n"},
+             {"status_effect_templates/1901_status_effect_test_block.yaml",
+              suspend_status_yaml("on_apply")}}),
+        "apply_suspend_movement takes only target, rise_speed and drift_speed"));
+}
+
+void apply_status_carries_the_direction_it_is_bound_to() {
+    const auto load = [](const std::string& name, const std::string& direction_line) {
+        return catalog_with(
+            name,
+            {{"action_graph_templates/action_test_suspend.yaml", kSuspendGraph},
+             {"status_effect_templates/1901_status_effect_test_block.yaml",
+              suspend_status_yaml("on_apply")},
+             {"action_graph_templates/action_test_apply_directed.yaml",
+              kDirectedApplyGraph},
+             {"entity_templates/1903_prop_test_balloon.yaml",
+              balloon_prop(direction_line)}});
+    };
+    const gs::KernelGameplayCatalogStorage built = gs::build_kernel_gameplay_catalog(
+        gs::load_gameplay_config_from_catalog_file(
+            load("directed", "      direction: event.direction\n").string()));
+    const KernelEntityTemplateDefinition* balloon = nullptr;
+    for (const KernelEntityTemplateDefinition& entity : built.entity_templates) {
+        if (entity.entity_template_id == 1903u) balloon = &entity;
+    }
+    require(balloon != nullptr);
+    const KernelActionDefinition& action = balloon->collision_trigger.actions[0];
+    require(action.action_type == KernelEntityTriggerActionType_ApplyStatus);
+    require(action.status_direction_authored == 1u);
+    require(action.direction_source == KernelEventVec3Source_Direction);
+    require(kernel_accepts(built));
+    // Bound to anything but an event direction, it is refused.
+    require(refused_for(
+        load("directed_position", "      direction: event.position\n"),
+        "apply_status direction must be event.direction"));
+}
+
 }  // namespace
 
 int main() {
@@ -250,6 +383,9 @@ int main() {
     a_target_other_than_the_subject_is_refused();
     a_field_of_its_own_is_refused();
     an_entity_trigger_is_refused();
+    a_suspension_in_on_apply_loads_with_its_speeds();
+    a_suspension_anywhere_else_or_too_fast_is_refused();
+    apply_status_carries_the_direction_it_is_bound_to();
     std::puts("status_action_block_catalog_test passed");
     return 0;
 }

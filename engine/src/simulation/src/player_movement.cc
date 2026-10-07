@@ -309,6 +309,72 @@ glm::vec3 step_hover(
     return position;
 }
 
+// A status suspension's step for an actor not on the character controller:
+// the drift, then the rise, each its own sweep -- as a hover moves -- so
+// something overhead stops the rise and a wall stops only the drift. Nothing
+// here is input or gravity.
+glm::vec3 step_suspended(
+    physics::PhysicsWorld& physics_world,
+    const ColliderInstance& collider,
+    const Transform& transform,
+    const glm::vec3& velocity,
+    std::uint32_t collision_mask,
+    float fixed_delta_seconds) {
+    float travelled = 1.0f;
+    glm::vec3 position = sweep(
+        physics_world, collider, transform.position, transform.rotation,
+        glm::vec3{velocity.x, 0.0f, velocity.z} * fixed_delta_seconds,
+        collision_mask, nullptr, &travelled);
+    return sweep(
+        physics_world, collider, position, transform.rotation,
+        glm::vec3{0.0f, velocity.y * fixed_delta_seconds, 0.0f},
+        collision_mask, nullptr, &travelled);
+}
+
+// A hover's drop after a suspension ended: what step_hover will not do. The
+// same semi-implicit step as everything that falls -- gravity first, then
+// move -- so knockback_flight_ticks predicts its landing, and it lands on the
+// first walkable thing a downward sweep meets.
+struct FreeFallStep {
+    glm::vec3 position{0.0f};
+    glm::vec3 velocity{0.0f};
+    bool landed = false;
+    physics::CollisionHit ground{};
+};
+
+FreeFallStep step_free_fall(
+    physics::PhysicsWorld& physics_world,
+    const ColliderInstance& collider,
+    const Transform& transform,
+    const glm::vec3& velocity,
+    const MovementState& movement,
+    float fixed_delta_seconds) {
+    FreeFallStep step;
+    step.velocity = velocity + movement.gravity * fixed_delta_seconds;
+    float travelled = 1.0f;
+    step.position = sweep(
+        physics_world, collider, transform.position, transform.rotation,
+        glm::vec3{step.velocity.x, 0.0f, step.velocity.z} * fixed_delta_seconds,
+        movement.movement_collision_mask, nullptr, &travelled);
+    const float drop = step.velocity.y * fixed_delta_seconds;
+    if (drop >= 0.0f) {
+        step.position.y += drop;
+        return step;
+    }
+    const GroundProbe landing = probe_ground(
+        physics_world, collider, step.position, transform.rotation, -drop,
+        movement.max_slope_degrees, movement.movement_collision_mask);
+    if (landing.walkable) {
+        step.position.y += drop * landing.collision.fraction;
+        step.velocity.y = 0.0f;
+        step.landed = true;
+        step.ground = landing.collision;
+    } else {
+        step.position.y += drop;
+    }
+    return step;
+}
+
 struct BufferedMovementResult {
     entt::entity entity = entt::null;
     NetId net_id = 0;
@@ -561,7 +627,57 @@ void simulate_actor_movement(
         const bool was_grounded = next_movement.ground_state ==
             MovementState::GroundState::kGrounded;
 
+        // A status suspension owns the actor outright: no input, no gravity,
+        // no controller of its own -- only the rise and the drift. The dead
+        // are not held; they fall as the dead do.
+        const ActiveStatusEffect* suspension =
+            dead ? nullptr : active_suspension(world, entity);
+        const glm::vec3 suspended = suspension == nullptr
+            ? glm::vec3{0.0f}
+            : movement_solver::suspended_velocity(
+                  suspension->suspend_rise_speed,
+                  suspension->suspend_drift_velocity);
+        if (suspension != nullptr &&
+            next_movement.controller_type !=
+                MovementState::ControllerType::kCharacter) {
+            result.physics_finalized = true;
+            result.position = step_suspended(
+                *physics_world, *collider, transform, suspended,
+                next_movement.movement_collision_mask, fixed_delta_seconds);
+            result.velocity =
+                (result.position - transform.position) / fixed_delta_seconds;
+            result.movement.ground_state = MovementState::GroundState::kAirborne;
+            result.movement.has_controller_height = false;
+            result.movement.landed_this_tick = false;
+            buffered.push_back(result);
+            continue;
+        }
+
         if (next_movement.controller_type ==
+                MovementState::ControllerType::kHover &&
+            impulse_locked && impulse_lockout->free_fall) {
+            result.physics_finalized = true;
+            const FreeFallStep fall = step_free_fall(
+                *physics_world, *collider, transform,
+                glm::vec3{desired_horizontal.x, current_velocity.linear.y,
+                          desired_horizontal.z},
+                next_movement, fixed_delta_seconds);
+            result.position = fall.position;
+            result.velocity = fall.velocity;
+            if (fall.landed) {
+                // Grounded for this one tick, so the landing reads as one --
+                // landed_this_tick, the lockout's release, ActorLanded -- and
+                // step_hover lifts it off again from the next.
+                result.movement.ground_state = MovementState::GroundState::kGrounded;
+                result.movement.ground_normal = fall.ground.normal;
+                result.movement.supporting_entity_net_id =
+                    fall.ground.identity.entity_net_id;
+                result.movement.supporting_collider_id =
+                    fall.ground.identity.collider_id;
+            } else {
+                result.movement.ground_state = MovementState::GroundState::kAirborne;
+            }
+        } else if (next_movement.controller_type ==
             MovementState::ControllerType::kHover) {
             result.physics_finalized = true;
             result.position = step_hover(
@@ -625,13 +741,22 @@ void simulate_actor_movement(
                     : physics::CharacterGroundState::kAirborne;
             state.ground_normal = next_movement.ground_normal;
             std::string error;
-            if (movement_solver::step_character(
-                    *physics_world,
-                    config,
-                    desired_horizontal,
-                    fixed_delta_seconds,
-                    &state,
-                    &error)) {
+            if (suspension != nullptr) {
+                // Off the ground for good while held, so the controller never
+                // follows a floor it is rising away from.
+                state.ground_state = physics::CharacterGroundState::kAirborne;
+            }
+            const bool stepped = suspension != nullptr
+                ? movement_solver::step_character_at_velocity(
+                      *physics_world, config, suspended, fixed_delta_seconds,
+                      &state, &error)
+                : movement_solver::step_character(
+                      *physics_world, config, desired_horizontal,
+                      fixed_delta_seconds, &state, &error);
+            if (stepped && suspension != nullptr) {
+                state.ground_state = physics::CharacterGroundState::kAirborne;
+            }
+            if (stepped) {
                 result.physics_finalized = true;
                 result.position = state.position;
                 result.velocity = state.velocity;
@@ -883,6 +1008,82 @@ const ColliderInstance* find_movement_capsule(World& world, NetId net_id) {
 }
 
 }  // namespace
+
+std::optional<float> ground_height_below(
+    World& world,
+    NetId net_id,
+    const glm::vec3& position,
+    const glm::quat& rotation,
+    float max_distance) {
+    physics::PhysicsWorld* physics_world = world.collision_world();
+    const ColliderInstance* collider = physics_world == nullptr
+        ? nullptr
+        : find_movement_capsule(world, net_id);
+    const std::optional<entt::entity> entity = world.find_entity(net_id);
+    const MovementState* movement = entity.has_value()
+        ? world.registry().try_get<MovementState>(*entity)
+        : nullptr;
+    if (collider == nullptr || movement == nullptr || max_distance <= 0.0f) {
+        return std::nullopt;
+    }
+    const GroundProbe ground = probe_ground(
+        *physics_world, *collider, position, rotation, max_distance,
+        movement->max_slope_degrees, movement->movement_collision_mask);
+    if (!ground.hit) {
+        return std::nullopt;
+    }
+    return position.y - max_distance * ground.collision.fraction;
+}
+
+std::vector<std::pair<NetId, float>> settle_status_suspensions(
+    World& world,
+    std::uint32_t current_tick,
+    float fixed_delta_seconds) {
+    // How far below the drop looks for the floor it will land on. Past this
+    // the lockout's ceiling is the fall time for this far, and a hover whose
+    // lockout runs out over nothing holds the height it reached.
+    constexpr float kDropProbeMeters = 50.0f;
+    std::vector<entt::entity> held;
+    for (const entt::entity entity : world.registry().view<HeldInSuspension>()) {
+        held.push_back(entity);
+    }
+    std::vector<std::pair<NetId, float>> drops;
+    for (const entt::entity entity : held) {
+        if (active_suspension(world, entity) != nullptr) {
+            continue;
+        }
+        world.registry().remove<HeldInSuspension>(entity);
+        const Health* health = world.registry().try_get<Health>(entity);
+        const MovementState* movement = world.registry().try_get<MovementState>(entity);
+        Velocity* velocity = world.registry().try_get<Velocity>(entity);
+        const Transform* transform = world.registry().try_get<Transform>(entity);
+        // The dead fall as the dead do, and a revive puts the body down where
+        // it stands: neither has a drop to arm.
+        if ((health != nullptr && health->max_hp > 0u && health->hp == 0u) ||
+            movement == nullptr || velocity == nullptr || transform == nullptr ||
+            movement->ground_state == MovementState::GroundState::kGrounded ||
+            !(movement->gravity.y < 0.0f)) {
+            continue;
+        }
+        const NetId net_id = world.registry().get<NetworkIdentity>(entity).net_id;
+        // Straight down: the drift ends with the bubble.
+        velocity->linear = glm::vec3{0.0f};
+        const float floor_y = ground_height_below(
+                                  world, net_id, transform->position,
+                                  transform->rotation, kDropProbeMeters)
+                                  .value_or(transform->position.y - kDropProbeMeters);
+        // The landing tick, and two past it for margin: landing releases it
+        // anyway, so the count only matters for a drop that never lands.
+        const std::uint32_t flight = knockback_flight_ticks(
+            transform->position, glm::vec3{0.0f}, movement->gravity.y, floor_y,
+            fixed_delta_seconds, KERNEL_MAX_IMPULSE_LOCKOUT_TICKS);
+        ImpulseLockout lockout{current_tick + flight + 2u, current_tick};
+        lockout.free_fall = true;
+        world.registry().emplace_or_replace<ImpulseLockout>(entity, lockout);
+        drops.emplace_back(net_id, floor_y);
+    }
+    return drops;
+}
 
 float available_lift(
     World& world,

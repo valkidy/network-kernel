@@ -96,6 +96,21 @@ bool status_blocks_actions(const World& world, entt::entity entity) {
             [](const ActiveStatusEffect& active) { return active.blocks_actions; });
 }
 
+const ActiveStatusEffect* active_suspension(const World& world, entt::entity entity) {
+    const StatusEffectState* state = world.registry().try_get<StatusEffectState>(entity);
+    if (state == nullptr) {
+        return nullptr;
+    }
+    // The newest wins: active is kept sorted by instance id.
+    const ActiveStatusEffect* newest = nullptr;
+    for (const ActiveStatusEffect& active : state->active) {
+        if (active.suspends_movement) {
+            newest = &active;
+        }
+    }
+    return newest;
+}
+
 bool is_staggered(const World& world, entt::entity entity, std::uint32_t current_tick) {
     const StaggerState* state = world.registry().try_get<StaggerState>(entity);
     return state != nullptr && current_tick < state->until_tick;

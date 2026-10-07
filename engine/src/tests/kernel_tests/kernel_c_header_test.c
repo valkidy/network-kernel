@@ -20,8 +20,17 @@ _Static_assert(
     "status-bound crowd control: apply_block_actions");
 _Static_assert(
     KernelEntityTriggerActionType_ApplyBlockActions == 12 &&
+        KernelEntityTriggerActionType_ApplySuspendMovement == 13 &&
         KernelLocalActionResultReason_StatusBlocked == 17,
     "the ABI 102 enum values are appended");
+_Static_assert(
+    offsetof(KernelActionDefinition, status_direction_authored) >
+            offsetof(KernelActionDefinition, reserve_refill_percent) &&
+        offsetof(KernelActionDefinition, suspend_rise_speed) >
+            offsetof(KernelActionDefinition, status_direction_authored) &&
+        offsetof(KernelActionDefinition, suspend_drift_speed) >
+            offsetof(KernelActionDefinition, suspend_rise_speed),
+    "the ABI 102 action fields are appended after the reserve refill");
 _Static_assert(
     offsetof(KernelActionDefinition, pull_strength) >
         offsetof(KernelActionDefinition, spawn_placement),
@@ -183,17 +192,19 @@ _Static_assert(
         offsetof(KernelSkeletonBindingDefinition, processing_order),
     "stance crouch is appended to the skeleton binding ABI");
 _Static_assert(
-    sizeof(KernelActionDefinition) == 84u + 16u + 16u + 8u + 4u + 4u,
+    sizeof(KernelActionDefinition) == 84u + 16u + 16u + 8u + 4u + 4u + 12u,
     "KernelActionDefinition ABI size: 84 bytes before ABI 94, plus the "
     "16-byte spawn lifetime and repeat block, plus ABI 95's 16-byte pull "
     "block, plus ABI 96's ui_id and spawn_placement, plus ABI 100's "
-    "pull_strength, plus ABI 101's two reserve refill fields");
+    "pull_strength, plus ABI 101's two reserve refill fields, plus ABI 102's "
+    "status direction flag and two suspend speeds");
 _Static_assert(
     sizeof(KernelActionTriggerDefinition) ==
-        764u + 8u * 16u + 8u * 16u + 8u * 8u + 8u * 4u + 8u * 4u,
+        764u + 8u * 16u + 8u * 16u + 8u * 8u + 8u * 4u + 8u * 4u + 8u * 12u,
     "KernelActionTriggerDefinition ABI size: its eight actions each grew by "
     "the ABI 94 repeat block, the ABI 95 pull block, ABI 96's ui_id and "
-    "spawn_placement, ABI 100's pull_strength and ABI 101's reserve refill");
+    "spawn_placement, ABI 100's pull_strength, ABI 101's reserve refill and "
+    "ABI 102's status direction and suspend speeds");
 _Static_assert(
     offsetof(KernelActionDefinition, spawn_placement) >
             offsetof(KernelActionDefinition, ui_id) &&

@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include "kernel/public/kernel_types.h"
@@ -366,6 +367,26 @@ void simulate_velocity_movement(World& world, float fixed_delta_seconds);
 // travel from `position` before its head meets something, less a small skin.
 // Returns `lift` unchanged when there is no physics world or no movement
 // capsule to sweep, and never less than zero.
+// The height of whatever the entity's movement capsule would come to rest on
+// straight below `position`, looking at most `max_distance` down, or nothing
+// when it finds nothing (or there is no physics world or capsule to ask).
+std::optional<float> ground_height_below(
+    World& world,
+    NetId net_id,
+    const glm::vec3& position,
+    const glm::quat& rotation,
+    float max_distance);
+
+// Arms the drop for every actor whose last status suspension has ended since
+// the last call: velocity zeroed, straight down, out of its own control, until
+// it lands -- a free-fall ImpulseLockout whose ceiling is the fall to the floor
+// found below. Returns each one's net id and that floor height, for the
+// knockback anchor that lets a client draw the drop.
+std::vector<std::pair<NetId, float>> settle_status_suspensions(
+    World& world,
+    std::uint32_t current_tick,
+    float fixed_delta_seconds);
+
 float available_lift(
     World& world,
     NetId net_id,
@@ -562,6 +583,10 @@ bool is_staggered(const World& world, entt::entity entity, std::uint32_t current
 
 // Some active status instance on the actor ran apply_block_actions.
 bool status_blocks_actions(const World& world, entt::entity entity);
+
+// The status instance holding the actor in an apply_suspend_movement, the
+// newest when there are several, or null.
+const ActiveStatusEffect* active_suspension(const World& world, entt::entity entity);
 
 // Gives the actor its template's StaggerProfile, or takes it away when the
 // template authors none. Both ways an actor gets a template call this: the

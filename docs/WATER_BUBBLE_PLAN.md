@@ -1,6 +1,6 @@
 # 水球武器（泡泡封鎖）實作計劃書
 
-狀態：**設計已定案；P0 驗證完成（§9）；P1 完成（2026-10-08，見 §3.1）。P2 起尚未實作。**
+狀態：**設計已定案；P0 驗證完成（§9）；P1、P2 完成（2026-10-08，見 §3.1、§3.4 後的實作紀錄）。P3 起尚未實作。**
 分支：`claude/water-bubble`，從 `main`（7dc17f9，item-weapon 已 merge，ABI 101）開。
 最後更新：2026-10-08。
 
@@ -40,7 +40,7 @@
 | D5 | 上升時保留一點水平飄移，方向用**水球飛行的方向**乘上 status 設定的 `drift` 速度 | 不用隨機，保持 deterministic |
 | D6 | 泡泡破掉時**水平速度歸零、直直落下** | |
 | D7 | **落下期間不能動作，但可以被打** | `untargetable` 隨 status 結束；落下的封鎖由 §3.4 的 lockout 提供 |
-| D8 | 落下沿用現有的 `ImpulseLockout`（`recovering = false` 那一段），不加欄位 | 落地解除、`KnockdownProfile` 起身、擋 AI 寫速度、送 anchor，全部現成 |
+| D8 | 落下沿用現有的 `ImpulseLockout`（`recovering = false` 那一段） | 落地解除、`KnockdownProfile` 起身、擋 AI 寫速度、送 anchor，全部現成。P2 實作時多加了一個 server 端的 `free_fall` 旗標，只有 hover 會讀（見 §3.4 實作紀錄） |
 | D9 | 上升那一段**不用** `ImpulseLockout`，另做一個綁 status instance 的 `Suspended` modifier | 生命週期要跟 status 一致 |
 | D10 | `apply_status` 加**可選的** `strength` 欄位；有寫時只有 `strength > impulse_resistance` 才掛上 status | 沒寫就不檢查，現有 status 行為不變 |
 | D11 | 飛船（`37_hive_airship`，resistance 10）只受傷害、免疫泡泡；水球的 strength ≤ 10 | 傷害是命中 graph 裡另一個 `apply_damage` 節點，不受 D10 影響。巢、帳篷是 prop，本來就不受影響 |
@@ -140,6 +140,30 @@ grounded（sentry）的落下不用新寫：原本那段就有重力和落地檢
 這段封鎖屬於 `suspend_movement` 的語意（「懸浮結束一定是一段不能操控的落下」），
 不是 `block_actions` 的語意。所以以後就算單獨用 `suspend_movement`，落下也一樣會被鎖住。
 
+### P2 實作紀錄（K3 + K4）
+
+- **飄移方向**：`apply_status` 加了可選的 `direction:`（`KernelActionDefinition::status_direction_authored` + `direction_source`），
+  可以綁 `event.direction`、`event.subject_direction` 或 vec3 預設值。方向存在 `ActiveStatusEffect::applied_direction`，
+  只有 status 的 **`on_apply`** 會在 `event.direction` 看到它（`on_tick` / `on_expire` 看到的還是 0）。
+  `apply_suspend_movement` 在 graph 執行時就把它換算成水平飄移速度。
+- **懸浮狀態**和 P1 的旗標一樣，直接放在 `ActiveStatusEffect` 上（`suspends_movement`、`suspend_rise_speed`、`suspend_drift_velocity`），
+  有多個時取最新的那個。另外用一個 server 端的標記 `HeldInSuspension` 記住「這個單位被懸浮過」，用來偵測泡泡破掉。
+- **上升**：
+  - character controller：`movement_solver::step_character_at_velocity`，是從 `step_character` 拆出來的共用 solver，P5 的 client 預測會呼叫同一個。
+  - grounded / hover：`step_suspended`，先水平 `sweep` 再垂直 `sweep`，頂到屋頂就停。
+  - 懸浮期間 ground state 一律是空中，輸入、AI 寫速度（`set_velocity`）、進建築都被擋；正在被擊飛時中彈，泡泡會取代擊退；建築裡的住客不會被包。
+- **破掉 → 落下**：`settle_status_suspensions(World&, tick, dt)` 在每個 tick 的 status 結算之後、movement 之前執行。
+  只要單位有 `HeldInSuspension` 但已經沒有懸浮中的 status，就把速度歸零，往下最多找 50 m 的地面，
+  用 `knockback_flight_ticks` 算出落地 tick（加 2 當餘量），arm 一個 `ImpulseLockout{free_fall = true}`，並回傳 anchor 要用的 `floor_y`。
+  engine 那層的包裝負責把 anchor 排進 `queue_actor_impulse`。死掉、已經在地上、或重力不是往下的單位不會被 arm。
+- **hover 的落下**：lockout 有 `free_fall` 時改走 `step_free_fall`（先加重力再移動，往下 `probe_ground` 找可以站的地面）。
+  落地那一 tick 設成 grounded，讓 lockout 依現有規則解除，下一 tick `step_hover` 再接手飛回原高度。
+- **anchor 的重力**：`flush_actor_impulses` 對 hover 單位只有在 `free_fall` 時才送真的重力，否則送 0。
+  原因是 drone 的 YAML 重力改成 -9.81 之後，一般擊退的 anchor 如果照送，遠端 client 會畫出 drone 在下墜。
+- **drone YAML**：`36_beam_drone.yaml` 的 `gravity` 改成 `{0, -9.81, 0}`（D17）。
+- 測試：`//engine/src/tests/simulation_tests:status_suspension_test`（7 項）。catalog 載入的情況加在 `//game_server:status_action_block_catalog_test`。
+- **延到 P6**：「sentry 類 AI 推不動」要 server 真的跑起來（`set_velocity` 要求 `running_`），放到 P6 的 e2e。
+
 ### 3.5 K5：不會被打（`untargetable`）與 AI 跳過
 
 要擋住的每一條路徑都各寫一個測試：
@@ -200,7 +224,7 @@ id 在開工時再分配，分配前要先查其他還沒 merge 的分支（memo
 - **status**：`<id>_status_effect_water_bubble.yaml`，`duration_ticks: N`，`on_apply` 綁 `action_status_water_bubble`。
 - **graph ②** `action_status_water_bubble`：`apply_block_actions` + `apply_suspend_movement { rise_speed, drift_speed }` + `apply_untargetable`。
 - **graph ①** 水球命中 graph：`apply_damage`（如果水球本身要有傷害）+ `apply_status { status: water_bubble, strength: ≤ 10 }`。
-- **weapon / projectile / collider**：單體命中的水球。projectile 一定要有 `on_collision`（memory `thrown-prop-needs-on-collision`）。
+- **水球本體**：P2 發現 projectile 的 trigger 路徑**不支援 `apply_status`**，只有 entity（prop）的 trigger 支援。所以水球要照各種瓶子的做法，做成「丟出去的 prop」（item + prop + collider），用 prop 的 `on_collision` 對 `event.target` 執行 `apply_status { direction: event.direction }`。prop 一定要有 `on_collision`（memory `thrown-prop-needs-on-collision`）。
 
 示意（欄位名稱以實作時為準）：
 
@@ -250,7 +274,7 @@ client 和 server 必須用同一版。
 |---|---|---|
 | **P0** | 開工前驗證（§9） | **完成 2026-10-08** |
 | **P1** | K1 `apply_block_actions` + status 綁定 + 打斷 | **完成 2026-10-08。** 新動作被拒絕；進行中的動作被打斷；放在命中 graph 會被驗證拒絕；status 被移除或到期時解除；持續中的 beam 被打斷後消失 |
-| **P2** | K3 + K4 懸浮與落下 | 上升高度剛好是 `rise_speed·N·dt`；飄移方向等於水球飛行方向；破掉時水平歸零；落地的 tick 跟預測一樣；落下期間不能動作；sentry 類 AI 推不動；被擊飛時中彈，泡泡取代擊退；**三種 controller 各一個屋頂下的測試，高度停在屋頂下方**；**drone：從 9 m 落到地面、落地後 lockout 解除並飛回 9 m；往下找不到地面時停在當時高度；anchor 的 `floor_y` 是地面高度** |
+| **P2** | K3 + K4 懸浮與落下 | **完成 2026-10-08**（「sentry 類 AI 推不動」延到 P6）。上升高度剛好是 `rise_speed·N·dt`；飄移方向等於水球飛行方向；破掉時水平歸零；落地的 tick 跟預測一樣；落下期間不能動作；sentry 類 AI 推不動；被擊飛時中彈，泡泡取代擊退；**三種 controller 各一個屋頂下的測試，高度停在屋頂下方**；**drone：從 9 m 落到地面、落地後 lockout 解除並飛回 9 m；往下找不到地面時停在當時高度；anchor 的 `floor_y` 是地面高度** |
 | **P3** | K5 untargetable + AI 跳過 | §3.5 每一條路徑各一個測試：子彈穿過、範圍效果跳過；落下期間可以被打；AI 視野看不到 |
 | **P4** | K2 strength | 飛船（resistance 10）被打到只受傷不被包；沒寫 strength 的現有 status 行為不變 |
 | **P5** | K6 + K7 prediction 與遠端軌跡 | 本機 prediction 的上升軌跡和 server 誤差為 0；遠端 anchor 重播誤差為 0 |
@@ -276,9 +300,10 @@ client 和 server 必須用同一版。
 
 | # | 風險 | 處理 |
 |---|---|---|
-| R1 | 往上升穿過天花板：P0 確認 character controller 會擋，grounded 不會（§9-1） | grounded 和 hover 的上升改用 `sweep`（§3.3）；P2 三種 controller 各一個屋頂下的測試 |
-| R2 | drone 的落下是新寫的計算，誤用 grounded 那段會瞬間貼地（§3.4） | 新寫一段，不借用；P2 測從 9 m 落地的 tick 跟 `knockback_flight_ticks` 預測一致 |
+| R1 | 往上升穿過天花板：P0 確認 character controller 會擋，grounded 不會（§9-1） | **P2 已解決**：grounded 和 hover 的上升改用 `sweep`，三種 controller 的屋頂測試都通過 |
+| R2 | drone 的落下是新寫的計算，誤用 grounded 那段會瞬間貼地（§3.4） | **P2 已解決**：新寫 `step_free_fall`；從 10 m 落地的 tick 跟 `knockback_flight_ticks` 的預測一致 |
 | R6 | drone 的 beam 是持續好幾個 tick 的攻擊，打斷後有沒有真的停 | **P1 已解決**：打斷時 `release_action_resources` 會刪掉 beam 實體。測試 `a_block_ends_a_held_beam` 用一般玩家的 action 路徑驗證，AI 的 action intent 走同一條路 |
+| R9 | main 上大約 15 個 game_server 測試（包含 `hover_controller_test`、`flying_units_test`）的 BUILD 沒有列 `locomotion_skeleton_assets`，gingerbread giant（template 39）加進 catalog 之後就全部載入失敗。原本就有的問題 | P2 暫時補上 dep 確認這兩個測試在 drone 改重力後都通過，然後還原。修正另外開成背景任務 |
 | R8 | 舊的按鈕射擊路徑（`simulate_weapons` 在沒有 action commit 時，看 `InputButton_Fire` 直接產生 commit）不經過 `action_block_reason`，所以擋不住。stagger、擊退、進建築也一樣擋不住它，是原本就有的缺口 | 只有玩家會走這條路徑（`PlayerTag`），AI 用 action intent。P1 不處理；要不要補上由使用者決定 |
 | R7 | drone 落下、落地的動畫 Unity 端還沒有 | client presentation，使用者處理 |
 | R3 | 關掉 hitbox 的做法可能連帶影響移動碰撞或 rewind | §9-3 先確認；不行就改成在每條路徑各加檢查 |

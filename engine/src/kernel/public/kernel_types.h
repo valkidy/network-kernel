@@ -9,9 +9,20 @@
  *     gained _ApplyBlockActions: a status on_apply action that, for as long as
  *     that status instance stands, refuses its target new actions and ends the
  *     one under way. It has no fields of its own -- its lifetime is the
- *     status's -- so KernelActionDefinition is unchanged.
- *     KernelLocalActionResultReason gained _StatusBlocked, the reason both the
- *     refusal and the interrupt report.
+ *     status's. KernelLocalActionResultReason gained _StatusBlocked, the
+ *     reason both the refusal and the interrupt report.
+ *     KernelEntityTriggerActionType gained _ApplySuspendMovement, another
+ *     status on_apply action: while the instance stands its subject rises at
+ *     suspend_rise_speed and drifts at suspend_drift_speed along the
+ *     horizontal of the direction the status was applied with, and when it
+ *     ends the subject drops straight down, out of its own control, until it
+ *     lands. KernelActionDefinition gained status_direction_authored,
+ *     suspend_rise_speed and suspend_drift_speed, appended after
+ *     reserve_refill_percent: apply_status may now carry a direction
+ *     (direction_source, when status_direction_authored is non-zero) that its
+ *     on_apply graph reads as event.direction. KernelActionDefinition is
+ *     embedded in every trigger definition, so every managed mirror of those
+ *     shifts.
  * 101: items and wands, first part. KernelPropDefinition gained importance
  *     (with three reserved bytes), appended after population_group_id: when
  *     a population group is over max_alive, the member just spawned is never
@@ -882,6 +893,11 @@ typedef enum KernelEntityTriggerActionType {
      * not start an action and the one under way is ended. Status on_apply
      * graphs only, targeting the status's own subject (ABI 102). */
     KernelEntityTriggerActionType_ApplyBlockActions = 12,
+    /* While the status instance whose on_apply ran it stands, its target
+     * rises and drifts and nothing else moves it; when the instance ends it
+     * falls straight down out of its own control until it lands. Status
+     * on_apply graphs only, onto the status's own subject (ABI 102). */
+    KernelEntityTriggerActionType_ApplySuspendMovement = 13,
 } KernelEntityTriggerActionType;
 
 typedef enum KernelStatModifierOperation {
@@ -939,6 +955,10 @@ typedef enum KernelActionConditionType {
  * kernel validators both check against this one constant; they used to keep
  * separate tables and drifted. */
 #define KERNEL_MAX_IMPULSE_LOCKOUT_TICKS 300u
+
+/* Ceiling on apply_suspend_movement's suspend_rise_speed and
+ * suspend_drift_speed, metres per second. */
+#define KERNEL_MAX_SUSPEND_SPEED 20.0f
 
 /* Ceiling on an actor's stagger duration_ticks and immunity_ticks, for the
  * same reason and checked by the same two parties as the lockout above. */
@@ -1064,6 +1084,17 @@ typedef struct KernelActionDefinition {
      * at least 1. Either is capped at that template value. */
     uint16_t reserve_refill_count;
     uint16_t reserve_refill_percent;
+    /* apply_status only; zero on every other action. Non-zero: the status is
+     * applied with the direction direction_source names (impulse_direction
+     * for a literal), and its on_apply graph sees it as event.direction.
+     * Zero: it sees a zero direction, as before ABI 102. */
+    uint32_t status_direction_authored;
+    /* apply_suspend_movement only; zero on every other action. Metres per
+     * second, finite and in 0 .. KERNEL_MAX_SUSPEND_SPEED: how fast the
+     * subject rises, and how fast it drifts along the horizontal of the
+     * status's direction. */
+    float suspend_rise_speed;
+    float suspend_drift_speed;
 } KernelActionDefinition;
 
 typedef struct KernelActionTriggerDefinition {

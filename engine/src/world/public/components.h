@@ -170,7 +170,16 @@ struct ImpulseLockout {
     // hold. Rooted rather than carrying velocity, and only the tick count ends
     // it -- it is already on the ground.
     bool recovering = false;
+    // The drop after a suspension ended. Only a hover controller reads it: a
+    // hover holds its height rather than falling, so for this one flight it
+    // falls under its gravity and lands like anything else instead.
+    bool free_fall = false;
 };
+
+// Server-only. On an actor a status suspension has held, from the commit that
+// started it until the tick after the last suspension on it ended, when the
+// drop is armed (settle_status_suspensions).
+struct HeldInSuspension {};
 
 // Authored per actor. Absent, a knockback releases the actor the tick it lands.
 struct KnockdownProfile {
@@ -903,6 +912,9 @@ struct ActionApplyStatusDefinition {
     std::string target_parameter;
     std::string status_parameter;
     ActionConditionType condition = ActionConditionType::kAlways;
+    // Optional, a vec3 parameter: the direction the status is applied with.
+    // Empty applies it with none.
+    std::string direction_parameter;
 };
 
 struct ActionRemoveStatusDefinition {
@@ -922,6 +934,15 @@ struct ActionApplySpeedModifierDefinition {
 // a speed modifier: the block lives exactly as long as that status instance.
 struct ActionApplyBlockActionsDefinition {
     std::string target_parameter;
+    ActionConditionType condition = ActionConditionType::kAlways;
+};
+
+// KernelEntityTriggerActionType_ApplySuspendMovement, on the same terms. The
+// speeds are literals, as apply_pull's numbers are.
+struct ActionApplySuspendMovementDefinition {
+    std::string target_parameter;
+    float rise_speed = 0.0f;
+    float drift_speed = 0.0f;
     ActionConditionType condition = ActionConditionType::kAlways;
 };
 
@@ -950,7 +971,8 @@ using ActionGraphAction = std::variant<
     ActionApplyPullDefinition,
     ActionOpenUiDefinition,
     ActionRefillWeaponReserveDefinition,
-    ActionApplyBlockActionsDefinition>;
+    ActionApplyBlockActionsDefinition,
+    ActionApplySuspendMovementDefinition>;
 
 struct ActionGraphTemplate {
     std::string id;
@@ -1011,6 +1033,15 @@ struct ActiveStatusEffect {
     // every path that ends the instance -- expiry, removal, replacement, a
     // revive dropping them all -- ends the block with it.
     bool blocks_actions = false;
+    // The direction apply_status was given, zero when it was given none. Its
+    // on_apply graph reads it as event.direction.
+    glm::vec3 applied_direction{0.0f};
+    // Set by this instance's on_apply running apply_suspend_movement, and kept
+    // here for the same reason as blocks_actions. The drift is already the
+    // horizontal velocity, worked out from applied_direction.
+    bool suspends_movement = false;
+    float suspend_rise_speed = 0.0f;
+    glm::vec3 suspend_drift_velocity{0.0f};
 };
 
 struct SpeedModifier {

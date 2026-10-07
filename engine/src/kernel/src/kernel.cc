@@ -3064,7 +3064,8 @@ bool KernelEngine::load_gameplay_catalog(
                 // speed modifier is, so it is allowed exactly where one is.
                 const bool status_bound =
                     std::holds_alternative<ActionApplySpeedModifierDefinition>(action) ||
-                    std::holds_alternative<ActionApplyBlockActionsDefinition>(action);
+                    std::holds_alternative<ActionApplyBlockActionsDefinition>(action) ||
+                    std::holds_alternative<ActionApplySuspendMovementDefinition>(action);
                 if (!damage_or_health && !(allow_speed_modifier && status_bound)) {
                     return false;
                 }
@@ -3088,7 +3089,9 @@ bool KernelEngine::load_gameplay_catalog(
                 (trigger.action_type ==
                      KernelEntityTriggerActionType_ApplySpeedModifier ||
                  trigger.action_type ==
-                     KernelEntityTriggerActionType_ApplyBlockActions) &&
+                     KernelEntityTriggerActionType_ApplyBlockActions ||
+                 trigger.action_type ==
+                     KernelEntityTriggerActionType_ApplySuspendMovement) &&
                 trigger.target_source != KernelEntityRefSource_Self &&
                 trigger.target_source != KernelEntityRefSource_EventSubject) {
                 return false;
@@ -3109,7 +3112,9 @@ bool KernelEngine::load_gameplay_catalog(
                 if ((action.action_type ==
                          KernelEntityTriggerActionType_ApplySpeedModifier ||
                      action.action_type ==
-                         KernelEntityTriggerActionType_ApplyBlockActions) &&
+                         KernelEntityTriggerActionType_ApplyBlockActions ||
+                     action.action_type ==
+                         KernelEntityTriggerActionType_ApplySuspendMovement) &&
                     action.target_source != KernelEntityRefSource_Self &&
                     action.target_source != KernelEntityRefSource_EventSubject) {
                     return false;
@@ -3457,7 +3462,10 @@ bool KernelEngine::load_gameplay_catalog(
                         KernelEntityTriggerActionType_RemoveStatus) {
                     if (action.target_source >
                             KernelEntityRefSource_EventInstigator ||
-                        !status_id_in_use(action.status_effect_id)) {
+                        !status_id_in_use(action.status_effect_id) ||
+                        (action.status_direction_authored != 0u &&
+                         action.direction_source >
+                             KernelEventVec3Source_SubjectPosition)) {
                         return false;
                     }
                     continue;
@@ -12945,6 +12953,7 @@ void KernelEngine::simulate_tick() {
     }
     sync_entity_colliders_from_world();
     simulate_status_effects(*this, server_time_us);
+    settle_status_suspensions(*this);
     MovementSimulationStats movement_stats{};
     std::vector<QueuedInput> movement_inputs =
         build_effective_movement_inputs(server_time_us);
@@ -14544,7 +14553,13 @@ void KernelEngine::flush_actor_impulses() {
         record.net_id = net_id;
         record.position = transform->position;
         record.velocity = velocity->linear;
-        record.gravity_y = movement->gravity.y;
+        // A hover does not fall, whatever gravity it authors, except in the
+        // drop after a suspension.
+        record.gravity_y =
+            movement->controller_type == MovementState::ControllerType::kHover &&
+                !lockout->free_fall
+            ? 0.0f
+            : movement->gravity.y;
         record.floor_y = floor_y;
         record.lockout_ticks = static_cast<std::uint16_t>(std::min<std::uint32_t>(
             lockout->until_tick - tick, UINT16_MAX));

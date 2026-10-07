@@ -97,6 +97,24 @@ inline glm::vec3 impulse_velocity_delta(
         : direction * horizontal;
 }
 
+// apply_suspend_movement's speeds, checked by the same three parties.
+inline bool suspend_speed_is_authorable(float speed) {
+    return std::isfinite(speed) && speed >= 0.0f &&
+        speed <= KERNEL_MAX_SUSPEND_SPEED;
+}
+
+// The drift a suspension moves at: the horizontal of the status's direction,
+// at drift_speed. A direction with no horizontal to it -- straight down, or
+// none at all -- drifts nowhere.
+inline glm::vec3 suspend_drift_velocity(const glm::vec3& direction, float drift_speed) {
+    const float length = std::sqrt(direction.x * direction.x + direction.z * direction.z);
+    if (!(length > 0.0001f)) {
+        return glm::vec3{0.0f};
+    }
+    return glm::vec3{
+        direction.x / length * drift_speed, 0.0f, direction.z / length * drift_speed};
+}
+
 // apply_pull's numbers, checked the same way by the loader, the kernel's
 // trigger validators and the command preflight.
 inline bool pull_is_authorable(
@@ -250,6 +268,8 @@ struct ActionApplyStatusCommand {
     NetId target = 0;
     std::uint32_t status_effect_id = 0;
     ActionExecutionProvenance provenance;
+    // Resolved when the graph ran; zero when the action names none.
+    glm::vec3 direction{0.0f};
 };
 
 struct ActionRemoveStatusCommand {
@@ -313,6 +333,18 @@ struct ActionRefillWeaponReserveCommand {
     ActionExecutionProvenance provenance;
 };
 
+// The target rises at rise_speed and drifts at drift_velocity while status
+// instance status_instance_id stands. The drift is worked out when the graph
+// runs, from the status's own direction.
+struct ActionApplySuspendMovementCommand {
+    NetId source = 0;
+    NetId target = 0;
+    std::uint32_t status_instance_id = 0;
+    float rise_speed = 0.0f;
+    glm::vec3 drift_velocity{0.0f};
+    ActionExecutionProvenance provenance;
+};
+
 // The target may not act while status instance status_instance_id stands.
 // Only a status lifecycle batch fills that id, as for a speed modifier.
 struct ActionApplyBlockActionsCommand {
@@ -334,7 +366,8 @@ using ActionGraphCommand = std::variant<
     ActionApplyPullCommand,
     ActionOpenUiCommand,
     ActionRefillWeaponReserveCommand,
-    ActionApplyBlockActionsCommand>;
+    ActionApplyBlockActionsCommand,
+    ActionApplySuspendMovementCommand>;
 
 struct ActionGraphQueuedTrigger {
     CompiledActionGraphBinding binding;

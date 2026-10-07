@@ -20,6 +20,11 @@ bool execute_action_graph_command_batch(
     const ActionGraphCommandBatch& batch,
     std::uint64_t server_time_us);
 void simulate_status_effects(KernelEngine& engine, std::uint64_t server_time_us);
+// Arms the drop for every actor whose last status suspension has ended since
+// the last call: straight down, out of its own control, until it lands (a
+// free-fall ImpulseLockout), with the anchor that lets a client draw it. Runs
+// ahead of movement each tick.
+void settle_status_suspensions(KernelEngine& engine);
 struct ConfirmedDamage;
 
 class EntityLifecycleSystem {
