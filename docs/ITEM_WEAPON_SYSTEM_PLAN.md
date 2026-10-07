@@ -87,7 +87,7 @@
 | 武器 item | K5、K6 | 配裝套用武器 | 拾取、丟棄、HUD | 武器 item 模板 |
 | 蓄力施法 | K7 | — | 蓄力表現 | action 模板 |
 | 換下的武器自動 reload | K8 | — | 顯示 | — |
-| 死亡掉落（之後） | K11、K12 | 監聽死亡事件、建立物品時給標記 | — | 任務道具的預設標記 |
+| 死亡掉落 | K11、K12（已完成） | 監聽死亡事件、建立物品時給標記 | — | 任務道具的預設標記 |
 | 操作 | — | — | 全部 | — |
 
 ### 3.2 初始營地與配裝模板（D1–D6）
@@ -215,7 +215,7 @@ Unity 端（不在這個 repo）：slot 數 0 時的動畫、瞄準 IK、HUD 需
 - **K8 換下的武器自動 reload：** 每格記錄「reload 完成的 tick」，換回這把武器時再檢查，到了就補滿 MP、扣一次 reserve。
   計算是 deterministic 的，client 可以自己算。等 K6 完成後再做。
 
-### 3.8 死亡掉落（D19，K11、K12，第一版不做）
+### 3.8 死亡掉落（D19，K11、K12）
 
 **掉落標記（K12）。** 每個 item instance 帶一個 uint8 `drop_tag`：
 
@@ -239,13 +239,15 @@ Unity 端（不在這個 repo）：slot 數 0 時的動畫、瞄準 IK、HUD 需
 - **不會越積越多：** 數量少，任務道具也本來就該留在場上，不需要壽命限制。
 - **誰可以撿：** 沿用現行規則，所有人都可以。
 
-之後要做時的實作：
-- 現有 API 都不能直接用：
-  - `Kernel_ServerCreateWorldItem` 會建立**新的**物品，id 不同，portable state 也不會帶過去。
-  - Place 會拒絕已經死亡的玩家（`InstigatorDead`，`item_gameplay_system.cc:535`）。
-- **K11：** 新的 server API，把 inventory 裡的物品原封不動移到地上：保留 id、portable state 和標記，在死亡地點周圍散開，略過重疊檢查。
-  武器要先把 `WeaponState` 寫回武器 item。之前延後的「死亡時丟下 carry 中的 prop」可以一起處理。
-- game_server：監聽 `EntityDied`，挑出 `drop_tag != 0` 的物品並呼叫 K11。
+實作（K11，已完成）：
+- game_server 收到玩家的 `EntityDied` 時，掃過他所有容器（道具和武器），把 `drop_tag != 0` 的物品用 `Kernel_ServerDropInventoryItem` 原封不動丟到地上：保留 id、portable state 和標記。
+  沒有標記的物品留在身上，重生時由配裝覆蓋。
+- 掉落位置：死亡地點周圍半徑 1 m 的圓上平均分布，避免疊在一起。
+- kernel 把掉落物放在該點下方的 terrain 上（地面上 0.1 m），所以在空中死亡（例如被擊飛時）不會讓物品懸在半空、撿不到。下方找不到 terrain 時才留在原點。
+  這也套用到 D23 的「地圖武器丟到腳下」。
+- 武器離開武器容器時，彈匣和 reserve 會先寫回 item（`rebuild_weapon_loadout`）。
+- 現有 API 不能直接用的原因：`Kernel_ServerCreateWorldItem` 會建立新的物品（id 不同、portable state 不帶過去）；Place 會拒絕已經死亡的玩家（`InstigatorDead`）。
+- 仍未處理：死亡時丟下 carry 中的 prop；玩家離線（`PlayerLeft`）時身上的帶標記物品不會掉落。
 
 ### 3.9 操作介面（Unity）
 
@@ -338,7 +340,7 @@ kernel 不需要知道玩家在哪個模式：R2 在武器模式送 Fire 輸入�
 | K8 | 換下的武器自動 reload | 小到中 | 依 K6 |
 | K9 | 臨時營地容器：營地內的人看得到、`Transfer`、進出時同步 | 中到大 | 新封包、新 API |
 | K10 | client 和 game_server 之間的通用訊息，雙向（kernel 只轉送）。**已完成**（7096283） | 小到中 | ABI 101 內新增（capability bit 50）；packet schema 27 |
-| K11 | （之後）帶標記物品的死亡掉落：原封不動移到地上、散開 | 中 | 新 API |
+| K11 | 帶標記物品的死亡掉落：原封不動移到地上、散開。**已完成** | 小 | 沒有新 API；`Kernel_ServerDropInventoryItem` 改為落在 terrain 上 |
 | K12 | item instance 的 uint8 `drop_tag`：建立時帶入、跟著物品走、疊加要求相同；重新套用配裝只清 tag 0（D23）。**已完成**（3488b19） | 小到中 | ABI 101：item view 多 `drop_tag`、模板的 `default_drop_tag`、三個新 API；packet schema 29 |
 
 每個項目實際的 ABI 版本號等實作時再定。並行的分支會撞版本號和 catalog id，merge 時兩者都要檢查。
@@ -355,7 +357,7 @@ kernel 不需要知道玩家在哪個模式：R2 在武器模式送 Fire 輸入�
 | P3 | K5 + K6，配裝模板加上武器。**已完成** | 最大的一塊，snapshot schema 在這裡升一次 |
 | P4 | K9 臨時營地 | 依賴 shelter 流程（已在 main） |
 | P5 | K7、K8 | K8 依賴 K6 |
-| 之後 | K12 掉落標記、K11 死亡掉落 | 第一版不做（D19）。K12 可以提早，跟 K5 一起做 |
+| 之後 | K12 掉落標記、K11 死亡掉落 | 都已完成（K12 3488b19；K11 見 §3.8） |
 
 ---
 
@@ -375,7 +377,7 @@ kernel 不需要知道玩家在哪個模式：R2 在武器模式送 Fire 輸入�
 | T10 | 臨時營地：營地內的人看得到容器、外面的人看不到；只能領取；搶最後一個時先到的贏；被毀時庫存消失、人先被放出 |
 | T11 | 蓄力：未滿放開不扣 MP；滿了放開才施法 |
 | T12 | 自動 reload：換下後經過 reload 時間再換回，MP 補滿、reserve 扣一 |
-| T13 | （之後）死亡掉落：只有 `drop_tag` 1、2 的物品掉落；id、portable state、標記都保留；可撿回 |
+| T13 | 死亡掉落（`drop_tag_test`）：只有 `drop_tag` 1、2 的物品掉落；id、portable state、標記都保留；可撿回 |
 | T14 | 掉落標記：撿起、投擲、拆疊後保留；標記不同的 fungible 不疊加 |
 
 catalog 驅動的測試要自己掛上武器 mechanics、載入地面場景，並保留對照組（P0 的經驗）。

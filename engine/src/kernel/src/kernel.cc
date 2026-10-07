@@ -27,6 +27,7 @@
 #include "protocol/public/sha256.h"
 #include "simulation/public/action_graph.h"
 #include "simulation/public/collision_filter.h"
+#include "simulation/public/ground_follow.h"
 #include "simulation/public/movement_solver.h"
 #include "simulation/src/command_dispatcher.h"
 #include "simulation/src/systems.h"
@@ -5467,6 +5468,13 @@ bool KernelEngine::server_clear_untagged_items(KernelInventoryContainerId contai
     return true;
 }
 
+namespace {
+// Where a dropped item rests above the ground, and how far below the drop
+// point the ground is still looked for.
+constexpr float kDroppedItemHeight = 0.1f;
+constexpr float kDroppedItemMaxFall = 200.0f;
+}  // namespace
+
 bool KernelEngine::server_drop_inventory_item(
     KernelItemInstanceId id,
     const KernelVec3& position,
@@ -5489,6 +5497,20 @@ bool KernelEngine::server_drop_inventory_item(
     create.entity_template_id = definition->entity_template_id;
     create.position = position;
     create.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+    // It lies on the ground under the point, not at it: a player who dies in
+    // the air (a knockback flight) would otherwise leave it hanging there,
+    // out of reach. A world prop does not fall. No ground within reach keeps
+    // the point as given.
+    if (physics_world() != nullptr) {
+        ground_follow::Config ground{};
+        ground.hover_height = kDroppedItemHeight;
+        ground.filter = collision_filter_from_mask(KERNEL_COLLISION_LAYER_TERRAIN);
+        ground_follow::State landed{
+            glm::vec3{position.x, position.y, position.z}, false};
+        if (ground_follow::settle(*physics_world(), ground, kDroppedItemMaxFall, &landed)) {
+            create.position.y = landed.position.y;
+        }
+    }
     std::uint32_t prop_id = 0;
     if (!EntityLifecycleSystem{}.create_entity(*this, create, &prop_id, false)) {
         return false;

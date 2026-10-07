@@ -400,10 +400,13 @@ uint32_t Kernel_PollGameplayRequestOutcomes(
  * retags a live item (a map weapon is made, then tagged MAP_WEAPON).
  * Kernel_ServerClearUntaggedItems empties a container of its NONE-tagged
  * items and leaves the tagged ones in place. Kernel_ServerDropInventoryItem
- * puts an item from a container on the ground at `position` as itself -- id,
- * portable state and tag kept -- with no range or placement check: the server
- * is the one deciding where. A weapon dropped from a weapon container leaves
- * the loadout.
+ * puts an item from a container on the ground under `position` as itself --
+ * id, portable state and tag kept -- with no range or placement check: the
+ * server is the one deciding where. It rests on the terrain below the point
+ * (a death in mid-air leaves nothing hanging), or at the point when there is
+ * no terrain beneath it. A weapon dropped from a weapon container leaves the
+ * loadout, its magazine and reserve written to the item first. Works on a
+ * dead owner's containers.
  */
 bool Kernel_ServerSetItemDropTag(
     KernelHandle* kernel,

@@ -11,6 +11,8 @@
 // stays, and the map weapon stays unless the pick wants its category, in which
 // case it goes to the player's feet, as a same-category pickup would put it.
 // Fungible stacks merge only on an equal tag, and a split keeps its source's.
+// A death (K11) puts the tagged on the ground round the body and leaves the
+// untagged for the respawn to replace.
 
 #include <array>
 #include <cmath>
@@ -316,22 +318,61 @@ int main() {
     require(harness.item(relic).drop_tag == KERNEL_DROP_TAG_QUEST);
     require((harness.weapons() == std::vector<std::uint32_t>{0u, 13u, 5u, 14u}));
 
-    // A respawn reapplies the default loadout: the untagged go, the tagged
-    // stay -- the relic in the inventory. The default wants category 2 for its
-    // sky laser, so the map beam rifle goes to the feet, still tagged.
+    // Death (K11): the tagged go to the ground round the body, as
+    // themselves; the untagged stay for the respawn to replace. The player
+    // dies in mid-air -- lifted 6 m and killed before it falls -- and the
+    // drops still land on the ground, not where it hung.
+    const std::size_t items_before_death = harness.slots(items).size();
+    KernelVec3 death_point = harness.state_of(harness.player).position;
+    death_point.y += 6.0f;
+    {
+        const KernelQuat rotation{0.0f, 0.0f, 0.0f, 1.0f};
+        require(Kernel_ServerSetEntityTransform(kernel, harness.player, &death_point, &rotation));
+    }
     require(Kernel_ServerSetEntityHealth(kernel, harness.player, 0u));
     KernelEvent died{};
     died.type = KernelEventType_EntityDied;
     died.net_id = harness.player;
     server.handle_event(died);
+    KernelItemInstanceView beam_view = harness.item(beam);
+    KernelItemInstanceView relic_view = harness.item(relic);
+    require(beam_view.residency == KernelItemResidency_World);
+    require(relic_view.residency == KernelItemResidency_World);
+    require(beam_view.drop_tag == KERNEL_DROP_TAG_MAP_WEAPON);
+    require(relic_view.drop_tag == KERNEL_DROP_TAG_QUEST);
+    require(!harness.holds(weapons, beam));
+    require(!harness.holds(items, relic));
+    // The control: everything untagged is still on the body -- one item fewer
+    // (the relic), and the default weapons other than the map one.
+    require(harness.slots(items).size() == items_before_death - 1u);
+    require((harness.weapons() == std::vector<std::uint32_t>{0u, 13u, 14u}));
+    {
+        const KernelServerEntityState lying_beam = harness.state_of(beam_view.prop_entity_id);
+        const KernelServerEntityState lying_relic = harness.state_of(relic_view.prop_entity_id);
+        for (const KernelServerEntityState* lying : {&lying_beam, &lying_relic}) {
+            require(std::hypot(lying->position.x - death_point.x,
+                               lying->position.z - death_point.z) < 1.5f);
+            require(lying->position.y < 1.0f);
+        }
+        // Spread, not stacked.
+        require(std::hypot(lying_beam.position.x - lying_relic.position.x,
+                           lying_beam.position.z - lying_relic.position.z) > 1.0f);
+    }
+
+    // The respawn reapplies the default loadout over what is left.
     harness.step(static_cast<int>(std::lround(config.player.respawn.delay_seconds * 30.0f)) + 5);
     require(harness.state_of(harness.player).hp != 0u);
+    require((harness.weapons() == std::vector<std::uint32_t>{0u, 13u, 15u, 14u}));
+    require(harness.item(beam).residency == KernelItemResidency_World);
+    require(harness.item(relic).residency == KernelItemResidency_World);
+
+    // Both can be picked back up, still tagged; the beam rifle swaps the sky
+    // laser out again.
+    harness.stand_at(harness.state_of(relic_view.prop_entity_id).position);
+    require(harness.request(KernelDomainAction_Pickup, relic, relic_view.prop_entity_id).status ==
+            KernelGameplayRequestStatus_Committed);
     require(harness.holds(items, relic));
     require(harness.item(relic).drop_tag == KERNEL_DROP_TAG_QUEST);
-    require((harness.weapons() == std::vector<std::uint32_t>{0u, 13u, 15u, 14u}));
-    KernelItemInstanceView beam_view = harness.item(beam);
-    require(beam_view.residency == KernelItemResidency_World);
-    require(beam_view.drop_tag == KERNEL_DROP_TAG_MAP_WEAPON);
 
     // A camp pick that leaves category 2 free keeps the map weapon.
     harness.stand_at(harness.state_of(beam_view.prop_entity_id).position);

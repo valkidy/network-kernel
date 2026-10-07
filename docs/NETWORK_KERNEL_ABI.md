@@ -46,7 +46,7 @@ adds the container kind to inventory snapshot pages. Drop tags (K12):
 `KernelInventoryChange_DropTag` (bit 3) joined `_All`. New exports:
 `Kernel_ServerSetItemDropTag`, `Kernel_ServerClearUntaggedItems` and
 `Kernel_ServerDropInventoryItem` (an inventory item onto the ground as
-itself). Fungible stacks merge only on an equal tag; a split keeps its
+itself, resting on the terrain beneath the given point). Fungible stacks merge only on an equal tag; a split keeps its
 source's. Packet schema 29 carries the tag in inventory records. ABI 100 appended `pull_strength` to
 `KernelActionDefinition`. ABI 98
 appended the tornado shape and motion fields to

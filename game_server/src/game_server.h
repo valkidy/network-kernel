@@ -51,6 +51,10 @@ private:
     // template default's weapon items; refilled fresh when `reset`.
     bool configure_player_weapons(std::uint32_t net_id, bool reset) const;
     void revive_player(std::uint32_t net_id, float delta_seconds);
+    // A dead player's tagged items -- quest items, map weapons -- go to the
+    // ground around them (D19, K11); the untagged stay for the respawn to
+    // replace.
+    void drop_tagged_items(std::uint32_t net_id) const;
     // Puts the catalog's scene_props in the world, once the kernel takes
     // them; tried every tick until it has.
     void place_scene_props();
