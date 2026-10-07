@@ -20,7 +20,7 @@
 | 配裝 | 初始營地選配裝模板（不限量）；臨時營地發放有限的共用庫存 |
 | 武器 | 槍械改成法杖；武器變成 stateful item，可以撿、丟、交換 |
 | 道具 | 補 MP 次數的 `fungible_mp_potion`；可投擲的補血藥水 |
-| 死亡 | 重生套用配裝模板；（之後）任務道具在死亡地點掉落 |
+| 死亡 | 重生套用配裝模板；帶標記的物品（任務道具、地圖武器）掉在死亡地點（K11），斷線時也一樣 |
 | 操作 | PS 手把；道具模式 / 武器模式兩種狀態 |
 
 作弊容許原則（需求 b）：需要複雜輸入的流程（選單、短按 / 長按、模式切換、快速投擲）只在 client 做，server 不驗證。
@@ -125,6 +125,7 @@
 - 武器 mechanics 是每個 entity 各自設的：game_server 對每一把呼叫 `Kernel_ServerSetEntityWeaponMechanics`。只用 `Kernel_ServerCreateEntity` 建出的玩家打不出任何東西（P0 量到）。
 - snapshot 只送 `active_weapon_slot` 和 `active_weapon_ammo`（`snapshot.h:91`），不送每格的武器 id，也不送 reserve。
 - `RenderEntityState` 沒有任何武器欄位：**其他玩家看不到你手上拿的是哪一把**。現在每個玩家的武器配置都一樣所以沒差；配置可變之後就有差。封包成本評估見 §3.10。
+  （已解決：K6 加了 `held_weapon_id`，snapshot schema 28；P5 起切換武器時就更新，不必等開火。）
 - inventory 只同步給容器的擁有者。
 
 設計：
