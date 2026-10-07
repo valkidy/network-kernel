@@ -253,6 +253,53 @@ void recompute_speed(World& world, entt::entity entity) {
         movement.base_speed_meters_per_second * multiplier + additive;
 }
 
+// A command that would strike an actor nothing may strike. A status's own
+// lifecycle batches are exempt: those are the actor's own statuses running
+// their course (a damage tick among them is discarded where all damage is).
+bool strikes_untargetable(
+    const World& world,
+    const ActionGraphCommandBatch& batch,
+    const ActionGraphCommand& command) {
+    if (batch.provenance.status_instance_id != 0u) {
+        return false;
+    }
+    NetId target = 0u;
+    if (const auto* damage = std::get_if<ActionApplyDamageCommand>(&command)) {
+        target = damage->target;
+    } else if (const auto* health =
+                   std::get_if<ActionApplyHealthChangeCommand>(&command)) {
+        target = health->target;
+    } else if (const auto* impulse =
+                   std::get_if<ActionApplyImpulseCommand>(&command)) {
+        target = impulse->target;
+    } else if (const auto* pull = std::get_if<ActionApplyPullCommand>(&command)) {
+        target = pull->target;
+    } else if (const auto* status = std::get_if<ActionApplyStatusCommand>(&command)) {
+        target = status->target;
+    }
+    if (target == 0u) {
+        return false;
+    }
+    const std::optional<entt::entity> entity = world.find_entity(target);
+    return entity.has_value() && status_untargetable(world, *entity);
+}
+
+// The active instance a status-bound command belongs to, or null. On_apply
+// always runs with its instance already active, so null is a broken batch.
+ActiveStatusEffect* find_status_instance(
+    World& world, entt::entity target, std::uint32_t instance_id) {
+    StatusEffectState* state = world.registry().try_get<StatusEffectState>(target);
+    if (state == nullptr) {
+        return nullptr;
+    }
+    for (ActiveStatusEffect& candidate : state->active) {
+        if (candidate.instance_id == instance_id) {
+            return &candidate;
+        }
+    }
+    return nullptr;
+}
+
 void advance_status_revision(StatusEffectState& state) {
     ++state.revision;
     if (state.revision == 0u) {
@@ -351,6 +398,13 @@ bool prepare_status_lifecycle_trigger(
                             suspend->target == target
                         ? suspend->target
                         : 0u;
+                } else if (const auto* untargetable =
+                               std::get_if<ActionApplyUntargetableCommand>(&command)) {
+                    side_effect_target =
+                        event_type == TriggerEventType::kStatusApplied &&
+                            untargetable->target == target
+                        ? untargetable->target
+                        : 0u;
                 } else {
                     side_effect_target = 0u;
                 }
@@ -410,7 +464,15 @@ bool prepare_status_lifecycle_trigger(
             !std::holds_alternative<ActionApplyHealthChangeCommand>(command) &&
             !std::holds_alternative<ActionApplySpeedModifierCommand>(command) &&
             !std::holds_alternative<ActionApplyBlockActionsCommand>(command) &&
-            !std::holds_alternative<ActionApplySuspendMovementCommand>(command)) {
+            !std::holds_alternative<ActionApplySuspendMovementCommand>(command) &&
+            !std::holds_alternative<ActionApplyUntargetableCommand>(command)) {
+            return false;
+        }
+        if (const auto* untargetable =
+                std::get_if<ActionApplyUntargetableCommand>(&command);
+            untargetable != nullptr &&
+            (event_type != TriggerEventType::kStatusApplied ||
+             untargetable->target != target)) {
             return false;
         }
         if (const auto* suspend =
@@ -461,7 +523,25 @@ bool execute_action_graph_commands(
             batch.sequence)) {
         return true;
     }
-    const std::vector<ActionGraphCommand>& commands = batch.commands;
+    // Out of reach is out of reach however the command got here: an event
+    // queued before the target became untargetable, a graph that names it
+    // outright. Copied only when something is actually dropped.
+    std::vector<ActionGraphCommand> reachable;
+    const bool drops_any = std::any_of(
+        batch.commands.begin(),
+        batch.commands.end(),
+        [&](const ActionGraphCommand& command) {
+            return strikes_untargetable(world, batch, command);
+        });
+    if (drops_any) {
+        for (const ActionGraphCommand& command : batch.commands) {
+            if (!strikes_untargetable(world, batch, command)) {
+                reachable.push_back(command);
+            }
+        }
+    }
+    const std::vector<ActionGraphCommand>& commands =
+        drops_any ? reachable : batch.commands;
     std::vector<ActionGraphCommandBatch> lifecycle_batches;
     lifecycle_batches.reserve(commands.size());
     std::vector<std::uint32_t> planned_status_instance_ids(
@@ -763,6 +843,15 @@ bool execute_action_graph_commands(
                 std::get_if<ActionApplyBlockActionsCommand>(&command)) {
             if (block->source == 0u || block->status_instance_id == 0u ||
                 !world.find_entity(block->target).has_value()) {
+                return false;
+            }
+            continue;
+        }
+        if (const auto* untargetable =
+                std::get_if<ActionApplyUntargetableCommand>(&command)) {
+            if (untargetable->source == 0u ||
+                untargetable->status_instance_id == 0u ||
+                !world.find_entity(untargetable->target).has_value()) {
                 return false;
             }
             continue;
@@ -1293,15 +1382,8 @@ bool execute_action_graph_commands(
                 world.registry().all_of<Sheltered>(target)) {
                 continue;
             }
-            ActiveStatusEffect* active = nullptr;
-            if (StatusEffectState* status_state =
-                    world.registry().try_get<StatusEffectState>(target)) {
-                for (ActiveStatusEffect& candidate : status_state->active) {
-                    if (candidate.instance_id == suspend->status_instance_id) {
-                        active = &candidate;
-                    }
-                }
-            }
+            ActiveStatusEffect* active =
+                find_status_instance(world, target, suspend->status_instance_id);
             if (active == nullptr) {
                 return false;
             }
@@ -1326,21 +1408,26 @@ bool execute_action_graph_commands(
             if (world.registry().get<EntityKind>(target).type != EntityType::kActor) {
                 continue;
             }
-            // As for a speed modifier: an on_apply always runs with its
-            // instance already active, so a missing one is a broken batch.
-            ActiveStatusEffect* active = nullptr;
-            if (StatusEffectState* status_state =
-                    world.registry().try_get<StatusEffectState>(target)) {
-                for (ActiveStatusEffect& candidate : status_state->active) {
-                    if (candidate.instance_id == block->status_instance_id) {
-                        active = &candidate;
-                    }
-                }
-            }
+            ActiveStatusEffect* active =
+                find_status_instance(world, target, block->status_instance_id);
             if (active == nullptr) {
                 return false;
             }
             active->blocks_actions = true;
+            continue;
+        }
+        if (const auto* untargetable =
+                std::get_if<ActionApplyUntargetableCommand>(&command)) {
+            const entt::entity target = *world.find_entity(untargetable->target);
+            if (world.registry().get<EntityKind>(target).type != EntityType::kActor) {
+                continue;
+            }
+            ActiveStatusEffect* active = find_status_instance(
+                world, target, untargetable->status_instance_id);
+            if (active == nullptr) {
+                return false;
+            }
+            active->untargetable = true;
             continue;
         }
         if (const auto* refill =

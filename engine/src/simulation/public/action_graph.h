@@ -345,6 +345,15 @@ struct ActionApplySuspendMovementCommand {
     ActionExecutionProvenance provenance;
 };
 
+// Nothing can strike the target while status instance status_instance_id
+// stands.
+struct ActionApplyUntargetableCommand {
+    NetId source = 0;
+    NetId target = 0;
+    std::uint32_t status_instance_id = 0;
+    ActionExecutionProvenance provenance;
+};
+
 // The target may not act while status instance status_instance_id stands.
 // Only a status lifecycle batch fills that id, as for a speed modifier.
 struct ActionApplyBlockActionsCommand {
@@ -367,7 +376,8 @@ using ActionGraphCommand = std::variant<
     ActionOpenUiCommand,
     ActionRefillWeaponReserveCommand,
     ActionApplyBlockActionsCommand,
-    ActionApplySuspendMovementCommand>;
+    ActionApplySuspendMovementCommand,
+    ActionApplyUntargetableCommand>;
 
 struct ActionGraphQueuedTrigger {
     CompiledActionGraphBinding binding;

@@ -113,9 +113,12 @@ void HistoryBuffer::write_frame(const World& world, std::uint32_t server_tick) {
         const NetworkIdentity& identity = view.get<const NetworkIdentity>(entity);
         const Transform& transform = view.get<const Transform>(entity);
         const Hitbox& hitbox = view.get<const Hitbox>(entity);
+        // Untargetable counts as not there, as dead does: a shot rewound to
+        // this tick must pass through what nothing could strike at it.
         const bool alive =
-            !world.registry().all_of<Health>(entity) ||
-            world.registry().get<Health>(entity).hp > 0;
+            (!world.registry().all_of<Health>(entity) ||
+             world.registry().get<Health>(entity).hp > 0) &&
+            !status_untargetable(world, entity);
         frame.volumes.push_back(HitVolumeSnapshot{
             identity.net_id,
             transform.position + hitbox.center,

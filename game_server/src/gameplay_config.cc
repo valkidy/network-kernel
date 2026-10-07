@@ -2348,14 +2348,15 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
             compiled_action.target_parameter =
                 parameter_reference_from_yaml(action["target"], "target");
             action_parameters = {&compiled_action.target_parameter};
-        } else if (compiled_action.action_type == "apply_block_actions") {
+        } else if (compiled_action.action_type == "apply_block_actions" ||
+                   compiled_action.action_type == "apply_untargetable") {
             // Whom it holds, and nothing else: how long is the status's
             // duration_ticks, not the action's.
             for (const auto& field : action) {
                 const std::string key = field.first.as<std::string>();
                 if (key != "type" && key != "target" && key != "when") {
                     throw std::runtime_error(
-                        "apply_block_actions takes only target: " + path);
+                        compiled_action.action_type + " takes only target: " + path);
                 }
             }
             compiled_action.target_parameter =
@@ -7681,13 +7682,16 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
             compiled_action.suspend_drift_speed = action.suspend_drift_speed;
             continue;
         }
-        if (action.action_type == "apply_block_actions") {
+        if (action.action_type == "apply_block_actions" ||
+            action.action_type == "apply_untargetable") {
             if (trigger_name != "on_apply") {
                 throw std::runtime_error(
-                    "apply_block_actions is only valid in status on_apply");
+                    action.action_type + " is only valid in status on_apply");
             }
             compiled_action.action_type =
-                KernelEntityTriggerActionType_ApplyBlockActions;
+                action.action_type == "apply_block_actions"
+                ? KernelEntityTriggerActionType_ApplyBlockActions
+                : KernelEntityTriggerActionType_ApplyUntargetable;
             compiled_action.target_source = entity_ref_source(
                 trigger_parameter_value(
                     binding, graph_parameter(action.target_parameter)));
@@ -11017,7 +11021,8 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
                 action_type == KernelEntityTriggerActionType_ApplySpeedModifier;
             const bool block_actions =
                 action_type == KernelEntityTriggerActionType_ApplyBlockActions ||
-                action_type == KernelEntityTriggerActionType_ApplySuspendMovement;
+                action_type == KernelEntityTriggerActionType_ApplySuspendMovement ||
+                action_type == KernelEntityTriggerActionType_ApplyUntargetable;
             if (!damage_or_health && !speed_modifier && !block_actions) {
                 throw std::runtime_error(
                     "status lifecycle action graph only allows damage, health change, and on_apply speed modifiers or action blocks");
@@ -11028,8 +11033,8 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
             }
             if (block_actions && std::string_view(trigger_name) != "on_apply") {
                 throw std::runtime_error(
-                    "apply_block_actions and apply_suspend_movement are only "
-                    "allowed in status on_apply");
+                    "apply_block_actions, apply_suspend_movement and "
+                    "apply_untargetable are only allowed in status on_apply");
             }
             if (block_actions &&
                 action.target_source != KernelEntityRefSource_Self &&

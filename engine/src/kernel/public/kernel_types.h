@@ -23,6 +23,10 @@
  *     on_apply graph reads as event.direction. KernelActionDefinition is
  *     embedded in every trigger definition, so every managed mirror of those
  *     shifts.
+ *     KernelEntityTriggerActionType gained _ApplyUntargetable, the third: while
+ *     the instance stands nothing can strike its subject -- its hit volumes
+ *     leave every hit query, rewound shots included, area effects pass it by,
+ *     agents do not see it, and damage that still arrives is discarded whole.
  * 101: items and wands, first part. KernelPropDefinition gained importance
  *     (with three reserved bytes), appended after population_group_id: when
  *     a population group is over max_alive, the member just spawned is never
@@ -898,6 +902,11 @@ typedef enum KernelEntityTriggerActionType {
      * falls straight down out of its own control until it lands. Status
      * on_apply graphs only, onto the status's own subject (ABI 102). */
     KernelEntityTriggerActionType_ApplySuspendMovement = 13,
+    /* While the status instance whose on_apply ran it stands, nothing can
+     * strike its target: shots and blasts pass through, agents do not see it,
+     * and damage is discarded. Status on_apply graphs only, onto the status's
+     * own subject (ABI 102). */
+    KernelEntityTriggerActionType_ApplyUntargetable = 14,
 } KernelEntityTriggerActionType;
 
 typedef enum KernelStatModifierOperation {

@@ -3065,7 +3065,8 @@ bool KernelEngine::load_gameplay_catalog(
                 const bool status_bound =
                     std::holds_alternative<ActionApplySpeedModifierDefinition>(action) ||
                     std::holds_alternative<ActionApplyBlockActionsDefinition>(action) ||
-                    std::holds_alternative<ActionApplySuspendMovementDefinition>(action);
+                    std::holds_alternative<ActionApplySuspendMovementDefinition>(action) ||
+                    std::holds_alternative<ActionApplyUntargetableDefinition>(action);
                 if (!damage_or_health && !(allow_speed_modifier && status_bound)) {
                     return false;
                 }
@@ -3091,7 +3092,9 @@ bool KernelEngine::load_gameplay_catalog(
                  trigger.action_type ==
                      KernelEntityTriggerActionType_ApplyBlockActions ||
                  trigger.action_type ==
-                     KernelEntityTriggerActionType_ApplySuspendMovement) &&
+                     KernelEntityTriggerActionType_ApplySuspendMovement ||
+                 trigger.action_type ==
+                     KernelEntityTriggerActionType_ApplyUntargetable) &&
                 trigger.target_source != KernelEntityRefSource_Self &&
                 trigger.target_source != KernelEntityRefSource_EventSubject) {
                 return false;
@@ -3114,7 +3117,9 @@ bool KernelEngine::load_gameplay_catalog(
                      action.action_type ==
                          KernelEntityTriggerActionType_ApplyBlockActions ||
                      action.action_type ==
-                         KernelEntityTriggerActionType_ApplySuspendMovement) &&
+                         KernelEntityTriggerActionType_ApplySuspendMovement ||
+                     action.action_type ==
+                         KernelEntityTriggerActionType_ApplyUntargetable) &&
                     action.target_source != KernelEntityRefSource_Self &&
                     action.target_source != KernelEntityRefSource_EventSubject) {
                     return false;
@@ -4902,6 +4907,14 @@ bool KernelEngine::push_collider_into_physics(const ColliderInstance& collider) 
     object.enabled = collider.enabled;
     if (entity.has_value() && world_.registry().all_of<Health>(*entity) &&
         world_.registry().get<Health>(*entity).hp == 0) {
+        object.enabled = false;
+    }
+    // An untargetable actor's hit volumes leave the world, as a dead one's do,
+    // but not its movement capsule: it still collides, it only cannot be hit.
+    if (entity.has_value() &&
+        (object.identity.kind == physics::CollisionObjectKind::kActorHitbox ||
+         object.identity.kind == physics::CollisionObjectKind::kActorLimb) &&
+        status_untargetable(world_, *entity)) {
         object.enabled = false;
     }
     std::string error;
@@ -13604,6 +13617,10 @@ void KernelEngine::update_vision_states(float delta_seconds) {
                     world_.registry().try_get<Health>(candidate_entity);
                 candidate_health != nullptr && candidate_health->max_hp > 0u &&
                 candidate_health->hp == 0u) {
+                continue;
+            }
+            // Nor is one nothing can strike: an agent would only fire into it.
+            if (status_untargetable(world_, candidate_entity)) {
                 continue;
             }
             const glm::vec3 position =

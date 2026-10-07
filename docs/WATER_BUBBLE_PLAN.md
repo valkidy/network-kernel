@@ -1,6 +1,6 @@
 # 水球武器（泡泡封鎖）實作計劃書
 
-狀態：**設計已定案；P0 驗證完成（§9）；P1、P2 完成（2026-10-08，見 §3.1、§3.4 後的實作紀錄）。P3 起尚未實作。**
+狀態：**設計已定案；P0 驗證完成（§9）；P1–P3 完成（2026-10-08，見各節的實作紀錄）。P4 起尚未實作。**
 分支：`claude/water-bubble`，從 `main`（7dc17f9，item-weapon 已 merge，ABI 101）開。
 最後更新：2026-10-08。
 
@@ -186,6 +186,18 @@ grounded（sentry）的落下不用新寫：原本那段就有重力和落地檢
 
 另外：standalone collision world（測試用，[world.cc:282](../engine/src/world/src/world.cc)）也要同步加這個條件，否則測試結果跟正式 server 不一致。
 
+**P3 實作紀錄（K5）**：
+- `apply_untargetable` 是 action type 14，旗標同樣放在 `ActiveStatusEffect::untargetable`。查詢函式 `status_untargetable(const World&, entt::entity)`
+  放在 **world 層**（`world.h`），不放在 simulation，因為 history 和 standalone collision world 都在 simulation 下面，依賴方向不能反過來。
+- 計劃寫的三處都做了：kernel 的 `push_collider_into_physics` 只關 `kActorHitbox` 和 `kActorLimb`（移動 capsule 保留）、
+  standalone collision world、history 的 `alive`、傷害入口照 `Sheltered` 的做法整筆丟掉。AI 視野候選照死亡單位的做法 `continue`。
+- **多做了一處**：`execute_action_graph_commands` 一開始就把「打到 untargetable 單位」的傷害、health change、擊退、pull、apply_status 指令拿掉，
+  只有真的有要拿掉的指令時才複製。這擋住了「在被包住之前就排好的 event」和「graph 直接指名目標」這兩種漏網的情況。
+  status 自己的 lifecycle batch 不受影響（例如再生的 `on_tick`）。負的 health change 本來就走傷害 pipeline，所以也會在傷害入口被丟掉。
+- 測試：`//engine/src/tests/simulation_tests:status_untargetable_test`（live 物理查詢、rewind、範圍效果、beam、傷害入口、commit 過濾、status 生命週期，8 項）、
+  `//engine/src/tests/kernel_tests:status_untargetable_kernel_test`（kernel 正式的物理世界、丟出去的 prop 的 `on_collision`、AI 視野，3 項）。
+  projectile、live hitscan、近戰都查同一個物理世界的 hitbox，由「物理世界不含 hitbox」那兩項涵蓋，沒有各寫一項。
+
 ### 3.6 K6：共用 solver 與本機玩家 prediction
 
 - 共用 solver 放在 `movement_solver`：輸入 `Suspended` 的參數，輸出這一 tick 的速度和位移。
@@ -275,7 +287,7 @@ client 和 server 必須用同一版。
 | **P0** | 開工前驗證（§9） | **完成 2026-10-08** |
 | **P1** | K1 `apply_block_actions` + status 綁定 + 打斷 | **完成 2026-10-08。** 新動作被拒絕；進行中的動作被打斷；放在命中 graph 會被驗證拒絕；status 被移除或到期時解除；持續中的 beam 被打斷後消失 |
 | **P2** | K3 + K4 懸浮與落下 | **完成 2026-10-08**（「sentry 類 AI 推不動」延到 P6）。上升高度剛好是 `rise_speed·N·dt`；飄移方向等於水球飛行方向；破掉時水平歸零；落地的 tick 跟預測一樣；落下期間不能動作；sentry 類 AI 推不動；被擊飛時中彈，泡泡取代擊退；**三種 controller 各一個屋頂下的測試，高度停在屋頂下方**；**drone：從 9 m 落到地面、落地後 lockout 解除並飛回 9 m；往下找不到地面時停在當時高度；anchor 的 `floor_y` 是地面高度** |
-| **P3** | K5 untargetable + AI 跳過 | §3.5 每一條路徑各一個測試：子彈穿過、範圍效果跳過；落下期間可以被打；AI 視野看不到 |
+| **P3** | K5 untargetable + AI 跳過 | **完成 2026-10-08。** §3.5 每一條路徑各一個測試：子彈穿過、範圍效果跳過；落下期間可以被打；AI 視野看不到 |
 | **P4** | K2 strength | 飛船（resistance 10）被打到只受傷不被包；沒寫 strength 的現有 status 行為不變 |
 | **P5** | K6 + K7 prediction 與遠端軌跡 | 本機 prediction 的上升軌跡和 server 誤差為 0；遠端 anchor 重播誤差為 0 |
 | **P6** | §4 catalog 內容 | e2e：玩家丟水球打中 AI，AI 上升 N ticks、落下、落地；打中 drone，drone 墜落後飛回 |

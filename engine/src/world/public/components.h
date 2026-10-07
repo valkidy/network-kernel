@@ -937,6 +937,12 @@ struct ActionApplyBlockActionsDefinition {
     ActionConditionType condition = ActionConditionType::kAlways;
 };
 
+// KernelEntityTriggerActionType_ApplyUntargetable, on the same terms.
+struct ActionApplyUntargetableDefinition {
+    std::string target_parameter;
+    ActionConditionType condition = ActionConditionType::kAlways;
+};
+
 // KernelEntityTriggerActionType_ApplySuspendMovement, on the same terms. The
 // speeds are literals, as apply_pull's numbers are.
 struct ActionApplySuspendMovementDefinition {
@@ -972,7 +978,8 @@ using ActionGraphAction = std::variant<
     ActionOpenUiDefinition,
     ActionRefillWeaponReserveDefinition,
     ActionApplyBlockActionsDefinition,
-    ActionApplySuspendMovementDefinition>;
+    ActionApplySuspendMovementDefinition,
+    ActionApplyUntargetableDefinition>;
 
 struct ActionGraphTemplate {
     std::string id;
@@ -1042,6 +1049,9 @@ struct ActiveStatusEffect {
     bool suspends_movement = false;
     float suspend_rise_speed = 0.0f;
     glm::vec3 suspend_drift_velocity{0.0f};
+    // Set by this instance's on_apply running apply_untargetable, on the same
+    // terms.
+    bool untargetable = false;
 };
 
 struct SpeedModifier {

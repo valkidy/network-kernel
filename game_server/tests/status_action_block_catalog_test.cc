@@ -374,6 +374,31 @@ void apply_status_carries_the_direction_it_is_bound_to() {
         "apply_status direction must be event.direction"));
 }
 
+void untargetable_loads_where_a_block_does_and_nowhere_else() {
+    std::string graph = kBlockGraph;
+    graph.replace(graph.find("apply_block_actions"), 19, "apply_untargetable");
+    const gs::KernelGameplayCatalogStorage built = gs::build_kernel_gameplay_catalog(
+        gs::load_gameplay_config_from_catalog_file(
+            catalog_with(
+                "untargetable_on_apply",
+                {{"action_graph_templates/action_test_block.yaml", graph},
+                 {"status_effect_templates/1901_status_effect_test_block.yaml",
+                  status_yaml("on_apply", "event.subject")}})
+                .string()));
+    const KernelStatusEffectDefinition* status = find_status(built);
+    require(status != nullptr);
+    require(status->on_apply_trigger.actions[0].action_type ==
+            KernelEntityTriggerActionType_ApplyUntargetable);
+    require(kernel_accepts(built));
+    require(refused_for(
+        catalog_with(
+            "untargetable_on_tick",
+            {{"action_graph_templates/action_test_block.yaml", graph},
+             {"status_effect_templates/1901_status_effect_test_block.yaml",
+              status_yaml("on_tick", "event.subject")}}),
+        "apply_untargetable is only valid in status on_apply"));
+}
+
 }  // namespace
 
 int main() {
@@ -386,6 +411,7 @@ int main() {
     a_suspension_in_on_apply_loads_with_its_speeds();
     a_suspension_anywhere_else_or_too_fast_is_refused();
     apply_status_carries_the_direction_it_is_bound_to();
+    untargetable_loads_where_a_block_does_and_nowhere_else();
     std::puts("status_action_block_catalog_test passed");
     return 0;
 }

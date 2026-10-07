@@ -55,6 +55,12 @@ cc_test(
 )
 
 cc_test(
+    name = "status_untargetable_test",
+    srcs = ["status_untargetable_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
+cc_test(
     name = "status_suspension_test",
     srcs = ["status_suspension_test.cc"],
     deps = ["//engine/src/kernel:kernel"],

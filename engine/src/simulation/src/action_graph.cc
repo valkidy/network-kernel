@@ -511,7 +511,9 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
             continue;
         }
         if (action.action_type ==
-            KernelEntityTriggerActionType_ApplyBlockActions) {
+                KernelEntityTriggerActionType_ApplyBlockActions ||
+            action.action_type ==
+                KernelEntityTriggerActionType_ApplyUntargetable) {
             // Only a status's on_apply has an instance for the block to live
             // as long as, and only its own subject to hold.
             if (event_type != TriggerEventType::kStatusApplied ||
@@ -521,8 +523,13 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
             }
             const std::string target_name = "target" + suffix;
             binding.graph.parameters.push_back({target_name, std::monostate{}});
-            binding.graph.actions.push_back(ActionApplyBlockActionsDefinition{
-                target_name, *condition});
+            binding.graph.actions.push_back(
+                action.action_type ==
+                        KernelEntityTriggerActionType_ApplyBlockActions
+                    ? ActionGraphAction{ActionApplyBlockActionsDefinition{
+                          target_name, *condition}}
+                    : ActionGraphAction{ActionApplyUntargetableDefinition{
+                          target_name, *condition}});
             binding.parameters.push_back({
                 target_name,
                 EntityRefExpression{static_cast<EntityRefSource>(
@@ -986,6 +993,15 @@ bool validate_action_graph_binding(
             }
             continue;
         }
+        if (const auto* untargetable =
+                std::get_if<ActionApplyUntargetableDefinition>(&action)) {
+            if (!validate_action_parameter(
+                    binding, untargetable->target_parameter,
+                    ParameterType::kEntityId, error)) {
+                return false;
+            }
+            continue;
+        }
         if (const auto* refill =
                 std::get_if<ActionRefillWeaponReserveDefinition>(&action)) {
             if ((refill->count == 0u) == (refill->percent == 0u) ||
@@ -1263,6 +1279,26 @@ bool evaluate_action_graph(
                 provenance.status_instance_id,
                 suspend->rise_speed,
                 suspend_drift_velocity(event.direction, suspend->drift_speed),
+                provenance,
+            });
+            continue;
+        }
+        if (const auto* untargetable =
+                std::get_if<ActionApplyUntargetableDefinition>(&action)) {
+            const ActionGraphParameterValue* target_value =
+                find_resolved_parameter(parameters, untargetable->target_parameter);
+            if (target_value == nullptr ||
+                !std::holds_alternative<EntityIdValue>(*target_value)) {
+                return fail(error, "apply_untargetable action input type mismatch");
+            }
+            const NetId target = std::get<EntityIdValue>(*target_value).value;
+            if (target == 0u) {
+                return fail(error, "apply_untargetable target must not be null");
+            }
+            commands->push_back(ActionApplyUntargetableCommand{
+                action_source(self, event),
+                target,
+                provenance.status_instance_id,
                 provenance,
             });
             continue;

@@ -21,6 +21,7 @@ _Static_assert(
 _Static_assert(
     KernelEntityTriggerActionType_ApplyBlockActions == 12 &&
         KernelEntityTriggerActionType_ApplySuspendMovement == 13 &&
+        KernelEntityTriggerActionType_ApplyUntargetable == 14 &&
         KernelLocalActionResultReason_StatusBlocked == 17,
     "the ABI 102 enum values are appended");
 _Static_assert(

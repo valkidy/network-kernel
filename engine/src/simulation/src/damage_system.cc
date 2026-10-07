@@ -200,6 +200,13 @@ std::vector<ConfirmedDamage> apply_damage_applications(
         if (world.registry().all_of<Sheltered>(*target)) {
             continue;
         }
+        // The same for a status that makes it untargetable. Its hit volumes
+        // are already out of every query, so this only catches what was
+        // already on its way: a rewound shot at where it stood a moment ago,
+        // a damage-over-time tick, an area effect resolved before it.
+        if (status_untargetable(world, *target)) {
+            continue;
+        }
         const std::uint16_t hp_before =
             world.registry().get<Health>(*target).hp;
         if (!world.apply_damage(damage.target_net_id, damage.damage)) {
