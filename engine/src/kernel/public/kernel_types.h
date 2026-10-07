@@ -21,6 +21,14 @@
  *     reserve already full -- is rejected (GraphRejected) and costs no item.
  *     KernelActionDefinition is embedded in every trigger definition, so
  *     every managed mirror of those shifts.
+ *     Game messages: Kernel_SendGameMessage / Kernel_PollGameMessages on a
+ *     client (or a listen host's own player) and Kernel_ServerSendGameMessage
+ *     / Kernel_ServerPollGameMessages on a server carry an opaque, typed body
+ *     of at most KERNEL_MAX_GAME_MESSAGE_BYTES between a client and
+ *     game_server, either way, reliably and in order. The kernel never reads
+ *     the body. Behind KERNEL_CAPABILITY_GAME_MESSAGES; KernelAbiInfo gained
+ *     game_message_size, appended. Packet schema 27 adds the GameMessage
+ *     packet.
  * 100: pull strength. KernelActionDefinition gained pull_strength, appended
  *     after spawn_placement and read only by apply_pull: a fixed number
  *     weighed against the target's impulse_resistance, as apply_impulse's
@@ -312,6 +320,9 @@
 #define KERNEL_CAPABILITY_SERVER_ENTITY_REVIVE UINT64_C(0x0000400000000000)
 #define KERNEL_CAPABILITY_SERVER_INVENTORY_CLEAR UINT64_C(0x0000800000000000)
 #define KERNEL_CAPABILITY_LOCAL_SHELTER_STATE UINT64_C(0x0002000000000000)
+/* Kernel_SendGameMessage, Kernel_PollGameMessages,
+ * Kernel_ServerSendGameMessage and Kernel_ServerPollGameMessages (ABI 101). */
+#define KERNEL_CAPABILITY_GAME_MESSAGES UINT64_C(0x0004000000000000)
 /* Kernel_PollLogMessages. Additive within ABI 93: check this flag, not the
  * version, before calling it. */
 #define KERNEL_CAPABILITY_LOG_CAPTURE UINT64_C(0x0001000000000000)
@@ -525,6 +536,7 @@ typedef struct KernelAbiInfo {
     uint32_t status_effect_view_size;
     uint32_t local_weapon_state_size;
     uint32_t local_shelter_state_size;
+    uint32_t game_message_size;
 } KernelAbiInfo;
 
 typedef struct KernelBuildInfo {
@@ -2585,6 +2597,28 @@ struct KernelEntityTemplateDefinition {
      * last sighting and may still come looking. */
     uint32_t shelter_hides_occupants;
 };
+
+/* The largest body a game message may carry. */
+#define KERNEL_MAX_GAME_MESSAGE_BYTES 512u
+
+/*
+ * A message between a client and game_server, in either direction. The kernel
+ * delivers it reliably and in order and never reads `payload`: what
+ * message_type means, and how its body is laid out, is the game's.
+ *
+ * Read on a server (Kernel_ServerPollGameMessages), `peer` is the sender and
+ * `player_net_id` its player, filled in by the kernel from the session -- never
+ * from anything the client wrote. Read on a client (Kernel_PollGameMessages),
+ * both are 0.
+ */
+typedef struct KernelGameMessage {
+    uint32_t struct_size;
+    uint32_t peer;
+    uint32_t player_net_id;
+    uint32_t message_type;
+    uint32_t payload_size;
+    uint8_t payload[KERNEL_MAX_GAME_MESSAGE_BYTES];
+} KernelGameMessage;
 
 typedef struct KernelEvent {
     KernelEventType type;

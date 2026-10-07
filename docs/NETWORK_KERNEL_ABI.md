@@ -19,7 +19,17 @@ the oldest within it, and added `KernelEntityTriggerActionType_RefillWeaponReser
 with `reserve_refill_count` / `reserve_refill_percent` appended to
 `KernelActionDefinition`: an item's `on_item_used` refills the user's active
 weapon's reserve magazines, and a use that would refill nothing is rejected
-before the item is spent. ABI 100 appended `pull_strength` to
+before the item is spent. ABI 101 also added game messages behind
+`KERNEL_CAPABILITY_GAME_MESSAGES` (bit 50, `0x0004000000000000`):
+`Kernel_SendGameMessage` / `Kernel_PollGameMessages` on a client or a listen
+host's own player, `Kernel_ServerSendGameMessage` /
+`Kernel_ServerPollGameMessages` on a server. A `KernelGameMessage` carries a
+game-defined `message_type` and an opaque body of at most
+`KERNEL_MAX_GAME_MESSAGE_BYTES` (512), reliably and in order; the kernel never
+reads the body, and a server reports the sender from the session. Each queue
+holds 256 messages; one past that is dropped with Error event code 34.
+`KernelAbiInfo` appended `game_message_size`; packet schema 27 adds the
+GameMessage packet (31). ABI 100 appended `pull_strength` to
 `KernelActionDefinition`. ABI 98
 appended the tornado shape and motion fields to
 `KernelAreaEffectMechanicsDefinition`. ABI 99 appended `hover_height_meters`

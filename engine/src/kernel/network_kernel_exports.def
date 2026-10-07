@@ -65,6 +65,10 @@ EXPORTS
     Kernel_CopyOwnedInventoryContainers
     Kernel_CopyInventorySlots
     Kernel_PollGameplayRequestOutcomes
+    Kernel_SendGameMessage
+    Kernel_PollGameMessages
+    Kernel_ServerSendGameMessage
+    Kernel_ServerPollGameMessages
     Kernel_PollInventoryDeltas
     Kernel_ServerDestroyEntity
     Kernel_ServerSetEntityTransform

@@ -1815,6 +1815,51 @@ bool decode_status_effect_state_packet(
     return true;
 }
 
+std::vector<std::uint8_t> encode_game_message_packet(
+    const GameMessagePacket& message,
+    std::uint32_t sequence) {
+    protocol_internal::PacketWriter payload;
+    payload.reserve(8u + message.payload.size());
+    payload.write_u32(message.message_type);
+    payload.write_u32(static_cast<std::uint32_t>(message.payload.size()));
+    if (!message.payload.empty()) {
+        payload.write_bytes(message.payload.data(), message.payload.size());
+    }
+    return protocol_internal::wrap_packet(
+        MessageType::kGameMessage, payload.bytes(), sequence);
+}
+
+bool decode_game_message_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    GameMessagePacket* out_message) {
+    const std::uint8_t* payload = nullptr;
+    std::size_t payload_size = 0;
+    if (out_message == nullptr ||
+        !protocol_internal::unwrap_packet(
+            data, size, MessageType::kGameMessage, &payload, &payload_size)) {
+        return false;
+    }
+    protocol_internal::PacketReader reader(payload, payload_size);
+    GameMessagePacket message;
+    std::uint32_t body_size = 0;
+    if (!reader.read_u32(&message.message_type) ||
+        !reader.read_u32(&body_size) ||
+        body_size > KERNEL_MAX_GAME_MESSAGE_BYTES ||
+        payload_size != 8u + body_size) {
+        return false;
+    }
+    message.payload.resize(body_size);
+    if (body_size != 0u && !reader.read_bytes(message.payload.data(), body_size)) {
+        return false;
+    }
+    if (!reader.done()) {
+        return false;
+    }
+    *out_message = std::move(message);
+    return true;
+}
+
 std::vector<std::uint8_t> encode_gameplay_request_packet(
     const KernelGameplayRequest& request,
     std::uint32_t sequence) {

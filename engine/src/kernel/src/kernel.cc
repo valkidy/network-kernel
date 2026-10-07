@@ -5573,6 +5573,146 @@ bool KernelEngine::submit_gameplay_request(
     return true;
 }
 
+namespace {
+
+// A game message queue past this is a peer sending faster than game_server
+// drains, or nobody draining at all; either way, more would only grow memory.
+constexpr std::size_t kMaxQueuedGameMessages = 256;
+
+bool valid_game_message_body(const std::uint8_t* payload, std::uint32_t size) {
+    return size <= KERNEL_MAX_GAME_MESSAGE_BYTES &&
+        (size == 0u || payload != nullptr);
+}
+
+std::uint32_t drain_game_messages(
+    std::deque<KernelGameMessage>* queue,
+    KernelGameMessage* out_messages,
+    std::uint32_t max_messages) {
+    if (out_messages == nullptr || max_messages == 0u) return 0u;
+    std::uint32_t copied = 0;
+    while (copied < max_messages && !queue->empty()) {
+        out_messages[copied++] = queue->front();
+        queue->pop_front();
+    }
+    return copied;
+}
+
+}  // namespace
+
+void KernelEngine::enqueue_game_message(
+    std::deque<KernelGameMessage>* queue,
+    PeerId peer,
+    NetId player_net_id,
+    std::uint32_t message_type,
+    const std::uint8_t* payload,
+    std::uint32_t payload_size) {
+    if (queue->size() >= kMaxQueuedGameMessages) {
+        push_event(KernelEventType_Error, player_net_id, peer, 34);
+        return;
+    }
+    KernelGameMessage message{};
+    message.struct_size = sizeof(message);
+    message.peer = peer;
+    message.player_net_id = player_net_id;
+    message.message_type = message_type;
+    message.payload_size = payload_size;
+    if (payload_size != 0u) {
+        std::memcpy(message.payload, payload, payload_size);
+    }
+    queue->push_back(message);
+}
+
+bool KernelEngine::send_game_message(
+    std::uint32_t message_type,
+    const std::uint8_t* payload,
+    std::uint32_t payload_size) {
+    if (!valid_game_message_body(payload, payload_size)) return false;
+    if (config_.mode == KernelMode_ListenServer) {
+        // The host's own player: no wire between it and its own server.
+        if (!running_ || local_listen_session_.player == 0u) return false;
+        enqueue_game_message(
+            &server_game_messages_,
+            kLocalListenPeerId,
+            local_listen_session_.player,
+            message_type,
+            payload,
+            payload_size);
+        return true;
+    }
+    if (config_.mode != KernelMode_Client || !has_welcome_ ||
+        transport_ == nullptr) {
+        return false;
+    }
+    GameMessagePacket message;
+    message.message_type = message_type;
+    message.payload.assign(payload, payload + payload_size);
+    const std::vector<std::uint8_t> packet =
+        encode_game_message_packet(message, next_packet_sequence_++);
+    if (!transport_->Send(
+            kServerPeerId,
+            packet.data(),
+            static_cast<std::uint32_t>(packet.size()),
+            SendMode::kReliable,
+            ChannelId::kReliableEvent)) {
+        return false;
+    }
+    record_sent_packet(
+        static_cast<std::uint32_t>(packet.size()),
+        SendMode::kReliable,
+        ChannelId::kReliableEvent);
+    return true;
+}
+
+std::uint32_t KernelEngine::poll_game_messages(
+    KernelGameMessage* out_messages,
+    std::uint32_t max_messages) {
+    return drain_game_messages(&client_game_messages_, out_messages, max_messages);
+}
+
+bool KernelEngine::server_send_game_message(
+    PeerId peer,
+    std::uint32_t message_type,
+    const std::uint8_t* payload,
+    std::uint32_t payload_size) {
+    if (!running_ || !is_server_mode(config_.mode) ||
+        !valid_game_message_body(payload, payload_size)) {
+        return false;
+    }
+    if (config_.mode == KernelMode_ListenServer && peer == kLocalListenPeerId) {
+        enqueue_game_message(
+            &client_game_messages_, 0u, 0u, message_type, payload, payload_size);
+        return true;
+    }
+    const PeerSession* session = find_session(peer);
+    if (session == nullptr || !session->welcomed || transport_ == nullptr) {
+        return false;
+    }
+    GameMessagePacket message;
+    message.message_type = message_type;
+    message.payload.assign(payload, payload + payload_size);
+    const std::vector<std::uint8_t> packet =
+        encode_game_message_packet(message, next_packet_sequence_++);
+    if (!transport_->Send(
+            peer,
+            packet.data(),
+            static_cast<std::uint32_t>(packet.size()),
+            SendMode::kReliable,
+            ChannelId::kReliableEvent)) {
+        return false;
+    }
+    record_sent_packet(
+        static_cast<std::uint32_t>(packet.size()),
+        SendMode::kReliable,
+        ChannelId::kReliableEvent);
+    return true;
+}
+
+std::uint32_t KernelEngine::server_poll_game_messages(
+    KernelGameMessage* out_messages,
+    std::uint32_t max_messages) {
+    return drain_game_messages(&server_game_messages_, out_messages, max_messages);
+}
+
 bool KernelEngine::get_item_instance(
     KernelItemInstanceId id,
     KernelItemInstanceView* out_view) const {
@@ -6357,6 +6497,8 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     processed_gameplay_requests_.clear();
     pending_gameplay_request_outcomes_.clear();
     pending_network_gameplay_outcomes_.clear();
+    server_game_messages_.clear();
+    client_game_messages_.clear();
     physics_entity_colliders_.clear();
     prediction_proxy_collider_ids_.clear();
     prediction_obstacle_collider_ids_.clear();
@@ -6558,6 +6700,23 @@ void KernelEngine::poll_transport() {
                 send_inventory_snapshot(
                     mutable_session,
                     inventory_request.inventory_container_id);
+                continue;
+            }
+            GameMessagePacket game_message;
+            if (decode_game_message_packet(
+                    transport_event.payload.data(),
+                    transport_event.payload.size(),
+                    &game_message)) {
+                // Who sent it is the session's word, never the packet's.
+                if (session != nullptr && session->welcomed) {
+                    enqueue_game_message(
+                        &server_game_messages_,
+                        transport_event.peer,
+                        session->player,
+                        game_message.message_type,
+                        game_message.payload.data(),
+                        static_cast<std::uint32_t>(game_message.payload.size()));
+                }
                 continue;
             }
             KernelGameplayRequest request{};
@@ -7025,6 +7184,22 @@ void KernelEngine::handle_client_reliable_event(const TransportEvent& transport_
             &inventory_delta)) {
         record_packet_deserialization_cost(elapsed_cost_us(decode_start));
         handle_client_inventory_delta_batch(inventory_delta);
+        return;
+    }
+    GameMessagePacket game_message;
+    decode_start = std::chrono::steady_clock::now();
+    if (decode_game_message_packet(
+            transport_event.payload.data(),
+            transport_event.payload.size(),
+            &game_message)) {
+        record_packet_deserialization_cost(elapsed_cost_us(decode_start));
+        enqueue_game_message(
+            &client_game_messages_,
+            0u,
+            0u,
+            game_message.message_type,
+            game_message.payload.data(),
+            static_cast<std::uint32_t>(game_message.payload.size()));
         return;
     }
     KernelGameplayRequestOutcome gameplay_outcome{};

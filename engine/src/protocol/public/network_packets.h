@@ -376,6 +376,22 @@ bool decode_status_effect_state_packet(
     std::size_t size,
     StatusEffectStatePacket* out_packet);
 
+// The kernel's view of a game message on the wire: a game-defined type and an
+// opaque body of at most KERNEL_MAX_GAME_MESSAGE_BYTES.
+struct GameMessagePacket {
+    std::uint32_t message_type = 0;
+    std::vector<std::uint8_t> payload;
+};
+
+std::vector<std::uint8_t> encode_game_message_packet(
+    const GameMessagePacket& message,
+    std::uint32_t sequence = 0);
+
+bool decode_game_message_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    GameMessagePacket* out_message);
+
 std::vector<std::uint8_t> encode_gameplay_request_packet(
     const KernelGameplayRequest& request,
     std::uint32_t sequence = 0);

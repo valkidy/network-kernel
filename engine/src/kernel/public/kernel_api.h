@@ -370,6 +370,45 @@ uint32_t Kernel_PollGameplayRequestOutcomes(
     KernelGameplayRequestOutcome* out_outcomes,
     uint32_t max_outcomes);
 
+/*
+ * Game messages; see KernelGameMessage. Behind KERNEL_CAPABILITY_GAME_MESSAGES.
+ *
+ * Kernel_SendGameMessage sends from the local player to game_server: over the
+ * network from a welcomed client, straight into the server's queue on a listen
+ * host. False on a dedicated server, before a client is welcomed, for a body
+ * over KERNEL_MAX_GAME_MESSAGE_BYTES, or a null body with a non-zero size.
+ * Kernel_PollGameMessages drains what game_server sent the local player.
+ *
+ * Kernel_ServerSendGameMessage sends to one peer (a listen host's own peer
+ * included); false for a peer with no welcomed session. Kernel_ServerPollGameMessages
+ * drains what clients sent, oldest first. Each queue holds at most 256
+ * messages; one arriving past that is dropped with an Error event, code 34.
+ *
+ * The poll calls fill whole KernelGameMessage records and return how many.
+ */
+bool Kernel_SendGameMessage(
+    KernelHandle* kernel,
+    uint32_t message_type,
+    const uint8_t* payload,
+    uint32_t payload_size);
+
+uint32_t Kernel_PollGameMessages(
+    KernelHandle* kernel,
+    KernelGameMessage* out_messages,
+    uint32_t max_messages);
+
+bool Kernel_ServerSendGameMessage(
+    KernelHandle* kernel,
+    uint32_t peer,
+    uint32_t message_type,
+    const uint8_t* payload,
+    uint32_t payload_size);
+
+uint32_t Kernel_ServerPollGameMessages(
+    KernelHandle* kernel,
+    KernelGameMessage* out_messages,
+    uint32_t max_messages);
+
 uint32_t Kernel_PollInventoryDeltas(
     KernelHandle* kernel,
     KernelInventoryContainerId container_id,

@@ -277,6 +277,22 @@ public:
         std::int32_t health_delta,
         std::uint64_t event_time_us);
     bool submit_gameplay_request(const KernelGameplayRequest& request);
+    // Game messages; see Kernel_SendGameMessage.
+    bool send_game_message(
+        std::uint32_t message_type,
+        const std::uint8_t* payload,
+        std::uint32_t payload_size);
+    std::uint32_t poll_game_messages(
+        KernelGameMessage* out_messages,
+        std::uint32_t max_messages);
+    bool server_send_game_message(
+        PeerId peer,
+        std::uint32_t message_type,
+        const std::uint8_t* payload,
+        std::uint32_t payload_size);
+    std::uint32_t server_poll_game_messages(
+        KernelGameMessage* out_messages,
+        std::uint32_t max_messages);
     bool get_item_instance(
         KernelItemInstanceId id,
         KernelItemInstanceView* out_view) const;
@@ -1223,6 +1239,18 @@ private:
     ItemStore item_store_;
     std::vector<KernelGameplayRequestOutcome> processed_gameplay_requests_;
     std::deque<KernelGameplayRequestOutcome> pending_gameplay_request_outcomes_;
+    // Game messages waiting for game_server (server) and for the local player
+    // (client, or a listen host's own player). Bounded; see
+    // enqueue_game_message.
+    std::deque<KernelGameMessage> server_game_messages_;
+    std::deque<KernelGameMessage> client_game_messages_;
+    void enqueue_game_message(
+        std::deque<KernelGameMessage>* queue,
+        PeerId peer,
+        NetId player_net_id,
+        std::uint32_t message_type,
+        const std::uint8_t* payload,
+        std::uint32_t payload_size);
     std::vector<std::pair<PeerId, KernelGameplayRequestOutcome>>
         pending_network_gameplay_outcomes_;
     struct ClientInventorySnapshotAssembly {
