@@ -1433,10 +1433,8 @@ record_outcome:
     return true;
 }
 
-void ItemGameplaySystem::drop_carried_props(
-    KernelEngine& engine,
-    NetId carrier_net_id,
-    const glm::vec3& position) const {
+std::vector<entt::entity> ItemGameplaySystem::carried_by(
+    KernelEngine& engine, NetId carrier_net_id) const {
     std::vector<entt::entity> carried;
     auto view = engine.world_.registry().view<CarriedBy, PropWorldMode>();
     for (const entt::entity entity : view) {
@@ -1445,24 +1443,50 @@ void ItemGameplaySystem::drop_carried_props(
             carried.push_back(entity);
         }
     }
-    for (const entt::entity entity : carried) {
-        if (!engine.world_.registry().all_of<NetworkIdentity, Transform>(entity)) {
-            continue;
-        }
-        const NetId prop_net_id =
-            engine.world_.registry().get<NetworkIdentity>(entity).net_id;
-        engine.world_.registry().get<Transform>(entity).position = position;
-        if (const ItemInstanceRef* item =
-                engine.world_.registry().try_get<ItemInstanceRef>(entity)) {
-            engine.item_store_.set_world_mode(
-                item->item_instance_id, KernelWorldItemMode_Placed);
-        }
-        engine.world_.registry().emplace_or_replace<PropWorldMode>(
-            entity, PropWorldMode{PropMode::kPlaced});
-        engine.world_.registry().remove<CarriedBy>(entity);
-        set_prop_collision_enabled(engine, prop_net_id, true);
-        engine.queue_prop_state_change(prop_net_id);
+    return carried;
+}
+
+void ItemGameplaySystem::drop_carried_props(
+    KernelEngine& engine,
+    NetId carrier_net_id,
+    const glm::vec3& position) const {
+    for (const entt::entity entity : carried_by(engine, carrier_net_id)) {
+        set_down_carried_prop(engine, entity, position);
     }
+}
+
+void ItemGameplaySystem::drop_carried_props(
+    KernelEngine& engine,
+    NetId carrier_net_id) const {
+    for (const entt::entity entity : carried_by(engine, carrier_net_id)) {
+        if (!engine.world_.registry().all_of<Transform>(entity)) continue;
+        // Where it is held: the carrier's position plus the carry offset,
+        // as of the last carry update.
+        const glm::vec3 held = engine.world_.registry().get<Transform>(entity).position;
+        set_down_carried_prop(engine, entity, engine.grounded_drop_point(held));
+    }
+}
+
+void ItemGameplaySystem::set_down_carried_prop(
+    KernelEngine& engine,
+    entt::entity entity,
+    const glm::vec3& position) const {
+    if (!engine.world_.registry().all_of<NetworkIdentity, Transform>(entity)) {
+        return;
+    }
+    const NetId prop_net_id =
+        engine.world_.registry().get<NetworkIdentity>(entity).net_id;
+    engine.world_.registry().get<Transform>(entity).position = position;
+    if (const ItemInstanceRef* item =
+            engine.world_.registry().try_get<ItemInstanceRef>(entity)) {
+        engine.item_store_.set_world_mode(
+            item->item_instance_id, KernelWorldItemMode_Placed);
+    }
+    engine.world_.registry().emplace_or_replace<PropWorldMode>(
+        entity, PropWorldMode{PropMode::kPlaced});
+    engine.world_.registry().remove<CarriedBy>(entity);
+    set_prop_collision_enabled(engine, prop_net_id, true);
+    engine.queue_prop_state_change(prop_net_id);
 }
 
 void ItemGameplaySystem::update_carried_props(KernelEngine& engine) const {

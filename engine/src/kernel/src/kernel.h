@@ -287,6 +287,9 @@ public:
         KernelItemInstanceId id,
         const KernelVec3& position,
         std::uint32_t* out_prop_entity_id);
+    // Where something let go of at `point` comes to rest: on the terrain
+    // beneath it, or at the point when there is none in reach.
+    glm::vec3 grounded_drop_point(const glm::vec3& point) const;
     bool server_drop_tagged_items(
         std::uint32_t owner_entity_id,
         const KernelVec3* position,

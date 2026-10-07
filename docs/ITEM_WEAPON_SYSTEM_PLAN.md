@@ -270,7 +270,8 @@ Unity 端（不在這個 repo）：slot 數 0 時的動畫、瞄準 IK、HUD 需
 - 現有 API 不能直接用的原因：`Kernel_ServerCreateWorldItem` 會建立新的物品（id 不同、portable state 不帶過去）；Place 會拒絕已經死亡的玩家（`InstigatorDead`）。
 - **離線掉落（2026-10-08，使用者決定方案 A、任務道具掉在原地）**：kernel 在斷線處理中、刪除玩家之前，用同一個 `Kernel_ServerDropTaggedItems` 放下帶標記的物品（在建築裡時用進入時的位置），然後刪除這個玩家的所有容器。沒有標記的物品跟著玩家消失。之前斷線路徑直接刪除玩家，容器和物品會一直留在 item store 裡沒有擁有者。
   死亡掉落也改呼叫同一個 API（game_server 不再自己排位置），兩者的排法一致。已經在死亡時掉落過的，斷線時不會再掉一次。測試：`disconnect_drop_test`。
-- 仍未處理：死亡時丟下 carry 中的 prop。
+- **死亡或離線時放下 carry 中的 prop（2026-10-08，使用者採建議方案）**：kernel 在 `enter_death_state`（真正死亡、送出 `EntityDied` 的地方）和斷線處理中，把搬運中的 prop 放在原本拿著的位置（搬運者位置 + `carry_offset`）正下方的地面上，改回放置狀態、打開碰撞、移除搬運關係並同步給 client。所有搬運中的 prop 都放下，不看 `drop_tag`。只是放下，不是丟出。進入帳篷或營地時的放下方式不變（腳下）。
+  之前：死亡時 prop 繼續跟著屍體，死者無法送請求、別人也拿不走；斷線時 prop 停在半空、被不存在的玩家「搬運」，永久卡住。shipped catalog 目前沒有任何可搬運的東西，所以這是預防性修正。測試：`carry_drop_test`。
 
 ### 3.9 操作介面（Unity）
 

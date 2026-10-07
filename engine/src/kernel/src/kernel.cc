@@ -5482,6 +5482,24 @@ constexpr float kDroppedItemHeight = 0.1f;
 constexpr float kDroppedItemMaxFall = 200.0f;
 }  // namespace
 
+glm::vec3 KernelEngine::grounded_drop_point(const glm::vec3& point) const {
+    // On the ground under the point, not at it: something let go of in the
+    // air (a death in a knockback flight) would otherwise hang there, out of
+    // reach, since a world prop does not fall. No ground within reach keeps
+    // the point as given.
+    if (physics_world() == nullptr) {
+        return point;
+    }
+    ground_follow::Config ground{};
+    ground.hover_height = kDroppedItemHeight;
+    ground.filter = collision_filter_from_mask(KERNEL_COLLISION_LAYER_TERRAIN);
+    ground_follow::State landed{point, false};
+    if (!ground_follow::settle(*physics_world(), ground, kDroppedItemMaxFall, &landed)) {
+        return point;
+    }
+    return landed.position;
+}
+
 bool KernelEngine::server_drop_inventory_item(
     KernelItemInstanceId id,
     const KernelVec3& position,
@@ -5504,20 +5522,8 @@ bool KernelEngine::server_drop_inventory_item(
     create.entity_template_id = definition->entity_template_id;
     create.position = position;
     create.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
-    // It lies on the ground under the point, not at it: a player who dies in
-    // the air (a knockback flight) would otherwise leave it hanging there,
-    // out of reach. A world prop does not fall. No ground within reach keeps
-    // the point as given.
-    if (physics_world() != nullptr) {
-        ground_follow::Config ground{};
-        ground.hover_height = kDroppedItemHeight;
-        ground.filter = collision_filter_from_mask(KERNEL_COLLISION_LAYER_TERRAIN);
-        ground_follow::State landed{
-            glm::vec3{position.x, position.y, position.z}, false};
-        if (ground_follow::settle(*physics_world(), ground, kDroppedItemMaxFall, &landed)) {
-            create.position.y = landed.position.y;
-        }
-    }
+    create.position.y =
+        grounded_drop_point(glm::vec3{position.x, position.y, position.z}).y;
     std::uint32_t prop_id = 0;
     if (!EntityLifecycleSystem{}.create_entity(*this, create, &prop_id, false)) {
         return false;
@@ -7202,6 +7208,9 @@ void KernelEngine::handle_server_disconnect(const TransportEvent& transport_even
     // so do its containers, so nothing is left owned by no one.
     const NetId leaving = session->player;
     (void)server_drop_tagged_items(leaving, nullptr, nullptr);
+    // What it had in its hands is let go of where it was held; left carried,
+    // it would hang there, claimed by no one who still exists.
+    ItemGameplaySystem{}.drop_carried_props(*this, leaving);
     for (const KernelInventoryContainerId container_id :
          item_store_.containers_for_owner(leaving)) {
         (void)item_store_.destroy_container(container_id);

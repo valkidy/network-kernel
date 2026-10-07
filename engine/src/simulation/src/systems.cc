@@ -2630,6 +2630,10 @@ void EntityLifecycleSystem::enter_death_state(
             damage.target_net_id,
             damage.source_peer,
             damage.source_net_id);
+        // What it had in its hands falls where it was held. The dead make no
+        // requests, so left carried it would stay out of everyone's reach
+        // until a revive -- or for good, with none to come.
+        ItemGameplaySystem{}.drop_carried_props(engine, damage.target_net_id);
         // A corpse holds still. The knockback and the stagger that killed it
         // would otherwise carry it on, and a dormant one keeps both into its
         // next life. Status effects run out on their own: their removal fires
