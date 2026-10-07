@@ -979,6 +979,7 @@ cc_test(
     ]) + [
         "gameplay_catalog/gameplay_catalog.yaml",
         "//game_server/gameplay_catalog/mesh_assets:cooked_mesh_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:locomotion_skeleton_assets",
         "//game_server/gameplay_catalog/skeleton_assets:simplified_biped_assets",
         "//game_server/gameplay_catalog/skeleton_assets:simplified_quadruped_assets",
         "//game_server/gameplay_catalog/skeleton_assets:simplified_tripod_assets",
@@ -1050,6 +1051,7 @@ cc_test(
     ]) + [
         "gameplay_catalog/gameplay_catalog.yaml",
         "//game_server/gameplay_catalog/mesh_assets:cooked_mesh_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:locomotion_skeleton_assets",
         "//game_server/gameplay_catalog/skeleton_assets:simplified_biped_assets",
         "//game_server/gameplay_catalog/skeleton_assets:simplified_quadruped_assets",
         "//game_server/gameplay_catalog/skeleton_assets:simplified_tripod_assets",
@@ -1075,6 +1077,7 @@ cc_test(
     ]) + [
         "gameplay_catalog/gameplay_catalog.yaml",
         "//game_server/gameplay_catalog/mesh_assets:cooked_mesh_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:locomotion_skeleton_assets",
         "//game_server/gameplay_catalog/skeleton_assets:simplified_biped_assets",
         "//game_server/gameplay_catalog/skeleton_assets:simplified_quadruped_assets",
         "//game_server/gameplay_catalog/skeleton_assets:simplified_tripod_assets",
@@ -1100,6 +1103,7 @@ cc_test(
     ]) + [
         "gameplay_catalog/gameplay_catalog.yaml",
         "//game_server/gameplay_catalog/mesh_assets:cooked_mesh_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:locomotion_skeleton_assets",
         "//game_server/gameplay_catalog/skeleton_assets:simplified_biped_assets",
         "//game_server/gameplay_catalog/skeleton_assets:simplified_quadruped_assets",
         "//game_server/gameplay_catalog/skeleton_assets:simplified_tripod_assets",
