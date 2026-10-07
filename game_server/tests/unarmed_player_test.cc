@@ -52,6 +52,8 @@ void require_impl(bool condition, int line, const char* text) {
 constexpr float kTickSeconds = 1.0f / 30.0f;
 constexpr std::uint8_t kRifle = 0;
 constexpr std::uint8_t kMeteorStaff = 13;
+// The staff charges: a hold of less than this is cancelled and casts nothing.
+constexpr int kStaffChargeTicks = 20;
 
 std::filesystem::path catalog_root() {
     const char* test_srcdir = std::getenv("TEST_SRCDIR");
@@ -352,7 +354,7 @@ int main() {
     const std::uint16_t grunt_after_cleared = entity_state(arena.kernel, arena.grunt).hp;
 
     // The one weapon left still works.
-    arena.hold(kMeteorStaff, KernelActionBinding_PrimaryFire, 2);
+    arena.hold(kMeteorStaff, KernelActionBinding_PrimaryFire, kStaffChargeTicks + 2);
     print_state("staff only, fire id 13", arena);
     // The control for every "unchanged" above: the staff does fire.
     require(entity_state(arena.kernel, arena.player).ammo[0] == 2u);
@@ -396,7 +398,7 @@ int main() {
     arena.hold(kRifle, KernelActionBinding_PrimaryFire, 9);
     print_state("unarmed, fire id 0", arena);
     still_unarmed("unarmed fire id 0");
-    arena.hold(kMeteorStaff, KernelActionBinding_PrimaryFire, 2);
+    arena.hold(kMeteorStaff, KernelActionBinding_PrimaryFire, kStaffChargeTicks + 2);
     still_unarmed("unarmed fire id 13");
     arena.hold(kRifle, KernelActionBinding_Reload, 1);
     still_unarmed("unarmed reload");
@@ -410,7 +412,7 @@ int main() {
     combat.reserve_magazines[0] = 6;
     require(Kernel_ServerSetEntityCombatState(arena.kernel, arena.player, &combat));
     arena.tick();
-    arena.hold(kMeteorStaff, KernelActionBinding_PrimaryFire, 2);
+    arena.hold(kMeteorStaff, KernelActionBinding_PrimaryFire, kStaffChargeTicks + 2);
     print_state("re-armed, fire id 13", arena);
     require(entity_state(arena.kernel, arena.player).ammo[0] == 1u);
 

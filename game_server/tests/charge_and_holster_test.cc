@@ -1,7 +1,6 @@
 // P5, design D21: the charge trigger mode (K7) and the holstered auto-reload
-// (K8), on a dedicated server with the shipped catalog -- the meteor staff's
-// cast turned into a charge in a temporary copy, since no shipped weapon
-// charges yet.
+// (K8), on a dedicated server with the shipped catalog, whose meteor staff
+// charges.
 //
 // K7: hold to charge, release to cast. A release before commit_offset_ticks
 // cancels and spends nothing; holding past it does not cast by itself, the
@@ -54,26 +53,19 @@ std::filesystem::path catalog_root() {
         "gameplay_catalog";
 }
 
-// The shipped catalog with meteor_staff_cast made a charge.
-gs::GameServerGameplayConfig catalog_with_charged_staff() {
-    const char* tmp = std::getenv("TEST_TMPDIR");
-    require(tmp != nullptr);
-    const std::filesystem::path root = std::filesystem::path(tmp) / "catalog_charge";
-    std::filesystem::remove_all(root);
-    std::filesystem::copy(catalog_root(), root, std::filesystem::copy_options::recursive);
-    std::ofstream(root / "action_templates" / "meteor_staff_cast.yaml", std::ios::trunc)
-        << "id: 4119\n"
-           "name: meteor_staff_cast\n"
-           "trigger_mode: charge\n"
-           "flags: [cancel_on_death, cancel_on_weapon_change]\n"
-           "ammo_cost_per_commit: 1\n"
-           "commit_offset_ticks: " << kChargeTicks << "\n"
-           "commit_interval_ticks: 30\n"
-           "max_commit_count: 1\n"
-           "recovery_ticks: 10\n"
-           "hold_input_timeout_ticks: 6\n";
-    return gs::load_gameplay_config_from_catalog_file(
-        (root / "gameplay_catalog.yaml").string());
+// The shipped catalog, whose meteor staff charges.
+gs::GameServerGameplayConfig shipped_catalog() {
+    const gs::GameServerGameplayConfig config = gs::load_gameplay_config_from_catalog_file(
+        (catalog_root() / "gameplay_catalog.yaml").string());
+    bool charges = false;
+    for (const gs::ActionTemplateConfig& action : config.action_templates) {
+        if (action.name == "meteor_staff_cast") {
+            charges = action.definition.trigger_mode == KernelActionTriggerMode_Charge &&
+                action.definition.commit_offset_ticks == static_cast<std::uint32_t>(kChargeTicks);
+        }
+    }
+    require(charges);
+    return config;
 }
 
 std::vector<std::uint8_t> read_ground_scene() {
@@ -163,7 +155,7 @@ std::uint32_t held_weapon(const KernelServerEntityState& state) {
 }  // namespace
 
 int main() {
-    const gs::GameServerGameplayConfig config = catalog_with_charged_staff();
+    const gs::GameServerGameplayConfig config = shipped_catalog();
     const std::vector<std::uint8_t> scene = read_ground_scene();
     KernelConfig kernel_config{};
     kernel_config.mode = KernelMode_DedicatedServer;

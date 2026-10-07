@@ -1,11 +1,16 @@
-# One meteor per press, one second apart.
+# Hold to charge, release to cast (design D21, trigger_mode charge): the
+# meteor falls where the staff points at the moment of release, if the press
+# was held for commit_offset_ticks (20 ticks, 0.67 s at 30 Hz). Released
+# sooner, it is cancelled and costs nothing. Held input has to keep arriving
+# within hold_input_timeout_ticks while charging. One meteor per press; casts
+# at least a second apart.
 id: 4119
 name: meteor_staff_cast
-trigger_mode: press
-flags: [cancel_on_death, cancel_on_weapon_change, cancel_before_first_commit]
+trigger_mode: charge
+flags: [cancel_on_death, cancel_on_weapon_change]
 ammo_cost_per_commit: 1
-commit_offset_ticks: 0
+commit_offset_ticks: 20
 commit_interval_ticks: 30
 max_commit_count: 1
 recovery_ticks: 10
-hold_input_timeout_ticks: 0
+hold_input_timeout_ticks: 6
