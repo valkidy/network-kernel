@@ -279,6 +279,13 @@ public:
     bool submit_gameplay_request(const KernelGameplayRequest& request);
     // Weapon containers (ABI 101): an owner's loadout is what its weapon
     // container holds. See sync_weapon_loadouts.
+    // Drop tags (K12); see Kernel_ServerSetItemDropTag.
+    bool server_set_item_drop_tag(KernelItemInstanceId id, std::uint8_t drop_tag);
+    bool server_clear_untagged_items(KernelInventoryContainerId container_id);
+    bool server_drop_inventory_item(
+        KernelItemInstanceId id,
+        const KernelVec3& position,
+        std::uint32_t* out_prop_entity_id);
     bool server_create_weapon_container(
         std::uint32_t owner_entity_id,
         KernelInventoryContainerId* out_container_id);

@@ -89,6 +89,7 @@ InventoryWireItem inventory_wire_item(const KernelItemInstanceView& view) {
         item.portable_values.push_back(
             portable_state_word(view.portable_state_fields[index]));
     }
+    item.drop_tag = view.drop_tag;
     return item;
 }
 
@@ -118,6 +119,7 @@ bool inventory_view_from_wire(
     view.slot = slot;
     view.inventory_container_id = container_id;
     view.next_use_tick = wire.next_use_tick;
+    view.drop_tag = wire.drop_tag;
     view.portable_state_field_count =
         item_template->portable_state_field_count;
     for (std::uint32_t index = 0;
@@ -5451,6 +5453,67 @@ bool KernelEngine::server_clear_inventory_container(
     return true;
 }
 
+bool KernelEngine::server_set_item_drop_tag(
+    KernelItemInstanceId id,
+    std::uint8_t drop_tag) {
+    return is_server_mode(config_.mode) && item_store_.set_drop_tag(id, drop_tag);
+}
+
+bool KernelEngine::server_clear_untagged_items(KernelInventoryContainerId container_id) {
+    if (!is_server_mode(config_.mode) || !item_store_.clear_untagged(container_id)) {
+        return false;
+    }
+    sync_weapon_loadouts();
+    return true;
+}
+
+bool KernelEngine::server_drop_inventory_item(
+    KernelItemInstanceId id,
+    const KernelVec3& position,
+    std::uint32_t* out_prop_entity_id) {
+    if (!is_server_mode(config_.mode) || out_prop_entity_id == nullptr ||
+        !std::isfinite(position.x) || !std::isfinite(position.y) ||
+        !std::isfinite(position.z)) {
+        return false;
+    }
+    const ItemInstanceRecord* item = item_store_.find_item(id);
+    const KernelItemTemplateDefinition* definition =
+        item == nullptr ? nullptr : item_store_.find_template(item->item_template_id);
+    if (item == nullptr || item->terminal ||
+        item->residency.kind != KernelItemResidency_Inventory ||
+        definition == nullptr || definition->entity_template_id == 0) {
+        return false;
+    }
+    KernelServerEntityCreateInfo create{};
+    create.struct_size = sizeof(create);
+    create.entity_template_id = definition->entity_template_id;
+    create.position = position;
+    create.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+    std::uint32_t prop_id = 0;
+    if (!EntityLifecycleSystem{}.create_entity(*this, create, &prop_id, false)) {
+        return false;
+    }
+    // The same instance goes down -- its id, portable state and drop tag --
+    // not a new one made in its likeness.
+    if (!item_store_.move_to_world(id, prop_id, KernelWorldItemMode_Placed)) {
+        server_destroy_entity(prop_id, KernelDespawnReason_Destroyed);
+        return false;
+    }
+    const std::optional<entt::entity> entity = world_.find_entity(prop_id);
+    world_.registry().emplace_or_replace<ItemTemplateRef>(
+        *entity, ItemTemplateRef{item->item_template_id});
+    world_.registry().emplace_or_replace<ItemInstanceRef>(*entity, ItemInstanceRef{id});
+    const ItemInstanceRecord* moved = item_store_.find_item(id);
+    if (moved == nullptr ||
+        !ItemGameplaySystem{}.decorate_item_prop(*this, prop_id, *moved)) {
+        server_destroy_entity(prop_id, KernelDespawnReason_Destroyed);
+        return false;
+    }
+    sync_weapon_loadouts();
+    *out_prop_entity_id = prop_id;
+    return true;
+}
+
 bool KernelEngine::server_create_weapon_container(
     std::uint32_t owner_entity_id,
     KernelInventoryContainerId* out_container_id) {
@@ -7167,6 +7230,9 @@ void KernelEngine::handle_client_inventory_delta_batch(
                 if ((record.changed_fields &
                      kInventoryChangePortableState) != 0u) {
                     merged.portable_values = record.item.portable_values;
+                }
+                if ((record.changed_fields & kInventoryChangeDropTag) != 0u) {
+                    merged.drop_tag = record.item.drop_tag;
                 }
                 if (!inventory_view_from_wire(
                         item_store_,

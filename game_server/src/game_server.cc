@@ -1,5 +1,6 @@
 #include "game_server/src/game_server.h"
 
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <spdlog/spdlog.h>
@@ -102,6 +103,24 @@ void GameServer::place_scene_props() {
             }
             spdlog::warn(
                 "scene prop not placed template={}", scene_prop.entity_template_id);
+        }
+    }
+    for (const SceneItemConfig& scene_item : config_.scene_items) {
+        KernelItemInstanceId item = 0;
+        std::uint32_t prop = 0;
+        if (!Kernel_ServerCreateWorldItem(
+                kernel_, scene_item.item_template_id, scene_item.quantity,
+                &scene_item.position, &item, &prop)) {
+            spdlog::warn("scene item not placed template={}", scene_item.item_template_id);
+            continue;
+        }
+        // A weapon lying on the map is a map weapon: it outlives a loadout
+        // being reapplied (D23) and, later, drops on death (D19).
+        for (const ItemTemplateConfig& candidate : config_.item_templates) {
+            if (candidate.definition.item_template_id == scene_item.item_template_id &&
+                candidate.definition.is_weapon != 0u) {
+                Kernel_ServerSetItemDropTag(kernel_, item, KERNEL_DROP_TAG_MAP_WEAPON);
+            }
         }
     }
     scene_props_placed_ = true;
@@ -216,7 +235,8 @@ bool GameServer::configure_player_inventory(
             return true;
         }
         container_id = existing.inventory_container_id;
-        if (!Kernel_ServerClearInventoryContainer(kernel_, container_id)) {
+        // Only what the loadout gave goes; a quest item stays (D23).
+        if (!Kernel_ServerClearUntaggedItems(kernel_, container_id)) {
             return false;
         }
     } else if (!Kernel_ServerCreateInventoryContainer(
@@ -232,13 +252,18 @@ bool GameServer::configure_player_inventory(
         picked != nullptr ? picked->items : actor_template.inventory_slots;
     for (const InventorySlotConfig& slot : slots) {
         KernelItemInstanceId item_instance_id = 0;
+        // A slot a kept quest item holds is not freed for the loadout: what
+        // no longer fits is not given.
         if (!Kernel_ServerCreateInventoryItem(
                 kernel_,
                 slot.item_template_id,
                 slot.quantity,
                 container_id,
                 &item_instance_id)) {
-            return false;
+            spdlog::info(
+                "loadout item did not fit player={} template={}",
+                net_id,
+                slot.item_template_id);
         }
     }
     return true;
@@ -259,11 +284,12 @@ bool GameServer::configure_player_weapons(std::uint32_t net_id, bool reset) cons
         }
     }
     if (weapons != 0u) {
-        // A join keeps what it has; a respawn or a new pick starts fresh.
+        // A join keeps what it has; a respawn or a new pick starts fresh --
+        // except for map weapons, which stay (D23).
         if (!reset) {
             return true;
         }
-        if (!Kernel_ServerClearInventoryContainer(kernel_, weapons)) {
+        if (!Kernel_ServerClearUntaggedItems(kernel_, weapons)) {
             return false;
         }
     } else if (!Kernel_ServerCreateWeaponContainer(kernel_, net_id, &weapons)) {
@@ -272,8 +298,38 @@ bool GameServer::configure_player_weapons(std::uint32_t net_id, bool reset) cons
     const PlayerLoadout* picked = loadout_.loadout_of(net_id);
     const std::vector<std::uint32_t>& weapon_items =
         picked != nullptr ? picked->weapon_items : default_weapon_items_;
+    // What is still in the container is a kept map weapon, by category.
+    std::array<KernelItemInstanceId, KERNEL_WEAPON_CATEGORY_COUNT> kept{};
+    {
+        KernelItemInstanceView held[KERNEL_WEAPON_CATEGORY_COUNT]{};
+        for (KernelItemInstanceView& view : held) view.struct_size = sizeof(view);
+        const std::uint32_t held_count = Kernel_CopyInventorySlots(
+            kernel_, weapons, held, KERNEL_WEAPON_CATEGORY_COUNT);
+        for (std::uint32_t index = 0; index < held_count; ++index) {
+            if (held[index].slot < KERNEL_WEAPON_CATEGORY_COUNT) {
+                kept[held[index].slot] = held[index].item_instance_id;
+            }
+        }
+    }
     bool all_placed = true;
     for (const std::uint32_t item_template_id : weapon_items) {
+        // The picked weapon takes its slot; a map weapon kept there goes to the
+        // player's feet, as a same-category pickup would put it (D23, D11).
+        std::uint8_t category = KERNEL_WEAPON_CATEGORY_COUNT;
+        for (const ItemTemplateConfig& candidate : config_.item_templates) {
+            if (candidate.definition.item_template_id == item_template_id) {
+                category = candidate.definition.weapon_category;
+            }
+        }
+        if (category < KERNEL_WEAPON_CATEGORY_COUNT && kept[category] != 0u) {
+            KernelServerEntityState me{};
+            me.struct_size = sizeof(me);
+            std::uint32_t prop = 0;
+            if (Kernel_ServerGetEntityState(kernel_, net_id, &me) &&
+                Kernel_ServerDropInventoryItem(kernel_, kept[category], &me.position, &prop)) {
+                kept[category] = 0u;
+            }
+        }
         KernelItemInstanceId item = 0;
         // Two default weapons of one category: the second has no slot.
         all_placed &= Kernel_ServerCreateInventoryItem(

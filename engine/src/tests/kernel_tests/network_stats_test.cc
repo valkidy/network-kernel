@@ -311,8 +311,9 @@ void inventory_replication_is_owner_only_delta_driven_and_idle_zero() {
     require(nonowner_inventory_packets == 0u);
     const std::uint64_t initial_bytes =
         server.network_stats_.inventory_snapshot_bytes_sent;
-    // 82 since packet schema 28 added the container kind byte.
-    require(initial_bytes == 82u);
+    // 82 since packet schema 28 added the container kind byte, 83 since 29
+    // added the one item's drop tag byte.
+    require(initial_bytes == 83u);
     server.flush_inventory_replication();
     require(!transport->PollClientEvent(event));
     require(server.network_stats_.inventory_snapshot_bytes_sent == initial_bytes);
@@ -331,7 +332,8 @@ void inventory_replication_is_owner_only_delta_driven_and_idle_zero() {
         }
     }
     require(owner_delta_batches == 1u);
-    require(server.network_stats_.inventory_delta_bytes_sent == 74u);
+    // 75 since packet schema 29: the Add record carries the item's drop tag.
+    require(server.network_stats_.inventory_delta_bytes_sent == 75u);
 }
 
 struct TrafficRow {

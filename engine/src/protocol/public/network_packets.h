@@ -98,10 +98,13 @@ struct StatusEffectStatePacket {
 inline constexpr std::uint16_t kInventoryChangeQuantity = 1u << 0;
 inline constexpr std::uint16_t kInventoryChangeCooldown = 1u << 1;
 inline constexpr std::uint16_t kInventoryChangePortableState = 1u << 2;
+// Packet schema 29.
+inline constexpr std::uint16_t kInventoryChangeDropTag = 1u << 3;
 inline constexpr std::uint16_t kInventoryChangeAll =
     kInventoryChangeQuantity |
     kInventoryChangeCooldown |
-    kInventoryChangePortableState;
+    kInventoryChangePortableState |
+    kInventoryChangeDropTag;
 
 struct InventoryWireItem {
     KernelItemInstanceId item_instance_id = 0;
@@ -109,6 +112,7 @@ struct InventoryWireItem {
     std::uint32_t quantity = 0;
     std::uint32_t next_use_tick = 0;
     std::vector<std::uint32_t> portable_values;
+    std::uint8_t drop_tag = 0;
 };
 
 struct InventoryDeltaRecord {

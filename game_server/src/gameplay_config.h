@@ -467,6 +467,16 @@ struct ScenePropConfig {
     KernelVec3 position{};
 };
 
+// An item lying on the map from the start (`scene_items:`), placed alongside
+// the scene props. A weapon item placed so is a map weapon
+// (KERNEL_DROP_TAG_MAP_WEAPON): it survives a loadout being reapplied.
+struct SceneItemConfig {
+    std::string item_template_ref;
+    std::uint32_t item_template_id = 0;
+    std::uint32_t quantity = 1;
+    KernelVec3 position{};
+};
+
 struct ReinforceBudgetConfig {
     std::uint32_t max_live_agents = 0;
 };
@@ -491,6 +501,7 @@ struct GameServerGameplayConfig {
     // unbounded, and a catalog with any on_alert spawner must author it.
     ReinforceBudgetConfig reinforce_budget;
     std::vector<ScenePropConfig> scene_props;
+    std::vector<SceneItemConfig> scene_items;
     // Every agent on the server. Spawners that fill room when there is room --
     // patrols, nests, on_alert -- are held to it; mission and world rules and
     // action-graph spawns count toward it but are never refused, so it is a

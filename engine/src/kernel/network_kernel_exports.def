@@ -65,6 +65,9 @@ EXPORTS
     Kernel_CopyOwnedInventoryContainers
     Kernel_CopyInventorySlots
     Kernel_PollGameplayRequestOutcomes
+    Kernel_ServerSetItemDropTag
+    Kernel_ServerClearUntaggedItems
+    Kernel_ServerDropInventoryItem
     Kernel_ServerCreateWeaponContainer
     Kernel_SendGameMessage
     Kernel_PollGameMessages

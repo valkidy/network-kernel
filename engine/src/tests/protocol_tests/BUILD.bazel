@@ -13,6 +13,12 @@ cc_test(
 )
 
 cc_test(
+    name = "inventory_drop_tag_roundtrip_test",
+    srcs = ["inventory_drop_tag_roundtrip_test.cc"],
+    deps = ["//engine/src/protocol:protocol"],
+)
+
+cc_test(
     name = "held_weapon_roundtrip_test",
     srcs = ["held_weapon_roundtrip_test.cc"],
     deps = ["//engine/src/protocol:protocol"],

@@ -998,6 +998,37 @@ uint32_t Kernel_PollGameplayRequestOutcomes(
     });
 }
 
+bool Kernel_ServerSetItemDropTag(
+    KernelHandle* kernel,
+    KernelItemInstanceId item_instance_id,
+    uint8_t drop_tag) {
+    return abi_call("Kernel_ServerSetItemDropTag", false, [&]() {
+        return kernel != nullptr &&
+            kernel->engine->server_set_item_drop_tag(item_instance_id, drop_tag);
+    });
+}
+
+bool Kernel_ServerClearUntaggedItems(
+    KernelHandle* kernel,
+    KernelInventoryContainerId container_id) {
+    return abi_call("Kernel_ServerClearUntaggedItems", false, [&]() {
+        return kernel != nullptr &&
+            kernel->engine->server_clear_untagged_items(container_id);
+    });
+}
+
+bool Kernel_ServerDropInventoryItem(
+    KernelHandle* kernel,
+    KernelItemInstanceId item_instance_id,
+    const KernelVec3* position,
+    uint32_t* out_prop_entity_id) {
+    return abi_call("Kernel_ServerDropInventoryItem", false, [&]() {
+        return kernel != nullptr && position != nullptr &&
+            kernel->engine->server_drop_inventory_item(
+                item_instance_id, *position, out_prop_entity_id);
+    });
+}
+
 bool Kernel_ServerCreateWeaponContainer(
     KernelHandle* kernel,
     uint32_t owner_entity_id,

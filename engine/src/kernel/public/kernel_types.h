@@ -46,6 +46,12 @@
  *     per player record; KernelLocalWeaponState reports it as weapon_id on a
  *     client. Packet schema 28 adds the container kind to an inventory
  *     snapshot page.
+ *     Drop tags: KernelItemInstanceView gained drop_tag (and three reserved
+ *     bytes), appended; KernelItemTemplateDefinition's reserved_weapon became
+ *     default_drop_tag; KernelInventoryChange gained _DropTag, now part of
+ *     _All. Kernel_ServerSetItemDropTag, Kernel_ServerClearUntaggedItems and
+ *     Kernel_ServerDropInventoryItem were added. Packet schema 29 carries the
+ *     tag in inventory records.
  * 100: pull strength. KernelActionDefinition gained pull_strength, appended
  *     after spawn_placement and read only by apply_pull: a fixed number
  *     weighed against the target's impulse_resistance, as apply_impulse's
@@ -1087,6 +1093,14 @@ typedef struct KernelStatusEffectDefinition {
  * the slot index is the category: a number, so the same rule serves wands and
  * guns alike. */
 #define KERNEL_WEAPON_CATEGORY_COUNT 4u
+/* An item instance's drop tag (ABI 101): why it exists, which decides what
+ * survives a loadout being reapplied and, later, what a death drops. Set when
+ * the instance is made and carried with it -- through pickup, drop, split --
+ * and fungible stacks merge only on an equal tag. */
+#define KERNEL_DROP_TAG_NONE 0u
+#define KERNEL_DROP_TAG_QUEST 1u
+#define KERNEL_DROP_TAG_MAP_WEAPON 2u
+
 /* RenderEntityState::held_weapon_id of an unarmed player. No weapon may use
  * this id. */
 #define KERNEL_HELD_WEAPON_NONE 255u
@@ -1148,7 +1162,9 @@ typedef struct KernelItemTemplateDefinition {
     uint8_t is_weapon;
     uint8_t weapon_id;
     uint8_t weapon_category;
-    uint8_t reserved_weapon;
+    /* The KERNEL_DROP_TAG_* a new instance of this item starts with (ABI 101,
+     * was reserved_weapon): KERNEL_DROP_TAG_QUEST for a quest item. */
+    uint8_t default_drop_tag;
 } KernelItemTemplateDefinition;
 
 typedef struct KernelPropInteractionDefinition {
@@ -1687,6 +1703,10 @@ typedef struct KernelItemInstanceView {
     uint32_t portable_state_field_count;
     KernelPortableStateFieldDefinition
         portable_state_fields[KERNEL_MAX_PORTABLE_STATE_FIELDS];
+    /* KERNEL_DROP_TAG_* (ABI 101, appended). */
+    uint8_t drop_tag;
+    uint8_t reserved_drop0;
+    uint16_t reserved_drop1;
 } KernelItemInstanceView;
 
 typedef struct KernelInventoryContainerView {
@@ -1729,10 +1749,13 @@ typedef enum KernelInventoryChangeFlag {
     KernelInventoryChange_Quantity = 1u << 0,
     KernelInventoryChange_Cooldown = 1u << 1,
     KernelInventoryChange_PortableState = 1u << 2,
+    /* ABI 101. */
+    KernelInventoryChange_DropTag = 1u << 3,
     KernelInventoryChange_All =
         KernelInventoryChange_Quantity |
         KernelInventoryChange_Cooldown |
-        KernelInventoryChange_PortableState,
+        KernelInventoryChange_PortableState |
+        KernelInventoryChange_DropTag,
 } KernelInventoryChangeFlag;
 
 typedef struct KernelInventoryDelta {

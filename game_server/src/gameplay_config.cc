@@ -5769,7 +5769,7 @@ ItemTemplateConfig item_template_from_yaml(
         node,
         {"id", "name", "mode", "max_stack", "capabilities",
          "entity_template", "world_interaction", "throw", "use", "portable_state",
-         "triggers", "weapon"},
+         "triggers", "weapon", "drop_tag"},
         path,
         source_kind,
         KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ITEM);
@@ -5781,6 +5781,16 @@ ItemTemplateConfig item_template_from_yaml(
     item.name = node["name"].as<std::string>();
     if (node["weapon"]) {
         item.weapon_ref = node["weapon"].as<std::string>();
+    }
+    // What a fresh instance is tagged. Only `quest` is authored: a map weapon
+    // is tagged where it is placed, not by what it is.
+    if (node["drop_tag"]) {
+        const std::string tag = node["drop_tag"].as<std::string>();
+        if (tag == "quest") {
+            item.definition.default_drop_tag = KERNEL_DROP_TAG_QUEST;
+        } else if (tag != "none") {
+            throw std::runtime_error("item drop_tag must be none or quest: " + path);
+        }
     }
     KernelItemTemplateDefinition& definition = item.definition;
     definition.struct_size = sizeof(definition);
@@ -8027,6 +8037,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             "agent_budget",
             "navigation_mesh",
             "scene_props",
+            "scene_items",
         },
         path,
         source.source_kind(),
@@ -8307,13 +8318,10 @@ void apply_catalog_scene_props_config(
     const std::string& path,
     std::uint32_t source_kind) {
     const YAML::Node props = document["scene_props"];
-    if (!props) {
-        return;
-    }
-    if (!props.IsSequence()) {
+    if (props && !props.IsSequence()) {
         throw std::runtime_error("scene_props must be a sequence: " + path);
     }
-    for (const YAML::Node& prop : props) {
+    for (const YAML::Node& prop : props ? props : YAML::Node(YAML::NodeType::Sequence)) {
         reject_unknown_keys(
             prop,
             {"entity_template", "position"},
@@ -8329,6 +8337,37 @@ void apply_catalog_scene_props_config(
             prop["entity_template"], config->entity_templates);
         scene_prop.position = vec3_from_yaml(prop["position"]);
         config->scene_props.push_back(scene_prop);
+    }
+    if (const YAML::Node items = document["scene_items"]) {
+        if (!items.IsSequence()) {
+            throw std::runtime_error("scene_items must be a sequence: " + path);
+        }
+        for (const YAML::Node& item_node : items) {
+            reject_unknown_keys(
+                item_node,
+                {"item_template", "quantity", "position"},
+                path,
+                source_kind,
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+            if (!item_node["item_template"] || !item_node["position"]) {
+                throw std::runtime_error(
+                    "scene item requires item_template and position: " + path);
+            }
+            SceneItemConfig scene_item;
+            scene_item.item_template_ref = item_node["item_template"].as<std::string>();
+            for (const ItemTemplateConfig& candidate : config->item_templates) {
+                if (candidate.name == scene_item.item_template_ref ||
+                    std::to_string(candidate.definition.item_template_id) ==
+                        scene_item.item_template_ref) {
+                    scene_item.item_template_id = candidate.definition.item_template_id;
+                }
+            }
+            scene_item.quantity = item_node["quantity"]
+                ? item_node["quantity"].as<std::uint32_t>()
+                : 1u;
+            scene_item.position = vec3_from_yaml(item_node["position"]);
+            config->scene_items.push_back(std::move(scene_item));
+        }
     }
 }
 
@@ -9189,6 +9228,7 @@ std::uint64_t compute_gameplay_catalog_hash(
         hash_scalar(&hash, definition.is_weapon);
         hash_scalar(&hash, definition.weapon_id);
         hash_scalar(&hash, definition.weapon_category);
+        hash_scalar(&hash, definition.default_drop_tag);
         hash_scalar(&hash, definition.portable_state_field_count);
         for (std::uint32_t index = 0;
              index < definition.portable_state_field_count;
@@ -9210,6 +9250,14 @@ std::uint64_t compute_gameplay_catalog_hash(
     }
     hash_scalar(&hash, config.player.actor_template_id);
     hash_scalar(&hash, static_cast<std::uint32_t>(config.scene_props.size()));
+    hash_scalar(&hash, static_cast<std::uint32_t>(config.scene_items.size()));
+    for (const SceneItemConfig& scene_item : config.scene_items) {
+        hash_scalar(&hash, scene_item.item_template_id);
+        hash_scalar(&hash, scene_item.quantity);
+        hash_float(&hash, scene_item.position.x);
+        hash_float(&hash, scene_item.position.y);
+        hash_float(&hash, scene_item.position.z);
+    }
     for (const ScenePropConfig& scene_prop : config.scene_props) {
         hash_scalar(&hash, scene_prop.entity_template_id);
         hash_float(&hash, scene_prop.position.x);
@@ -9740,6 +9788,24 @@ std::vector<std::string> validate_gameplay_config(
                 "collision_mask, or a throw never lands: " + item.name);
         }
     }
+    for (const SceneItemConfig& scene_item : config.scene_items) {
+        const auto item = std::find_if(
+            config.item_templates.begin(),
+            config.item_templates.end(),
+            [&scene_item](const ItemTemplateConfig& candidate) {
+                return candidate.definition.item_template_id == scene_item.item_template_id;
+            });
+        if (item == config.item_templates.end() ||
+            item->definition.entity_template_id == 0u || scene_item.quantity == 0u ||
+            scene_item.quantity > item->definition.max_stack ||
+            !std::isfinite(scene_item.position.x) ||
+            !std::isfinite(scene_item.position.y) ||
+            !std::isfinite(scene_item.position.z)) {
+            errors.push_back(
+                "scene item must name an item with a world prop, a quantity within "
+                "its max_stack, at a finite position: " + scene_item.item_template_ref);
+        }
+    }
     for (const ScenePropConfig& scene_prop : config.scene_props) {
         const auto entity_template = std::find_if(
             config.entity_templates.begin(),
@@ -9783,6 +9849,14 @@ std::vector<std::string> validate_gameplay_config(
                 item->definition.is_weapon != 0u) {
                 errors.push_back(
                     "a weapon item is offered under loadout weapons, not options: " +
+                    entity_template.name + " " + option.item_template_ref);
+            }
+            // A loadout is replayed on every respawn; a quest item handed out
+            // again each time would never be the one of a kind it is.
+            if (item != config.item_templates.end() &&
+                item->definition.default_drop_tag != KERNEL_DROP_TAG_NONE) {
+                errors.push_back(
+                    "a quest item cannot be a loadout option: " +
                     entity_template.name + " " + option.item_template_ref);
             }
         }

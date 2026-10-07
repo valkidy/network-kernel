@@ -19,7 +19,7 @@ bool set_error(std::string* error, const char* message) {
 bool compatible_runtime_state(
     const ItemInstanceRecord& lhs,
     const ItemInstanceRecord& rhs) {
-    if (lhs.next_use_tick != rhs.next_use_tick ||
+    if (lhs.next_use_tick != rhs.next_use_tick || lhs.drop_tag != rhs.drop_tag ||
         lhs.portable_state.size() != rhs.portable_state.size()) {
         return false;
     }
@@ -357,6 +357,7 @@ std::optional<KernelItemInstanceId> ItemStore::create_inventory_item(
         definition->portable_state_fields,
         definition->portable_state_fields +
             definition->portable_state_field_count);
+    item.drop_tag = definition->default_drop_tag;
     item.residency = ItemResidency{
         KernelItemResidency_Inventory,
         container_id,
@@ -409,6 +410,7 @@ std::optional<KernelItemInstanceId> ItemStore::create_world_item(
         definition->portable_state_fields,
         definition->portable_state_fields +
             definition->portable_state_field_count);
+    item.drop_tag = definition->default_drop_tag;
     item.residency.kind = KernelItemResidency_World;
     item.residency.prop_entity_id = prop_entity_id;
     item.residency.world_mode = world_mode;
@@ -540,6 +542,9 @@ std::optional<KernelItemInstanceId> ItemStore::split_inventory_stack(
         return std::nullopt;
     }
     source = find_item(source_id);
+    // A split is the same kind of thing as its source: same drop tag.
+    (void)set_drop_tag(*created, source->drop_tag);
+    source = find_item(source_id);
     source->quantity -= quantity;
     auto container = containers_.find(source->residency.container_id);
     publish_delta(
@@ -621,6 +626,7 @@ std::optional<KernelItemInstanceId> ItemStore::split_to_world(
     split.item_template_id = source->item_template_id;
     split.quantity = quantity;
     split.portable_state = source->portable_state;
+    split.drop_tag = source->drop_tag;
     split.residency.kind = KernelItemResidency_World;
     split.residency.prop_entity_id = prop_entity_id;
     split.residency.world_mode = world_mode;
@@ -962,6 +968,45 @@ bool ItemStore::terminate(KernelItemInstanceId id) {
     return true;
 }
 
+bool ItemStore::set_drop_tag(KernelItemInstanceId id, std::uint8_t drop_tag) {
+    ItemInstanceRecord* item = find_item(id);
+    if (item == nullptr || item->terminal || drop_tag > KERNEL_DROP_TAG_MAP_WEAPON) {
+        return false;
+    }
+    if (item->drop_tag == drop_tag) {
+        return true;
+    }
+    item->drop_tag = drop_tag;
+    if (item->residency.kind == KernelItemResidency_Inventory) {
+        auto container = containers_.find(item->residency.container_id);
+        if (container != containers_.end()) {
+            publish_delta(
+                &container->second,
+                KernelInventoryDeltaType_Update,
+                item->residency.slot,
+                item->residency.slot,
+                item,
+                KernelInventoryChange_DropTag);
+        }
+    }
+    return true;
+}
+
+bool ItemStore::clear_untagged(KernelInventoryContainerId id) {
+    const auto container = containers_.find(id);
+    if (container == containers_.end()) {
+        return false;
+    }
+    const std::vector<KernelItemInstanceId> slots = container->second.slots;
+    for (const KernelItemInstanceId item_id : slots) {
+        const ItemInstanceRecord* item = item_id == 0 ? nullptr : find_item(item_id);
+        if (item != nullptr && item->drop_tag == KERNEL_DROP_TAG_NONE) {
+            (void)terminate(item_id);
+        }
+    }
+    return true;
+}
+
 bool ItemStore::clear_container(KernelInventoryContainerId id) {
     const auto container = containers_.find(id);
     if (container == containers_.end()) {
@@ -1104,6 +1149,7 @@ bool ItemStore::apply_replica_snapshot(
             0u,
         };
         container.slots[item_view.slot] = item_view.item_instance_id;
+        item.drop_tag = item_view.drop_tag;
         items_[item_view.item_instance_id] = std::move(item);
     }
     containers_[view.inventory_container_id] = std::move(container);
@@ -1179,6 +1225,7 @@ bool ItemStore::apply_replica_deltas(
                 KernelWorldItemMode_Placed,
                 0u,
             };
+            item.drop_tag = delta.item.drop_tag;
             items_[id] = std::move(item);
             container->second.slots[delta.slot] = id;
         }
@@ -1214,6 +1261,7 @@ KernelItemInstanceView ItemStore::item_view(KernelItemInstanceId id) const {
         item->portable_state.begin(),
         view.portable_state_field_count,
         view.portable_state_fields);
+    view.drop_tag = item->drop_tag;
     return view;
 }
 

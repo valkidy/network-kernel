@@ -30,6 +30,8 @@ struct ItemInstanceRecord {
     ItemResidency residency;
     std::uint32_t next_use_tick = 0;
     bool terminal = false;
+    // KERNEL_DROP_TAG_*.
+    std::uint8_t drop_tag = 0;
 };
 
 struct InventoryContainerRecord {
@@ -136,6 +138,13 @@ public:
         KernelWorldItemMode world_mode,
         std::uint32_t carrier_entity_id = 0);
     bool terminate(KernelItemInstanceId id);
+    // Sets a live item's drop tag, publishing an Update when it sits in a
+    // container. False for a terminal or unknown item, or a tag past
+    // KERNEL_DROP_TAG_MAP_WEAPON.
+    bool set_drop_tag(KernelItemInstanceId id, std::uint8_t drop_tag);
+    // Terminates every item in the container whose drop tag is NONE, the
+    // tagged ones staying where they are. False if there is no such container.
+    bool clear_untagged(KernelInventoryContainerId id);
     // Terminates every item in the container, publishing a Remove delta per
     // slot. The container itself stays, empty. False if there is no such
     // container.

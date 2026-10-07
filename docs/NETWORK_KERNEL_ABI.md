@@ -39,7 +39,15 @@ gives an owner a weapon container whose contents are its loadout;
 `RenderEntityState`'s reserved bytes after `shelter_seat` became
 `held_weapon_id` and `has_held_weapon` (size unchanged). Snapshot schema 28
 sends the held weapon on every player record (one byte); packet schema 28
-adds the container kind to inventory snapshot pages. ABI 100 appended `pull_strength` to
+adds the container kind to inventory snapshot pages. Drop tags (K12):
+`KERNEL_DROP_TAG_NONE / _QUEST / _MAP_WEAPON` (0/1/2) on every item instance,
+`KernelItemInstanceView` appended `drop_tag`,
+`KernelItemTemplateDefinition.reserved_weapon` became `default_drop_tag`, and
+`KernelInventoryChange_DropTag` (bit 3) joined `_All`. New exports:
+`Kernel_ServerSetItemDropTag`, `Kernel_ServerClearUntaggedItems` and
+`Kernel_ServerDropInventoryItem` (an inventory item onto the ground as
+itself). Fungible stacks merge only on an equal tag; a split keeps its
+source's. Packet schema 29 carries the tag in inventory records. ABI 100 appended `pull_strength` to
 `KernelActionDefinition`. ABI 98
 appended the tornado shape and motion fields to
 `KernelAreaEffectMechanicsDefinition`. ABI 99 appended `hover_height_meters`

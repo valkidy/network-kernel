@@ -170,7 +170,8 @@ float beam_length_from_wire(std::uint16_t value) {
 bool valid_wire_item(const InventoryWireItem& item) {
     return item.item_instance_id != 0u && item.item_template_id != 0u &&
         item.quantity != 0u &&
-        item.portable_values.size() <= KERNEL_MAX_PORTABLE_STATE_FIELDS;
+        item.portable_values.size() <= KERNEL_MAX_PORTABLE_STATE_FIELDS &&
+        item.drop_tag <= KERNEL_DROP_TAG_MAP_WEAPON;
 }
 
 void write_wire_item(
@@ -192,6 +193,9 @@ void write_wire_item(
         for (const std::uint32_t value : item.portable_values) {
             writer->write_u32(value);
         }
+    }
+    if ((changed_fields & kInventoryChangeDropTag) != 0u) {
+        writer->write_u8(item.drop_tag);
     }
 }
 
@@ -222,6 +226,11 @@ bool read_wire_item(
         for (std::uint32_t& value : item->portable_values) {
             if (!reader->read_u32(&value)) return false;
         }
+    }
+    if ((changed_fields & kInventoryChangeDropTag) != 0u &&
+        (!reader->read_u8(&item->drop_tag) ||
+         item->drop_tag > KERNEL_DROP_TAG_MAP_WEAPON)) {
+        return false;
     }
     return item->item_instance_id != 0u;
 }

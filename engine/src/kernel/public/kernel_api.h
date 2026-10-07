@@ -395,6 +395,31 @@ uint32_t Kernel_PollGameplayRequestOutcomes(
  * the picker's feet. Players only pick weapons up. False on a client, for an
  * owner with no weapon state, or one that already has a weapon container.
  */
+/*
+ * Drop tags (ABI 101); see KERNEL_DROP_TAG_*. Kernel_ServerSetItemDropTag
+ * retags a live item (a map weapon is made, then tagged MAP_WEAPON).
+ * Kernel_ServerClearUntaggedItems empties a container of its NONE-tagged
+ * items and leaves the tagged ones in place. Kernel_ServerDropInventoryItem
+ * puts an item from a container on the ground at `position` as itself -- id,
+ * portable state and tag kept -- with no range or placement check: the server
+ * is the one deciding where. A weapon dropped from a weapon container leaves
+ * the loadout.
+ */
+bool Kernel_ServerSetItemDropTag(
+    KernelHandle* kernel,
+    KernelItemInstanceId item_instance_id,
+    uint8_t drop_tag);
+
+bool Kernel_ServerClearUntaggedItems(
+    KernelHandle* kernel,
+    KernelInventoryContainerId container_id);
+
+bool Kernel_ServerDropInventoryItem(
+    KernelHandle* kernel,
+    KernelItemInstanceId item_instance_id,
+    const KernelVec3* position,
+    uint32_t* out_prop_entity_id);
+
 bool Kernel_ServerCreateWeaponContainer(
     KernelHandle* kernel,
     uint32_t owner_entity_id,
