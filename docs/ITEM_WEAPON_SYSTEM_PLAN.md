@@ -1,6 +1,6 @@
 # 道具系統與法杖武器系統 實作計劃書
 
-狀態：**設計已定案（第九輪）。P1（K1–K4）已實作（`claude/item-weapon-p1`）；P2（K10 + 配裝模板，道具部分）已實作（`claude/item-weapon-p2`，疊在 P1 之上）。ABI 101、packet schema 27。** P0 量測測試已完成（見 §4）。
+狀態：**設計已定案（第九輪）。P1（K1–K4）已實作（`claude/item-weapon-p1`）；P2（K10 + 配裝模板）已實作（`claude/item-weapon-p2`）；P3（武器 item、K5 + K6）已實作（`claude/item-weapon-p3`）。三個分支依序疊加。ABI 101、snapshot schema 28、packet schema 28。** P0 量測測試已完成（見 §4）。
 分支：本文件在 `claude/item-weapon-plan`；P0 測試在 `claude/p0-throw-and-unarmed-tests`（12795b3）。兩者都從 main 78d9350 分出，尚未 merge。
 最後更新：2026-10-07（第八輪：營地選項在 prop 模板、臨時營地比照帳篷、L1/R1 重複按不作用、其他玩家武器的封包評估）。
 
@@ -68,6 +68,7 @@
 | D26 | 已經在道具模式時短按 L1 不作用；已經在武器模式時短按 R1 也不作用 | 第八輪（原 G4） |
 | D27 | 其他玩家手上的武器用 snapshot 欄位同步（§3.10 的 A）：隊友記錄多 1 B 武器 id，空手用專用值。併進 K6 | 第九輪（原 G1） |
 | D28 | 初始營地由 catalog 頂層的 `scene_props:` 放進場景，game_server 在 kernel 開始執行後的第一個 tick 放置。這是未來 scene file 的替代品。game rule 放不了：等待節點不能生成東西、一個節點只能有一個效果，而永遠不完成的節點會讓整個 rule 永遠無法完成 | P2 實作時決定 |
+| D29 | **武器類別用數字 0–3**（weapon template 的 `category:`），就是武器容器的格子編號。同一套格子同時適用法杖和槍械，不綁定名稱 | 第十輪，使用者指定 |
 
 ---
 
@@ -139,6 +140,14 @@
   需求 7e「client 查詢 reserve 是否用完」也由這一項解決。
 
 代理（agent）的武器不變，仍由 `weapon_slots` 決定，不做成 item。
+
+P3 實作紀錄：
+- weapon template 的 `category:` 是 0–3 的數字（D29）。item 模板寫 `weapon: <武器名稱或 id>`，loader 自動加上 `weapon_ammo`、`weapon_reserve` 兩個 uint32 portable state 欄位（預設值是新武器的彈匣和 reserve），kernel 用同樣的 FNV id（`KERNEL_PORTABLE_FIELD_WEAPON_AMMO/_RESERVE`）讀寫。
+- 武器狀態在不在手上時都存在 item 上：換裝重建前先把舊格子寫回 item（不管 item 已經在哪）；每個 tick 結束把 reserve（和收起的武器的 ammo）寫回，透過既有的 inventory 同步送給擁有者。手上那把的 ammo 仍由 snapshot 報。
+- 地上的武器都用同一個 prop 220 `weapon_pickup`；client 依 item 模板的 `weapon_id` 畫外觀。武器 item 3020–3026。
+- 預設手上的武器變成「類別最小的那把」（rifle），不再是 `weapon_slots` 的第一把（meteor staff）。
+- `KERNEL_HELD_WEAPON_NONE` = 255，武器 id 不能用 255。
+- 還沒做：K12 `drop_tag`。所以 D23「重新套用配裝只清掉 tag 0」目前做不到：重新套用會清掉武器容器裡的全部武器，包括地圖撿來的。
 
 ### 3.4 臨時營地（D7–D9，K9）
 
@@ -323,8 +332,8 @@ kernel 不需要知道玩家在哪個模式：R2 在武器模式送 Fire 輸入�
 | K2 | 可投擲 potion；缺 terrain 的 `on_collision` 時載入錯誤。**已完成**（c3cf49b），不需要改 kernel：graph 的 `when: event.has_target` 已能分開兩種碰撞 | 小 | 無 |
 | K3 | `refill_weapon_reserve` graph action + 使用前檢查 + `fungible_mp_potion`（3013）。**已完成**（ca547d8） | 小到中 | ABI 101：新 action type + 兩個欄位 |
 | K4 | 空手：放寬三個入口（loader 解析、`validate_gameplay_config`、`SetEntityCombatState`）、修 client 舊彈藥 bug、刪死 code。**已完成**（8e8ba53） | 小 | 無 |
-| K5 | 武器 item：依類別指定格子的武器容器、裝卸同步 `WeaponState` 和 mechanics、portable state 寫回、自動交換、只有玩家能撿 | **大** | 模板定義、新 API |
-| K6 | 給擁有者的武器配置和 reserve 同步；其他玩家記錄裡的武器 id（D27） | 中 | **snapshot schema + ABI** |
+| K5 | 武器 item：依類別指定格子的武器容器、裝卸同步 `WeaponState`、portable state 寫回、自動交換、只有玩家能撿。**已完成**（69f32e6、daaf88d、167fbd6） | **大** | ABI 101：item 模板多 4 個欄位、`Kernel_ServerCreateWeaponContainer`、容器 view 的 `container_kind` |
+| K6 | 給擁有者的武器配置和 reserve 同步（沿用 inventory 同步，零新封包）；每個玩家記錄裡的武器 id（D27）。**已完成**（438c822） | 中 | snapshot schema 28、packet schema 28；`RenderEntityState` 大小不變 |
 | K7 | `charge` trigger mode | 中 | 新增型 |
 | K8 | 換下的武器自動 reload | 小到中 | 依 K6 |
 | K9 | 臨時營地容器：營地內的人看得到、`Transfer`、進出時同步 | 中到大 | 新封包、新 API |
@@ -343,7 +352,7 @@ kernel 不需要知道玩家在哪個模式：R2 在武器模式送 Fire 輸入�
 | P0 | 量測現行行為 | **已完成**（§4） |
 | P1 | K1、K2、K3、K4 | 都是小改動、彼此獨立，不用升 snapshot schema |
 | P2 | K10 + game_server 配裝模板（先只有道具）。**已完成**（0b799fa） | 初始營地可以先用現有的武器配置跑起來 |
-| P3 | K5 + K6，配裝模板加上武器 | 最大的一塊，snapshot schema 在這裡升一次 |
+| P3 | K5 + K6，配裝模板加上武器。**已完成** | 最大的一塊，snapshot schema 在這裡升一次 |
 | P4 | K9 臨時營地 | 依賴 shelter 流程（已在 main） |
 | P5 | K7、K8 | K8 依賴 K6 |
 | 之後 | K12 掉落標記、K11 死亡掉落 | 第一版不做（D19）。K12 可以提早，跟 K5 一起做 |
