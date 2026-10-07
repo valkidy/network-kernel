@@ -1,6 +1,6 @@
 # 道具系統與法杖武器系統 實作計劃書
 
-狀態：**設計已定案（第九輪）。P1（K1–K4）已實作（`claude/item-weapon-p1`）；P2（K10 + 配裝模板）已實作（`claude/item-weapon-p2`）；P3（武器 item、K5 + K6）已實作（`claude/item-weapon-p3`）。三個分支依序疊加。ABI 101、snapshot schema 28、packet schema 28。** P0 量測測試已完成（見 §4）。
+狀態：**設計已定案（第九輪）。P1（K1–K4）已實作（`claude/item-weapon-p1`）；P2（K10 + 配裝模板）已實作（`claude/item-weapon-p2`）；P3（武器 item、K5 + K6）已實作（`claude/item-weapon-p3`）；K12 drop_tag 已實作（`claude/item-weapon-k12`）。四個分支依序疊加。ABI 101、snapshot schema 28、packet schema 29。** P0 量測測試已完成（見 §4）。
 分支：本文件在 `claude/item-weapon-plan`；P0 測試在 `claude/p0-throw-and-unarmed-tests`（12795b3）。兩者都從 main 78d9350 分出，尚未 merge。
 最後更新：2026-10-07（第八輪：營地選項在 prop 模板、臨時營地比照帳篷、L1/R1 重複按不作用、其他玩家武器的封包評估）。
 
@@ -147,7 +147,7 @@ P3 實作紀錄：
 - 地上的武器都用同一個 prop 220 `weapon_pickup`；client 依 item 模板的 `weapon_id` 畫外觀。武器 item 3020–3026。
 - 預設手上的武器變成「類別最小的那把」（rifle），不再是 `weapon_slots` 的第一把（meteor staff）。
 - `KERNEL_HELD_WEAPON_NONE` = 255，武器 id 不能用 255。
-- 還沒做：K12 `drop_tag`。所以 D23「重新套用配裝只清掉 tag 0」目前做不到：重新套用會清掉武器容器裡的全部武器，包括地圖撿來的。
+- K12 已補上（3488b19）：重新套用配裝只清掉 tag 0；同類別時地圖武器丟在腳下。
 
 ### 3.4 臨時營地（D7–D9，K9）
 
@@ -223,15 +223,15 @@ Unity 端（不在這個 repo）：slot 數 0 時的動畫、瞄準 IK、HUD 需
 |---|---|---|
 | 0 | 無（死亡時不掉） | 配裝模板建立的物品、臨時營地的庫存（D22） |
 | 1 | 任務道具 | item 模板上寫的預設值，建立時帶入 |
-| 2 | 來自地圖的武器 | game rule / scene 在地圖上建立武器時指定 |
+| 2 | 來自地圖的武器 | game_server 依 catalog 的 `scene_items:` 擺放武器時設定（`Kernel_ServerSetItemDropTag`） |
 
 - **標記放在 instance 上，不放在模板上。** 同一把武器模板可能來自配裝，也可能是在地圖上撿到的，只有建立物品的那一刻才知道來源。
   任務道具則可以由模板給預設值。
 - **標記跟著物品走：** 撿起、投擲、放下、拆疊時都保留。從配裝來的武器被交換丟在地上、再被別人撿走，仍然是 0，不會在他死亡時掉落。
 - **fungible 疊加要求標記相同**，比照現有規則（portable state 和 cooldown 相同才能疊）。
   否則地圖上撿到的物品會混進配裝的那一疊，掉落時就分不清哪些是哪裡來的。
-- 建立物品的 API（`Kernel_ServerCreateInventoryItem`、`Kernel_ServerCreateWorldItem`）要能帶入標記，item 查詢也要回報它。
-  inventory 同步要不要送給 client，看 UI 是否需要顯示（例如在任務道具上加圖示）。
+- 實作（K12）：建立時取模板的 `default_drop_tag`；之後用 `Kernel_ServerSetItemDropTag` 改。item 查詢和 inventory 同步都帶標記（packet schema 29），client 的 UI 可以據此顯示任務道具圖示。
+- shipped catalog 預設不擺 `scene_items`：每擺一個 entity，後面所有 net id 都會往後移，對 entity 順序敏感的測試（`knockdown_recovery_test`）會挑到不同的單位。
 - 用 uint8 列舉（互斥）而不是 bit flag：一個物品只有一個來源。之後有新的掉落類別就加值。
 
 縮小範圍後，原本死亡掉落的三個問題大多消失：
@@ -339,7 +339,7 @@ kernel 不需要知道玩家在哪個模式：R2 在武器模式送 Fire 輸入�
 | K9 | 臨時營地容器：營地內的人看得到、`Transfer`、進出時同步 | 中到大 | 新封包、新 API |
 | K10 | client 和 game_server 之間的通用訊息，雙向（kernel 只轉送）。**已完成**（7096283） | 小到中 | ABI 101 內新增（capability bit 50）；packet schema 27 |
 | K11 | （之後）帶標記物品的死亡掉落：原封不動移到地上、散開 | 中 | 新 API |
-| K12 | item instance 的 uint8 `drop_tag`：建立時帶入、跟著物品走、疊加要求相同 | 小到中 | 建立 API 多一個參數、item view 多一個欄位 |
+| K12 | item instance 的 uint8 `drop_tag`：建立時帶入、跟著物品走、疊加要求相同；重新套用配裝只清 tag 0（D23）。**已完成**（3488b19） | 小到中 | ABI 101：item view 多 `drop_tag`、模板的 `default_drop_tag`、三個新 API；packet schema 29 |
 
 每個項目實際的 ABI 版本號等實作時再定。並行的分支會撞版本號和 catalog id，merge 時兩者都要檢查。
 
