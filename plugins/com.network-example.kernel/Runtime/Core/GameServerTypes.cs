@@ -12,6 +12,25 @@ namespace NetworkExample.Kernel
         public const ulong CapabilityWeaponTemplateDirectory = 0x0000000000000008UL;
         public const ulong CapabilityWeaponTemplateQuery = 0x0000000000000010UL;
         public const ulong CapabilityGameplayCatalogBundle = 0x0000000000000020UL;
+        // The loadout game messages below (initial camp, ui_id 2).
+        public const ulong CapabilityLoadoutMessages = 0x0000000000000040UL;
+
+        // KernelGameMessage.message_type values game_server sends and reads.
+        // Bodies are little-endian and packed; see game_server_types.h.
+        public const uint MessageLoadoutOffers = 1;   // server -> client
+        public const uint MessageLoadoutSelect = 2;   // client -> server
+        public const uint MessageLoadoutResult = 3;   // server -> client
+
+        // LOADOUT_RESULT.result.
+        public const byte LoadoutResultApplied = 0;
+        public const byte LoadoutResultMalformed = 1;
+        public const byte LoadoutResultNotACamp = 2;
+        public const byte LoadoutResultOutOfRange = 3;
+        public const byte LoadoutResultTooManyPicks = 4;
+        public const byte LoadoutResultBadOption = 5;
+        public const byte LoadoutResultDead = 6;
+        public const byte LoadoutResultApplyFailed = 7;
+        public const byte LoadoutResultCategoryTaken = 8;
     }
 
     [StructLayout(LayoutKind.Sequential)]

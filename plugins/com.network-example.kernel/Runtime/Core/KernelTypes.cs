@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 100;
+        public const uint AbiVersion = 101;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int LogMessageTextSize = 512;
@@ -128,6 +128,25 @@ namespace NetworkExample.Kernel
         public const ulong CapabilityLogCapture = 0x0001000000000000UL;
         // Kernel_GetLocalShelterState (ABI 96).
         public const ulong CapabilityLocalShelterState = 0x0002000000000000UL;
+        // Kernel_SendGameMessage / Kernel_PollGameMessages and the server pair
+        // (ABI 101): an opaque body between a client and game_server.
+        public const ulong CapabilityGameMessages = 0x0004000000000000UL;
+
+        // Largest KernelGameMessage body (ABI 101).
+        public const int MaxGameMessageBytes = 512;
+        // A weapon container's slot count; a weapon's category is its slot.
+        public const int WeaponCategoryCount = 4;
+        // KernelItemInstanceView.drop_tag (ABI 101): what drops at a death or
+        // a disconnect. NONE stays with the player.
+        public const byte DropTagNone = 0;
+        public const byte DropTagQuest = 1;
+        public const byte DropTagMapWeapon = 2;
+        // RenderEntityState.held_weapon_id when a player holds nothing.
+        public const byte HeldWeaponNone = 255;
+        // Portable state field ids a weapon item carries its magazine and
+        // reserve in, while it is not in hand.
+        public const uint PortableFieldWeaponAmmo = 0x8cf0d7ecU;
+        public const uint PortableFieldWeaponReserve = 0xd9861da6U;
 
         // KernelLocalWeaponState.flags.
         public const byte LocalWeaponStateFlagReloading = 0x01;
@@ -368,6 +387,9 @@ namespace NetworkExample.Kernel
         Place = 4,
         Carry = 5,
         Activate = 6,
+        // ABI 101: take requested_quantity (0 = all) of an item out of the
+        // stock of the building the instigator is inside, onto itself.
+        Transfer = 7,
     }
 
     public enum KernelItemResidencyKind
@@ -440,7 +462,8 @@ namespace NetworkExample.Kernel
         GraphRejected = 16,
         // The instigator is dead.
         InstigatorDead = 17,
-        // The instigator is inside a building; it may only activate that one.
+        // The instigator is inside a building; it may only activate that one,
+        // or Transfer from its stock.
         InstigatorSheltered = 18,
     }
 
@@ -459,6 +482,8 @@ namespace NetworkExample.Kernel
         ApplyPull = 9,
         // ABI 96: a building's on_activated asking for its interface.
         OpenUi = 10,
+        // ABI 101: refills the target's active weapon reserve (item graphs).
+        RefillWeaponReserve = 11,
     }
 
     public enum KernelEntityRefSource
@@ -505,6 +530,9 @@ namespace NetworkExample.Kernel
     {
         Press = 0,
         Hold = 1,
+        // ABI 101: hold to charge, release to cast once commit_offset_ticks
+        // have passed; an earlier release cancels with nothing spent.
+        Charge = 2,
     }
 
     public enum KernelActionPhase : byte
@@ -541,6 +569,9 @@ namespace NetworkExample.Kernel
         KnockedBack = 14,
         // Inside a building: no actions until it comes out.
         Sheltered = 15,
+        // ABI 101: a Throw, Consume, Place or Carry request took the hands and
+        // ended the charge or beam under way.
+        ItemAction = 16,
     }
 
     public enum KernelRemoteActionPresentationEventType : byte
@@ -773,6 +804,7 @@ namespace NetworkExample.Kernel
         public uint status_effect_view_size;
         public uint local_weapon_state_size;
         public uint local_shelter_state_size;
+        public uint game_message_size;
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
@@ -1118,6 +1150,10 @@ namespace NetworkExample.Kernel
         public uint spawn_placement;
         // apply_pull only: moves targets whose impulse_resistance is lower.
         public float pull_strength;
+        // refill_weapon_reserve only (ABI 101): a fixed count, or a percent of
+        // the weapon's reserve_magazines (rounded half up, at least 1).
+        public ushort reserve_refill_count;
+        public ushort reserve_refill_percent;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelActionDefinition>();
     }
@@ -1224,6 +1260,13 @@ namespace NetworkExample.Kernel
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = KernelConstants.MaxPortableStateFields)]
         public KernelPortableStateFieldDefinition[] portable_state_fields;
         public KernelActionTriggerDefinition item_used_trigger;
+        // ABI 101: a weapon item (is_weapon 1) names its weapon and its
+        // category 0-3, the weapon container slot it goes in.
+        public byte is_weapon;
+        public byte weapon_id;
+        public byte weapon_category;
+        // A KernelConstants.DropTag* every instance starts with.
+        public byte default_drop_tag;
 
         public static uint StructSize =>
             (uint)Marshal.SizeOf<KernelItemTemplateDefinition>();
@@ -1268,6 +1311,10 @@ namespace NetworkExample.Kernel
         public uint throw_trajectory_projectile_template_id;
         public uint lifetime_ticks;
         public uint population_group_id;
+        // ABI 101: eviction order within the population group, lowest first.
+        public byte importance;
+        public byte reserved0;
+        public ushort reserved1;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelPropDefinition>();
     }
@@ -1414,8 +1461,14 @@ namespace NetworkExample.Kernel
         public KernelVec3 beam_end;
         public uint shelter_net_id;
         public byte shelter_seat;
-        public byte reserved_shelter0;
-        public ushort reserved_shelter1;
+        /// <summary>
+        /// The weapon a player holds (ABI 101, snapshot schema 28), when
+        /// <see cref="has_held_weapon"/> is 1; <see cref="KernelConstants.HeldWeaponNone"/>
+        /// is unarmed. Other entities leave both 0.
+        /// </summary>
+        public byte held_weapon_id;
+        public byte has_held_weapon;
+        public byte reserved_shelter1;
 
         public static uint StructSize => (uint)Marshal.SizeOf<RenderEntityState>();
     }
@@ -1573,6 +1626,10 @@ namespace NetworkExample.Kernel
         public uint portable_state_field_count;
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = KernelConstants.MaxPortableStateFields)]
         public KernelPortableStateFieldDefinition[] portable_state_fields;
+        // ABI 101: a KernelConstants.DropTag*.
+        public byte drop_tag;
+        public byte reserved_drop0;
+        public ushort reserved_drop1;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelItemInstanceView>();
     }
@@ -1587,11 +1644,44 @@ namespace NetworkExample.Kernel
         public uint occupied_slot_count;
         public ulong revision;
         public byte sync_state;
-        public byte reserved0;
+        // ABI 101: a KernelInventoryContainerKind.
+        public byte container_kind;
         public ushort reserved1;
 
         public static uint StructSize =>
             (uint)Marshal.SizeOf<KernelInventoryContainerView>();
+    }
+
+    /// <summary>
+    /// What a container holds (ABI 101). A player has one Items and one
+    /// Weapons container (4 slots, slot = weapon category). Stock is a camp's,
+    /// read with <c>CopyOwnedInventoryContainers(campNetId)</c> while inside it.
+    /// </summary>
+    public enum KernelInventoryContainerKind : byte
+    {
+        Items = 0,
+        Weapons = 1,
+        Stock = 2,
+    }
+
+    /// <summary>
+    /// A message between a client and game_server (ABI 101). The kernel
+    /// carries it and never reads the body; <see cref="peer"/> and
+    /// <see cref="player_net_id"/> are the sender's on the server side, 0 on a
+    /// client.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelGameMessage
+    {
+        public uint struct_size;
+        public uint peer;
+        public uint player_net_id;
+        public uint message_type;
+        public uint payload_size;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = KernelConstants.MaxGameMessageBytes)]
+        public byte[] payload;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelGameMessage>();
     }
 
     public enum KernelInventorySyncState
@@ -1616,7 +1706,9 @@ namespace NetworkExample.Kernel
         Quantity = 1U << 0,
         Cooldown = 1U << 1,
         PortableState = 1U << 2,
-        All = Quantity | Cooldown | PortableState,
+        // ABI 101.
+        DropTag = 1U << 3,
+        All = Quantity | Cooldown | PortableState | DropTag,
     }
 
     [StructLayout(LayoutKind.Sequential)]

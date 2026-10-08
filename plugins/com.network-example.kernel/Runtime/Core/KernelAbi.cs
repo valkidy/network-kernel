@@ -419,6 +419,10 @@ namespace NetworkExample.Kernel
                 nameof(KernelLocalShelterState),
                 info.local_shelter_state_size,
                 Marshal.SizeOf<KernelLocalShelterState>());
+            RequireSize(
+                nameof(KernelGameMessage),
+                info.game_message_size,
+                Marshal.SizeOf<KernelGameMessage>());
         }
 
         private static void RequireCapability(

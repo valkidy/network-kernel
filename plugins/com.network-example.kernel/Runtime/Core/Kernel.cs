@@ -770,6 +770,142 @@ namespace NetworkExample.Kernel
             return KernelNative.Kernel_ServerClearInventoryContainer(handle, containerId);
         }
 
+        /// <summary>
+        /// Creates <paramref name="ownerEntityId"/>'s weapon container
+        /// (ABI 101): 4 slots, one per weapon category; from then on its
+        /// loadout is what the container holds.
+        /// </summary>
+        public bool ServerCreateWeaponContainer(uint ownerEntityId, out ulong containerId)
+        {
+            ThrowIfDisposed();
+            return KernelNative.Kernel_ServerCreateWeaponContainer(
+                handle, ownerEntityId, out containerId);
+        }
+
+        /// <summary>
+        /// Creates a camp's stock container (ABI 101): weapons and items in
+        /// any slot, sent only to those inside the owner, gone with it.
+        /// </summary>
+        public bool ServerCreateStockContainer(
+            uint ownerEntityId,
+            uint slotCapacity,
+            out ulong containerId)
+        {
+            ThrowIfDisposed();
+            return KernelNative.Kernel_ServerCreateStockContainer(
+                handle, ownerEntityId, slotCapacity, out containerId);
+        }
+
+        /// <summary>Sets a live item's drop tag (a KernelConstants.DropTag*).</summary>
+        public bool ServerSetItemDropTag(ulong itemInstanceId, byte dropTag)
+        {
+            ThrowIfDisposed();
+            return KernelNative.Kernel_ServerSetItemDropTag(handle, itemInstanceId, dropTag);
+        }
+
+        /// <summary>Terminates the container's untagged items; tagged ones stay.</summary>
+        public bool ServerClearUntaggedItems(ulong containerId)
+        {
+            ThrowIfDisposed();
+            return KernelNative.Kernel_ServerClearUntaggedItems(handle, containerId);
+        }
+
+        /// <summary>
+        /// Puts an inventory item on the ground under <paramref name="position"/>
+        /// as itself: id, portable state and drop tag kept.
+        /// </summary>
+        public bool ServerDropInventoryItem(
+            ulong itemInstanceId,
+            KernelVec3 position,
+            out uint propEntityId)
+        {
+            ThrowIfDisposed();
+            return KernelNative.Kernel_ServerDropInventoryItem(
+                handle, itemInstanceId, ref position, out propEntityId);
+        }
+
+        /// <summary>
+        /// Drops every tagged item the owner holds on a 1 m ring round
+        /// <paramref name="position"/>, or round the owner when it is null
+        /// (where it went in, if it is inside a building).
+        /// </summary>
+        public bool ServerDropTaggedItems(
+            uint ownerEntityId,
+            KernelVec3? position,
+            out uint droppedCount)
+        {
+            ThrowIfDisposed();
+            if (position.HasValue)
+            {
+                KernelVec3 at = position.Value;
+                return KernelNative.Kernel_ServerDropTaggedItemsAt(
+                    handle, ownerEntityId, ref at, out droppedCount);
+            }
+            return KernelNative.Kernel_ServerDropTaggedItemsAroundOwner(
+                handle, ownerEntityId, IntPtr.Zero, out droppedCount);
+        }
+
+        /// <summary>
+        /// Sends a game message from the local player to game_server (ABI 101,
+        /// <see cref="KernelConstants.CapabilityGameMessages"/>). False before
+        /// the client is welcomed, on a dedicated server, or for a body over
+        /// <see cref="KernelConstants.MaxGameMessageBytes"/>.
+        /// </summary>
+        public bool SendGameMessage(uint messageType, byte[] payload, int payloadSize)
+        {
+            ThrowIfDisposed();
+            if (payloadSize < 0 || (payload == null && payloadSize != 0) ||
+                (payload != null && payloadSize > payload.Length))
+            {
+                return false;
+            }
+            return KernelNative.Kernel_SendGameMessage(
+                handle, messageType, payload, (uint)payloadSize);
+        }
+
+        /// <summary>Drains what game_server sent the local player.</summary>
+        public uint PollGameMessages(KernelGameMessage[] messages)
+        {
+            ThrowIfDisposed();
+            if (messages == null || messages.Length == 0)
+            {
+                return 0;
+            }
+            PrepareGameMessages(messages);
+            return KernelNative.Kernel_PollGameMessages(
+                handle, messages, (uint)messages.Length);
+        }
+
+        /// <summary>Sends a game message to one peer (a listen host's own included).</summary>
+        public bool ServerSendGameMessage(
+            uint peer,
+            uint messageType,
+            byte[] payload,
+            int payloadSize)
+        {
+            ThrowIfDisposed();
+            if (payloadSize < 0 || (payload == null && payloadSize != 0) ||
+                (payload != null && payloadSize > payload.Length))
+            {
+                return false;
+            }
+            return KernelNative.Kernel_ServerSendGameMessage(
+                handle, peer, messageType, payload, (uint)payloadSize);
+        }
+
+        /// <summary>Drains what clients sent game_server, oldest first.</summary>
+        public uint ServerPollGameMessages(KernelGameMessage[] messages)
+        {
+            ThrowIfDisposed();
+            if (messages == null || messages.Length == 0)
+            {
+                return 0;
+            }
+            PrepareGameMessages(messages);
+            return KernelNative.Kernel_ServerPollGameMessages(
+                handle, messages, (uint)messages.Length);
+        }
+
         public bool ServerCreateInventoryItem(
             uint itemTemplateId,
             uint quantity,
@@ -1195,6 +1331,19 @@ namespace NetworkExample.Kernel
                     views[index].portable_state_fields =
                         new KernelPortableStateFieldDefinition[
                             KernelConstants.MaxPortableStateFields];
+                }
+            }
+        }
+
+        private static void PrepareGameMessages(KernelGameMessage[] messages)
+        {
+            for (int index = 0; index < messages.Length; ++index)
+            {
+                messages[index].struct_size = KernelGameMessage.StructSize;
+                if (messages[index].payload == null ||
+                    messages[index].payload.Length != KernelConstants.MaxGameMessageBytes)
+                {
+                    messages[index].payload = new byte[KernelConstants.MaxGameMessageBytes];
                 }
             }
         }

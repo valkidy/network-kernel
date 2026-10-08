@@ -347,6 +347,93 @@ namespace NetworkExample.Kernel
             IntPtr kernel,
             ulong containerId);
 
+        // ABI 101: weapon containers, camp stock, drop tags, dropping items.
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_ServerCreateWeaponContainer(
+            IntPtr kernel,
+            uint ownerEntityId,
+            out ulong outContainerId);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_ServerCreateStockContainer(
+            IntPtr kernel,
+            uint ownerEntityId,
+            uint slotCapacity,
+            out ulong outContainerId);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_ServerSetItemDropTag(
+            IntPtr kernel,
+            ulong itemInstanceId,
+            byte dropTag);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_ServerClearUntaggedItems(
+            IntPtr kernel,
+            ulong containerId);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_ServerDropInventoryItem(
+            IntPtr kernel,
+            ulong itemInstanceId,
+            ref KernelVec3 position,
+            out uint outPropEntityId);
+
+        // position may be null (round the owner); two entry points for the
+        // two shapes, since the package does not allow unsafe code.
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl,
+            EntryPoint = "Kernel_ServerDropTaggedItems")]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_ServerDropTaggedItemsAt(
+            IntPtr kernel,
+            uint ownerEntityId,
+            ref KernelVec3 position,
+            out uint outDroppedCount);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl,
+            EntryPoint = "Kernel_ServerDropTaggedItems")]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_ServerDropTaggedItemsAroundOwner(
+            IntPtr kernel,
+            uint ownerEntityId,
+            IntPtr position,
+            out uint outDroppedCount);
+
+        // ABI 101, KernelConstants.CapabilityGameMessages.
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_SendGameMessage(
+            IntPtr kernel,
+            uint messageType,
+            byte[] payload,
+            uint payloadSize);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern uint Kernel_PollGameMessages(
+            IntPtr kernel,
+            [Out] KernelGameMessage[] outMessages,
+            uint maxMessages);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_ServerSendGameMessage(
+            IntPtr kernel,
+            uint peer,
+            uint messageType,
+            byte[] payload,
+            uint payloadSize);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern uint Kernel_ServerPollGameMessages(
+            IntPtr kernel,
+            [Out] KernelGameMessage[] outMessages,
+            uint maxMessages);
+
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         [return: MarshalAs(UnmanagedType.I1)]
         internal static extern bool Kernel_ServerCreateInventoryItem(
