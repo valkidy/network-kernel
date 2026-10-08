@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 101;
+        public const uint AbiVersion = 102;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int LogMessageTextSize = 512;
@@ -32,6 +32,8 @@ namespace NetworkExample.Kernel
         public const uint MaxImpulseLockoutTicks = 300U;
         public const uint MaxStaggerTicks = 300U;
         public const uint MaxKnockdownRecoveryTicks = 300U;
+        // apply_suspend_movement's rise and drift speeds, m/s (ABI 102).
+        public const float MaxSuspendSpeed = 20.0f;
         public const uint ImpulseStrengthModeRadial = 0U;
         public const uint ImpulseStrengthModeSplit = 1U;
         // apply_pull's pull_mode (ABI 95).
@@ -213,6 +215,9 @@ namespace NetworkExample.Kernel
         public const uint VisualFlagStaggered = 0x00000080U;
         public const uint VisualFlagAiming = 0x00000100U;
         public const uint VisualFlagFiring = 0x00000200U;
+        // ABI 102: a status suspension holds the actor in the air -- the water
+        // bubble. Draw the bubble from this.
+        public const uint VisualFlagSuspended = 0x00000400U;
         public const uint MaxVisibleHostiles = 16;
         public const uint MaxVisibleAllies = 16;
         public const uint MaxVisibleNeutrals = 16;
@@ -484,6 +489,11 @@ namespace NetworkExample.Kernel
         OpenUi = 10,
         // ABI 101: refills the target's active weapon reserve (item graphs).
         RefillWeaponReserve = 11,
+        // ABI 102: status on_apply actions, each lasting exactly as long as
+        // that status instance -- the water bubble's three parts.
+        ApplyBlockActions = 12,
+        ApplySuspendMovement = 13,
+        ApplyUntargetable = 14,
     }
 
     public enum KernelEntityRefSource
@@ -572,6 +582,10 @@ namespace NetworkExample.Kernel
         // ABI 101: a Throw, Consume, Place or Carry request took the hands and
         // ended the charge or beam under way.
         ItemAction = 16,
+        // ABI 102: a status holds the actor (apply_block_actions) -- no new
+        // action while it stands, and the one under way ended without its
+        // recovery.
+        StatusBlocked = 17,
     }
 
     public enum KernelRemoteActionPresentationEventType : byte
@@ -1154,6 +1168,17 @@ namespace NetworkExample.Kernel
         // the weapon's reserve_magazines (rounded half up, at least 1).
         public ushort reserve_refill_count;
         public ushort reserve_refill_percent;
+        // apply_status only (ABI 102): non-zero applies the status with the
+        // direction direction_source names (impulse_direction for a literal),
+        // which its on_apply graph reads as event.direction.
+        public uint status_direction_authored;
+        // apply_suspend_movement only (ABI 102): rise and drift speeds, m/s,
+        // 0 .. KernelConstants.MaxSuspendSpeed.
+        public float suspend_rise_speed;
+        public float suspend_drift_speed;
+        // apply_status only (ABI 102): when > 0 the status lands only on a
+        // target whose impulse_resistance is strictly below it; 0 is anyone.
+        public float status_strength;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelActionDefinition>();
     }
