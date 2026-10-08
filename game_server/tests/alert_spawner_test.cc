@@ -111,6 +111,9 @@ public:
             shipping_catalog_,
             "# Every unit an on_alert spawner",
             "agent_budget:\n  max_live_agents: 256\n");
+        // The airforce patrol fields hive_airship, one of the callers taken
+        // out, so it goes too. It is the last thing in the file.
+        catalog_ = cut(catalog_, "  - id: 2\n    name: gingerbread_airforce\n", "");
         for (const char* file : kShippedCallerFiles) {
             fs::remove(root_ / file);
         }
