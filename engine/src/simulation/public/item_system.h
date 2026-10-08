@@ -30,6 +30,8 @@ struct ItemInstanceRecord {
     ItemResidency residency;
     std::uint32_t next_use_tick = 0;
     bool terminal = false;
+    // KERNEL_DROP_TAG_*.
+    std::uint8_t drop_tag = 0;
 };
 
 struct InventoryContainerRecord {
@@ -38,6 +40,8 @@ struct InventoryContainerRecord {
     std::uint32_t slot_capacity = 0;
     std::vector<KernelItemInstanceId> slots;
     std::uint64_t revision = 0;
+    // KernelInventoryContainerKind.
+    std::uint8_t kind = KernelInventoryContainerKind_Items;
 };
 
 struct ItemConsumeResult {
@@ -57,7 +61,8 @@ public:
 
     std::optional<KernelInventoryContainerId> create_container(
         std::uint32_t owner_entity_id,
-        std::uint32_t slot_capacity);
+        std::uint32_t slot_capacity,
+        std::uint8_t kind = KernelInventoryContainerKind_Items);
 
     std::optional<KernelItemInstanceId> create_inventory_item(
         std::uint32_t item_template_id,
@@ -77,8 +82,20 @@ public:
     ItemInstanceRecord* find_item(KernelItemInstanceId id);
     const InventoryContainerRecord* find_container(
         KernelInventoryContainerId id) const;
+    // The owner's item container; never its weapon container.
     const InventoryContainerRecord* find_container_for_owner(
         std::uint32_t owner_entity_id) const;
+    const InventoryContainerRecord* find_weapon_container_for_owner(
+        std::uint32_t owner_entity_id) const;
+    // Every weapon container, for keeping loadouts in step with them.
+    std::vector<const InventoryContainerRecord*> weapon_containers() const;
+    // Writes a uint32 portable state field of a live item, wherever it is,
+    // publishing an Update delta when it sits in a container. False if the
+    // item has no such field; true without a delta when the value is unchanged.
+    bool set_portable_uint32(
+        KernelItemInstanceId id,
+        std::uint32_t field_id,
+        std::uint32_t value);
     std::vector<KernelInventoryContainerId> containers_for_owner(
         std::uint32_t owner_entity_id) const;
 
@@ -96,6 +113,16 @@ public:
         KernelWorldItemMode world_mode);
     std::optional<KernelItemInstanceId> transfer_world_to_inventory(
         KernelItemInstanceId source_id,
+        KernelInventoryContainerId container_id);
+    // Moves `quantity` of an inventory item into another container (K9: from
+    // a camp's stock onto a player). Fungible quantity tops up compatible
+    // stacks there first and the rest takes one empty slot; a weapon takes its
+    // category's slot. All or nothing: nullopt, and nothing moved, when it does
+    // not fit. Returns the item now holding what moved -- the source itself
+    // when all of it went to a slot of its own.
+    std::optional<KernelItemInstanceId> transfer_to_container(
+        KernelItemInstanceId source_id,
+        std::uint32_t quantity,
         KernelInventoryContainerId container_id);
     std::optional<ItemConsumeResult> consume(
         KernelItemInstanceId id,
@@ -121,10 +148,22 @@ public:
         KernelWorldItemMode world_mode,
         std::uint32_t carrier_entity_id = 0);
     bool terminate(KernelItemInstanceId id);
+    // Sets a live item's drop tag, publishing an Update when it sits in a
+    // container. False for a terminal or unknown item, or a tag past
+    // KERNEL_DROP_TAG_MAP_WEAPON.
+    bool set_drop_tag(KernelItemInstanceId id, std::uint8_t drop_tag);
+    // Terminates every item in the container whose drop tag is NONE, the
+    // tagged ones staying where they are. False if there is no such container.
+    bool clear_untagged(KernelInventoryContainerId id);
     // Terminates every item in the container, publishing a Remove delta per
     // slot. The container itself stays, empty. False if there is no such
     // container.
     bool clear_container(KernelInventoryContainerId id);
+    // Terminates every item in the container and then removes the container
+    // itself, with its delta history: a camp's stock when the camp goes, or a
+    // client's copy of a container it no longer sees. False if there is no
+    // such container.
+    bool destroy_container(KernelInventoryContainerId id);
 
     std::vector<KernelInventoryDelta> take_inventory_deltas(
         KernelInventoryContainerId container_id,
@@ -146,6 +185,7 @@ public:
 private:
     std::optional<std::uint16_t> find_empty_slot(
         const InventoryContainerRecord& container,
+        const KernelItemTemplateDefinition& definition,
         std::optional<std::uint16_t> preferred_slot) const;
     void remove_from_inventory(ItemInstanceRecord* item);
     void publish_delta(

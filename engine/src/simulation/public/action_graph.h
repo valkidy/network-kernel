@@ -304,6 +304,15 @@ struct ActionOpenUiCommand {
     ActionExecutionProvenance provenance;
 };
 
+// Refills the target's active weapon at commit, from what it holds then.
+struct ActionRefillWeaponReserveCommand {
+    NetId source = 0;
+    NetId target = 0;
+    std::uint16_t count = 0;
+    std::uint16_t percent = 0;
+    ActionExecutionProvenance provenance;
+};
+
 using ActionGraphCommand = std::variant<
     ActionSpawnProjectileCommand,
     ActionApplyDamageCommand,
@@ -314,7 +323,8 @@ using ActionGraphCommand = std::variant<
     ActionApplySpeedModifierCommand,
     ActionSpawnEntityCommand,
     ActionApplyPullCommand,
-    ActionOpenUiCommand>;
+    ActionOpenUiCommand,
+    ActionRefillWeaponReserveCommand>;
 
 struct ActionGraphQueuedTrigger {
     CompiledActionGraphBinding binding;

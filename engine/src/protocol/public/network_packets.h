@@ -98,10 +98,13 @@ struct StatusEffectStatePacket {
 inline constexpr std::uint16_t kInventoryChangeQuantity = 1u << 0;
 inline constexpr std::uint16_t kInventoryChangeCooldown = 1u << 1;
 inline constexpr std::uint16_t kInventoryChangePortableState = 1u << 2;
+// Packet schema 29.
+inline constexpr std::uint16_t kInventoryChangeDropTag = 1u << 3;
 inline constexpr std::uint16_t kInventoryChangeAll =
     kInventoryChangeQuantity |
     kInventoryChangeCooldown |
-    kInventoryChangePortableState;
+    kInventoryChangePortableState |
+    kInventoryChangeDropTag;
 
 struct InventoryWireItem {
     KernelItemInstanceId item_instance_id = 0;
@@ -109,6 +112,7 @@ struct InventoryWireItem {
     std::uint32_t quantity = 0;
     std::uint32_t next_use_tick = 0;
     std::vector<std::uint32_t> portable_values;
+    std::uint8_t drop_tag = 0;
 };
 
 struct InventoryDeltaRecord {
@@ -130,6 +134,10 @@ struct InventorySnapshotRequestPacket {
     std::uint64_t client_revision = 0;
 };
 
+struct InventoryContainerClosedPacket {
+    KernelInventoryContainerId inventory_container_id = 0;
+};
+
 struct InventorySnapshotEntry {
     std::uint16_t slot = 0;
     InventoryWireItem item;
@@ -142,6 +150,8 @@ struct InventorySnapshotPagePacket {
     std::uint32_t slot_capacity = 0;
     std::uint16_t page_index = 0;
     std::uint16_t page_count = 0;
+    // Packet schema 28: KernelInventoryContainerKind.
+    std::uint8_t container_kind = 0;
     std::vector<InventorySnapshotEntry> entries;
 };
 
@@ -376,6 +386,22 @@ bool decode_status_effect_state_packet(
     std::size_t size,
     StatusEffectStatePacket* out_packet);
 
+// The kernel's view of a game message on the wire: a game-defined type and an
+// opaque body of at most KERNEL_MAX_GAME_MESSAGE_BYTES.
+struct GameMessagePacket {
+    std::uint32_t message_type = 0;
+    std::vector<std::uint8_t> payload;
+};
+
+std::vector<std::uint8_t> encode_game_message_packet(
+    const GameMessagePacket& message,
+    std::uint32_t sequence = 0);
+
+bool decode_game_message_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    GameMessagePacket* out_message);
+
 std::vector<std::uint8_t> encode_gameplay_request_packet(
     const KernelGameplayRequest& request,
     std::uint32_t sequence = 0);
@@ -409,6 +435,14 @@ bool decode_inventory_snapshot_request_packet(
     const std::uint8_t* data,
     std::size_t size,
     InventorySnapshotRequestPacket* out_packet);
+
+std::vector<std::uint8_t> encode_inventory_container_closed_packet(
+    const InventoryContainerClosedPacket& packet,
+    std::uint32_t sequence = 0);
+bool decode_inventory_container_closed_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    InventoryContainerClosedPacket* out_packet);
 
 std::vector<std::uint8_t> encode_inventory_snapshot_page_packet(
     const InventorySnapshotPagePacket& packet,

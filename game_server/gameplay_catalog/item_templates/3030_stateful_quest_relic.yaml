@@ -1,0 +1,13 @@
+# A quest item: tagged quest from the moment it exists, so a loadout being
+# reapplied (a respawn, a new pick at the initial camp) never takes it away,
+# and no loadout may hand one out. One of a kind.
+id: 3030
+name: stateful_quest_relic
+mode: stateful
+max_stack: 1
+capabilities: [pickupable, deployable]
+entity_template: quest_relic
+world_interaction:
+  range: 2.5
+  line_of_sight_required: false
+drop_tag: quest

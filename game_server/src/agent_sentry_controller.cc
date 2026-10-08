@@ -30,6 +30,7 @@ void AgentSentryController::tick(
         ActorIntentExecutorConfig executor_config;
         executor_config.weapon_id = config.weapon_id;
         executor_config.ballistic_aim = config.ballistic_aim;
+        executor_config.charge_ticks = config.charge_ticks;
         const ActorIntentExecutor actor_executor(executor_config);
 
         const SentryPerceptionSnapshot perception =

@@ -16,7 +16,7 @@ static void require_impl(int condition, const char* expression, int line) {
 #define require(condition) require_impl((condition) ? 1 : 0, #condition, __LINE__)
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 100u,
+    KERNEL_ABI_VERSION == 101u,
     "pull strength: KernelActionDefinition gained pull_strength");
 _Static_assert(
     offsetof(KernelActionDefinition, pull_strength) >
@@ -58,6 +58,9 @@ _Static_assert(
         KernelGameplayRequestRejection_InstigatorSheltered == 18 &&
         KernelLocalActionResultReason_Sheltered == 15,
     "the ABI 96 enum values are appended");
+_Static_assert(
+    KernelLocalActionResultReason_ItemAction == 16,
+    "the ABI 101 enum value is appended");
 _Static_assert(
     offsetof(KernelEvent, related_net_id) >
             offsetof(KernelEvent, health_delta) &&
@@ -176,22 +179,33 @@ _Static_assert(
         offsetof(KernelSkeletonBindingDefinition, processing_order),
     "stance crouch is appended to the skeleton binding ABI");
 _Static_assert(
-    sizeof(KernelActionDefinition) == 84u + 16u + 16u + 8u + 4u,
+    sizeof(KernelActionDefinition) == 84u + 16u + 16u + 8u + 4u + 4u,
     "KernelActionDefinition ABI size: 84 bytes before ABI 94, plus the "
     "16-byte spawn lifetime and repeat block, plus ABI 95's 16-byte pull "
     "block, plus ABI 96's ui_id and spawn_placement, plus ABI 100's "
-    "pull_strength");
+    "pull_strength, plus ABI 101's two reserve refill fields");
 _Static_assert(
     sizeof(KernelActionTriggerDefinition) ==
-        764u + 8u * 16u + 8u * 16u + 8u * 8u + 8u * 4u,
+        764u + 8u * 16u + 8u * 16u + 8u * 8u + 8u * 4u + 8u * 4u,
     "KernelActionTriggerDefinition ABI size: its eight actions each grew by "
     "the ABI 94 repeat block, the ABI 95 pull block, ABI 96's ui_id and "
-    "spawn_placement and ABI 100's pull_strength");
+    "spawn_placement, ABI 100's pull_strength and ABI 101's reserve refill");
 _Static_assert(
     offsetof(KernelActionDefinition, spawn_placement) >
             offsetof(KernelActionDefinition, ui_id) &&
         KERNEL_SPAWN_PLACEMENT_EXACT == 0u && KERNEL_SPAWN_PLACEMENT_CLEAR == 1u,
     "spawn_placement is appended after ui_id; exact is the zero default");
+_Static_assert(
+    offsetof(KernelActionDefinition, reserve_refill_count) >
+            offsetof(KernelActionDefinition, pull_strength) &&
+        offsetof(KernelActionDefinition, reserve_refill_percent) >
+            offsetof(KernelActionDefinition, reserve_refill_count) &&
+        KernelEntityTriggerActionType_RefillWeaponReserve == 11,
+    "the reserve refill is appended after pull_strength in ABI 101");
+_Static_assert(
+    offsetof(KernelPropDefinition, importance) >
+        offsetof(KernelPropDefinition, population_group_id),
+    "the eviction importance is appended to KernelPropDefinition");
 _Static_assert(
     offsetof(KernelEntityTemplateDefinition, shelter_capacity) >
             offsetof(KernelEntityTemplateDefinition, knockdown_recovery_ticks) &&

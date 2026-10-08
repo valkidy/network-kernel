@@ -286,6 +286,9 @@ struct AgentRuntime {
 struct AgentSentryRuntime {};
 
 inline constexpr std::size_t kWeaponSlotCount = 4;
+// The held-weapon id of an unarmed player: KERNEL_HELD_WEAPON_NONE, which
+// this layer does not include.
+inline constexpr std::uint8_t kHeldWeaponNone = 255;
 inline constexpr std::size_t kWeaponIdCount = 256;
 inline constexpr std::uint8_t kWeaponSlot0 = 0;
 inline constexpr std::uint8_t kWeaponSlot1 = 1;
@@ -420,6 +423,15 @@ struct WeaponState {
     // reload logic decrements it like any other count and must not special-case 65535.
     std::array<std::uint16_t, kWeaponSlotCount> reserve_magazines{};
     std::array<std::uint32_t, kWeaponSlotCount> next_primary_commit_tick{};
+    // The weapon item each slot is, when the loadout comes from a weapon
+    // container; 0 for a loadout authored on the template. The slot's ammo
+    // and reserve are written back to that item, wherever it has gone.
+    std::array<std::uint64_t, kWeaponSlotCount> item_ids{};
+    // Holstered auto-reload (K8, D21): the tick each slot was put away, while
+    // it is away. Taking it back out after its reload time refills it as a
+    // reload would have, one reserve for a full magazine.
+    std::array<std::uint32_t, kWeaponSlotCount> holstered_tick{};
+    std::array<bool, kWeaponSlotCount> holstered{};
     NetId active_effect_net_id = 0;
     bool is_reloading = false;
 };
@@ -491,6 +503,13 @@ struct ActionInputState {
     glm::vec3 aim_direction{1.0f, 0.0f, 0.0f};
 };
 
+// Set by a committed item request that takes the hands (Throw, Consume,
+// Place, Carry); the next action pass ends whatever weapon action is under
+// way with `reason`, then removes this.
+struct PendingActionInterrupt {
+    std::uint16_t reason = 0;
+};
+
 struct ActionRuntimeState {
     std::uint32_t action_template_id = 0;
     std::uint32_t action_instance_id = 0;
@@ -538,6 +557,39 @@ struct WeaponTuning {
     std::array<bool, kWeaponIdCount> configured{};
     std::array<WeaponMechanicsDefinition, kWeaponIdCount> definitions{};
 };
+
+// How many reserve magazines a refill puts into the active weapon: `count`, or
+// `percent` of the weapon template's reserve_magazines rounded half up and at
+// least 1, capped so the reserve never passes the template's. Zero when there
+// is nothing to refill -- no active weapon, or its reserve already full.
+inline std::uint16_t weapon_reserve_refill_amount(
+    const WeaponState& weapon,
+    const WeaponTuning& tuning,
+    std::uint16_t count,
+    std::uint16_t percent) {
+    if (weapon.active_weapon_slot >= weapon.weapon_slot_count ||
+        weapon.active_weapon_slot >= kWeaponSlotCount) {
+        return 0u;
+    }
+    const std::size_t slot = weapon.active_weapon_slot;
+    const std::uint32_t weapon_id = weapon.weapon_ids[slot];
+    if (weapon_id >= kWeaponIdCount || !tuning.configured[weapon_id]) {
+        return 0u;
+    }
+    const std::uint32_t max = tuning.definitions[weapon_id].reserve_magazines;
+    const std::uint32_t current = weapon.reserve_magazines[slot];
+    if (current >= max) {
+        return 0u;
+    }
+    std::uint32_t amount = count;
+    if (percent != 0u) {
+        amount = (max * percent + 50u) / 100u;
+        if (amount == 0u) {
+            amount = 1u;
+        }
+    }
+    return static_cast<std::uint16_t>(std::min(amount, max - current));
+}
 
 struct Hitbox {
     glm::vec3 center{0.0f, 0.0f, 0.0f};
@@ -603,6 +655,9 @@ struct PropLifecycle {
     std::uint32_t spawn_tick = 0;
     std::uint32_t remaining_lifetime_ticks = 0;
     std::uint32_t population_group_id = 0;
+    // KernelPropDefinition::importance: lower goes first when the group is
+    // over its cap.
+    std::uint8_t importance = 0;
 };
 
 enum class TriggerEventType : std::uint8_t {
@@ -834,6 +889,16 @@ struct ActionOpenUiDefinition {
     ActionConditionType condition = ActionConditionType::kAlways;
 };
 
+// An item refilling its user's active weapon; see
+// KernelEntityTriggerActionType_RefillWeaponReserve. Exactly one of count and
+// percent is non-zero.
+struct ActionRefillWeaponReserveDefinition {
+    std::string target_parameter;
+    std::uint16_t count = 0;
+    std::uint16_t percent = 0;
+    ActionConditionType condition = ActionConditionType::kAlways;
+};
+
 struct ActionApplyStatusDefinition {
     std::string target_parameter;
     std::string status_parameter;
@@ -876,7 +941,8 @@ using ActionGraphAction = std::variant<
     ActionApplySpeedModifierDefinition,
     ActionSpawnEntityDefinition,
     ActionApplyPullDefinition,
-    ActionOpenUiDefinition>;
+    ActionOpenUiDefinition,
+    ActionRefillWeaponReserveDefinition>;
 
 struct ActionGraphTemplate {
     std::string id;

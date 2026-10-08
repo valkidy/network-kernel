@@ -245,6 +245,7 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
         out_info->status_effect_view_size = sizeof(KernelStatusEffectView);
         out_info->local_weapon_state_size = sizeof(KernelLocalWeaponState);
         out_info->local_shelter_state_size = sizeof(KernelLocalShelterState);
+        out_info->game_message_size = sizeof(KernelGameMessage);
         out_info->capability_flags =
             KERNEL_CAPABILITY_CLIENT_MODE |
             KERNEL_CAPABILITY_LISTEN_SERVER_MODE |
@@ -293,7 +294,8 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             KERNEL_CAPABILITY_SKELETON_RENDER_STATES |
             KERNEL_CAPABILITY_SKELETON_BIND_POSE |
             KERNEL_CAPABILITY_LOCAL_WEAPON_STATE |
-            KERNEL_CAPABILITY_LOCAL_SHELTER_STATE;
+            KERNEL_CAPABILITY_LOCAL_SHELTER_STATE |
+            KERNEL_CAPABILITY_GAME_MESSAGES;
         return true;
     });
 }
@@ -993,6 +995,118 @@ uint32_t Kernel_PollGameplayRequestOutcomes(
             : kernel->engine->poll_gameplay_request_outcomes(
                   out_outcomes,
                   max_outcomes);
+    });
+}
+
+bool Kernel_ServerSetItemDropTag(
+    KernelHandle* kernel,
+    KernelItemInstanceId item_instance_id,
+    uint8_t drop_tag) {
+    return abi_call("Kernel_ServerSetItemDropTag", false, [&]() {
+        return kernel != nullptr &&
+            kernel->engine->server_set_item_drop_tag(item_instance_id, drop_tag);
+    });
+}
+
+bool Kernel_ServerClearUntaggedItems(
+    KernelHandle* kernel,
+    KernelInventoryContainerId container_id) {
+    return abi_call("Kernel_ServerClearUntaggedItems", false, [&]() {
+        return kernel != nullptr &&
+            kernel->engine->server_clear_untagged_items(container_id);
+    });
+}
+
+bool Kernel_ServerDropInventoryItem(
+    KernelHandle* kernel,
+    KernelItemInstanceId item_instance_id,
+    const KernelVec3* position,
+    uint32_t* out_prop_entity_id) {
+    return abi_call("Kernel_ServerDropInventoryItem", false, [&]() {
+        return kernel != nullptr && position != nullptr &&
+            kernel->engine->server_drop_inventory_item(
+                item_instance_id, *position, out_prop_entity_id);
+    });
+}
+
+bool Kernel_ServerDropTaggedItems(
+    KernelHandle* kernel,
+    uint32_t owner_entity_id,
+    const KernelVec3* position,
+    uint32_t* out_dropped_count) {
+    return abi_call("Kernel_ServerDropTaggedItems", false, [&]() {
+        return kernel != nullptr &&
+            kernel->engine->server_drop_tagged_items(
+                owner_entity_id, position, out_dropped_count);
+    });
+}
+
+bool Kernel_ServerCreateWeaponContainer(
+    KernelHandle* kernel,
+    uint32_t owner_entity_id,
+    KernelInventoryContainerId* out_container_id) {
+    return abi_call("Kernel_ServerCreateWeaponContainer", false, [&]() {
+        return kernel != nullptr &&
+            kernel->engine->server_create_weapon_container(
+                owner_entity_id, out_container_id);
+    });
+}
+
+bool Kernel_ServerCreateStockContainer(
+    KernelHandle* kernel,
+    uint32_t owner_entity_id,
+    uint32_t slot_capacity,
+    KernelInventoryContainerId* out_container_id) {
+    return abi_call("Kernel_ServerCreateStockContainer", false, [&]() {
+        return kernel != nullptr &&
+            kernel->engine->server_create_stock_container(
+                owner_entity_id, slot_capacity, out_container_id);
+    });
+}
+
+bool Kernel_SendGameMessage(
+    KernelHandle* kernel,
+    uint32_t message_type,
+    const uint8_t* payload,
+    uint32_t payload_size) {
+    return abi_call("Kernel_SendGameMessage", false, [&]() {
+        return kernel != nullptr &&
+            kernel->engine->send_game_message(message_type, payload, payload_size);
+    });
+}
+
+uint32_t Kernel_PollGameMessages(
+    KernelHandle* kernel,
+    KernelGameMessage* out_messages,
+    uint32_t max_messages) {
+    return abi_call("Kernel_PollGameMessages", 0u, [&]() {
+        return kernel == nullptr
+            ? 0u
+            : kernel->engine->poll_game_messages(out_messages, max_messages);
+    });
+}
+
+bool Kernel_ServerSendGameMessage(
+    KernelHandle* kernel,
+    uint32_t peer,
+    uint32_t message_type,
+    const uint8_t* payload,
+    uint32_t payload_size) {
+    return abi_call("Kernel_ServerSendGameMessage", false, [&]() {
+        return kernel != nullptr &&
+            kernel->engine->server_send_game_message(
+                peer, message_type, payload, payload_size);
+    });
+}
+
+uint32_t Kernel_ServerPollGameMessages(
+    KernelHandle* kernel,
+    KernelGameMessage* out_messages,
+    uint32_t max_messages) {
+    return abi_call("Kernel_ServerPollGameMessages", 0u, [&]() {
+        return kernel == nullptr
+            ? 0u
+            : kernel->engine->server_poll_game_messages(out_messages, max_messages);
     });
 }
 

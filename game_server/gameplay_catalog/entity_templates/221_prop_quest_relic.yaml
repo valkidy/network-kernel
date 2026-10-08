@@ -1,0 +1,6 @@
+# stateful_quest_relic in the world.
+id: 221
+name: quest_relic
+entity_type: prop
+physics:
+  collider_template: collision_damage_prop_hitbox

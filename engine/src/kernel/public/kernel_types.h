@@ -5,6 +5,65 @@
 #include <stdint.h>
 
 /*
+ * 101: items and wands, first part. KernelPropDefinition gained importance
+ *     (with three reserved bytes), appended after population_group_id: when
+ *     a population group is over max_alive, the member just spawned is never
+ *     the one evicted; of the rest, the lowest importance goes first and the
+ *     oldest within it. Zero, the default, ties every member, so eviction
+ *     stays oldest-first as before -- except that a newcomer no longer evicts
+ *     itself. KernelPropDefinition is embedded in KernelEntityTemplateDefinition,
+ *     so every managed mirror of that shifts.
+ *     KernelEntityTriggerActionType gained _RefillWeaponReserve, and
+ *     KernelActionDefinition gained reserve_refill_count and
+ *     reserve_refill_percent, appended after pull_strength, read only by it:
+ *     an item's on_item_used refills the user's active weapon's reserve
+ *     magazines. A use that would refill nothing -- no active weapon, or its
+ *     reserve already full -- is rejected (GraphRejected) and costs no item.
+ *     KernelActionDefinition is embedded in every trigger definition, so
+ *     every managed mirror of those shifts.
+ *     Game messages: Kernel_SendGameMessage / Kernel_PollGameMessages on a
+ *     client (or a listen host's own player) and Kernel_ServerSendGameMessage
+ *     / Kernel_ServerPollGameMessages on a server carry an opaque, typed body
+ *     of at most KERNEL_MAX_GAME_MESSAGE_BYTES between a client and
+ *     game_server, either way, reliably and in order. The kernel never reads
+ *     the body. Behind KERNEL_CAPABILITY_GAME_MESSAGES; KernelAbiInfo gained
+ *     game_message_size, appended. Packet schema 27 adds the GameMessage
+ *     packet.
+ *     Weapon items: KernelItemTemplateDefinition gained is_weapon, weapon_id,
+ *     weapon_category and a reserved byte, appended after item_used_trigger.
+ *     KernelItemTemplateDefinition is embedded in nothing, but its size
+ *     changes, so a mirror sized to 100 is refused.
+ *     Weapon containers: Kernel_ServerCreateWeaponContainer, and
+ *     KernelInventoryContainerView's reserved0 became container_kind
+ *     (KernelInventoryContainerKind; 0 is the item container every
+ *     container was). An owner with a weapon container is armed with exactly
+ *     what it holds; Pickup puts a weapon item there and swaps one of the
+ *     same category to the picker's feet, and only players pick weapons up.
+ *     RenderEntityState's reserved_shelter0 became held_weapon_id and the low
+ *     byte of reserved_shelter1 became has_held_weapon (the struct's size and
+ *     every other offset are unchanged): what each player holds, so every
+ *     client can draw it (design D27). Snapshot schema 28 sends it, one byte
+ *     per player record; KernelLocalWeaponState reports it as weapon_id on a
+ *     client. Packet schema 28 adds the container kind to an inventory
+ *     snapshot page.
+ *     Drop tags: KernelItemInstanceView gained drop_tag (and three reserved
+ *     bytes), appended; KernelItemTemplateDefinition's reserved_weapon became
+ *     default_drop_tag; KernelInventoryChange gained _DropTag, now part of
+ *     _All. Kernel_ServerSetItemDropTag, Kernel_ServerClearUntaggedItems and
+ *     Kernel_ServerDropInventoryItem were added (and later
+ *     Kernel_ServerDropTaggedItems, which a disconnect also runs). Packet schema 29 carries the
+ *     tag in inventory records.
+ *     Camps (K9): KernelInventoryContainerKind_Stock and
+ *     Kernel_ServerCreateStockContainer; KernelDomainAction_Transfer takes
+ *     from the stock of the building the instigator is inside. A stock goes
+ *     to whoever is inside its owner; packet schema 30 adds
+ *     InventoryContainerClosed for a container a client no longer sees.
+ *     KernelActionTriggerMode_Charge (K7): hold to charge, release to cast.
+ *     The weapon in hand now follows the input's selected_weapon whenever no
+ *     action is under way (it used to move only on a commit), and a weapon
+ *     put away reloads itself if it stays away for its reload time (K8).
+ *     KernelLocalActionResultReason_ItemAction: a Throw, Consume, Place or
+ *     Carry request ends the weapon action under way.
  * 100: pull strength. KernelActionDefinition gained pull_strength, appended
  *     after spawn_placement and read only by apply_pull: a fixed number
  *     weighed against the target's impulse_resistance, as apply_impulse's
@@ -181,7 +240,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 100u
+#define KERNEL_ABI_VERSION 101u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -296,6 +355,9 @@
 #define KERNEL_CAPABILITY_SERVER_ENTITY_REVIVE UINT64_C(0x0000400000000000)
 #define KERNEL_CAPABILITY_SERVER_INVENTORY_CLEAR UINT64_C(0x0000800000000000)
 #define KERNEL_CAPABILITY_LOCAL_SHELTER_STATE UINT64_C(0x0002000000000000)
+/* Kernel_SendGameMessage, Kernel_PollGameMessages,
+ * Kernel_ServerSendGameMessage and Kernel_ServerPollGameMessages (ABI 101). */
+#define KERNEL_CAPABILITY_GAME_MESSAGES UINT64_C(0x0004000000000000)
 /* Kernel_PollLogMessages. Additive within ABI 93: check this flag, not the
  * version, before calling it. */
 #define KERNEL_CAPABILITY_LOG_CAPTURE UINT64_C(0x0001000000000000)
@@ -509,6 +571,7 @@ typedef struct KernelAbiInfo {
     uint32_t status_effect_view_size;
     uint32_t local_weapon_state_size;
     uint32_t local_shelter_state_size;
+    uint32_t game_message_size;
 } KernelAbiInfo;
 
 typedef struct KernelBuildInfo {
@@ -714,6 +777,12 @@ typedef enum KernelDomainAction {
     KernelDomainAction_Place = 4,
     KernelDomainAction_Carry = 5,
     KernelDomainAction_Activate = 6,
+    /* Takes requested_quantity (0 = all) of selected_item_instance_id out of
+     * a camp's stock -- a container owned by the building the instigator is
+     * inside -- into the instigator's own inventory, or its weapon container
+     * for a weapon, whose same-category weapon goes to where it entered (ABI
+     * 101). Take-only: nothing goes the other way. */
+    KernelDomainAction_Transfer = 7,
 } KernelDomainAction;
 
 typedef enum KernelItemResidencyKind {
@@ -778,8 +847,9 @@ typedef enum KernelGameplayRequestRejectionReason {
     KernelGameplayRequestRejection_GraphRejected = 16,
     /* The instigator's health is zero: the dead do not use, throw or pick up. */
     KernelGameplayRequestRejection_InstigatorDead = 17,
-    /* The instigator is inside a building. The only request it may make is
-     * to activate that same building, which is how it asks to leave. */
+    /* The instigator is inside a building. The only requests it may make
+     * are to activate that same building, which is how it asks to leave, and
+     * to Transfer from that building's stock. */
     KernelGameplayRequestRejection_InstigatorSheltered = 18,
 } KernelGameplayRequestRejectionReason;
 
@@ -797,6 +867,10 @@ typedef enum KernelEntityTriggerActionType {
     /* A building's on_activated graph asking for its interface; see
      * KernelEventType_UiOpened. Entity on_activated triggers only. */
     KernelEntityTriggerActionType_OpenUi = 10,
+    /* Refills the target's active weapon's reserve_magazines (its MP
+     * refills), up to the weapon template's own reserve_magazines. Item
+     * on_item_used graphs only. */
+    KernelEntityTriggerActionType_RefillWeaponReserve = 11,
 } KernelEntityTriggerActionType;
 
 typedef enum KernelStatModifierOperation {
@@ -973,6 +1047,12 @@ typedef struct KernelActionDefinition {
      * same strictly-greater test apply_impulse uses. It decides who is moved,
      * never how fast: the launch velocity comes from pull_* above. */
     float pull_strength;
+    /* refill_weapon_reserve only; zero on every other action. Exactly one is
+     * non-zero: a fixed number of reserve magazines, or a percentage
+     * (1-100) of the weapon template's reserve_magazines, rounded half up and
+     * at least 1. Either is capped at that template value. */
+    uint16_t reserve_refill_count;
+    uint16_t reserve_refill_percent;
 } KernelActionDefinition;
 
 typedef struct KernelActionTriggerDefinition {
@@ -1028,6 +1108,27 @@ typedef struct KernelStatusEffectDefinition {
 
 #define KERNEL_MAX_PORTABLE_STATE_FIELDS 8
 
+/* Weapon items (ABI 101). A weapon container has one slot per category, and
+ * the slot index is the category: a number, so the same rule serves wands and
+ * guns alike. */
+#define KERNEL_WEAPON_CATEGORY_COUNT 4u
+/* An item instance's drop tag (ABI 101): why it exists, which decides what
+ * survives a loadout being reapplied and, later, what a death drops. Set when
+ * the instance is made and carried with it -- through pickup, drop, split --
+ * and fungible stacks merge only on an equal tag. */
+#define KERNEL_DROP_TAG_NONE 0u
+#define KERNEL_DROP_TAG_QUEST 1u
+#define KERNEL_DROP_TAG_MAP_WEAPON 2u
+
+/* RenderEntityState::held_weapon_id of an unarmed player. No weapon may use
+ * this id. */
+#define KERNEL_HELD_WEAPON_NONE 255u
+/* Portable state field ids every weapon item carries: the FNV-1a hash of
+ * "weapon_ammo" and "weapon_reserve", the same name hash every authored
+ * portable state field id is. */
+#define KERNEL_PORTABLE_FIELD_WEAPON_AMMO UINT32_C(0x8cf0d7ec)
+#define KERNEL_PORTABLE_FIELD_WEAPON_RESERVE UINT32_C(0xd9861da6)
+
 typedef struct KernelPortableStateFieldDefinition {
     uint32_t field_id;
     uint8_t type;
@@ -1071,6 +1172,18 @@ typedef struct KernelItemTemplateDefinition {
     KernelPortableStateFieldDefinition
         portable_state_fields[KERNEL_MAX_PORTABLE_STATE_FIELDS];
     KernelActionTriggerDefinition item_used_trigger;
+    /* A weapon item (ABI 101) when is_weapon is 1: an item that is a weapon.
+     * It lives in its owner's weapon container at slot weapon_category (one
+     * weapon per category), and while it is there weapon_id is in the
+     * owner's loadout. It must be stateful, and carries its magazine and
+     * reserve in the portable state fields KERNEL_PORTABLE_FIELD_WEAPON_AMMO
+     * and _RESERVE (uint32), whose defaults are a fresh weapon's. */
+    uint8_t is_weapon;
+    uint8_t weapon_id;
+    uint8_t weapon_category;
+    /* The KERNEL_DROP_TAG_* a new instance of this item starts with (ABI 101,
+     * was reserved_weapon): KERNEL_DROP_TAG_QUEST for a quest item. */
+    uint8_t default_drop_tag;
 } KernelItemTemplateDefinition;
 
 typedef struct KernelPropInteractionDefinition {
@@ -1105,6 +1218,12 @@ typedef struct KernelPropDefinition {
     uint32_t throw_trajectory_projectile_template_id;
     uint32_t lifetime_ticks;
     uint32_t population_group_id;
+    /* Which member of a full population group goes first: the lowest
+     * importance, oldest first within it. Never the member just spawned.
+     * Needs a population group. */
+    uint8_t importance;
+    uint8_t reserved0;
+    uint16_t reserved1;
 } KernelPropDefinition;
 
 typedef enum KernelAiControllerType {
@@ -1133,9 +1252,15 @@ typedef enum KernelActionBinding {
     KernelActionBinding_Reload = 1,
 } KernelActionBinding;
 
+/* Charge (ABI 101, design D21): hold to charge, release to cast. The cast
+ * happens on the tick the release arrives, if the press has been held for
+ * commit_offset_ticks; a release before that cancels it, and nothing is
+ * spent. Held input must keep arriving within hold_input_timeout_ticks, as
+ * for Hold. One cast per press: max_commit_count is 1. */
 typedef enum KernelActionTriggerMode {
     KernelActionTriggerMode_Press = 0,
     KernelActionTriggerMode_Hold = 1,
+    KernelActionTriggerMode_Charge = 2,
 } KernelActionTriggerMode;
 
 typedef enum KernelActionPhase {
@@ -1169,6 +1294,10 @@ typedef enum KernelLocalActionResultReason {
     KernelLocalActionResultReason_KnockedBack = 14,
     /* Inside a building: no actions until it comes out. */
     KernelLocalActionResultReason_Sheltered = 15,
+    /* The hands went to an item (ABI 101): a Throw, Consume, Place or Carry
+     * request committed while a weapon action -- a charge, a beam -- was
+     * under way, and ended it. A charge not yet cast costs nothing. */
+    KernelLocalActionResultReason_ItemAction = 16,
 } KernelLocalActionResultReason;
 
 typedef enum KernelRemoteActionPresentationEventType {
@@ -1482,8 +1611,14 @@ typedef struct RenderEntityState {
      */
     uint32_t shelter_net_id;
     uint8_t shelter_seat;
-    uint8_t reserved_shelter0;
-    uint16_t reserved_shelter1;
+    /* ABI 101, in what were reserved bytes: the weapon a player is holding,
+     * for drawing it in their hands. has_held_weapon is 1 for a player whose
+     * snapshot said, and held_weapon_id is then the weapon id, or
+     * KERNEL_HELD_WEAPON_NONE when the player is unarmed. 0 and 0 for
+     * anything else. */
+    uint8_t held_weapon_id;
+    uint8_t has_held_weapon;
+    uint8_t reserved_shelter1;
 } RenderEntityState;
 
 typedef struct KernelBoneLocalTransform {
@@ -1597,6 +1732,10 @@ typedef struct KernelItemInstanceView {
     uint32_t portable_state_field_count;
     KernelPortableStateFieldDefinition
         portable_state_fields[KERNEL_MAX_PORTABLE_STATE_FIELDS];
+    /* KERNEL_DROP_TAG_* (ABI 101, appended). */
+    uint8_t drop_tag;
+    uint8_t reserved_drop0;
+    uint16_t reserved_drop1;
 } KernelItemInstanceView;
 
 typedef struct KernelInventoryContainerView {
@@ -1607,9 +1746,22 @@ typedef struct KernelInventoryContainerView {
     uint32_t occupied_slot_count;
     uint64_t revision;
     uint8_t sync_state;
-    uint8_t reserved0;
+    /* KernelInventoryContainerKind (ABI 101; was reserved, always 0). */
+    uint8_t container_kind;
     uint16_t reserved1;
 } KernelInventoryContainerView;
+
+/* What a container holds. A weapon container (ABI 101) has
+ * KERNEL_WEAPON_CATEGORY_COUNT slots, holds only weapon items, each at the
+ * slot its category names, and is its owner's loadout: what is in it is what
+ * the owner can fire. A stock container (ABI 101) is a camp's: it holds
+ * weapons and items alike, in any slot, and goes to whoever is inside the
+ * building that owns it; they take from it with KernelDomainAction_Transfer. */
+typedef enum KernelInventoryContainerKind {
+    KernelInventoryContainerKind_Items = 0,
+    KernelInventoryContainerKind_Weapons = 1,
+    KernelInventoryContainerKind_Stock = 2,
+} KernelInventoryContainerKind;
 
 typedef enum KernelInventorySyncState {
     KernelInventorySyncState_NotAvailable = 0,
@@ -1629,10 +1781,13 @@ typedef enum KernelInventoryChangeFlag {
     KernelInventoryChange_Quantity = 1u << 0,
     KernelInventoryChange_Cooldown = 1u << 1,
     KernelInventoryChange_PortableState = 1u << 2,
+    /* ABI 101. */
+    KernelInventoryChange_DropTag = 1u << 3,
     KernelInventoryChange_All =
         KernelInventoryChange_Quantity |
         KernelInventoryChange_Cooldown |
-        KernelInventoryChange_PortableState,
+        KernelInventoryChange_PortableState |
+        KernelInventoryChange_DropTag,
 } KernelInventoryChangeFlag;
 
 typedef struct KernelInventoryDelta {
@@ -2553,6 +2708,28 @@ struct KernelEntityTemplateDefinition {
      * last sighting and may still come looking. */
     uint32_t shelter_hides_occupants;
 };
+
+/* The largest body a game message may carry. */
+#define KERNEL_MAX_GAME_MESSAGE_BYTES 512u
+
+/*
+ * A message between a client and game_server, in either direction. The kernel
+ * delivers it reliably and in order and never reads `payload`: what
+ * message_type means, and how its body is laid out, is the game's.
+ *
+ * Read on a server (Kernel_ServerPollGameMessages), `peer` is the sender and
+ * `player_net_id` its player, filled in by the kernel from the session -- never
+ * from anything the client wrote. Read on a client (Kernel_PollGameMessages),
+ * both are 0.
+ */
+typedef struct KernelGameMessage {
+    uint32_t struct_size;
+    uint32_t peer;
+    uint32_t player_net_id;
+    uint32_t message_type;
+    uint32_t payload_size;
+    uint8_t payload[KERNEL_MAX_GAME_MESSAGE_BYTES];
+} KernelGameMessage;
 
 typedef struct KernelEvent {
     KernelEventType type;

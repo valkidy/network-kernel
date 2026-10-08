@@ -34,14 +34,6 @@ const WeaponMechanicsDefinition* weapon_definition_for_entity(
     return &tuning.definitions[index];
 }
 
-const WeaponMechanicsDefinition* current_weapon_definition_for_entity(
-    const World& world,
-    entt::entity entity,
-    const WeaponState& weapon) {
-    return weapon_definition_for_entity(
-        world, entity, active_weapon_id(weapon));
-}
-
 glm::vec3 input_aim_to_world(const KernelPlayerInput& input) {
     glm::vec3 aim{input.aim_dir.x, input.aim_dir.y, input.aim_dir.z};
     if (glm::length(aim) <= 0.0001f) {

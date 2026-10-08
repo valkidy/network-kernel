@@ -308,6 +308,8 @@ void hash_projectile_template(
             hash_scalar(hash, action.ui_id);
             hash_scalar(hash, action.spawn_placement);
             hash_float(hash, action.pull_strength);
+            hash_scalar(hash, action.reserve_refill_count);
+            hash_scalar(hash, action.reserve_refill_percent);
             hash_scalar(hash, action.condition_type);
         }
     }
@@ -371,6 +373,24 @@ void hash_actor_template(
     for (const InventorySlotConfig& slot : actor_template.inventory_slots) {
         hash_scalar(hash, slot.item_template_id);
         hash_scalar(hash, slot.quantity);
+    }
+    hash_scalar(
+        hash,
+        static_cast<std::uint32_t>(actor_template.loadout_options.size()));
+    for (const InventorySlotConfig& option : actor_template.loadout_options) {
+        hash_scalar(hash, option.item_template_id);
+        hash_scalar(hash, option.quantity);
+    }
+    hash_scalar(
+        hash,
+        static_cast<std::uint32_t>(actor_template.loadout_weapon_options.size()));
+    for (const InventorySlotConfig& option : actor_template.loadout_weapon_options) {
+        hash_scalar(hash, option.item_template_id);
+    }
+    hash_scalar(hash, static_cast<std::uint32_t>(actor_template.camp_stock.size()));
+    for (const InventorySlotConfig& entry : actor_template.camp_stock) {
+        hash_scalar(hash, entry.item_template_id);
+        hash_scalar(hash, entry.quantity);
     }
     hash_scalar(hash, actor_template.animation_idle);
     hash_scalar(hash, actor_template.animation_chasing);
@@ -486,6 +506,7 @@ void hash_actor_template(
         actor_template.prop.throw_trajectory_projectile_template_id);
     hash_scalar(hash, actor_template.prop.lifetime_ticks);
     hash_scalar(hash, actor_template.prop.population_group_id);
+    hash_scalar(hash, actor_template.prop.importance);
     hash_scalar(hash, actor_template.skeleton.enabled);
     if (actor_template.skeleton.enabled) {
         hash_scalar(hash, actor_template.skeleton.skeleton_asset_id);
@@ -1579,7 +1600,7 @@ bool valid_action_template_definition(
         KernelActionTemplateFlag_CancelBeforeFirstCommit;
     if (definition.struct_size < sizeof(KernelActionTemplateDefinition) ||
         definition.action_template_id == 0u ||
-        definition.trigger_mode > KernelActionTriggerMode_Hold ||
+        definition.trigger_mode > KernelActionTriggerMode_Charge ||
         (definition.flags & ~kKnownFlags) != 0u ||
         (definition.max_commit_count != 1u &&
          definition.commit_interval_ticks == 0u)) {
@@ -1588,6 +1609,13 @@ bool valid_action_template_definition(
     if (definition.trigger_mode == KernelActionTriggerMode_Press) {
         return definition.max_commit_count >= 1u &&
                definition.hold_input_timeout_ticks == 0u;
+    }
+    if (definition.trigger_mode == KernelActionTriggerMode_Charge) {
+        // commit_offset_ticks is the charge time: a charge of nothing would
+        // be a press that fires on release.
+        return definition.max_commit_count == 1u &&
+               definition.commit_offset_ticks > 0u &&
+               definition.hold_input_timeout_ticks > 0u;
     }
     return definition.hold_input_timeout_ticks > 0u;
 }
@@ -1643,6 +1671,8 @@ ActionTemplateConfig action_template_from_yaml(
         definition.trigger_mode = KernelActionTriggerMode_Press;
     } else if (trigger_mode == "hold") {
         definition.trigger_mode = KernelActionTriggerMode_Hold;
+    } else if (trigger_mode == "charge") {
+        definition.trigger_mode = KernelActionTriggerMode_Charge;
     } else {
         throw DataLoadError(
             KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_INVALID_ENUM_VALUE,
@@ -1940,6 +1970,8 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 "max_speed",
                 "ui_id",
                 "placement",
+                "count",
+                "percent",
             },
             path,
             source_kind,
@@ -2206,6 +2238,41 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 &compiled_action.target_parameter,
                 &compiled_action.status_parameter,
             };
+        } else if (compiled_action.action_type == "refill_weapon_reserve") {
+            // An item refilling the active weapon of whoever used it: a fixed
+            // number of reserve magazines, or a percentage of the template's.
+            if (action["projectile_template"] || action["position"] ||
+                action["direction"] || action["owner"] || action["amount"] ||
+                action["strength"] || action["status"] ||
+                action["operation"] || action["value"] ||
+                action["entity_template"] || action["item_template"] ||
+                action["quantity"] || action["collision_mask"] ||
+                action["lockout_ticks"] || action["ui_id"] ||
+                action["count"].IsDefined() == action["percent"].IsDefined()) {
+                throw std::runtime_error(
+                    "refill_weapon_reserve requires target and exactly one of "
+                    "count or percent, and nothing else: " + path);
+            }
+            if (action["count"]) {
+                const int count = action["count"].as<int>();
+                if (count <= 0 || count > UINT16_MAX) {
+                    throw std::runtime_error(
+                        "refill_weapon_reserve count must be 1 to 65535: " + path);
+                }
+                compiled_action.reserve_refill_count =
+                    static_cast<std::uint16_t>(count);
+            } else {
+                const int percent = action["percent"].as<int>();
+                if (percent <= 0 || percent > 100) {
+                    throw std::runtime_error(
+                        "refill_weapon_reserve percent must be 1 to 100: " + path);
+                }
+                compiled_action.reserve_refill_percent =
+                    static_cast<std::uint16_t>(percent);
+            }
+            compiled_action.target_parameter =
+                parameter_reference_from_yaml(action["target"], "target");
+            action_parameters = {&compiled_action.target_parameter};
         } else if (compiled_action.action_type == "open_ui") {
             // Who it opens for, and which one. Everything else a building's
             // interface does is game_server's, not the graph's.
@@ -2482,10 +2549,11 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
     const std::string& path,
     std::uint32_t source_kind) {
     const int authored_id = node["id"].as<int>();
-    if (authored_id < 0 || authored_id > UINT8_MAX) {
+    // 255 is KERNEL_HELD_WEAPON_NONE, what an unarmed player holds.
+    if (authored_id < 0 || authored_id >= static_cast<int>(KERNEL_HELD_WEAPON_NONE)) {
         throw DataLoadError(
             KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_INVALID_NUMERIC_RANGE,
-            "weapon id must be in uint8 range",
+            "weapon id must be 0 to 254",
             path,
             "id",
             source_kind,
@@ -2512,6 +2580,7 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
             "beam",
             "fire_action_template",
             "reload_action_template",
+            "category",
         },
         path,
         source_kind,
@@ -2952,6 +3021,11 @@ void apply_default_non_weapon_config(GameServerGameplayConfig* config);
 void apply_catalog_player_config(
     const YAML::Node& document,
     GameServerGameplayConfig* config);
+void apply_catalog_scene_props_config(
+    const YAML::Node& document,
+    GameServerGameplayConfig* config,
+    const std::string& path,
+    std::uint32_t source_kind);
 void apply_catalog_director_preload_config(
     const YAML::Node& document,
     GameServerGameplayConfig* config);
@@ -4074,10 +4148,18 @@ ActorTemplateConfig actor_template_from_yaml(
         throw std::runtime_error(
             "actor template requires weapon_slots: " + actor_template.name);
     }
-    if (weapon_slots.size() == 0 || weapon_slots.size() > actor_template.weapon_ids.size()) {
+    // A player may start with no weapon at all and play on items alone; an
+    // agent always needs one, its controller fires the active slot.
+    const std::size_t min_weapon_slots =
+        actor_template.actor_type == kActorTypePlayer ? 0u : 1u;
+    if (weapon_slots.size() < min_weapon_slots ||
+        weapon_slots.size() > actor_template.weapon_ids.size()) {
         throw std::runtime_error(
-            "actor template weapon_slots count must be 1 to 4: " +
-            actor_template.name);
+            actor_template.actor_type == kActorTypePlayer
+                ? "actor template weapon_slots count must be 0 to 4: " +
+                      actor_template.name
+                : "actor template weapon_slots count must be 1 to 4: " +
+                      actor_template.name);
     }
     actor_template.weapon_slot_count =
         static_cast<std::uint8_t>(weapon_slots.size());
@@ -4101,7 +4183,10 @@ ActorTemplateConfig actor_template_from_yaml(
         node["active_weapon_slot"]
             ? static_cast<std::uint8_t>(node["active_weapon_slot"].as<int>())
             : 0;
-    if (actor_template.active_weapon_slot >= actor_template.weapon_slot_count) {
+    // With no weapon the only valid active slot is 0, which names none.
+    if (actor_template.weapon_slot_count == 0
+            ? actor_template.active_weapon_slot != 0
+            : actor_template.active_weapon_slot >= actor_template.weapon_slot_count) {
         throw std::runtime_error(
             "actor template active_weapon_slot is out of range: " +
             actor_template.name);
@@ -4725,6 +4810,8 @@ EntityTemplateConfig entity_template_from_yaml(
                 "carry_offset",
                 "lifecycle",
                 "shelter",
+                "loadout",
+                "camp",
                 "triggers",
                 "spawner",
             },
@@ -4790,7 +4877,7 @@ EntityTemplateConfig entity_template_from_yaml(
         if (node["lifecycle"]) {
             reject_unknown_keys(
                 node["lifecycle"],
-                {"lifetime_ticks", "population_group"},
+                {"lifetime_ticks", "population_group", "importance"},
                 path,
                 source_kind,
                 KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
@@ -4815,6 +4902,112 @@ EntityTemplateConfig entity_template_from_yaml(
                     prop_population_group_id_from_ref(
                         node["lifecycle"]["population_group"],
                         prop_population_rules);
+            }
+            // Who goes first when the group is full: lower first.
+            if (node["lifecycle"]["importance"]) {
+                if (!node["lifecycle"]["population_group"]) {
+                    throw std::runtime_error(
+                        "prop lifecycle importance requires population_group: " +
+                        path);
+                }
+                const int importance = node["lifecycle"]["importance"].as<int>();
+                if (importance < 0 || importance > UINT8_MAX) {
+                    throw std::runtime_error(
+                        "prop lifecycle importance must be 0 to 255: " + path);
+                }
+                entity_template.prop.importance =
+                    static_cast<std::uint8_t>(importance);
+            }
+        }
+        // A loadout camp: what a player may pick to fill their inventory.
+        if (node["loadout"]) {
+            reject_unknown_keys(
+                node["loadout"],
+                {"options", "weapons"},
+                path,
+                source_kind,
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+                entity_template.actor_template_id);
+            const YAML::Node options = node["loadout"]["options"];
+            if (!options || !options.IsSequence() || options.size() == 0 ||
+                options.size() > kMaxLoadoutOptions) {
+                throw std::runtime_error(
+                    "loadout options must be a sequence of 1 to " +
+                    std::to_string(kMaxLoadoutOptions) + " entries: " + path);
+            }
+            for (const YAML::Node& option_node : options) {
+                if (!option_node.IsMap()) {
+                    throw std::runtime_error(
+                        "loadout option must be a mapping: " + path);
+                }
+                reject_unknown_keys(
+                    option_node,
+                    {"item_template", "quantity"},
+                    path,
+                    source_kind,
+                    KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+                    entity_template.actor_template_id);
+                if (!option_node["item_template"] || !option_node["quantity"]) {
+                    throw std::runtime_error(
+                        "loadout option requires item_template and quantity: " +
+                        path);
+                }
+                InventorySlotConfig option;
+                option.item_template_ref =
+                    option_node["item_template"].as<std::string>();
+                option.quantity = option_node["quantity"].as<std::uint32_t>();
+                entity_template.loadout_options.push_back(std::move(option));
+            }
+            // Weapon items by name; a player takes at most one per category.
+            if (const YAML::Node weapons = node["loadout"]["weapons"]) {
+                if (!weapons.IsSequence() || weapons.size() > kMaxLoadoutOptions) {
+                    throw std::runtime_error(
+                        "loadout weapons must be a sequence of at most " +
+                        std::to_string(kMaxLoadoutOptions) + " weapon items: " + path);
+                }
+                for (const YAML::Node& weapon_node : weapons) {
+                    InventorySlotConfig weapon;
+                    weapon.item_template_ref = weapon_node.as<std::string>();
+                    weapon.quantity = 1;
+                    entity_template.loadout_weapon_options.push_back(std::move(weapon));
+                }
+            }
+        }
+        // A temporary camp: the stock its occupants take from.
+        if (node["camp"]) {
+            reject_unknown_keys(
+                node["camp"],
+                {"stock"},
+                path,
+                source_kind,
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+                entity_template.actor_template_id);
+            const YAML::Node stock = node["camp"]["stock"];
+            if (!stock || !stock.IsSequence() || stock.size() == 0 ||
+                stock.size() > kMaxCampStock) {
+                throw std::runtime_error(
+                    "camp stock must be a sequence of 1 to " +
+                    std::to_string(kMaxCampStock) + " entries: " + path);
+            }
+            for (const YAML::Node& entry_node : stock) {
+                if (!entry_node.IsMap()) {
+                    throw std::runtime_error("camp stock entry must be a mapping: " + path);
+                }
+                reject_unknown_keys(
+                    entry_node,
+                    {"item_template", "quantity"},
+                    path,
+                    source_kind,
+                    KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+                    entity_template.actor_template_id);
+                if (!entry_node["item_template"] || !entry_node["quantity"]) {
+                    throw std::runtime_error(
+                        "camp stock entry requires item_template and quantity: " + path);
+                }
+                InventorySlotConfig entry;
+                entry.item_template_ref = entry_node["item_template"].as<std::string>();
+                entry.quantity = entry_node["quantity"].as<std::uint32_t>();
+                entity_template.camp_stock.push_back(std::move(entry));
             }
         }
         // What going inside this building means: how many it holds, and
@@ -5628,7 +5821,7 @@ ItemTemplateConfig item_template_from_yaml(
         node,
         {"id", "name", "mode", "max_stack", "capabilities",
          "entity_template", "world_interaction", "throw", "use", "portable_state",
-         "triggers"},
+         "triggers", "weapon", "drop_tag"},
         path,
         source_kind,
         KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ITEM);
@@ -5638,6 +5831,19 @@ ItemTemplateConfig item_template_from_yaml(
     }
     ItemTemplateConfig item;
     item.name = node["name"].as<std::string>();
+    if (node["weapon"]) {
+        item.weapon_ref = node["weapon"].as<std::string>();
+    }
+    // What a fresh instance is tagged. Only `quest` is authored: a map weapon
+    // is tagged where it is placed, not by what it is.
+    if (node["drop_tag"]) {
+        const std::string tag = node["drop_tag"].as<std::string>();
+        if (tag == "quest") {
+            item.definition.default_drop_tag = KERNEL_DROP_TAG_QUEST;
+        } else if (tag != "none") {
+            throw std::runtime_error("item drop_tag must be none or quest: " + path);
+        }
+    }
     KernelItemTemplateDefinition& definition = item.definition;
     definition.struct_size = sizeof(definition);
     definition.item_template_id = node["id"].as<std::uint32_t>();
@@ -5834,10 +6040,106 @@ std::vector<ItemTemplateConfig> load_item_templates_from_source(
     return items;
 }
 
+// `weapon:` on an item template. Binds the weapon and its category, and gives
+// the item the two portable state fields the kernel keeps its magazine and
+// reserve in, defaulting to a fresh weapon's.
+void resolve_weapon_item_templates(
+    const WeaponCatalogConfig& weapons,
+    std::vector<ItemTemplateConfig>* item_templates) {
+    for (ItemTemplateConfig& item : *item_templates) {
+        if (item.weapon_ref.empty()) {
+            continue;
+        }
+        std::optional<std::uint8_t> weapon_id;
+        for (std::size_t index = 0; index < weapons.names.size(); ++index) {
+            if (weapons.configured[index] &&
+                (weapons.names[index] == item.weapon_ref ||
+                 std::to_string(index) == item.weapon_ref)) {
+                weapon_id = static_cast<std::uint8_t>(index);
+            }
+        }
+        if (!weapon_id.has_value()) {
+            throw std::runtime_error(
+                "item weapon references an unknown weapon: " + item.name);
+        }
+        if (!weapons.has_category[*weapon_id]) {
+            throw std::runtime_error(
+                "a weapon an item names needs a category: " + item.name);
+        }
+        KernelItemTemplateDefinition& definition = item.definition;
+        if (definition.portable_state_field_count + 2u >
+            KERNEL_MAX_PORTABLE_STATE_FIELDS) {
+            throw std::runtime_error(
+                "weapon item has no room for its ammo and reserve fields: " +
+                item.name);
+        }
+        for (std::uint32_t index = 0; index < definition.portable_state_field_count;
+             ++index) {
+            const std::uint32_t field_id =
+                definition.portable_state_fields[index].field_id;
+            if (field_id == KERNEL_PORTABLE_FIELD_WEAPON_AMMO ||
+                field_id == KERNEL_PORTABLE_FIELD_WEAPON_RESERVE) {
+                throw std::runtime_error(
+                    "weapon_ammo and weapon_reserve are the weapon's own fields: " +
+                    item.name);
+            }
+        }
+        const KernelWeaponMechanicsDefinition& weapon =
+            weapons.definitions[*weapon_id];
+        definition.is_weapon = 1u;
+        definition.weapon_id = *weapon_id;
+        definition.weapon_category = weapons.categories[*weapon_id];
+        for (const auto& [field_id, value] :
+             {std::pair{KERNEL_PORTABLE_FIELD_WEAPON_AMMO,
+                        static_cast<std::uint32_t>(weapon.magazine_size)},
+              std::pair{KERNEL_PORTABLE_FIELD_WEAPON_RESERVE,
+                        static_cast<std::uint32_t>(weapon.reserve_magazines)}}) {
+            KernelPortableStateFieldDefinition& field =
+                definition.portable_state_fields[
+                    definition.portable_state_field_count++];
+            field = KernelPortableStateFieldDefinition{};
+            field.field_id = field_id;
+            field.type = KernelPortableStateType_Uint32;
+            field.uint32_default = value;
+        }
+    }
+}
+
 void resolve_inventory_item_template_references(
     const std::vector<ItemTemplateConfig>& item_templates,
     std::vector<EntityTemplateConfig>* entity_templates) {
     for (EntityTemplateConfig& entity_template : *entity_templates) {
+        for (InventorySlotConfig& weapon : entity_template.loadout_weapon_options) {
+            for (const ItemTemplateConfig& candidate : item_templates) {
+                if (candidate.name == weapon.item_template_ref ||
+                    std::to_string(candidate.definition.item_template_id) ==
+                        weapon.item_template_ref) {
+                    weapon.item_template_id = candidate.definition.item_template_id;
+                }
+            }
+        }
+        for (InventorySlotConfig& entry : entity_template.camp_stock) {
+            for (const ItemTemplateConfig& candidate : item_templates) {
+                if (candidate.name == entry.item_template_ref ||
+                    std::to_string(candidate.definition.item_template_id) ==
+                        entry.item_template_ref) {
+                    entry.item_template_id = candidate.definition.item_template_id;
+                }
+            }
+        }
+        for (InventorySlotConfig& option : entity_template.loadout_options) {
+            const auto item = std::find_if(
+                item_templates.begin(),
+                item_templates.end(),
+                [&option](const ItemTemplateConfig& candidate) {
+                    return candidate.name == option.item_template_ref ||
+                        std::to_string(candidate.definition.item_template_id) ==
+                            option.item_template_ref;
+                });
+            if (item != item_templates.end()) {
+                option.item_template_id = item->definition.item_template_id;
+            }
+        }
         for (InventorySlotConfig& slot : entity_template.inventory_slots) {
             const auto item = std::find_if(
                 item_templates.begin(),
@@ -6854,6 +7156,11 @@ void compile_projectile_trigger_binding(
                 "open_ui is only supported in on_activated: " +
                 projectile_template->name);
         }
+        if (action.action_type == "refill_weapon_reserve") {
+            throw std::runtime_error(
+                "refill_weapon_reserve is only supported in on_item_used: " +
+                projectile_template->name);
+        }
         if (action.action_type == "apply_pull") {
             compiled_action.target_source = entity_ref_source(
                 trigger_parameter_value(
@@ -7196,6 +7503,22 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
             }
             compiled_action.impulse_collision_mask = action.collision_mask;
             compiled_action.impulse_lockout_ticks = action.lockout_ticks;
+            continue;
+        }
+        if (action.action_type == "refill_weapon_reserve") {
+            // Mirrors the kernel: only an item's use has a user to refill.
+            if (trigger_name != "on_item_used") {
+                throw std::runtime_error(
+                    "refill_weapon_reserve is only supported in on_item_used: " +
+                    binding.action_graph_ref);
+            }
+            compiled_action.action_type =
+                KernelEntityTriggerActionType_RefillWeaponReserve;
+            compiled_action.target_source = entity_ref_source(
+                trigger_parameter_value(
+                    binding, graph_parameter(action.target_parameter)));
+            compiled_action.reserve_refill_count = action.reserve_refill_count;
+            compiled_action.reserve_refill_percent = action.reserve_refill_percent;
             continue;
         }
         if (action.action_type == "open_ui") {
@@ -7668,6 +7991,18 @@ WeaponCatalogConfig load_weapon_catalog_from_source(
         weapons.projectile_sync_modes[weapon.weapon_id] =
             projectile_sync_mode_from_weapon_yaml(document);
         weapons.names[weapon.weapon_id] = name;
+        if (document["category"]) {
+            const int category = document["category"].as<int>();
+            if (category < 0 ||
+                category >= static_cast<int>(KERNEL_WEAPON_CATEGORY_COUNT)) {
+                throw std::runtime_error(
+                    "weapon category must be 0 to " +
+                    std::to_string(KERNEL_WEAPON_CATEGORY_COUNT - 1u) + ": " + file);
+            }
+            weapons.has_category[weapon.weapon_id] = true;
+            weapons.categories[weapon.weapon_id] =
+                static_cast<std::uint8_t>(category);
+        }
     }
     return weapons;
 }
@@ -7762,6 +8097,8 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             "reinforce_budget",
             "agent_budget",
             "navigation_mesh",
+            "scene_props",
+            "scene_items",
         },
         path,
         source.source_kind(),
@@ -8008,10 +8345,13 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     }
     resolve_inventory_item_template_references(
         config.item_templates, &config.entity_templates);
+    resolve_weapon_item_templates(config.weapons, &config.item_templates);
     config.actor_templates =
         actor_templates_from_entity_templates(config.entity_templates);
 
     apply_catalog_player_config(document, &config);
+    apply_catalog_scene_props_config(
+        document, &config, path, source.source_kind());
     apply_catalog_director_preload_config(document, &config);
     apply_catalog_patrol_config(
         document, &config, path, source.source_kind());
@@ -8031,6 +8371,65 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
 void apply_default_non_weapon_config(GameServerGameplayConfig* config) {
     config->player = PlayerGameplayDefinition{};
     apply_default_actor_templates(config);
+}
+
+void apply_catalog_scene_props_config(
+    const YAML::Node& document,
+    GameServerGameplayConfig* config,
+    const std::string& path,
+    std::uint32_t source_kind) {
+    const YAML::Node props = document["scene_props"];
+    if (props && !props.IsSequence()) {
+        throw std::runtime_error("scene_props must be a sequence: " + path);
+    }
+    for (const YAML::Node& prop : props ? props : YAML::Node(YAML::NodeType::Sequence)) {
+        reject_unknown_keys(
+            prop,
+            {"entity_template", "position"},
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+        if (!prop["entity_template"] || !prop["position"]) {
+            throw std::runtime_error(
+                "scene prop requires entity_template and position: " + path);
+        }
+        ScenePropConfig scene_prop;
+        scene_prop.entity_template_id = entity_template_ref_from_yaml(
+            prop["entity_template"], config->entity_templates);
+        scene_prop.position = vec3_from_yaml(prop["position"]);
+        config->scene_props.push_back(scene_prop);
+    }
+    if (const YAML::Node items = document["scene_items"]) {
+        if (!items.IsSequence()) {
+            throw std::runtime_error("scene_items must be a sequence: " + path);
+        }
+        for (const YAML::Node& item_node : items) {
+            reject_unknown_keys(
+                item_node,
+                {"item_template", "quantity", "position"},
+                path,
+                source_kind,
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+            if (!item_node["item_template"] || !item_node["position"]) {
+                throw std::runtime_error(
+                    "scene item requires item_template and position: " + path);
+            }
+            SceneItemConfig scene_item;
+            scene_item.item_template_ref = item_node["item_template"].as<std::string>();
+            for (const ItemTemplateConfig& candidate : config->item_templates) {
+                if (candidate.name == scene_item.item_template_ref ||
+                    std::to_string(candidate.definition.item_template_id) ==
+                        scene_item.item_template_ref) {
+                    scene_item.item_template_id = candidate.definition.item_template_id;
+                }
+            }
+            scene_item.quantity = item_node["quantity"]
+                ? item_node["quantity"].as<std::uint32_t>()
+                : 1u;
+            scene_item.position = vec3_from_yaml(item_node["position"]);
+            config->scene_items.push_back(std::move(scene_item));
+        }
+    }
 }
 
 void apply_catalog_player_config(
@@ -8729,6 +9128,8 @@ std::uint64_t compute_gameplay_catalog_hash(const WeaponCatalogConfig& weapons) 
         hash_string(&hash, weapons.names[index]);
         hash_scalar(&hash, weapons.projectile_sync_modes[index]);
         hash_scalar(&hash, weapons.collider_template_ids[index]);
+        hash_scalar(&hash, weapons.has_category[index]);
+        hash_scalar(&hash, weapons.categories[index]);
         hash_weapon(&hash, weapons.definitions[index]);
     }
     return hash == 0 ? kFnvOffsetBasis : hash;
@@ -8813,6 +9214,8 @@ std::uint64_t compute_gameplay_catalog_hash(
             hash_scalar(&hash, action.ui_id);
             hash_scalar(&hash, action.spawn_placement);
             hash_float(&hash, action.pull_strength);
+            hash_scalar(&hash, action.reserve_refill_count);
+            hash_scalar(&hash, action.reserve_refill_percent);
         }
     }
     std::vector<StatusEffectTemplateConfig> status_effect_templates =
@@ -8883,6 +9286,10 @@ std::uint64_t compute_gameplay_catalog_hash(
         hash_scalar(&hash, definition.use_policy.charge_field_id);
         hash_scalar(&hash, definition.use_policy.cooldown_ticks);
         hash_scalar(&hash, definition.use_policy.destroy_when_empty);
+        hash_scalar(&hash, definition.is_weapon);
+        hash_scalar(&hash, definition.weapon_id);
+        hash_scalar(&hash, definition.weapon_category);
+        hash_scalar(&hash, definition.default_drop_tag);
         hash_scalar(&hash, definition.portable_state_field_count);
         for (std::uint32_t index = 0;
              index < definition.portable_state_field_count;
@@ -8903,6 +9310,21 @@ std::uint64_t compute_gameplay_catalog_hash(
         }
     }
     hash_scalar(&hash, config.player.actor_template_id);
+    hash_scalar(&hash, static_cast<std::uint32_t>(config.scene_props.size()));
+    hash_scalar(&hash, static_cast<std::uint32_t>(config.scene_items.size()));
+    for (const SceneItemConfig& scene_item : config.scene_items) {
+        hash_scalar(&hash, scene_item.item_template_id);
+        hash_scalar(&hash, scene_item.quantity);
+        hash_float(&hash, scene_item.position.x);
+        hash_float(&hash, scene_item.position.y);
+        hash_float(&hash, scene_item.position.z);
+    }
+    for (const ScenePropConfig& scene_prop : config.scene_props) {
+        hash_scalar(&hash, scene_prop.entity_template_id);
+        hash_float(&hash, scene_prop.position.x);
+        hash_float(&hash, scene_prop.position.y);
+        hash_float(&hash, scene_prop.position.z);
+    }
     hash_float(&hash, config.player.respawn.delay_seconds);
     hash_float(&hash, config.player.respawn.height_offset_meters);
     hash_float(&hash, config.player.respawn.invulnerable_seconds);
@@ -9188,6 +9610,24 @@ const ActorTemplateConfig* find_actor_template(
     return nullptr;
 }
 
+std::uint32_t weapon_charge_ticks(
+    const GameServerGameplayConfig& config,
+    std::uint16_t weapon_id) {
+    if (weapon_id > UINT8_MAX || !config.weapons.configured[weapon_id]) {
+        return 0u;
+    }
+    const std::uint32_t fire_action =
+        config.weapons.definitions[weapon_id].fire_action_template_id;
+    for (const ActionTemplateConfig& action : config.action_templates) {
+        if (action.definition.action_template_id == fire_action) {
+            return action.definition.trigger_mode == KernelActionTriggerMode_Charge
+                ? action.definition.commit_offset_ticks
+                : 0u;
+        }
+    }
+    return 0u;
+}
+
 std::uint8_t active_weapon_id(const ActorTemplateConfig& actor_template) {
     if (actor_template.weapon_slot_count == 0 ||
         actor_template.active_weapon_slot >= actor_template.weapon_slot_count) {
@@ -9374,6 +9814,10 @@ std::vector<std::string> validate_gameplay_config(
              entity_template.prop.population_group_id != 0u)) {
             errors.push_back("only prop templates may declare lifecycle");
         }
+        if (entity_template.prop.importance != 0u &&
+            entity_template.prop.population_group_id == 0u) {
+            errors.push_back("prop lifecycle importance requires a population group");
+        }
         if (entity_template.prop.population_group_id != 0u &&
             std::find(
                 prop_population_rule_ids.begin(),
@@ -9400,6 +9844,175 @@ std::vector<std::string> validate_gameplay_config(
              entity_template->prop.population_group_id != 0u)) {
             errors.push_back(
                 "item-backed prop must not declare lifecycle or population");
+        }
+        // A thrown prop is only ever swept against the world through its
+        // on_collision binding. Without terrain in that mask nothing lands
+        // it: it falls through the ground for good, cannot be picked up, and
+        // the item is lost (measured, thrown_potion_test).
+        if (item.definition.is_weapon != 0u &&
+            (item.definition.item_mode != KernelItemMode_Stateful ||
+             (item.definition.capability_flags &
+              (KernelItemCapability_Consumable | KernelItemCapability_Throwable)) != 0u)) {
+            errors.push_back(
+                "weapon item must be stateful and neither consumable nor "
+                "throwable: " + item.name);
+        }
+        if (entity_template != config.entity_templates.end() &&
+            item.definition.throw_policy.mode ==
+                KernelItemThrowMode_IdentityPreserving &&
+            (entity_template->collision_trigger_mask &
+             KERNEL_COLLISION_LAYER_TERRAIN) == 0u) {
+            errors.push_back(
+                "throwable item prop needs on_collision with terrain in its "
+                "collision_mask, or a throw never lands: " + item.name);
+        }
+    }
+    for (const SceneItemConfig& scene_item : config.scene_items) {
+        const auto item = std::find_if(
+            config.item_templates.begin(),
+            config.item_templates.end(),
+            [&scene_item](const ItemTemplateConfig& candidate) {
+                return candidate.definition.item_template_id == scene_item.item_template_id;
+            });
+        if (item == config.item_templates.end() ||
+            item->definition.entity_template_id == 0u || scene_item.quantity == 0u ||
+            scene_item.quantity > item->definition.max_stack ||
+            !std::isfinite(scene_item.position.x) ||
+            !std::isfinite(scene_item.position.y) ||
+            !std::isfinite(scene_item.position.z)) {
+            errors.push_back(
+                "scene item must name an item with a world prop, a quantity within "
+                "its max_stack, at a finite position: " + scene_item.item_template_ref);
+        }
+    }
+    for (const ScenePropConfig& scene_prop : config.scene_props) {
+        const auto entity_template = std::find_if(
+            config.entity_templates.begin(),
+            config.entity_templates.end(),
+            [&scene_prop](const EntityTemplateConfig& candidate) {
+                return candidate.actor_template_id == scene_prop.entity_template_id;
+            });
+        if (entity_template == config.entity_templates.end() ||
+            entity_template->entity_type != KernelEntityType_Prop ||
+            !std::isfinite(scene_prop.position.x) ||
+            !std::isfinite(scene_prop.position.y) ||
+            !std::isfinite(scene_prop.position.z)) {
+            errors.push_back("scene prop must name a prop template at a finite position");
+        }
+    }
+    for (const EntityTemplateConfig& entity_template : config.entity_templates) {
+        for (const InventorySlotConfig& weapon : entity_template.loadout_weapon_options) {
+            const auto item = std::find_if(
+                config.item_templates.begin(),
+                config.item_templates.end(),
+                [&weapon](const ItemTemplateConfig& candidate) {
+                    return candidate.definition.item_template_id ==
+                        weapon.item_template_id;
+                });
+            if (item == config.item_templates.end() ||
+                item->definition.is_weapon == 0u) {
+                errors.push_back(
+                    "loadout weapon must name a weapon item: " +
+                    entity_template.name + " " + weapon.item_template_ref);
+            }
+        }
+        for (const InventorySlotConfig& option : entity_template.loadout_options) {
+            const auto item = std::find_if(
+                config.item_templates.begin(),
+                config.item_templates.end(),
+                [&option](const ItemTemplateConfig& candidate) {
+                    return candidate.definition.item_template_id ==
+                        option.item_template_id;
+                });
+            if (item != config.item_templates.end() &&
+                item->definition.is_weapon != 0u) {
+                errors.push_back(
+                    "a weapon item is offered under loadout weapons, not options: " +
+                    entity_template.name + " " + option.item_template_ref);
+            }
+            // A loadout is replayed on every respawn; a quest item handed out
+            // again each time would never be the one of a kind it is.
+            if (item != config.item_templates.end() &&
+                item->definition.default_drop_tag != KERNEL_DROP_TAG_NONE) {
+                errors.push_back(
+                    "a quest item cannot be a loadout option: " +
+                    entity_template.name + " " + option.item_template_ref);
+            }
+        }
+        if (!entity_template.camp_stock.empty() &&
+            (entity_template.entity_type != KernelEntityType_Prop ||
+             entity_template.shelter_capacity == 0u)) {
+            // Only those inside see the stock, so a camp nobody can enter
+            // would hold it for no one.
+            errors.push_back(
+                "camp stock needs a prop template with a shelter: " +
+                entity_template.name);
+        }
+        for (const InventorySlotConfig& entry : entity_template.camp_stock) {
+            const auto item = std::find_if(
+                config.item_templates.begin(),
+                config.item_templates.end(),
+                [&entry](const ItemTemplateConfig& candidate) {
+                    return candidate.definition.item_template_id ==
+                        entry.item_template_id;
+                });
+            if (item == config.item_templates.end()) {
+                errors.push_back(
+                    "camp stock entry must reference a valid item: " +
+                    entity_template.name + " " + entry.item_template_ref);
+                continue;
+            }
+            if (entry.quantity == 0 ||
+                entry.quantity > item->definition.max_stack ||
+                (item->definition.item_mode == KernelItemMode_Stateful &&
+                 entry.quantity != 1)) {
+                errors.push_back(
+                    "camp stock quantity must be 1 to the item's max_stack: " +
+                    entity_template.name + " " + entry.item_template_ref);
+            }
+            // What a camp hands out is a consumable resource, never a quest
+            // item or a map weapon (D22).
+            if (item->definition.default_drop_tag != KERNEL_DROP_TAG_NONE) {
+                errors.push_back(
+                    "a quest item cannot be camp stock: " +
+                    entity_template.name + " " + entry.item_template_ref);
+            }
+        }
+        if (!entity_template.loadout_options.empty() &&
+            entity_template.entity_type != KernelEntityType_Prop) {
+            errors.push_back(
+                "only prop templates may offer a loadout: " + entity_template.name);
+        }
+        for (const InventorySlotConfig& option : entity_template.loadout_options) {
+            const auto item = std::find_if(
+                config.item_templates.begin(),
+                config.item_templates.end(),
+                [&option](const ItemTemplateConfig& candidate) {
+                    return candidate.definition.item_template_id ==
+                        option.item_template_id;
+                });
+            if (item == config.item_templates.end()) {
+                errors.push_back(
+                    "loadout option must reference a valid item: " +
+                    entity_template.name + " " + option.item_template_ref);
+                continue;
+            }
+            if (option.quantity == 0 ||
+                option.quantity > item->definition.max_stack ||
+                (item->definition.item_mode == KernelItemMode_Stateful &&
+                 option.quantity != 1)) {
+                errors.push_back(
+                    "loadout option quantity must be 1 to the item's max_stack: " +
+                    entity_template.name + " " + option.item_template_ref);
+            }
+        }
+        if (entity_template.prop.throw_trajectory_projectile_template_id != 0u &&
+            (entity_template.collision_trigger_mask &
+             KERNEL_COLLISION_LAYER_TERRAIN) == 0u) {
+            errors.push_back(
+                "throwable prop needs on_collision with terrain in its "
+                "collision_mask, or a throw never lands: " +
+                entity_template.name);
         }
     }
     const StaticCollisionSceneConfig& static_scene =
@@ -9513,9 +10126,14 @@ std::vector<std::string> validate_gameplay_config(
             actor_template.hitbox_half_extents.x <= 0.0f ||
             actor_template.hitbox_half_extents.y <= 0.0f ||
             actor_template.hitbox_half_extents.z <= 0.0f ||
-            actor_template.weapon_slot_count == 0 ||
+            // Only a player may be unarmed, and then slot 0 names nothing.
+            (actor_template.weapon_slot_count == 0 &&
+             actor_template.actor_type != kActorTypePlayer) ||
             actor_template.weapon_slot_count > actor_template.weapon_ids.size() ||
-            actor_template.active_weapon_slot >= actor_template.weapon_slot_count) {
+            (actor_template.weapon_slot_count == 0
+                 ? actor_template.active_weapon_slot != 0
+                 : actor_template.active_weapon_slot >=
+                       actor_template.weapon_slot_count)) {
             errors.push_back("actor template must be valid");
         }
         for (std::uint8_t slot = 0; slot < actor_template.weapon_slot_count; ++slot) {
@@ -10452,5 +11070,9 @@ KernelCombatStateDefinition make_player_combat_state(
     return make_combat_state_from_actor_template(config, *actor_template);
 }
 
+
+std::uint32_t item_portable_state_field_id(const std::string& name) {
+    return portable_state_field_id(name);
+}
 
 }  // namespace network_example::game_server

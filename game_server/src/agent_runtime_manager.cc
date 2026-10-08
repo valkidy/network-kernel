@@ -36,6 +36,7 @@ AgentSentryConfig agent_sentry_config(
     }
 
     AgentSentryConfig sentry = actor_template->sentry;
+    sentry.charge_ticks = weapon_charge_ticks(config, sentry.weapon_id);
     if (sentry.weapon_id > UINT8_MAX) {
         return sentry;
     }

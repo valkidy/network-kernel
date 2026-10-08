@@ -156,6 +156,15 @@ RenderEntityState render_state_from_world_entity(
         state.shelter_net_id = sheltered->shelter_net_id;
         state.shelter_seat = sheltered->seat;
     }
+    if (world.registry().all_of<PlayerTag, WeaponState>(entity)) {
+        const WeaponState& weapon = world.registry().get<WeaponState>(entity);
+        state.has_held_weapon = 1u;
+        state.held_weapon_id =
+            weapon.active_weapon_slot < weapon.weapon_slot_count &&
+                    weapon.active_weapon_slot < kWeaponSlotCount
+                ? static_cast<std::uint8_t>(weapon.weapon_ids[weapon.active_weapon_slot])
+                : static_cast<std::uint8_t>(KERNEL_HELD_WEAPON_NONE);
+    }
     return state;
 }
 
@@ -206,6 +215,10 @@ RenderEntityState render_state_from_snapshot_entity(
     };
     state.shelter_net_id = entity.shelter_net_id;
     state.shelter_seat = entity.shelter_seat;
+    if (entity.has_held_weapon) {
+        state.has_held_weapon = 1u;
+        state.held_weapon_id = entity.held_weapon_id;
+    }
     return state;
 }
 

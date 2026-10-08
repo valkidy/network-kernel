@@ -251,6 +251,18 @@ struct ActorTemplateConfig {
     std::uint8_t active_weapon_slot = 0;
     std::uint16_t inventory_slot_capacity = 0;
     std::vector<InventorySlotConfig> inventory_slots;
+    // A loadout camp's offer (design D24): each entry is one choice that fills
+    // one inventory slot when picked, and may be picked more than once. Props
+    // only; empty for anything that is not a loadout camp.
+    std::vector<InventorySlotConfig> loadout_options;
+    // The weapon items a loadout camp offers (D5); a player picks at most one
+    // per category. Quantity is always 1.
+    std::vector<InventorySlotConfig> loadout_weapon_options;
+    // A temporary camp's stock (D7, D8): each entry fills one slot of a
+    // container the camp owns, made when the camp appears. Shared, finite and
+    // take-only; seen only by whoever is inside (K9). Props with a shelter
+    // only.
+    std::vector<InventorySlotConfig> camp_stock;
     std::uint16_t animation_idle = 0;
     std::uint16_t animation_chasing = 0;
     AgentSentryConfig sentry{};
@@ -309,6 +321,11 @@ struct WeaponCatalogConfig {
     std::array<std::string, kWeaponIdCount> names{};
     std::array<std::uint8_t, kWeaponIdCount> projectile_sync_modes{};
     std::array<std::uint32_t, kWeaponIdCount> collider_template_ids{};
+    // `category:` 0..KERNEL_WEAPON_CATEGORY_COUNT-1, the weapon container slot
+    // a weapon item of this weapon goes in. Numbers, not names: the same four
+    // slots serve wands and guns. Needed only by weapons a weapon item names.
+    std::array<bool, kWeaponIdCount> has_category{};
+    std::array<std::uint8_t, kWeaponIdCount> categories{};
 };
 
 struct ActionTemplateConfig {
@@ -385,6 +402,10 @@ struct ActionGraphActionConfig {
     // open_ui only: which interface the building offers. A literal, like
     // apply_pull's numbers; see KernelActionDefinition::ui_id.
     std::uint32_t ui_id = 0;
+    // refill_weapon_reserve only: exactly one is non-zero. See
+    // KernelActionDefinition::reserve_refill_count.
+    std::uint16_t reserve_refill_count = 0;
+    std::uint16_t reserve_refill_percent = 0;
     // spawn_entity only: a KERNEL_SPAWN_PLACEMENT_*, authored as
     // `placement: exact | clear`.
     std::uint32_t spawn_placement = KERNEL_SPAWN_PLACEMENT_EXACT;
@@ -415,6 +436,8 @@ struct StatusEffectTemplateConfig {
 struct ItemTemplateConfig {
     std::string name;
     std::string entity_template_ref;
+    // `weapon:` -- the weapon template this item is; empty for anything else.
+    std::string weapon_ref;
     std::string charge_field_ref;
     TriggerBindingConfig item_used_trigger;
     KernelItemTemplateDefinition definition{};
@@ -441,6 +464,24 @@ struct StaticCollisionSceneConfig {
     std::uint32_t collision_layer = 0;
 };
 
+// A prop game_server puts in the world once the server is running, before any
+// mission does -- the initial camp. A stand-in for the scene file that will
+// place a map's fixed props; authored as `scene_props:` at catalog top level.
+struct ScenePropConfig {
+    std::uint32_t entity_template_id = 0;
+    KernelVec3 position{};
+};
+
+// An item lying on the map from the start (`scene_items:`), placed alongside
+// the scene props. A weapon item placed so is a map weapon
+// (KERNEL_DROP_TAG_MAP_WEAPON): it survives a loadout being reapplied.
+struct SceneItemConfig {
+    std::string item_template_ref;
+    std::uint32_t item_template_id = 0;
+    std::uint32_t quantity = 1;
+    KernelVec3 position{};
+};
+
 struct ReinforceBudgetConfig {
     std::uint32_t max_live_agents = 0;
 };
@@ -464,6 +505,8 @@ struct GameServerGameplayConfig {
     // Per-carrier ceilings bound one caller; this bounds N callers. Zero is
     // unbounded, and a catalog with any on_alert spawner must author it.
     ReinforceBudgetConfig reinforce_budget;
+    std::vector<ScenePropConfig> scene_props;
+    std::vector<SceneItemConfig> scene_items;
     // Every agent on the server. Spawners that fill room when there is room --
     // patrols, nests, on_alert -- are held to it; mission and world rules and
     // action-graph spawns count toward it but are never refused, so it is a
@@ -566,6 +609,23 @@ const ActorTemplateConfig* find_actor_template(
     const GameServerGameplayConfig& config,
     std::uint32_t actor_template_id);
 std::uint8_t active_weapon_id(const ActorTemplateConfig& actor_template);
+
+// How long `weapon_id`'s fire action charges before a release casts it
+// (trigger_mode charge, design D21): its commit_offset_ticks. 0 for any other
+// trigger mode, or a weapon the catalog does not configure.
+std::uint32_t weapon_charge_ticks(
+    const GameServerGameplayConfig& config,
+    std::uint16_t weapon_id);
+
+// The field id a portable state field named `name` gets: what the kernel's
+// KERNEL_PORTABLE_FIELD_* constants are, for the names it reserves.
+std::uint32_t item_portable_state_field_id(const std::string& name);
+
+// The most options one loadout camp may offer: the offer list has to fit one
+// game message (GAME_SERVER_MESSAGE_LOADOUT_OFFERS).
+inline constexpr std::size_t kMaxLoadoutOptions = 32;
+// The most entries one camp's stock may hold (one slot each).
+inline constexpr std::size_t kMaxCampStock = 64;
 
 KernelCombatStateDefinition make_player_combat_state(
     const GameServerGameplayConfig& config);

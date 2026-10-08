@@ -370,6 +370,117 @@ uint32_t Kernel_PollGameplayRequestOutcomes(
     KernelGameplayRequestOutcome* out_outcomes,
     uint32_t max_outcomes);
 
+/*
+ * Game messages; see KernelGameMessage. Behind KERNEL_CAPABILITY_GAME_MESSAGES.
+ *
+ * Kernel_SendGameMessage sends from the local player to game_server: over the
+ * network from a welcomed client, straight into the server's queue on a listen
+ * host. False on a dedicated server, before a client is welcomed, for a body
+ * over KERNEL_MAX_GAME_MESSAGE_BYTES, or a null body with a non-zero size.
+ * Kernel_PollGameMessages drains what game_server sent the local player.
+ *
+ * Kernel_ServerSendGameMessage sends to one peer (a listen host's own peer
+ * included); false for a peer with no welcomed session. Kernel_ServerPollGameMessages
+ * drains what clients sent, oldest first. Each queue holds at most 256
+ * messages; one arriving past that is dropped with an Error event, code 34.
+ *
+ * The poll calls fill whole KernelGameMessage records and return how many.
+ */
+/*
+ * Creates `owner_entity_id`'s weapon container (ABI 101): KERNEL_WEAPON_CATEGORY_COUNT
+ * slots, weapon items only, each at its category's slot. From then on the
+ * owner's loadout is what the container holds -- an empty one is unarmed --
+ * and a weapon item's magazine and reserve live on the item whenever it is
+ * not in hand. A weapon picked up goes here; one already in that slot goes to
+ * the picker's feet. Players only pick weapons up. False on a client, for an
+ * owner with no weapon state, or one that already has a weapon container.
+ */
+/*
+ * Drop tags (ABI 101); see KERNEL_DROP_TAG_*. Kernel_ServerSetItemDropTag
+ * retags a live item (a map weapon is made, then tagged MAP_WEAPON).
+ * Kernel_ServerClearUntaggedItems empties a container of its NONE-tagged
+ * items and leaves the tagged ones in place. Kernel_ServerDropInventoryItem
+ * puts an item from a container on the ground under `position` as itself --
+ * id, portable state and tag kept -- with no range or placement check: the
+ * server is the one deciding where. It rests on the terrain below the point
+ * (a death in mid-air leaves nothing hanging), or at the point when there is
+ * no terrain beneath it. A weapon dropped from a weapon container leaves the
+ * loadout, its magazine and reserve written to the item first. Works on a
+ * dead owner's containers.
+ */
+bool Kernel_ServerSetItemDropTag(
+    KernelHandle* kernel,
+    KernelItemInstanceId item_instance_id,
+    uint8_t drop_tag);
+
+bool Kernel_ServerClearUntaggedItems(
+    KernelHandle* kernel,
+    KernelInventoryContainerId container_id);
+
+bool Kernel_ServerDropInventoryItem(
+    KernelHandle* kernel,
+    KernelItemInstanceId item_instance_id,
+    const KernelVec3* position,
+    uint32_t* out_prop_entity_id);
+
+bool Kernel_ServerCreateWeaponContainer(
+    KernelHandle* kernel,
+    uint32_t owner_entity_id,
+    KernelInventoryContainerId* out_container_id);
+
+/*
+ * Drops every item whose drop tag is not NONE, from every container
+ * `owner_entity_id` owns, onto the ground as itself (see
+ * Kernel_ServerDropInventoryItem): spread on a 1 m ring round `position`, or,
+ * when `position` is null, round the owner -- where it went in, if it is
+ * inside a building. Untagged items stay. *out_dropped_count (optional) is how
+ * many went down. False on a client or for an unknown owner (ABI 101).
+ *
+ * What a death drops (game_server calls it), and what the kernel itself drops
+ * when a player disconnects, before the player is removed.
+ */
+bool Kernel_ServerDropTaggedItems(
+    KernelHandle* kernel,
+    uint32_t owner_entity_id,
+    const KernelVec3* position,
+    uint32_t* out_dropped_count);
+
+/*
+ * Creates a stock container (ABI 101; KernelInventoryContainerKind_Stock) of
+ * `slot_capacity` slots owned by `owner_entity_id` -- a camp. It holds
+ * anything, is sent only to those inside its owner (and never to its owner,
+ * which is not a player), and goes when its owner does, with whatever is
+ * left in it. False on a client or for an unknown owner.
+ */
+bool Kernel_ServerCreateStockContainer(
+    KernelHandle* kernel,
+    uint32_t owner_entity_id,
+    uint32_t slot_capacity,
+    KernelInventoryContainerId* out_container_id);
+
+bool Kernel_SendGameMessage(
+    KernelHandle* kernel,
+    uint32_t message_type,
+    const uint8_t* payload,
+    uint32_t payload_size);
+
+uint32_t Kernel_PollGameMessages(
+    KernelHandle* kernel,
+    KernelGameMessage* out_messages,
+    uint32_t max_messages);
+
+bool Kernel_ServerSendGameMessage(
+    KernelHandle* kernel,
+    uint32_t peer,
+    uint32_t message_type,
+    const uint8_t* payload,
+    uint32_t payload_size);
+
+uint32_t Kernel_ServerPollGameMessages(
+    KernelHandle* kernel,
+    KernelGameMessage* out_messages,
+    uint32_t max_messages);
+
 uint32_t Kernel_PollInventoryDeltas(
     KernelHandle* kernel,
     KernelInventoryContainerId container_id,

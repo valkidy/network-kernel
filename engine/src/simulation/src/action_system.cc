@@ -162,6 +162,52 @@ void settle_recovery(ActionRuntimeState& action, std::uint32_t current_tick) {
     }
 }
 
+// The weapon in hand follows the input's selection (K8), when nothing is
+// being done with the one in hand. The one put away starts its holstered
+// reload; the one taken out, if it has been away for its reload time and has
+// room and a reserve, comes out reloaded -- the same as a reload action would
+// have left it, and computed from ticks alone, so a client can work it out.
+void hold_selected_weapon(
+    World& world,
+    entt::entity entity,
+    std::uint8_t selected_weapon,
+    std::uint32_t current_tick) {
+    WeaponState& weapon = world.registry().get<WeaponState>(entity);
+    const std::size_t slot = find_weapon_slot(weapon, selected_weapon);
+    if (slot >= weapon.weapon_slot_count || slot == weapon.active_weapon_slot) {
+        return;
+    }
+    if (const ActionRuntimeState* action =
+            world.registry().try_get<ActionRuntimeState>(entity);
+        action != nullptr && (action->phase == KernelActionPhase_Windup ||
+                              action->phase == KernelActionPhase_Active)) {
+        return;
+    }
+    const std::size_t previous = weapon.active_weapon_slot;
+    if (previous < weapon.weapon_slot_count && previous < kWeaponSlotCount) {
+        weapon.holstered[previous] = true;
+        weapon.holstered_tick[previous] = current_tick;
+    }
+    weapon.active_weapon_slot = static_cast<std::uint8_t>(slot);
+    if (!weapon.holstered[slot]) {
+        return;
+    }
+    weapon.holstered[slot] = false;
+    const WeaponMechanicsDefinition* definition =
+        weapon_definition(world, entity, selected_weapon);
+    const RuntimeActionTemplate* reload = definition == nullptr
+        ? nullptr
+        : world.find_action_template(definition->reload_action_template_id);
+    if (reload == nullptr ||
+        current_tick - weapon.holstered_tick[slot] < reload->commit_offset_ticks ||
+        weapon.ammo[slot] >= definition->magazine_size ||
+        weapon.reserve_magazines[slot] == 0u) {
+        return;
+    }
+    weapon.ammo[slot] = definition->magazine_size;
+    --weapon.reserve_magazines[slot];
+}
+
 bool admit_action(
     World& world,
     entt::entity entity,
@@ -410,11 +456,49 @@ void advance_action(
         input.continuous.action_instance_id == action.action_instance_id;
     const bool released = matching_control && input.continuous.held == 0u;
     const bool weapon_changed = input.selected_weapon != action.source_weapon_id;
+    const bool charge =
+        action_template->trigger_mode == KernelActionTriggerMode_Charge;
     const bool timed_out =
-        action_template->trigger_mode == KernelActionTriggerMode_Hold &&
+        (action_template->trigger_mode == KernelActionTriggerMode_Hold || charge) &&
         action_template->hold_input_timeout_ticks != 0u &&
         current_tick - input.last_input_tick >=
             action_template->hold_input_timeout_ticks;
+    // A charge (D21) casts on release, and only once charged. Anything that
+    // ends it first -- death, a weapon change, silence, an early release --
+    // cancels it outright: nothing has been spent, so there is nothing for
+    // the cancel flags to decide.
+    if (charge && action.commit_count == 0u) {
+        KernelLocalActionResultReason stop = KernelLocalActionResultReason_None;
+        if (dead) {
+            stop = KernelLocalActionResultReason_Dead;
+        } else if (weapon_changed) {
+            stop = KernelLocalActionResultReason_WeaponChanged;
+        } else if (timed_out) {
+            stop = KernelLocalActionResultReason_TimedOut;
+        } else if (released && current_tick < action.next_commit_tick) {
+            stop = KernelLocalActionResultReason_Cancelled;
+        }
+        if (stop != KernelLocalActionResultReason_None) {
+            push_outcome(
+                world,
+                entity,
+                action,
+                current_tick,
+                ActionOutcomeType::Corrected,
+                stop,
+                outcomes);
+            release_action_resources(world, entity, action);
+            reset_action(action);
+            update_visual_flags(world, entity);
+            return;
+        }
+        if (!released) {
+            action.phase = KernelActionPhase_Windup;
+            update_visual_flags(world, entity);
+            return;
+        }
+        // Released, charged: cast now.
+    }
     KernelLocalActionResultReason cancel_reason =
         KernelLocalActionResultReason_None;
     if (dead &&
@@ -426,7 +510,7 @@ void advance_action(
          KernelActionTemplateFlag_CancelOnWeaponChange) != 0u) {
         cancel_reason = KernelLocalActionResultReason_WeaponChanged;
     } else if (
-        released &&
+        released && !charge &&
         (action_template->flags & KernelActionTemplateFlag_CancelOnRelease) != 0u) {
         cancel_reason = KernelLocalActionResultReason_Cancelled;
     } else if (timed_out) {
@@ -574,6 +658,49 @@ void interrupt_sheltered_actions(
     }
 }
 
+// An item request that took the hands (PendingActionInterrupt) ends the
+// weapon action under way. One that has committed -- a beam that has been
+// firing -- goes into its recovery as any ending does; a charge not yet cast
+// simply ends, with nothing spent.
+void interrupt_actions_for_items(
+    World& world,
+    std::uint32_t current_tick,
+    std::vector<ActionOutcome>* outcomes) {
+    std::vector<entt::entity> pending;
+    for (const entt::entity entity : world.registry().view<PendingActionInterrupt>()) {
+        pending.push_back(entity);
+    }
+    for (const entt::entity entity : pending) {
+        const auto reason = static_cast<KernelLocalActionResultReason>(
+            world.registry().get<PendingActionInterrupt>(entity).reason);
+        world.registry().remove<PendingActionInterrupt>(entity);
+        ActionRuntimeState* action =
+            world.registry().try_get<ActionRuntimeState>(entity);
+        if (action == nullptr ||
+            (action->phase != KernelActionPhase_Windup &&
+             action->phase != KernelActionPhase_Active)) {
+            continue;
+        }
+        push_outcome(
+            world,
+            entity,
+            *action,
+            current_tick,
+            ActionOutcomeType::Corrected,
+            reason,
+            outcomes);
+        const RuntimeActionTemplate* action_template =
+            world.find_action_template(action->action_template_id);
+        if (action->commit_count > 0u && action_template != nullptr) {
+            enter_recovery(world, entity, *action, *action_template, current_tick);
+        } else {
+            release_action_resources(world, entity, *action);
+            reset_action(*action);
+        }
+        update_visual_flags(world, entity);
+    }
+}
+
 }  // namespace
 
 std::vector<ActionCommit> simulate_actions(
@@ -584,6 +711,7 @@ std::vector<ActionCommit> simulate_actions(
     std::vector<ActionCommit> commits;
     interrupt_staggered_actions(world, current_tick, outcomes);
     interrupt_sheltered_actions(world, current_tick, outcomes);
+    interrupt_actions_for_items(world, current_tick, outcomes);
     std::unordered_set<entt::entity> touched;
     for (const QueuedInput& queued_input : inputs) {
         const entt::entity entity = input_entity(world, queued_input);
@@ -602,6 +730,7 @@ std::vector<ActionCommit> simulate_actions(
         };
         input.selected_weapon = queued_input.input.selected_weapon;
         input.aim_direction = normalized_aim(queued_input.input);
+        hold_selected_weapon(world, entity, input.selected_weapon, current_tick);
         ActionRuntimeState& action =
             world.registry().get_or_emplace<ActionRuntimeState>(entity);
         if (queued_input.input.action_input.action_instance_id != 0u &&

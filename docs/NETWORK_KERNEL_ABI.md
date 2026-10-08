@@ -12,7 +12,60 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 99u`; `kernel_types.h` is the authority. ABI 98
+`KERNEL_ABI_VERSION == 101u`; `kernel_types.h` is the authority. ABI 101
+appended `importance` to `KernelPropDefinition`: a full population group
+never evicts the member just spawned, and evicts the lowest importance first,
+the oldest within it, and added `KernelEntityTriggerActionType_RefillWeaponReserve`
+with `reserve_refill_count` / `reserve_refill_percent` appended to
+`KernelActionDefinition`: an item's `on_item_used` refills the user's active
+weapon's reserve magazines, and a use that would refill nothing is rejected
+before the item is spent. ABI 101 also added game messages behind
+`KERNEL_CAPABILITY_GAME_MESSAGES` (bit 50, `0x0004000000000000`):
+`Kernel_SendGameMessage` / `Kernel_PollGameMessages` on a client or a listen
+host's own player, `Kernel_ServerSendGameMessage` /
+`Kernel_ServerPollGameMessages` on a server. A `KernelGameMessage` carries a
+game-defined `message_type` and an opaque body of at most
+`KERNEL_MAX_GAME_MESSAGE_BYTES` (512), reliably and in order; the kernel never
+reads the body, and a server reports the sender from the session. Each queue
+holds 256 messages; one past that is dropped with Error event code 34.
+`KernelAbiInfo` appended `game_message_size`; packet schema 27 adds the
+GameMessage packet (31). ABI 101 also adds weapon items and weapon
+containers: `KernelItemTemplateDefinition` appended `is_weapon`, `weapon_id`,
+`weapon_category` and a reserved byte; `KERNEL_WEAPON_CATEGORY_COUNT` (4),
+`KERNEL_PORTABLE_FIELD_WEAPON_AMMO` / `_RESERVE` and `KERNEL_HELD_WEAPON_NONE`
+(255; no weapon may use the id) are new; `Kernel_ServerCreateWeaponContainer`
+gives an owner a weapon container whose contents are its loadout;
+`KernelInventoryContainerView.reserved0` became `container_kind`; and
+`RenderEntityState`'s reserved bytes after `shelter_seat` became
+`held_weapon_id` and `has_held_weapon` (size unchanged). Snapshot schema 28
+sends the held weapon on every player record (one byte); packet schema 28
+adds the container kind to inventory snapshot pages. Drop tags (K12):
+`KERNEL_DROP_TAG_NONE / _QUEST / _MAP_WEAPON` (0/1/2) on every item instance,
+`KernelItemInstanceView` appended `drop_tag`,
+`KernelItemTemplateDefinition.reserved_weapon` became `default_drop_tag`, and
+`KernelInventoryChange_DropTag` (bit 3) joined `_All`. New exports:
+`Kernel_ServerSetItemDropTag`, `Kernel_ServerClearUntaggedItems` and
+`Kernel_ServerDropInventoryItem` (an inventory item onto the ground as
+itself, resting on the terrain beneath the given point), and
+`Kernel_ServerDropTaggedItems` (every tagged item an owner holds, on a 1 m
+ring round a point, or round the owner -- its entry point when sheltered;
+the kernel also calls it for a disconnecting player, and removes that player's
+containers). Fungible stacks merge only on an equal tag; a split keeps its
+source's. Packet schema 29 carries the tag in inventory records. Camps (K9):
+`KernelInventoryContainerKind_Stock` (2) and `Kernel_ServerCreateStockContainer`
+(a camp's stock: weapons and items in any slot, removed with its owner);
+`KernelDomainAction_Transfer` (7) takes from the stock of the building the
+instigator is inside. A container is now sent to its owner and to whoever is
+inside the entity that owns it; packet schema 30 adds `InventoryContainerClosed`
+(32), after which the client drops its copy. `KernelActionTriggerMode_Charge`
+(2, K7): hold to charge, release to cast once `commit_offset_ticks` have
+passed; an earlier release cancels and spends nothing. The held weapon now
+follows the input's `selected_weapon` while no action is under way, and a
+weapon put away refills from one reserve if it stays away for its reload
+action's `commit_offset_ticks` (K8).
+`KernelLocalActionResultReason_ItemAction` (16): a committed Throw, Consume,
+Place or Carry request ends the weapon action under way. ABI 100 appended `pull_strength` to
+`KernelActionDefinition`. ABI 98
 appended the tornado shape and motion fields to
 `KernelAreaEffectMechanicsDefinition`. ABI 99 appended `hover_height_meters`
 and `hover_vertical_speed_meters_per_second` to `KernelMovementDefinition` and

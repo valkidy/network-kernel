@@ -9,8 +9,8 @@ namespace network_example {
 
 constexpr std::uint32_t kPacketMagic = 0x4e584b31u;
 constexpr std::uint16_t kProtocolVersion = 3;
-constexpr std::uint16_t kPacketSchemaVersion = 26;
-constexpr std::uint16_t kSnapshotSchemaVersion = 27;
+constexpr std::uint16_t kPacketSchemaVersion = 30;
+constexpr std::uint16_t kSnapshotSchemaVersion = 28;
 constexpr std::uint16_t kSchemaVersion = kPacketSchemaVersion;
 constexpr std::size_t kPacketHeaderSize = 28;
 
@@ -45,6 +45,12 @@ enum class MessageType : std::uint16_t {
     kLocomotionStepBatch = 28,
     kStatusEffectState = 29,
     kActorImpulseBatch = 30,
+    // An opaque message between a client and game_server, either way; the
+    // kernel carries it and never reads its body. Packet schema 27.
+    kGameMessage = 31,
+    // A container the session no longer sees -- a camp it left, or one that
+    // is gone -- for the client to drop its copy of. Packet schema 30.
+    kInventoryContainerClosed = 32,
 };
 
 struct PacketHeader {

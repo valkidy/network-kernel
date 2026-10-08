@@ -31,6 +31,8 @@ namespace {
 
 constexpr float kTickSeconds = 1.0f / 30.0f;
 constexpr std::uint8_t kMeteorStaff = 13;
+// meteor_staff_cast's commit_offset_ticks: it charges.
+constexpr int kStaffChargeTicks = 20;
 constexpr std::uint8_t kMeteorStormStaff = 14;
 constexpr std::uint8_t kSkyLaser = 15;
 
@@ -168,6 +170,30 @@ struct Arena {
         require(Kernel_ServerSubmitEntityInput(kernel, player, &input));
     }
 
+    // The staff charges (trigger_mode charge): held for its charge time, then
+    // released, which is the tick it casts. Returns with the release sent but
+    // not yet ticked, so the caller's first tick is the cast.
+    void charge_and_release(std::uint8_t weapon, const KernelVec3& aim_at) {
+        const KernelVec3 from = launch_point();
+        const KernelVec3 aim{aim_at.x - from.x, aim_at.y - from.y, aim_at.z - from.z};
+        const std::uint32_t action = 9000u + next_action++;
+        for (int index = 0; index <= kStaffChargeTicks; ++index) {
+            const bool release = index == kStaffChargeTicks;
+            KernelPlayerInput input{};
+            input.input_seq = next_seq++;
+            input.aim_dir = aim;
+            input.selected_weapon = weapon;
+            if (index == 0) {
+                input.action_intent =
+                    KernelActionIntent{action, KernelActionBinding_PrimaryFire, 0u, 0u};
+            }
+            input.action_input =
+                KernelActionInput{action, static_cast<std::uint8_t>(release ? 0u : 1u), 0u, 0u};
+            require(Kernel_ServerSubmitEntityInput(kernel, player, &input));
+            if (!release) tick();
+        }
+    }
+
     std::uint16_t ammo() { return entity_state(kernel, player).ammo[0]; }
 };
 
@@ -287,7 +313,7 @@ void meteor_staff_lands_on_the_target(const Catalog& catalog) {
         entity_state(arena.kernel, arena.bystander).hp;
     require(arena.ammo() == 3u);
 
-    arena.fire(kMeteorStaff, KernelVec3{
+    arena.charge_and_release(kMeteorStaff, KernelVec3{
         target.position.x, target.position.y + 0.8f, target.position.z});
     int mark_tick = -1;
     int fall_tick = -1;
@@ -310,7 +336,7 @@ void meteor_staff_lands_on_the_target(const Catalog& catalog) {
         }
     }
     std::printf(
-        "meteor_staff: mark +%d ticks, fall +%d, damage +%d (from press)\n",
+        "meteor_staff: mark +%d ticks, fall +%d, damage +%d (from release)\n",
         mark_tick, fall_tick, hit_tick);
     require(mark_tick >= 1 && mark_tick <= 2);
     require(horizontal_distance(mark, target.position) < 0.6f);
@@ -326,7 +352,7 @@ void meteor_staff_refuses_the_sky(const Catalog& catalog) {
     Arena arena;
     open_arena(catalog, kMeteorStaff, 7892, &arena);
     const KernelVec3 from = arena.launch_point();
-    arena.fire(kMeteorStaff, KernelVec3{from.x + 2.0f, from.y + 50.0f, from.z});
+    arena.charge_and_release(kMeteorStaff, KernelVec3{from.x + 2.0f, from.y + 50.0f, from.z});
     arena.tick(5);
     require(projectiles(arena.kernel).empty());
     require(arena.ammo() == 3u);

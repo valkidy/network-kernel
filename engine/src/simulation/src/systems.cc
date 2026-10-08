@@ -540,6 +540,15 @@ bool execute_action_graph_commands(
             }
             continue;
         }
+        if (const auto* refill =
+                std::get_if<ActionRefillWeaponReserveCommand>(&command)) {
+            if ((refill->count == 0u) == (refill->percent == 0u) ||
+                refill->percent > 100u ||
+                !world.find_entity(refill->target).has_value()) {
+                return false;
+            }
+            continue;
+        }
         if (const auto* pull = std::get_if<ActionApplyPullCommand>(&command)) {
             if (!world.find_entity(pull->target).has_value() ||
                 !pull_is_authorable(
@@ -1216,6 +1225,26 @@ bool execute_action_graph_commands(
             recompute_speed(world, target);
             continue;
         }
+        if (const auto* refill =
+                std::get_if<ActionRefillWeaponReserveCommand>(&command)) {
+            // From what the target holds now, not when the item was used: a
+            // weapon swapped or a reserve filled in between refills nothing
+            // past the template's own count.
+            const entt::entity target = *world.find_entity(refill->target);
+            WeaponState* weapon = world.registry().try_get<WeaponState>(target);
+            const WeaponTuning* tuning =
+                world.registry().try_get<WeaponTuning>(target);
+            if (weapon == nullptr || tuning == nullptr) {
+                continue;
+            }
+            const std::uint16_t amount = weapon_reserve_refill_amount(
+                *weapon, *tuning, refill->count, refill->percent);
+            weapon->reserve_magazines[weapon->active_weapon_slot] =
+                static_cast<std::uint16_t>(
+                    weapon->reserve_magazines[weapon->active_weapon_slot] +
+                    amount);
+            continue;
+        }
         if (const auto* open_ui = std::get_if<ActionOpenUiCommand>(&command)) {
             // The kernel only says it was asked. Which interface that is, and
             // whether the actor goes inside, is game_server's to act on.
@@ -1781,6 +1810,7 @@ bool EntityLifecycleSystem::create_entity(
                         engine.tick_loop_.current_tick(),
                         entity_template->prop.lifetime_ticks,
                         entity_template->prop.population_group_id,
+                        entity_template->prop.importance,
                     });
             }
         }
@@ -1966,7 +1996,7 @@ bool EntityLifecycleSystem::create_entity(
     if (entity_template != nullptr &&
         entity_template->prop.population_group_id != 0u) {
         enforce_prop_population_limit(
-            engine, entity_template->prop.population_group_id);
+            engine, entity_template->prop.population_group_id, net_id);
     }
     if (publish_snapshot) {
         engine.publish_snapshot();
@@ -2448,7 +2478,8 @@ void EntityLifecycleSystem::update_prop_lifetimes(
 
 void EntityLifecycleSystem::enforce_prop_population_limit(
     KernelEngine& engine,
-    std::uint32_t population_group_id) const {
+    std::uint32_t population_group_id,
+    NetId spawned_net_id) const {
     const auto rule = std::find_if(
         engine.prop_population_rules_.begin(),
         engine.prop_population_rules_.end(),
@@ -2459,30 +2490,41 @@ void EntityLifecycleSystem::enforce_prop_population_limit(
     if (rule == engine.prop_population_rules_.end()) {
         return;
     }
-    std::vector<std::tuple<std::uint32_t, NetId>> members;
+    // The member just spawned counts towards the cap but is never the one
+    // evicted: whoever put it down wants it, and a low-importance newcomer
+    // would otherwise remove itself on the tick it appeared. Of the rest, the
+    // lowest importance goes first and the oldest within it.
+    std::size_t alive = 0;
+    std::vector<std::tuple<std::uint8_t, std::uint32_t, NetId>> candidates;
     auto view = engine.world_.registry().view<NetworkIdentity, PropLifecycle>();
     for (const entt::entity entity : view) {
         const PropLifecycle& lifecycle = view.get<PropLifecycle>(entity);
         if (lifecycle.population_group_id != population_group_id) {
             continue;
         }
-        members.emplace_back(
+        ++alive;
+        const NetId net_id = view.get<NetworkIdentity>(entity).net_id;
+        if (net_id == spawned_net_id) {
+            continue;
+        }
+        candidates.emplace_back(
+            lifecycle.importance,
             lifecycle.spawn_tick,
-            view.get<NetworkIdentity>(entity).net_id);
+            net_id);
     }
-    std::sort(members.begin(), members.end());
-    // V1 fixes overflow handling to deterministic despawn-oldest. Add an
-    // authored overflow policy before supporting alternatives such as reject-new.
-    while (members.size() > rule->max_alive) {
-        const NetId oldest = std::get<1>(members.front());
-        members.erase(members.begin());
+    std::sort(candidates.begin(), candidates.end());
+    std::size_t next = 0;
+    while (alive > rule->max_alive && next < candidates.size()) {
+        const NetId evicted = std::get<2>(candidates[next]);
+        ++next;
+        --alive;
         // Capacity eviction is resource cleanup and bypasses gameplay
         // on_destroy_entity graphs to prevent spawn cascades, unless the group
         // opts in -- which the catalog allows only when no member's graph
         // spawns into any group, so there is no cascade to prevent.
         (void)destroy_entity_with_context(
             engine,
-            oldest,
+            evicted,
             KernelDespawnReason_CapacityEvicted,
             0u,
             0u,
@@ -2588,6 +2630,10 @@ void EntityLifecycleSystem::enter_death_state(
             damage.target_net_id,
             damage.source_peer,
             damage.source_net_id);
+        // What it had in its hands falls where it was held. The dead make no
+        // requests, so left carried it would stay out of everyone's reach
+        // until a revive -- or for good, with none to come.
+        ItemGameplaySystem{}.drop_carried_props(engine, damage.target_net_id);
         // A corpse holds still. The knockback and the stagger that killed it
         // would otherwise carry it on, and a dormant one keeps both into its
         // next life. Status effects run out on their own: their removal fires
@@ -2769,6 +2815,14 @@ bool EntityLifecycleSystem::destroy_entity_with_context(
     }
     if (world_item_id != 0u) {
         (void)engine.item_store_.terminate(world_item_id);
+    }
+    // What it owned goes with it: a camp's stock vanishes with the camp (D7).
+    // Its occupants are already out, and the next inventory flush tells
+    // their clients the container is closed.
+    for (const KernelInventoryContainerId container_id :
+         engine.item_store_.containers_for_owner(net_id)) {
+        (void)engine.item_store_.destroy_container(container_id);
+        engine.synced_weapon_revisions_.erase(container_id);
     }
     engine.pending_first_physics_actors_.erase(net_id);
     engine.vision_configs_.erase(net_id);

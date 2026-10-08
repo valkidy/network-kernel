@@ -22,6 +22,42 @@ cc_test(
 )
 
 cc_test(
+    name = "held_weapon_client_test",
+    srcs = ["held_weapon_client_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
+cc_test(
+    name = "game_message_test",
+    srcs = ["game_message_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
+cc_test(
+    name = "carry_drop_test",
+    srcs = ["carry_drop_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
+cc_test(
+    name = "disconnect_drop_test",
+    srcs = ["disconnect_drop_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
+cc_test(
+    name = "camp_container_sync_test",
+    srcs = ["camp_container_sync_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
+cc_test(
+    name = "prop_population_importance_test",
+    srcs = ["prop_population_importance_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
+cc_test(
     name = "item_gameplay_system_test",
     srcs = ["item_gameplay_system_test.cc"],
     deps = ["//engine/src/kernel:kernel"],

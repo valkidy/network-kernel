@@ -68,7 +68,8 @@ private:
 
     void enforce_prop_population_limit(
         KernelEngine& engine,
-        std::uint32_t population_group_id) const;
+        std::uint32_t population_group_id,
+        NetId spawned_net_id) const;
 };
 
 class ActivationSystem {

@@ -1,6 +1,8 @@
 # Half a second after the press, a beam stands on the aimed point for 1.5 s.
 id: 15
 name: Sky Laser
+# Weapon container slot 0-3 (wand, scepter, staff, tome / their gun twins).
+category: 2
 weapon_type: targeted_strike
 magazine_size: 4
 reserve_magazines: 4

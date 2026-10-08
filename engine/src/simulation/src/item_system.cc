@@ -19,7 +19,7 @@ bool set_error(std::string* error, const char* message) {
 bool compatible_runtime_state(
     const ItemInstanceRecord& lhs,
     const ItemInstanceRecord& rhs) {
-    if (lhs.next_use_tick != rhs.next_use_tick ||
+    if (lhs.next_use_tick != rhs.next_use_tick || lhs.drop_tag != rhs.drop_tag ||
         lhs.portable_state.size() != rhs.portable_state.size()) {
         return false;
     }
@@ -65,6 +65,13 @@ bool valid_item_graph_action(const KernelActionDefinition& action) {
             action.health_change_amount <=
                 static_cast<std::int32_t>(
                     std::numeric_limits<std::uint16_t>::max()) &&
+            action.target_source <= KernelEntityRefSource_EventInstigator;
+    }
+    if (action.action_type ==
+        KernelEntityTriggerActionType_RefillWeaponReserve) {
+        return (action.reserve_refill_count == 0u) !=
+                (action.reserve_refill_percent == 0u) &&
+            action.reserve_refill_percent <= 100u &&
             action.target_source <= KernelEntityRefSource_EventInstigator;
     }
     return false;
@@ -125,6 +132,36 @@ bool validate_item_template(
     if (definition.portable_state_field_count >
         KERNEL_MAX_PORTABLE_STATE_FIELDS) {
         return set_error(error, "too many portable state fields");
+    }
+    if (definition.is_weapon > 1u) {
+        return set_error(error, "is_weapon must be 0 or 1");
+    }
+    if (definition.is_weapon != 0u) {
+        // A weapon is one thing with its own magazine: stateful, never used up
+        // or thrown, and carrying the two fields the kernel keeps its state in.
+        bool has_ammo = false;
+        bool has_reserve = false;
+        for (std::uint32_t index = 0; index < definition.portable_state_field_count;
+             ++index) {
+            const KernelPortableStateFieldDefinition& field =
+                definition.portable_state_fields[index];
+            if (field.type != KernelPortableStateType_Uint32) continue;
+            has_ammo |= field.field_id == KERNEL_PORTABLE_FIELD_WEAPON_AMMO;
+            has_reserve |= field.field_id == KERNEL_PORTABLE_FIELD_WEAPON_RESERVE;
+        }
+        if (definition.item_mode != KernelItemMode_Stateful ||
+            definition.weapon_category >= KERNEL_WEAPON_CATEGORY_COUNT ||
+            (definition.capability_flags &
+             (KernelItemCapability_Consumable | KernelItemCapability_Throwable)) != 0u ||
+            !has_ammo || !has_reserve) {
+            return set_error(
+                error,
+                "weapon item must be stateful, not consumable or throwable, "
+                "with a category below KERNEL_WEAPON_CATEGORY_COUNT and uint32 "
+                "weapon_ammo and weapon_reserve fields");
+        }
+    } else if (definition.weapon_id != 0u || definition.weapon_category != 0u) {
+        return set_error(error, "only a weapon item names a weapon");
     }
     std::unordered_set<std::uint32_t> field_ids;
     bool has_health_projection = false;
@@ -235,9 +272,14 @@ bool ItemStore::set_templates(
 
 std::optional<KernelInventoryContainerId> ItemStore::create_container(
     std::uint32_t owner_entity_id,
-    std::uint32_t slot_capacity) {
+    std::uint32_t slot_capacity,
+    std::uint8_t kind) {
     if (owner_entity_id == 0 || slot_capacity == 0 ||
-        slot_capacity > std::numeric_limits<std::uint16_t>::max()) {
+        slot_capacity > std::numeric_limits<std::uint16_t>::max() ||
+        kind > KernelInventoryContainerKind_Stock ||
+        (kind == KernelInventoryContainerKind_Weapons &&
+         (slot_capacity != KERNEL_WEAPON_CATEGORY_COUNT ||
+          find_weapon_container_for_owner(owner_entity_id) != nullptr))) {
         return std::nullopt;
     }
     const KernelInventoryContainerId id = next_container_id_++;
@@ -249,13 +291,31 @@ std::optional<KernelInventoryContainerId> ItemStore::create_container(
             slot_capacity,
             std::vector<KernelItemInstanceId>(slot_capacity, 0),
             0,
+            kind,
         });
     return id;
 }
 
 std::optional<std::uint16_t> ItemStore::find_empty_slot(
     const InventoryContainerRecord& container,
+    const KernelItemTemplateDefinition& definition,
     std::optional<std::uint16_t> preferred_slot) const {
+    // Weapons and items never mix, and a weapon has exactly one place: the
+    // slot its category names. A camp's stock holds both, anywhere.
+    const bool weapon_container =
+        container.kind == KernelInventoryContainerKind_Weapons;
+    if (container.kind != KernelInventoryContainerKind_Stock &&
+        weapon_container != (definition.is_weapon != 0u)) {
+        return std::nullopt;
+    }
+    if (weapon_container) {
+        const std::uint16_t slot = definition.weapon_category;
+        if (slot >= container.slots.size() || container.slots[slot] != 0 ||
+            (preferred_slot.has_value() && *preferred_slot != slot)) {
+            return std::nullopt;
+        }
+        return slot;
+    }
     if (preferred_slot.has_value()) {
         if (*preferred_slot >= container.slots.size() ||
             container.slots[*preferred_slot] != 0) {
@@ -285,7 +345,7 @@ std::optional<KernelItemInstanceId> ItemStore::create_inventory_item(
         return std::nullopt;
     }
     const std::optional<std::uint16_t> slot =
-        find_empty_slot(container->second, preferred_slot);
+        find_empty_slot(container->second, *definition, preferred_slot);
     if (!slot.has_value()) {
         return std::nullopt;
     }
@@ -298,6 +358,7 @@ std::optional<KernelItemInstanceId> ItemStore::create_inventory_item(
         definition->portable_state_fields,
         definition->portable_state_fields +
             definition->portable_state_field_count);
+    item.drop_tag = definition->default_drop_tag;
     item.residency = ItemResidency{
         KernelItemResidency_Inventory,
         container_id,
@@ -350,6 +411,7 @@ std::optional<KernelItemInstanceId> ItemStore::create_world_item(
         definition->portable_state_fields,
         definition->portable_state_fields +
             definition->portable_state_field_count);
+    item.drop_tag = definition->default_drop_tag;
     item.residency.kind = KernelItemResidency_World;
     item.residency.prop_entity_id = prop_entity_id;
     item.residency.world_mode = world_mode;
@@ -385,9 +447,66 @@ const InventoryContainerRecord* ItemStore::find_container_for_owner(
         containers_.begin(),
         containers_.end(),
         [owner_entity_id](const auto& entry) {
-            return entry.second.owner_entity_id == owner_entity_id;
+            return entry.second.owner_entity_id == owner_entity_id &&
+                entry.second.kind == KernelInventoryContainerKind_Items;
         });
     return found == containers_.end() ? nullptr : &found->second;
+}
+
+const InventoryContainerRecord* ItemStore::find_weapon_container_for_owner(
+    std::uint32_t owner_entity_id) const {
+    const auto found = std::find_if(
+        containers_.begin(),
+        containers_.end(),
+        [owner_entity_id](const auto& entry) {
+            return entry.second.owner_entity_id == owner_entity_id &&
+                entry.second.kind == KernelInventoryContainerKind_Weapons;
+        });
+    return found == containers_.end() ? nullptr : &found->second;
+}
+
+std::vector<const InventoryContainerRecord*> ItemStore::weapon_containers() const {
+    std::vector<const InventoryContainerRecord*> result;
+    for (const auto& [id, container] : containers_) {
+        if (container.kind == KernelInventoryContainerKind_Weapons) {
+            result.push_back(&container);
+        }
+    }
+    return result;
+}
+
+bool ItemStore::set_portable_uint32(
+    KernelItemInstanceId id,
+    std::uint32_t field_id,
+    std::uint32_t value) {
+    ItemInstanceRecord* item = find_item(id);
+    if (item == nullptr || item->terminal) {
+        return false;
+    }
+    for (KernelPortableStateFieldDefinition& field : item->portable_state) {
+        if (field.field_id != field_id ||
+            field.type != KernelPortableStateType_Uint32) {
+            continue;
+        }
+        if (field.uint32_default == value) {
+            return true;
+        }
+        field.uint32_default = value;
+        if (item->residency.kind == KernelItemResidency_Inventory) {
+            auto container = containers_.find(item->residency.container_id);
+            if (container != containers_.end()) {
+                publish_delta(
+                    &container->second,
+                    KernelInventoryDeltaType_Update,
+                    item->residency.slot,
+                    item->residency.slot,
+                    item,
+                    KernelInventoryChange_PortableState);
+            }
+        }
+        return true;
+    }
+    return false;
 }
 
 std::vector<KernelInventoryContainerId> ItemStore::containers_for_owner(
@@ -423,6 +542,9 @@ std::optional<KernelItemInstanceId> ItemStore::split_inventory_stack(
     if (!created.has_value()) {
         return std::nullopt;
     }
+    source = find_item(source_id);
+    // A split is the same kind of thing as its source: same drop tag.
+    (void)set_drop_tag(*created, source->drop_tag);
     source = find_item(source_id);
     source->quantity -= quantity;
     auto container = containers_.find(source->residency.container_id);
@@ -505,6 +627,7 @@ std::optional<KernelItemInstanceId> ItemStore::split_to_world(
     split.item_template_id = source->item_template_id;
     split.quantity = quantity;
     split.portable_state = source->portable_state;
+    split.drop_tag = source->drop_tag;
     split.residency.kind = KernelItemResidency_World;
     split.residency.prop_entity_id = prop_entity_id;
     split.residency.world_mode = world_mode;
@@ -553,7 +676,7 @@ std::optional<KernelItemInstanceId> ItemStore::transfer_world_to_inventory(
     }
     const bool needs_slot = available < source->quantity;
     const std::optional<std::uint16_t> empty_slot =
-        needs_slot ? find_empty_slot(container->second, std::nullopt)
+        needs_slot ? find_empty_slot(container->second, *definition, std::nullopt)
                    : std::optional<std::uint16_t>{};
     if (needs_slot && !empty_slot.has_value()) {
         return std::nullopt;
@@ -598,6 +721,139 @@ std::optional<KernelItemInstanceId> ItemStore::transfer_world_to_inventory(
         *empty_slot,
         source);
     return source_id;
+}
+
+std::optional<KernelItemInstanceId> ItemStore::transfer_to_container(
+    KernelItemInstanceId source_id,
+    std::uint32_t quantity,
+    KernelInventoryContainerId container_id) {
+    ItemInstanceRecord* source = find_item(source_id);
+    auto destination = containers_.find(container_id);
+    if (source == nullptr || source->terminal ||
+        source->residency.kind != KernelItemResidency_Inventory ||
+        source->residency.container_id == container_id ||
+        destination == containers_.end() || quantity == 0u ||
+        quantity > source->quantity) {
+        return std::nullopt;
+    }
+    const KernelItemTemplateDefinition* definition =
+        find_template(source->item_template_id);
+    if (definition == nullptr) {
+        return std::nullopt;
+    }
+    std::vector<KernelItemInstanceId> stacks;
+    std::uint64_t room = 0;
+    if (definition->item_mode == KernelItemMode_Fungible) {
+        for (const KernelItemInstanceId candidate_id : destination->second.slots) {
+            const ItemInstanceRecord* candidate = find_item(candidate_id);
+            if (candidate != nullptr && !candidate->terminal &&
+                candidate->item_template_id == source->item_template_id &&
+                compatible_runtime_state(*candidate, *source) &&
+                candidate->quantity < definition->max_stack) {
+                stacks.push_back(candidate_id);
+                room += definition->max_stack - candidate->quantity;
+            }
+        }
+    }
+    const std::uint32_t merged =
+        static_cast<std::uint32_t>(std::min<std::uint64_t>(quantity, room));
+    const std::uint32_t rest = quantity - merged;
+    const std::optional<std::uint16_t> empty_slot = rest == 0u
+        ? std::optional<std::uint16_t>{}
+        : find_empty_slot(destination->second, *definition, std::nullopt);
+    if (rest != 0u && !empty_slot.has_value()) {
+        return std::nullopt;
+    }
+    // Nothing has moved yet; from here every step succeeds.
+    KernelItemInstanceId result = 0;
+    std::uint32_t left = merged;
+    for (const KernelItemInstanceId stack_id : stacks) {
+        if (left == 0u) break;
+        ItemInstanceRecord* stack = find_item(stack_id);
+        const std::uint32_t moved =
+            std::min<std::uint32_t>(left, definition->max_stack - stack->quantity);
+        stack->quantity += moved;
+        left -= moved;
+        publish_delta(
+            &destination->second,
+            KernelInventoryDeltaType_Update,
+            stack->residency.slot,
+            stack->residency.slot,
+            stack,
+            KernelInventoryChange_Quantity);
+        if (result == 0u) result = stack_id;
+    }
+    source = find_item(source_id);
+    if (rest == 0u) {
+        if (quantity == source->quantity) {
+            (void)terminate(source_id);
+        } else {
+            source->quantity -= quantity;
+            auto origin = containers_.find(source->residency.container_id);
+            publish_delta(
+                &origin->second,
+                KernelInventoryDeltaType_Update,
+                source->residency.slot,
+                source->residency.slot,
+                source,
+                KernelInventoryChange_Quantity);
+        }
+        return result;
+    }
+    if (quantity == source->quantity) {
+        // All of it leaves: the source itself moves, keeping its id.
+        remove_from_inventory(source);
+        source->quantity = rest;
+        source->residency = ItemResidency{
+            KernelItemResidency_Inventory,
+            container_id,
+            *empty_slot,
+            0,
+            KernelWorldItemMode_Placed,
+            0,
+        };
+        destination->second.slots[*empty_slot] = source_id;
+        publish_delta(
+            &destination->second,
+            KernelInventoryDeltaType_Add,
+            *empty_slot,
+            *empty_slot,
+            source);
+        return result != 0u ? result : source_id;
+    }
+    // Part of a stack: the rest of the move is a new stack like it.
+    source->quantity -= quantity;
+    {
+        auto origin = containers_.find(source->residency.container_id);
+        publish_delta(
+            &origin->second,
+            KernelInventoryDeltaType_Update,
+            source->residency.slot,
+            source->residency.slot,
+            source,
+            KernelInventoryChange_Quantity);
+    }
+    const KernelItemInstanceId id = next_item_instance_id_++;
+    ItemInstanceRecord copy = *find_item(source_id);
+    copy.item_instance_id = id;
+    copy.quantity = rest;
+    copy.residency = ItemResidency{
+        KernelItemResidency_Inventory,
+        container_id,
+        *empty_slot,
+        0,
+        KernelWorldItemMode_Placed,
+        0,
+    };
+    auto inserted = items_.emplace(id, std::move(copy));
+    destination->second.slots[*empty_slot] = id;
+    publish_delta(
+        &destination->second,
+        KernelInventoryDeltaType_Add,
+        *empty_slot,
+        *empty_slot,
+        &inserted.first->second);
+    return result != 0u ? result : id;
 }
 
 std::optional<ItemConsumeResult> ItemStore::consume(
@@ -759,12 +1015,14 @@ bool ItemStore::move_to_inventory(
     std::optional<std::uint16_t> preferred_slot) {
     ItemInstanceRecord* item = find_item(id);
     auto container = containers_.find(container_id);
-    if (item == nullptr || item->terminal ||
+    const KernelItemTemplateDefinition* definition =
+        item == nullptr ? nullptr : find_template(item->item_template_id);
+    if (item == nullptr || item->terminal || definition == nullptr ||
         container == containers_.end()) {
         return false;
     }
     const std::optional<std::uint16_t> slot =
-        find_empty_slot(container->second, preferred_slot);
+        find_empty_slot(container->second, *definition, preferred_slot);
     if (!slot.has_value()) {
         return false;
     }
@@ -844,6 +1102,45 @@ bool ItemStore::terminate(KernelItemInstanceId id) {
     return true;
 }
 
+bool ItemStore::set_drop_tag(KernelItemInstanceId id, std::uint8_t drop_tag) {
+    ItemInstanceRecord* item = find_item(id);
+    if (item == nullptr || item->terminal || drop_tag > KERNEL_DROP_TAG_MAP_WEAPON) {
+        return false;
+    }
+    if (item->drop_tag == drop_tag) {
+        return true;
+    }
+    item->drop_tag = drop_tag;
+    if (item->residency.kind == KernelItemResidency_Inventory) {
+        auto container = containers_.find(item->residency.container_id);
+        if (container != containers_.end()) {
+            publish_delta(
+                &container->second,
+                KernelInventoryDeltaType_Update,
+                item->residency.slot,
+                item->residency.slot,
+                item,
+                KernelInventoryChange_DropTag);
+        }
+    }
+    return true;
+}
+
+bool ItemStore::clear_untagged(KernelInventoryContainerId id) {
+    const auto container = containers_.find(id);
+    if (container == containers_.end()) {
+        return false;
+    }
+    const std::vector<KernelItemInstanceId> slots = container->second.slots;
+    for (const KernelItemInstanceId item_id : slots) {
+        const ItemInstanceRecord* item = item_id == 0 ? nullptr : find_item(item_id);
+        if (item != nullptr && item->drop_tag == KERNEL_DROP_TAG_NONE) {
+            (void)terminate(item_id);
+        }
+    }
+    return true;
+}
+
 bool ItemStore::clear_container(KernelInventoryContainerId id) {
     const auto container = containers_.find(id);
     if (container == containers_.end()) {
@@ -856,6 +1153,16 @@ bool ItemStore::clear_container(KernelInventoryContainerId id) {
             (void)terminate(item_id);
         }
     }
+    return true;
+}
+
+bool ItemStore::destroy_container(KernelInventoryContainerId id) {
+    if (!clear_container(id)) {
+        return false;
+    }
+    containers_.erase(id);
+    pending_deltas_.erase(id);
+    delta_history_.erase(id);
     return true;
 }
 
@@ -965,6 +1272,7 @@ bool ItemStore::apply_replica_snapshot(
         view.slot_capacity,
         std::vector<KernelItemInstanceId>(view.slot_capacity, 0u),
         view.revision,
+        view.container_kind,
     };
     for (const KernelItemInstanceView& item_view : item_views) {
         ItemInstanceRecord item;
@@ -985,6 +1293,7 @@ bool ItemStore::apply_replica_snapshot(
             0u,
         };
         container.slots[item_view.slot] = item_view.item_instance_id;
+        item.drop_tag = item_view.drop_tag;
         items_[item_view.item_instance_id] = std::move(item);
     }
     containers_[view.inventory_container_id] = std::move(container);
@@ -1060,6 +1369,7 @@ bool ItemStore::apply_replica_deltas(
                 KernelWorldItemMode_Placed,
                 0u,
             };
+            item.drop_tag = delta.item.drop_tag;
             items_[id] = std::move(item);
             container->second.slots[delta.slot] = id;
         }
@@ -1095,6 +1405,7 @@ KernelItemInstanceView ItemStore::item_view(KernelItemInstanceId id) const {
         item->portable_state.begin(),
         view.portable_state_field_count,
         view.portable_state_fields);
+    view.drop_tag = item->drop_tag;
     return view;
 }
 
@@ -1115,6 +1426,7 @@ KernelInventoryContainerView ItemStore::container_view(
         [](KernelItemInstanceId item) { return item != 0; }));
     view.revision = container->revision;
     view.sync_state = KernelInventorySyncState_Ready;
+    view.container_kind = container->kind;
     return view;
 }
 

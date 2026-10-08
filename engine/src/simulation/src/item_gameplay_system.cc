@@ -17,6 +17,23 @@
 namespace network_example {
 namespace {
 
+// A refill is admitted only when it would refill something, so an item used
+// with no active weapon, or with that weapon's reserve already full, is
+// refused before the item is spent rather than spent on nothing.
+bool refill_has_room(
+    const World& world,
+    const ActionRefillWeaponReserveCommand& refill) {
+    const std::optional<entt::entity> target = world.find_entity(refill.target);
+    if (!target.has_value()) {
+        return false;
+    }
+    const WeaponState* weapon = world.registry().try_get<WeaponState>(*target);
+    const WeaponTuning* tuning = world.registry().try_get<WeaponTuning>(*target);
+    return weapon != nullptr && tuning != nullptr &&
+        weapon_reserve_refill_amount(
+            *weapon, *tuning, refill.count, refill.percent) != 0u;
+}
+
 enum class GameplayRequestContext {
     kInvalid,
     kInventoryItem,
@@ -82,7 +99,7 @@ bool begin_thrown_prop_motion(
 
 bool valid_domain_action(std::uint8_t action) {
     return action >= KernelDomainAction_Consume &&
-        action <= KernelDomainAction_Activate;
+        action <= KernelDomainAction_Transfer;
 }
 
 bool action_allowed_in_context(
@@ -463,6 +480,12 @@ std::optional<ActionGraphCommandBatch> prepare_item_graph_batch(
         return std::nullopt;
     }
     for (const ActionGraphCommand& command : commands) {
+        if (const auto* refill =
+                std::get_if<ActionRefillWeaponReserveCommand>(&command);
+            refill != nullptr &&
+            !refill_has_room(engine.simulation_world(), *refill)) {
+            return std::nullopt;
+        }
         const auto* damage = std::get_if<ActionApplyDamageCommand>(&command);
         const auto* health_change =
             std::get_if<ActionApplyHealthChangeCommand>(&command);
@@ -536,10 +559,12 @@ bool ItemGameplaySystem::submit_request(
     } else if (const Sheltered* sheltered =
                    engine.world_.registry().try_get<Sheltered>(*instigator);
                sheltered != nullptr &&
+               request.domain_action != KernelDomainAction_Transfer &&
                (request.domain_action != KernelDomainAction_Activate ||
                 request.target_net_id != sheltered->shelter_net_id)) {
-        // From inside, the one thing to ask is to activate the building
-        // again, which is how an occupant asks to come out.
+        // From inside, the things to ask are to activate the building again,
+        // which is how an occupant asks to come out, and to take from its
+        // stock.
         reject(&outcome, KernelGameplayRequestRejection_InstigatorSheltered);
     } else {
         ScopeTransferTransaction transfer_transaction(engine, &outcome);
@@ -563,6 +588,82 @@ bool ItemGameplaySystem::submit_request(
         }
         if (request.selected_item_instance_id != 0u && item == nullptr) {
             reject(&outcome, KernelGameplayRequestRejection_UnknownItem);
+            goto record_outcome;
+        }
+
+        if (request.domain_action == KernelDomainAction_Transfer) {
+            // Out of a camp's stock (K9, D7): only from the building the
+            // instigator is inside, only onto itself.
+            if (item == nullptr || request.selected_item_instance_id == 0u ||
+                item->terminal ||
+                item->residency.kind != KernelItemResidency_Inventory) {
+                reject(&outcome, KernelGameplayRequestRejection_UnknownItem);
+                goto record_outcome;
+            }
+            const InventoryContainerRecord* stock =
+                engine.item_store_.find_container(item->residency.container_id);
+            const Sheltered* inside =
+                engine.world_.registry().try_get<Sheltered>(*instigator);
+            if (stock == nullptr || inside == nullptr ||
+                inside->shelter_net_id == 0u ||
+                stock->owner_entity_id != inside->shelter_net_id) {
+                reject(&outcome, KernelGameplayRequestRejection_NotAuthorized);
+                goto record_outcome;
+            }
+            const KernelItemTemplateDefinition* definition =
+                engine.item_store_.find_template(item->item_template_id);
+            if (definition == nullptr) {
+                reject(&outcome, KernelGameplayRequestRejection_UnknownItem);
+                goto record_outcome;
+            }
+            const std::uint32_t quantity = request.requested_quantity == 0u
+                ? item->quantity
+                : request.requested_quantity;
+            if (quantity > item->quantity) {
+                reject(&outcome, KernelGameplayRequestRejection_InvalidQuantity);
+                goto record_outcome;
+            }
+            const bool weapon_item = definition->is_weapon != 0u;
+            if (weapon_item &&
+                !engine.world_.registry().all_of<PlayerTag>(*instigator)) {
+                reject(&outcome, KernelGameplayRequestRejection_NotAuthorized);
+                goto record_outcome;
+            }
+            const InventoryContainerRecord* own = weapon_item
+                ? engine.item_store_.find_weapon_container_for_owner(
+                      request.instigator_net_id)
+                : engine.item_store_.find_container_for_owner(
+                      request.instigator_net_id);
+            if (own == nullptr) {
+                reject(&outcome, KernelGameplayRequestRejection_InventoryFull);
+                goto record_outcome;
+            }
+            // One weapon per category: the one held there goes down where
+            // the taker went in, which is where it comes out (D11).
+            if (weapon_item && definition->weapon_category < own->slots.size() &&
+                own->slots[definition->weapon_category] != 0u) {
+                const KernelVec3 entry{
+                    inside->entry_position.x,
+                    inside->entry_position.y,
+                    inside->entry_position.z};
+                std::uint32_t swapped_prop = 0;
+                if (!engine.server_drop_inventory_item(
+                        own->slots[definition->weapon_category], entry, &swapped_prop)) {
+                    reject(&outcome, KernelGameplayRequestRejection_InventoryFull);
+                    goto record_outcome;
+                }
+            }
+            const KernelInventoryContainerId own_id = own->inventory_container_id;
+            const auto taken = engine.item_store_.transfer_to_container(
+                item->item_instance_id, quantity, own_id);
+            if (!taken.has_value()) {
+                reject(&outcome, KernelGameplayRequestRejection_InventoryFull);
+                goto record_outcome;
+            }
+            outcome.status = KernelGameplayRequestStatus_Committed;
+            outcome.item_instance_id = *taken;
+            outcome.committed_quantity = quantity;
+            outcome.rejection_reason = KernelGameplayRequestRejection_None;
             goto record_outcome;
         }
 
@@ -857,6 +958,16 @@ bool ItemGameplaySystem::submit_request(
                     goto record_outcome;
                 }
                 for (const ActionGraphCommand& command : commands) {
+                    if (const auto* refill =
+                            std::get_if<ActionRefillWeaponReserveCommand>(
+                                &command);
+                        refill != nullptr &&
+                        !refill_has_room(engine.world_, *refill)) {
+                        reject(
+                            &outcome,
+                            KernelGameplayRequestRejection_GraphRejected);
+                        goto record_outcome;
+                    }
                     const auto* damage =
                         std::get_if<ActionApplyDamageCommand>(&command);
                     const auto* health_change =
@@ -909,13 +1020,67 @@ bool ItemGameplaySystem::submit_request(
         }
 
         if (action == KernelDomainAction_Pickup) {
-            const InventoryContainerRecord* container =
-                engine.item_store_.find_container_for_owner(
-                    request.instigator_net_id);
+            // A weapon goes to the weapon container, at its category's slot,
+            // and only a player picks one up (design D13).
+            const bool weapon_item = item_template->is_weapon != 0u;
+            if (weapon_item) {
+                const std::optional<entt::entity> picker =
+                    engine.world_.find_entity(request.instigator_net_id);
+                if (!picker.has_value() ||
+                    !engine.world_.registry().all_of<PlayerTag>(*picker)) {
+                    reject(&outcome, KernelGameplayRequestRejection_NotAuthorized);
+                    goto record_outcome;
+                }
+            }
+            const InventoryContainerRecord* container = weapon_item
+                ? engine.item_store_.find_weapon_container_for_owner(
+                      request.instigator_net_id)
+                : engine.item_store_.find_container_for_owner(
+                      request.instigator_net_id);
             if (container == nullptr) {
                 reject(&outcome, KernelGameplayRequestRejection_InventoryFull);
                 goto record_outcome;
             }
+            // One weapon per category: the one in that slot goes to the
+            // picker's feet (D11). Its magazine is written back to it when the
+            // loadout is rebuilt, after this request.
+            KernelItemInstanceId swapped_out = 0;
+            std::uint32_t swapped_prop = 0;
+            if (weapon_item &&
+                container->slots[item_template->weapon_category] != 0u) {
+                swapped_out = container->slots[item_template->weapon_category];
+                const ItemInstanceRecord* held =
+                    engine.item_store_.find_item(swapped_out);
+                const KernelItemTemplateDefinition* held_template = held == nullptr
+                    ? nullptr
+                    : engine.item_store_.find_template(held->item_template_id);
+                const std::optional<entt::entity> picker =
+                    engine.world_.find_entity(request.instigator_net_id);
+                const glm::vec3 feet =
+                    engine.world_.registry().get<Transform>(*picker).position;
+                const auto prop = held_template == nullptr
+                    ? std::optional<std::uint32_t>{}
+                    : spawn_prop(
+                          engine,
+                          *held_template,
+                          KernelVec3{feet.x, feet.y, feet.z});
+                if (!prop.has_value() ||
+                    !engine.item_store_.move_to_world(
+                        swapped_out, *prop, KernelWorldItemMode_Placed)) {
+                    if (prop.has_value()) {
+                        EntityLifecycleSystem{}.destroy_entity(
+                            engine, *prop, KernelDespawnReason_Destroyed);
+                    }
+                    reject(&outcome, KernelGameplayRequestRejection_InventoryFull);
+                    goto record_outcome;
+                }
+                swapped_prop = *prop;
+                (void)decorate_item_prop(
+                    engine, swapped_prop, *engine.item_store_.find_item(swapped_out));
+            }
+            // Re-read: dropping the old weapon touched the container.
+            container = engine.item_store_.find_container(
+                container->inventory_container_id);
             const KernelItemInstanceId source_item_id = item->item_instance_id;
             const std::uint32_t source_quantity = item->quantity;
             const std::vector<KernelPortableStateFieldDefinition>
@@ -941,6 +1106,13 @@ bool ItemGameplaySystem::submit_request(
                     engine.item_store_.find_item(source_item_id);
                 if (source != nullptr && !source->terminal) {
                     source->portable_state = portable_state_before;
+                }
+                // Put the swapped-out weapon back where it was.
+                if (swapped_out != 0u &&
+                    engine.item_store_.move_to_inventory(
+                        swapped_out, container->inventory_container_id)) {
+                    EntityLifecycleSystem{}.destroy_entity(
+                        engine, swapped_prop, KernelDespawnReason_Destroyed);
                 }
                 reject(&outcome, KernelGameplayRequestRejection_InventoryFull);
                 goto record_outcome;
@@ -1256,15 +1428,29 @@ bool ItemGameplaySystem::submit_request(
     }
 
 record_outcome:
+    // An item that takes the hands ends a weapon action under way: a throw
+    // mid-charge or mid-beam goes, and the charge or beam stops. Picking up
+    // and activating do not take the hands.
+    if (outcome.status == KernelGameplayRequestStatus_Committed &&
+        (request.domain_action == KernelDomainAction_Throw ||
+         request.domain_action == KernelDomainAction_Consume ||
+         request.domain_action == KernelDomainAction_Place ||
+         request.domain_action == KernelDomainAction_Carry)) {
+        if (const std::optional<entt::entity> hands =
+                engine.world_.find_entity(request.instigator_net_id)) {
+            engine.world_.registry().emplace_or_replace<PendingActionInterrupt>(
+                *hands,
+                PendingActionInterrupt{static_cast<std::uint16_t>(
+                    KernelLocalActionResultReason_ItemAction)});
+        }
+    }
     engine.processed_gameplay_requests_.push_back(outcome);
     engine.pending_gameplay_request_outcomes_.push_back(outcome);
     return true;
 }
 
-void ItemGameplaySystem::drop_carried_props(
-    KernelEngine& engine,
-    NetId carrier_net_id,
-    const glm::vec3& position) const {
+std::vector<entt::entity> ItemGameplaySystem::carried_by(
+    KernelEngine& engine, NetId carrier_net_id) const {
     std::vector<entt::entity> carried;
     auto view = engine.world_.registry().view<CarriedBy, PropWorldMode>();
     for (const entt::entity entity : view) {
@@ -1273,24 +1459,50 @@ void ItemGameplaySystem::drop_carried_props(
             carried.push_back(entity);
         }
     }
-    for (const entt::entity entity : carried) {
-        if (!engine.world_.registry().all_of<NetworkIdentity, Transform>(entity)) {
-            continue;
-        }
-        const NetId prop_net_id =
-            engine.world_.registry().get<NetworkIdentity>(entity).net_id;
-        engine.world_.registry().get<Transform>(entity).position = position;
-        if (const ItemInstanceRef* item =
-                engine.world_.registry().try_get<ItemInstanceRef>(entity)) {
-            engine.item_store_.set_world_mode(
-                item->item_instance_id, KernelWorldItemMode_Placed);
-        }
-        engine.world_.registry().emplace_or_replace<PropWorldMode>(
-            entity, PropWorldMode{PropMode::kPlaced});
-        engine.world_.registry().remove<CarriedBy>(entity);
-        set_prop_collision_enabled(engine, prop_net_id, true);
-        engine.queue_prop_state_change(prop_net_id);
+    return carried;
+}
+
+void ItemGameplaySystem::drop_carried_props(
+    KernelEngine& engine,
+    NetId carrier_net_id,
+    const glm::vec3& position) const {
+    for (const entt::entity entity : carried_by(engine, carrier_net_id)) {
+        set_down_carried_prop(engine, entity, position);
     }
+}
+
+void ItemGameplaySystem::drop_carried_props(
+    KernelEngine& engine,
+    NetId carrier_net_id) const {
+    for (const entt::entity entity : carried_by(engine, carrier_net_id)) {
+        if (!engine.world_.registry().all_of<Transform>(entity)) continue;
+        // Where it is held: the carrier's position plus the carry offset,
+        // as of the last carry update.
+        const glm::vec3 held = engine.world_.registry().get<Transform>(entity).position;
+        set_down_carried_prop(engine, entity, engine.grounded_drop_point(held));
+    }
+}
+
+void ItemGameplaySystem::set_down_carried_prop(
+    KernelEngine& engine,
+    entt::entity entity,
+    const glm::vec3& position) const {
+    if (!engine.world_.registry().all_of<NetworkIdentity, Transform>(entity)) {
+        return;
+    }
+    const NetId prop_net_id =
+        engine.world_.registry().get<NetworkIdentity>(entity).net_id;
+    engine.world_.registry().get<Transform>(entity).position = position;
+    if (const ItemInstanceRef* item =
+            engine.world_.registry().try_get<ItemInstanceRef>(entity)) {
+        engine.item_store_.set_world_mode(
+            item->item_instance_id, KernelWorldItemMode_Placed);
+    }
+    engine.world_.registry().emplace_or_replace<PropWorldMode>(
+        entity, PropWorldMode{PropMode::kPlaced});
+    engine.world_.registry().remove<CarriedBy>(entity);
+    set_prop_collision_enabled(engine, prop_net_id, true);
+    engine.queue_prop_state_change(prop_net_id);
 }
 
 void ItemGameplaySystem::update_carried_props(KernelEngine& engine) const {

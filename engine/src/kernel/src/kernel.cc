@@ -27,6 +27,7 @@
 #include "protocol/public/sha256.h"
 #include "simulation/public/action_graph.h"
 #include "simulation/public/collision_filter.h"
+#include "simulation/public/ground_follow.h"
 #include "simulation/public/movement_solver.h"
 #include "simulation/src/command_dispatcher.h"
 #include "simulation/src/systems.h"
@@ -89,6 +90,7 @@ InventoryWireItem inventory_wire_item(const KernelItemInstanceView& view) {
         item.portable_values.push_back(
             portable_state_word(view.portable_state_fields[index]));
     }
+    item.drop_tag = view.drop_tag;
     return item;
 }
 
@@ -118,6 +120,7 @@ bool inventory_view_from_wire(
     view.slot = slot;
     view.inventory_container_id = container_id;
     view.next_use_tick = wire.next_use_tick;
+    view.drop_tag = wire.drop_tag;
     view.portable_state_field_count =
         item_template->portable_state_field_count;
     for (std::uint32_t index = 0;
@@ -321,6 +324,7 @@ std::uint64_t elapsed_cost_us(
 }
 
 constexpr PeerId kLocalListenPeerId = 1;
+static_assert(kHeldWeaponNone == KERNEL_HELD_WEAPON_NONE);
 constexpr PeerId kServerPeerId = 0;
 constexpr std::uint32_t kClientNonce = 0x4d330001u;
 constexpr std::uint32_t kMaxCompensationWindowUs = 100000u;
@@ -1677,7 +1681,7 @@ bool validate_action_template(
         KernelActionTemplateFlag_CancelBeforeFirstCommit;
     if (definition.struct_size < sizeof(KernelActionTemplateDefinition) ||
         definition.action_template_id == 0u ||
-        definition.trigger_mode > KernelActionTriggerMode_Hold ||
+        definition.trigger_mode > KernelActionTriggerMode_Charge ||
         (definition.flags & ~kKnownFlags) != 0u ||
         (definition.max_commit_count != 1u &&
          definition.commit_interval_ticks == 0u)) {
@@ -1686,6 +1690,13 @@ bool validate_action_template(
     if (definition.trigger_mode == KernelActionTriggerMode_Press) {
         return definition.max_commit_count >= 1u &&
                definition.hold_input_timeout_ticks == 0u;
+    }
+    if (definition.trigger_mode == KernelActionTriggerMode_Charge) {
+        // commit_offset_ticks is the charge time: a charge of nothing would
+        // be a press that fires on release.
+        return definition.max_commit_count == 1u &&
+               definition.commit_offset_ticks > 0u &&
+               definition.hold_input_timeout_ticks > 0u;
     }
     return definition.hold_input_timeout_ticks > 0u;
 }
@@ -3529,6 +3540,11 @@ bool KernelEngine::load_gameplay_catalog(
         if (entity_template.entity_type != KernelEntityType_Prop &&
             (entity_template.prop.lifetime_ticks != 0u ||
              entity_template.prop.population_group_id != 0u)) {
+            return false;
+        }
+        // Importance only orders a population group's evictions.
+        if (entity_template.prop.importance != 0u &&
+            entity_template.prop.population_group_id == 0u) {
             return false;
         }
         if (entity_template.entity_type == KernelEntityType_Prop &&
@@ -5438,8 +5454,315 @@ bool KernelEngine::server_activate_entity(
 
 bool KernelEngine::server_clear_inventory_container(
     KernelInventoryContainerId container_id) {
-    return is_server_mode(config_.mode) &&
-        item_store_.clear_container(container_id);
+    if (!is_server_mode(config_.mode) || !item_store_.clear_container(container_id)) {
+        return false;
+    }
+    sync_weapon_loadouts();
+    return true;
+}
+
+bool KernelEngine::server_set_item_drop_tag(
+    KernelItemInstanceId id,
+    std::uint8_t drop_tag) {
+    return is_server_mode(config_.mode) && item_store_.set_drop_tag(id, drop_tag);
+}
+
+bool KernelEngine::server_clear_untagged_items(KernelInventoryContainerId container_id) {
+    if (!is_server_mode(config_.mode) || !item_store_.clear_untagged(container_id)) {
+        return false;
+    }
+    sync_weapon_loadouts();
+    return true;
+}
+
+namespace {
+// Where a dropped item rests above the ground, and how far below the drop
+// point the ground is still looked for.
+constexpr float kDroppedItemHeight = 0.1f;
+constexpr float kDroppedItemMaxFall = 200.0f;
+}  // namespace
+
+glm::vec3 KernelEngine::grounded_drop_point(const glm::vec3& point) const {
+    // On the ground under the point, not at it: something let go of in the
+    // air (a death in a knockback flight) would otherwise hang there, out of
+    // reach, since a world prop does not fall. No ground within reach keeps
+    // the point as given.
+    if (physics_world() == nullptr) {
+        return point;
+    }
+    ground_follow::Config ground{};
+    ground.hover_height = kDroppedItemHeight;
+    ground.filter = collision_filter_from_mask(KERNEL_COLLISION_LAYER_TERRAIN);
+    ground_follow::State landed{point, false};
+    if (!ground_follow::settle(*physics_world(), ground, kDroppedItemMaxFall, &landed)) {
+        return point;
+    }
+    return landed.position;
+}
+
+bool KernelEngine::server_drop_inventory_item(
+    KernelItemInstanceId id,
+    const KernelVec3& position,
+    std::uint32_t* out_prop_entity_id) {
+    if (!is_server_mode(config_.mode) || out_prop_entity_id == nullptr ||
+        !std::isfinite(position.x) || !std::isfinite(position.y) ||
+        !std::isfinite(position.z)) {
+        return false;
+    }
+    const ItemInstanceRecord* item = item_store_.find_item(id);
+    const KernelItemTemplateDefinition* definition =
+        item == nullptr ? nullptr : item_store_.find_template(item->item_template_id);
+    if (item == nullptr || item->terminal ||
+        item->residency.kind != KernelItemResidency_Inventory ||
+        definition == nullptr || definition->entity_template_id == 0) {
+        return false;
+    }
+    KernelServerEntityCreateInfo create{};
+    create.struct_size = sizeof(create);
+    create.entity_template_id = definition->entity_template_id;
+    create.position = position;
+    create.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+    create.position.y =
+        grounded_drop_point(glm::vec3{position.x, position.y, position.z}).y;
+    std::uint32_t prop_id = 0;
+    if (!EntityLifecycleSystem{}.create_entity(*this, create, &prop_id, false)) {
+        return false;
+    }
+    // The same instance goes down -- its id, portable state and drop tag --
+    // not a new one made in its likeness.
+    if (!item_store_.move_to_world(id, prop_id, KernelWorldItemMode_Placed)) {
+        server_destroy_entity(prop_id, KernelDespawnReason_Destroyed);
+        return false;
+    }
+    const std::optional<entt::entity> entity = world_.find_entity(prop_id);
+    world_.registry().emplace_or_replace<ItemTemplateRef>(
+        *entity, ItemTemplateRef{item->item_template_id});
+    world_.registry().emplace_or_replace<ItemInstanceRef>(*entity, ItemInstanceRef{id});
+    const ItemInstanceRecord* moved = item_store_.find_item(id);
+    if (moved == nullptr ||
+        !ItemGameplaySystem{}.decorate_item_prop(*this, prop_id, *moved)) {
+        server_destroy_entity(prop_id, KernelDespawnReason_Destroyed);
+        return false;
+    }
+    sync_weapon_loadouts();
+    *out_prop_entity_id = prop_id;
+    return true;
+}
+
+bool KernelEngine::server_drop_tagged_items(
+    std::uint32_t owner_entity_id,
+    const KernelVec3* position,
+    std::uint32_t* out_dropped_count) {
+    if (out_dropped_count != nullptr) *out_dropped_count = 0u;
+    const std::optional<entt::entity> owner = world_.find_entity(owner_entity_id);
+    if (!is_server_mode(config_.mode) || !owner.has_value()) {
+        return false;
+    }
+    glm::vec3 centre{0.0f};
+    if (position != nullptr) {
+        centre = glm::vec3{position->x, position->y, position->z};
+    } else if (const Sheltered* sheltered =
+                   world_.registry().try_get<Sheltered>(*owner);
+               sheltered != nullptr && sheltered->shelter_net_id != 0u) {
+        // Inside a building its position is the building's; where it went in
+        // is outside, and is where it would come out.
+        centre = sheltered->entry_position;
+    } else if (const Transform* transform =
+                   world_.registry().try_get<Transform>(*owner)) {
+        centre = transform->position;
+    }
+    if (!std::isfinite(centre.x) || !std::isfinite(centre.y) ||
+        !std::isfinite(centre.z)) {
+        return false;
+    }
+    std::vector<KernelItemInstanceId> tagged;
+    for (const KernelInventoryContainerId container_id :
+         item_store_.containers_for_owner(owner_entity_id)) {
+        const InventoryContainerRecord* container =
+            item_store_.find_container(container_id);
+        if (container == nullptr) continue;
+        for (const KernelItemInstanceId item_id : container->slots) {
+            const ItemInstanceRecord* item = item_store_.find_item(item_id);
+            if (item != nullptr && !item->terminal &&
+                item->drop_tag != KERNEL_DROP_TAG_NONE) {
+                tagged.push_back(item_id);
+            }
+        }
+    }
+    // A ring, so no two land in one spot; each settles onto the ground under
+    // its own point.
+    constexpr float kRadius = 1.0f;
+    constexpr float kTwoPi = 6.28318530718f;
+    std::uint32_t dropped = 0;
+    for (std::size_t index = 0; index < tagged.size(); ++index) {
+        const float angle =
+            kTwoPi * static_cast<float>(index) / static_cast<float>(tagged.size());
+        const KernelVec3 at{
+            centre.x + kRadius * std::cos(angle),
+            centre.y,
+            centre.z + kRadius * std::sin(angle)};
+        std::uint32_t prop = 0;
+        if (server_drop_inventory_item(tagged[index], at, &prop)) {
+            ++dropped;
+        } else {
+            spdlog::warn(
+                "tagged item not dropped owner={} item={}", owner_entity_id,
+                tagged[index]);
+        }
+    }
+    if (out_dropped_count != nullptr) *out_dropped_count = dropped;
+    return true;
+}
+
+bool KernelEngine::server_create_stock_container(
+    std::uint32_t owner_entity_id,
+    std::uint32_t slot_capacity,
+    KernelInventoryContainerId* out_container_id) {
+    if (!is_server_mode(config_.mode) || out_container_id == nullptr ||
+        !world_.find_entity(owner_entity_id).has_value()) {
+        return false;
+    }
+    const auto created = item_store_.create_container(
+        owner_entity_id, slot_capacity, KernelInventoryContainerKind_Stock);
+    if (!created.has_value()) return false;
+    *out_container_id = *created;
+    return true;
+}
+
+bool KernelEngine::server_create_weapon_container(
+    std::uint32_t owner_entity_id,
+    KernelInventoryContainerId* out_container_id) {
+    if (!is_server_mode(config_.mode) || out_container_id == nullptr) {
+        return false;
+    }
+    const std::optional<entt::entity> owner = world_.find_entity(owner_entity_id);
+    if (!owner.has_value() || !world_.registry().all_of<WeaponState>(*owner)) {
+        return false;
+    }
+    const auto created = item_store_.create_container(
+        owner_entity_id,
+        KERNEL_WEAPON_CATEGORY_COUNT,
+        KernelInventoryContainerKind_Weapons);
+    if (!created.has_value()) return false;
+    *out_container_id = *created;
+    // From here the container is the loadout, even empty.
+    sync_weapon_loadouts();
+    return true;
+}
+
+void KernelEngine::sync_weapon_loadouts() {
+    if (!is_server_mode(config_.mode)) {
+        return;
+    }
+    for (const InventoryContainerRecord* container : item_store_.weapon_containers()) {
+        const auto synced =
+            synced_weapon_revisions_.find(container->inventory_container_id);
+        if (synced != synced_weapon_revisions_.end() &&
+            synced->second == container->revision) {
+            continue;
+        }
+        rebuild_weapon_loadout(*container);
+        // Re-read: rebuilding writes weapon state back to items, which may
+        // touch this container's revision.
+        const InventoryContainerRecord* after =
+            item_store_.find_container(container->inventory_container_id);
+        if (after != nullptr) {
+            synced_weapon_revisions_[after->inventory_container_id] = after->revision;
+        }
+    }
+}
+
+void KernelEngine::rebuild_weapon_loadout(const InventoryContainerRecord& container) {
+    const std::optional<entt::entity> owner =
+        world_.find_entity(container.owner_entity_id);
+    if (!owner.has_value() || !world_.registry().all_of<WeaponState>(*owner)) {
+        return;
+    }
+    WeaponState& weapon = world_.registry().get<WeaponState>(*owner);
+    // The weapons leaving hand keep what they had: write every equipped
+    // slot back to its item first, wherever that item now is.
+    for (std::size_t slot = 0; slot < weapon.weapon_slot_count && slot < kWeaponSlotCount;
+         ++slot) {
+        if (weapon.item_ids[slot] == 0u) continue;
+        item_store_.set_portable_uint32(
+            weapon.item_ids[slot], KERNEL_PORTABLE_FIELD_WEAPON_AMMO, weapon.ammo[slot]);
+        item_store_.set_portable_uint32(
+            weapon.item_ids[slot],
+            KERNEL_PORTABLE_FIELD_WEAPON_RESERVE,
+            weapon.reserve_magazines[slot]);
+    }
+    const bool had_active = weapon.active_weapon_slot < weapon.weapon_slot_count;
+    const std::uint32_t active_id =
+        had_active ? weapon.weapon_ids[weapon.active_weapon_slot] : 0u;
+    const WeaponState before = weapon;
+    WeaponState rebuilt{};
+    rebuilt.active_effect_net_id = before.active_effect_net_id;
+    // Packed in category order: the loadout is the occupied slots, and the
+    // fire path finds a weapon by id among the first weapon_slot_count.
+    for (std::size_t category = 0; category < container.slots.size(); ++category) {
+        const KernelItemInstanceId item_id = container.slots[category];
+        const ItemInstanceRecord* item =
+            item_id == 0u ? nullptr : item_store_.find_item(item_id);
+        const KernelItemTemplateDefinition* definition =
+            item == nullptr ? nullptr : item_store_.find_template(item->item_template_id);
+        if (definition == nullptr || definition->is_weapon == 0u) continue;
+        const std::size_t slot = rebuilt.weapon_slot_count++;
+        rebuilt.weapon_ids[slot] = definition->weapon_id;
+        rebuilt.item_ids[slot] = item_id;
+        for (const KernelPortableStateFieldDefinition& field : item->portable_state) {
+            if (field.field_id == KERNEL_PORTABLE_FIELD_WEAPON_AMMO) {
+                rebuilt.ammo[slot] = static_cast<std::uint16_t>(field.uint32_default);
+            } else if (field.field_id == KERNEL_PORTABLE_FIELD_WEAPON_RESERVE) {
+                rebuilt.reserve_magazines[slot] =
+                    static_cast<std::uint16_t>(field.uint32_default);
+            }
+        }
+        // A weapon that stays keeps its cadence, and its holstered reload.
+        for (std::size_t old = 0; old < before.weapon_slot_count; ++old) {
+            if (before.weapon_ids[old] == definition->weapon_id) {
+                rebuilt.next_primary_commit_tick[slot] =
+                    before.next_primary_commit_tick[old];
+                rebuilt.holstered[slot] = before.holstered[old];
+                rebuilt.holstered_tick[slot] = before.holstered_tick[old];
+            }
+        }
+        if (had_active && definition->weapon_id == active_id) {
+            rebuilt.active_weapon_slot = static_cast<std::uint8_t>(slot);
+            rebuilt.is_reloading = before.is_reloading;
+        }
+    }
+    weapon = rebuilt;
+}
+
+void KernelEngine::write_back_weapon_states() {
+    if (!is_server_mode(config_.mode)) {
+        return;
+    }
+    auto view = world_.registry().view<WeaponState>();
+    for (const entt::entity entity : view) {
+        const WeaponState& weapon = view.get<WeaponState>(entity);
+        for (std::size_t slot = 0; slot < weapon.weapon_slot_count && slot < kWeaponSlotCount;
+             ++slot) {
+            if (weapon.item_ids[slot] == 0u) continue;
+            item_store_.set_portable_uint32(
+                weapon.item_ids[slot],
+                KERNEL_PORTABLE_FIELD_WEAPON_RESERVE,
+                weapon.reserve_magazines[slot]);
+            if (slot != weapon.active_weapon_slot) {
+                item_store_.set_portable_uint32(
+                    weapon.item_ids[slot],
+                    KERNEL_PORTABLE_FIELD_WEAPON_AMMO,
+                    weapon.ammo[slot]);
+            }
+        }
+    }
+    // Writing back moves revisions; that is not a loadout change.
+    for (const InventoryContainerRecord* container : item_store_.weapon_containers()) {
+        auto synced = synced_weapon_revisions_.find(container->inventory_container_id);
+        if (synced != synced_weapon_revisions_.end()) {
+            synced->second = container->revision;
+        }
+    }
 }
 
 bool KernelEngine::server_create_inventory_container(
@@ -5472,6 +5795,7 @@ bool KernelEngine::server_create_inventory_item(
         container_id);
     if (!created.has_value()) return false;
     *out_item_instance_id = *created;
+    sync_weapon_loadouts();
     return true;
 }
 
@@ -5532,7 +5856,11 @@ bool KernelEngine::server_create_world_item(
 bool KernelEngine::server_submit_gameplay_request(
     const KernelGameplayRequest& request) {
     if (!is_server_mode(config_.mode)) return false;
-    return ItemGameplaySystem{}.submit_request(*this, request);
+    const bool submitted = ItemGameplaySystem{}.submit_request(*this, request);
+    // A pickup, swap or drop of a weapon item changes a loadout now, not on
+    // the next tick: the very next input may fire it.
+    sync_weapon_loadouts();
+    return submitted;
 }
 
 bool KernelEngine::submit_gameplay_request(
@@ -5566,6 +5894,146 @@ bool KernelEngine::submit_gameplay_request(
         ChannelId::kReliableEvent);
     begin_predicted_throw(request);
     return true;
+}
+
+namespace {
+
+// A game message queue past this is a peer sending faster than game_server
+// drains, or nobody draining at all; either way, more would only grow memory.
+constexpr std::size_t kMaxQueuedGameMessages = 256;
+
+bool valid_game_message_body(const std::uint8_t* payload, std::uint32_t size) {
+    return size <= KERNEL_MAX_GAME_MESSAGE_BYTES &&
+        (size == 0u || payload != nullptr);
+}
+
+std::uint32_t drain_game_messages(
+    std::deque<KernelGameMessage>* queue,
+    KernelGameMessage* out_messages,
+    std::uint32_t max_messages) {
+    if (out_messages == nullptr || max_messages == 0u) return 0u;
+    std::uint32_t copied = 0;
+    while (copied < max_messages && !queue->empty()) {
+        out_messages[copied++] = queue->front();
+        queue->pop_front();
+    }
+    return copied;
+}
+
+}  // namespace
+
+void KernelEngine::enqueue_game_message(
+    std::deque<KernelGameMessage>* queue,
+    PeerId peer,
+    NetId player_net_id,
+    std::uint32_t message_type,
+    const std::uint8_t* payload,
+    std::uint32_t payload_size) {
+    if (queue->size() >= kMaxQueuedGameMessages) {
+        push_event(KernelEventType_Error, player_net_id, peer, 34);
+        return;
+    }
+    KernelGameMessage message{};
+    message.struct_size = sizeof(message);
+    message.peer = peer;
+    message.player_net_id = player_net_id;
+    message.message_type = message_type;
+    message.payload_size = payload_size;
+    if (payload_size != 0u) {
+        std::memcpy(message.payload, payload, payload_size);
+    }
+    queue->push_back(message);
+}
+
+bool KernelEngine::send_game_message(
+    std::uint32_t message_type,
+    const std::uint8_t* payload,
+    std::uint32_t payload_size) {
+    if (!valid_game_message_body(payload, payload_size)) return false;
+    if (config_.mode == KernelMode_ListenServer) {
+        // The host's own player: no wire between it and its own server.
+        if (!running_ || local_listen_session_.player == 0u) return false;
+        enqueue_game_message(
+            &server_game_messages_,
+            kLocalListenPeerId,
+            local_listen_session_.player,
+            message_type,
+            payload,
+            payload_size);
+        return true;
+    }
+    if (config_.mode != KernelMode_Client || !has_welcome_ ||
+        transport_ == nullptr) {
+        return false;
+    }
+    GameMessagePacket message;
+    message.message_type = message_type;
+    message.payload.assign(payload, payload + payload_size);
+    const std::vector<std::uint8_t> packet =
+        encode_game_message_packet(message, next_packet_sequence_++);
+    if (!transport_->Send(
+            kServerPeerId,
+            packet.data(),
+            static_cast<std::uint32_t>(packet.size()),
+            SendMode::kReliable,
+            ChannelId::kReliableEvent)) {
+        return false;
+    }
+    record_sent_packet(
+        static_cast<std::uint32_t>(packet.size()),
+        SendMode::kReliable,
+        ChannelId::kReliableEvent);
+    return true;
+}
+
+std::uint32_t KernelEngine::poll_game_messages(
+    KernelGameMessage* out_messages,
+    std::uint32_t max_messages) {
+    return drain_game_messages(&client_game_messages_, out_messages, max_messages);
+}
+
+bool KernelEngine::server_send_game_message(
+    PeerId peer,
+    std::uint32_t message_type,
+    const std::uint8_t* payload,
+    std::uint32_t payload_size) {
+    if (!running_ || !is_server_mode(config_.mode) ||
+        !valid_game_message_body(payload, payload_size)) {
+        return false;
+    }
+    if (config_.mode == KernelMode_ListenServer && peer == kLocalListenPeerId) {
+        enqueue_game_message(
+            &client_game_messages_, 0u, 0u, message_type, payload, payload_size);
+        return true;
+    }
+    const PeerSession* session = find_session(peer);
+    if (session == nullptr || !session->welcomed || transport_ == nullptr) {
+        return false;
+    }
+    GameMessagePacket message;
+    message.message_type = message_type;
+    message.payload.assign(payload, payload + payload_size);
+    const std::vector<std::uint8_t> packet =
+        encode_game_message_packet(message, next_packet_sequence_++);
+    if (!transport_->Send(
+            peer,
+            packet.data(),
+            static_cast<std::uint32_t>(packet.size()),
+            SendMode::kReliable,
+            ChannelId::kReliableEvent)) {
+        return false;
+    }
+    record_sent_packet(
+        static_cast<std::uint32_t>(packet.size()),
+        SendMode::kReliable,
+        ChannelId::kReliableEvent);
+    return true;
+}
+
+std::uint32_t KernelEngine::server_poll_game_messages(
+    KernelGameMessage* out_messages,
+    std::uint32_t max_messages) {
+    return drain_game_messages(&server_game_messages_, out_messages, max_messages);
 }
 
 bool KernelEngine::get_item_instance(
@@ -5924,9 +6392,13 @@ bool KernelEngine::server_set_entity_combat_state(
     const KernelCombatStateDefinition& combat_state) {
     if (!running_ || !is_server_mode(config_.mode) || net_id == 0 ||
         combat_state.struct_size < sizeof(KernelCombatStateDefinition) ||
-        combat_state.weapon_slot_count == 0u ||
         combat_state.weapon_slot_count > KERNEL_MAX_WEAPON_SLOTS ||
-        combat_state.active_weapon_slot >= combat_state.weapon_slot_count ||
+        // No weapon at all is a loadout (a player playing on items alone);
+        // its active slot is 0 and names nothing, which every reader of
+        // WeaponState already treats as "no active weapon".
+        (combat_state.weapon_slot_count == 0u
+             ? combat_state.active_weapon_slot != 0u
+             : combat_state.active_weapon_slot >= combat_state.weapon_slot_count) ||
         combat_state.collider_template_id == 0 ||
         find_collider_template(
             collider_templates_,
@@ -5969,6 +6441,15 @@ bool KernelEngine::server_set_entity_combat_state(
         weapon.weapon_ids[slot] = combat_state.weapon_ids[slot];
         weapon.ammo[slot] = combat_state.ammo[slot];
         weapon.reserve_magazines[slot] = combat_state.reserve_magazines[slot];
+        // These slots are not items; nothing here may be written back to one.
+        weapon.item_ids[slot] = 0u;
+    }
+    // An owner with a weapon container is armed with what it holds, whatever
+    // this call said: rebuild from it now.
+    if (const InventoryContainerRecord* weapons =
+            item_store_.find_weapon_container_for_owner(net_id)) {
+        synced_weapon_revisions_.erase(weapons->inventory_container_id);
+        sync_weapon_loadouts();
     }
     if (net_id == local_player_net_id_) {
         local_player_move_speed_meters_per_second_ =
@@ -6348,6 +6829,9 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     processed_gameplay_requests_.clear();
     pending_gameplay_request_outcomes_.clear();
     pending_network_gameplay_outcomes_.clear();
+    server_game_messages_.clear();
+    client_game_messages_.clear();
+    synced_weapon_revisions_.clear();
     physics_entity_colliders_.clear();
     prediction_proxy_collider_ids_.clear();
     prediction_obstacle_collider_ids_.clear();
@@ -6540,7 +7024,7 @@ void KernelEngine::poll_transport() {
                     item_store_.find_container(
                         inventory_request.inventory_container_id);
                 if (container == nullptr ||
-                    container->owner_entity_id != session->player) {
+                    !can_observe_container(*session, *container)) {
                     push_event(KernelEventType_Error, 0, transport_event.peer, 33);
                     continue;
                 }
@@ -6549,6 +7033,23 @@ void KernelEngine::poll_transport() {
                 send_inventory_snapshot(
                     mutable_session,
                     inventory_request.inventory_container_id);
+                continue;
+            }
+            GameMessagePacket game_message;
+            if (decode_game_message_packet(
+                    transport_event.payload.data(),
+                    transport_event.payload.size(),
+                    &game_message)) {
+                // Who sent it is the session's word, never the packet's.
+                if (session != nullptr && session->welcomed) {
+                    enqueue_game_message(
+                        &server_game_messages_,
+                        transport_event.peer,
+                        session->player,
+                        game_message.message_type,
+                        game_message.payload.data(),
+                        static_cast<std::uint32_t>(game_message.payload.size()));
+                }
                 continue;
             }
             KernelGameplayRequest request{};
@@ -6702,6 +7203,20 @@ void KernelEngine::handle_server_disconnect(const TransportEvent& transport_even
     };
     events_.push_back(player_left);
 
+    // What it carries that outlives it -- quest items, map weapons -- goes
+    // down where it stood, as a death would put it; the rest goes with it, and
+    // so do its containers, so nothing is left owned by no one.
+    const NetId leaving = session->player;
+    (void)server_drop_tagged_items(leaving, nullptr, nullptr);
+    // What it had in its hands is let go of where it was held; left carried,
+    // it would hang there, claimed by no one who still exists.
+    ItemGameplaySystem{}.drop_carried_props(*this, leaving);
+    for (const KernelInventoryContainerId container_id :
+         item_store_.containers_for_owner(leaving)) {
+        (void)item_store_.destroy_container(container_id);
+        synced_weapon_revisions_.erase(container_id);
+    }
+
     // Current server mechanism removes the disconnected player immediately.
     // A later policy may preserve selected entities while clearing transient state.
     if (world_.destroy(session->player)) {
@@ -6734,6 +7249,7 @@ void KernelEngine::handle_client_inventory_snapshot_page(
         assembly.container.slot_capacity = packet.slot_capacity;
         assembly.container.revision = packet.revision;
         assembly.container.sync_state = KernelInventorySyncState_Syncing;
+        assembly.container.container_kind = packet.container_kind;
         assembly.page_count = packet.page_count;
         assembly.received_pages.assign(packet.page_count, false);
     }
@@ -6845,6 +7361,9 @@ void KernelEngine::handle_client_inventory_delta_batch(
                 if ((record.changed_fields &
                      kInventoryChangePortableState) != 0u) {
                     merged.portable_values = record.item.portable_values;
+                }
+                if ((record.changed_fields & kInventoryChangeDropTag) != 0u) {
+                    merged.drop_tag = record.item.drop_tag;
                 }
                 if (!inventory_view_from_wire(
                         item_store_,
@@ -7008,6 +7527,16 @@ void KernelEngine::handle_client_reliable_event(const TransportEvent& transport_
         handle_client_inventory_snapshot_page(inventory_snapshot);
         return;
     }
+    InventoryContainerClosedPacket inventory_closed;
+    decode_start = std::chrono::steady_clock::now();
+    if (decode_inventory_container_closed_packet(
+            transport_event.payload.data(),
+            transport_event.payload.size(),
+            &inventory_closed)) {
+        record_packet_deserialization_cost(elapsed_cost_us(decode_start));
+        handle_client_inventory_container_closed(inventory_closed);
+        return;
+    }
     InventoryDeltaBatchPacket inventory_delta;
     decode_start = std::chrono::steady_clock::now();
     if (decode_inventory_delta_batch_packet(
@@ -7016,6 +7545,22 @@ void KernelEngine::handle_client_reliable_event(const TransportEvent& transport_
             &inventory_delta)) {
         record_packet_deserialization_cost(elapsed_cost_us(decode_start));
         handle_client_inventory_delta_batch(inventory_delta);
+        return;
+    }
+    GameMessagePacket game_message;
+    decode_start = std::chrono::steady_clock::now();
+    if (decode_game_message_packet(
+            transport_event.payload.data(),
+            transport_event.payload.size(),
+            &game_message)) {
+        record_packet_deserialization_cost(elapsed_cost_us(decode_start));
+        enqueue_game_message(
+            &client_game_messages_,
+            0u,
+            0u,
+            game_message.message_type,
+            game_message.payload.data(),
+            static_cast<std::uint32_t>(game_message.payload.size()));
         return;
     }
     KernelGameplayRequestOutcome gameplay_outcome{};
@@ -9253,9 +9798,16 @@ bool KernelEngine::local_weapon_state(KernelLocalWeaponState* out_state) const {
     // spawned from the same template the server used, is what turns one into
     // the other; without it every spend counts, since there is nothing to tell
     // them apart by.
-    const bool weapon_known = weapon != nullptr &&
+    const bool loadout_known = weapon != nullptr &&
         slot < weapon->weapon_slot_count && slot < kWeaponSlotCount;
-    const std::uint32_t weapon_id = weapon_known ? weapon->weapon_ids[slot] : 0u;
+    // A pure client has no loadout of its own; the snapshot names the weapon
+    // in hand (schema 28), which is also right after a pickup or a swap.
+    const bool held_known =
+        authoritative_local_weapon_.held_weapon_id != KERNEL_HELD_WEAPON_NONE;
+    const bool weapon_known = held_known || loadout_known;
+    const std::uint32_t weapon_id = held_known
+        ? authoritative_local_weapon_.held_weapon_id
+        : loadout_known ? weapon->weapon_ids[slot] : 0u;
     std::uint32_t spent = 0u;
     for (const PredictedAmmoSpend& spend : predicted_ammo_spends_) {
         if (!weapon_known || spend.weapon_id == weapon_id) {
@@ -9284,7 +9836,15 @@ void KernelEngine::apply_authoritative_local_weapon(const WorldSnapshot& snapsho
         return;
     }
     const EntitySnapshot* own = find_snapshot_entity(snapshot, local_player_net_id_);
-    if (own == nullptr || !own->has_owner_weapon_state) {
+    if (own == nullptr) {
+        return;
+    }
+    if (!own->has_owner_weapon_state) {
+        // The server leaves the block off when the active slot names no
+        // weapon -- the player is unarmed. Keeping the last one would report
+        // a weapon, and its rounds, the player no longer has.
+        authoritative_local_weapon_ = AuthoritativeLocalWeapon{};
+        predicted_ammo_spends_.clear();
         return;
     }
     authoritative_local_weapon_ = AuthoritativeLocalWeapon{
@@ -9293,6 +9853,8 @@ void KernelEngine::apply_authoritative_local_weapon(const WorldSnapshot& snapsho
         own->active_weapon_slot,
         own->weapon_state_flags,
         own->active_weapon_ammo,
+        own->has_held_weapon ? own->held_weapon_id
+                             : static_cast<std::uint8_t>(KERNEL_HELD_WEAPON_NONE),
     };
     // Everything up to last_processed_input_seq is already inside the magazine
     // the server just reported, so charging it again would count it twice.
@@ -12360,6 +12922,7 @@ void KernelEngine::simulate_tick() {
     EntityLifecycleSystem{}.update_prop_lifetimes(*this);
     const std::size_t queue_depth = command_queue_.size();
     const std::size_t processed_command_count = drain_simulation_commands();
+    sync_weapon_loadouts();
     advance_predicted_projectiles(fixed_delta);
     advance_predicted_throws(fixed_delta);
     for (const QueuedInput& pending_input : pending_inputs_) {
@@ -12577,6 +13140,9 @@ void KernelEngine::simulate_tick() {
     if (wrote_snapshot) {
         publish_snapshot();
     }
+    // Before the inventory flush, so a reserve spent or refilled this tick
+    // reaches the owner with it.
+    write_back_weapon_states();
     flush_inventory_replication();
     flush_prop_state_changes();
     flush_actor_impulses();
@@ -14653,6 +15219,10 @@ void KernelEngine::rebuild_render_states_from_snapshot(
         replicated->active = true;
         replicated->shelter_net_id = entity.shelter_net_id;
         replicated->shelter_seat = entity.shelter_seat;
+        if (entity.has_held_weapon) {
+            replicated->has_held_weapon = true;
+            replicated->held_weapon_id = entity.held_weapon_id;
+        }
         if (!use_reliable_prop_state) {
             replicated->position = entity.position;
             replicated->rotation = entity.rotation;
@@ -14760,6 +15330,10 @@ void KernelEngine::rebuild_render_states_from_snapshot(
         }
         render_states_.back().shelter_net_id = entity.shelter_net_id;
         render_states_.back().shelter_seat = entity.shelter_seat;
+        if (entity.has_held_weapon) {
+            render_states_.back().has_held_weapon = 1u;
+            render_states_.back().held_weapon_id = entity.held_weapon_id;
+        }
     }
 
     // The derived chains, stepped to the render instant and drawn there.
@@ -15078,7 +15652,7 @@ bool KernelEngine::send_inventory_snapshot(
     if (session == nullptr || !session->welcomed) return false;
     const InventoryContainerRecord* container =
         item_store_.find_container(container_id);
-    if (container == nullptr || container->owner_entity_id != session->player) {
+    if (container == nullptr || !can_observe_container(*session, *container)) {
         return false;
     }
     std::vector<InventorySnapshotEntry> entries;
@@ -15112,6 +15686,7 @@ bool KernelEngine::send_inventory_snapshot(
         page.slot_capacity = container->slot_capacity;
         page.page_index = static_cast<std::uint16_t>(page_index);
         page.page_count = static_cast<std::uint16_t>(page_count_size);
+        page.container_kind = container->kind;
         if (begin < end) {
             page.entries.assign(entries.begin() + begin, entries.begin() + end);
         }
@@ -15143,7 +15718,7 @@ bool KernelEngine::send_inventory_delta_batch(
     if (session == nullptr || !session->welcomed || deltas.empty()) return false;
     const InventoryContainerRecord* container =
         item_store_.find_container(container_id);
-    if (container == nullptr || container->owner_entity_id != session->player) {
+    if (container == nullptr || !can_observe_container(*session, *container)) {
         return false;
     }
     InventoryDeltaBatchPacket batch;
@@ -15183,13 +15758,101 @@ bool KernelEngine::send_inventory_delta_batch(
     return true;
 }
 
+bool KernelEngine::can_observe_container(
+    const PeerSession& session,
+    const InventoryContainerRecord& container) const {
+    if (session.player == 0u) {
+        return false;
+    }
+    if (container.owner_entity_id == session.player) {
+        return true;
+    }
+    const std::optional<entt::entity> player = world_.find_entity(session.player);
+    const Sheltered* sheltered = player.has_value()
+        ? world_.registry().try_get<Sheltered>(*player)
+        : nullptr;
+    return sheltered != nullptr && sheltered->shelter_net_id != 0u &&
+        sheltered->shelter_net_id == container.owner_entity_id;
+}
+
+std::vector<KernelInventoryContainerId> KernelEngine::observed_containers(
+    const PeerSession& session) const {
+    std::vector<KernelInventoryContainerId> observed =
+        item_store_.containers_for_owner(session.player);
+    const std::optional<entt::entity> player = world_.find_entity(session.player);
+    const Sheltered* sheltered = player.has_value()
+        ? world_.registry().try_get<Sheltered>(*player)
+        : nullptr;
+    if (sheltered != nullptr && sheltered->shelter_net_id != 0u) {
+        for (const KernelInventoryContainerId id :
+             item_store_.containers_for_owner(sheltered->shelter_net_id)) {
+            observed.push_back(id);
+        }
+    }
+    return observed;
+}
+
+bool KernelEngine::send_inventory_container_closed(
+    PeerSession* session,
+    KernelInventoryContainerId container_id) {
+    if (session == nullptr || !session->welcomed) return false;
+    const std::vector<std::uint8_t> packet = encode_inventory_container_closed_packet(
+        InventoryContainerClosedPacket{container_id}, next_packet_sequence_++);
+    ITransport* target_transport =
+        session->peer == kLocalListenPeerId && listen_server_transport_ != nullptr
+        ? static_cast<ITransport*>(listen_server_transport_)
+        : transport_.get();
+    if (packet.empty() || target_transport == nullptr ||
+        !target_transport->Send(
+            session->peer,
+            packet.data(),
+            static_cast<std::uint32_t>(packet.size()),
+            SendMode::kReliable,
+            ChannelId::kReliableEvent)) {
+        return false;
+    }
+    record_sent_packet(
+        static_cast<std::uint32_t>(packet.size()),
+        SendMode::kReliable,
+        ChannelId::kReliableEvent);
+    return true;
+}
+
+void KernelEngine::handle_client_inventory_container_closed(
+    const InventoryContainerClosedPacket& packet) {
+    // A listen host's store is the authority's own; only a pure client holds
+    // copies to drop.
+    if (config_.mode != KernelMode_Client) {
+        return;
+    }
+    (void)item_store_.destroy_container(packet.inventory_container_id);
+    client_inventory_sync_states_.erase(packet.inventory_container_id);
+    client_inventory_snapshot_assemblies_.erase(packet.inventory_container_id);
+    client_inventory_resync_pending_.erase(packet.inventory_container_id);
+}
+
 void KernelEngine::flush_inventory_replication() {
     const auto flush_session = [&](PeerSession* session) {
         if (session == nullptr || !session->welcomed || session->player == 0u) {
             return;
         }
-        for (const KernelInventoryContainerId container_id :
-             item_store_.containers_for_owner(session->player)) {
+        const std::vector<KernelInventoryContainerId> observed =
+            observed_containers(*session);
+        // What it saw and no longer does -- a camp it left, a container that
+        // is gone -- is closed, so its client drops the copy and a return
+        // starts over from a full snapshot.
+        for (auto cursor = session->inventory_revisions.begin();
+             cursor != session->inventory_revisions.end();) {
+            if (std::find(observed.begin(), observed.end(), cursor->first) ==
+                    observed.end() ||
+                item_store_.find_container(cursor->first) == nullptr) {
+                (void)send_inventory_container_closed(session, cursor->first);
+                cursor = session->inventory_revisions.erase(cursor);
+            } else {
+                ++cursor;
+            }
+        }
+        for (const KernelInventoryContainerId container_id : observed) {
             const InventoryContainerRecord* container =
                 item_store_.find_container(container_id);
             if (container == nullptr) continue;

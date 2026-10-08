@@ -48,6 +48,7 @@ struct PropStateChangeRecord;
 struct EntityTemplateUpdatePacket;
 struct InventoryDeltaBatchPacket;
 struct InventorySnapshotPagePacket;
+struct InventoryContainerClosedPacket;
 struct InventorySnapshotRequestPacket;
 struct LocalActionResultBatchPacket;
 struct LocomotionStepBatchPacket;
@@ -277,6 +278,53 @@ public:
         std::int32_t health_delta,
         std::uint64_t event_time_us);
     bool submit_gameplay_request(const KernelGameplayRequest& request);
+    // Weapon containers (ABI 101): an owner's loadout is what its weapon
+    // container holds. See sync_weapon_loadouts.
+    // Drop tags (K12); see Kernel_ServerSetItemDropTag.
+    bool server_set_item_drop_tag(KernelItemInstanceId id, std::uint8_t drop_tag);
+    bool server_clear_untagged_items(KernelInventoryContainerId container_id);
+    bool server_drop_inventory_item(
+        KernelItemInstanceId id,
+        const KernelVec3& position,
+        std::uint32_t* out_prop_entity_id);
+    // Where something let go of at `point` comes to rest: on the terrain
+    // beneath it, or at the point when there is none in reach.
+    glm::vec3 grounded_drop_point(const glm::vec3& point) const;
+    bool server_drop_tagged_items(
+        std::uint32_t owner_entity_id,
+        const KernelVec3* position,
+        std::uint32_t* out_dropped_count);
+    bool server_create_stock_container(
+        std::uint32_t owner_entity_id,
+        std::uint32_t slot_capacity,
+        KernelInventoryContainerId* out_container_id);
+    bool server_create_weapon_container(
+        std::uint32_t owner_entity_id,
+        KernelInventoryContainerId* out_container_id);
+    // Rebuilds the WeaponState of every owner whose weapon container changed
+    // since the last call. Cheap when nothing did; called after anything that
+    // can move a weapon item and at the start of every tick.
+    void sync_weapon_loadouts();
+    // Copies each equipped weapon's magazine and reserve onto its item: the
+    // reserve always, the magazine only once the weapon is out of hand (the
+    // snapshot already reports the one in hand). End of every tick.
+    void write_back_weapon_states();
+    // Game messages; see Kernel_SendGameMessage.
+    bool send_game_message(
+        std::uint32_t message_type,
+        const std::uint8_t* payload,
+        std::uint32_t payload_size);
+    std::uint32_t poll_game_messages(
+        KernelGameMessage* out_messages,
+        std::uint32_t max_messages);
+    bool server_send_game_message(
+        PeerId peer,
+        std::uint32_t message_type,
+        const std::uint8_t* payload,
+        std::uint32_t payload_size);
+    std::uint32_t server_poll_game_messages(
+        KernelGameMessage* out_messages,
+        std::uint32_t max_messages);
     bool get_item_instance(
         KernelItemInstanceId id,
         KernelItemInstanceView* out_view) const;
@@ -525,6 +573,9 @@ private:
         // occupant standing outside.
         NetId shelter_net_id = 0;
         std::uint8_t shelter_seat = 0;
+        // What a player holds, as of the last record that said (schema 28).
+        bool has_held_weapon = false;
+        std::uint8_t held_weapon_id = KERNEL_HELD_WEAPON_NONE;
         bool active = false;
     };
 
@@ -671,6 +722,10 @@ private:
         std::uint8_t active_weapon_slot = 0;
         std::uint8_t flags = 0;
         std::uint16_t ammo = 0;
+        // The weapon in hand by id (schema 28), for a client with no loadout
+        // of its own to turn the slot into one; KERNEL_HELD_WEAPON_NONE if
+        // the record did not say.
+        std::uint8_t held_weapon_id = KERNEL_HELD_WEAPON_NONE;
     };
 
     // Unacknowledged spends are bounded by the input window the server has not
@@ -999,6 +1054,18 @@ private:
     bool send_inventory_snapshot(
         PeerSession* session,
         KernelInventoryContainerId container_id);
+    // Who sees a container (K9): its owner, and whoever is inside the
+    // building that owns it -- a camp's stock goes to its occupants only.
+    bool can_observe_container(
+        const PeerSession& session,
+        const InventoryContainerRecord& container) const;
+    std::vector<KernelInventoryContainerId> observed_containers(
+        const PeerSession& session) const;
+    bool send_inventory_container_closed(
+        PeerSession* session,
+        KernelInventoryContainerId container_id);
+    void handle_client_inventory_container_closed(
+        const InventoryContainerClosedPacket& packet);
     bool send_inventory_delta_batch(
         PeerSession* session,
         KernelInventoryContainerId container_id,
@@ -1223,6 +1290,23 @@ private:
     ItemStore item_store_;
     std::vector<KernelGameplayRequestOutcome> processed_gameplay_requests_;
     std::deque<KernelGameplayRequestOutcome> pending_gameplay_request_outcomes_;
+    // Game messages waiting for game_server (server) and for the local player
+    // (client, or a listen host's own player). Bounded; see
+    // enqueue_game_message.
+    // Weapon container -> the revision its owner's WeaponState was last built
+    // from.
+    std::unordered_map<KernelInventoryContainerId, std::uint64_t>
+        synced_weapon_revisions_;
+    void rebuild_weapon_loadout(const InventoryContainerRecord& container);
+    std::deque<KernelGameMessage> server_game_messages_;
+    std::deque<KernelGameMessage> client_game_messages_;
+    void enqueue_game_message(
+        std::deque<KernelGameMessage>* queue,
+        PeerId peer,
+        NetId player_net_id,
+        std::uint32_t message_type,
+        const std::uint8_t* payload,
+        std::uint32_t payload_size);
     std::vector<std::pair<PeerId, KernelGameplayRequestOutcome>>
         pending_network_gameplay_outcomes_;
     struct ClientInventorySnapshotAssembly {

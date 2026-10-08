@@ -1,0 +1,19 @@
+# Refills the active weapon's reserve_magazines -- in the wand system, how many
+# more times its MP can be refilled. Always the user's own weapon, whatever the
+# request names as its target.
+id: 3013
+name: fungible_mp_potion
+mode: fungible
+max_stack: 5
+capabilities: [consumable]
+throw:
+  mode: none
+use:
+  quantity_cost: 1
+  cooldown_ticks: 0
+  destroy_when_empty: true
+triggers:
+  on_item_used:
+    action_graph: action_refill_weapon_reserve_half_at_item_used
+    parameters:
+      target: event.instigator

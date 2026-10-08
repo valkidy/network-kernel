@@ -1,5 +1,7 @@
 id: 3
 name: Rocket
+# Weapon container slot 0-3 (wand, scepter, staff, tome / their gun twins).
+category: 1
 weapon_type: projectile
 magazine_size: 6
 fire_action_template: rocket_fire

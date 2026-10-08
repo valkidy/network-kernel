@@ -1,5 +1,7 @@
 id: 1
 name: Shotgun
+# Weapon container slot 0-3 (wand, scepter, staff, tome / their gun twins).
+category: 0
 weapon_type: shotgun
 magazine_size: 8
 fire_action_template: shotgun_fire

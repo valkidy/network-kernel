@@ -98,6 +98,8 @@ struct AgentSentryConfig {
     float move_speed_meters_per_second = 0.0f;
     std::uint16_t weapon_id = UINT16_MAX;
     BallisticAimProfile ballistic_aim;
+    // The weapon's charge time when its fire action charges (D21), else 0.
+    std::uint32_t charge_ticks = 0;
     std::uint16_t animation_idle = 0;
     std::uint16_t animation_attack = 0;
 };
@@ -140,6 +142,10 @@ struct AgentRuntimeState {
     std::uint32_t target_player_net_id = 0;
     std::uint32_t next_input_seq = 1;
     std::uint32_t next_action_instance_id = 1;
+    // A charging attack (D21): the action instance being charged and how many
+    // held inputs it has had since the press.
+    std::uint32_t charging_action_instance_id = 0;
+    std::uint32_t charge_inputs = 0;
     AgentSentryRuntimeState sentry{};
     // Resolved once from this agent's own actor template when the runtime first
     // discovers it; see AgentRuntimeManager::sync_agents_from_kernel.

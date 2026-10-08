@@ -58,6 +58,7 @@ constexpr std::size_t kActorMovementPayloadSize = 22;
 constexpr std::size_t kActorWeaponStatePayloadSize = 4;
 constexpr std::size_t kActorImpulseLockoutPayloadSize = 8;
 constexpr std::size_t kActorShelterPayloadSize = 5;
+constexpr std::size_t kActorHeldWeaponPayloadSize = 1;
 constexpr std::size_t kProjectileCompactSnapshotPayloadSize = 34;
 // net_id 4 + effective_length 2. No position, rotation or velocity: a beam does
 // not move, and its origin and aim are the shooter's, which every snapshot
@@ -93,6 +94,7 @@ constexpr std::size_t kStatusEffectStateRecordPayloadSize = 24;
 constexpr std::size_t kGameplayRequestPayloadSize = 60;
 constexpr std::size_t kGameplayRequestOutcomePayloadSize = 32;
 constexpr std::size_t kInventorySnapshotRequestPayloadSize = 16;
+constexpr std::size_t kInventoryContainerClosedPayloadSize = 8;
 constexpr std::size_t kMaxInventoryPacketPayloadSize = 16u * 1024u;
 
 constexpr float kTwoPi = 6.283185307179586f;
@@ -169,7 +171,8 @@ float beam_length_from_wire(std::uint16_t value) {
 bool valid_wire_item(const InventoryWireItem& item) {
     return item.item_instance_id != 0u && item.item_template_id != 0u &&
         item.quantity != 0u &&
-        item.portable_values.size() <= KERNEL_MAX_PORTABLE_STATE_FIELDS;
+        item.portable_values.size() <= KERNEL_MAX_PORTABLE_STATE_FIELDS &&
+        item.drop_tag <= KERNEL_DROP_TAG_MAP_WEAPON;
 }
 
 void write_wire_item(
@@ -191,6 +194,9 @@ void write_wire_item(
         for (const std::uint32_t value : item.portable_values) {
             writer->write_u32(value);
         }
+    }
+    if ((changed_fields & kInventoryChangeDropTag) != 0u) {
+        writer->write_u8(item.drop_tag);
     }
 }
 
@@ -221,6 +227,11 @@ bool read_wire_item(
         for (std::uint32_t& value : item->portable_values) {
             if (!reader->read_u32(&value)) return false;
         }
+    }
+    if ((changed_fields & kInventoryChangeDropTag) != 0u &&
+        (!reader->read_u8(&item->drop_tag) ||
+         item->drop_tag > KERNEL_DROP_TAG_MAP_WEAPON)) {
+        return false;
     }
     return item->item_instance_id != 0u;
 }
@@ -265,6 +276,9 @@ enum ActorSnapshotRecordFlag : std::uint16_t {
     // one. Schema 27 appends its seat (u8) and sends it for every actor, not
     // only the receiving session's own player.
     kActorSnapshotHasShelter = 1u << 8,
+    // Schema 28. The weapon a player holds (u8, KERNEL_HELD_WEAPON_NONE when
+    // unarmed), on every player record.
+    kActorSnapshotHasHeldWeapon = 1u << 9,
 };
 
 bool is_actor_entity_type(EntityType type) {
@@ -297,6 +311,9 @@ std::uint16_t actor_record_flags(const EntitySnapshot& entity) {
     }
     if (entity.shelter_net_id != 0u) {
         flags |= kActorSnapshotHasShelter;
+    }
+    if (entity.actor_type == ActorType::kPlayer && entity.has_held_weapon) {
+        flags |= kActorSnapshotHasHeldWeapon;
     }
     return flags;
 }
@@ -650,6 +667,9 @@ std::vector<std::uint8_t> encode_snapshot_packet(
                         payload.write_u32(entity->shelter_net_id);
                         payload.write_u8(entity->shelter_seat);
                     }
+                    if ((record_flags & kActorSnapshotHasHeldWeapon) != 0u) {
+                        payload.write_u8(entity->held_weapon_id);
+                    }
                     break;
                 }
                 case SnapshotSectionType::kActorAgent: {
@@ -903,6 +923,13 @@ bool decode_snapshot_packet(
                             return false;
                         }
                     }
+                    if ((record_flags & kActorSnapshotHasHeldWeapon) != 0u) {
+                        if (entity.actor_type != ActorType::kPlayer ||
+                            !reader.read_u8(&entity.held_weapon_id)) {
+                            return false;
+                        }
+                        entity.has_held_weapon = true;
+                    }
                     break;
                 }
                 case SnapshotSectionType::kActorAgent: {
@@ -1130,6 +1157,9 @@ std::size_t estimate_snapshot_entity_size(const EntitySnapshot& entity) {
                         : 0u) +
                    ((actor_record_flags(entity) & kActorSnapshotHasShelter) != 0u
                         ? kActorShelterPayloadSize
+                        : 0u) +
+                   ((actor_record_flags(entity) & kActorSnapshotHasHeldWeapon) != 0u
+                        ? kActorHeldWeaponPayloadSize
                         : 0u);
         case SnapshotSectionType::kActorAgent: {
             const std::uint8_t flags = agent_record_flags(entity);
@@ -1815,6 +1845,51 @@ bool decode_status_effect_state_packet(
     return true;
 }
 
+std::vector<std::uint8_t> encode_game_message_packet(
+    const GameMessagePacket& message,
+    std::uint32_t sequence) {
+    protocol_internal::PacketWriter payload;
+    payload.reserve(8u + message.payload.size());
+    payload.write_u32(message.message_type);
+    payload.write_u32(static_cast<std::uint32_t>(message.payload.size()));
+    if (!message.payload.empty()) {
+        payload.write_bytes(message.payload.data(), message.payload.size());
+    }
+    return protocol_internal::wrap_packet(
+        MessageType::kGameMessage, payload.bytes(), sequence);
+}
+
+bool decode_game_message_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    GameMessagePacket* out_message) {
+    const std::uint8_t* payload = nullptr;
+    std::size_t payload_size = 0;
+    if (out_message == nullptr ||
+        !protocol_internal::unwrap_packet(
+            data, size, MessageType::kGameMessage, &payload, &payload_size)) {
+        return false;
+    }
+    protocol_internal::PacketReader reader(payload, payload_size);
+    GameMessagePacket message;
+    std::uint32_t body_size = 0;
+    if (!reader.read_u32(&message.message_type) ||
+        !reader.read_u32(&body_size) ||
+        body_size > KERNEL_MAX_GAME_MESSAGE_BYTES ||
+        payload_size != 8u + body_size) {
+        return false;
+    }
+    message.payload.resize(body_size);
+    if (body_size != 0u && !reader.read_bytes(message.payload.data(), body_size)) {
+        return false;
+    }
+    if (!reader.done()) {
+        return false;
+    }
+    *out_message = std::move(message);
+    return true;
+}
+
 std::vector<std::uint8_t> encode_gameplay_request_packet(
     const KernelGameplayRequest& request,
     std::uint32_t sequence) {
@@ -2058,6 +2133,39 @@ bool decode_inventory_snapshot_request_packet(
     return true;
 }
 
+std::vector<std::uint8_t> encode_inventory_container_closed_packet(
+    const InventoryContainerClosedPacket& packet,
+    std::uint32_t sequence) {
+    if (packet.inventory_container_id == 0u) return {};
+    protocol_internal::PacketWriter payload;
+    payload.write_u64(packet.inventory_container_id);
+    return protocol_internal::wrap_packet(
+        MessageType::kInventoryContainerClosed, payload.bytes(), sequence);
+}
+
+bool decode_inventory_container_closed_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    InventoryContainerClosedPacket* out_packet) {
+    const std::uint8_t* payload = nullptr;
+    std::size_t payload_size = 0;
+    InventoryContainerClosedPacket packet;
+    if (out_packet == nullptr ||
+        !protocol_internal::unwrap_packet(
+            data, size, MessageType::kInventoryContainerClosed,
+            &payload, &payload_size) ||
+        payload_size != kInventoryContainerClosedPayloadSize) {
+        return false;
+    }
+    protocol_internal::PacketReader reader(payload, payload_size);
+    if (!reader.read_u64(&packet.inventory_container_id) ||
+        packet.inventory_container_id == 0u || !reader.done()) {
+        return false;
+    }
+    *out_packet = packet;
+    return true;
+}
+
 std::vector<std::uint8_t> encode_inventory_snapshot_page_packet(
     const InventorySnapshotPagePacket& packet,
     std::uint32_t sequence) {
@@ -2073,6 +2181,7 @@ std::vector<std::uint8_t> encode_inventory_snapshot_page_packet(
     payload.write_u32(packet.slot_capacity);
     payload.write_u16(packet.page_index);
     payload.write_u16(packet.page_count);
+    payload.write_u8(packet.container_kind);
     payload.write_u16(static_cast<std::uint16_t>(packet.entries.size()));
     for (const InventorySnapshotEntry& entry : packet.entries) {
         if (entry.slot >= packet.slot_capacity || !valid_wire_item(entry.item)) {
@@ -2096,7 +2205,7 @@ bool decode_inventory_snapshot_page_packet(
         !protocol_internal::unwrap_packet(
             data, size, MessageType::kInventorySnapshotPage,
             &payload, &payload_size) ||
-        payload_size < 30u || payload_size > kMaxInventoryPacketPayloadSize) {
+        payload_size < 31u || payload_size > kMaxInventoryPacketPayloadSize) {
         return false;
     }
     InventorySnapshotPagePacket packet;
@@ -2107,7 +2216,9 @@ bool decode_inventory_snapshot_page_packet(
         !reader.read_u64(&packet.revision) ||
         !reader.read_u32(&packet.slot_capacity) ||
         !reader.read_u16(&packet.page_index) ||
-        !reader.read_u16(&packet.page_count) || !reader.read_u16(&count) ||
+        !reader.read_u16(&packet.page_count) ||
+        !reader.read_u8(&packet.container_kind) || !reader.read_u16(&count) ||
+        packet.container_kind > KernelInventoryContainerKind_Stock ||
         packet.inventory_container_id == 0u || packet.owner_entity_id == 0u ||
         packet.slot_capacity == 0u || packet.page_count == 0u ||
         packet.page_index >= packet.page_count) {
