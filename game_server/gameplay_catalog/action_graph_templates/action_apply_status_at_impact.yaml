@@ -1,4 +1,4 @@
-# A bolt that puts a status on the actor it strikes, carrying its own flight
+# A bullet that puts a status on the actor it strikes, carrying its own flight
 # direction (the water bubble's drift). Striking the world -- a wall, the
 # ground -- names no target, and `when: event.has_target` lets that pass.
 #

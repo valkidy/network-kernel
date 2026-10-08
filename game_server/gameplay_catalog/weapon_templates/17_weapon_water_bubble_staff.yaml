@@ -1,6 +1,7 @@
-# Fires a bolt that traps the one actor it strikes in a water bubble: held,
-# untouchable, floating up for three seconds, then dropped. The hive airship
-# is too heavy for it. Deals no damage of its own.
+# Fires the Projectile Spammer's bullet, one a tick while held and straight
+# ahead (no burst, no spread); a bullet traps the one actor it strikes in a
+# water bubble: held, untouchable, floating up for three seconds, then
+# dropped. The hive airship is too heavy for it. Deals no damage of its own.
 id: 17
 name: Water Bubble Staff
 # Weapon container slot 0-3 (wand, scepter, staff, tome / their gun twins).
@@ -8,6 +9,6 @@ category: 2
 weapon_type: projectile
 magazine_size: 3
 reserve_magazines: 4
-fire_action_template: water_bubble_staff_cast
+fire_action_template: water_bubble_staff_fire
 reload_action_template: water_bubble_staff_reload
-projectile_template: water_bubble_bolt
+projectile_template: water_bubble_spammer_bullet

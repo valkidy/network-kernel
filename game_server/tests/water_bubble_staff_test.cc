@@ -1,12 +1,14 @@
 // The Water Bubble Staff end to end: a player armed with the shipped staff
 // (weapon 17, item 3027) through a weapon container, as a loadout pick arms
-// one, fires its bolt (projectile 30) through the real input path.
+// one, fires its spammer-style bullet (projectile 31, 5 m/s) through the real
+// input path.
 //
-//   - into the ground first: the charge is spent, and nobody is bubbled --
-//     an impact with no actor names no target, and the graph's
-//     `when: event.has_target` lets it pass;
-//   - then level at a gingerbread 6 m away: bubbled by the bolt's on_impact,
-//     carried up for the status's 90 ticks, and dropped back down.
+//   - one tap level at a gingerbread 6 m away: one bullet, which strikes it
+//     -- the spammer's own would pass through -- and bubbles it; carried up
+//     for the status's 90 ticks and dropped back down;
+//   - then held into the ground: one bullet a tick until the magazine is
+//     empty, and nobody bubbled -- an impact with no actor names no target,
+//     and the graph's `when: event.has_target` lets it pass.
 
 #include <algorithm>
 #include <cmath>
@@ -119,12 +121,19 @@ struct Arena {
         for (int index = 0; index < ticks; ++index) send(aim, 0u, false, false);
     }
 
-    // One press of the trigger, then a hold until the cast commits.
-    void cast(const KernelVec3& aim) {
+    // The trigger held down for `ticks`, then let go.
+    void hold(const KernelVec3& aim, int ticks) {
         const std::uint32_t action = 9100u + next_action++;
-        send(aim, action, true, true);
-        for (int index = 0; index < 10; ++index) send(aim, action, false, true);
+        for (int index = 0; index < ticks; ++index) send(aim, action, index == 0, true);
         send(aim, action, false, false);
+    }
+
+    std::uint32_t live_projectiles() const {
+        std::vector<KernelServerEntityState> found(16);
+        for (auto& state : found) state.struct_size = sizeof(state);
+        return Kernel_ServerQueryEntities(
+            kernel, KernelEntityType_Projectile, found.data(),
+            static_cast<std::uint32_t>(found.size()));
     }
 };
 
@@ -209,23 +218,18 @@ int main() {
     require(full == 3u);
     const float ground = entity_state(arena.kernel, arena.target).position.y;
 
-    // Into the ground: spent, and nobody bubbled.
-    arena.cast(KernelVec3{1.0f, -1.5f, 0.0f});
-    arena.idle(at_target, 30);
+    // One tap at the gingerbread: one bullet.
+    arena.hold(at_target, 1);
     require(staff_ammo(entity_state(arena.kernel, arena.player)) == full - 1u);
-    require(!has_status(arena.kernel, arena.target, status_id));
-    require(!has_status(arena.kernel, arena.player, status_id));
-
-    // At the gingerbread.
-    arena.cast(at_target);
+    require(arena.live_projectiles() == 1u);
     int bubbled_at = -1;
-    for (int tick = 0; tick < 30 && bubbled_at < 0; ++tick) {
+    for (int tick = 0; tick < 60 && bubbled_at < 0; ++tick) {
         arena.idle(at_target, 1);
         if (has_status(arena.kernel, arena.target, status_id)) bubbled_at = tick;
     }
-    std::fprintf(stderr, "staff: bubbled %d ticks after the cast\n", bubbled_at);
-    require(bubbled_at >= 0);
-    require(staff_ammo(entity_state(arena.kernel, arena.player)) == full - 2u);
+    std::fprintf(stderr, "staff: bubbled %d ticks after the tap\n", bubbled_at);
+    // Six metres at 5 m/s is 36 ticks; well under the bullet's 60.
+    require(bubbled_at > 20 && bubbled_at < 50);
     require(!has_status(arena.kernel, arena.player, status_id));
     float top = ground;
     for (int tick = 0; tick < 95; ++tick) {
@@ -235,9 +239,16 @@ int main() {
     std::fprintf(stderr, "staff: rose %.2f m\n", top - ground);
     require(top - ground > 2.5f);
     arena.idle(at_target, 60);
-    const KernelServerEntityState after = entity_state(arena.kernel, arena.target);
     require(!has_status(arena.kernel, arena.target, status_id));
-    require(std::fabs(after.position.y - ground) < 0.2f);
+    require(std::fabs(entity_state(arena.kernel, arena.target).position.y - ground) < 0.2f);
+
+    // Held into the ground: a bullet a tick for the two left, then empty.
+    const KernelVec3 at_ground{1.0f, -1.5f, 0.0f};
+    arena.hold(at_ground, 4);
+    require(staff_ammo(entity_state(arena.kernel, arena.player)) == 0u);
+    arena.idle(at_ground, 30);
+    require(!has_status(arena.kernel, arena.target, status_id));
+    require(!has_status(arena.kernel, arena.player, status_id));
 
     std::puts("water_bubble_staff_test passed");
     return 0;

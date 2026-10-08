@@ -311,11 +311,15 @@ triggers:
 
 | 檔案 | id | 內容 |
 |---|---|---|
-| `weapon_templates/17_weapon_water_bubble_staff.yaml` | weapon 17 | 武器欄 2（staff），projectile 武器，彈匣 3、備用 4 |
+| `weapon_templates/17_weapon_water_bubble_staff.yaml` | weapon 17 | 武器欄 2（staff），projectile 武器，一次一發、不散射，彈匣 3、備用 4 |
 | `item_templates/3027_stateful_weapon_water_bubble_staff.yaml` | item 3027 | 武器道具，加進營地 `loadout.weapons` |
-| `projectile_templates/30_projectile_water_bubble_bolt.yaml` | projectile 30 | 直線、無重力、30 m/s、沒有傷害（`damage_shape: none`），client 端用 hybrid 預測 |
+| `projectile_templates/31_projectile_water_bubble_spammer_bullet.yaml` | projectile 31 | spammer 的子彈：`projectile_sphere`、直線、5 m/s、60 ticks（射程約 10 m）、`local_predicted_deterministic`。不同的地方：碰撞遮罩加了 `damageable \| limb`（spammer 原本的子彈會穿過角色），沒有傷害，命中掛泡泡 |
 | `action_graph_templates/action_apply_status_at_impact.yaml` | — | `apply_status { water_bubble, direction: event.direction, strength: 10.0, when: event.has_target }` |
-| `action_templates/water_bubble_staff_cast.yaml`、`water_bubble_staff_reload.yaml` | 4124、4125 | 按下施法（6 ticks 後射出），reload 2 秒 |
+| `action_templates/water_bubble_staff_fire.yaml`、`water_bubble_staff_reload.yaml` | 4124、4125 | 開火照 spammer：按住時每個 tick 一發；reload 2 秒 |
+
+使用者在第二輪改定（2026-10-08）：射出 spammer 的子彈（照抄 5 m/s）、按住連射、子彈不帶傷害、另開 projectile id。
+第一版的 `30_projectile_water_bubble_bolt`（30 m/s、按一下射一發）已經刪掉；它只在這個分支存在過，沒有發佈。
+**彈匣沒有重訂**：照 spammer 每 tick 一發，3 發大約 3 個 tick 就打完，接著 reload 2 秒，這部分等使用者調整。
 
 要讓這把法杖生效，必須補兩件 kernel 和 game_server 的事：
 - **projectile 命中 trigger 原本只會執行 spawn_projectile。** kernel 的驗證雖然允許 apply_damage、apply_impulse、apply_pull，但 `execute_queued_trigger_events` 只執行「整個 batch 都是 spawn」的情況，其他的會被整批丟掉。
@@ -325,8 +329,8 @@ triggers:
 - **projectile trigger 支援 `apply_status`**：kernel 的驗證允許它；game_server 的 projectile 編譯可以用名字查 status。只有武器資料夾的載入路徑，也會從旁邊的資料夾讀 status。
 - 沒有 ABI 或 snapshot schema 的變動。
 - 測試：`//game_server:water_bubble_staff_test`，玩家透過武器容器裝備正式的法杖，用真正的輸入開火：
-  - 射地面：扣 1 發彈藥，沒有人被包住
-  - 射 6 m 外的 gingerbread：被包住、上升 2.97 m、落回地面
+  - 點一下打 6 m 外的 gingerbread：只射一發，28 ticks 後打中並包住，上升 2.97 m，落回地面
+  - 對地面按住 4 ticks：剩下的 2 發射完、彈匣歸零，沒有人被包住
   另外修了兩個測試的資料：`game_server_api_test` 自己組 bundle 時的資料夾清單少了 `status_effect_templates`。
 
 ---
