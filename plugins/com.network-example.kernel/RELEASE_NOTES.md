@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- makes the initial camp a building and offers loadout selection on entry
+
+
+0.7.0 release notes:
+
 - updates Unity bindings and native plugins to ABI 102 for items, weapons, game messages and water bubble effects
 
 
