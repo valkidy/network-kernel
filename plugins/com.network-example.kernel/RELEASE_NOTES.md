@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- updates Unity bindings and native plugins to ABI 102 for items, weapons, game messages and water bubble effects
+
+
+0.7.0 release notes:
+
 - updates the gingerbread giant kernel skeleton generated from its client source GLB
 
 
