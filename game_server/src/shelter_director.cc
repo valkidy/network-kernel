@@ -18,6 +18,13 @@ void ShelterDirector::handle_event(const KernelEvent& event) {
             if (inside == building) {
                 request(actor, 0u);
             } else if (inside == 0u) {
+                // Recorded now: once inside, the actor stands at the building.
+                KernelServerEntityState state{};
+                state.struct_size = sizeof(state);
+                if (kernel_ != nullptr &&
+                    Kernel_ServerGetEntityState(kernel_, actor, &state)) {
+                    entry_position_[actor] = state.position;
+                }
                 request(actor, building);
             }
             // Inside another building: the kernel only lets an occupant
@@ -29,6 +36,7 @@ void ShelterDirector::handle_event(const KernelEvent& event) {
                 shelter_of_[event.net_id] = event.code;
             } else {
                 shelter_of_.erase(event.net_id);
+                entry_position_.erase(event.net_id);
             }
             return;
         case KernelEventType_EntityDestroyed:
@@ -37,9 +45,11 @@ void ShelterDirector::handle_event(const KernelEvent& event) {
             // building needs nothing here: the kernel lets its occupants out
             // before it goes, and their ShelterChanged arrive first.
             shelter_of_.erase(event.net_id);
+            entry_position_.erase(event.net_id);
             return;
         case KernelEventType_PlayerLeft:
             shelter_of_.erase(event.net_id);
+            entry_position_.erase(event.net_id);
             return;
         default:
             return;
@@ -60,6 +70,20 @@ std::vector<std::uint32_t> ShelterDirector::occupants_of(
         }
     }
     return occupants;
+}
+
+bool ShelterDirector::entry_position_of(
+    std::uint32_t actor,
+    KernelVec3* out_position) const {
+    if (shelter_of(actor) == 0u) {
+        return false;
+    }
+    const auto found = entry_position_.find(actor);
+    if (found == entry_position_.end()) {
+        return false;
+    }
+    *out_position = found->second;
+    return true;
 }
 
 void ShelterDirector::request(std::uint32_t actor, std::uint32_t building) const {

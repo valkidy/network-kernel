@@ -1,11 +1,13 @@
 // The initial camp's loadout, end to end on a listen host (design D1-D6,
 // P2, 2026-10-07).
 //
-// The shipped game rule puts the initial camp in the scene. Activating it sends
-// the player the camp's offer (GAME_SERVER_MESSAGE_LOADOUT_OFFERS); a pick
-// (LOADOUT_SELECT) is checked once, replaces the inventory at once, answers
-// with LOADOUT_RESULT, and is what the next respawn gives. Every refusal leaves
-// the inventory as it was.
+// The shipped game rule puts the initial camp in the scene. It is a building
+// like a tent: activating it takes the player inside, which sends the camp's
+// offer (GAME_SERVER_MESSAGE_LOADOUT_OFFERS), and activating it again comes
+// back out, which sends nothing. A pick (LOADOUT_SELECT) is taken only from
+// inside, checked once, replaces the inventory at once, answers with
+// LOADOUT_RESULT, and is what the next respawn gives. Every refusal leaves the
+// inventory as it was.
 //
 // The listen host's own player has no wire to its server, so the messages run
 // through the kernel's in-process queues; the network path is
@@ -165,8 +167,7 @@ struct Harness {
         step(5);
     }
 
-    // Activates the camp and returns the offer it answers with.
-    Offers activate(std::uint32_t camp) {
+    void submit_activate(std::uint32_t camp) {
         KernelGameplayRequest request{};
         request.struct_size = sizeof(request);
         request.requester_peer = peer;
@@ -178,10 +179,39 @@ struct Harness {
         KernelGameplayRequestOutcome outcome{};
         outcome.struct_size = sizeof(outcome);
         while (Kernel_PollGameplayRequestOutcomes(kernel, &outcome, 1) != 0u) {}
-        step(2);
+        // The move inside lands a tick after the activation; the offer goes
+        // with it.
+        step(4);
+    }
+
+    std::uint32_t shelter() {
+        KernelLocalShelterState state{};
+        state.struct_size = sizeof(state);
+        require(Kernel_GetLocalShelterState(kernel, &state));
+        return state.shelter_net_id;
+    }
+
+    // Goes inside the camp and returns the offer that answers it.
+    Offers enter(std::uint32_t camp) {
+        require(shelter() == 0u);
+        submit_activate(camp);
+        require(shelter() == camp);
+        KernelLocalShelterState state{};
+        state.struct_size = sizeof(state);
+        require(Kernel_GetLocalShelterState(kernel, &state));
+        require(state.ui_id == 2u);
         KernelGameMessage message{};
         require(Kernel_PollGameMessages(kernel, &message, 1) == 1u);
         return parse_offers(message);
+    }
+
+    // Comes back out: no offer this time.
+    void leave(std::uint32_t camp) {
+        require(shelter() == camp);
+        submit_activate(camp);
+        require(shelter() == 0u);
+        KernelGameMessage message{};
+        require(Kernel_PollGameMessages(kernel, &message, 1) == 0u);
     }
 
     // Sends a raw SELECT body and returns {result, pick_count}.
@@ -323,9 +353,9 @@ int main() {
     const std::vector<std::uint32_t> default_weapons = harness.weapons();
     require((default_weapons == std::vector<std::uint32_t>{0u, 13u, 15u, 14u}));
 
-    // Activating it sends the offer: every option, the slot cap, no pick yet.
+    // Going in sends the offer: every option, the slot cap, no pick yet.
     harness.stand_near(camp, 2.0f);
-    Offers offers = harness.activate(camp);
+    Offers offers = harness.enter(camp);
     require(offers.camp == camp);
     require(offers.capacity == player_template->inventory_slot_capacity);
     require(offers.options.size() == camp_template->loadout_options.size());
@@ -379,8 +409,10 @@ int main() {
     require(held[mp_potion] == 2u);
     require(held.size() == 2u);
 
-    // The camp remembers it.
-    offers = harness.activate(camp);
+    // Out and back in: coming out sends nothing, going in again the offer,
+    // and the camp remembers the pick.
+    harness.leave(camp);
+    offers = harness.enter(camp);
     require(offers.current.size() == 3u);
     require(offers.current[0].item_template_id == potion);
     require(offers.current[2].item_template_id == mp_potion);
@@ -411,9 +443,12 @@ int main() {
     require(harness.select_raw({0, 0, 0, 0, 2, 0}).first ==
             GAME_SERVER_LOADOUT_RESULT_MALFORMED);
     unchanged();
-    harness.stand_near(camp, 20.0f);
+    // Only from inside: out of the camp, even standing right beside it where
+    // leaving set the player down, a pick is refused.
+    harness.leave(camp);
     require(harness.select(camp, {1}).first == GAME_SERVER_LOADOUT_RESULT_OUT_OF_RANGE);
     unchanged();
+    harness.stand_near(camp, 20.0f);
 
     // A message game_server does not know is left alone: no answer.
     const std::uint8_t noise[1] = {0};
@@ -474,6 +509,7 @@ int main() {
     require(Kernel_ServerSetEntityHealth(kernel, harness.player, 100u));
 
     // No picks: back to the default.
+    harness.enter(camp);
     auto [reset, reset_count] = harness.select(camp, {});
     require(reset == GAME_SERVER_LOADOUT_RESULT_APPLIED);
     require(reset_count == 0u);

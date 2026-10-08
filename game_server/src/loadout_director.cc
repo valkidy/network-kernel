@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cmath>
 #include <utility>
 
 #include "game_server/public/game_server_types.h"
@@ -10,10 +9,6 @@
 namespace network_example::game_server {
 
 namespace {
-
-// How far past the camp's interaction range a pick is still taken: the player
-// may have stepped back while choosing.
-constexpr float kPickRangeSlackMeters = 1.0f;
 
 void write_u8(std::vector<std::uint8_t>* out, std::uint8_t value) {
     out->push_back(value);
@@ -65,15 +60,32 @@ LoadoutDirector::LoadoutDirector(
     : kernel_(kernel), config_(config), apply_(std::move(apply)) {}
 
 void LoadoutDirector::handle_event(const KernelEvent& event) {
-    if (event.type == KernelEventType_PlayerLeft) {
-        // A reconnect is a new arrival here (no identity survives the
-        // handshake), so it picks again (D6).
-        loadouts_.erase(event.net_id);
-        return;
-    }
-    if (event.type == KernelEventType_UiOpened &&
-        camp_template(event.net_id) != nullptr) {
-        send_offers(event.peer_id, event.related_net_id, event.net_id);
+    switch (event.type) {
+        case KernelEventType_PlayerLeft:
+            // A reconnect is a new arrival here (no identity survives the
+            // handshake), so it picks again (D6).
+            loadouts_.erase(event.net_id);
+            inside_.erase(event.net_id);
+            return;
+        case KernelEventType_EntityDestroyed:
+            inside_.erase(event.net_id);
+            return;
+        case KernelEventType_ShelterChanged:
+            // A camp is a building like any other: activating it takes the
+            // player inside (ShelterDirector), and a second activation brings
+            // it out. The offer goes with going in, never with coming out,
+            // and a pick is taken only from inside.
+            if (event.code == 0u) {
+                inside_.erase(event.net_id);
+                return;
+            }
+            inside_[event.net_id] = event.code;
+            if (camp_template(event.code) != nullptr) {
+                send_offers(event.peer_id, event.net_id, event.code);
+            }
+            return;
+        default:
+            return;
     }
 }
 
@@ -113,12 +125,10 @@ void LoadoutDirector::handle_message(const KernelGameMessage& message) {
         reply(message.peer, camp, GAME_SERVER_LOADOUT_RESULT_NOT_A_CAMP, 0u);
         return;
     }
-    const float dx = player_state.position.x - camp_state.position.x;
-    const float dy = player_state.position.y - camp_state.position.y;
-    const float dz = player_state.position.z - camp_state.position.z;
-    const float reach =
-        camp_config->prop.interaction.interaction_range + kPickRangeSlackMeters;
-    if (dx * dx + dy * dy + dz * dz > reach * reach) {
+    // Only from inside this camp, as a field camp's stock is taken only from
+    // inside it.
+    const auto inside = inside_.find(message.player_net_id);
+    if (inside == inside_.end() || inside->second != camp) {
         reply(message.peer, camp, GAME_SERVER_LOADOUT_RESULT_OUT_OF_RANGE, 0u);
         return;
     }
