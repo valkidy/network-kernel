@@ -80,6 +80,23 @@ bool step_character(
     CharacterMovementState* state,
     std::string* error);
 
+// One controller step at exactly `velocity`, with no ground following and no
+// gravity added to it: what step_character does once it has worked out its
+// velocity. A status suspension moves a character this way, on the authority
+// and in the owner's prediction alike, so the two cannot drift apart.
+bool step_character_at_velocity(
+    physics::PhysicsWorld& physics_world,
+    const CharacterMovementConfig& config,
+    const glm::vec3& velocity,
+    float fixed_delta_seconds,
+    CharacterMovementState* state,
+    std::string* error);
+
+// The velocity a status suspension holds an actor at: its drift, and its rise.
+inline glm::vec3 suspended_velocity(float rise_speed, const glm::vec3& drift_velocity) {
+    return glm::vec3{drift_velocity.x, rise_speed, drift_velocity.z};
+}
+
 }  // namespace network_example::movement_solver
 
 #endif  // SIMULATION_PUBLIC_MOVEMENT_SOLVER_H_

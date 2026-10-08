@@ -931,6 +931,7 @@ private:
     void adopt_authoritative_impulse_lockout(
         const EntitySnapshot& authoritative,
         std::uint32_t snapshot_tick);
+    void adopt_authoritative_suspension(const EntitySnapshot& authoritative);
     void reconcile_local_prediction(const WorldSnapshot& snapshot);
     void apply_authoritative_local_weapon(const WorldSnapshot& snapshot);
     void record_predicted_ammo_spend(
@@ -1448,6 +1449,12 @@ private:
     // that landed: rooted, released only by the count. The twin of
     // ImpulseLockout::recovering.
     bool predicted_impulse_lockout_recovering_ = false;
+    // The status suspension holding the local player, as the last owner
+    // snapshot said: until predicted_suspension_until_tick_ the prediction
+    // moves at exactly this velocity, as the authority does, and on that tick
+    // it arms the drop itself rather than wait a round trip to be told.
+    glm::vec3 predicted_suspension_velocity_{0.0f};
+    std::uint32_t predicted_suspension_until_tick_ = 0;
     // The building the local player is inside, as the last owner snapshot
     // said (0 when outside), and that snapshot's tick. The twin of Sheltered:
     // while it is set the prediction stands still under a terrain-only mask,

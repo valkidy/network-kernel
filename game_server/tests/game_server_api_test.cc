@@ -372,6 +372,7 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip() {
         "weapon_templates",
         "action_templates",
         "action_graph_templates",
+        "status_effect_templates",
         "item_templates",
         "projectile_templates",
     };

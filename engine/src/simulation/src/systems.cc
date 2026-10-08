@@ -253,6 +253,72 @@ void recompute_speed(World& world, entt::entity entity) {
         movement.base_speed_meters_per_second * multiplier + additive;
 }
 
+// A command that would strike an actor nothing may strike. A status's own
+// lifecycle batches are exempt: those are the actor's own statuses running
+// their course (a damage tick among them is discarded where all damage is).
+bool strikes_untargetable(
+    const World& world,
+    const ActionGraphCommandBatch& batch,
+    const ActionGraphCommand& command) {
+    if (batch.provenance.status_instance_id != 0u) {
+        return false;
+    }
+    NetId target = 0u;
+    if (const auto* damage = std::get_if<ActionApplyDamageCommand>(&command)) {
+        target = damage->target;
+    } else if (const auto* health =
+                   std::get_if<ActionApplyHealthChangeCommand>(&command)) {
+        target = health->target;
+    } else if (const auto* impulse =
+                   std::get_if<ActionApplyImpulseCommand>(&command)) {
+        target = impulse->target;
+    } else if (const auto* pull = std::get_if<ActionApplyPullCommand>(&command)) {
+        target = pull->target;
+    } else if (const auto* status = std::get_if<ActionApplyStatusCommand>(&command)) {
+        target = status->target;
+    }
+    if (target == 0u) {
+        return false;
+    }
+    const std::optional<entt::entity> entity = world.find_entity(target);
+    return entity.has_value() && status_untargetable(world, *entity);
+}
+
+// An apply_status whose authored strength does not strictly exceed the
+// target's impulse_resistance: the status never lands, as an impulse that
+// strong would not move it. Weighed on the authored number, so who is
+// affected cannot depend on where anyone stands.
+bool resisted_status(const World& world, const ActionGraphCommand& command) {
+    const auto* status = std::get_if<ActionApplyStatusCommand>(&command);
+    if (status == nullptr || status->strength <= 0.0f) {
+        return false;
+    }
+    const std::optional<entt::entity> entity = world.find_entity(status->target);
+    if (!entity.has_value()) {
+        return false;
+    }
+    const ImpulseResistance* resistance =
+        world.registry().try_get<ImpulseResistance>(*entity);
+    return resistance != nullptr &&
+        (!std::isfinite(resistance->value) || status->strength <= resistance->value);
+}
+
+// The active instance a status-bound command belongs to, or null. On_apply
+// always runs with its instance already active, so null is a broken batch.
+ActiveStatusEffect* find_status_instance(
+    World& world, entt::entity target, std::uint32_t instance_id) {
+    StatusEffectState* state = world.registry().try_get<StatusEffectState>(target);
+    if (state == nullptr) {
+        return nullptr;
+    }
+    for (ActiveStatusEffect& candidate : state->active) {
+        if (candidate.instance_id == instance_id) {
+            return &candidate;
+        }
+    }
+    return nullptr;
+}
+
 void advance_status_revision(StatusEffectState& state) {
     ++state.revision;
     if (state.revision == 0u) {
@@ -273,7 +339,8 @@ bool prepare_status_lifecycle_trigger(
     std::uint16_t stack_count,
     TriggerEventType event_type,
     const std::optional<CompiledActionGraphBinding>& binding,
-    PreparedStatusLifecycle* out_prepared) {
+    PreparedStatusLifecycle* out_prepared,
+    const glm::vec3& direction = glm::vec3{0.0f}) {
     if (out_prepared == nullptr || target == 0u || source == 0u ||
         status_instance_id == 0u || stack_count == 0u || stack_count > 32u) {
         return false;
@@ -287,6 +354,7 @@ bool prepare_status_lifecycle_trigger(
     event.subject = target;
     event.instigator = source;
     event.target = target;
+    event.direction = direction;
     ActionExecutionProvenance provenance;
     provenance.request_id = action_trigger_request_id(
         engine.current_tick(),
@@ -335,6 +403,27 @@ bool prepare_status_lifecycle_trigger(
                     } else {
                         side_effect_target = modifier->target;
                     }
+                } else if (const auto* block =
+                               std::get_if<ActionApplyBlockActionsCommand>(&command)) {
+                    side_effect_target =
+                        event_type == TriggerEventType::kStatusApplied &&
+                            block->target == target
+                        ? block->target
+                        : 0u;
+                } else if (const auto* suspend =
+                               std::get_if<ActionApplySuspendMovementCommand>(&command)) {
+                    side_effect_target =
+                        event_type == TriggerEventType::kStatusApplied &&
+                            suspend->target == target
+                        ? suspend->target
+                        : 0u;
+                } else if (const auto* untargetable =
+                               std::get_if<ActionApplyUntargetableCommand>(&command)) {
+                    side_effect_target =
+                        event_type == TriggerEventType::kStatusApplied &&
+                            untargetable->target == target
+                        ? untargetable->target
+                        : 0u;
                 } else {
                     side_effect_target = 0u;
                 }
@@ -392,7 +481,33 @@ bool prepare_status_lifecycle_trigger(
     for (const ActionGraphCommand& command : batch.commands) {
         if (!std::holds_alternative<ActionApplyDamageCommand>(command) &&
             !std::holds_alternative<ActionApplyHealthChangeCommand>(command) &&
-            !std::holds_alternative<ActionApplySpeedModifierCommand>(command)) {
+            !std::holds_alternative<ActionApplySpeedModifierCommand>(command) &&
+            !std::holds_alternative<ActionApplyBlockActionsCommand>(command) &&
+            !std::holds_alternative<ActionApplySuspendMovementCommand>(command) &&
+            !std::holds_alternative<ActionApplyUntargetableCommand>(command)) {
+            return false;
+        }
+        if (const auto* untargetable =
+                std::get_if<ActionApplyUntargetableCommand>(&command);
+            untargetable != nullptr &&
+            (event_type != TriggerEventType::kStatusApplied ||
+             untargetable->target != target)) {
+            return false;
+        }
+        if (const auto* suspend =
+                std::get_if<ActionApplySuspendMovementCommand>(&command);
+            suspend != nullptr &&
+            (event_type != TriggerEventType::kStatusApplied ||
+             suspend->target != target)) {
+            return false;
+        }
+        // Held on the instance this on_apply belongs to, so only that event
+        // and only its own subject: there is nothing else to hold it on.
+        if (const auto* block =
+                std::get_if<ActionApplyBlockActionsCommand>(&command);
+            block != nullptr &&
+            (event_type != TriggerEventType::kStatusApplied ||
+             block->target != target)) {
             return false;
         }
         if (const auto* modifier =
@@ -427,7 +542,27 @@ bool execute_action_graph_commands(
             batch.sequence)) {
         return true;
     }
-    const std::vector<ActionGraphCommand>& commands = batch.commands;
+    // Out of reach is out of reach however the command got here: an event
+    // queued before the target became untargetable, a graph that names it
+    // outright. A status too weak for its target is dropped the same way, so
+    // the rest of the batch -- the hit's damage -- still lands. Copied only
+    // when something is actually dropped.
+    const auto dropped = [&](const ActionGraphCommand& command) {
+        return strikes_untargetable(world, batch, command) ||
+            resisted_status(world, command);
+    };
+    std::vector<ActionGraphCommand> reachable;
+    const bool drops_any =
+        std::any_of(batch.commands.begin(), batch.commands.end(), dropped);
+    if (drops_any) {
+        for (const ActionGraphCommand& command : batch.commands) {
+            if (!dropped(command)) {
+                reachable.push_back(command);
+            }
+        }
+    }
+    const std::vector<ActionGraphCommand>& commands =
+        drops_any ? reachable : batch.commands;
     std::vector<ActionGraphCommandBatch> lifecycle_batches;
     lifecycle_batches.reserve(commands.size());
     std::vector<std::uint32_t> planned_status_instance_ids(
@@ -630,7 +765,8 @@ bool execute_action_graph_commands(
                             same_status->stack_count + 1u),
                         TriggerEventType::kStatusApplied,
                         status_template->on_apply_binding,
-                        &prepared_stack)) {
+                        &prepared_stack,
+                        apply_status->direction)) {
                     return false;
                 }
                 if (prepared_stack.batch.has_value()) {
@@ -677,7 +813,8 @@ bool execute_action_graph_commands(
                     1u,
                     TriggerEventType::kStatusApplied,
                     status_template->on_apply_binding,
-                    &prepared_apply)) {
+                    &prepared_apply,
+                    apply_status->direction)) {
                 return false;
             }
             if (prepared_apply.batch.has_value()) {
@@ -720,6 +857,34 @@ bool execute_action_graph_commands(
                         lifecycle_batches.push_back(std::move(*prepared.batch));
                     }
                 }
+            }
+            continue;
+        }
+        if (const auto* block =
+                std::get_if<ActionApplyBlockActionsCommand>(&command)) {
+            if (block->source == 0u || block->status_instance_id == 0u ||
+                !world.find_entity(block->target).has_value()) {
+                return false;
+            }
+            continue;
+        }
+        if (const auto* untargetable =
+                std::get_if<ActionApplyUntargetableCommand>(&command)) {
+            if (untargetable->source == 0u ||
+                untargetable->status_instance_id == 0u ||
+                !world.find_entity(untargetable->target).has_value()) {
+                return false;
+            }
+            continue;
+        }
+        if (const auto* suspend =
+                std::get_if<ActionApplySuspendMovementCommand>(&command)) {
+            if (suspend->source == 0u || suspend->status_instance_id == 0u ||
+                !world.find_entity(suspend->target).has_value() ||
+                !suspend_speed_is_authorable(suspend->rise_speed) ||
+                !std::isfinite(suspend->drift_velocity.x) ||
+                !std::isfinite(suspend->drift_velocity.z)) {
+                return false;
             }
             continue;
         }
@@ -943,12 +1108,14 @@ bool execute_action_graph_commands(
                         next_stack_count,
                         TriggerEventType::kStatusApplied,
                         status_template->on_apply_binding,
-                        &prepared_stack)) {
+                        &prepared_stack,
+                        apply_status->direction)) {
                     return false;
                 }
                 same_status->source = apply_status->source;
                 same_status->source_peer = source_peer;
                 same_status->stack_count = next_stack_count;
+                same_status->applied_direction = apply_status->direction;
                 if (status_template->refresh_on_stack) {
                     same_status->expire_tick =
                         engine.current_tick() + status_template->duration_ticks;
@@ -1007,7 +1174,7 @@ bool execute_action_graph_commands(
             }
             const std::uint32_t applied_tick = engine.current_tick();
             const std::uint32_t instance_id = planned_status_instance_ids[index];
-            const ActiveStatusEffect active{
+            ActiveStatusEffect active{
                 instance_id,
                 status_template->status_effect_id,
                 status_template->channel_id,
@@ -1020,6 +1187,7 @@ bool execute_action_graph_commands(
                     : applied_tick + status_template->interval_ticks,
                 1u,
             };
+            active.applied_direction = apply_status->direction;
             PreparedStatusLifecycle prepared_apply;
             if (!prepare_status_lifecycle_trigger(
                     engine,
@@ -1030,7 +1198,8 @@ bool execute_action_graph_commands(
                     1u,
                     TriggerEventType::kStatusApplied,
                     status_template->on_apply_binding,
-                    &prepared_apply)) {
+                    &prepared_apply,
+                    apply_status->direction)) {
                 return false;
             }
             for (PreparedStatusLifecycle& prepared : prepared_expire) {
@@ -1223,6 +1392,70 @@ bool execute_action_graph_commands(
                 found->multiplier = modifier->value;
             }
             recompute_speed(world, target);
+            continue;
+        }
+        if (const auto* suspend =
+                std::get_if<ActionApplySuspendMovementCommand>(&command)) {
+            const entt::entity target = *world.find_entity(suspend->target);
+            // Never an occupant, for the reason apply_pull gives.
+            if (world.registry().get<EntityKind>(target).type != EntityType::kActor ||
+                !world.registry().all_of<MovementState>(target) ||
+                world.registry().all_of<Sheltered>(target)) {
+                continue;
+            }
+            ActiveStatusEffect* active =
+                find_status_instance(world, target, suspend->status_instance_id);
+            if (active == nullptr) {
+                return false;
+            }
+            active->suspends_movement = true;
+            active->suspend_rise_speed = suspend->rise_speed;
+            active->suspend_drift_velocity = suspend->drift_velocity;
+            // The suspension replaces whatever was moving the actor: a
+            // knockback in flight is over, and the ground lets go of it.
+            world.registry().remove<ImpulseLockout>(target);
+            world.registry().emplace_or_replace<HeldInSuspension>(target);
+            world.registry().get_or_emplace<ReplicationState>(target).visual_flags |=
+                kVisualFlagSuspended;
+            // The rise is the authority's alone, as a knockback's flight is:
+            // the anchor lets a client draw it instead of waiting on snapshots.
+            engine.queue_actor_impulse(
+                suspend->target,
+                world.registry().get<Transform>(target).position.y);
+            MovementState& movement = world.registry().get<MovementState>(target);
+            movement.ground_state = MovementState::GroundState::kAirborne;
+            movement.ground_normal = glm::vec3{0.0f, 1.0f, 0.0f};
+            movement.supporting_entity_net_id = 0u;
+            movement.supporting_collider_id = 0u;
+            movement.has_controller_height = false;
+            continue;
+        }
+        if (const auto* block =
+                std::get_if<ActionApplyBlockActionsCommand>(&command)) {
+            const entt::entity target = *world.find_entity(block->target);
+            if (world.registry().get<EntityKind>(target).type != EntityType::kActor) {
+                continue;
+            }
+            ActiveStatusEffect* active =
+                find_status_instance(world, target, block->status_instance_id);
+            if (active == nullptr) {
+                return false;
+            }
+            active->blocks_actions = true;
+            continue;
+        }
+        if (const auto* untargetable =
+                std::get_if<ActionApplyUntargetableCommand>(&command)) {
+            const entt::entity target = *world.find_entity(untargetable->target);
+            if (world.registry().get<EntityKind>(target).type != EntityType::kActor) {
+                continue;
+            }
+            ActiveStatusEffect* active = find_status_instance(
+                world, target, untargetable->status_instance_id);
+            if (active == nullptr) {
+                return false;
+            }
+            active->untargetable = true;
             continue;
         }
         if (const auto* refill =
@@ -1622,6 +1855,15 @@ bool execute_status_lifecycle_trigger(
         engine.authored_entity_templates(),
         *prepared.batch,
         server_time_us);
+}
+
+void settle_status_suspensions(KernelEngine& engine) {
+    for (const auto& [net_id, floor_y] : settle_status_suspensions(
+             engine.simulation_world(),
+             engine.current_tick(),
+             engine.fixed_delta_seconds())) {
+        engine.queue_actor_impulse(net_id, floor_y);
+    }
 }
 
 void simulate_status_effects(KernelEngine& engine, std::uint64_t server_time_us) {
@@ -3097,6 +3339,10 @@ bool EntityStateSystem::set_shelter(
         lockout != nullptr && engine.current_tick() < lockout->until_tick) {
         return false;
     }
+    // Nor one held in a status suspension, for the same reason.
+    if (registry.all_of<HeldInSuspension>(*entity)) {
+        return false;
+    }
     const std::optional<entt::entity> shelter = world.find_entity(shelter_net_id);
     if (!shelter.has_value() ||
         !registry.all_of<EntityKind, Transform>(*shelter) ||
@@ -3255,6 +3501,10 @@ bool EntityStateSystem::set_velocity(
     const ImpulseLockout* lockout =
         engine.world_.registry().try_get<ImpulseLockout>(*entity);
     if (lockout != nullptr && engine.current_tick() < lockout->until_tick) {
+        return false;
+    }
+    // A status suspension is the authority's to steer in the same way.
+    if (active_suspension(engine.world_, *entity) != nullptr) {
         return false;
     }
     engine.world_.registry().get<Velocity>(*entity).linear =

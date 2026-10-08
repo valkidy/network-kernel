@@ -56,6 +56,13 @@ bool damage_stagger_is_authorable(std::uint32_t authored, float stagger) {
     return authored == 0u || (std::isfinite(stagger) && stagger >= 0.0f);
 }
 
+// Mirrors suspend_speed_is_authorable in simulation/public/action_graph.h,
+// for the same reason as the pull check below.
+bool suspend_speed_is_authorable(float speed) {
+    return std::isfinite(speed) && speed >= 0.0f &&
+        speed <= KERNEL_MAX_SUSPEND_SPEED;
+}
+
 // Mirrors pull_is_authorable in simulation/public/action_graph.h, which the
 // kernel's trigger validators use; the loader says so first, with a path.
 bool pull_is_authorable(
@@ -1972,6 +1979,8 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 "placement",
                 "count",
                 "percent",
+                "rise_speed",
+                "drift_speed",
             },
             path,
             source_kind,
@@ -2006,6 +2015,12 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
         if (action["placement"] && compiled_action.action_type != "spawn_entity") {
             throw std::runtime_error(
                 "placement is only supported on spawn_entity: " + path);
+        }
+        if ((action["rise_speed"] || action["drift_speed"]) &&
+            compiled_action.action_type != "apply_suspend_movement") {
+            throw std::runtime_error(
+                "rise_speed and drift_speed are only supported on "
+                "apply_suspend_movement: " + path);
         }
         if (action["ui_id"] && compiled_action.action_type != "open_ui") {
             throw std::runtime_error(
@@ -2220,9 +2235,13 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
             };
         } else if (compiled_action.action_type == "apply_status" ||
                    compiled_action.action_type == "remove_status") {
-            if (action["projectile_template"] || action["position"] ||
-                action["direction"] || action["owner"] || action["amount"] ||
-                action["strength"] || action["operation"] || action["value"] ||
+            // apply_status may carry a direction its on_apply graph reads as
+            // event.direction; removing one has nothing to point.
+            if (((action["direction"] || action["strength"]) &&
+                 compiled_action.action_type != "apply_status") ||
+                action["projectile_template"] || action["position"] ||
+                action["owner"] || action["amount"] ||
+                action["operation"] || action["value"] ||
                 action["entity_template"] || action["item_template"] ||
                 action["quantity"] || action["collision_mask"] ||
                 action["lockout_ticks"]) {
@@ -2238,6 +2257,22 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 &compiled_action.target_parameter,
                 &compiled_action.status_parameter,
             };
+            if (action["direction"]) {
+                compiled_action.direction_parameter =
+                    parameter_reference_from_yaml(action["direction"], "direction");
+                action_parameters.push_back(&compiled_action.direction_parameter);
+            }
+            // A literal, as apply_pull's is: the number a target's
+            // impulse_resistance is weighed against must not vary per binding.
+            if (action["strength"]) {
+                compiled_action.status_strength = action["strength"].as<float>();
+                if (!std::isfinite(compiled_action.status_strength) ||
+                    compiled_action.status_strength <= 0.0f) {
+                    throw std::runtime_error(
+                        "apply_status strength must be a positive finite number: " +
+                        path);
+                }
+            }
         } else if (compiled_action.action_type == "refill_weapon_reserve") {
             // An item refilling the active weapon of whoever used it: a fixed
             // number of reserve magazines, or a percentage of the template's.
@@ -2291,6 +2326,49 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
             if (compiled_action.ui_id == 0u) {
                 throw std::runtime_error(
                     "open_ui ui_id must be non-zero: " + path);
+            }
+            compiled_action.target_parameter =
+                parameter_reference_from_yaml(action["target"], "target");
+            action_parameters = {&compiled_action.target_parameter};
+        } else if (compiled_action.action_type == "apply_suspend_movement") {
+            // Whom it holds and how fast it moves them; how long is the
+            // status's duration_ticks. The direction is the status's own.
+            for (const auto& field : action) {
+                const std::string key = field.first.as<std::string>();
+                if (key != "type" && key != "target" && key != "when" &&
+                    key != "rise_speed" && key != "drift_speed") {
+                    throw std::runtime_error(
+                        "apply_suspend_movement takes only target, rise_speed and "
+                        "drift_speed: " + path);
+                }
+            }
+            if (!action["rise_speed"]) {
+                throw std::runtime_error(
+                    "apply_suspend_movement requires rise_speed: " + path);
+            }
+            compiled_action.suspend_rise_speed = action["rise_speed"].as<float>();
+            compiled_action.suspend_drift_speed =
+                action["drift_speed"] ? action["drift_speed"].as<float>() : 0.0f;
+            if (!suspend_speed_is_authorable(compiled_action.suspend_rise_speed) ||
+                !suspend_speed_is_authorable(compiled_action.suspend_drift_speed)) {
+                throw std::runtime_error(
+                    "apply_suspend_movement rise_speed and drift_speed must be "
+                    "0 to " + std::to_string(KERNEL_MAX_SUSPEND_SPEED) + " m/s: " +
+                    path);
+            }
+            compiled_action.target_parameter =
+                parameter_reference_from_yaml(action["target"], "target");
+            action_parameters = {&compiled_action.target_parameter};
+        } else if (compiled_action.action_type == "apply_block_actions" ||
+                   compiled_action.action_type == "apply_untargetable") {
+            // Whom it holds, and nothing else: how long is the status's
+            // duration_ticks, not the action's.
+            for (const auto& field : action) {
+                const std::string key = field.first.as<std::string>();
+                if (key != "type" && key != "target" && key != "when") {
+                    throw std::runtime_error(
+                        compiled_action.action_type + " takes only target: " + path);
+                }
             }
             compiled_action.target_parameter =
                 parameter_reference_from_yaml(action["target"], "target");
@@ -7089,6 +7167,34 @@ void compile_pull_action(
     }
 }
 
+// apply_status's optional direction: an event direction, or a vec3 default
+// when the binding leaves it unset.
+void compile_status_direction(
+    const TriggerBindingConfig& binding,
+    const ActionGraphParameterConfig& direction_parameter,
+    KernelActionDefinition* compiled_action) {
+    compiled_action->status_direction_authored = 1u;
+    const bool bound = std::any_of(
+        binding.parameters.begin(),
+        binding.parameters.end(),
+        [&](const auto& value) { return value.first == direction_parameter.name; });
+    if (!bound && direction_parameter.default_vec3.has_value()) {
+        compiled_action->direction_source = KernelEventVec3Source_Literal;
+        compiled_action->impulse_direction = *direction_parameter.default_vec3;
+        return;
+    }
+    const std::string direction = trigger_parameter_value(binding, direction_parameter);
+    if (direction == "event.direction") {
+        compiled_action->direction_source = KernelEventVec3Source_Direction;
+    } else if (direction == "event.subject_direction") {
+        compiled_action->direction_source = KernelEventVec3Source_SubjectDirection;
+    } else {
+        throw std::runtime_error(
+            "apply_status direction must be event.direction, "
+            "event.subject_direction or a vec3 default");
+    }
+}
+
 void compile_spawn_repeat(
     const ActionGraphActionConfig& action,
     KernelActionDefinition* compiled_action) {
@@ -7107,7 +7213,8 @@ void compile_projectile_trigger_binding(
     bool expired,
     const std::vector<ActionGraphTemplateConfig>& action_graph_templates,
     std::vector<ProjectileTemplateConfig>* projectile_templates,
-    ProjectileTemplateConfig* projectile_template) {
+    ProjectileTemplateConfig* projectile_template,
+    const std::vector<StatusEffectTemplateConfig>* status_effect_templates) {
     if (binding.action_graph_ref.empty()) {
         return;
     }
@@ -7160,6 +7267,38 @@ void compile_projectile_trigger_binding(
             throw std::runtime_error(
                 "refill_weapon_reserve is only supported in on_item_used: " +
                 projectile_template->name);
+        }
+        // A bolt that puts a status on what it strikes, as a thrown prop's
+        // on_collision can: the water bubble staff.
+        if (action.action_type == "apply_status") {
+            if (status_effect_templates == nullptr) {
+                throw std::runtime_error(
+                    "projectile apply_status needs the catalog's status effects: " +
+                    projectile_template->name);
+            }
+            const std::string status = trigger_parameter_value(
+                binding, graph_parameter(action.status_parameter));
+            const auto found = std::find_if(
+                status_effect_templates->begin(), status_effect_templates->end(),
+                [&](const StatusEffectTemplateConfig& candidate) {
+                    return candidate.name == status ||
+                        std::to_string(candidate.status_effect_id) == status;
+                });
+            if (found == status_effect_templates->end()) {
+                throw std::runtime_error("unknown status effect: " + status);
+            }
+            compiled_action.action_type = KernelEntityTriggerActionType_ApplyStatus;
+            compiled_action.target_source = entity_ref_source(
+                trigger_parameter_value(
+                    binding, graph_parameter(action.target_parameter)));
+            compiled_action.status_effect_id = found->status_effect_id;
+            compiled_action.status_strength = action.status_strength;
+            if (!action.direction_parameter.empty()) {
+                compile_status_direction(
+                    binding, graph_parameter(action.direction_parameter),
+                    &compiled_action);
+            }
+            continue;
         }
         if (action.action_type == "apply_pull") {
             compiled_action.target_source = entity_ref_source(
@@ -7566,6 +7705,43 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
                 : KernelEntityTriggerActionType_RemoveStatus;
             compiled_action.target_source = entity_ref_source(target);
             compiled_action.status_effect_id = status_ref(status);
+            if (action.action_type == "apply_status") {
+                compiled_action.status_strength = action.status_strength;
+            }
+            if (!action.direction_parameter.empty()) {
+                compile_status_direction(
+                    binding, graph_parameter(action.direction_parameter),
+                    &compiled_action);
+            }
+            continue;
+        }
+        if (action.action_type == "apply_suspend_movement") {
+            if (trigger_name != "on_apply") {
+                throw std::runtime_error(
+                    "apply_suspend_movement is only valid in status on_apply");
+            }
+            compiled_action.action_type =
+                KernelEntityTriggerActionType_ApplySuspendMovement;
+            compiled_action.target_source = entity_ref_source(
+                trigger_parameter_value(
+                    binding, graph_parameter(action.target_parameter)));
+            compiled_action.suspend_rise_speed = action.suspend_rise_speed;
+            compiled_action.suspend_drift_speed = action.suspend_drift_speed;
+            continue;
+        }
+        if (action.action_type == "apply_block_actions" ||
+            action.action_type == "apply_untargetable") {
+            if (trigger_name != "on_apply") {
+                throw std::runtime_error(
+                    action.action_type + " is only valid in status on_apply");
+            }
+            compiled_action.action_type =
+                action.action_type == "apply_block_actions"
+                ? KernelEntityTriggerActionType_ApplyBlockActions
+                : KernelEntityTriggerActionType_ApplyUntargetable;
+            compiled_action.target_source = entity_ref_source(
+                trigger_parameter_value(
+                    binding, graph_parameter(action.target_parameter)));
             continue;
         }
         if (action.action_type == "apply_speed_modifier") {
@@ -7652,7 +7828,8 @@ std::vector<ProjectileTemplateConfig> load_projectile_templates_from_source(
     const GameplayConfigSource& source,
     const std::string& directory,
     const ColliderCatalogConfig& colliders,
-    const std::vector<ActionGraphTemplateConfig>& action_graph_templates) {
+    const std::vector<ActionGraphTemplateConfig>& action_graph_templates,
+    const std::vector<StatusEffectTemplateConfig>* status_effect_templates = nullptr) {
     std::vector<ProjectileTemplateConfig> projectile_templates;
     std::unordered_map<std::uint32_t, std::string> ids;
     std::unordered_map<std::string, std::uint32_t> names;
@@ -7695,13 +7872,15 @@ std::vector<ProjectileTemplateConfig> load_projectile_templates_from_source(
             false,
             action_graph_templates,
             &projectile_templates,
-            &projectile_template);
+            &projectile_template,
+            status_effect_templates);
         compile_projectile_trigger_binding(
             projectile_template.expired_trigger,
             true,
             action_graph_templates,
             &projectile_templates,
-            &projectile_template);
+            &projectile_template,
+            status_effect_templates);
     }
     for (const ProjectileTemplateConfig& projectile_template : projectile_templates) {
         std::vector<std::uint32_t> visited;
@@ -8037,11 +8216,18 @@ GameServerGameplayConfig load_gameplay_config_from_weapon_template_source(
         source.parent_path(directory), YAML::Node("action_graph_templates"));
     config.action_graph_templates = load_action_graph_templates_from_source(
         source, action_graph_template_dir);
+    // The statuses a projectile's trigger may put on what it strikes, from the
+    // same sibling layout the action graphs come from.
+    const std::string status_effect_template_dir = source.resolve_path(
+        source.parent_path(directory), YAML::Node("status_effect_templates"));
+    config.status_effect_templates = load_status_effect_templates_from_source(
+        source, status_effect_template_dir);
     config.projectile_templates = load_projectile_templates_from_source(
         source,
         source.default_projectile_template_dir_for_weapon_dir(directory),
         config.colliders,
-        config.action_graph_templates);
+        config.action_graph_templates,
+        &config.status_effect_templates);
     apply_weapon_template_references(
         source,
         directory,
@@ -8288,7 +8474,8 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
         source,
         projectile_template_dir,
         config.colliders,
-        config.action_graph_templates);
+        config.action_graph_templates,
+        &config.status_effect_templates);
     apply_weapon_template_references(
         source,
         weapon_template_dir,
@@ -10890,13 +11077,29 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
                 action_type == KernelEntityTriggerActionType_ApplyHealthChange;
             const bool speed_modifier =
                 action_type == KernelEntityTriggerActionType_ApplySpeedModifier;
-            if (!damage_or_health && !speed_modifier) {
+            const bool block_actions =
+                action_type == KernelEntityTriggerActionType_ApplyBlockActions ||
+                action_type == KernelEntityTriggerActionType_ApplySuspendMovement ||
+                action_type == KernelEntityTriggerActionType_ApplyUntargetable;
+            if (!damage_or_health && !speed_modifier && !block_actions) {
                 throw std::runtime_error(
-                    "status lifecycle action graph only allows damage, health change, and on_apply speed modifiers");
+                    "status lifecycle action graph only allows damage, health change, and on_apply speed modifiers or action blocks");
             }
             if (speed_modifier && std::string_view(trigger_name) != "on_apply") {
                 throw std::runtime_error(
                     "apply_speed_modifier is only allowed in status on_apply");
+            }
+            if (block_actions && std::string_view(trigger_name) != "on_apply") {
+                throw std::runtime_error(
+                    "apply_block_actions, apply_suspend_movement and "
+                    "apply_untargetable are only allowed in status on_apply");
+            }
+            if (block_actions &&
+                action.target_source != KernelEntityRefSource_Self &&
+                action.target_source != KernelEntityRefSource_EventSubject) {
+                throw std::runtime_error(
+                    "status action block or suspension target must be self or "
+                    "event.subject");
             }
             if (speed_modifier &&
                 action.target_source != KernelEntityRefSource_Self &&

@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include "kernel/public/kernel_types.h"
@@ -366,6 +367,26 @@ void simulate_velocity_movement(World& world, float fixed_delta_seconds);
 // travel from `position` before its head meets something, less a small skin.
 // Returns `lift` unchanged when there is no physics world or no movement
 // capsule to sweep, and never less than zero.
+// The height of whatever the entity's movement capsule would come to rest on
+// straight below `position`, looking at most `max_distance` down, or nothing
+// when it finds nothing (or there is no physics world or capsule to ask).
+std::optional<float> ground_height_below(
+    World& world,
+    NetId net_id,
+    const glm::vec3& position,
+    const glm::quat& rotation,
+    float max_distance);
+
+// Arms the drop for every actor whose last status suspension has ended since
+// the last call: velocity zeroed, straight down, out of its own control, until
+// it lands -- a free-fall ImpulseLockout whose ceiling is the fall to the floor
+// found below. Returns each one's net id and that floor height, for the
+// knockback anchor that lets a client draw the drop.
+std::vector<std::pair<NetId, float>> settle_status_suspensions(
+    World& world,
+    std::uint32_t current_tick,
+    float fixed_delta_seconds);
+
 float available_lift(
     World& world,
     NetId net_id,
@@ -415,6 +436,16 @@ void simulate_projectiles(
     std::uint32_t current_tick,
     std::vector<KernelEvent>* events,
     DamagePipeline* damage_pipeline);
+// The same, handing a trigger batch that does more than spawn projectiles --
+// an apply_status on what a bolt struck -- to `forwarded_batches` for the
+// engine to execute, instead of dropping it.
+void simulate_projectiles(
+    World& world,
+    float fixed_delta_seconds,
+    std::uint32_t current_tick,
+    std::vector<KernelEvent>* events,
+    DamagePipeline* damage_pipeline,
+    std::vector<ActionGraphCommandBatch>* forwarded_batches);
 void simulate_area_effects(
     World& world,
     std::uint32_t current_tick,
@@ -453,7 +484,8 @@ bool resolve_projectile_historical_hit(
     std::uint32_t current_tick,
     float fixed_delta_seconds,
     std::vector<KernelEvent>* events,
-    DamagePipeline* damage_pipeline);
+    DamagePipeline* damage_pipeline,
+    std::vector<ActionGraphCommandBatch>* forwarded_batches = nullptr);
 
 void simulate_hitscan_weapons(
     World& world,
@@ -560,6 +592,10 @@ bool apply_stagger(
 
 bool is_staggered(const World& world, entt::entity entity, std::uint32_t current_tick);
 
+// Some active status instance on the actor ran apply_block_actions.
+bool status_blocks_actions(const World& world, entt::entity entity);
+
+
 // Gives the actor its template's StaggerProfile, or takes it away when the
 // template authors none. Both ways an actor gets a template call this: the
 // entity-create path and set_actor_template, which is the only one a player
@@ -581,8 +617,10 @@ void clear_stagger(World& world, entt::entity entity);
 
 // Why this actor may not start a new action right now, or
 // KernelLocalActionResultReason_None. Sheltered outranks the rest: inside a
-// building nothing else can be happening to it. Staggered outranks KnockedBack
-// so a hit that does both reports the one that also interrupted.
+// building nothing else can be happening to it. A status block comes next: it
+// is what a bubble or a stun holds the actor with for its whole duration, so
+// it is the answer while it stands. Staggered outranks KnockedBack so a hit
+// that does both reports the one that also interrupted.
 KernelLocalActionResultReason action_block_reason(
     const World& world,
     entt::entity entity,

@@ -75,6 +75,12 @@ struct EntitySnapshot {
     // The lockout is the actor getting up after a knockback that landed:
     // rooted, not carrying velocity. Meaningless without has_impulse_lockout.
     bool impulse_lockout_recovering = false;
+    // The status suspension holding the actor (schema 29), for its owner's
+    // prediction alone, as the lockout is: the velocity the authority moves it
+    // at and the tick the status ends -- when it drops.
+    bool has_suspension = false;
+    glm::vec3 suspension_velocity{0.0f};
+    std::uint32_t suspension_until_tick = 0;
     // The building this actor is inside, or 0, and its seat there. Sent to
     // every session that sees the actor (schema 27; 26 sent it to the owner
     // alone): the owner's prediction needs it to stop pushing its player out

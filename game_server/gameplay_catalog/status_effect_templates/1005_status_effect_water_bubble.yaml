@@ -1,0 +1,22 @@
+# The water balloon's bubble (docs/WATER_BUBBLE_PLAN.md). For as long as it
+# stands the target can do nothing, nothing can strike it, and it floats up,
+# drifting the way the balloon was flying; when it ends the bubble bursts and
+# the target drops straight down, out of its own control, until it lands.
+#
+# The three are separate status-bound actions on purpose: each lives exactly
+# as long as this status, so duration_ticks is the whole of the bubble's
+# length. A client draws the bubble from KERNEL_VISUAL_FLAG_SUSPENDED.
+#
+# 90 ticks at 1.0 m/s is three seconds and three metres up.
+id: 1005
+name: water_bubble
+kind: status_effect
+channel: water_bubble
+duration_ticks: 90
+interval_ticks: 0
+replace_policy: replace
+triggers:
+  on_apply:
+    action_graph: action_status_water_bubble
+    parameters:
+      target: event.subject

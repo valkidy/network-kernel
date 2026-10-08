@@ -1,0 +1,12 @@
+# The Water Bubble Staff's fire: the Projectile Spammer's, held -- one bullet
+# a tick for as long as the trigger is down and the magazine lasts.
+id: 4124
+name: water_bubble_staff_fire
+trigger_mode: hold
+flags: [cancel_on_release, cancel_on_death, cancel_on_weapon_change, cancel_before_first_commit]
+ammo_cost_per_commit: 1
+commit_offset_ticks: 0
+commit_interval_ticks: 1
+max_commit_count: 0
+recovery_ticks: 4
+hold_input_timeout_ticks: 6

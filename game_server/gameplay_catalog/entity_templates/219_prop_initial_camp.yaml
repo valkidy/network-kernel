@@ -34,6 +34,8 @@ loadout:
       quantity: 3
     - item_template: fungible_pull_bottle
       quantity: 3
+    - item_template: fungible_water_balloon
+      quantity: 3
     - item_template: fungible_tent_kit
       quantity: 1
     - item_template: fungible_camp_kit
@@ -46,3 +48,4 @@ loadout:
     - stateful_weapon_sky_laser
     - stateful_weapon_beam_rifle
     - stateful_weapon_meteor_storm_staff
+    - stateful_weapon_water_bubble_staff

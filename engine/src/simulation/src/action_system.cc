@@ -658,6 +658,37 @@ void interrupt_sheltered_actions(
     }
 }
 
+// A status that blocks actions ends the one in progress, every tick it
+// stands -- the admission check refuses new ones, so after the first tick
+// there is nothing left to end. Like a stagger, and unlike an item taking the
+// hands, it skips the recovery: being held is the lock, and a recovery on top
+// would hold the actor for both.
+void interrupt_status_blocked_actions(
+    World& world,
+    std::uint32_t current_tick,
+    std::vector<ActionOutcome>* outcomes) {
+    const auto view = world.registry().view<StatusEffectState, ActionRuntimeState>();
+    for (const entt::entity entity : view) {
+        ActionRuntimeState& action = view.get<ActionRuntimeState>(entity);
+        if ((action.phase != KernelActionPhase_Windup &&
+             action.phase != KernelActionPhase_Active) ||
+            !status_blocks_actions(world, entity)) {
+            continue;
+        }
+        push_outcome(
+            world,
+            entity,
+            action,
+            current_tick,
+            ActionOutcomeType::Corrected,
+            KernelLocalActionResultReason_StatusBlocked,
+            outcomes);
+        release_action_resources(world, entity, action);
+        reset_action(action);
+        update_visual_flags(world, entity);
+    }
+}
+
 // An item request that took the hands (PendingActionInterrupt) ends the
 // weapon action under way. One that has committed -- a beam that has been
 // firing -- goes into its recovery as any ending does; a charge not yet cast
@@ -710,6 +741,7 @@ std::vector<ActionCommit> simulate_actions(
     std::vector<ActionOutcome>* outcomes) {
     std::vector<ActionCommit> commits;
     interrupt_staggered_actions(world, current_tick, outcomes);
+    interrupt_status_blocked_actions(world, current_tick, outcomes);
     interrupt_sheltered_actions(world, current_tick, outcomes);
     interrupt_actions_for_items(world, current_tick, outcomes);
     std::unordered_set<entt::entity> touched;

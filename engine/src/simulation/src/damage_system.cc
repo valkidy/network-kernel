@@ -87,6 +87,15 @@ bool apply_stagger(
     return true;
 }
 
+bool status_blocks_actions(const World& world, entt::entity entity) {
+    const StatusEffectState* state = world.registry().try_get<StatusEffectState>(entity);
+    return state != nullptr &&
+        std::any_of(
+            state->active.begin(),
+            state->active.end(),
+            [](const ActiveStatusEffect& active) { return active.blocks_actions; });
+}
+
 bool is_staggered(const World& world, entt::entity entity, std::uint32_t current_tick) {
     const StaggerState* state = world.registry().try_get<StaggerState>(entity);
     return state != nullptr && current_tick < state->until_tick;
@@ -139,6 +148,9 @@ KernelLocalActionResultReason action_block_reason(
     if (world.registry().all_of<Sheltered>(entity)) {
         return KernelLocalActionResultReason_Sheltered;
     }
+    if (status_blocks_actions(world, entity)) {
+        return KernelLocalActionResultReason_StatusBlocked;
+    }
     if (is_staggered(world, entity, current_tick)) {
         return KernelLocalActionResultReason_Staggered;
     }
@@ -171,6 +183,13 @@ std::vector<ConfirmedDamage> apply_damage_applications(
         // that is -- not until a tick, which a revive would also write.
         // Discarded whole, like immunity above: no stagger, no hit events.
         if (world.registry().all_of<Sheltered>(*target)) {
+            continue;
+        }
+        // The same for a status that makes it untargetable. Its hit volumes
+        // are already out of every query, so this only catches what was
+        // already on its way: a rewound shot at where it stood a moment ago,
+        // a damage-over-time tick, an area effect resolved before it.
+        if (status_untargetable(world, *target)) {
             continue;
         }
         const std::uint16_t hp_before =

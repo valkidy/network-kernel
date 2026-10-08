@@ -5,6 +5,37 @@
 #include <stdint.h>
 
 /*
+ * 102: status-bound crowd control (the water bubble). KernelEntityTriggerActionType
+ *     gained _ApplyBlockActions: a status on_apply action that, for as long as
+ *     that status instance stands, refuses its target new actions and ends the
+ *     one under way. It has no fields of its own -- its lifetime is the
+ *     status's. KernelLocalActionResultReason gained _StatusBlocked, the
+ *     reason both the refusal and the interrupt report.
+ *     KernelEntityTriggerActionType gained _ApplySuspendMovement, another
+ *     status on_apply action: while the instance stands its subject rises at
+ *     suspend_rise_speed and drifts at suspend_drift_speed along the
+ *     horizontal of the direction the status was applied with, and when it
+ *     ends the subject drops straight down, out of its own control, until it
+ *     lands. KernelActionDefinition gained status_direction_authored,
+ *     suspend_rise_speed and suspend_drift_speed, appended after
+ *     reserve_refill_percent: apply_status may now carry a direction
+ *     (direction_source, when status_direction_authored is non-zero) that its
+ *     on_apply graph reads as event.direction. KernelActionDefinition is
+ *     embedded in every trigger definition, so every managed mirror of those
+ *     shifts.
+ *     KernelEntityTriggerActionType gained _ApplyUntargetable, the third: while
+ *     the instance stands nothing can strike its subject -- its hit volumes
+ *     leave every hit query, rewound shots included, area effects pass it by,
+ *     agents do not see it, and damage that still arrives is discarded whole.
+ *     KernelActionDefinition gained status_strength, appended after
+ *     suspend_drift_speed: an apply_status that authors one (> 0) puts its
+ *     status only on a target whose impulse_resistance it strictly exceeds,
+ *     as apply_impulse and apply_pull weigh theirs. Zero, the default, applies
+ *     it to anyone, as before.
+ *     KERNEL_VISUAL_FLAG_SUSPENDED (0x400): the actor is held in a status
+ *     suspension -- the bubble a client draws. Snapshot schema 29 sends the
+ *     owner its own suspension (velocity and end tick) so its prediction
+ *     rises with the authority.
  * 101: items and wands, first part. KernelPropDefinition gained importance
  *     (with three reserved bytes), appended after population_group_id: when
  *     a population group is over max_alive, the member just spawned is never
@@ -240,7 +271,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 101u
+#define KERNEL_ABI_VERSION 102u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -468,6 +499,8 @@ typedef enum KernelFootholdQueryType {
  * Dead                  visual_flags & KERNEL_VISUAL_FLAG_DEAD
  * Staggered             visual_flags & KERNEL_VISUAL_FLAG_STAGGERED
  * Aiming                visual_flags & KERNEL_VISUAL_FLAG_AIMING
+ * Suspended             visual_flags & KERNEL_VISUAL_FLAG_SUSPENDED (a status
+ *                       holds it in the air: the water bubble; ABI 102)
  * Firing                visual_flags & KERNEL_VISUAL_FLAG_FIRING, or
  *                       action.phase == KernelActionPhase_Active
  * Windup                action.phase == KernelActionPhase_Windup
@@ -488,6 +521,8 @@ typedef enum KernelFootholdQueryType {
 #define KERNEL_VISUAL_FLAG_STAGGERED UINT32_C(0x00000080)
 #define KERNEL_VISUAL_FLAG_AIMING UINT32_C(0x00000100)
 #define KERNEL_VISUAL_FLAG_FIRING UINT32_C(0x00000200)
+/* Core state, but bits 0-7 are full. */
+#define KERNEL_VISUAL_FLAG_SUSPENDED UINT32_C(0x00000400)
 
 #define KERNEL_MAX_VISIBLE_HOSTILES 16u
 #define KERNEL_MAX_VISIBLE_ALLIES 16u
@@ -871,6 +906,20 @@ typedef enum KernelEntityTriggerActionType {
      * refills), up to the weapon template's own reserve_magazines. Item
      * on_item_used graphs only. */
     KernelEntityTriggerActionType_RefillWeaponReserve = 11,
+    /* While the status instance whose on_apply ran it stands, its target may
+     * not start an action and the one under way is ended. Status on_apply
+     * graphs only, targeting the status's own subject (ABI 102). */
+    KernelEntityTriggerActionType_ApplyBlockActions = 12,
+    /* While the status instance whose on_apply ran it stands, its target
+     * rises and drifts and nothing else moves it; when the instance ends it
+     * falls straight down out of its own control until it lands. Status
+     * on_apply graphs only, onto the status's own subject (ABI 102). */
+    KernelEntityTriggerActionType_ApplySuspendMovement = 13,
+    /* While the status instance whose on_apply ran it stands, nothing can
+     * strike its target: shots and blasts pass through, agents do not see it,
+     * and damage is discarded. Status on_apply graphs only, onto the status's
+     * own subject (ABI 102). */
+    KernelEntityTriggerActionType_ApplyUntargetable = 14,
 } KernelEntityTriggerActionType;
 
 typedef enum KernelStatModifierOperation {
@@ -928,6 +977,10 @@ typedef enum KernelActionConditionType {
  * kernel validators both check against this one constant; they used to keep
  * separate tables and drifted. */
 #define KERNEL_MAX_IMPULSE_LOCKOUT_TICKS 300u
+
+/* Ceiling on apply_suspend_movement's suspend_rise_speed and
+ * suspend_drift_speed, metres per second. */
+#define KERNEL_MAX_SUSPEND_SPEED 20.0f
 
 /* Ceiling on an actor's stagger duration_ticks and immunity_ticks, for the
  * same reason and checked by the same two parties as the lockout above. */
@@ -1053,6 +1106,21 @@ typedef struct KernelActionDefinition {
      * at least 1. Either is capped at that template value. */
     uint16_t reserve_refill_count;
     uint16_t reserve_refill_percent;
+    /* apply_status only; zero on every other action. Non-zero: the status is
+     * applied with the direction direction_source names (impulse_direction
+     * for a literal), and its on_apply graph sees it as event.direction.
+     * Zero: it sees a zero direction, as before ABI 102. */
+    uint32_t status_direction_authored;
+    /* apply_suspend_movement only; zero on every other action. Metres per
+     * second, finite and in 0 .. KERNEL_MAX_SUSPEND_SPEED: how fast the
+     * subject rises, and how fast it drifts along the horizontal of the
+     * status's direction. */
+    float suspend_rise_speed;
+    float suspend_drift_speed;
+    /* apply_status only; zero on every other action. Finite and >= 0. When
+     * non-zero the status is applied only to a target whose
+     * impulse_resistance is strictly below it; zero applies it to anyone. */
+    float status_strength;
 } KernelActionDefinition;
 
 typedef struct KernelActionTriggerDefinition {
@@ -1298,6 +1366,10 @@ typedef enum KernelLocalActionResultReason {
      * request committed while a weapon action -- a charge, a beam -- was
      * under way, and ended it. A charge not yet cast costs nothing. */
     KernelLocalActionResultReason_ItemAction = 16,
+    /* A status effect holds the actor (apply_block_actions, ABI 102): no new
+     * action while it stands, and the one under way was ended without its
+     * recovery. */
+    KernelLocalActionResultReason_StatusBlocked = 17,
 } KernelLocalActionResultReason;
 
 typedef enum KernelRemoteActionPresentationEventType {

@@ -1,0 +1,18 @@
+# A bullet that puts a status on the actor it strikes, carrying its own flight
+# direction (the water bubble's drift). Striking the world -- a wall, the
+# ground -- names no target, and `when: event.has_target` lets that pass.
+#
+# strength is a literal for the reason the balloon's is: 10 spares the hive
+# airship (impulse_resistance 10).
+id: action_apply_status_at_impact
+parameters:
+  target: null
+  status: null
+  direction: null
+actions:
+  - type: apply_status
+    target: params.target
+    status: params.status
+    direction: params.direction
+    strength: 10.0
+    when: event.has_target

@@ -75,6 +75,35 @@ bool step_character(
         }
         return false;
     }
+    return step_character_at_velocity(
+        physics_world,
+        config,
+        ground_following_velocity(
+            desired_horizontal_velocity,
+            state->ground_state,
+            state->ground_normal,
+            config.max_slope_degrees,
+            state->velocity.y,
+            config.gravity.y,
+            fixed_delta_seconds),
+        fixed_delta_seconds,
+        state,
+        error);
+}
+
+bool step_character_at_velocity(
+    physics::PhysicsWorld& physics_world,
+    const CharacterMovementConfig& config,
+    const glm::vec3& velocity,
+    float fixed_delta_seconds,
+    CharacterMovementState* state,
+    std::string* error) {
+    if (state == nullptr) {
+        if (error != nullptr) {
+            *error = "missing character movement state";
+        }
+        return false;
+    }
     physics::CharacterDescriptor descriptor{};
     descriptor.character_id = config.character_id;
     descriptor.shape = config.shape;
@@ -83,14 +112,6 @@ bool step_character(
         return false;
     }
 
-    const glm::vec3 velocity = ground_following_velocity(
-        desired_horizontal_velocity,
-        state->ground_state,
-        state->ground_normal,
-        config.max_slope_degrees,
-        state->velocity.y,
-        config.gravity.y,
-        fixed_delta_seconds);
     physics::CharacterMoveRequest request{};
     request.character_id = config.character_id;
     request.current_position = state->position;

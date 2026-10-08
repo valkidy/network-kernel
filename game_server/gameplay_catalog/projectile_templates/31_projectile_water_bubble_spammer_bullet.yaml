@@ -1,0 +1,32 @@
+# The Water Bubble Staff's bullet: the Projectile Spammer's bullet -- the
+# same sphere, slow, straight and locally predicted -- with two differences.
+# It strikes actors (damageable, and limb as the rocket has it), where the
+# spammer's passes through them; and it does no damage of its own, but puts
+# the one actor it strikes in a bubble (status water_bubble), drifting the
+# way the bullet flew.
+#
+# Its own template rather than a trigger on the spammer's, so the spammer
+# keeps doing what it does.
+id: 31
+name: water_bubble_spammer_bullet
+damage: 0
+sync_mode: local_predicted_deterministic
+collider_template: projectile_sphere
+movement_model: linear
+hit_response: destroy
+damage_shape: none
+speed: 5.0
+lifetime_ticks: 60
+collision_mask: damageable | limb | terrain | static_obstacle
+max_hit_count: 1
+gravity:
+  x: 0.0
+  y: 0.0
+  z: 0.0
+triggers:
+  on_projectile_impact:
+    action_graph: action_apply_status_at_impact
+    parameters:
+      target: event.target
+      status: water_bubble
+      direction: event.direction

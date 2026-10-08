@@ -1,0 +1,22 @@
+# fungible_water_balloon in the world: thrown, it bubbles the one actor it hits
+# (status water_bubble) and bursts on whatever it touches. `actor` is every
+# side, as the potion's is -- a balloon thrown at a teammate bubbles the
+# teammate. terrain is required: a thrown prop lands only through this
+# binding, and the catalog refuses a throwable prop without it.
+id: 224
+name: water_balloon
+entity_type: prop
+health:
+  hp: 1
+  max_hp: 1
+physics:
+  collider_template: collision_damage_prop_hitbox
+triggers:
+  on_collision:
+    collision_mask: actor | terrain | static_obstacle
+    action_graph: action_encase_target_and_break_self_at_collision
+    parameters:
+      source: self
+      target: event.target
+      direction: event.direction
+      self_damage: 1

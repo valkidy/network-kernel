@@ -1,0 +1,12 @@
+# The Water Bubble Staff's reload: the magazine refills on the single commit,
+# two seconds in.
+id: 4125
+name: water_bubble_staff_reload
+trigger_mode: press
+flags: [cancel_on_death, cancel_on_weapon_change, cancel_before_first_commit]
+ammo_cost_per_commit: 0
+commit_offset_ticks: 60
+commit_interval_ticks: 0
+max_commit_count: 1
+recovery_ticks: 0
+hold_input_timeout_ticks: 0

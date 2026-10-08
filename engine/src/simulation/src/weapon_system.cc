@@ -1122,7 +1122,8 @@ void simulate_weapons(
                                 current_tick,
                                 context.fixed_delta_seconds,
                                 events,
-                                damage_pipeline);
+                                damage_pipeline,
+                                context.action_graph_batches);
                         }
                     }
                 }

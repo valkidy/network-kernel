@@ -487,6 +487,57 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
             continue;
         }
         if (action.action_type ==
+            KernelEntityTriggerActionType_ApplySuspendMovement) {
+            // On the same terms as apply_block_actions below.
+            if (event_type != TriggerEventType::kStatusApplied ||
+                (action.target_source != KernelEntityRefSource_Self &&
+                 action.target_source != KernelEntityRefSource_EventSubject) ||
+                !suspend_speed_is_authorable(action.suspend_rise_speed) ||
+                !suspend_speed_is_authorable(action.suspend_drift_speed)) {
+                return std::nullopt;
+            }
+            const std::string target_name = "target" + suffix;
+            binding.graph.parameters.push_back({target_name, std::monostate{}});
+            binding.graph.actions.push_back(ActionApplySuspendMovementDefinition{
+                target_name,
+                action.suspend_rise_speed,
+                action.suspend_drift_speed,
+                *condition});
+            binding.parameters.push_back({
+                target_name,
+                EntityRefExpression{static_cast<EntityRefSource>(
+                    action.target_source)},
+            });
+            continue;
+        }
+        if (action.action_type ==
+                KernelEntityTriggerActionType_ApplyBlockActions ||
+            action.action_type ==
+                KernelEntityTriggerActionType_ApplyUntargetable) {
+            // Only a status's on_apply has an instance for the block to live
+            // as long as, and only its own subject to hold.
+            if (event_type != TriggerEventType::kStatusApplied ||
+                (action.target_source != KernelEntityRefSource_Self &&
+                 action.target_source != KernelEntityRefSource_EventSubject)) {
+                return std::nullopt;
+            }
+            const std::string target_name = "target" + suffix;
+            binding.graph.parameters.push_back({target_name, std::monostate{}});
+            binding.graph.actions.push_back(
+                action.action_type ==
+                        KernelEntityTriggerActionType_ApplyBlockActions
+                    ? ActionGraphAction{ActionApplyBlockActionsDefinition{
+                          target_name, *condition}}
+                    : ActionGraphAction{ActionApplyUntargetableDefinition{
+                          target_name, *condition}});
+            binding.parameters.push_back({
+                target_name,
+                EntityRefExpression{static_cast<EntityRefSource>(
+                    action.target_source)},
+            });
+            continue;
+        }
+        if (action.action_type ==
             KernelEntityTriggerActionType_RefillWeaponReserve) {
             // An item's use, for the actor using it: no other event has one.
             if (event_type != TriggerEventType::kItemUsed ||
@@ -596,10 +647,21 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
                 status_name,
                 StatusEffectIdValue{action.status_effect_id},
             });
+            const bool carries_direction =
+                applies_status && action.status_direction_authored != 0u;
+            if ((carries_direction &&
+                 action.direction_source > KernelEventVec3Source_SubjectPosition) ||
+                (applies_status &&
+                 !status_strength_is_authorable(action.status_strength))) {
+                return std::nullopt;
+            }
+            const std::string direction_name = "direction" + suffix;
             binding.graph.actions.push_back(
                 applies_status
                     ? ActionGraphAction{ActionApplyStatusDefinition{
-                          target_name, status_name, *condition}}
+                          target_name, status_name, *condition,
+                          carries_direction ? direction_name : std::string{},
+                          action.status_strength}}
                     : ActionGraphAction{ActionRemoveStatusDefinition{
                           target_name, status_name, *condition}});
             binding.parameters.push_back({
@@ -607,6 +669,24 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
                 EntityRefExpression{static_cast<EntityRefSource>(
                     action.target_source)},
             });
+            if (carries_direction) {
+                binding.graph.parameters.push_back({direction_name, std::monostate{}});
+                if (action.direction_source == KernelEventVec3Source_Literal) {
+                    binding.parameters.push_back({
+                        direction_name,
+                        ActionGraphParameterValue{glm::vec3{
+                            action.impulse_direction.x,
+                            action.impulse_direction.y,
+                            action.impulse_direction.z}},
+                    });
+                } else {
+                    binding.parameters.push_back({
+                        direction_name,
+                        EventVec3Expression{event_vec3_source_from_kernel(
+                            action.direction_source)},
+                    });
+                }
+            }
             continue;
         }
         if (applies_speed_modifier) {
@@ -893,6 +973,38 @@ bool validate_action_graph_binding(
             }
             continue;
         }
+        if (const auto* suspend =
+                std::get_if<ActionApplySuspendMovementDefinition>(&action)) {
+            if (!suspend_speed_is_authorable(suspend->rise_speed) ||
+                !suspend_speed_is_authorable(suspend->drift_speed)) {
+                return fail(
+                    error, "apply_suspend_movement speeds must be finite, 0 to 20 m/s");
+            }
+            if (!validate_action_parameter(
+                    binding, suspend->target_parameter, ParameterType::kEntityId,
+                    error)) {
+                return false;
+            }
+            continue;
+        }
+        if (const auto* block =
+                std::get_if<ActionApplyBlockActionsDefinition>(&action)) {
+            if (!validate_action_parameter(
+                    binding, block->target_parameter, ParameterType::kEntityId,
+                    error)) {
+                return false;
+            }
+            continue;
+        }
+        if (const auto* untargetable =
+                std::get_if<ActionApplyUntargetableDefinition>(&action)) {
+            if (!validate_action_parameter(
+                    binding, untargetable->target_parameter,
+                    ParameterType::kEntityId, error)) {
+                return false;
+            }
+            continue;
+        }
         if (const auto* refill =
                 std::get_if<ActionRefillWeaponReserveDefinition>(&action)) {
             if ((refill->count == 0u) == (refill->percent == 0u) ||
@@ -956,6 +1068,17 @@ bool validate_action_graph_binding(
                     binding, target_parameter, ParameterType::kEntityId, error) ||
                 !validate_action_parameter(
                     binding, status_parameter, ParameterType::kStatusEffectId, error)) {
+                return false;
+            }
+            if (apply_status != nullptr &&
+                !status_strength_is_authorable(apply_status->strength)) {
+                return fail(error, "apply_status strength must be finite and >= 0");
+            }
+            if (apply_status != nullptr &&
+                !apply_status->direction_parameter.empty() &&
+                !validate_action_parameter(
+                    binding, apply_status->direction_parameter,
+                    ParameterType::kVec3, error)) {
                 return false;
             }
             continue;
@@ -1144,6 +1267,70 @@ bool evaluate_action_graph(
             continue;
         }
 
+        if (const auto* suspend =
+                std::get_if<ActionApplySuspendMovementDefinition>(&action)) {
+            const ActionGraphParameterValue* target_value =
+                find_resolved_parameter(parameters, suspend->target_parameter);
+            if (target_value == nullptr ||
+                !std::holds_alternative<EntityIdValue>(*target_value)) {
+                return fail(error, "apply_suspend_movement action input type mismatch");
+            }
+            const NetId target = std::get<EntityIdValue>(*target_value).value;
+            if (target == 0u) {
+                return fail(error, "apply_suspend_movement target must not be null");
+            }
+            // The status's direction, which its lifecycle event carries.
+            commands->push_back(ActionApplySuspendMovementCommand{
+                action_source(self, event),
+                target,
+                provenance.status_instance_id,
+                suspend->rise_speed,
+                suspend_drift_velocity(event.direction, suspend->drift_speed),
+                provenance,
+            });
+            continue;
+        }
+        if (const auto* untargetable =
+                std::get_if<ActionApplyUntargetableDefinition>(&action)) {
+            const ActionGraphParameterValue* target_value =
+                find_resolved_parameter(parameters, untargetable->target_parameter);
+            if (target_value == nullptr ||
+                !std::holds_alternative<EntityIdValue>(*target_value)) {
+                return fail(error, "apply_untargetable action input type mismatch");
+            }
+            const NetId target = std::get<EntityIdValue>(*target_value).value;
+            if (target == 0u) {
+                return fail(error, "apply_untargetable target must not be null");
+            }
+            commands->push_back(ActionApplyUntargetableCommand{
+                action_source(self, event),
+                target,
+                provenance.status_instance_id,
+                provenance,
+            });
+            continue;
+        }
+        if (const auto* block =
+                std::get_if<ActionApplyBlockActionsDefinition>(&action)) {
+            const ActionGraphParameterValue* target_value =
+                find_resolved_parameter(parameters, block->target_parameter);
+            if (target_value == nullptr ||
+                !std::holds_alternative<EntityIdValue>(*target_value)) {
+                return fail(error, "apply_block_actions action input type mismatch");
+            }
+            const NetId target = std::get<EntityIdValue>(*target_value).value;
+            if (target == 0u) {
+                return fail(error, "apply_block_actions target must not be null");
+            }
+            commands->push_back(ActionApplyBlockActionsCommand{
+                action_source(self, event),
+                target,
+                provenance.status_instance_id,
+                provenance,
+            });
+            continue;
+        }
+
         if (const auto* refill =
                 std::get_if<ActionRefillWeaponReserveDefinition>(&action)) {
             const ActionGraphParameterValue* target_value =
@@ -1254,8 +1441,24 @@ bool evaluate_action_graph(
             }
             const NetId source = action_source(self, event);
             if (apply_status != nullptr) {
+                glm::vec3 direction{0.0f};
+                if (!apply_status->direction_parameter.empty()) {
+                    const ActionGraphParameterValue* direction_value =
+                        find_resolved_parameter(
+                            parameters, apply_status->direction_parameter);
+                    if (direction_value == nullptr ||
+                        !std::holds_alternative<glm::vec3>(*direction_value)) {
+                        return fail(error, "apply_status direction must be a vec3");
+                    }
+                    direction = std::get<glm::vec3>(*direction_value);
+                    if (!std::isfinite(direction.x) || !std::isfinite(direction.y) ||
+                        !std::isfinite(direction.z)) {
+                        return fail(error, "apply_status direction must be finite");
+                    }
+                }
                 commands->push_back(ActionApplyStatusCommand{
-                    source, target, status_id, provenance});
+                    source, target, status_id, provenance, direction,
+                    apply_status->strength});
             } else {
                 commands->push_back(ActionRemoveStatusCommand{
                     source, target, status_id, provenance});

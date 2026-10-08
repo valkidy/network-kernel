@@ -14,6 +14,9 @@ reinforce_budget:
   max_live_agents: 64
 action_template_dir: action_templates
 action_graph_template_dir: action_graph_templates
+# Shares action_graph_template_dir and entity_template_dir with production, so
+# it needs the statuses they name (the water balloon's water_bubble).
+status_effect_template_dir: status_effect_templates
 reload_action_template:
   id: 4199
   name: shared_reload

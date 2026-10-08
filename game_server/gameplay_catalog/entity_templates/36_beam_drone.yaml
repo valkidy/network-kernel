@@ -20,9 +20,10 @@ movement:
   controller: hover
   move_speed_meters_per_second: 4.0
   collider_template: sentry_grunt_movement_capsule
-  # Ignored by hover, which never falls; present because every actor authors
-  # it.
-  gravity: {x: 0.0, y: 0.0, z: 0.0}
+  # Hover never falls on its own, so in flight this is ignored. It is what the
+  # drone drops under after a status suspension (a water bubble) ends, until
+  # it lands and climbs back to its height.
+  gravity: {x: 0.0, y: -9.81, z: 0.0}
   max_slope_degrees: 50.0
   step_height: 0.4
   ground_probe_distance: 0.25

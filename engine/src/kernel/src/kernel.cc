@@ -1897,6 +1897,17 @@ bool validate_projectile_mechanics(
                 }
             } else if (action.action_type == KernelEntityTriggerActionType_ApplyPull) {
                 if (!pull_action_is_authorable(action)) return false;
+            } else if (action.action_type == KernelEntityTriggerActionType_ApplyStatus) {
+                // A bolt that puts a status on what it strikes (the water
+                // bubble staff). Whether the id names a status is the
+                // batch's to find out: it refuses the whole batch if not.
+                if (action.target_source > KernelEntityRefSource_EventInstigator ||
+                    action.status_effect_id == 0u ||
+                    !status_strength_is_authorable(action.status_strength) ||
+                    (action.status_direction_authored != 0u &&
+                     action.direction_source > KernelEventVec3Source_SubjectPosition)) {
+                    return false;
+                }
             } else {
                 return false;
             }
@@ -3060,9 +3071,14 @@ bool KernelEngine::load_gameplay_catalog(
                 const bool damage_or_health =
                     std::holds_alternative<ActionApplyDamageDefinition>(action) ||
                     std::holds_alternative<ActionApplyHealthChangeDefinition>(action);
-                const bool speed_modifier =
-                    std::holds_alternative<ActionApplySpeedModifierDefinition>(action);
-                if (!damage_or_health && !(allow_speed_modifier && speed_modifier)) {
+                // A block is part of a status instance's lifetime exactly as a
+                // speed modifier is, so it is allowed exactly where one is.
+                const bool status_bound =
+                    std::holds_alternative<ActionApplySpeedModifierDefinition>(action) ||
+                    std::holds_alternative<ActionApplyBlockActionsDefinition>(action) ||
+                    std::holds_alternative<ActionApplySuspendMovementDefinition>(action) ||
+                    std::holds_alternative<ActionApplyUntargetableDefinition>(action);
+                if (!damage_or_health && !(allow_speed_modifier && status_bound)) {
                     return false;
                 }
             }
@@ -3082,8 +3098,14 @@ bool KernelEngine::load_gameplay_catalog(
                 return false;
             }
             if (trigger.action_count == 0u &&
-                trigger.action_type ==
-                    KernelEntityTriggerActionType_ApplySpeedModifier &&
+                (trigger.action_type ==
+                     KernelEntityTriggerActionType_ApplySpeedModifier ||
+                 trigger.action_type ==
+                     KernelEntityTriggerActionType_ApplyBlockActions ||
+                 trigger.action_type ==
+                     KernelEntityTriggerActionType_ApplySuspendMovement ||
+                 trigger.action_type ==
+                     KernelEntityTriggerActionType_ApplyUntargetable) &&
                 trigger.target_source != KernelEntityRefSource_Self &&
                 trigger.target_source != KernelEntityRefSource_EventSubject) {
                 return false;
@@ -3101,8 +3123,14 @@ bool KernelEngine::load_gameplay_catalog(
                         scale_amount)) {
                     return false;
                 }
-                if (action.action_type ==
-                        KernelEntityTriggerActionType_ApplySpeedModifier &&
+                if ((action.action_type ==
+                         KernelEntityTriggerActionType_ApplySpeedModifier ||
+                     action.action_type ==
+                         KernelEntityTriggerActionType_ApplyBlockActions ||
+                     action.action_type ==
+                         KernelEntityTriggerActionType_ApplySuspendMovement ||
+                     action.action_type ==
+                         KernelEntityTriggerActionType_ApplyUntargetable) &&
                     action.target_source != KernelEntityRefSource_Self &&
                     action.target_source != KernelEntityRefSource_EventSubject) {
                     return false;
@@ -3450,7 +3478,13 @@ bool KernelEngine::load_gameplay_catalog(
                         KernelEntityTriggerActionType_RemoveStatus) {
                     if (action.target_source >
                             KernelEntityRefSource_EventInstigator ||
-                        !status_id_in_use(action.status_effect_id)) {
+                        !status_id_in_use(action.status_effect_id) ||
+                        (action.status_direction_authored != 0u &&
+                         action.direction_source >
+                             KernelEventVec3Source_SubjectPosition) ||
+                        (action.action_type ==
+                             KernelEntityTriggerActionType_ApplyStatus &&
+                         !status_strength_is_authorable(action.status_strength))) {
                         return false;
                     }
                     continue;
@@ -4889,6 +4923,14 @@ bool KernelEngine::push_collider_into_physics(const ColliderInstance& collider) 
         world_.registry().get<Health>(*entity).hp == 0) {
         object.enabled = false;
     }
+    // An untargetable actor's hit volumes leave the world, as a dead one's do,
+    // but not its movement capsule: it still collides, it only cannot be hit.
+    if (entity.has_value() &&
+        (object.identity.kind == physics::CollisionObjectKind::kActorHitbox ||
+         object.identity.kind == physics::CollisionObjectKind::kActorLimb) &&
+        status_untargetable(world_, *entity)) {
+        object.enabled = false;
+    }
     std::string error;
     if (const auto held = physics_entity_colliders_.find(collider.collider_id);
         held != physics_entity_colliders_.end()) {
@@ -5347,7 +5389,10 @@ void KernelEngine::sync_client_render_colliders() {
         const bool prediction_actor_hitbox =
             entity_type == EntityType::kActor &&
             state.net_id != local_player_net_id_ &&
-            (state.visual_flags & kVisualFlagDead) == 0u;
+            (state.visual_flags & kVisualFlagDead) == 0u &&
+            // Nothing strikes an actor in a bubble, so the shots this client
+            // predicts must pass through it as the authority's do.
+            (state.visual_flags & kVisualFlagSuspended) == 0u;
         if (prediction_physics_world_ == nullptr ||
             (entity_type != EntityType::kProp && !prediction_actor_hitbox) ||
             state.item_instance_id != 0u ||
@@ -6917,6 +6962,8 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     predicted_impulse_lockout_until_tick_ = 0u;
     predicted_impulse_lockout_armed_tick_ = 0u;
     predicted_impulse_lockout_recovering_ = false;
+    predicted_suspension_velocity_ = glm::vec3{0.0f};
+    predicted_suspension_until_tick_ = 0u;
     predicted_shelter_net_id_ = 0u;
     predicted_shelter_tick_ = 0u;
     predicted_action_buttons_ = 0u;
@@ -8756,6 +8803,8 @@ void KernelEngine::clear_client_session() {
     predicted_impulse_lockout_until_tick_ = 0u;
     predicted_impulse_lockout_armed_tick_ = 0u;
     predicted_impulse_lockout_recovering_ = false;
+    predicted_suspension_velocity_ = glm::vec3{0.0f};
+    predicted_suspension_until_tick_ = 0u;
     predicted_shelter_net_id_ = 0u;
     predicted_shelter_tick_ = 0u;
     local_presentation_position_ = glm::vec3{0.0f, 0.0f, 0.0f};
@@ -9624,6 +9673,20 @@ bool KernelEngine::step_local_character_prediction(
     // velocity instead of rebuilding it from input, so the prediction has to
     // do exactly the same or it walks away from the authority for N ticks and
     // is snapped back at reconciliation.
+    // The tick the suspension ends is the tick the authority's
+    // settle_status_suspensions arms the drop: velocity zeroed, out of the
+    // player's control until it lands. Armed here the same way, with the
+    // longest ceiling there is -- landing is what ends it, and the owner
+    // snapshot hands over the authority's own numbers soon after.
+    if (predicted_suspension_until_tick_ != 0u &&
+        prediction_tick == predicted_suspension_until_tick_ &&
+        predicted_impulse_lockout_armed_tick_ < prediction_tick) {
+        predicted_character_state_.velocity = glm::vec3{0.0f};
+        predicted_impulse_lockout_armed_tick_ = prediction_tick;
+        predicted_impulse_lockout_until_tick_ =
+            prediction_tick + KERNEL_MAX_IMPULSE_LOCKOUT_TICKS;
+        predicted_impulse_lockout_recovering_ = false;
+    }
     const bool impulse_locked =
         prediction_tick < predicted_impulse_lockout_until_tick_;
     // Inside a building the authority holds the player still whatever the
@@ -9639,15 +9702,34 @@ bool KernelEngine::step_local_character_prediction(
                      predicted_character_state_.velocity.z})
         : movement_solver::input_move_to_world(input) *
               local_player_move_speed_meters_per_second_;
+    // The suspension's twin of player_movement.cc: held, the step is the
+    // authority's own -- step_character_at_velocity at the suspension's
+    // velocity, off the ground, whatever the stick says.
+    const bool suspended = prediction_tick < predicted_suspension_until_tick_;
     std::string error;
     const glm::vec3 position_before_step = predicted_character_state_.position;
-    if (!movement_solver::step_character(
-            *prediction_physics_world_,
-            movement_config,
-            desired_horizontal,
-            tick_loop_.fixed_delta_seconds(),
-            &predicted_character_state_,
-            &error)) {
+    if (suspended) {
+        predicted_character_state_.ground_state = physics::CharacterGroundState::kAirborne;
+    }
+    const bool stepped = suspended
+        ? movement_solver::step_character_at_velocity(
+              *prediction_physics_world_,
+              movement_config,
+              predicted_suspension_velocity_,
+              tick_loop_.fixed_delta_seconds(),
+              &predicted_character_state_,
+              &error)
+        : movement_solver::step_character(
+              *prediction_physics_world_,
+              movement_config,
+              desired_horizontal,
+              tick_loop_.fixed_delta_seconds(),
+              &predicted_character_state_,
+              &error);
+    if (suspended) {
+        predicted_character_state_.ground_state = physics::CharacterGroundState::kAirborne;
+    }
+    if (!stepped) {
         spdlog::error("client CharacterVirtual prediction step failed: {}", error);
         return false;
     }
@@ -9966,6 +10048,17 @@ void KernelEngine::adopt_authoritative_impulse_lockout(
     }
 }
 
+// Whatever the owner snapshot says, outright: a suspension starts and ends on
+// the authority alone, so the snapshot is never stale against a prediction of
+// one -- only against the drop the prediction arms when it ends, and that is
+// the impulse lockout's to reconcile.
+void KernelEngine::adopt_authoritative_suspension(const EntitySnapshot& authoritative) {
+    predicted_suspension_velocity_ =
+        authoritative.has_suspension ? authoritative.suspension_velocity : glm::vec3{0.0f};
+    predicted_suspension_until_tick_ =
+        authoritative.has_suspension ? authoritative.suspension_until_tick : 0u;
+}
+
 void KernelEngine::reconcile_local_prediction(const WorldSnapshot& snapshot) {
     if (local_player_net_id_ == 0) {
         return;
@@ -10044,6 +10137,7 @@ void KernelEngine::reconcile_local_prediction(const WorldSnapshot& snapshot) {
         predicted_character_tick_ = snapshot.header.server_tick;
         adopt_authoritative_impulse_lockout(
             *authoritative, snapshot.header.server_tick);
+        adopt_authoritative_suspension(*authoritative);
         movement_solver::CharacterMovementConfig movement_config{};
         std::string error;
         if (!build_local_character_movement_config(&movement_config)) {
@@ -12938,6 +13032,7 @@ void KernelEngine::simulate_tick() {
     }
     sync_entity_colliders_from_world();
     simulate_status_effects(*this, server_time_us);
+    settle_status_suspensions(*this);
     MovementSimulationStats movement_stats{};
     std::vector<QueuedInput> movement_inputs =
         build_effective_movement_inputs(server_time_us);
@@ -13051,7 +13146,8 @@ void KernelEngine::simulate_tick() {
         fixed_delta,
         tick_loop_.current_tick(),
         &events_,
-        &damage_pipeline_);
+        &damage_pipeline_,
+        &action_graph_batches);
     simulate_area_effects(
         world_,
         tick_loop_.current_tick(),
@@ -13248,6 +13344,8 @@ WorldSnapshot KernelEngine::build_relevant_snapshot(
             filtered_entity.impulse_lockout_recovering =
                 filtered_entity.has_impulse_lockout &&
                 entity.impulse_lockout_recovering;
+            filtered_entity.has_suspension =
+                entity.has_suspension && entity.net_id == session.player;
             filtered.entities.push_back(filtered_entity);
         }
     }
@@ -13588,6 +13686,10 @@ void KernelEngine::update_vision_states(float delta_seconds) {
                     world_.registry().try_get<Health>(candidate_entity);
                 candidate_health != nullptr && candidate_health->max_hp > 0u &&
                 candidate_health->hp == 0u) {
+                continue;
+            }
+            // Nor is one nothing can strike: an agent would only fire into it.
+            if (status_untargetable(world_, candidate_entity)) {
                 continue;
             }
             const glm::vec3 position =
@@ -14526,18 +14628,48 @@ void KernelEngine::flush_actor_impulses() {
         const Velocity* velocity = registry.try_get<Velocity>(*entity);
         const MovementState* movement = registry.try_get<MovementState>(*entity);
         const Health* health = registry.try_get<Health>(*entity);
+        if (transform == nullptr || velocity == nullptr || movement == nullptr ||
+            (health != nullptr && health->max_hp > 0u && health->hp == 0u)) {
+            continue;
+        }
+        // A status suspension's rise: a straight line at its own velocity,
+        // with nothing pulling on it, until the status's end tick -- which a
+        // zero-gravity flight replays exactly. Its drop gets an anchor of its
+        // own when the suspension ends.
+        if (const ActiveStatusEffect* suspension =
+                registry.all_of<HeldInSuspension>(*entity)
+                    ? active_suspension(world_, *entity)
+                    : nullptr;
+            suspension != nullptr) {
+            if (suspension->expire_tick <= tick) continue;
+            ActorImpulseRecord record{};
+            record.net_id = net_id;
+            record.position = transform->position;
+            record.velocity = movement_solver::suspended_velocity(
+                suspension->suspend_rise_speed, suspension->suspend_drift_velocity);
+            record.gravity_y = 0.0f;
+            record.floor_y = floor_y;
+            record.lockout_ticks = static_cast<std::uint16_t>(std::min<std::uint32_t>(
+                suspension->expire_tick - tick, UINT16_MAX));
+            batch.records.push_back(record);
+            continue;
+        }
         // No lockout left means the flight already ended inside this tick (it
         // landed, or a death cleared it); the snapshot says the rest.
-        if (lockout == nullptr || transform == nullptr || velocity == nullptr ||
-            movement == nullptr || lockout->until_tick <= tick ||
-            (health != nullptr && health->max_hp > 0u && health->hp == 0u)) {
+        if (lockout == nullptr || lockout->until_tick <= tick) {
             continue;
         }
         ActorImpulseRecord record{};
         record.net_id = net_id;
         record.position = transform->position;
         record.velocity = velocity->linear;
-        record.gravity_y = movement->gravity.y;
+        // A hover does not fall, whatever gravity it authors, except in the
+        // drop after a suspension.
+        record.gravity_y =
+            movement->controller_type == MovementState::ControllerType::kHover &&
+                !lockout->free_fall
+            ? 0.0f
+            : movement->gravity.y;
         record.floor_y = floor_y;
         record.lockout_ticks = static_cast<std::uint16_t>(std::min<std::uint32_t>(
             lockout->until_tick - tick, UINT16_MAX));

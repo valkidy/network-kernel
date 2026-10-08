@@ -254,6 +254,7 @@ cc_test(
         "gameplay_catalog/action_templates/*.yaml",
         "gameplay_catalog/collider_templates/*.yaml",
         "gameplay_catalog/entity_templates/*.yaml",
+        "gameplay_catalog/status_effect_templates/*.yaml",
         "gameplay_catalog/item_templates/*.yaml",
         "gameplay_catalog/projectile_templates/*.yaml",
         "gameplay_catalog/weapon_templates/*.yaml",
@@ -275,6 +276,7 @@ cc_test(
         "gameplay_catalog/action_templates/*.yaml",
         "gameplay_catalog/collider_templates/*.yaml",
         "gameplay_catalog/entity_templates/*.yaml",
+        "gameplay_catalog/status_effect_templates/*.yaml",
         "gameplay_catalog/item_templates/*.yaml",
         "gameplay_catalog/projectile_templates/*.yaml",
         "gameplay_catalog/weapon_templates/*.yaml",
@@ -410,6 +412,7 @@ cc_test(
         "gameplay_catalog/action_templates/*.yaml",
         "gameplay_catalog/collider_templates/*.yaml",
         "gameplay_catalog/entity_templates/*.yaml",
+        "gameplay_catalog/status_effect_templates/*.yaml",
         "gameplay_catalog/item_templates/*.yaml",
         "gameplay_catalog/projectile_templates/*.yaml",
         "gameplay_catalog/weapon_templates/*.yaml",
@@ -432,6 +435,7 @@ cc_test(
         "gameplay_catalog/action_templates/*.yaml",
         "gameplay_catalog/collider_templates/*.yaml",
         "gameplay_catalog/entity_templates/*.yaml",
+        "gameplay_catalog/status_effect_templates/*.yaml",
         "gameplay_catalog/item_templates/*.yaml",
         "gameplay_catalog/projectile_templates/*.yaml",
         "gameplay_catalog/weapon_templates/*.yaml",
@@ -453,6 +457,7 @@ cc_test(
         "gameplay_catalog/action_templates/*.yaml",
         "gameplay_catalog/collider_templates/*.yaml",
         "gameplay_catalog/entity_templates/*.yaml",
+        "gameplay_catalog/status_effect_templates/*.yaml",
         "gameplay_catalog/item_templates/*.yaml",
         "gameplay_catalog/projectile_templates/*.yaml",
         "gameplay_catalog/weapon_templates/*.yaml",
@@ -474,6 +479,7 @@ cc_test(
         "gameplay_catalog/action_templates/*.yaml",
         "gameplay_catalog/collider_templates/*.yaml",
         "gameplay_catalog/entity_templates/*.yaml",
+        "gameplay_catalog/status_effect_templates/*.yaml",
         "gameplay_catalog/item_templates/*.yaml",
         "gameplay_catalog/projectile_templates/*.yaml",
         "gameplay_catalog/weapon_templates/*.yaml",
@@ -495,6 +501,7 @@ cc_test(
         "gameplay_catalog/action_templates/*.yaml",
         "gameplay_catalog/collider_templates/*.yaml",
         "gameplay_catalog/entity_templates/*.yaml",
+        "gameplay_catalog/status_effect_templates/*.yaml",
         "gameplay_catalog/item_templates/*.yaml",
         "gameplay_catalog/projectile_templates/*.yaml",
         "gameplay_catalog/weapon_templates/*.yaml",
@@ -516,6 +523,7 @@ cc_test(
         "gameplay_catalog/action_templates/*.yaml",
         "gameplay_catalog/collider_templates/*.yaml",
         "gameplay_catalog/entity_templates/*.yaml",
+        "gameplay_catalog/status_effect_templates/*.yaml",
         "gameplay_catalog/item_templates/*.yaml",
         "gameplay_catalog/projectile_templates/*.yaml",
         "gameplay_catalog/weapon_templates/*.yaml",
@@ -732,6 +740,84 @@ cc_test(
 cc_test(
     name = "mp_potion_test",
     srcs = ["tests/mp_potion_test.cc"],
+    data = glob([
+        "gameplay_catalog/action_graph_templates/*.yaml",
+        "gameplay_catalog/action_templates/*.yaml",
+        "gameplay_catalog/collider_templates/*.yaml",
+        "gameplay_catalog/entity_templates/*.yaml",
+        "gameplay_catalog/item_templates/*.yaml",
+        "gameplay_catalog/projectile_templates/*.yaml",
+        "gameplay_catalog/status_effect_templates/*.yaml",
+        "gameplay_catalog/weapon_templates/*.yaml",
+    ]) + [
+        "gameplay_catalog/gameplay_catalog.yaml",
+        "//game_server/gameplay_catalog/mesh_assets:cooked_mesh_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:locomotion_skeleton_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_biped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_quadruped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_tripod_assets",
+    ],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
+    name = "status_action_block_catalog_test",
+    srcs = ["tests/status_action_block_catalog_test.cc"],
+    data = glob([
+        "gameplay_catalog/action_graph_templates/*.yaml",
+        "gameplay_catalog/action_templates/*.yaml",
+        "gameplay_catalog/collider_templates/*.yaml",
+        "gameplay_catalog/entity_templates/*.yaml",
+        "gameplay_catalog/item_templates/*.yaml",
+        "gameplay_catalog/projectile_templates/*.yaml",
+        "gameplay_catalog/status_effect_templates/*.yaml",
+        "gameplay_catalog/weapon_templates/*.yaml",
+    ]) + [
+        "gameplay_catalog/gameplay_catalog.yaml",
+        "//game_server/gameplay_catalog/mesh_assets:cooked_mesh_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:locomotion_skeleton_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_biped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_quadruped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_tripod_assets",
+    ],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
+    name = "water_balloon_test",
+    srcs = ["tests/water_balloon_test.cc"],
+    data = glob([
+        "gameplay_catalog/action_graph_templates/*.yaml",
+        "gameplay_catalog/action_templates/*.yaml",
+        "gameplay_catalog/collider_templates/*.yaml",
+        "gameplay_catalog/entity_templates/*.yaml",
+        "gameplay_catalog/item_templates/*.yaml",
+        "gameplay_catalog/projectile_templates/*.yaml",
+        "gameplay_catalog/status_effect_templates/*.yaml",
+        "gameplay_catalog/weapon_templates/*.yaml",
+    ]) + [
+        "gameplay_catalog/gameplay_catalog.yaml",
+        "//game_server/gameplay_catalog/mesh_assets:cooked_mesh_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:locomotion_skeleton_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_biped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_quadruped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_tripod_assets",
+    ],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
+    name = "water_bubble_staff_test",
+    srcs = ["tests/water_bubble_staff_test.cc"],
     data = glob([
         "gameplay_catalog/action_graph_templates/*.yaml",
         "gameplay_catalog/action_templates/*.yaml",

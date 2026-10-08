@@ -247,6 +247,30 @@ const physics::PhysicsWorld* World::collision_world() const {
     return collision_world_;
 }
 
+bool status_untargetable(const World& world, entt::entity entity) {
+    const StatusEffectState* state = world.registry().try_get<StatusEffectState>(entity);
+    return state != nullptr &&
+        std::any_of(
+            state->active.begin(),
+            state->active.end(),
+            [](const ActiveStatusEffect& active) { return active.untargetable; });
+}
+
+const ActiveStatusEffect* active_suspension(const World& world, entt::entity entity) {
+    const StatusEffectState* state = world.registry().try_get<StatusEffectState>(entity);
+    if (state == nullptr) {
+        return nullptr;
+    }
+    // The newest wins: active is kept sorted by instance id.
+    const ActiveStatusEffect* newest = nullptr;
+    for (const ActiveStatusEffect& active : state->active) {
+        if (active.suspends_movement) {
+            newest = &active;
+        }
+    }
+    return newest;
+}
+
 void World::synchronize_standalone_collision_world() {
     if (standalone_collision_world_ == nullptr) {
         standalone_collision_world_ =
@@ -274,8 +298,9 @@ void World::synchronize_standalone_collision_world() {
         object.shape.half_extents = hitbox.half_extents;
         object.position = transform.position + transform.rotation * hitbox.center;
         object.rotation = transform.rotation;
-        object.enabled = !registry_.all_of<Health>(entity) ||
-            registry_.get<Health>(entity).hp != 0;
+        object.enabled = (!registry_.all_of<Health>(entity) ||
+                          registry_.get<Health>(entity).hp != 0) &&
+            !status_untargetable(*this, entity);
         std::string error;
         (void)standalone_collision_world_->upsert_object(object, &error);
     }
