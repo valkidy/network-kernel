@@ -915,6 +915,9 @@ struct ActionApplyStatusDefinition {
     // Optional, a vec3 parameter: the direction the status is applied with.
     // Empty applies it with none.
     std::string direction_parameter;
+    // A literal, like apply_pull's strength: when > 0 the status lands only on
+    // a target whose impulse_resistance is strictly below it. Zero: anyone.
+    float strength = 0.0f;
 };
 
 struct ActionRemoveStatusDefinition {

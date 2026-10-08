@@ -284,6 +284,25 @@ bool strikes_untargetable(
     return entity.has_value() && status_untargetable(world, *entity);
 }
 
+// An apply_status whose authored strength does not strictly exceed the
+// target's impulse_resistance: the status never lands, as an impulse that
+// strong would not move it. Weighed on the authored number, so who is
+// affected cannot depend on where anyone stands.
+bool resisted_status(const World& world, const ActionGraphCommand& command) {
+    const auto* status = std::get_if<ActionApplyStatusCommand>(&command);
+    if (status == nullptr || status->strength <= 0.0f) {
+        return false;
+    }
+    const std::optional<entt::entity> entity = world.find_entity(status->target);
+    if (!entity.has_value()) {
+        return false;
+    }
+    const ImpulseResistance* resistance =
+        world.registry().try_get<ImpulseResistance>(*entity);
+    return resistance != nullptr &&
+        (!std::isfinite(resistance->value) || status->strength <= resistance->value);
+}
+
 // The active instance a status-bound command belongs to, or null. On_apply
 // always runs with its instance already active, so null is a broken batch.
 ActiveStatusEffect* find_status_instance(
@@ -525,17 +544,19 @@ bool execute_action_graph_commands(
     }
     // Out of reach is out of reach however the command got here: an event
     // queued before the target became untargetable, a graph that names it
-    // outright. Copied only when something is actually dropped.
+    // outright. A status too weak for its target is dropped the same way, so
+    // the rest of the batch -- the hit's damage -- still lands. Copied only
+    // when something is actually dropped.
+    const auto dropped = [&](const ActionGraphCommand& command) {
+        return strikes_untargetable(world, batch, command) ||
+            resisted_status(world, command);
+    };
     std::vector<ActionGraphCommand> reachable;
-    const bool drops_any = std::any_of(
-        batch.commands.begin(),
-        batch.commands.end(),
-        [&](const ActionGraphCommand& command) {
-            return strikes_untargetable(world, batch, command);
-        });
+    const bool drops_any =
+        std::any_of(batch.commands.begin(), batch.commands.end(), dropped);
     if (drops_any) {
         for (const ActionGraphCommand& command : batch.commands) {
-            if (!strikes_untargetable(world, batch, command)) {
+            if (!dropped(command)) {
                 reachable.push_back(command);
             }
         }

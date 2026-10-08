@@ -3470,7 +3470,10 @@ bool KernelEngine::load_gameplay_catalog(
                         !status_id_in_use(action.status_effect_id) ||
                         (action.status_direction_authored != 0u &&
                          action.direction_source >
-                             KernelEventVec3Source_SubjectPosition)) {
+                             KernelEventVec3Source_SubjectPosition) ||
+                        (action.action_type ==
+                             KernelEntityTriggerActionType_ApplyStatus &&
+                         !status_strength_is_authorable(action.status_strength))) {
                         return false;
                     }
                     continue;

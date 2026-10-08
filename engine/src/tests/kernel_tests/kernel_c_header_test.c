@@ -30,7 +30,9 @@ _Static_assert(
         offsetof(KernelActionDefinition, suspend_rise_speed) >
             offsetof(KernelActionDefinition, status_direction_authored) &&
         offsetof(KernelActionDefinition, suspend_drift_speed) >
-            offsetof(KernelActionDefinition, suspend_rise_speed),
+            offsetof(KernelActionDefinition, suspend_rise_speed) &&
+        offsetof(KernelActionDefinition, status_strength) >
+            offsetof(KernelActionDefinition, suspend_drift_speed),
     "the ABI 102 action fields are appended after the reserve refill");
 _Static_assert(
     offsetof(KernelActionDefinition, pull_strength) >
@@ -193,19 +195,19 @@ _Static_assert(
         offsetof(KernelSkeletonBindingDefinition, processing_order),
     "stance crouch is appended to the skeleton binding ABI");
 _Static_assert(
-    sizeof(KernelActionDefinition) == 84u + 16u + 16u + 8u + 4u + 4u + 12u,
+    sizeof(KernelActionDefinition) == 84u + 16u + 16u + 8u + 4u + 4u + 16u,
     "KernelActionDefinition ABI size: 84 bytes before ABI 94, plus the "
     "16-byte spawn lifetime and repeat block, plus ABI 95's 16-byte pull "
     "block, plus ABI 96's ui_id and spawn_placement, plus ABI 100's "
     "pull_strength, plus ABI 101's two reserve refill fields, plus ABI 102's "
-    "status direction flag and two suspend speeds");
+    "status direction flag, two suspend speeds and status strength");
 _Static_assert(
     sizeof(KernelActionTriggerDefinition) ==
-        764u + 8u * 16u + 8u * 16u + 8u * 8u + 8u * 4u + 8u * 4u + 8u * 12u,
+        764u + 8u * 16u + 8u * 16u + 8u * 8u + 8u * 4u + 8u * 4u + 8u * 16u,
     "KernelActionTriggerDefinition ABI size: its eight actions each grew by "
     "the ABI 94 repeat block, the ABI 95 pull block, ABI 96's ui_id and "
     "spawn_placement, ABI 100's pull_strength, ABI 101's reserve refill and "
-    "ABI 102's status direction and suspend speeds");
+    "ABI 102's status direction, suspend speeds and status strength");
 _Static_assert(
     offsetof(KernelActionDefinition, spawn_placement) >
             offsetof(KernelActionDefinition, ui_id) &&

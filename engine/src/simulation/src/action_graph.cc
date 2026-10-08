@@ -649,8 +649,10 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
             });
             const bool carries_direction =
                 applies_status && action.status_direction_authored != 0u;
-            if (carries_direction &&
-                action.direction_source > KernelEventVec3Source_SubjectPosition) {
+            if ((carries_direction &&
+                 action.direction_source > KernelEventVec3Source_SubjectPosition) ||
+                (applies_status &&
+                 !status_strength_is_authorable(action.status_strength))) {
                 return std::nullopt;
             }
             const std::string direction_name = "direction" + suffix;
@@ -658,7 +660,8 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
                 applies_status
                     ? ActionGraphAction{ActionApplyStatusDefinition{
                           target_name, status_name, *condition,
-                          carries_direction ? direction_name : std::string{}}}
+                          carries_direction ? direction_name : std::string{},
+                          action.status_strength}}
                     : ActionGraphAction{ActionRemoveStatusDefinition{
                           target_name, status_name, *condition}});
             binding.parameters.push_back({
@@ -1068,6 +1071,10 @@ bool validate_action_graph_binding(
                 return false;
             }
             if (apply_status != nullptr &&
+                !status_strength_is_authorable(apply_status->strength)) {
+                return fail(error, "apply_status strength must be finite and >= 0");
+            }
+            if (apply_status != nullptr &&
                 !apply_status->direction_parameter.empty() &&
                 !validate_action_parameter(
                     binding, apply_status->direction_parameter,
@@ -1450,7 +1457,8 @@ bool evaluate_action_graph(
                     }
                 }
                 commands->push_back(ActionApplyStatusCommand{
-                    source, target, status_id, provenance, direction});
+                    source, target, status_id, provenance, direction,
+                    apply_status->strength});
             } else {
                 commands->push_back(ActionRemoveStatusCommand{
                     source, target, status_id, provenance});

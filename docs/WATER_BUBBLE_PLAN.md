@@ -1,6 +1,6 @@
 # 水球武器（泡泡封鎖）實作計劃書
 
-狀態：**設計已定案；P0 驗證完成（§9）；P1–P3 完成（2026-10-08，見各節的實作紀錄）。P4 起尚未實作。**
+狀態：**設計已定案；P0 驗證完成（§9）；P1–P4 完成（2026-10-08，見各節的實作紀錄）。P5 起尚未實作。**
 分支：`claude/water-bubble`，從 `main`（7dc17f9，item-weapon 已 merge，ABI 101）開。
 最後更新：2026-10-08。
 
@@ -86,6 +86,15 @@
 - `apply_status` 加一個可選的 `strength`。有寫時，`strength <= impulse_resistance` 就不掛 status，跟 `apply_impulse`、`apply_pull` 一樣是嚴格大於。
 - 沒寫就跳過檢查。現有 status（burn、poison、speed_up、slow）不受影響。
 - 檢查放在 `apply_status`，不放在三個控制 action 上。否則 status 還是會掛上去：client 會在飛船上畫泡泡，`untargetable` 也可能已經生效。
+
+**P4 實作紀錄（K2）**：
+- `KernelActionDefinition` 加了 `status_strength`（接在 `suspend_drift_speed` 後面，仍在 ABI 102 內）。YAML 寫法是 apply_status 的 `strength: 10.0`，
+  和 apply_pull 一樣是**字面數字**，不能由 binding 改；0、負數、非數字都會被拒絕。沒寫就是 0，代表不檢查。
+- 檢查放在 commit 一開始的過濾（P3 加的那一段）：`strength <= impulse_resistance` 的 apply_status 被拿掉，同一個 batch 的其他指令（例如傷害）照常執行。
+  resistance 不是有限數字時一律擋下，跟 apply_impulse 的規則一樣。
+- 測試：`//engine/src/tests/simulation_tests:status_strength_test`（resistance 10 對 strength 10 只受傷不掛 status、9.5 會掛、沒有 resistance 會掛、
+  無限大不掛、沒寫 strength 時 resistance 1000 也會掛、不合法的 strength 不能編譯）；catalog 測試確認 YAML 的 strength 編進去了，
+  而且正式 catalog 裡飛船（template 37）的 resistance 確實是 10。
 
 ### 3.3 K3：懸浮移動（`Suspended`）
 
@@ -288,7 +297,7 @@ client 和 server 必須用同一版。
 | **P1** | K1 `apply_block_actions` + status 綁定 + 打斷 | **完成 2026-10-08。** 新動作被拒絕；進行中的動作被打斷；放在命中 graph 會被驗證拒絕；status 被移除或到期時解除；持續中的 beam 被打斷後消失 |
 | **P2** | K3 + K4 懸浮與落下 | **完成 2026-10-08**（「sentry 類 AI 推不動」延到 P6）。上升高度剛好是 `rise_speed·N·dt`；飄移方向等於水球飛行方向；破掉時水平歸零；落地的 tick 跟預測一樣；落下期間不能動作；sentry 類 AI 推不動；被擊飛時中彈，泡泡取代擊退；**三種 controller 各一個屋頂下的測試，高度停在屋頂下方**；**drone：從 9 m 落到地面、落地後 lockout 解除並飛回 9 m；往下找不到地面時停在當時高度；anchor 的 `floor_y` 是地面高度** |
 | **P3** | K5 untargetable + AI 跳過 | **完成 2026-10-08。** §3.5 每一條路徑各一個測試：子彈穿過、範圍效果跳過；落下期間可以被打；AI 視野看不到 |
-| **P4** | K2 strength | 飛船（resistance 10）被打到只受傷不被包；沒寫 strength 的現有 status 行為不變 |
+| **P4** | K2 strength | **完成 2026-10-08。** 飛船（resistance 10）被打到只受傷不被包；沒寫 strength 的現有 status 行為不變 |
 | **P5** | K6 + K7 prediction 與遠端軌跡 | 本機 prediction 的上升軌跡和 server 誤差為 0；遠端 anchor 重播誤差為 0 |
 | **P6** | §4 catalog 內容 | e2e：玩家丟水球打中 AI，AI 上升 N ticks、落下、落地；打中 drone，drone 墜落後飛回 |
 

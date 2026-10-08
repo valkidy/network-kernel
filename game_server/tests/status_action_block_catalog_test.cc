@@ -399,6 +399,36 @@ void untargetable_loads_where_a_block_does_and_nowhere_else() {
         "apply_untargetable is only valid in status on_apply"));
 }
 
+void apply_status_takes_a_literal_strength() {
+    std::string graph = kDirectedApplyGraph + "    strength: 10.0\n";
+    const auto load = [&](const std::string& name, const std::string& apply_graph) {
+        return catalog_with(
+            name,
+            {{"action_graph_templates/action_test_suspend.yaml", kSuspendGraph},
+             {"status_effect_templates/1901_status_effect_test_block.yaml",
+              suspend_status_yaml("on_apply")},
+             {"action_graph_templates/action_test_apply_directed.yaml", apply_graph},
+             {"entity_templates/1903_prop_test_balloon.yaml",
+              balloon_prop("      direction: event.direction\n")}});
+    };
+    const gs::KernelGameplayCatalogStorage built = gs::build_kernel_gameplay_catalog(
+        gs::load_gameplay_config_from_catalog_file(load("strength", graph).string()));
+    const KernelEntityTemplateDefinition* balloon = nullptr;
+    const KernelEntityTemplateDefinition* airship = nullptr;
+    for (const KernelEntityTemplateDefinition& entity : built.entity_templates) {
+        if (entity.entity_template_id == 1903u) balloon = &entity;
+        if (entity.entity_template_id == 37u) airship = &entity;
+    }
+    require(balloon != nullptr && airship != nullptr);
+    require(balloon->collision_trigger.actions[0].status_strength == 10.0f);
+    // What a balloon of 10 is weighed against on the shipped airship.
+    require(airship->impulse_resistance == 10.0f);
+    require(kernel_accepts(built));
+    std::string zero = kDirectedApplyGraph + "    strength: 0.0\n";
+    require(refused_for(
+        load("strength_zero", zero), "apply_status strength must be a positive"));
+}
+
 }  // namespace
 
 int main() {
@@ -412,6 +442,7 @@ int main() {
     a_suspension_anywhere_else_or_too_fast_is_refused();
     apply_status_carries_the_direction_it_is_bound_to();
     untargetable_loads_where_a_block_does_and_nowhere_else();
+    apply_status_takes_a_literal_strength();
     std::puts("status_action_block_catalog_test passed");
     return 0;
 }

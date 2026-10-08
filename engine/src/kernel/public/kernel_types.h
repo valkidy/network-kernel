@@ -27,6 +27,11 @@
  *     the instance stands nothing can strike its subject -- its hit volumes
  *     leave every hit query, rewound shots included, area effects pass it by,
  *     agents do not see it, and damage that still arrives is discarded whole.
+ *     KernelActionDefinition gained status_strength, appended after
+ *     suspend_drift_speed: an apply_status that authors one (> 0) puts its
+ *     status only on a target whose impulse_resistance it strictly exceeds,
+ *     as apply_impulse and apply_pull weigh theirs. Zero, the default, applies
+ *     it to anyone, as before.
  * 101: items and wands, first part. KernelPropDefinition gained importance
  *     (with three reserved bytes), appended after population_group_id: when
  *     a population group is over max_alive, the member just spawned is never
@@ -1104,6 +1109,10 @@ typedef struct KernelActionDefinition {
      * status's direction. */
     float suspend_rise_speed;
     float suspend_drift_speed;
+    /* apply_status only; zero on every other action. Finite and >= 0. When
+     * non-zero the status is applied only to a target whose
+     * impulse_resistance is strictly below it; zero applies it to anyone. */
+    float status_strength;
 } KernelActionDefinition;
 
 typedef struct KernelActionTriggerDefinition {

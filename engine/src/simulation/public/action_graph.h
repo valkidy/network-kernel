@@ -97,6 +97,11 @@ inline glm::vec3 impulse_velocity_delta(
         : direction * horizontal;
 }
 
+// apply_status's strength, checked by the same three parties.
+inline bool status_strength_is_authorable(float strength) {
+    return std::isfinite(strength) && strength >= 0.0f;
+}
+
 // apply_suspend_movement's speeds, checked by the same three parties.
 inline bool suspend_speed_is_authorable(float speed) {
     return std::isfinite(speed) && speed >= 0.0f &&
@@ -270,6 +275,9 @@ struct ActionApplyStatusCommand {
     ActionExecutionProvenance provenance;
     // Resolved when the graph ran; zero when the action names none.
     glm::vec3 direction{0.0f};
+    // Weighed against the target's impulse_resistance at commit; zero is
+    // no weighing.
+    float strength = 0.0f;
 };
 
 struct ActionRemoveStatusCommand {

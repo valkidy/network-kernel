@@ -2237,11 +2237,11 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                    compiled_action.action_type == "remove_status") {
             // apply_status may carry a direction its on_apply graph reads as
             // event.direction; removing one has nothing to point.
-            if ((action["direction"] &&
+            if (((action["direction"] || action["strength"]) &&
                  compiled_action.action_type != "apply_status") ||
                 action["projectile_template"] || action["position"] ||
                 action["owner"] || action["amount"] ||
-                action["strength"] || action["operation"] || action["value"] ||
+                action["operation"] || action["value"] ||
                 action["entity_template"] || action["item_template"] ||
                 action["quantity"] || action["collision_mask"] ||
                 action["lockout_ticks"]) {
@@ -2261,6 +2261,17 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 compiled_action.direction_parameter =
                     parameter_reference_from_yaml(action["direction"], "direction");
                 action_parameters.push_back(&compiled_action.direction_parameter);
+            }
+            // A literal, as apply_pull's is: the number a target's
+            // impulse_resistance is weighed against must not vary per binding.
+            if (action["strength"]) {
+                compiled_action.status_strength = action["strength"].as<float>();
+                if (!std::isfinite(compiled_action.status_strength) ||
+                    compiled_action.status_strength <= 0.0f) {
+                    throw std::runtime_error(
+                        "apply_status strength must be a positive finite number: " +
+                        path);
+                }
             }
         } else if (compiled_action.action_type == "refill_weapon_reserve") {
             // An item refilling the active weapon of whoever used it: a fixed
@@ -7661,6 +7672,9 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
                 : KernelEntityTriggerActionType_RemoveStatus;
             compiled_action.target_source = entity_ref_source(target);
             compiled_action.status_effect_id = status_ref(status);
+            if (action.action_type == "apply_status") {
+                compiled_action.status_strength = action.status_strength;
+            }
             if (!action.direction_parameter.empty()) {
                 compile_status_direction(
                     binding, graph_parameter(action.direction_parameter),

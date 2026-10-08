@@ -399,6 +399,8 @@ struct ActionGraphActionConfig {
     std::uint32_t pull_airtime_ticks = 0;
     float pull_max_speed = 0.0f;
     float pull_strength = 0.0f;
+    // apply_status only: a literal, like apply_pull's strength. Zero is none.
+    float status_strength = 0.0f;
     // apply_suspend_movement only: literals, like apply_pull's numbers. See
     // KernelActionDefinition's suspend_* fields.
     float suspend_rise_speed = 0.0f;
