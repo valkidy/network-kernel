@@ -584,9 +584,6 @@ bool is_staggered(const World& world, entt::entity entity, std::uint32_t current
 // Some active status instance on the actor ran apply_block_actions.
 bool status_blocks_actions(const World& world, entt::entity entity);
 
-// The status instance holding the actor in an apply_suspend_movement, the
-// newest when there are several, or null.
-const ActiveStatusEffect* active_suspension(const World& world, entt::entity entity);
 
 // Gives the actor its template's StaggerProfile, or takes it away when the
 // template authors none. Both ways an actor gets a template call this: the

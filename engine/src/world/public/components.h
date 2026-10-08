@@ -1309,6 +1309,7 @@ inline constexpr std::uint32_t kVisualFlagLanded = 0x00000040u;
 inline constexpr std::uint32_t kVisualFlagStaggered = 0x00000080u;
 inline constexpr std::uint32_t kVisualFlagAiming = 0x00000100u;
 inline constexpr std::uint32_t kVisualFlagFiring = 0x00000200u;
+inline constexpr std::uint32_t kVisualFlagSuspended = 0x00000400u;
 
 struct ReplicationState {
     std::uint16_t animation_state = 0;

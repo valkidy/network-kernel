@@ -1,6 +1,6 @@
 # 水球武器（泡泡封鎖）實作計劃書
 
-狀態：**設計已定案；P0 驗證完成（§9）；P1–P4 完成（2026-10-08，見各節的實作紀錄）。P5 起尚未實作。**
+狀態：**設計已定案；P0 驗證完成（§9）；P1–P5 完成（2026-10-08，見各節的實作紀錄）。P6（catalog 內容）尚未實作。**
 分支：`claude/water-bubble`，從 `main`（7dc17f9，item-weapon 已 merge，ABI 101）開。
 最後更新：2026-10-08。
 
@@ -236,6 +236,25 @@ grounded（sentry）的落下不用新寫：原本那段就有重力和落地檢
 `knockback_flight_ticks` 在重力為 0 時回傳 `lockout_ticks - 1`，也正確。
 破掉時再送 §3.4 的第二個 anchor。
 
+**P5 實作紀錄（K6 + K7）**：
+- **擁有者 snapshot**：`EntitySnapshot` 加 `has_suspension`、`suspension_velocity`、`suspension_until_tick`（= status 的 `expire_tick`）。
+  線上是 actor record 的 flag bit `1u << 10`，16 bytes，只有懸浮期間才佔位置，而且跟 lockout 一樣只送給擁有者。
+  帶著它的 agent 會改用完整的 actor record。**snapshot schema 28 → 29**。
+- **client 預測**：`step_local_character_prediction` 在 `prediction_tick < suspension_until_tick` 時改走 `step_character_at_velocity`，
+  也就是 server 用的同一個 solver。到了結束 tick，client 自己 arm 落下（速度歸零，lockout 上限先給 `KERNEL_MAX_IMPULSE_LOCKOUT_TICKS`，落地就解除），
+  不用等一個來回。server 的 lockout 隨 snapshot 到了以後，由現有的 `adopt_authoritative_impulse_lockout` 接手。
+  懸浮資料本身每次都直接採用 snapshot 的值（`adopt_authoritative_suspension`），因為開始和結束都只由 server 決定。
+- **遠端 client**：
+  - 顯示旗標 `KERNEL_VISUAL_FLAG_SUSPENDED = 0x400`（`kVisualFlagSuspended`），在 settle 裡每個 tick 重設。
+    因為 game_server 的 `set_state` 會整個覆寫 `visual_flags`，而 settle 在那些指令之後執行。計劃原本取名 `Encased`，改成比較通用的名字。
+  - client 預測子彈用的碰撞世界會排除帶這個旗標的單位。**注意**：這裡用「懸浮」代替「打不到」，對水球來說兩者同時成立，但兩者在設計上是不同的 action。
+  - 懸浮開始時送一個 anchor：速度等於懸浮速度、重力 0、持續到 status 結束。`flush_actor_impulses` 對懸浮中的單位不需要 lockout。
+    泡泡破掉時再送 P2 的落下 anchor。
+- 測試：`//engine/src/tests/kernel_tests:suspension_end_to_end_test`（兩個 engine 加 loopback：rise anchor、旗標、擁有者才有懸浮資料、落下 anchor、旗標清除）、
+  `//engine/src/tests/protocol_tests:suspension_roundtrip_test`、`client_mode_test` 的 `predicted_suspension_rises_then_drops_like_the_authority`。
+- **沒做**：client 端不會在本機玩家被擋住時拒絕自己的動作預測。被擋住期間按下的動作會先預測、再被 server 用 `StatusBlocked` 糾正回來。
+  擊退和 stagger 目前也是這樣處理。
+
 ---
 
 ## 4. Catalog 內容（game_server）
@@ -298,7 +317,7 @@ client 和 server 必須用同一版。
 | **P2** | K3 + K4 懸浮與落下 | **完成 2026-10-08**（「sentry 類 AI 推不動」延到 P6）。上升高度剛好是 `rise_speed·N·dt`；飄移方向等於水球飛行方向；破掉時水平歸零；落地的 tick 跟預測一樣；落下期間不能動作；sentry 類 AI 推不動；被擊飛時中彈，泡泡取代擊退；**三種 controller 各一個屋頂下的測試，高度停在屋頂下方**；**drone：從 9 m 落到地面、落地後 lockout 解除並飛回 9 m；往下找不到地面時停在當時高度；anchor 的 `floor_y` 是地面高度** |
 | **P3** | K5 untargetable + AI 跳過 | **完成 2026-10-08。** §3.5 每一條路徑各一個測試：子彈穿過、範圍效果跳過；落下期間可以被打；AI 視野看不到 |
 | **P4** | K2 strength | **完成 2026-10-08。** 飛船（resistance 10）被打到只受傷不被包；沒寫 strength 的現有 status 行為不變 |
-| **P5** | K6 + K7 prediction 與遠端軌跡 | 本機 prediction 的上升軌跡和 server 誤差為 0；遠端 anchor 重播誤差為 0 |
+| **P5** | K6 + K7 prediction 與遠端軌跡 | **完成 2026-10-08。** 原本的驗收是「本機 prediction 的上升軌跡和 server 誤差為 0；遠端 anchor 重播誤差為 0」。實際驗證的是：client 預測的上升和飄移距離在 `v·t` 的 1 cm 以內（server 那邊在 P2 也是同樣的標準），兩邊呼叫同一個 solver；anchor 的速度、重力、tick 跟 server 完全相等。**沒有**逐 tick 比對 client 和 server 的軌跡 |
 | **P6** | §4 catalog 內容 | e2e：玩家丟水球打中 AI，AI 上升 N ticks、落下、落地；打中 drone，drone 墜落後飛回 |
 
 全部做完後交給使用者，附上：分支名稱、commit、ABI 與 snapshot schema 的變動、`bundle.bytes` 需要更新。

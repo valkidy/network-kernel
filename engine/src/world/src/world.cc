@@ -256,6 +256,21 @@ bool status_untargetable(const World& world, entt::entity entity) {
             [](const ActiveStatusEffect& active) { return active.untargetable; });
 }
 
+const ActiveStatusEffect* active_suspension(const World& world, entt::entity entity) {
+    const StatusEffectState* state = world.registry().try_get<StatusEffectState>(entity);
+    if (state == nullptr) {
+        return nullptr;
+    }
+    // The newest wins: active is kept sorted by instance id.
+    const ActiveStatusEffect* newest = nullptr;
+    for (const ActiveStatusEffect& active : state->active) {
+        if (active.suspends_movement) {
+            newest = &active;
+        }
+    }
+    return newest;
+}
+
 void World::synchronize_standalone_collision_world() {
     if (standalone_collision_world_ == nullptr) {
         standalone_collision_world_ =

@@ -57,6 +57,7 @@ constexpr std::size_t kActorMovementPayloadSize = 22;
 // active slot 1 + state flags 1 + ammo 2.
 constexpr std::size_t kActorWeaponStatePayloadSize = 4;
 constexpr std::size_t kActorImpulseLockoutPayloadSize = 8;
+constexpr std::size_t kActorSuspensionPayloadSize = 16;
 constexpr std::size_t kActorShelterPayloadSize = 5;
 constexpr std::size_t kActorHeldWeaponPayloadSize = 1;
 constexpr std::size_t kProjectileCompactSnapshotPayloadSize = 34;
@@ -279,6 +280,9 @@ enum ActorSnapshotRecordFlag : std::uint16_t {
     // Schema 28. The weapon a player holds (u8, KERNEL_HELD_WEAPON_NONE when
     // unarmed), on every player record.
     kActorSnapshotHasHeldWeapon = 1u << 9,
+    // Schema 29. The status suspension holding the actor: its velocity (three
+    // f32) and end tick (u32). The receiving session's own player only.
+    kActorSnapshotHasSuspension = 1u << 10,
 };
 
 bool is_actor_entity_type(EntityType type) {
@@ -314,6 +318,9 @@ std::uint16_t actor_record_flags(const EntitySnapshot& entity) {
     }
     if (entity.actor_type == ActorType::kPlayer && entity.has_held_weapon) {
         flags |= kActorSnapshotHasHeldWeapon;
+    }
+    if (entity.has_suspension) {
+        flags |= kActorSnapshotHasSuspension;
     }
     return flags;
 }
@@ -468,6 +475,7 @@ SnapshotSectionType snapshot_section_type(const EntitySnapshot& entity) {
                 !entity.has_authoritative_movement_state &&
                 !entity.has_owner_weapon_state &&
                 !entity.has_impulse_lockout &&
+                !entity.has_suspension &&
                 entity.shelter_net_id == 0u
             ? SnapshotSectionType::kActorAgent
             : SnapshotSectionType::kActor;
@@ -669,6 +677,10 @@ std::vector<std::uint8_t> encode_snapshot_packet(
                     }
                     if ((record_flags & kActorSnapshotHasHeldWeapon) != 0u) {
                         payload.write_u8(entity->held_weapon_id);
+                    }
+                    if ((record_flags & kActorSnapshotHasSuspension) != 0u) {
+                        payload.write_vec3(entity->suspension_velocity);
+                        payload.write_u32(entity->suspension_until_tick);
                     }
                     break;
                 }
@@ -930,6 +942,16 @@ bool decode_snapshot_packet(
                         }
                         entity.has_held_weapon = true;
                     }
+                    if ((record_flags & kActorSnapshotHasSuspension) != 0u) {
+                        if (!reader.read_vec3(&entity.suspension_velocity) ||
+                            !reader.read_u32(&entity.suspension_until_tick) ||
+                            !std::isfinite(entity.suspension_velocity.x) ||
+                            !std::isfinite(entity.suspension_velocity.y) ||
+                            !std::isfinite(entity.suspension_velocity.z)) {
+                            return false;
+                        }
+                        entity.has_suspension = true;
+                    }
                     break;
                 }
                 case SnapshotSectionType::kActorAgent: {
@@ -1160,6 +1182,9 @@ std::size_t estimate_snapshot_entity_size(const EntitySnapshot& entity) {
                         : 0u) +
                    ((actor_record_flags(entity) & kActorSnapshotHasHeldWeapon) != 0u
                         ? kActorHeldWeaponPayloadSize
+                        : 0u) +
+                   ((actor_record_flags(entity) & kActorSnapshotHasSuspension) != 0u
+                        ? kActorSuspensionPayloadSize
                         : 0u);
         case SnapshotSectionType::kActorAgent: {
             const std::uint8_t flags = agent_record_flags(entity);

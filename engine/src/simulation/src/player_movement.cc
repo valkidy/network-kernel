@@ -1049,9 +1049,15 @@ std::vector<std::pair<NetId, float>> settle_status_suspensions(
     }
     std::vector<std::pair<NetId, float>> drops;
     for (const entt::entity entity : held) {
+        // Raised again every tick rather than once: a game_server state write
+        // replaces the flags wholesale, and this runs after those commands.
+        ReplicationState& replication =
+            world.registry().get_or_emplace<ReplicationState>(entity);
         if (active_suspension(world, entity) != nullptr) {
+            replication.visual_flags |= kVisualFlagSuspended;
             continue;
         }
+        replication.visual_flags &= ~kVisualFlagSuspended;
         world.registry().remove<HeldInSuspension>(entity);
         const Health* health = world.registry().try_get<Health>(entity);
         const MovementState* movement = world.registry().try_get<MovementState>(entity);

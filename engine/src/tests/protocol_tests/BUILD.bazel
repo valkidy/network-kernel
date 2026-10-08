@@ -37,6 +37,12 @@ cc_test(
 )
 
 cc_test(
+    name = "suspension_roundtrip_test",
+    srcs = ["suspension_roundtrip_test.cc"],
+    deps = ["//engine/src/protocol:protocol"],
+)
+
+cc_test(
     name = "status_effect_packet_test",
     srcs = ["status_effect_packet_test.cc"],
     deps = ["//engine/src/protocol:protocol"],

@@ -1858,6 +1858,59 @@ void client_shelter_state_names_the_building_ui() {
     require(state.authoritative_tick == 77u);
 }
 
+// The owner's twin of a status suspension: at exactly the authority's
+// velocity, whatever the stick says, through the snapshot's end tick; then the
+// drop it arms itself -- straight down, out of control until it lands.
+void predicted_suspension_rises_then_drops_like_the_authority() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+    prepare_character_prediction(&engine);
+
+    network_example::EntitySnapshot own;
+    own.has_suspension = true;
+    own.suspension_velocity = glm::vec3{0.3f, 1.5f, 0.0f};
+    own.suspension_until_tick = 31u;
+    engine.adopt_authoritative_suspension(own);
+    require(engine.predicted_suspension_until_tick_ == 31u);
+
+    KernelPlayerInput input{};
+    input.move.x = -1.0f;
+    const glm::vec3 start = engine.predicted_character_state_.position;
+    std::uint32_t tick = 1u;
+    for (; tick < 31u; ++tick) {
+        require(engine.step_local_character_prediction(input, tick));
+        require(engine.predicted_character_state_.ground_state !=
+                network_example::physics::CharacterGroundState::kGrounded);
+    }
+    const glm::vec3 top = engine.predicted_character_state_.position;
+    const float seconds = 30.0f / 30.0f;
+    require(std::abs((top - start).y - 1.5f * seconds) < 0.01f);
+    require(std::abs((top - start).x - 0.3f * seconds) < 0.01f);
+
+    // The end tick: the drop is armed here, velocity zeroed.
+    require(engine.step_local_character_prediction(input, tick));
+    require(engine.predicted_impulse_lockout_armed_tick_ == 31u);
+    require(tick < engine.predicted_impulse_lockout_until_tick_);
+    for (++tick; tick < 120u && tick < engine.predicted_impulse_lockout_until_tick_; ++tick) {
+        require(engine.step_local_character_prediction(input, tick));
+        require(std::abs(engine.predicted_character_state_.position.x - top.x) < 0.001f);
+    }
+    // Landed, released, and the stick moves it again.
+    require(!(tick < engine.predicted_impulse_lockout_until_tick_));
+    require(engine.predicted_character_state_.position.y < 0.05f);
+    for (int step = 0; step < 10; ++step, ++tick) {
+        require(engine.step_local_character_prediction(input, tick));
+    }
+    require(engine.predicted_character_state_.position.x < top.x - 0.5f);
+
+    // A snapshot without one clears it.
+    engine.adopt_authoritative_suspension(network_example::EntitySnapshot{});
+    require(engine.predicted_suspension_until_tick_ == 0u);
+}
+
 void predicted_knockdown_holds_the_local_player_down() {
     KernelConfig config{};
     config.mode = KernelMode_Client;
@@ -5665,6 +5718,7 @@ int main() {
     reconcile_replays_an_authoritative_knockback();
     authoritative_lockout_respects_a_newer_local_one();
     predicted_knockdown_holds_the_local_player_down();
+    predicted_suspension_rises_then_drops_like_the_authority();
     predicted_shelter_holds_the_local_player_inside();
     client_shelter_state_names_the_building_ui();
     late_snapshot_is_stored_but_not_used_for_reconciliation();

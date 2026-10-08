@@ -1415,6 +1415,13 @@ bool execute_action_graph_commands(
             // knockback in flight is over, and the ground lets go of it.
             world.registry().remove<ImpulseLockout>(target);
             world.registry().emplace_or_replace<HeldInSuspension>(target);
+            world.registry().get_or_emplace<ReplicationState>(target).visual_flags |=
+                kVisualFlagSuspended;
+            // The rise is the authority's alone, as a knockback's flight is:
+            // the anchor lets a client draw it instead of waiting on snapshots.
+            engine.queue_actor_impulse(
+                suspend->target,
+                world.registry().get<Transform>(target).position.y);
             MovementState& movement = world.registry().get<MovementState>(target);
             movement.ground_state = MovementState::GroundState::kAirborne;
             movement.ground_normal = glm::vec3{0.0f, 1.0f, 0.0f};

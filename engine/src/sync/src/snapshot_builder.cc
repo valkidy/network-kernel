@@ -93,6 +93,15 @@ WorldSnapshot build_world_snapshot(
             entity_snapshot.impulse_lockout_armed_tick = lockout->armed_tick;
             entity_snapshot.impulse_lockout_recovering = lockout->recovering;
         }
+        if (const ActiveStatusEffect* suspension = active_suspension(world, entity);
+            suspension != nullptr && server_tick < suspension->expire_tick) {
+            entity_snapshot.has_suspension = true;
+            entity_snapshot.suspension_velocity = glm::vec3{
+                suspension->suspend_drift_velocity.x,
+                suspension->suspend_rise_speed,
+                suspension->suspend_drift_velocity.z};
+            entity_snapshot.suspension_until_tick = suspension->expire_tick;
+        }
         if (const Sheltered* sheltered = world.registry().try_get<Sheltered>(entity)) {
             entity_snapshot.shelter_net_id = sheltered->shelter_net_id;
             entity_snapshot.shelter_seat = sheltered->seat;

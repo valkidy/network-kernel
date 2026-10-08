@@ -5378,7 +5378,10 @@ void KernelEngine::sync_client_render_colliders() {
         const bool prediction_actor_hitbox =
             entity_type == EntityType::kActor &&
             state.net_id != local_player_net_id_ &&
-            (state.visual_flags & kVisualFlagDead) == 0u;
+            (state.visual_flags & kVisualFlagDead) == 0u &&
+            // Nothing strikes an actor in a bubble, so the shots this client
+            // predicts must pass through it as the authority's do.
+            (state.visual_flags & kVisualFlagSuspended) == 0u;
         if (prediction_physics_world_ == nullptr ||
             (entity_type != EntityType::kProp && !prediction_actor_hitbox) ||
             state.item_instance_id != 0u ||
@@ -6948,6 +6951,8 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     predicted_impulse_lockout_until_tick_ = 0u;
     predicted_impulse_lockout_armed_tick_ = 0u;
     predicted_impulse_lockout_recovering_ = false;
+    predicted_suspension_velocity_ = glm::vec3{0.0f};
+    predicted_suspension_until_tick_ = 0u;
     predicted_shelter_net_id_ = 0u;
     predicted_shelter_tick_ = 0u;
     predicted_action_buttons_ = 0u;
@@ -8787,6 +8792,8 @@ void KernelEngine::clear_client_session() {
     predicted_impulse_lockout_until_tick_ = 0u;
     predicted_impulse_lockout_armed_tick_ = 0u;
     predicted_impulse_lockout_recovering_ = false;
+    predicted_suspension_velocity_ = glm::vec3{0.0f};
+    predicted_suspension_until_tick_ = 0u;
     predicted_shelter_net_id_ = 0u;
     predicted_shelter_tick_ = 0u;
     local_presentation_position_ = glm::vec3{0.0f, 0.0f, 0.0f};
@@ -9655,6 +9662,20 @@ bool KernelEngine::step_local_character_prediction(
     // velocity instead of rebuilding it from input, so the prediction has to
     // do exactly the same or it walks away from the authority for N ticks and
     // is snapped back at reconciliation.
+    // The tick the suspension ends is the tick the authority's
+    // settle_status_suspensions arms the drop: velocity zeroed, out of the
+    // player's control until it lands. Armed here the same way, with the
+    // longest ceiling there is -- landing is what ends it, and the owner
+    // snapshot hands over the authority's own numbers soon after.
+    if (predicted_suspension_until_tick_ != 0u &&
+        prediction_tick == predicted_suspension_until_tick_ &&
+        predicted_impulse_lockout_armed_tick_ < prediction_tick) {
+        predicted_character_state_.velocity = glm::vec3{0.0f};
+        predicted_impulse_lockout_armed_tick_ = prediction_tick;
+        predicted_impulse_lockout_until_tick_ =
+            prediction_tick + KERNEL_MAX_IMPULSE_LOCKOUT_TICKS;
+        predicted_impulse_lockout_recovering_ = false;
+    }
     const bool impulse_locked =
         prediction_tick < predicted_impulse_lockout_until_tick_;
     // Inside a building the authority holds the player still whatever the
@@ -9670,15 +9691,34 @@ bool KernelEngine::step_local_character_prediction(
                      predicted_character_state_.velocity.z})
         : movement_solver::input_move_to_world(input) *
               local_player_move_speed_meters_per_second_;
+    // The suspension's twin of player_movement.cc: held, the step is the
+    // authority's own -- step_character_at_velocity at the suspension's
+    // velocity, off the ground, whatever the stick says.
+    const bool suspended = prediction_tick < predicted_suspension_until_tick_;
     std::string error;
     const glm::vec3 position_before_step = predicted_character_state_.position;
-    if (!movement_solver::step_character(
-            *prediction_physics_world_,
-            movement_config,
-            desired_horizontal,
-            tick_loop_.fixed_delta_seconds(),
-            &predicted_character_state_,
-            &error)) {
+    if (suspended) {
+        predicted_character_state_.ground_state = physics::CharacterGroundState::kAirborne;
+    }
+    const bool stepped = suspended
+        ? movement_solver::step_character_at_velocity(
+              *prediction_physics_world_,
+              movement_config,
+              predicted_suspension_velocity_,
+              tick_loop_.fixed_delta_seconds(),
+              &predicted_character_state_,
+              &error)
+        : movement_solver::step_character(
+              *prediction_physics_world_,
+              movement_config,
+              desired_horizontal,
+              tick_loop_.fixed_delta_seconds(),
+              &predicted_character_state_,
+              &error);
+    if (suspended) {
+        predicted_character_state_.ground_state = physics::CharacterGroundState::kAirborne;
+    }
+    if (!stepped) {
         spdlog::error("client CharacterVirtual prediction step failed: {}", error);
         return false;
     }
@@ -9997,6 +10037,17 @@ void KernelEngine::adopt_authoritative_impulse_lockout(
     }
 }
 
+// Whatever the owner snapshot says, outright: a suspension starts and ends on
+// the authority alone, so the snapshot is never stale against a prediction of
+// one -- only against the drop the prediction arms when it ends, and that is
+// the impulse lockout's to reconcile.
+void KernelEngine::adopt_authoritative_suspension(const EntitySnapshot& authoritative) {
+    predicted_suspension_velocity_ =
+        authoritative.has_suspension ? authoritative.suspension_velocity : glm::vec3{0.0f};
+    predicted_suspension_until_tick_ =
+        authoritative.has_suspension ? authoritative.suspension_until_tick : 0u;
+}
+
 void KernelEngine::reconcile_local_prediction(const WorldSnapshot& snapshot) {
     if (local_player_net_id_ == 0) {
         return;
@@ -10075,6 +10126,7 @@ void KernelEngine::reconcile_local_prediction(const WorldSnapshot& snapshot) {
         predicted_character_tick_ = snapshot.header.server_tick;
         adopt_authoritative_impulse_lockout(
             *authoritative, snapshot.header.server_tick);
+        adopt_authoritative_suspension(*authoritative);
         movement_solver::CharacterMovementConfig movement_config{};
         std::string error;
         if (!build_local_character_movement_config(&movement_config)) {
@@ -13280,6 +13332,8 @@ WorldSnapshot KernelEngine::build_relevant_snapshot(
             filtered_entity.impulse_lockout_recovering =
                 filtered_entity.has_impulse_lockout &&
                 entity.impulse_lockout_recovering;
+            filtered_entity.has_suspension =
+                entity.has_suspension && entity.net_id == session.player;
             filtered.entities.push_back(filtered_entity);
         }
     }
@@ -14562,11 +14616,35 @@ void KernelEngine::flush_actor_impulses() {
         const Velocity* velocity = registry.try_get<Velocity>(*entity);
         const MovementState* movement = registry.try_get<MovementState>(*entity);
         const Health* health = registry.try_get<Health>(*entity);
+        if (transform == nullptr || velocity == nullptr || movement == nullptr ||
+            (health != nullptr && health->max_hp > 0u && health->hp == 0u)) {
+            continue;
+        }
+        // A status suspension's rise: a straight line at its own velocity,
+        // with nothing pulling on it, until the status's end tick -- which a
+        // zero-gravity flight replays exactly. Its drop gets an anchor of its
+        // own when the suspension ends.
+        if (const ActiveStatusEffect* suspension =
+                registry.all_of<HeldInSuspension>(*entity)
+                    ? active_suspension(world_, *entity)
+                    : nullptr;
+            suspension != nullptr) {
+            if (suspension->expire_tick <= tick) continue;
+            ActorImpulseRecord record{};
+            record.net_id = net_id;
+            record.position = transform->position;
+            record.velocity = movement_solver::suspended_velocity(
+                suspension->suspend_rise_speed, suspension->suspend_drift_velocity);
+            record.gravity_y = 0.0f;
+            record.floor_y = floor_y;
+            record.lockout_ticks = static_cast<std::uint16_t>(std::min<std::uint32_t>(
+                suspension->expire_tick - tick, UINT16_MAX));
+            batch.records.push_back(record);
+            continue;
+        }
         // No lockout left means the flight already ended inside this tick (it
         // landed, or a death cleared it); the snapshot says the rest.
-        if (lockout == nullptr || transform == nullptr || velocity == nullptr ||
-            movement == nullptr || lockout->until_tick <= tick ||
-            (health != nullptr && health->max_hp > 0u && health->hp == 0u)) {
+        if (lockout == nullptr || lockout->until_tick <= tick) {
             continue;
         }
         ActorImpulseRecord record{};

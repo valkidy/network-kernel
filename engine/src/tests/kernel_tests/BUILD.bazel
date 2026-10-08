@@ -363,6 +363,12 @@ cc_test(
 )
 
 cc_test(
+    name = "suspension_end_to_end_test",
+    srcs = ["suspension_end_to_end_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
+cc_test(
     name = "world_timeline_endings_test",
     srcs = ["world_timeline_endings_test.cc"],
     deps = ["//engine/src/kernel:kernel"],

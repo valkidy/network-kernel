@@ -32,6 +32,10 @@
  *     status only on a target whose impulse_resistance it strictly exceeds,
  *     as apply_impulse and apply_pull weigh theirs. Zero, the default, applies
  *     it to anyone, as before.
+ *     KERNEL_VISUAL_FLAG_SUSPENDED (0x400): the actor is held in a status
+ *     suspension -- the bubble a client draws. Snapshot schema 29 sends the
+ *     owner its own suspension (velocity and end tick) so its prediction
+ *     rises with the authority.
  * 101: items and wands, first part. KernelPropDefinition gained importance
  *     (with three reserved bytes), appended after population_group_id: when
  *     a population group is over max_alive, the member just spawned is never
@@ -495,6 +499,8 @@ typedef enum KernelFootholdQueryType {
  * Dead                  visual_flags & KERNEL_VISUAL_FLAG_DEAD
  * Staggered             visual_flags & KERNEL_VISUAL_FLAG_STAGGERED
  * Aiming                visual_flags & KERNEL_VISUAL_FLAG_AIMING
+ * Suspended             visual_flags & KERNEL_VISUAL_FLAG_SUSPENDED (a status
+ *                       holds it in the air: the water bubble; ABI 102)
  * Firing                visual_flags & KERNEL_VISUAL_FLAG_FIRING, or
  *                       action.phase == KernelActionPhase_Active
  * Windup                action.phase == KernelActionPhase_Windup
@@ -515,6 +521,8 @@ typedef enum KernelFootholdQueryType {
 #define KERNEL_VISUAL_FLAG_STAGGERED UINT32_C(0x00000080)
 #define KERNEL_VISUAL_FLAG_AIMING UINT32_C(0x00000100)
 #define KERNEL_VISUAL_FLAG_FIRING UINT32_C(0x00000200)
+/* Core state, but bits 0-7 are full. */
+#define KERNEL_VISUAL_FLAG_SUSPENDED UINT32_C(0x00000400)
 
 #define KERNEL_MAX_VISIBLE_HOSTILES 16u
 #define KERNEL_MAX_VISIBLE_ALLIES 16u
