@@ -307,6 +307,28 @@ triggers:
   - 飛船：水球在 (7.00, 13.21) 打中而破掉，但沒有被包住
   這同時涵蓋了 P2 延到這裡的「AI 推不動」。
 
+**追加：Water Bubble Staff（2026-10-08，P6 之後）**
+
+| 檔案 | id | 內容 |
+|---|---|---|
+| `weapon_templates/17_weapon_water_bubble_staff.yaml` | weapon 17 | 武器欄 2（staff），projectile 武器，彈匣 3、備用 4 |
+| `item_templates/3027_stateful_weapon_water_bubble_staff.yaml` | item 3027 | 武器道具，加進營地 `loadout.weapons` |
+| `projectile_templates/30_projectile_water_bubble_bolt.yaml` | projectile 30 | 直線、無重力、30 m/s、沒有傷害（`damage_shape: none`），client 端用 hybrid 預測 |
+| `action_graph_templates/action_apply_status_at_impact.yaml` | — | `apply_status { water_bubble, direction: event.direction, strength: 10.0, when: event.has_target }` |
+| `action_templates/water_bubble_staff_cast.yaml`、`water_bubble_staff_reload.yaml` | 4124、4125 | 按下施法（6 ticks 後射出），reload 2 秒 |
+
+要讓這把法杖生效，必須補兩件 kernel 和 game_server 的事：
+- **projectile 命中 trigger 原本只會執行 spawn_projectile。** kernel 的驗證雖然允許 apply_damage、apply_impulse、apply_pull，但 `execute_queued_trigger_events` 只執行「整個 batch 都是 spawn」的情況，其他的會被整批丟掉。
+  現在含有其他指令的 batch 會轉交給 engine 的通用執行器，跟範圍效果和近戰的 batch 在同一個時間點執行；延遲補償的命中路徑（`resolve_projectile_historical_hit`）也一樣轉交。
+  正式 catalog 裡寫了 damage、impulse、pull 的 projectile trigger 全部是範圍效果或近戰，不會走這條碰撞路徑，所以這個改動對現有內容沒有影響。
+  **但這是行為上的改變**：以後一般的 projectile 寫 apply_damage 或 apply_impulse，命中時就真的會執行了。
+- **projectile trigger 支援 `apply_status`**：kernel 的驗證允許它；game_server 的 projectile 編譯可以用名字查 status。只有武器資料夾的載入路徑，也會從旁邊的資料夾讀 status。
+- 沒有 ABI 或 snapshot schema 的變動。
+- 測試：`//game_server:water_bubble_staff_test`，玩家透過武器容器裝備正式的法杖，用真正的輸入開火：
+  - 射地面：扣 1 發彈藥，沒有人被包住
+  - 射 6 m 外的 gingerbread：被包住、上升 2.97 m、落回地面
+  另外修了兩個測試的資料：`game_server_api_test` 自己組 bundle 時的資料夾清單少了 `status_effect_templates`。
+
 ---
 
 ## 5. 版本與交付

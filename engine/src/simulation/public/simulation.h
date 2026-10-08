@@ -436,6 +436,16 @@ void simulate_projectiles(
     std::uint32_t current_tick,
     std::vector<KernelEvent>* events,
     DamagePipeline* damage_pipeline);
+// The same, handing a trigger batch that does more than spawn projectiles --
+// an apply_status on what a bolt struck -- to `forwarded_batches` for the
+// engine to execute, instead of dropping it.
+void simulate_projectiles(
+    World& world,
+    float fixed_delta_seconds,
+    std::uint32_t current_tick,
+    std::vector<KernelEvent>* events,
+    DamagePipeline* damage_pipeline,
+    std::vector<ActionGraphCommandBatch>* forwarded_batches);
 void simulate_area_effects(
     World& world,
     std::uint32_t current_tick,
@@ -474,7 +484,8 @@ bool resolve_projectile_historical_hit(
     std::uint32_t current_tick,
     float fixed_delta_seconds,
     std::vector<KernelEvent>* events,
-    DamagePipeline* damage_pipeline);
+    DamagePipeline* damage_pipeline,
+    std::vector<ActionGraphCommandBatch>* forwarded_batches = nullptr);
 
 void simulate_hitscan_weapons(
     World& world,

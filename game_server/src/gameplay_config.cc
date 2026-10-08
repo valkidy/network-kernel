@@ -7213,7 +7213,8 @@ void compile_projectile_trigger_binding(
     bool expired,
     const std::vector<ActionGraphTemplateConfig>& action_graph_templates,
     std::vector<ProjectileTemplateConfig>* projectile_templates,
-    ProjectileTemplateConfig* projectile_template) {
+    ProjectileTemplateConfig* projectile_template,
+    const std::vector<StatusEffectTemplateConfig>* status_effect_templates) {
     if (binding.action_graph_ref.empty()) {
         return;
     }
@@ -7266,6 +7267,38 @@ void compile_projectile_trigger_binding(
             throw std::runtime_error(
                 "refill_weapon_reserve is only supported in on_item_used: " +
                 projectile_template->name);
+        }
+        // A bolt that puts a status on what it strikes, as a thrown prop's
+        // on_collision can: the water bubble staff.
+        if (action.action_type == "apply_status") {
+            if (status_effect_templates == nullptr) {
+                throw std::runtime_error(
+                    "projectile apply_status needs the catalog's status effects: " +
+                    projectile_template->name);
+            }
+            const std::string status = trigger_parameter_value(
+                binding, graph_parameter(action.status_parameter));
+            const auto found = std::find_if(
+                status_effect_templates->begin(), status_effect_templates->end(),
+                [&](const StatusEffectTemplateConfig& candidate) {
+                    return candidate.name == status ||
+                        std::to_string(candidate.status_effect_id) == status;
+                });
+            if (found == status_effect_templates->end()) {
+                throw std::runtime_error("unknown status effect: " + status);
+            }
+            compiled_action.action_type = KernelEntityTriggerActionType_ApplyStatus;
+            compiled_action.target_source = entity_ref_source(
+                trigger_parameter_value(
+                    binding, graph_parameter(action.target_parameter)));
+            compiled_action.status_effect_id = found->status_effect_id;
+            compiled_action.status_strength = action.status_strength;
+            if (!action.direction_parameter.empty()) {
+                compile_status_direction(
+                    binding, graph_parameter(action.direction_parameter),
+                    &compiled_action);
+            }
+            continue;
         }
         if (action.action_type == "apply_pull") {
             compiled_action.target_source = entity_ref_source(
@@ -7795,7 +7828,8 @@ std::vector<ProjectileTemplateConfig> load_projectile_templates_from_source(
     const GameplayConfigSource& source,
     const std::string& directory,
     const ColliderCatalogConfig& colliders,
-    const std::vector<ActionGraphTemplateConfig>& action_graph_templates) {
+    const std::vector<ActionGraphTemplateConfig>& action_graph_templates,
+    const std::vector<StatusEffectTemplateConfig>* status_effect_templates = nullptr) {
     std::vector<ProjectileTemplateConfig> projectile_templates;
     std::unordered_map<std::uint32_t, std::string> ids;
     std::unordered_map<std::string, std::uint32_t> names;
@@ -7838,13 +7872,15 @@ std::vector<ProjectileTemplateConfig> load_projectile_templates_from_source(
             false,
             action_graph_templates,
             &projectile_templates,
-            &projectile_template);
+            &projectile_template,
+            status_effect_templates);
         compile_projectile_trigger_binding(
             projectile_template.expired_trigger,
             true,
             action_graph_templates,
             &projectile_templates,
-            &projectile_template);
+            &projectile_template,
+            status_effect_templates);
     }
     for (const ProjectileTemplateConfig& projectile_template : projectile_templates) {
         std::vector<std::uint32_t> visited;
@@ -8180,11 +8216,18 @@ GameServerGameplayConfig load_gameplay_config_from_weapon_template_source(
         source.parent_path(directory), YAML::Node("action_graph_templates"));
     config.action_graph_templates = load_action_graph_templates_from_source(
         source, action_graph_template_dir);
+    // The statuses a projectile's trigger may put on what it strikes, from the
+    // same sibling layout the action graphs come from.
+    const std::string status_effect_template_dir = source.resolve_path(
+        source.parent_path(directory), YAML::Node("status_effect_templates"));
+    config.status_effect_templates = load_status_effect_templates_from_source(
+        source, status_effect_template_dir);
     config.projectile_templates = load_projectile_templates_from_source(
         source,
         source.default_projectile_template_dir_for_weapon_dir(directory),
         config.colliders,
-        config.action_graph_templates);
+        config.action_graph_templates,
+        &config.status_effect_templates);
     apply_weapon_template_references(
         source,
         directory,
@@ -8431,7 +8474,8 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
         source,
         projectile_template_dir,
         config.colliders,
-        config.action_graph_templates);
+        config.action_graph_templates,
+        &config.status_effect_templates);
     apply_weapon_template_references(
         source,
         weapon_template_dir,

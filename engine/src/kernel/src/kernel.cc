@@ -1897,6 +1897,17 @@ bool validate_projectile_mechanics(
                 }
             } else if (action.action_type == KernelEntityTriggerActionType_ApplyPull) {
                 if (!pull_action_is_authorable(action)) return false;
+            } else if (action.action_type == KernelEntityTriggerActionType_ApplyStatus) {
+                // A bolt that puts a status on what it strikes (the water
+                // bubble staff). Whether the id names a status is the
+                // batch's to find out: it refuses the whole batch if not.
+                if (action.target_source > KernelEntityRefSource_EventInstigator ||
+                    action.status_effect_id == 0u ||
+                    !status_strength_is_authorable(action.status_strength) ||
+                    (action.status_direction_authored != 0u &&
+                     action.direction_source > KernelEventVec3Source_SubjectPosition)) {
+                    return false;
+                }
             } else {
                 return false;
             }
@@ -13135,7 +13146,8 @@ void KernelEngine::simulate_tick() {
         fixed_delta,
         tick_loop_.current_tick(),
         &events_,
-        &damage_pipeline_);
+        &damage_pipeline_,
+        &action_graph_batches);
     simulate_area_effects(
         world_,
         tick_loop_.current_tick(),

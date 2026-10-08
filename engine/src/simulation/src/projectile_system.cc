@@ -787,12 +787,18 @@ void queue_projectile_trigger(
 // `committed_subjects`, when given, receives the subject of every batch that
 // committed or had already committed -- so a caller can tell which of the
 // triggers it queued actually took effect.
+// Spawns are run here, against the world alone. A batch that does anything
+// else -- puts a status on what a bolt struck -- needs the engine's executor,
+// so it goes to `forwarded`, which the engine drains once per tick with the
+// area effect and melee batches; with nowhere to forward it, it is dropped as
+// it always was.
 void execute_queued_trigger_events(
     World& world,
     std::vector<ActionGraphQueuedTrigger>* trigger_events,
     float fixed_delta_seconds,
     std::vector<KernelEvent>* events,
-    std::vector<NetId>* committed_subjects = nullptr) {
+    std::vector<NetId>* committed_subjects = nullptr,
+    std::vector<ActionGraphCommandBatch>* forwarded = nullptr) {
     if (trigger_events == nullptr) {
         return;
     }
@@ -823,15 +829,28 @@ void execute_queued_trigger_events(
             }
             continue;
         }
+        const bool spawns_only = std::all_of(
+            batch.commands.begin(),
+            batch.commands.end(),
+            [](const ActionGraphCommand& graph_command) {
+                return std::holds_alternative<ActionSpawnProjectileCommand>(graph_command);
+            });
+        if (!spawns_only) {
+            if (forwarded != nullptr) {
+                forwarded->push_back(batch);
+                if (committed_subjects != nullptr) {
+                    committed_subjects->push_back(batch.event.subject);
+                }
+            }
+            continue;
+        }
         const bool valid = std::all_of(
             batch.commands.begin(),
             batch.commands.end(),
             [&](const ActionGraphCommand& graph_command) {
-                const auto* command =
-                    std::get_if<ActionSpawnProjectileCommand>(&graph_command);
-                return command != nullptr &&
-                    world.find_projectile_template(
-                        command->projectile_template_id) != nullptr;
+                return world.find_projectile_template(
+                           std::get<ActionSpawnProjectileCommand>(graph_command)
+                               .projectile_template_id) != nullptr;
             });
         if (!valid) {
             continue;
@@ -1477,6 +1496,17 @@ void simulate_projectiles(
     std::uint32_t current_tick,
     std::vector<KernelEvent>* events,
     DamagePipeline* damage_pipeline) {
+    simulate_projectiles(
+        world, fixed_delta_seconds, current_tick, events, damage_pipeline, nullptr);
+}
+
+void simulate_projectiles(
+    World& world,
+    float fixed_delta_seconds,
+    std::uint32_t current_tick,
+    std::vector<KernelEvent>* events,
+    DamagePipeline* damage_pipeline,
+    std::vector<ActionGraphCommandBatch>* forwarded_batches) {
     DamagePipeline local_damage_pipeline;
     DamagePipeline* active_damage_pipeline = damage_pipeline;
     if (active_damage_pipeline == nullptr) {
@@ -1738,7 +1768,8 @@ void simulate_projectiles(
 
     std::vector<NetId> committed_subjects;
     execute_queued_trigger_events(
-        world, &trigger_events, fixed_delta_seconds, events, &committed_subjects);
+        world, &trigger_events, fixed_delta_seconds, events, &committed_subjects,
+        forwarded_batches);
     // A root whose chain did not start is removed now rather than held: a
     // client reads a root that goes before its chain could have ended as the
     // chain being called off.
@@ -1786,7 +1817,8 @@ bool resolve_projectile_historical_hit(
     std::uint32_t current_tick,
     float fixed_delta_seconds,
     std::vector<KernelEvent>* events,
-    DamagePipeline* damage_pipeline) {
+    DamagePipeline* damage_pipeline,
+    std::vector<ActionGraphCommandBatch>* forwarded_batches) {
     if (fixed_delta_seconds <= 0.0f || current_tick <= rewind_tick) {
         return false;
     }
@@ -1848,7 +1880,8 @@ bool resolve_projectile_historical_hit(
                         hit.volume.hit_zone));
                 }
                 execute_queued_trigger_events(
-                    world, &trigger_events, fixed_delta_seconds, events);
+                    world, &trigger_events, fixed_delta_seconds, events, nullptr,
+                    forwarded_batches);
                 world.destroy(projectile_net_id);
                 return true;
             }
