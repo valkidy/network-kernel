@@ -1,0 +1,29 @@
+# A thrown water balloon: hitting an actor puts it in a bubble, carrying the
+# balloon's flight direction for the bubble's drift; whatever it hits, the
+# balloon bursts.
+#
+# Only the hit names a target, so `when: event.has_target` keeps a landing from
+# trying to bubble nobody. The self-damage is on every contact: unlike a
+# potion, a balloon that lands has burst too.
+#
+# strength is weighed against the target's impulse_resistance, strictly:
+# 10 spares the hive airship (resistance 10). It is a literal on the action
+# for the reason apply_pull's is -- who is affected must not depend on the
+# binding.
+id: action_encase_target_and_break_self_at_collision
+parameters:
+  source: null
+  target: null
+  status: water_bubble
+  direction: null
+  self_damage: 1
+actions:
+  - type: apply_status
+    target: params.target
+    status: params.status
+    direction: params.direction
+    strength: 10.0
+    when: event.has_target
+  - type: apply_damage
+    target: params.source
+    amount: params.self_damage

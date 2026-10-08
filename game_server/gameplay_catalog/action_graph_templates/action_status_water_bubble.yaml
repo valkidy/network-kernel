@@ -1,0 +1,15 @@
+# water_bubble's on_apply: hold, float and shield the bubbled actor. The speeds
+# are literals on the action, as apply_pull's numbers are; the drift's
+# direction is the one the status was applied with (event.direction).
+id: action_status_water_bubble
+parameters:
+  target: null
+actions:
+  - type: apply_block_actions
+    target: params.target
+  - type: apply_suspend_movement
+    target: params.target
+    rise_speed: 1.0
+    drift_speed: 0.5
+  - type: apply_untargetable
+    target: params.target

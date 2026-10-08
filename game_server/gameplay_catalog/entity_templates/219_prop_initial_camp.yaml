@@ -34,6 +34,8 @@ loadout:
       quantity: 3
     - item_template: fungible_pull_bottle
       quantity: 3
+    - item_template: fungible_water_balloon
+      quantity: 3
     - item_template: fungible_tent_kit
       quantity: 1
     - item_template: fungible_camp_kit

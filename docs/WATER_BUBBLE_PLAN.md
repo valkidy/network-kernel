@@ -1,6 +1,6 @@
 # 水球武器（泡泡封鎖）實作計劃書
 
-狀態：**設計已定案；P0 驗證完成（§9）；P1–P5 完成（2026-10-08，見各節的實作紀錄）。P6（catalog 內容）尚未實作。**
+狀態：**設計已定案；P0 驗證完成（§9）；**P1–P6 全部完成（2026-10-08）**，見各節的實作紀錄。**
 分支：`claude/water-bubble`，從 `main`（7dc17f9，item-weapon 已 merge，ABI 101）開。
 最後更新：2026-10-08。
 
@@ -286,6 +286,27 @@ triggers:
       drift_speed: 0.3
 ```
 
+**P6 實作紀錄（catalog 內容）**：
+
+| 檔案 | id | 內容 |
+|---|---|---|
+| `status_effect_templates/1005_status_effect_water_bubble.yaml` | status 1005 | `water_bubble`，90 ticks（3 秒），`on_apply` → `action_status_water_bubble` |
+| `action_graph_templates/action_status_water_bubble.yaml` | — | `apply_block_actions` + `apply_suspend_movement { rise_speed: 1.0, drift_speed: 0.5 }` + `apply_untargetable` |
+| `action_graph_templates/action_encase_target_and_break_self_at_collision.yaml` | — | `apply_status { direction, strength: 10.0, when: event.has_target }` + 對自己扣 1 hp（每次碰撞都會，所以丟到地上也會破） |
+| `entity_templates/224_prop_water_balloon.yaml` | prop 224 | `on_collision: actor \| terrain \| static_obstacle`，`direction: event.direction` |
+| `item_templates/3014_fungible_water_balloon.yaml` | item 3014 | 照 `fungible_pull_bottle`：fungible、一組 3 個、`grenade_shell` 拋物線 |
+
+- 玩家的道具欄最後面加上 3 顆水球（`1_player.yaml`），營地的整備選項也加上（`219_prop_initial_camp.yaml`）。id 開工前掃過全部本地分支，沒有撞號。
+- **水球本身沒有傷害**：同一個 batch 裡的傷害會先進傷害 pipeline，等確認時目標已經被包住，反正會被丟掉。
+- **碰撞遮罩是 `actor`（所有陣營）**，跟藥水一樣，所以丟到隊友會把隊友包住。這是一個設計選擇，要只打敵人的話改成敵方陣營的遮罩。
+- **BUILD 的修正**：graph 現在會指名一個 status，所以凡是會載入整份 catalog 的測試，data 都要有 `status_effect_templates`。補了 8 個 game_server 測試 target，
+  以及 bundle 裡的 `tests/test_catalogs/legged_locomotion/gameplay_catalog.yaml`（共用正式的 graph 和 entity 資料夾，原本沒有指定 `status_effect_template_dir`）。
+- 測試：`//game_server:water_balloon_test`，玩家實際丟出正式的水球：
+  - gingerbread：被包住、`set_velocity` 被拒絕、上升 2.97 m、落回地面、之後可以再設定速度
+  - drone：被包住、升到 11.97 m、掉到地面（0.00）、再飛回 9.00 m
+  - 飛船：水球在 (7.00, 13.21) 打中而破掉，但沒有被包住
+  這同時涵蓋了 P2 延到這裡的「AI 推不動」。
+
 ---
 
 ## 5. 版本與交付
@@ -318,7 +339,7 @@ client 和 server 必須用同一版。
 | **P3** | K5 untargetable + AI 跳過 | **完成 2026-10-08。** §3.5 每一條路徑各一個測試：子彈穿過、範圍效果跳過；落下期間可以被打；AI 視野看不到 |
 | **P4** | K2 strength | **完成 2026-10-08。** 飛船（resistance 10）被打到只受傷不被包；沒寫 strength 的現有 status 行為不變 |
 | **P5** | K6 + K7 prediction 與遠端軌跡 | **完成 2026-10-08。** 原本的驗收是「本機 prediction 的上升軌跡和 server 誤差為 0；遠端 anchor 重播誤差為 0」。實際驗證的是：client 預測的上升和飄移距離在 `v·t` 的 1 cm 以內（server 那邊在 P2 也是同樣的標準），兩邊呼叫同一個 solver；anchor 的速度、重力、tick 跟 server 完全相等。**沒有**逐 tick 比對 client 和 server 的軌跡 |
-| **P6** | §4 catalog 內容 | e2e：玩家丟水球打中 AI，AI 上升 N ticks、落下、落地；打中 drone，drone 墜落後飛回 |
+| **P6** | §4 catalog 內容 | **完成 2026-10-08。** e2e：玩家丟水球打中 AI，AI 上升 N ticks、落下、落地；打中 drone，drone 墜落後飛回 |
 
 全部做完後交給使用者，附上：分支名稱、commit、ABI 與 snapshot schema 的變動、`bundle.bytes` 需要更新。
 

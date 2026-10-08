@@ -1,0 +1,22 @@
+# Water balloon: the one actor it hits is caught in a bubble for three seconds
+# -- held, untouchable, floating up -- then dropped. The hive airship is too
+# heavy for it and only gets wet.
+#
+# Fungible and identity-preserving, like fungible_pull_bottle: a throw splits
+# one balloon off the stack and the prop that flies is that balloon.
+id: 3014
+name: fungible_water_balloon
+mode: fungible
+max_stack: 3
+capabilities: [pickupable, throwable]
+entity_template: water_balloon
+world_interaction:
+  range: 3.0
+  line_of_sight_required: false
+throw:
+  mode: identity_preserving
+  trajectory_projectile: grenade_shell
+use:
+  quantity_cost: 0
+  cooldown_ticks: 0
+  destroy_when_empty: false

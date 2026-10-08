@@ -70,6 +70,9 @@ inventory_slots:
   # Last, so every slot index above it stays where it was.
   - item_template: fungible_pull_bottle
     quantity: 3
+  # After it, for the same reason.
+  - item_template: fungible_water_balloon
+    quantity: 3
 animations:
   idle: 0
   chasing: 1
