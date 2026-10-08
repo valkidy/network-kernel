@@ -393,7 +393,7 @@ client 和 server 必須用同一版。
 | R9 | main 上大約 15 個 game_server 測試（包含 `hover_controller_test`、`flying_units_test`）的 BUILD 沒有列 `locomotion_skeleton_assets`，gingerbread giant（template 39）加進 catalog 之後就全部載入失敗。原本就有的問題 | P2 暫時補上 dep 確認這兩個測試在 drone 改重力後都通過，然後還原。修正另外開成背景任務 |
 | R8 | 舊的按鈕射擊路徑（`simulate_weapons` 在沒有 action commit 時，看 `InputButton_Fire` 直接產生 commit）不經過 `action_block_reason`，所以擋不住。stagger、擊退、進建築也一樣擋不住它，是原本就有的缺口 | 只有玩家會走這條路徑（`PlayerTag`），AI 用 action intent。P1 不處理；要不要補上由使用者決定 |
 | R7 | drone 落下、落地的動畫 Unity 端還沒有 | client presentation，使用者處理 |
-| R3 | 關掉 hitbox 的做法可能連帶影響移動碰撞或 rewind | §9-3 先確認；不行就改成在每條路徑各加檢查 |
+| R3 | 關掉 hitbox 的做法可能連帶影響移動碰撞或 rewind | **P3 已解決**：只關 `kActorHitbox` 和 `kActorLimb`，移動 capsule 保留；rewind history 的 `alive` 也算進被包住；傷害入口再擋一次。`status_untargetable_test`（rewind、live 物理世界）和 `status_untargetable_kernel_test`（kernel 正式物理世界）涵蓋 |
 | R4 | 被包住的單位升得太高、飄出地圖 | `rise_speed·N·dt` 是有上限的，authoring 時控制即可 |
 | R5 | ABI 或 catalog id 跟其他還沒 merge 的分支撞號 | 開工時檢查，merge 時再檢查一次 |
 
