@@ -23,8 +23,10 @@
  * padding. A message whose body does not have exactly the layout below is
  * answered with GAME_SERVER_LOADOUT_RESULT_MALFORMED or ignored.
  *
- * LOADOUT_OFFERS, server -> client. Sent when the player activates a loadout
- * camp; it is also the client's cue to open the loadout UI.
+ * LOADOUT_OFFERS, server -> client. Sent when the player goes inside a
+ * loadout camp (a camp is a building: activating it takes the player in, and
+ * again brings it out; coming out sends nothing). The client opens the UI
+ * from its shelter state (ui_id 2); this fills it.
  *   u32 camp_net_id
  *   u8  slot_capacity        how many item options the player may pick
  *   u8  option_count         item options, 1..32
@@ -62,6 +64,7 @@
 #define GAME_SERVER_LOADOUT_RESULT_APPLIED 0u
 #define GAME_SERVER_LOADOUT_RESULT_MALFORMED 1u
 #define GAME_SERVER_LOADOUT_RESULT_NOT_A_CAMP 2u
+/* The player is not inside the camp the pick names. */
 #define GAME_SERVER_LOADOUT_RESULT_OUT_OF_RANGE 3u
 #define GAME_SERVER_LOADOUT_RESULT_TOO_MANY_PICKS 4u
 #define GAME_SERVER_LOADOUT_RESULT_BAD_OPTION 5u

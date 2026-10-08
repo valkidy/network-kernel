@@ -394,6 +394,11 @@ int main() {
     KernelServerEntityState camp_state = harness.state_of(camp);
     camp_state.position.x += 2.0f;
     harness.stand_at(camp_state.position);
+    // Picks are made from inside the camp, like any building's UI.
+    const KernelVec3 entry = harness.state_of(harness.player).position;
+    require(harness.request(KernelDomainAction_Activate, 0u, camp, 0u).status ==
+            KernelGameplayRequestStatus_Committed);
+    harness.step(4);
     auto [applied, weapon_count] = harness.select(camp, {0}, {pick_rifle});
     require(applied == GAME_SERVER_LOADOUT_RESULT_APPLIED);
     require(weapon_count == 1u);
@@ -410,13 +415,19 @@ int main() {
     require(beam_view.residency == KernelItemResidency_World);
     require(beam_view.drop_tag == KERNEL_DROP_TAG_MAP_WEAPON);
     {
-        const KernelServerEntityState me = harness.state_of(harness.player);
+        const KernelServerEntityState camp_now = harness.state_of(camp);
         const KernelServerEntityState lying = harness.state_of(beam_view.prop_entity_id);
-        // At the feet: the prop appears where the player stood, and the
-        // player is pushed off it, so "near" rather than "under".
-        require(std::hypot(lying.position.x - me.position.x, lying.position.z - me.position.z) < 1.5f);
+        // At the feet: inside the camp the player stands at its centre, so
+        // the feet are where it went in, outside -- not in the camp.
+        require(std::hypot(lying.position.x - entry.x, lying.position.z - entry.z) < 1.5f);
+        require(std::hypot(lying.position.x - camp_now.position.x,
+                           lying.position.z - camp_now.position.z) > 1.0f);
     }
     require(harness.holds(items, relic));
+    // Back out of the camp: inside, nothing else may be done.
+    require(harness.request(KernelDomainAction_Activate, 0u, camp, 0u).status ==
+            KernelGameplayRequestStatus_Committed);
+    harness.step(4);
 
     // Fungible stacks merge only on an equal tag. Merging happens on pickup,
     // so each potion goes down and comes back up. The loadout gave an untagged

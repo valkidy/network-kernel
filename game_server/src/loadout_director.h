@@ -16,12 +16,14 @@ namespace network_example::game_server {
 // leave the session. The wire format is GAME_SERVER_MESSAGE_LOADOUT_* in
 // game_server_types.h.
 //
-// A camp is any prop whose template has a `loadout:` block; activating it
-// (KernelEventType_UiOpened) sends the player the offer, which is also the
-// client's cue to open the UI. The pick is checked here, once -- it is replayed
-// on every respawn, so a forged one would pay out forever: the camp must be a
-// camp the player stands in reach of, the picks must name its options, and
-// there may be no more of them than the player has inventory slots.
+// A camp is any prop whose template has a `loadout:` block. It is a building
+// like a tent: activating it takes the player inside (ShelterDirector), and
+// going in (KernelEventType_ShelterChanged) sends the player the offer;
+// coming back out sends nothing. The client opens the UI from its shelter
+// state (ui_id 2), the offer fills it. The pick is checked here, once -- it is
+// replayed on every respawn, so a forged one would pay out forever: the player
+// must be inside the camp, the picks must name its options, and there may be
+// no more of them than the player has inventory slots.
 // What a player picked: items, each filling one inventory slot, and weapon
 // items, at most one per category. A loadout of neither is the default.
 struct PlayerLoadout {
@@ -59,6 +61,8 @@ private:
     const GameServerGameplayConfig& config_;
     ApplyLoadout apply_;
     std::map<std::uint32_t, PlayerLoadout> loadouts_;
+    // Player -> the building it is inside, from ShelterChanged.
+    std::map<std::uint32_t, std::uint32_t> inside_;
 };
 
 }  // namespace network_example::game_server

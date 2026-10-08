@@ -3,7 +3,14 @@
 # fills one inventory slot, and may be repeated, up to the player's
 # inventory_slot_capacity; weapons are picked at most one per category.
 #
-# No health and no lifecycle, so nothing removes it. For now the game rule
+# A building like the tent and the field camp: activating it takes the
+# player inside, the loadout UI (ui 2) is open while inside, and activating it
+# again comes back out. The offer is sent on the way in, and a pick is taken
+# only from inside.
+#
+# No health and no lifecycle, so nothing removes it: with no population group
+# it is never evicted either, which is the highest importance a building can
+# have (importance only orders eviction within a group). For now the game rule
 # puts it in the scene at the start; a scene file will later.
 id: 219
 name: initial_camp
@@ -11,6 +18,10 @@ entity_type: prop
 impulse_resistance: 1000.0
 physics:
   collider_template: tent_hitbox
+# Several players may be picking at once; hidden from enemies like a tent's.
+shelter:
+  capacity: 8
+  hide_occupants_from_vision: true
 interaction:
   capabilities: [interactable]
   range: 3.0

@@ -380,11 +380,19 @@ bool GameServer::configure_player_weapons(std::uint32_t net_id, bool reset) cons
             }
         }
         if (category < KERNEL_WEAPON_CATEGORY_COUNT && kept[category] != 0u) {
-            KernelServerEntityState me{};
-            me.struct_size = sizeof(me);
+            // A pick is made from inside the camp, where the player stands at
+            // the camp's centre: its feet are where it went in.
+            KernelVec3 feet{};
+            bool have_feet = shelter_.entry_position_of(net_id, &feet);
+            if (!have_feet) {
+                KernelServerEntityState me{};
+                me.struct_size = sizeof(me);
+                have_feet = Kernel_ServerGetEntityState(kernel_, net_id, &me);
+                feet = me.position;
+            }
             std::uint32_t prop = 0;
-            if (Kernel_ServerGetEntityState(kernel_, net_id, &me) &&
-                Kernel_ServerDropInventoryItem(kernel_, kept[category], &me.position, &prop)) {
+            if (have_feet &&
+                Kernel_ServerDropInventoryItem(kernel_, kept[category], &feet, &prop)) {
                 kept[category] = 0u;
             }
         }

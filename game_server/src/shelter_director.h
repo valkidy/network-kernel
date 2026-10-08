@@ -29,6 +29,11 @@ public:
     std::uint32_t shelter_of(std::uint32_t actor) const;
     // Everyone inside `building`, in net id order.
     std::vector<std::uint32_t> occupants_of(std::uint32_t building) const;
+    // Where `actor` stood when it was sent inside: outside the building, where
+    // it comes back out. False when it is not inside one. Inside, its own
+    // position is the building's, so anything set down "at its feet" goes
+    // here instead, as the kernel's own drops and a camp's Transfer do.
+    bool entry_position_of(std::uint32_t actor, KernelVec3* out_position) const;
 
 private:
     void request(std::uint32_t actor, std::uint32_t building) const;
@@ -36,6 +41,8 @@ private:
     KernelHandle* kernel_ = nullptr;
     // Occupant -> building, as the kernel last reported it.
     std::map<std::uint32_t, std::uint32_t> shelter_of_;
+    // Actor -> where it stood when it asked to go in.
+    std::map<std::uint32_t, KernelVec3> entry_position_;
 };
 
 }  // namespace network_example::game_server

@@ -95,12 +95,14 @@
 流程（P2 已實作，`game_server/src/loadout_director.cc`）：
 
 1. 初始營地是 prop 219 `initial_camp`，由 `scene_props:` 放進場景（D28）。`on_activated` 綁 `open_ui {ui_id: 2}`。
-   不需要 shelter，也不需要容器同步。任何模板有 `loadout:` 的 prop 都是配裝營地。
-2. 玩家互動後，game_server 透過 K10 送 `GAME_SERVER_MESSAGE_LOADOUT_OFFERS` 給他，這也是 client 打開 UI 的訊號。
+   它和帳篷、臨時營地一樣是建築（2026-10-08 改，見下方「建築進出一致」）：有 `shelter:`，啟動就進去，再啟動就出來。
+   不需要容器同步。任何模板有 `loadout:` 的 prop 都是配裝營地。
+2. 玩家**進入**營地時（`ShelterChanged`），game_server 透過 K10 送 `GAME_SERVER_MESSAGE_LOADOUT_OFFERS` 給他；離開時不送。
+   client 依本地 shelter 狀態的 ui_id 2 開關 UI，offers 只用來填內容。
 3. client 送 `LOADOUT_SELECT`，用選項的 index 指名；index 可以重複，一次挑選佔一格。
 4. game_server 驗證：
    - 目標是配裝營地；
-   - 玩家還活著，且距離在營地的互動範圍 + 1 m 內；
+   - 玩家還活著，且人在這個營地裡面（否則回 `OUT_OF_RANGE`）；
    - 挑選數 ≤ `inventory_slot_capacity`；
    - 每個 index 都有效。
 5. 驗證通過就記成這個玩家的配裝模板，並**立刻套用**（D3）：清空道具容器，再依模板建立。0 個挑選代表回到預設。回 `LOADOUT_RESULT`。
@@ -116,6 +118,12 @@
 - 立刻套用會讓從臨時營地拿到的東西一起被換掉（它們的標記是 0）。這是 D3 的結果。
 - 重新套用時，模板道具的格子可能被保留下來的任務道具佔掉。放不下的模板道具怎麼處理，實作時要定（建議：放不下的就不發）。
 - 重生套用的物品是憑空建立的，不從任何庫存扣。總量由 `team_revive_times` 控制。
+
+**建築進出一致（2026-10-08，使用者決定）**：原本初始營地沒有 `shelter:`，但 game_server 的 `ShelterDirector` 對任何 `open_ui` 都會讓啟動者進出，
+所以玩家選完配裝後被留在營地裡（除了離開以外的請求都被拒絕），而且離開的那次啟動又觸發一次 offers。
+現在三種建築用同一套規則：啟動進去、在裡面時開該建築的 UI（1 休息、2 配裝、3 庫存）、再啟動出來。
+初始營地補上 `shelter: {capacity: 8, hide_occupants_from_vision: true}`；它沒有 lifecycle、不在任何 population group，所以永遠不會被淘汰
+（`importance` 只在 group 內排淘汰順序，loader 也要求它和 `population_group` 一起寫）。測試：`loadout_test`。
 
 ### 3.3 武器 item（D10–D14，K5、K6）
 
