@@ -4389,7 +4389,7 @@ void local_terminated_projectile_binds_without_reviving() {
 // shot of the hold shares the one instance id. The release must leave the
 // shots the authority spawned in flight -- the one it bound to the local
 // prediction and the ones built from its spawns -- and drop only a
-// prediction it never spawned.
+// prediction of a commit it never fired.
 void releasing_a_held_fire_keeps_its_bullets_in_flight() {
     KernelConfig config{};
     config.mode = KernelMode_Client;
@@ -4409,6 +4409,8 @@ void releasing_a_held_fire_keeps_its_bullets_in_flight() {
     auto unspawned = predicted_projectile(
         KernelProjectileSyncMode_LocalPredictedDeterministic);
     unspawned.entity_id = 9002;
+    // Its commit is past the two the authority confirmed: it never fired.
+    unspawned.commit_index = 2;
     client.predicted_projectiles_.push_back(unspawned);
 
     KernelLocalActionResult result{};
@@ -4425,6 +4427,210 @@ void releasing_a_held_fire_keeps_its_bullets_in_flight() {
     require(client.predicted_projectiles_.size() == 2);
     require(client.predicted_projectiles_[0].net_id == 201);
     require(client.predicted_projectiles_[1].net_id == 202);
+}
+
+// A client holding a burst fire (three pellets a commit), as
+// docs/HELD_FIRE_PROJECTILE_PREDICTION_PLAN.md P2 has it: every commit is
+// predicted, every pellet on the authority's own direction, and each spawn
+// binds the very shot it names however the spawns arrive.
+struct HeldBurstClient {
+    HeldBurstClient() : client(config()) {
+        client.reset_runtime_state(KernelMode_Client);
+        KernelProjectileTemplateDefinition projectile = ::projectile_template(
+            3, 2, KernelProjectileSyncMode_LocalPredictedDeterministic);
+        KernelColliderTemplateDefinition collider = projectile_collider_template();
+        KernelGameplayCatalogDefinition catalog{};
+        catalog.struct_size = sizeof(catalog);
+        catalog.catalog_version = 9;
+        catalog.catalog_hash = 0x9999ull;
+        catalog.projectile_templates = &projectile;
+        catalog.projectile_template_count = 1;
+        catalog.collider_templates = &collider;
+        catalog.collider_template_count = 1;
+        require(client.load_gameplay_catalog(catalog));
+
+        const network_example::NetId player =
+            client.world_.spawn_player(7, glm::vec3{0.0f, 0.0f, 0.0f});
+        const std::optional<entt::entity> entity = client.world_.find_entity(player);
+        require(entity.has_value());
+        network_example::WeaponTuning& tuning =
+            client.world_.registry().get<network_example::WeaponTuning>(*entity);
+        tuning.configured[2] = true;
+        tuning.definitions[2].id = 2;
+        tuning.definitions[2].mode = network_example::WeaponFireMode::kProjectile;
+        tuning.definitions[2].projectile_template_id = 3;
+        tuning.definitions[2].pellet_count = 3;
+        tuning.definitions[2].pellet_spread = 15.0f;
+        weapon = tuning.definitions[2];
+        client.local_client_peer_id_ = 7;
+        client.local_player_net_id_ = player;
+        input.input_seq = 1;
+        input.action_intent = KernelActionIntent{
+            1234u, KernelActionBinding_PrimaryFire, 0u, 0u};
+        input.selected_weapon = 2;
+        input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
+        client.predicted_local_entity_.action_instance_id = 1234u;
+    }
+
+    static KernelConfig config() {
+        KernelConfig config{};
+        config.mode = KernelMode_Client;
+        config.tick.server_tick_rate = 30;
+        config.tick.snapshot_rate = 15;
+        return config;
+    }
+
+    // predict_local_action counts the commit, then the projectile is predicted.
+    void commit(std::uint32_t commit_count) {
+        client.predicted_local_entity_.action_commit_count = commit_count;
+        client.predict_local_projectile(input);
+    }
+
+    const network_example::KernelEngine::PredictedProjectile* shot(
+        std::uint16_t commit_index, std::uint8_t burst_index) const {
+        for (const auto& projectile : client.predicted_projectiles_) {
+            if (projectile.commit_index == commit_index &&
+                projectile.burst_index == burst_index) {
+                return &projectile;
+            }
+        }
+        return nullptr;
+    }
+
+    network_example::ProjectileSpawnRecord spawn(
+        network_example::NetId net_id,
+        std::uint16_t commit_index,
+        std::uint8_t burst_index) const {
+        network_example::ProjectileSpawnRecord record{
+            net_id,
+            11,
+            7,
+            1234,
+            glm::vec3{0.0f, 1.0f, 0.0f},
+            network_example::projectile_burst_directions(
+                glm::vec3{1.0f, 0.0f, 0.0f}, weapon)[burst_index] * 10.0f,
+        };
+        record.commit_index = commit_index;
+        record.burst_index = burst_index;
+        return record;
+    }
+
+    void receive(const std::vector<network_example::ProjectileSpawnRecord>& records) {
+        network_example::ProjectileSpawnBatchPacket batch{};
+        batch.server_tick = 3;
+        batch.server_time_us = 100000;
+        batch.catalog_hash = 0x9999ull;
+        network_example::ProjectileSpawnGroup group{};
+        group.projectile_template_id = 3;
+        group.records = records;
+        batch.groups.push_back(group);
+        client.handle_client_projectile_spawn_batch(batch);
+    }
+
+    network_example::KernelEngine client;
+    network_example::WeaponMechanicsDefinition weapon;
+    KernelPlayerInput input{};
+};
+
+void a_held_burst_predicts_every_pellet_of_every_commit() {
+    HeldBurstClient held;
+    held.commit(1u);
+    held.commit(1u);  // the same commit again: nothing more
+    held.commit(2u);
+    require(held.client.predicted_projectiles_.size() == 6u);
+    const std::vector<glm::vec3> directions =
+        network_example::projectile_burst_directions(
+            glm::vec3{1.0f, 0.0f, 0.0f}, held.weapon);
+    for (std::uint16_t commit = 0; commit < 2u; ++commit) {
+        for (std::uint8_t burst = 0; burst < 3u; ++burst) {
+            const auto* predicted = held.shot(commit, burst);
+            require(predicted != nullptr);
+            require(predicted->net_id == 0u);
+            require(glm::length(glm::normalize(predicted->initial_velocity) -
+                                directions[burst]) < 1e-5f);
+        }
+    }
+}
+
+void each_spawn_binds_the_shot_it_names() {
+    HeldBurstClient held;
+    held.commit(1u);
+    held.commit(2u);
+    // Out of order, across commits, as packets may come.
+    held.receive({held.spawn(105, 1u, 1u), held.spawn(103, 0u, 2u),
+                  held.spawn(101, 0u, 0u), held.spawn(104, 1u, 0u),
+                  held.spawn(102, 0u, 1u), held.spawn(106, 1u, 2u)});
+    // Bound in place: no shot drawn twice, none missing.
+    require(held.client.predicted_projectiles_.size() == 6u);
+    for (std::uint16_t commit = 0; commit < 2u; ++commit) {
+        for (std::uint8_t burst = 0; burst < 3u; ++burst) {
+            const auto* predicted = held.shot(commit, burst);
+            require(predicted != nullptr);
+            require(predicted->bound);
+            require(predicted->net_id == 101u + commit * 3u + burst);
+        }
+    }
+}
+
+void a_commit_the_client_did_not_predict_is_built_from_its_spawns() {
+    HeldBurstClient held;
+    held.commit(1u);
+    // The authority fired a second commit this client never predicted.
+    held.receive({held.spawn(101, 0u, 0u), held.spawn(104, 1u, 0u)});
+    require(held.client.predicted_projectiles_.size() == 4u);
+    require(held.shot(0u, 0u)->net_id == 101u);
+    require(held.shot(1u, 0u) != nullptr && held.shot(1u, 0u)->net_id == 104u);
+    // ... and the second commit is then not predicted over it.
+    held.commit(2u);
+    require(held.client.predicted_projectiles_.size() == 4u);
+}
+
+void a_release_drops_only_the_commits_past_the_confirmed() {
+    HeldBurstClient held;
+    held.commit(1u);
+    held.commit(2u);
+    held.commit(3u);
+    // Commit 0 spawned; commit 1 confirmed, its spawns still on the way;
+    // commit 2 never fired.
+    held.receive({held.spawn(101, 0u, 0u), held.spawn(102, 0u, 1u),
+                  held.spawn(103, 0u, 2u)});
+    KernelLocalActionResult result{};
+    result.action_instance_id = 1234;
+    result.confirmed_commit_count = 2;
+    result.result = KernelLocalActionResultType_Corrected;
+    result.reason = KernelLocalActionResultReason_Cancelled;
+    result.authoritative_tick = 3;
+    network_example::LocalActionResultBatchPacket packet{};
+    packet.records.push_back(result);
+    held.client.handle_client_local_action_results(packet);
+    require(held.client.predicted_projectiles_.size() == 6u);
+    for (std::uint8_t burst = 0; burst < 3u; ++burst) {
+        require(held.shot(0u, burst) != nullptr && held.shot(0u, burst)->net_id != 0u);
+        require(held.shot(1u, burst) != nullptr);
+        require(held.shot(2u, burst) == nullptr);
+    }
+}
+
+void a_snapshot_corrects_the_shot_it_names() {
+    HeldBurstClient held;
+    held.commit(1u);
+    held.commit(2u);
+    held.receive({held.spawn(101, 0u, 0u), held.spawn(104, 1u, 0u)});
+    const glm::vec3 before = held.shot(0u, 0u)->spawn_position;
+    held.client.handle_client_snapshot(projectile_snapshot(
+        10, 104, 7, 1234, glm::vec3{2.0f, 1.0f, 0.0f}, glm::vec3{10.0f, 0.0f, 0.0f}));
+    // The snapshot named 104: commit 1's first pellet moves, commit 0's stays.
+    require(held.shot(1u, 0u)->net_id == 104u);
+    require(held.shot(1u, 0u)->spawn_position.x == 2.0f);
+    require(held.shot(0u, 0u)->net_id == 101u);
+    require(held.shot(0u, 0u)->spawn_position == before);
+    // A snapshot of a shot no spawn has named yet, while the action has
+    // several unnamed: none of them is pulled onto it.
+    held.client.handle_client_snapshot(projectile_snapshot(
+        11, 199, 7, 1234, glm::vec3{9.0f, 1.0f, 0.0f}, glm::vec3{10.0f, 0.0f, 0.0f}));
+    for (const auto& projectile : held.client.predicted_projectiles_) {
+        require(projectile.net_id != 199u);
+    }
 }
 
 void terminal_action_result_clears_local_terminated_projectile() {
@@ -5800,6 +6006,11 @@ int main() {
     local_projectile_missing_physics_falls_back_once();
     local_terminated_projectile_binds_without_reviving();
     terminal_action_result_clears_local_terminated_projectile();
+    a_held_burst_predicts_every_pellet_of_every_commit();
+    each_spawn_binds_the_shot_it_names();
+    a_commit_the_client_did_not_predict_is_built_from_its_spawns();
+    a_release_drops_only_the_commits_past_the_confirmed();
+    a_snapshot_corrects_the_shot_it_names();
     releasing_a_held_fire_keeps_its_bullets_in_flight();
     client_update_advances_local_predicted_deterministic_projectile();
     default_kernel_config_uses_larger_render_state_cap();

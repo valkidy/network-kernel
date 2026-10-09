@@ -7838,12 +7838,12 @@ void KernelEngine::handle_client_local_action_results(
                         outstanding->second.active_effect_before;
                 }
             }
-            // Only what the authority never spawned goes. A held action's
-            // later shots exist here only as the authority's spawns -- one
-            // instance id for every commit -- and ending the hold must not
-            // take the ones still in flight with it. A prediction the
-            // authority did confirm but whose spawn has not arrived yet is
-            // rebuilt from that spawn when it does.
+            // Only what the authority never fired goes: the predictions of
+            // commits past the ones it confirmed. A held action's shots all
+            // share its instance id, and ending the hold must not take the
+            // ones still in flight with it -- those the authority spawned
+            // carry its net id, and a confirmed one whose spawn has not
+            // arrived yet waits for it.
             predicted_projectiles_.erase(
                 std::remove_if(
                     predicted_projectiles_.begin(),
@@ -7851,7 +7851,9 @@ void KernelEngine::handle_client_local_action_results(
                     [&result](const PredictedProjectile& projectile) {
                         return projectile.net_id == 0 &&
                                projectile.action_instance_id ==
-                                   result.action_instance_id;
+                                   result.action_instance_id &&
+                               projectile.commit_index >=
+                                   result.confirmed_commit_count;
                     }),
                 predicted_projectiles_.end());
             if (predicted_local_entity_.action_instance_id ==
@@ -8210,9 +8212,15 @@ void KernelEngine::handle_client_projectile_spawn_batch(
                 ProjectileSyncMode::kServerSnapshotOnly) {
                 continue;
             }
-            PredictedProjectile* predicted = find_predicted_projectile(
-                record.owner_peer, record.action_instance_id);
-            if (predicted != nullptr && !predicted->bound) {
+            // The shot this client predicted as this commit's this pellet,
+            // and only that one: a held or burst fire has many under the
+            // one action instance id.
+            PredictedProjectile* predicted = find_unspawned_prediction(
+                record.owner_peer,
+                record.action_instance_id,
+                record.commit_index,
+                record.burst_index);
+            if (predicted != nullptr) {
                 predicted->entity_id = entity_id_for_net_id(record.projectile_net_id);
                 predicted->net_id = record.projectile_net_id;
                 predicted->spawn_tick = packet.server_tick;
@@ -8265,6 +8273,8 @@ void KernelEngine::handle_client_projectile_spawn_batch(
                             ProjectileType::kStandard ||
                         is_ground_following(*projectile_template),
                 });
+                predicted_projectiles_.back().commit_index = record.commit_index;
+                predicted_projectiles_.back().burst_index = record.burst_index;
                 // Nothing is sent about a ground follower after its spawn, and
                 // the spawn record is the one it had at birth -- a session that
                 // only now finds it relevant gets a record many ticks old. A
@@ -10226,8 +10236,16 @@ void KernelEngine::reconcile_predicted_projectiles(const WorldSnapshot& snapshot
         if (entity.action_instance_id == 0) {
             continue;
         }
+        // The projectile already named this net id, or else the action's one
+        // unnamed prediction. A snapshot names no commit or pellet, so when
+        // an action has several unnamed it waits for their spawns instead of
+        // pulling one of them onto another shot's path.
         PredictedProjectile* predicted =
-            find_predicted_projectile(entity.owner_peer, entity.action_instance_id);
+            find_predicted_projectile_by_net_id(entity.net_id);
+        if (predicted == nullptr) {
+            predicted = find_sole_unspawned_prediction(
+                entity.owner_peer, entity.action_instance_id);
+        }
         if (predicted == nullptr) {
             continue;
         }
@@ -10501,8 +10519,17 @@ bool KernelEngine::predict_local_action(const KernelPlayerInput& input) {
 void KernelEngine::predict_local_projectile(const KernelPlayerInput& input) {
     const std::uint32_t action_instance_id =
         predicted_local_entity_.action_instance_id;
+    // The commit predict_local_action has just counted, from zero as the
+    // authority names it. Each commit of a held fire is predicted on its own;
+    // only a commit already here -- predicted, or built from its spawns --
+    // is not predicted again.
+    const std::uint32_t commit_count = predicted_local_entity_.action_commit_count;
+    const std::uint16_t commit_index = static_cast<std::uint16_t>(
+        std::min<std::uint32_t>(
+            commit_count > 0u ? commit_count - 1u : 0u, UINT16_MAX));
     if (local_client_peer_id_ == 0 || action_instance_id == 0 ||
-        find_predicted_projectile(local_client_peer_id_, action_instance_id) != nullptr) {
+        has_projectiles_of_commit(
+            local_client_peer_id_, action_instance_id, commit_index)) {
         return;
     }
     const WeaponMechanicsDefinition* weapon =
@@ -10533,55 +10560,67 @@ void KernelEngine::predict_local_projectile(const KernelPlayerInput& input) {
         player_position = latest->position;
     }
 
-    glm::vec3 origin = player_position + glm::vec3{0.0f, 1.0f, 0.0f};
+    const glm::vec3 muzzle = player_position + glm::vec3{0.0f, 1.0f, 0.0f};
     const glm::vec3 direction = input_aim_to_world(input);
-    glm::vec3 velocity = direction * projectile_template->speed;
     const bool ground_following = is_ground_following(*projectile_template);
-    // Launched the way the authority launches it: level, and settled onto the
-    // ground under the muzzle before its first step.
-    if (ground_following) {
-        velocity = ground_following_launch_velocity(
-            direction, projectile_template->speed);
-        origin = ground_following_spawn_state(
-                     prediction_physics_world_.get(),
-                     area_ground_follow_config(
-                         projectile_template->area_ground_follow,
-                         velocity,
-                         projectile_template->area_motion_collision_mask),
-                     origin,
-                     0u,
-                     tick_loop_.fixed_delta_seconds())
-                     .position;
-    }
     const ProjectileMotionModel motion_model = projectile_template->motion_model;
     const glm::vec3 gravity = projectile_template->gravity;
-    predicted_projectiles_.push_back(PredictedProjectile{
-        allocate_predicted_entity_id(),
-        0,
-        local_client_peer_id_,
-        input.input_seq,
-        action_instance_id,
-        tick_loop_.current_tick(),
-        0,
-        origin,
-        glm::quat{1.0f, 0.0f, 0.0f, 0.0f},
-        velocity,
-        origin,
-        velocity,
-        gravity,
-        motion_model,
-        projectile_template->lifetime_ticks,
-        weapon->projectile_template_id,
-        collider_template_id,
-        weapon->id,
-        sync_mode,
-        glm::vec3{0.0f, 0.0f, 0.0f},
-        false,
-        false,
-        0,
-        projectile_template->projectile_type == ProjectileType::kStandard ||
-            ground_following,
-    });
+    // Every pellet of the commit, on the directions the authority fires them
+    // and in its order, so each one's burst_index is the authority's.
+    const std::vector<glm::vec3> burst_directions =
+        projectile_burst_directions(direction, *weapon);
+    for (std::size_t burst_index = 0; burst_index < burst_directions.size();
+         ++burst_index) {
+        const glm::vec3& pellet_direction = burst_directions[burst_index];
+        glm::vec3 origin = muzzle;
+        glm::vec3 velocity = pellet_direction * projectile_template->speed;
+        // Launched the way the authority launches it: level, and settled onto
+        // the ground under the muzzle before its first step.
+        if (ground_following) {
+            velocity = ground_following_launch_velocity(
+                pellet_direction, projectile_template->speed);
+            origin = ground_following_spawn_state(
+                         prediction_physics_world_.get(),
+                         area_ground_follow_config(
+                             projectile_template->area_ground_follow,
+                             velocity,
+                             projectile_template->area_motion_collision_mask),
+                         origin,
+                         0u,
+                         tick_loop_.fixed_delta_seconds())
+                         .position;
+        }
+        predicted_projectiles_.push_back(PredictedProjectile{
+            allocate_predicted_entity_id(),
+            0,
+            local_client_peer_id_,
+            input.input_seq,
+            action_instance_id,
+            tick_loop_.current_tick(),
+            0,
+            origin,
+            glm::quat{1.0f, 0.0f, 0.0f, 0.0f},
+            velocity,
+            origin,
+            velocity,
+            gravity,
+            motion_model,
+            projectile_template->lifetime_ticks,
+            weapon->projectile_template_id,
+            collider_template_id,
+            weapon->id,
+            sync_mode,
+            glm::vec3{0.0f, 0.0f, 0.0f},
+            false,
+            false,
+            0,
+            projectile_template->projectile_type == ProjectileType::kStandard ||
+                ground_following,
+        });
+        predicted_projectiles_.back().commit_index = commit_index;
+        predicted_projectiles_.back().burst_index =
+            static_cast<std::uint8_t>(burst_index);
+    }
 }
 
 KernelPlayerInput KernelEngine::prepare_client_input(const KernelPlayerInput& input) {
@@ -12382,23 +12421,73 @@ bool KernelEngine::has_predicted_projectile_net_id(NetId net_id) const {
         });
 }
 
-KernelEngine::PredictedProjectile* KernelEngine::find_predicted_projectile(
+KernelEngine::PredictedProjectile* KernelEngine::find_unspawned_prediction(
     PeerId owner_peer,
-    std::uint32_t action_instance_id) {
+    std::uint32_t action_instance_id,
+    std::uint16_t commit_index,
+    std::uint8_t burst_index) {
     if (action_instance_id == 0) {
         return nullptr;
     }
     auto found = std::find_if(
         predicted_projectiles_.begin(),
         predicted_projectiles_.end(),
-        [owner_peer, action_instance_id](const PredictedProjectile& projectile) {
-            return projectile.owner_peer == owner_peer &&
-                   projectile.action_instance_id == action_instance_id;
+        [&](const PredictedProjectile& projectile) {
+            return projectile.net_id == 0 &&
+                   projectile.owner_peer == owner_peer &&
+                   projectile.action_instance_id == action_instance_id &&
+                   projectile.commit_index == commit_index &&
+                   projectile.burst_index == burst_index;
         });
-    if (found == predicted_projectiles_.end()) {
+    return found == predicted_projectiles_.end() ? nullptr : &(*found);
+}
+
+KernelEngine::PredictedProjectile* KernelEngine::find_sole_unspawned_prediction(
+    PeerId owner_peer,
+    std::uint32_t action_instance_id) {
+    if (action_instance_id == 0) {
         return nullptr;
     }
-    return &(*found);
+    PredictedProjectile* sole = nullptr;
+    for (PredictedProjectile& projectile : predicted_projectiles_) {
+        if (projectile.net_id != 0 || projectile.owner_peer != owner_peer ||
+            projectile.action_instance_id != action_instance_id) {
+            continue;
+        }
+        if (sole != nullptr) {
+            return nullptr;
+        }
+        sole = &projectile;
+    }
+    return sole;
+}
+
+KernelEngine::PredictedProjectile* KernelEngine::find_predicted_projectile_by_net_id(
+    NetId net_id) {
+    if (net_id == 0) {
+        return nullptr;
+    }
+    auto found = std::find_if(
+        predicted_projectiles_.begin(),
+        predicted_projectiles_.end(),
+        [net_id](const PredictedProjectile& projectile) {
+            return projectile.net_id == net_id;
+        });
+    return found == predicted_projectiles_.end() ? nullptr : &(*found);
+}
+
+bool KernelEngine::has_projectiles_of_commit(
+    PeerId owner_peer,
+    std::uint32_t action_instance_id,
+    std::uint16_t commit_index) const {
+    return std::any_of(
+        predicted_projectiles_.begin(),
+        predicted_projectiles_.end(),
+        [&](const PredictedProjectile& projectile) {
+            return projectile.owner_peer == owner_peer &&
+                   projectile.action_instance_id == action_instance_id &&
+                   projectile.commit_index == commit_index;
+        });
 }
 
 bool KernelEngine::enqueue_simulation_command(const simulation::Command& command) {

@@ -639,6 +639,12 @@ private:
         // waits, hidden and unmoved, until it has -- so it is drawn on the
         // timeline the actors it pulls are drawn on.
         std::uint32_t hold_ticks = 0;
+        // Which commit of its action and which pellet of that commit it is,
+        // as the authority's spawn record names them (packet schema 31): a
+        // held or burst fire puts every shot under one action instance id,
+        // and only these tell its shots apart.
+        std::uint16_t commit_index = 0;
+        std::uint8_t burst_index = 0;
     };
 
     // One throw this client requested, from the request until the prop it
@@ -999,9 +1005,25 @@ private:
     std::uint64_t entity_id_for_net_id(NetId net_id);
     std::uint64_t allocate_predicted_entity_id();
     bool has_predicted_projectile_net_id(NetId net_id) const;
-    PredictedProjectile* find_predicted_projectile(
+    // A shot this client predicted that no spawn or snapshot has named yet
+    // (no net id), by the commit and pellet it was predicted as.
+    PredictedProjectile* find_unspawned_prediction(
+        PeerId owner_peer,
+        std::uint32_t action_instance_id,
+        std::uint16_t commit_index,
+        std::uint8_t burst_index);
+    // The one unnamed prediction of an action, when it has exactly one: a
+    // snapshot names no commit or pellet, so it can bind only that.
+    PredictedProjectile* find_sole_unspawned_prediction(
         PeerId owner_peer,
         std::uint32_t action_instance_id);
+    PredictedProjectile* find_predicted_projectile_by_net_id(NetId net_id);
+    // Whether this commit of the action already has its shots here, predicted
+    // or built from the authority's spawns.
+    bool has_projectiles_of_commit(
+        PeerId owner_peer,
+        std::uint32_t action_instance_id,
+        std::uint16_t commit_index) const;
     void publish_snapshot();
     // The whole world at this tick, before any session's filter. Built once per
     // snapshot interval and handed to every session's build_relevant_snapshot:

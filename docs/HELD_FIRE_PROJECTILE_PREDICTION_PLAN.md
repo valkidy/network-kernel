@@ -1,6 +1,6 @@
 # 連射子彈的本機預測（commit / burst 編號）實作計劃書
 
-狀態：P0、P1 完成（2026-10-09），P2 尚未開始。
+狀態：P0、P1、P2 完成（2026-10-09），P3 尚未開始。
 前置：`claude/held-fire-keeps-bullets`（`e75cd17`，放開按鍵不再刪掉飛行中的子彈），尚未 merge 到 `main`。
 本計劃以那個修正為基礎，並在 P2 把它的 `net_id == 0` 規則換成照編號判斷。
 
@@ -88,6 +88,33 @@ client 和 server 之間對子彈的配對只靠 `(owner_peer, action_instance_i
 - 動作逾時（[kernel.cc:2583](../engine/src/kernel/src/kernel.cc)）：沒有 server 的確認數，維持 `e75cd17` 的「沒有 net id 就刪」。
 - 從 spawn 建出來的子彈（[kernel.cc:8232](../engine/src/kernel/src/kernel.cc)）也記下這兩個編號，並標成 `bound = true`，因為它本來就是 server 的子彈。
   這樣 Q4 不會再發生。
+
+**P2 實作紀錄**：
+- `PredictedProjectile` 結尾加 `commit_index`、`burst_index`，放在最後面，既有的 aggregate 初始化不受影響。
+- `find_predicted_projectile(peer, instance)` 移除，改成 4 個用途明確的函式：
+  - `find_unspawned_prediction(peer, instance, commit, burst)`：spawn 綁定用，只找 `net_id == 0` 的純本機預測。
+  - `find_sole_unspawned_prediction(peer, instance)`：snapshot 的備用找法，只有在這個動作**剛好只有一顆**還沒命名的預測時才回傳。
+  - `find_predicted_projectile_by_net_id`：snapshot 修正優先用這個。
+  - `has_projectiles_of_commit(peer, instance, commit)`：本機預測的重複檢查。
+- `predict_local_projectile`：拿掉「每個 instance 只預測一次」，改成「每個 commit 只預測一次」。
+  `commit_index = action_commit_count - 1`，用 `projectile_burst_directions` 一次預測整個 burst，每顆帶自己的 `burst_index`。
+  這個 commit 如果已經有從 spawn 建出來的子彈，就不再預測。
+- terminal 結果：刪掉 `net_id == 0 && commit_index >= confirmed_commit_count` 的子彈。`e75cd17` 的測試跟著改：沒 spawn 的那顆子彈改成第 2 發。
+- 動作逾時：維持 `net_id == 0` 就刪，跟計劃一樣。
+- **跟計劃不同的地方**：
+  1. **從 spawn 建出來的子彈沒有標成 `bound = true`**（§3.3 原本要這樣做）。這些子彈也包括其他玩家的子彈，而 `has_predicted_projectile_net_id` 依賴 `bound`，用來決定遠端子彈的 despawn 要不要延到 world timeline（[kernel.cc](../engine/src/kernel/src/kernel.cc) `handle_client_despawn`），以及 snapshot entity 要不要另外畫。標成 bound 會改到遠端子彈的行為。
+     Q4 改用另一種修法：spawn 只綁 `net_id == 0` 的純本機預測，從 spawn 建出來的子彈本來就有 net id，不會再被綁走。
+  2. **Q3 比原本寫的嚴重**：舊的 snapshot 修正每次找到這個 instance 的第一顆子彈，**還會把它的 `net_id` 改成 snapshot 那顆的**。按住連射時，同一顆預測子彈會被輪流拉到每顆子彈的位置。
+     現在先用 net id 找；找不到時，只有這個動作剛好一顆還沒命名的預測才會被綁定。有好幾顆的話，就等 spawn 送到。
+- R1 的確認：沒有 spawn 對上的預測子彈，會走既有的 lifetime 清理（lifetime 到了先隱藏，再留 1 秒給 despawn，然後刪掉，見 `predicted_projectile_lifetime_cleanup_removes_batch_projectile`），不會一直留著。
+- 測試（`client_mode_test`）：
+  - `a_held_burst_predicts_every_pellet_of_every_commit`：2 次 commit × 3 顆，同一個 commit 重複呼叫不會多生，方向等於共用函式算出來的。
+  - `each_spawn_binds_the_shot_it_names`：6 個 spawn 亂序送到，每顆都綁到正確的 net id，沒有重複、沒有遺漏。
+  - `a_commit_the_client_did_not_predict_is_built_from_its_spawns`：client 沒預測到的 commit 會從 spawn 建出來，之後也不會再預測一次。
+  - `a_release_drops_only_the_commits_past_the_confirmed`：確認 2 發時，只刪第 2 發的預測；第 0 發（已 spawn）和第 1 發（spawn 還在路上）都保留。
+  - `a_snapshot_corrects_the_shot_it_names`：snapshot 只修正 net id 對應的那顆；有好幾顆還沒命名的預測時，不會綁到任何一顆。
+  - mutation：重複檢查只看 instance、綁定時忽略 burst、snapshot 只用 instance 找、terminal 時忽略 commit，各自都會讓對應的測試失敗。
+- 既有的測試：8 個 projectile 相關的 kernel 測試、`combat_test`、`projectile_spawn_index_roundtrip_test`、`dynamic_abi_smoke_test` 都通過。
 
 ### 3.4 不用改的
 
