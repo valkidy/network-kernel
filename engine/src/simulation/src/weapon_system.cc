@@ -93,34 +93,6 @@ std::vector<glm::vec3> pellet_directions(
     return directions;
 }
 
-std::vector<glm::vec3> projectile_burst_directions(
-    const glm::vec3& direction,
-    const WeaponMechanicsDefinition& definition) {
-    const std::uint8_t burst_count =
-        definition.pellet_count == 0 ? 1 : definition.pellet_count;
-    std::vector<glm::vec3> directions;
-    directions.reserve(burst_count);
-    if (burst_count == 1 || definition.pellet_spread == 0.0f) {
-        directions.push_back(direction);
-        return directions;
-    }
-
-    constexpr float kPi = 3.14159265358979323846f;
-    const float center = static_cast<float>(burst_count - 1) * 0.5f;
-    for (std::uint8_t index = 0; index < burst_count; ++index) {
-        const float degrees =
-            (static_cast<float>(index) - center) * definition.pellet_spread;
-        const float radians = degrees * kPi / 180.0f;
-        const float cos_angle = std::cos(radians);
-        const float sin_angle = std::sin(radians);
-        directions.push_back(glm::normalize(glm::vec3{
-            direction.x * cos_angle + direction.z * sin_angle,
-            direction.y,
-            -direction.x * sin_angle + direction.z * cos_angle}));
-    }
-    return directions;
-}
-
 bool find_hitscan_target(
     World& world,
     const HistoryFrame* rewind_frame,
@@ -572,6 +544,8 @@ NetId fire_projectile(
     NetId shooter_net_id,
     PeerId shooter_peer_id,
     std::uint32_t action_instance_id,
+    std::uint16_t commit_index,
+    std::uint8_t burst_index,
     const glm::vec3& origin,
     const glm::vec3& direction,
     const glm::vec3& velocity,
@@ -638,6 +612,8 @@ NetId fire_projectile(
         projectile_state.damage = projectile_template.damage;
         projectile_state.spawn_tick = spawn_tick;
         projectile_state.action_instance_id = action_instance_id;
+        projectile_state.commit_index = commit_index;
+        projectile_state.burst_index = burst_index;
         projectile_state.shooter_net_id = shooter_net_id;
         projectile_state.motion_model = projectile_template.motion_model;
         projectile_state.hit_response = projectile_template.hit_response;
@@ -752,6 +728,34 @@ NetId fire_projectile(
 }
 
 }  // namespace
+
+std::vector<glm::vec3> projectile_burst_directions(
+    const glm::vec3& direction,
+    const WeaponMechanicsDefinition& definition) {
+    const std::uint8_t burst_count =
+        definition.pellet_count == 0 ? 1 : definition.pellet_count;
+    std::vector<glm::vec3> directions;
+    directions.reserve(burst_count);
+    if (burst_count == 1 || definition.pellet_spread == 0.0f) {
+        directions.push_back(direction);
+        return directions;
+    }
+
+    constexpr float kPi = 3.14159265358979323846f;
+    const float center = static_cast<float>(burst_count - 1) * 0.5f;
+    for (std::uint8_t index = 0; index < burst_count; ++index) {
+        const float degrees =
+            (static_cast<float>(index) - center) * definition.pellet_spread;
+        const float radians = degrees * kPi / 180.0f;
+        const float cos_angle = std::cos(radians);
+        const float sin_angle = std::sin(radians);
+        directions.push_back(glm::normalize(glm::vec3{
+            direction.x * cos_angle + direction.z * sin_angle,
+            direction.y,
+            -direction.x * sin_angle + direction.z * cos_angle}));
+    }
+    return directions;
+}
 
 void simulate_weapons(
     World& world,
@@ -1077,8 +1081,18 @@ void simulate_weapons(
                     }
                     weapon.active_effect_net_id = 0u;
                 }
-                for (const glm::vec3& projectile_direction :
-                     projectile_burst_directions(direction, *definition)) {
+                // commit_count is this commit's own, counted from one.
+                const std::uint16_t commit_index =
+                    commit.commit_count > 0u
+                        ? static_cast<std::uint16_t>(commit.commit_count - 1u)
+                        : 0u;
+                const std::vector<glm::vec3> burst_directions =
+                    projectile_burst_directions(direction, *definition);
+                for (std::size_t burst_index = 0;
+                     burst_index < burst_directions.size();
+                     ++burst_index) {
+                    const glm::vec3& projectile_direction =
+                        burst_directions[burst_index];
                     const glm::vec3 velocity =
                         projectile_direction * projectile_template->speed;
                     const NetId projectile = fire_projectile(
@@ -1090,6 +1104,8 @@ void simulate_weapons(
                         player_identity.net_id,
                         queued_input.owner_peer,
                         queued_input.input.action_intent.action_instance_id,
+                        commit_index,
+                        static_cast<std::uint8_t>(burst_index),
                         compensated_origin,
                         projectile_direction,
                         velocity,

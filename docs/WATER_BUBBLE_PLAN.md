@@ -255,6 +255,50 @@ grounded（sentry）的落下不用新寫：原本那段就有重力和落地檢
 - **沒做**：client 端不會在本機玩家被擋住時拒絕自己的動作預測。被擋住期間按下的動作會先預測、再被 server 用 `StatusBlocked` 糾正回來。
   擊退和 stagger 目前也是這樣處理。
 
+### 3.8 Unity animator state（client presentation，由使用者實作）
+
+Unity 的 animator controller 不在這個 repo 裡，下面是照 kernel 實際送到 client 的訊號整理出來的規格。
+泡泡本身和破泡的水花建議做成 VFX，跟 animator 分開。
+
+**kernel 在每個階段給 client 的訊號**：
+
+| 階段 | visual flags | 其他 |
+|---|---|---|
+| 被包住、上升 | `SUSPENDED` + `FALLING` | 遠端收到重力 0 的直線 anchor；本機玩家用自己的預測（§3.6） |
+| 泡泡破掉、往下掉 | 只有 `FALLING`（`SUSPENDED` 清掉） | 收到從速度 0 開始、受重力的下落 anchor；不能動作，但可以被打 |
+| 落地 | `GROUNDED`，落地那一個 tick 還有 `LANDED` | 下落的 lockout 解除 |
+
+**要新增的 state**：
+
+1. **`Bubbled`**：全身覆蓋的循環動畫（例如縮成一團漂浮），優先度只比 Death 低。
+   - 進入：`SUSPENDED` 打開。離開：`SUSPENDED` 關掉。
+   - 上升時的水平漂移可能讓 `MOVING` 亮起，所以一定要蓋過 locomotion layer。
+   - 泡泡裡不會受傷，這段時間不會有 `STAGGERED` 或 HitReaction，不用處理衝突。
+2. **`BubbleDrop`**：泡泡破了、往下掉。
+   - 進入：`SUSPENDED` 從開變成關的那一刻，同時觸發破泡 VFX。離開：`GROUNDED` 或 `LANDED` 打開。
+   - 一定要獨立成一個 state，不能沿用一般的 Falling：只看 `FALLING` 分不出「跳起來」和「泡泡破了在掉」。
+   - 這段時間可以被打，會出現 `STAGGERED`，也可能死掉。這兩個 transition 要能從 `BubbleDrop` 打斷出去。
+3. **落地**：沿用現有的 Land；想要「摔在地上、爬起來」的感覺才另做 `BubbleLand`。
+
+**animator 參數**：
+
+- `bool IsSuspended`：每幀從 `SUSPENDED` 設定。
+- `bool IsGrounded`：從 `GROUNDED` 設定。
+- `trigger BubbleBurst`：C# 偵測到 `SUSPENDED` 從開變成關時觸發。
+
+**drone 和飛船**：
+
+- drone 平常飛行時 `FALLING` 就一直開著（hover 對 kernel 來說是騰空），所以 drone 的 `BubbleDrop` 只能用 `BubbleBurst` 進入，用 `GROUNDED` 離開。
+- drone 落地只 grounded 一個 tick，下一個 tick 就飛起來（§3.4）。snapshot 是 15Hz，那一個 tick 的 `GROUNDED` / `LANDED` 可能收不到。
+  `BubbleDrop` 在播完摔落動畫後也要能自己回到 hover，不要只靠 `GROUNDED` 離開。
+- 飛船和蟲巢的抗性擋得住泡泡（§3.2），不需要這些 state。
+
+**不需要另外做的**：
+
+- Fire / Reload：被包住時 server 會中斷進行中的動作，snapshot 的 action phase 回到 None，這兩個 layer 會自己停下來。
+- 例外是本機玩家：client 不會先擋掉自己預測的動作（§3.7 的「沒做」），被包住的瞬間可能短暫播出開火動畫，等 server 修正。
+  如果在意，可以在 C# 看到 `SUSPENDED` 時在 client 端壓掉 fire 的表現。
+
 ---
 
 ## 4. Catalog 內容（game_server）
@@ -392,7 +436,7 @@ client 和 server 必須用同一版。
 | R6 | drone 的 beam 是持續好幾個 tick 的攻擊，打斷後有沒有真的停 | **P1 已解決**：打斷時 `release_action_resources` 會刪掉 beam 實體。測試 `a_block_ends_a_held_beam` 用一般玩家的 action 路徑驗證，AI 的 action intent 走同一條路 |
 | R9 | main 上大約 15 個 game_server 測試（包含 `hover_controller_test`、`flying_units_test`）的 BUILD 沒有列 `locomotion_skeleton_assets`，gingerbread giant（template 39）加進 catalog 之後就全部載入失敗。原本就有的問題 | P2 暫時補上 dep 確認這兩個測試在 drone 改重力後都通過，然後還原。修正另外開成背景任務 |
 | R8 | 舊的按鈕射擊路徑（`simulate_weapons` 在沒有 action commit 時，看 `InputButton_Fire` 直接產生 commit）不經過 `action_block_reason`，所以擋不住。stagger、擊退、進建築也一樣擋不住它，是原本就有的缺口 | 只有玩家會走這條路徑（`PlayerTag`），AI 用 action intent。P1 不處理；要不要補上由使用者決定 |
-| R7 | drone 落下、落地的動畫 Unity 端還沒有 | client presentation，使用者處理 |
+| R7 | drone 落下、落地的動畫 Unity 端還沒有 | client presentation，使用者處理；animator state 的規格見 §3.8 |
 | R3 | 關掉 hitbox 的做法可能連帶影響移動碰撞或 rewind | **P3 已解決**：只關 `kActorHitbox` 和 `kActorLimb`，移動 capsule 保留；rewind history 的 `alive` 也算進被包住；傷害入口再擋一次。`status_untargetable_test`（rewind、live 物理世界）和 `status_untargetable_kernel_test`（kernel 正式物理世界）涵蓋 |
 | R4 | 被包住的單位升得太高、飄出地圖 | `rise_speed·N·dt` 是有上限的，authoring 時控制即可 |
 | R5 | ABI 或 catalog id 跟其他還沒 merge 的分支撞號 | 開工時檢查，merge 時再檢查一次 |

@@ -7,7 +7,7 @@ name: Water Bubble Staff
 # Weapon container slot 0-3 (wand, scepter, staff, tome / their gun twins).
 category: 2
 weapon_type: projectile
-magazine_size: 3
+magazine_size: 12
 reserve_magazines: 4
 fire_action_template: water_bubble_staff_fire
 reload_action_template: water_bubble_staff_reload

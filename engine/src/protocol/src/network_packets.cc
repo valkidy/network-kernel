@@ -86,7 +86,8 @@ constexpr std::size_t kEntityDespawnPayloadSize = 12;
 constexpr std::size_t kEntityTemplateUpdatePayloadSize = 12;
 constexpr std::size_t kProjectileSpawnBatchHeaderPayloadSize = 24;
 constexpr std::size_t kProjectileSpawnGroupHeaderPayloadSize = 8;
-constexpr std::size_t kProjectileSpawnRecordPayloadSize = 40;
+// Four ids 16 + commit_index 2 + burst_index 1 + reserved 1 + two vec3 24.
+constexpr std::size_t kProjectileSpawnRecordPayloadSize = 44;
 constexpr std::size_t kActionBatchHeaderPayloadSize = 8;
 constexpr std::size_t kLocalActionResultPayloadSize = 12;
 constexpr std::size_t kRemoteActionPresentationPayloadSize = 32;
@@ -1499,6 +1500,9 @@ std::vector<std::uint8_t> encode_projectile_spawn_batch_packet(
             payload.write_u32(record.owner_net_id);
             payload.write_u32(record.owner_peer);
             payload.write_u32(record.action_instance_id);
+            payload.write_u16(record.commit_index);
+            payload.write_u8(record.burst_index);
+            payload.write_u8(0u);
             payload.write_vec3(record.spawn_position);
             payload.write_vec3(record.initial_velocity);
         }
@@ -1548,10 +1552,14 @@ bool decode_projectile_spawn_batch_packet(
         group.records.reserve(record_count);
         for (std::uint32_t record_index = 0; record_index < record_count; ++record_index) {
             ProjectileSpawnRecord record;
+            std::uint8_t reserved = 0;
             if (!reader.read_u32(&record.projectile_net_id) ||
                 !reader.read_u32(&record.owner_net_id) ||
                 !reader.read_u32(&record.owner_peer) ||
                 !reader.read_u32(&record.action_instance_id) ||
+                !reader.read_u16(&record.commit_index) ||
+                !reader.read_u8(&record.burst_index) ||
+                !reader.read_u8(&reserved) ||
                 !reader.read_vec3(&record.spawn_position) ||
                 !reader.read_vec3(&record.initial_velocity)) {
                 return false;

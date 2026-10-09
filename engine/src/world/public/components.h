@@ -613,6 +613,11 @@ struct ProjectileState {
     std::uint16_t damage = 0;
     std::uint32_t spawn_tick = 0;
     std::uint32_t action_instance_id = 0;
+    // Which of its action's commits fired it (0 for the first), and which of
+    // that commit's pellets it is: with action_instance_id, what names one
+    // shot of a held or burst fire to the client that predicted it.
+    std::uint16_t commit_index = 0;
+    std::uint8_t burst_index = 0;
     NetId shooter_net_id = 0;
     ProjectileMotionModel motion_model = ProjectileMotionModel::kLinear;
     ProjectileHitResponse hit_response = ProjectileHitResponse::kDestroy;
