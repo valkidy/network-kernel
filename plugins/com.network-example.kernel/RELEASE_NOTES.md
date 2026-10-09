@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- updates held and burst fire prediction for every shot, preserves released bullets in flight and refreshes water bubble staff tuning
+
+
+0.7.0 release notes:
+
 - makes the initial camp a building and offers loadout selection on entry
 
 
