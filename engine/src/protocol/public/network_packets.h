@@ -55,6 +55,13 @@ struct ProjectileSpawnRecord {
     std::uint32_t action_instance_id = 0;
     glm::vec3 spawn_position{0.0f, 0.0f, 0.0f};
     glm::vec3 initial_velocity{0.0f, 0.0f, 0.0f};
+    // Which commit of the action fired it and which of that commit's pellets
+    // it is (packet schema 31): what lets the owner's client bind each shot
+    // of a held or burst fire to the one it predicted. Last here so the
+    // positional initializers above still read as before; on the wire they
+    // follow action_instance_id.
+    std::uint16_t commit_index = 0;
+    std::uint8_t burst_index = 0;
 };
 
 struct ProjectileSpawnGroup {

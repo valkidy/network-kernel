@@ -206,6 +206,14 @@ struct ProjectileLaunch {
     glm::vec3 velocity{0.0f};
 };
 
+// The directions a projectile weapon's one commit fires, in the order the
+// authority spawns them: index i is that commit's burst_index i. A client
+// predicting its own shots calls the same function, so its pellets leave on
+// the very directions the authority's do.
+std::vector<glm::vec3> projectile_burst_directions(
+    const glm::vec3& direction,
+    const WeaponMechanicsDefinition& definition);
+
 // Mixes the facts that identify one launch into a seed. Integers only, so the
 // same inputs give the same seed on every platform.
 std::uint64_t projectile_launch_seed(

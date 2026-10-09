@@ -14900,6 +14900,8 @@ void KernelEngine::send_projectile_spawn_batch(
     record.owner_net_id = projectile.shooter_net_id;
     record.owner_peer = identity.owner_peer;
     record.action_instance_id = projectile.action_instance_id;
+    record.commit_index = projectile.commit_index;
+    record.burst_index = projectile.burst_index;
     record.spawn_position = projectile.spawn_position;
     record.initial_velocity =
         glm::length(projectile.initial_velocity) > 0.0001f

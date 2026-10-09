@@ -373,6 +373,77 @@ void hold_action_pressed_late_is_not_cancelled_as_timed_out() {
             .action_instance_id == 7101u);
 }
 
+// A held burst fire: every shot under the one action instance id, each named
+// by its commit and its pellet, and pellet i leaving on direction i of
+// projectile_burst_directions -- what the owner's client calls to predict it.
+void held_burst_shots_carry_their_commit_and_burst_index() {
+    const network_example::RuntimeActionTemplate spray_action{
+        1002,
+        KernelActionTriggerMode_Hold,
+        KernelActionTemplateFlag_CancelOnRelease |
+            KernelActionTemplateFlag_CancelOnDeath |
+            KernelActionTemplateFlag_CancelOnWeaponChange,
+        1,
+        0,
+        2,
+        0,
+        2,
+        6,
+    };
+    network_example::World world;
+    const network_example::NetId player =
+        spawn_player(world, 1, glm::vec3{0.0f, 0.0f, 0.0f});
+    world.set_action_templates({spray_action});
+    const auto entity = world.find_entity(player);
+    require(entity.has_value());
+    network_example::WeaponMechanicsDefinition& definition =
+        world.registry()
+            .get<network_example::WeaponTuning>(*entity)
+            .definitions[network_example::kWeaponSlot2];
+    definition.fire_action_template_id = spray_action.action_template_id;
+    definition.pellet_count = 3;
+    definition.pellet_spread = 15.0f;
+
+    KernelPlayerInput input = fire_input(network_example::kWeaponSlot2);
+    set_action_instance(input, 7301u);
+    std::vector<KernelEvent> events;
+    // Commits on ticks 0, 2 and 4.
+    for (std::uint32_t tick = 0; tick <= 4; ++tick) {
+        network_example::simulate_weapons(world, queue(input), tick, &events);
+    }
+
+    std::vector<const network_example::ProjectileState*> shots;
+    for (const auto [projectile, state] :
+         world.registry().view<const network_example::ProjectileState>().each()) {
+        (void)projectile;
+        shots.push_back(&state);
+    }
+    require(shots.size() == 9u);
+    bool seen[3][3] = {};
+    for (const network_example::ProjectileState* shot : shots) {
+        require(shot->action_instance_id == 7301u);
+        require(shot->commit_index < 3u && shot->burst_index < 3u);
+        require(!seen[shot->commit_index][shot->burst_index]);
+        seen[shot->commit_index][shot->burst_index] = true;
+    }
+    // Pellet 1 of three is the aim itself; from it the shared function gives
+    // every pellet's direction, in burst_index order.
+    glm::vec3 aim{0.0f};
+    for (const network_example::ProjectileState* shot : shots) {
+        if (shot->commit_index == 0u && shot->burst_index == 1u) {
+            aim = glm::normalize(shot->initial_velocity);
+        }
+    }
+    const std::vector<glm::vec3> expected =
+        network_example::projectile_burst_directions(aim, definition);
+    require(expected.size() == 3u);
+    for (const network_example::ProjectileState* shot : shots) {
+        const glm::vec3 flown = glm::normalize(shot->initial_velocity);
+        require(glm::length(flown - expected[shot->burst_index]) < 1e-5f);
+    }
+    require(glm::length(expected[0] - expected[2]) > 0.1f);
+}
+
 void action_timeline_drives_rocket_rifle_and_beam() {
     const network_example::RuntimeActionTemplate rocket_action{
         1001,
@@ -1600,6 +1671,7 @@ void weapon_fired_area_effect_survives_the_tick_it_lands() {
 int main() {
     hold_action_pressed_late_is_not_cancelled_as_timed_out();
     action_timeline_drives_rocket_rifle_and_beam();
+    held_burst_shots_carry_their_commit_and_burst_index();
     finite_press_and_per_weapon_gates_are_independent();
     deterministic_projectile_paths_match_motion_models();
     rocket_moves_linearly_and_grenade_arcs();

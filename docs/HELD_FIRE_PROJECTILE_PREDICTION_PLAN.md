@@ -1,6 +1,6 @@
 # 連射子彈的本機預測（commit / burst 編號）實作計劃書
 
-狀態：P0 完成（2026-10-09），P1 進行中。
+狀態：P0、P1 完成（2026-10-09），P2 尚未開始。
 前置：`claude/held-fire-keeps-bullets`（`e75cd17`，放開按鍵不再刪掉飛行中的子彈），尚未 merge 到 `main`。
 本計劃以那個修正為基礎，並在 P2 把它的 `net_id == 0` 規則換成照編號判斷。
 
@@ -55,6 +55,22 @@ client 和 server 之間對子彈的配對只靠 `(owner_peer, action_instance_i
 - `send_projectile_spawn_batch`（[kernel.cc:14877](../engine/src/kernel/src/kernel.cc)）從 `ProjectileState` 帶這兩個值。
 - **`kPacketSchemaVersion` 從 30 改成 31**（[packet_header.h:12](../engine/src/protocol/public/packet_header.h)）。
   握手測試都用常數，沒有寫死的版本號（已用 grep 確認）。
+
+**P1 實作紀錄**：
+- `ProjectileState` 加 `commit_index`（u16）、`burst_index`（u8）。
+  `weapon_system.cc` 的 projectile 分支傳 `commit.commit_count - 1` 和 burst 迴圈的 index。
+  舊的按鈕射擊路徑 `commit_count` 是 1，所以 index 是 0（D6）。
+- `fire_projectile` 只有一個呼叫端，沒有其他地方要補 0。action graph 的 `spawn_projectile` 和 derived chain 不經過它，維持預設值 0。
+- `projectile_burst_directions` 從 `weapon_system.cc` 的 anonymous namespace 搬出來，宣告放在 `simulation/public/simulation.h`。內容沒有改。
+- `ProjectileSpawnRecord` 的兩個新欄位放在 **struct 最後面**，這樣測試裡現有的 aggregate 初始化不受影響。
+  線上的順序是接在 `action_instance_id` 後面：u16 + u8 + 1 byte reserved（寫 0，讀到後忽略）。record 從 40 B 變成 44 B。
+- `kPacketSchemaVersion` 30 → 31。`dynamic_abi_smoke_test` 和 `kernel_api_test` 寫死了 30，改成 31。
+  §3.2「沒有寫死的版本號」是錯的：握手測試用常數，但這兩個 build info 的檢查是寫死的。C# 只讀這個值，沒有寫死。
+- 測試：
+  - 新增 `//engine/src/tests/protocol_tests:projectile_spawn_index_roundtrip_test`：編號 roundtrip（含 u16 / u8 的最大值），每筆 record 剛好多 44 B。
+  - `combat_test` 新增 `held_burst_shots_carry_their_commit_and_burst_index`：按住、burst 3，三次 commit 共 9 顆，每顆的 `(commit, burst)` 都不重複，方向等於共用函式的第 `burst_index` 個。
+  - mutation：把 burst index 寫死 0、把 encoder 的 commit index 寫死 0，這兩個測試都會失敗。
+- 既有的測試：`client_mode_test` 和 7 個 projectile 相關的 kernel 測試都通過。`network_packets_test`（752）、`session_packets_test`（174）、`kernel_api_test`（288）失敗的位置跟 `main` 上原本壞掉的一樣。
 
 ### 3.3 Client（kernel）
 
