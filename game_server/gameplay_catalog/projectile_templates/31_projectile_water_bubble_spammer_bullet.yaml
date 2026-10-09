@@ -16,7 +16,7 @@ movement_model: linear
 hit_response: destroy
 damage_shape: none
 speed: 5.0
-lifetime_ticks: 60
+lifetime_ticks: 120
 collision_mask: damageable | limb | terrain | static_obstacle
 max_hit_count: 1
 gravity:

@@ -42,7 +42,7 @@ hitbox:
 weapon_slots:
   - 13 # 3
   - 14 # 1
-  - 15 # 7
+  - 17 # 15 # 7
   - 0
 active_weapon_slot: 0
 inventory_slot_capacity: 16
