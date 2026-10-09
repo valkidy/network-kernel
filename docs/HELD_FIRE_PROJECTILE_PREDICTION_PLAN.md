@@ -1,6 +1,6 @@
 # 連射子彈的本機預測（commit / burst 編號）實作計劃書
 
-狀態：P0、P1、P2 完成（2026-10-09），P3 尚未開始。
+狀態：P0–P3 全部完成（2026-10-09）。
 前置：`claude/held-fire-keeps-bullets`（`e75cd17`，放開按鍵不再刪掉飛行中的子彈），尚未 merge 到 `main`。
 本計劃以那個修正為基礎，並在 P2 把它的 `net_id == 0` 規則換成照編號判斷。
 
@@ -23,6 +23,20 @@ client 和 server 之間對子彈的配對只靠 `(owner_peer, action_instance_i
 一次按住最多 8 顆子彈同時在飛（120 / 15），Q1、Q3、Q4 都會比之前明顯。
 
 **根本原因只有一個**：spawn record 沒有「第幾發」。
+
+> **P3 開工前的修正（2026-10-09）：純 Client 不會在本機預測子彈。**
+> `predict_local_projectile` 要從 `world_` 取得本機玩家的武器（`entity_weapon_mechanics`），但只有 listen-server 的 host 和 server 端的 peer 握手會把玩家放進 `world_`。
+> 一般連線進來的 Unity client（純 Client 模式）拿不到武器資料，會直接 return（memory：client-has-no-local-weapon-state，2026-09-30 實測）。所以在純 Client 上：
+>
+> | # | 純 Client 上 |
+> |---|---|
+> | Q1 | **不適用**：每一發（包括第一發）本來就都要等 server 的 spawn。要改善需要 client 端的武器狀態（`docs/ITEM_WEAPON_SYSTEM_PLAN.md` §8.1 選項 2 / 3），不在本計劃範圍 |
+> | Q2 | **不會發生**：沒有本機預測可以綁錯 |
+> | Q3 | **有效**，但只限會進 snapshot 的子彈（`hybrid_deterministic_then_snapshot`）。spammer 和水球法杖是 `local_predicted_deterministic`，不會進 snapshot（P3 實測） |
+> | Q4 | **有效，而且比原本寫的嚴重**：從 spawn 建出來的子彈都是 `bound = 0`，舊的綁定每次都找這個 instance 的第一筆，所以**同一次按住的每個 spawn 都會綁到第一顆子彈上**，不是只有長按才會發生（P3 的 mutation MC） |
+> | Q5 | **有效**：使用者看到的「放開按鍵子彈消失」就是這個（`e75cd17`） |
+>
+> P1、P2 的本機預測部分只會在 listen-server 的 host 上執行；P3 照使用者的決定，驗證純 Client + dedicated server。
 
 ---
 
@@ -116,6 +130,25 @@ client 和 server 之間對子彈的配對只靠 `(owner_peer, action_instance_i
   - mutation：重複檢查只看 instance、綁定時忽略 burst、snapshot 只用 instance 找、terminal 時忽略 commit，各自都會讓對應的測試失敗。
 - 既有的測試：8 個 projectile 相關的 kernel 測試、`combat_test`、`projectile_spawn_index_roundtrip_test`、`dynamic_abi_smoke_test` 都通過。
 
+**P3 實作紀錄**：
+- 新增 `//engine/src/tests/kernel_tests:held_fire_end_to_end_test`，兩個 engine 透過 loopback 互傳：
+  - dedicated server 加上純 Client（client 的 `world_` 裡沒有自己的玩家，測試開頭會檢查這點）。
+  - input 編碼好之後從 `kInput` channel 注入 server。server 的封包（spawn、snapshot、action result）送回 client。
+  - 場景是 spammer 的形狀：hold、burst 3、interval 2。按住打出 3 次 commit 共 9 顆，然後放開，再飛 30 tick。
+- 檢查項目：
+  - server 上有 9 顆子彈。
+  - client 收到放開的 terminal 結果（`Corrected` / `Cancelled`，`confirmed_commit_count = 3`）。
+  - client 每顆子彈都有 net id（沒有本機預測），而且 commit、burst、初速都跟 server 同一個 net id 的子彈一樣。每個 net id 剛好一顆，沒有重複也沒有遺漏。
+  - 放開後的 30 tick 內每 tick 都檢查一次。
+- 兩種 sync mode 各跑一次：
+  - `local_predicted_deterministic`（spammer、水球法杖用的）：snapshot 裡**一顆都沒有**，子彈只靠 spawn 建出來。
+  - `hybrid_deterministic_then_snapshot`：snapshot 裡最多 9 顆，這輪才會走到 snapshot 修正（Q3）。
+- mutation（每一個都讓這個測試失敗）：
+  - MA，放開時刪掉這個 instance 的所有子彈（`e75cd17` 以前）：子彈數量對不上，重現了使用者看到的現象。
+  - MB，snapshot 只用 instance 找（P2 以前）：只有 hybrid 那輪失敗。
+  - MC，spawn 綁定這個 instance 第一筆 `!bound` 的子彈（P2 以前）：burst index 對不上。
+- 建測試時踩到一個坑：`World::spawn_player` 生出的玩家血量是 0，server 會用 `Dead` 拒絕動作。測試要自己設 `Health`，跟其他測試一樣。
+
 ### 3.4 不用改的
 
 - **C ABI**：沒有新的 export，struct 也沒變，Unity 的 C# 不用改。
@@ -173,7 +206,7 @@ client 和 server 之間對子彈的配對只靠 `(owner_peer, action_instance_i
 
 | # | 風險 | 處理 |
 |---|---|---|
-| R1 | client 和 server 的 commit 次數可能不同。例如 input 掉包，server 因為 `hold_input_timeout_ticks` 提早結束；或是 client 預測的開始 tick 跟 server 差一格。這樣預測的第 k 發會對不到 server 的第 k 發 | terminal 結果會刪掉超過確認數的子彈；中途對不上的子彈，綁定時會因為編號不同而不綁。P2 要確認沒綁定的預測子彈最後會被清掉（lifetime 到了，或動作逾時那條路徑） |
+| R1 | （只影響 listen-server 的 host，純 Client 沒有本機預測）client 和 server 的 commit 次數可能不同。例如 input 掉包，server 因為 `hold_input_timeout_ticks` 提早結束；或是 client 預測的開始 tick 跟 server 差一格。這樣預測的第 k 發會對不到 server 的第 k 發 | terminal 結果會刪掉超過確認數的子彈；中途對不上的子彈，綁定時會因為編號不同而不綁。P2 要確認沒綁定的預測子彈最後會被清掉（lifetime 到了，或動作逾時那條路徑） |
 | R2 | 一次按住的預測子彈變多，client 每 tick 的預測成本變高 | spammer 最多 3 × 60 = 180 顆、水球法杖最多 8 顆。P3 量一下 `predicted_projectiles_` 的大小和每 tick 時間 |
 | R3 | 搬移 `projectile_burst_directions` 時改到了數學 | 搬移前後比對 server 的方向，結果要完全一樣 |
 | R4 | `water_bubble_staff_test` 寫死彈匣 3（`require(full == 3u)`），還用「按住 4 tick 打空」。`4100c9a` 改成 12 發、interval 15 之後應該會紅 | P0 先跑一次確認；測試要跟著新參數改，或改成從 catalog 讀值。要不要改由使用者決定 |
