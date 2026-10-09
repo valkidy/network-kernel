@@ -2585,7 +2585,7 @@ void KernelEngine::update(float delta_seconds) {
                 predicted_projectiles_.begin(),
                 predicted_projectiles_.end(),
                 [expired_action_id](const PredictedProjectile& projectile) {
-                    return !projectile.bound &&
+                    return projectile.net_id == 0 &&
                            projectile.action_instance_id == expired_action_id;
                 }),
             predicted_projectiles_.end());
@@ -7838,13 +7838,20 @@ void KernelEngine::handle_client_local_action_results(
                         outstanding->second.active_effect_before;
                 }
             }
+            // Only what the authority never spawned goes. A held action's
+            // later shots exist here only as the authority's spawns -- one
+            // instance id for every commit -- and ending the hold must not
+            // take the ones still in flight with it. A prediction the
+            // authority did confirm but whose spawn has not arrived yet is
+            // rebuilt from that spawn when it does.
             predicted_projectiles_.erase(
                 std::remove_if(
                     predicted_projectiles_.begin(),
                     predicted_projectiles_.end(),
                     [&result](const PredictedProjectile& projectile) {
-                        return projectile.action_instance_id ==
-                               result.action_instance_id;
+                        return projectile.net_id == 0 &&
+                               projectile.action_instance_id ==
+                                   result.action_instance_id;
                     }),
                 predicted_projectiles_.end());
             if (predicted_local_entity_.action_instance_id ==
