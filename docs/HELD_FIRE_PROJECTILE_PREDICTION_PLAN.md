@@ -1,6 +1,6 @@
 # 連射子彈的本機預測（commit / burst 編號）實作計劃書
 
-狀態：**計劃，尚未實作**（2026-10-09）。
+狀態：P0 完成（2026-10-09），P1 進行中。
 前置：`claude/held-fire-keeps-bullets`（`e75cd17`，放開按鍵不再刪掉飛行中的子彈），尚未 merge 到 `main`。
 本計劃以那個修正為基礎，並在 P2 把它的 `net_id == 0` 規則換成照編號判斷。
 
@@ -138,7 +138,37 @@ client 和 server 之間對子彈的配對只靠 `(owner_peer, action_instance_i
 
 ---
 
-## 9. Token / 成本限制
+## 9. P0 驗證結果（2026-10-09）
+
+在 `main`（`26668fd`）上的暫時 worktree 跑，臨時測試沒有 commit（diff 留在 session scratchpad，P2 改寫成正式測試）。
+
+### 9-1. Q2：burst 綁錯子彈（已重現）
+
+本機放一顆往正前方飛的預測子彈（instance 1234），再照 server 的順序送 3 個 spawn record：index 0（偏 +z）、正中、index 2（偏 -z），同一個 instance id。結果：
+
+| client 的子彈 | net id | bound | 速度 | 實際對應 server 的 |
+|---|---|---|---|---|
+| 本機預測的那顆 | 101 | 1 | (5, 0, 0)，正前方 | **index 0，偏 +z** |
+| 從 spawn 建出來 | 102 | 0 | (5, 0, 0)，正前方 | 正中 |
+| 從 spawn 建出來 | 103 | 0 | (4.83, 0, -1.29) | index 2 |
+
+- 正前方畫了兩顆（101、102 重疊），偏 +z 那顆畫面上沒有：它的 net id 掛在正前方的預測子彈上，綁定時只換 net id，沒有改速度。
+- 從 spawn 建出來的子彈是 `bound = 0`，下一個 spawn 可能綁到它們身上（Q4），跟 §3.3 的推斷一致。
+- 沒實測：server 的 101 撞到東西消失時，client 刪掉的會是正前方那顆（從 despawn 用 net id 刪子彈推斷）。
+
+### 9-2. R4：`water_bubble_staff_test` 失敗（已確認）
+
+`require failed at line 218: full == 3u`。`4100c9a` 把彈匣改成 12，第一個斷言就失敗。後面的「按住 4 tick 打空」也是照舊參數寫的（interval 現在是 15、lifetime 120），修好這行之後還會繼續失敗。
+測試要改成符合新參數，還是改成從 catalog 讀值，由使用者決定；不在 P1 範圍內。
+
+### 9-3. 其他
+
+- 檢查了所有本機分支，packet schema 最高是 30，沒有分支用到 31（R5）。
+- P0 結果跟計劃一致，P1 照 §3.1、§3.2 進行。
+
+---
+
+## 10. Token / 成本限制
 
 - 先跑 smoke test：每個階段只跑直接相關的測試，不跑全部。
 - 只讀直接相關的檔案：`kernel.cc` 只讀第 3 節列出的段落，`weapon_system.cc` 只讀 projectile 分支。
