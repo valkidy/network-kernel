@@ -4385,6 +4385,48 @@ void local_terminated_projectile_binds_without_reviving() {
     require(client.predicted_projectiles_[0].net_id == 102);
 }
 
+// A held fire's release ends its action with a terminal result, and every
+// shot of the hold shares the one instance id. The release must leave the
+// shots the authority spawned in flight -- the one it bound to the local
+// prediction and the ones built from its spawns -- and drop only a
+// prediction it never spawned.
+void releasing_a_held_fire_keeps_its_bullets_in_flight() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+
+    network_example::KernelEngine client(config);
+    client.reset_runtime_state(KernelMode_Client);
+    auto first = predicted_projectile(
+        KernelProjectileSyncMode_LocalPredictedDeterministic);
+    first.net_id = 201;
+    first.bound = true;
+    client.predicted_projectiles_.push_back(first);
+    auto second = predicted_projectile(
+        KernelProjectileSyncMode_LocalPredictedDeterministic);
+    second.entity_id = 9001;
+    second.net_id = 202;
+    client.predicted_projectiles_.push_back(second);
+    auto unspawned = predicted_projectile(
+        KernelProjectileSyncMode_LocalPredictedDeterministic);
+    unspawned.entity_id = 9002;
+    client.predicted_projectiles_.push_back(unspawned);
+
+    KernelLocalActionResult result{};
+    result.action_instance_id = 1234;
+    result.confirmed_commit_count = 2;
+    result.result = KernelLocalActionResultType_Corrected;
+    result.reason = KernelLocalActionResultReason_Cancelled;
+    result.authoritative_tick = 3;
+    network_example::LocalActionResultBatchPacket packet{};
+    packet.records.push_back(result);
+
+    client.handle_client_local_action_results(packet);
+
+    require(client.predicted_projectiles_.size() == 2);
+    require(client.predicted_projectiles_[0].net_id == 201);
+    require(client.predicted_projectiles_[1].net_id == 202);
+}
+
 void terminal_action_result_clears_local_terminated_projectile() {
     KernelConfig config{};
     config.mode = KernelMode_Client;
@@ -5758,6 +5800,7 @@ int main() {
     local_projectile_missing_physics_falls_back_once();
     local_terminated_projectile_binds_without_reviving();
     terminal_action_result_clears_local_terminated_projectile();
+    releasing_a_held_fire_keeps_its_bullets_in_flight();
     client_update_advances_local_predicted_deterministic_projectile();
     default_kernel_config_uses_larger_render_state_cap();
     render_state_overflow_reports_error_event();
