@@ -82,7 +82,8 @@ bool sweep_history_frame(
     const glm::vec3& segment_end,
     NetId ignored_net_id,
     HistoricalHitResult* out_hit,
-    bool include_limbs = false);
+    bool include_limbs = false,
+    const std::vector<NetId>* excluded_net_ids = nullptr);
 
 }  // namespace network_example
 

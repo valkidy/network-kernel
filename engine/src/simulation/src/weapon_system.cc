@@ -95,40 +95,6 @@ std::vector<glm::vec3> pellet_directions(
     return directions;
 }
 
-// The net ids a rewound shot authored with collision_mask must pass through:
-// those whose colliders declare a side and none of the sides the mask names.
-// This is the rule collision_filter_from_mask gives the live ray, rebuilt here
-// because history volumes record no side. One pass over the registry per
-// query, not one per volume -- entity_gameplay_collision_category walks the
-// whole registry each time it is asked. Sorted, for raycast_history_frame.
-std::vector<NetId> net_ids_outside_collision_mask(
-    const World& world,
-    std::uint32_t collision_mask) {
-    std::vector<std::pair<NetId, std::uint32_t>> sides;
-    for (const ColliderInstance& collider : world.collider_registry().instances()) {
-        const std::uint32_t side = collider.layer_mask & KERNEL_COLLISION_MASK_ACTOR;
-        if (collider.lifetime_ticks == 0 && collider.enabled && side != 0u) {
-            sides.emplace_back(collider.entity_net_id, side);
-        }
-    }
-    std::sort(sides.begin(), sides.end());
-
-    const std::uint32_t reachable = collision_mask & KERNEL_COLLISION_MASK_ACTOR;
-    std::vector<NetId> excluded;
-    for (std::size_t first = 0; first < sides.size();) {
-        std::uint32_t side = 0;
-        std::size_t last = first;
-        for (; last < sides.size() && sides[last].first == sides[first].first; ++last) {
-            side |= sides[last].second;
-        }
-        if ((side & reachable) == 0u) {
-            excluded.push_back(sides[first].first);
-        }
-        first = last;
-    }
-    return excluded;
-}
-
 bool find_hitscan_target(
     World& world,
     const HistoryFrame* rewind_frame,
@@ -144,11 +110,8 @@ bool find_hitscan_target(
     const bool include_limbs =
         (collision_mask & KERNEL_COLLISION_LAYER_LIMB) != 0u;
     if (rewind_frame != nullptr) {
-        // A mask of zero names nothing and filters nothing, as on the live ray.
         const std::vector<NetId> excluded =
-            collision_mask != 0u
-                ? net_ids_outside_collision_mask(world, collision_mask)
-                : std::vector<NetId>{};
+            net_ids_outside_collision_mask(world, collision_mask);
         HistoricalHitResult hit;
         if (raycast_history_frame(
                 *rewind_frame,
@@ -770,6 +733,44 @@ NetId fire_projectile(
 }
 
 }  // namespace
+
+// The net ids a rewound shot authored with collision_mask must pass through:
+// those whose colliders declare a side and none of the sides the mask names.
+// This is the rule collision_filter_from_mask gives the live ray, rebuilt here
+// because history volumes record no side. One pass over the registry per
+// query, not one per volume -- entity_gameplay_collision_category walks the
+// whole registry each time it is asked. Sorted, for raycast_history_frame.
+// A mask of zero names nothing and filters nothing, as on the live ray.
+std::vector<NetId> net_ids_outside_collision_mask(
+    const World& world,
+    std::uint32_t collision_mask) {
+    if (collision_mask == 0u) {
+        return {};
+    }
+    std::vector<std::pair<NetId, std::uint32_t>> sides;
+    for (const ColliderInstance& collider : world.collider_registry().instances()) {
+        const std::uint32_t side = collider.layer_mask & KERNEL_COLLISION_MASK_ACTOR;
+        if (collider.lifetime_ticks == 0 && collider.enabled && side != 0u) {
+            sides.emplace_back(collider.entity_net_id, side);
+        }
+    }
+    std::sort(sides.begin(), sides.end());
+
+    const std::uint32_t reachable = collision_mask & KERNEL_COLLISION_MASK_ACTOR;
+    std::vector<NetId> excluded;
+    for (std::size_t first = 0; first < sides.size();) {
+        std::uint32_t side = 0;
+        std::size_t last = first;
+        for (; last < sides.size() && sides[last].first == sides[first].first; ++last) {
+            side |= sides[last].second;
+        }
+        if ((side & reachable) == 0u) {
+            excluded.push_back(sides[first].first);
+        }
+        first = last;
+    }
+    return excluded;
+}
 
 std::vector<glm::vec3> projectile_burst_directions(
     const glm::vec3& direction,

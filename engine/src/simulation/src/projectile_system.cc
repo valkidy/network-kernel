@@ -1825,6 +1825,10 @@ bool resolve_projectile_historical_hit(
 
     // Only query historical hitboxes along the deterministic catch-up path; the
     // surviving projectile's current transform remains the fast-forwarded state.
+    // The frames record no side, so the mask's sides are applied by net id,
+    // built once for the whole catch-up rather than once per tick.
+    const std::vector<NetId> excluded =
+        net_ids_outside_collision_mask(world, projectile.collision_mask);
     glm::vec3 previous_position = origin;
     for (std::uint32_t tick = rewind_tick + 1; tick <= current_tick; ++tick) {
         const float elapsed_seconds =
@@ -1845,7 +1849,8 @@ bool resolve_projectile_historical_hit(
                     ignored_net_id,
                     &hit,
                     (projectile.collision_mask &
-                     KERNEL_COLLISION_LAYER_LIMB) != 0u)) {
+                     KERNEL_COLLISION_LAYER_LIMB) != 0u,
+                    &excluded)) {
                 const std::uint64_t hit_time_us =
                     tick_time_us(frame->server_tick, fixed_delta_seconds);
                 const NetworkIdentity identity{projectile_net_id, owner_peer};

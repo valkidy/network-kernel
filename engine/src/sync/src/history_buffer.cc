@@ -308,7 +308,8 @@ bool sweep_history_frame(
     const glm::vec3& segment_end,
     NetId ignored_net_id,
     HistoricalHitResult* out_hit,
-    bool include_limbs) {
+    bool include_limbs,
+    const std::vector<NetId>* excluded_net_ids) {
     const glm::vec3 displacement = segment_end - segment_start;
     const float length = glm::length(displacement);
     if (length <= 0.0001f) {
@@ -321,7 +322,8 @@ bool sweep_history_frame(
         length,
         ignored_net_id,
         out_hit,
-        include_limbs);
+        include_limbs,
+        excluded_net_ids);
 }
 
 }  // namespace network_example

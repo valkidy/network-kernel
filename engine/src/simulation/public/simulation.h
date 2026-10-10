@@ -479,6 +479,12 @@ void simulate_beams(
     std::uint64_t server_time_us,
     std::vector<KernelEvent>* events,
     DamagePipeline* damage_pipeline);
+// Net ids a rewound query authored with collision_mask must pass through:
+// history volumes record no side, so this is the side half of the mask, for
+// raycast_history_frame / sweep_history_frame. Sorted; empty for a zero mask.
+std::vector<NetId> net_ids_outside_collision_mask(
+    const World& world,
+    std::uint32_t collision_mask);
 bool resolve_projectile_historical_hit(
     World& world,
     const HistoryBuffer& history_buffer,
