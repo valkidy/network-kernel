@@ -146,7 +146,7 @@ id: 19
 name: Magic Missile
 weapon_type: lock_missile
 magazine_size: 24
-fire_action_template: magic_missile_fire     # hold, commit_interval_ticks: 1
+fire_action_template: magic_missile_fire     # hold, commit_interval_ticks: 3
 reload_action_template: magic_missile_reload
 lock_collider: magic_missile_cone
 projectile_template: magic_missile_bolt      # damage, collision_mask, max_hit_count, lifetime_ticks

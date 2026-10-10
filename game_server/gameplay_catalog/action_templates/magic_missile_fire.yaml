@@ -1,14 +1,19 @@
-# Magic Missile: a missile every tick while held and something is locked. A
+# Magic Missile: ten missiles a second while held and something is locked. A
 # commit that locks nothing spends nothing and the hold keeps looking, so a
-# magazine lasts exactly as long as there was something to shoot at -- one
-# second of targets for 30 rounds.
+# magazine lasts exactly as long as there was something to shoot at -- three
+# seconds of targets for 30 rounds.
+#
+# Every 3 ticks, not every tick: each missile that lands sends every client
+# that sees it two reliable combat events, so at 1 tick four players holding
+# this cost each client about 31.6 KB/s; at 3 ticks about 10.7 KB/s, the
+# rifle's rate. The traffic comparison is in docs/LOCK_ON_WEAPONS_PLAN.md.
 id: 4128
 name: magic_missile_fire
 trigger_mode: hold
 flags: [cancel_on_release, cancel_on_death, cancel_on_weapon_change, cancel_before_first_commit]
 ammo_cost_per_commit: 1
 commit_offset_ticks: 0
-commit_interval_ticks: 1
+commit_interval_ticks: 3
 max_commit_count: 0
 recovery_ticks: 4
 hold_input_timeout_ticks: 6

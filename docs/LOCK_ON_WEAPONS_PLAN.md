@@ -319,9 +319,9 @@ N：錐形內偵測到的目標數。M：單次最大鎖定數。T：一顆飛�
   | 錐形 | 18 m、50° | 25 m、60° |
   | 鎖定數 M | 6 | 4（輪流打） |
   | 傷害 | 20／目標 | 8／顆 |
-  | 間隔 | 15 tick（每秒 2 次） | 1 tick |
+  | 間隔 | 15 tick（每秒 2 次） | 3 tick（每秒 10 顆；原本 1 tick，流量比較後改成 3） |
   | 每次 commit 扣彈 | 6（沒目標也扣） | 1（沒目標不扣） |
-  | 彈匣 | 24（4 次 commit） | 30（有目標時連射 1 秒） |
+  | 彈匣 | 24（4 次 commit） | 30（有目標時連射 3 秒） |
   | 最長飛行 | — | 20 tick（約 0.67 秒，37.5 m/s） |
   | reload | 45 tick | 45 tick |
 
@@ -360,6 +360,33 @@ N：錐形內偵測到的目標數。M：單次最大鎖定數。T：一顆飛�
 - 跟一般投射物比：一般子彈每顆約 205 B 的 reliable spawn（見 `HELD_FIRE_PROJECTILE_PREDICTION_PLAN.md` §4），還會出現在 snapshot 裡。這裡沒有 server entity，也不進 snapshot。
 
 ---
+
+### 4.1 和 Rifle 的比較（2026-10-10，P5 之後）
+
+規格：最多 4 位玩家，每人同時只拿一把武器。數字從編碼格式算出來，沒有實測。
+
+**每次開火會送的東西**（每個 tick 各自 flush，基本上一項一個封包，封包開頭 28 B）：
+
+| 項目 | 大小 | 送給誰 | 什麼時候送 |
+|---|---|---|---|
+| 動作結果（Accepted） | 48 B，reliable | 射手本人 | 每次 commit |
+| `FireCommit` 演出 | 68 B，unreliable | 看得到射手的其他人 | 每次 commit |
+| `FireConfirmed` 事件 | 62 B，reliable | 射手和看得到射手的人 | 有射出東西時 |
+| `HitConfirmed` + `DamageApplied` | 2 × 62 B，reliable | 射手和看得到目標的人 | 每次命中 |
+| 飛彈記錄 | 每顆 12 B，加上每個 snapshot 間隔 4 B | 看得到射手的人 | 每顆飛彈 |
+
+**4 人拿同一把武器、同時開火時，每個 client 收到的流量**（每一發都命中，4 人和目標都在彼此視野內）：
+
+| 武器 | 峰值 | 計入彈匣和 reload 的平均 | 沒有目標時 |
+|---|---|---|---|
+| Rifle（interval 3） | 約 10.0 KB/s | 約 10.0 KB/s | 約 5.0 KB/s |
+| Chain Lightning（每次鎖滿 6 個） | 約 7.0 KB/s | 約 4.0 KB/s | 約 1.0 KB/s |
+| Magic Missile，interval 1（原本的設定） | 約 31.6 KB/s | 約 12.6 KB/s | 約 7.6 KB/s，而且不扣彈、不會停 |
+| **Magic Missile，interval 3（現在的設定）** | **約 10.7 KB/s** | **約 7.0 KB/s** | **約 2.5 KB/s** |
+
+- 主要的流量是每次命中送出的兩個 reliable 事件封包，不是飛彈記錄。
+- interval 3 時魔法飛彈的 commit 速率和 Rifle 一樣，流量也差不多：多了飛彈記錄（180 B/s），少了沒目標時的 `FireConfirmed`。
+- 之後如果要再降：把每個 tick 的戰鬥事件合成一個封包，每個事件可以省下 28 B 的開頭，所有武器都會受益。牽涉範圍大，適合另外排成一個工作。
 
 ## 5. 版本與交付
 

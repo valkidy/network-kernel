@@ -1,5 +1,5 @@
-# Locks up to four enemies inside a 25 m, 60-degree cone and fires a missile
-# every tick while held, at each of them in turn, nearest first. Every missile
+# Locks up to four enemies inside a 25 m, 60-degree cone and fires ten
+# missiles a second while held, at each of them in turn, nearest first. Every missile
 # hits: the hit is decided when it is fired and lands when it arrives, unless
 # the target dies first. Not in any loadout.
 id: 19
