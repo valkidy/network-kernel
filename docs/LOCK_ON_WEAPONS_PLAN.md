@@ -48,8 +48,8 @@ N：錐形內偵測到的目標數。M：單次最大鎖定數。T：一顆飛�
 | D19 | A 的 `ammo_cost_per_commit` 必須等於 M，且 `magazine_size % M == 0`，否則是載入錯誤 | 已定 |
 | D20 | B 的記錄用 unreliable 送：純演出，掉了只少一顆飛彈畫面，傷害照算。到達 tick 已過才收到的記錄只播爆炸，或直接略過 | 已定（2026-10-10） |
 | D21 | 純 client 上射手自己的 A 演出：建議 Unity 按下時就呼叫 client 查詢 API（§3.4）立即畫，不等 snapshot；旁觀者照 snapshot 的 commit 數畫 | 已定（2026-10-10） |
-| D22 | 純 client 的 kernel 要有武器資料（P0-3）：在 `KernelGameplayCatalogDefinition` 結尾加武器定義陣列（靠 `struct_size` 相容），client 和 server 都安裝到 kernel 的唯讀武器表。替代方案是另開一個 client 專用 export。兩者都動到 ABI，§5 的「ABI 維持 102」要重新確認 | **待確認**（P0 提出） |
-| D23 | 旁觀者怎麼知道 AI 射手拿的是鎖定武器（P0-6：`held_weapon_id` 只有玩家有）：client 用 snapshot 的 `action_template_id` 反查武器，載入時要求鎖定武器的 fire action 模板**不能跟其他武器共用**。不改 snapshot | **待確認**（P0 提出） |
+| D22 | 純 client 的 kernel 要有武器資料（P0-3）：在 `KernelGameplayCatalogDefinition` 結尾加武器定義陣列（靠 `struct_size` 相容），client 和 server 都安裝到 kernel 的唯讀武器表。替代方案是另開一個 client 專用 export。兩者都動到 ABI，§5 的「ABI 維持 102」要重新確認 | 已定（2026-10-10） |
+| D23 | 旁觀者怎麼知道 AI 射手拿的是鎖定武器（P0-6：`held_weapon_id` 只有玩家有）：client 用 snapshot 的 `action_template_id` 反查武器，載入時要求鎖定武器的 fire action 模板**不能跟其他武器共用**。不改 snapshot | 已定（2026-10-10） |
 
 ---
 
@@ -113,6 +113,14 @@ N：錐形內偵測到的目標數。M：單次最大鎖定數。T：一顆飛�
   - 純 client 的彈藥 UI 用 server 的值（§8.1 方案 1），不會比 server 先扣光。彈藥用完時 server 會送結束結果，client 收到才停，高延遲下大約晚半個 RTT。
 - 演出的時間軸用 `client_render_server_time_us`，不用 snapshot header 的 tick（memory「Interpolated snapshot tick is floored」）。
 
+### 3.4b 武器資料進 kernel（D22）與 AI 射手反查（D23）
+
+- `KernelGameplayCatalogDefinition` 結尾加 `weapon_definitions` 和數量。元素沿用 `KernelWeaponMechanicsDefinition`，舊的呼叫端靠 `struct_size` 判斷有沒有這兩個欄位。
+- `build_kernel_gameplay_catalog`（game_server）把解析好的武器填進去。client 和 server 載入 bundle 都走這條路（[game_server_api.cc:132](../game_server/src/game_server_api.cc)）。
+- kernel 在所有模式都把它裝成一張唯讀的「weapon id → 定義」表。這張表跟 server 端每個 entity 的 `WeaponTuning` 分開，不改變 `Kernel_ServerSetEntityWeaponMechanics` 的行為，也不改變 §8.1「純 client 不預測扣彈」的決定。
+- client 端的鎖定演出（§3.4）和查詢 API 都從這張表讀錐形、M、T2。
+- D23：client 用 snapshot 的 `action_template_id` 反查武器，反查表從同一張武器表建（fire action 模板 id → weapon id）。`gameplay_config.cc` 載入時檢查：`lock_instant` 和 `lock_missile` 的 fire action 模板不能被其他武器引用，否則是載入錯誤。
+
 ### 3.5 Content
 
 - 兩把武器各四個檔（shot、fire action、reload action、weapon）加上 cone collider 模板，照 `$id_<kind>_$name` 命名。不放進任何配裝。
@@ -150,7 +158,7 @@ N：錐形內偵測到的目標數。M：單次最大鎖定數。T：一顆飛�
 
 - **Packet schema 31 → 32**：client 和 server 一定要用同一版 native library。`dynamic_abi_smoke_test`、`kernel_api_test` 寫死了版本號，要跟著改（memory「Schema bump touch points」）。
 - **Snapshot schema 維持 29**（P0 確認後定案）。
-- **ABI**：P0 後要看 D22。D22 不論哪個方案都會動 ABI，原本的「維持 102」不成立。原本的推論：新的 fire mode 只是新增 enum 值，新 export 用 capability flag。D18 如果不採用、要加 struct 欄位，就要 bump，P1 時再確認。
+- **ABI 102 → 103**（D22）：`KernelGameplayCatalogDefinition` 多了欄位，Unity 的 C# 鏡像要跟著改（使用者負責）。新的 fire mode enum 值和新 export（capability flag）一起放在這一版。寫死 ABI 版本號的測試要跟著改（memory「Schema bump touch points」）。開工時先查其他還沒 merge 的分支有沒有用到 103（memory「Parallel branches collide on numbers」）。
 - **`bundle.bytes` 需要更新**：P5 加了新的 catalog 內容。由使用者處理。
 - Unity 的 C# 鏡像和演出由使用者處理。
 - 照規則在 `claude/*` 分支上 commit 並測好後交給使用者，不碰 `feat-unity-plugin` 和 package。
@@ -162,7 +170,7 @@ N：錐形內偵測到的目標數。M：單次最大鎖定數。T：一顆飛�
 | 階段 | 內容 | 驗證 |
 |---|---|---|
 | P0 | 只讀不改，確認：(1) 目標死亡的單一入口在哪；(2) 回溯路徑怎麼套用陣營和 mask（`raycast_history_frame` 沒有收 mask）；(3) 純 client 能不能從 catalog 讀到武器的 cone 和 M；(4) client 怎麼知道遠端 actor 的陣營和 hitbox 中心；(5) client 的靜態碰撞能不能做遮擋射線；(6) AI 射手的 snapshot 有沒有 `aim_direction` 和 `action_commit_count` | 結果寫回 §9 |
-| P1 | §3.1 共用選擇函式；§3.2 連鎖閃電的 server 端與載入檢查 | 選擇函式單元測試；`combat_test` 新案例 |
+| P1 | §3.1 共用選擇函式；§3.2 連鎖閃電的 server 端與載入檢查；§3.4b 武器表進 kernel、D23 的載入檢查；ABI 103 | 選擇函式單元測試；`combat_test` 新案例；catalog 載入測試（client 模式也查得到武器） |
 | P2 | §3.3 前半：`apply_tick`、已死跳過、死亡時取消 | `damage_pipeline_test` 新案例 |
 | P3 | §3.3 後半：魔法飛彈 server 端；§3.4 的封包與 schema 32 | protocol roundtrip；`combat_test` 新案例 |
 | P4 | §3.4 的 client 端：兩種演出清單、export、查詢 API | `client_mode_test` 新案例；dedicated server + 純 client 的 loopback e2e（以 `held_fire_end_to_end_test` 為範本） |
@@ -174,7 +182,7 @@ N：錐形內偵測到的目標數。M：單次最大鎖定數。T：一顆飛�
 
 - **選擇函式**：3D 錐形邊界（正上方的目標在 fov 外就不選）、超過 range 不選、依距離排序、同距離比 net id、被遮擋的跳過並由下一個補上、最多 M 個、死掉的不選。
 - **連鎖閃電**：N = 0 照樣扣 M 發、不會 `Corrected`、按住不中斷；N < M 只傷 N 個；每個目標各受一次傷害。
-- **載入**：`ammo_cost_per_commit != M` 或 `magazine_size % M != 0` 會被拒絕。
+- **載入**：鎖定武器的 fire action 模板被其他武器共用會被拒絕；client 模式載入 bundle 後查得到武器定義；`ammo_cost_per_commit != M` 或 `magazine_size % M != 0` 會被拒絕。
 - **延遲傷害**：到 `apply_tick` 前不生效、當下生效；目標已死、已消失、無敵、在帳篷內都取消；死亡後馬上復活也不會被打到（D14）；在到達時刻按閃避會取消。
 - **魔法飛彈**：N = 0 時照常 Committed、冷卻照算、彈藥不變、沒有飛彈記錄、按住不中斷；一直沒目標時彈藥一直不變；commit k 打第 `k % n` 近的目標；T 落在 [1, T2]；記錄 roundtrip，包括合成一組和分組的邊界。
 - **e2e**：純 client 收到的飛彈記錄和 server 的一致；連鎖閃電在純 client 上選中的目標，和 server 在無延遲時選中的一樣。要附一個「拿掉修正就會紅」的對照（memory「Test assertions can be vacuous」）。
