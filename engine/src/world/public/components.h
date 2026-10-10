@@ -685,6 +685,10 @@ enum class TriggerEventType : std::uint8_t {
     kStatusApplied,
     kStatusTick,
     kStatusExpired,
+    // A trigger volume's (ABI 103): an actor came in, is still in, went out.
+    kEnter,
+    kOverlap,
+    kExit,
 };
 
 struct OnCollisionTriggerTag {};
@@ -1016,6 +1020,20 @@ struct ActionGraphHealthDepletedBinding {
 
 struct ActionGraphDestroyEntityBinding {
     CompiledActionGraphBinding binding;
+};
+
+// A prop's trigger volume and the actors in it as of the last tick, sorted.
+// The volume itself is a collider with the trigger purpose that is never a
+// physics body; OverlapTriggerSystem queries with its shape every tick.
+struct OverlapTriggerVolume {
+    std::uint32_t collider_template_id = 0;
+    // Camps that count, as KERNEL_COLLISION_LAYER_*_SIDE / _NEUTRAL bits.
+    std::uint32_t collision_mask = 0;
+    bool players_only = false;
+    std::optional<CompiledActionGraphBinding> on_enter;
+    std::optional<CompiledActionGraphBinding> on_overlap;
+    std::optional<CompiledActionGraphBinding> on_exit;
+    std::vector<NetId> inside;
 };
 
 struct RuntimeStatusEffectTemplate {

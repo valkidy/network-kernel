@@ -1,6 +1,6 @@
 # 傳送門（Portal）實作計劃書
 
-狀態：**設計已定案；P0 實測完成（§7.1），尚未實作 kernel。** 下一步是 P1。
+狀態：**設計已定案；P0 實測完成（§7.1）；P1（K1、K2、K6，ABI 103）完成（§6.1）。** 下一步是 P2。
 分支：`claude/portal`（從 main fc4e964 開出）。
 最後更新：2026-10-10（第七輪 review：與帳篷共用 population group 並改名 `building`；觸發區分成 on_enter / on_overlap / on_exit）。
 
@@ -200,9 +200,24 @@ triggers:
 | 階段 | 內容 | ABI |
 |---|---|---|
 | **P0 實測（已完成）** | 測試直接呼叫 `Kernel_ServerSetEntityTransform` 做傳送，量測 R1–R3（§7.1）。入口的落點校正需要綠色觸發區，留到 P1 再測 | 不變 |
-| P1 | K1 + K2 + K6 | 103 |
+| P1（已完成） | K1 + K2 + K6，見 §6.1 | 103 |
 | P2 | K3 + K4 | 103 |
 | P3 | K5；Unity 的銜接動畫與鏡頭（使用者） | 103，可能加 packet 或 snapshot schema |
+
+### 6.1 P1 實作紀錄（2026-10-10，分支 `claude/portal-p1`）
+
+- **ABI 103**：`KernelEntityTemplateDefinition` 末尾新增 `trigger_collider_template_id`、`enter_trigger`、`overlap_trigger`、`exit_trigger`、`overlap_trigger_mask`、`overlap_trigger_instigators`；新增 enum `KernelOverlapInstigators`（`_Actors = 0`、`_Players = 1`）。Unity 的 C# 對應結構要跟著改（使用者負責）。
+- **K1 與計畫的差異**：D13 原本寫「註冊到新的內部 physics layer `kTrigger`」。實作改成**觸發區根本不放進 physics world**（`push_collider_into_physics` 對純 trigger 用途回傳 false），只存在 collider registry 裡，由 `OverlapTriggerSystem` 拿它的形狀做查詢。效果相同（移動、projectile 碰撞檢查、落點校正都看不到它），但不用新增 Jolt layer。
+- **K1 落點校正**：`find_clear_spawn_spot` 除了第一個 Hit box，也檢查 trigger 用途的 box（D16）。
+- **K2**：`OverlapTriggerSystem` 每個 tick 在 `CollisionTriggerSystem` 之後執行。查詢對象是 actor 的**移動膠囊**，camp 讀膠囊碰撞盒的 `layer`。執行順序：exit → enter → overlap，再依觸發區、actor 的 net_id 排序。事件：instigator 和 target 都是 actor，position 是 actor 位置，direction 從觸發區指向 actor。
+- **K6**：population group `tent` 改名 `building`（`gameplay_catalog.yaml`、`216_prop_tent.yaml`、`223_prop_field_camp.yaml`、`gameplay_config_test.cc`）。
+- YAML：collider 的 `purpose: trigger` 現在可以用了（原本只有 skeleton collider 接受）。
+- 測試：
+  - `//engine/src/tests/kernel_tests:trigger_volume_placement_test`：門口前方有一個方塊、但門框沒有被擋到時，只檢查門框的話會留在原位（對照組，z = 0）；連觸發區一起檢查會退到 z = −1。
+  - `//game_server:trigger_volume_test`：用 YAML 撰寫的測試門，三個 trigger 各自生成一個 marker prop 來計數。驗證：進入一次、每 tick overlap、離開一次；玩家可以直接走過觸發區；`instigators: players` 擋掉敵人；camp mask 擋掉玩家；死亡算離開、復活算進入；被刪除不觸發 exit。
+- 已知限制：
+  - **沒有移動膠囊的 actor 永遠不會觸發**（例如不會動的 sentry）。傳送門只給玩家用，沒有影響。
+  - 帳篷住客那個情境的測試是**空的**：進入帳篷會把移動遮罩改成只有 terrain，膠囊因此離開 physics world，查詢本來就找不到它；拿掉 `Sheltered` 規則測試照樣通過。規則保留作為保險，測試只能證明結果，不能證明規則。
 
 ---
 

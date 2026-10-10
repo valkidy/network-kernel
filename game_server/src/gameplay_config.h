@@ -307,6 +307,15 @@ struct ActorTemplateConfig {
     std::uint32_t collision_trigger_mask = KERNEL_COLLISION_MASK_NONE;
     TriggerBindingConfig health_depleted_trigger;
     TriggerBindingConfig destroy_entity_trigger;
+    // A trigger volume (ABI 103); props only. physics.trigger_collider_template
+    // and triggers.on_enter / on_overlap / on_exit, which share one
+    // collision_mask and one instigators.
+    std::uint32_t trigger_collider_template_id = 0;
+    TriggerBindingConfig enter_trigger;
+    TriggerBindingConfig overlap_trigger;
+    TriggerBindingConfig exit_trigger;
+    std::uint32_t overlap_trigger_mask = KERNEL_COLLISION_MASK_NONE;
+    std::uint32_t overlap_trigger_instigators = KernelOverlapInstigators_Actors;
     KernelPropDefinition prop{};
     SkeletonBindingConfig skeleton;
 };

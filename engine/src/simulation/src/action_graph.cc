@@ -155,6 +155,14 @@ ParameterType expression_type(const ActionGraphParameterExpression& expression) 
     return ParameterType::kVec3;
 }
 
+// A trigger volume's events: the actor is both instigator and target, the
+// position is the actor's and the direction runs from the volume to it.
+bool is_trigger_volume_event(TriggerEventType event_type) {
+    return event_type == TriggerEventType::kEnter ||
+        event_type == TriggerEventType::kOverlap ||
+        event_type == TriggerEventType::kExit;
+}
+
 bool expression_available_for_event(
     const ActionGraphParameterExpression& expression,
     TriggerEventType event_type) {
@@ -167,7 +175,8 @@ bool expression_available_for_event(
                 event_type == TriggerEventType::kProjectileImpact ||
                 event_type == TriggerEventType::kStatusApplied ||
                 event_type == TriggerEventType::kStatusTick ||
-                event_type == TriggerEventType::kStatusExpired;
+                event_type == TriggerEventType::kStatusExpired ||
+                is_trigger_volume_event(event_type);
         }
         if (entity_ref->source == EntityRefSource::kEventInstigator) {
             return event_type != TriggerEventType::kCollision;
@@ -204,7 +213,8 @@ bool expression_available_for_event(
         event_type == TriggerEventType::kCollision ||
         event_type == TriggerEventType::kProjectileImpact ||
         event_type == TriggerEventType::kExpired ||
-        event_type == TriggerEventType::kDestroyEntity;
+        event_type == TriggerEventType::kDestroyEntity ||
+        is_trigger_volume_event(event_type);
 }
 
 // Deliberately a switch rather than the cast this used to be. The two enums are

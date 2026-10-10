@@ -5,6 +5,22 @@
 #include <stdint.h>
 
 /*
+ * 103: trigger volumes (the portal, first part). KernelEntityTemplateDefinition
+ *     gained trigger_collider_template_id, enter_trigger, overlap_trigger,
+ *     exit_trigger, overlap_trigger_mask and overlap_trigger_instigators,
+ *     appended after shelter_hides_occupants; props only. The collider named
+ *     by trigger_collider_template_id must have the trigger purpose and a box
+ *     shape. It is never a physics body: nothing moves against it, sweeps
+ *     through it or is placed around it. Each server tick the kernel finds the
+ *     actors whose movement capsule overlaps it -- of a camp in
+ *     overlap_trigger_mask, players only if overlap_trigger_instigators is
+ *     KernelOverlapInstigators_Players, and never one sheltered or dead -- and
+ *     runs enter_trigger for each that was not there the tick before,
+ *     overlap_trigger for each that was, and exit_trigger for each that left
+ *     or stopped qualifying. An actor or trigger that is destroyed runs
+ *     nothing. The three graphs read the actor as event.instigator and
+ *     event.target. KernelEntityTemplateDefinition is a public catalog
+ *     struct, so every managed mirror of it shifts.
  * 102: status-bound crowd control (the water bubble). KernelEntityTriggerActionType
  *     gained _ApplyBlockActions: a status on_apply action that, for as long as
  *     that status instance stands, refuses its target new actions and ends the
@@ -271,7 +287,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 102u
+#define KERNEL_ABI_VERSION 103u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -2779,7 +2795,27 @@ struct KernelEntityTemplateDefinition {
      * inside: nothing sees, chases or aims at them, though an agent keeps its
      * last sighting and may still come looking. */
     uint32_t shelter_hides_occupants;
+    /* Props only (ABI 103). A box collider template with the trigger purpose,
+     * or 0. Required by, and only meaningful with, the three triggers below. */
+    uint32_t trigger_collider_template_id;
+    /* Run once for an actor that starts overlapping the trigger volume, every
+     * tick it stays, and once when it leaves or stops qualifying. */
+    KernelActionTriggerDefinition enter_trigger;
+    KernelActionTriggerDefinition overlap_trigger;
+    KernelActionTriggerDefinition exit_trigger;
+    /* Which camps count, as KERNEL_COLLISION_LAYER_PLAYER_SIDE,
+     * _HOSTILE_SIDE and _NEUTRAL bits. Non-zero whenever any of the three
+     * triggers is authored, zero otherwise. */
+    uint32_t overlap_trigger_mask;
+    /* A KernelOverlapInstigators. */
+    uint32_t overlap_trigger_instigators;
 };
+
+/* Who a trigger volume counts, within its overlap_trigger_mask (ABI 103). */
+typedef enum KernelOverlapInstigators {
+    KernelOverlapInstigators_Actors = 0,
+    KernelOverlapInstigators_Players = 1,
+} KernelOverlapInstigators;
 
 /* The largest body a game message may carry. */
 #define KERNEL_MAX_GAME_MESSAGE_BYTES 512u

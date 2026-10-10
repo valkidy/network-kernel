@@ -501,6 +501,20 @@ void hash_actor_template(
         hash_string(hash, parameter.first);
         hash_string(hash, parameter.second);
     }
+    hash_scalar(hash, actor_template.trigger_collider_template_id);
+    hash_scalar(hash, actor_template.overlap_trigger_mask);
+    hash_scalar(hash, actor_template.overlap_trigger_instigators);
+    for (const TriggerBindingConfig* trigger : {
+             &actor_template.enter_trigger,
+             &actor_template.overlap_trigger,
+             &actor_template.exit_trigger,
+         }) {
+        hash_string(hash, trigger->action_graph_ref);
+        for (const auto& parameter : trigger->parameters) {
+            hash_string(hash, parameter.first);
+            hash_string(hash, parameter.second);
+        }
+    }
     hash_scalar(hash, actor_template.prop.interaction.capability_flags);
     hash_scalar(hash, actor_template.prop.interaction.line_of_sight_required);
     hash_float(hash, actor_template.prop.interaction.interaction_range);
@@ -2866,7 +2880,8 @@ TriggerBindingConfig trigger_binding_from_yaml(
     std::uint32_t source_kind,
     std::uint32_t template_kind,
     std::uint32_t template_id,
-    bool allow_collision_mask = false);
+    bool allow_collision_mask = false,
+    bool allow_instigators = false);
 
 std::uint32_t item_capability_from_yaml(const std::string& value);
 
@@ -2926,6 +2941,11 @@ std::uint32_t collider_purpose_from_yaml(const YAML::Node& node) {
     }
     if (value == "movement") {
         return KernelColliderPurpose_Movement;
+    }
+    // A trigger volume (ABI 103): a prop's physics.trigger_collider_template,
+    // never a physics body.
+    if (value == "trigger") {
+        return KernelColliderPurpose_Trigger;
     }
     throw std::runtime_error("unsupported collider purpose: " + value);
 }
@@ -4939,7 +4959,7 @@ EntityTemplateConfig entity_template_from_yaml(
         if (node["physics"]) {
             reject_unknown_keys(
                 node["physics"],
-                {"collider_template"},
+                {"collider_template", "trigger_collider_template"},
                 path,
                 source_kind,
                 KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
@@ -4947,6 +4967,29 @@ EntityTemplateConfig entity_template_from_yaml(
             if (node["physics"]["collider_template"]) {
                 entity_template.collider_template_id = collider_template_id_from_ref(
                     node["physics"]["collider_template"], colliders);
+            }
+            if (node["physics"]["trigger_collider_template"]) {
+                entity_template.trigger_collider_template_id =
+                    collider_template_id_from_ref(
+                        node["physics"]["trigger_collider_template"], colliders);
+                const auto collider = std::find_if(
+                    colliders.templates.begin(),
+                    colliders.templates.end(),
+                    [&](const ColliderTemplateConfig& candidate) {
+                        return candidate.definition.template_id ==
+                            entity_template.trigger_collider_template_id;
+                    });
+                if (collider == colliders.templates.end() ||
+                    collider->definition.purpose_flags !=
+                        KernelColliderPurpose_Trigger ||
+                    (collider->definition.shape_type !=
+                         KernelColliderShapeType_Aabb &&
+                     collider->definition.shape_type !=
+                         KernelColliderShapeType_OrientedBox)) {
+                    throw std::runtime_error(
+                        "trigger_collider_template must be a box with purpose: "
+                        "trigger and nothing else: " + path);
+                }
             }
         }
         entity_template.prop.struct_size = sizeof(entity_template.prop);
@@ -5183,6 +5226,9 @@ EntityTemplateConfig entity_template_from_yaml(
                     "on_collision",
                     "on_health_depleted",
                     "on_destroy_entity",
+                    "on_enter",
+                    "on_overlap",
+                    "on_exit",
                 },
                 path,
                 source_kind,
@@ -5218,6 +5264,68 @@ EntityTemplateConfig entity_template_from_yaml(
                     KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
                     entity_template.actor_template_id,
                     true);
+            }
+            // A trigger volume's three triggers watch one set of actors, so
+            // they share what counts: every one names the same collision_mask
+            // and instigators.
+            bool volume_trigger_seen = false;
+            for (const auto& [key, binding] :
+                 std::initializer_list<std::pair<const char*, TriggerBindingConfig*>>{
+                     {"on_enter", &entity_template.enter_trigger},
+                     {"on_overlap", &entity_template.overlap_trigger},
+                     {"on_exit", &entity_template.exit_trigger},
+                 }) {
+                const YAML::Node trigger = node["triggers"][key];
+                if (!trigger) {
+                    continue;
+                }
+                if (!trigger["collision_mask"]) {
+                    throw std::runtime_error(
+                        std::string(key) + " requires collision_mask: " + path);
+                }
+                const std::uint32_t mask =
+                    collision_mask_from_yaml(trigger["collision_mask"]);
+                require_supported_collision_mask(
+                    mask, KERNEL_COLLISION_MASK_ACTOR, key);
+                if (mask == 0u) {
+                    throw std::runtime_error(
+                        std::string(key) + " collision_mask names no camp: " + path);
+                }
+                std::uint32_t instigators = KernelOverlapInstigators_Actors;
+                if (trigger["instigators"]) {
+                    const std::string value = trigger["instigators"].as<std::string>();
+                    if (value == "players") {
+                        instigators = KernelOverlapInstigators_Players;
+                    } else if (value != "actors") {
+                        throw std::runtime_error(
+                            std::string(key) +
+                            " instigators must be players or actors: " + path);
+                    }
+                }
+                if (volume_trigger_seen &&
+                    (mask != entity_template.overlap_trigger_mask ||
+                     instigators != entity_template.overlap_trigger_instigators)) {
+                    throw std::runtime_error(
+                        "on_enter, on_overlap and on_exit must share collision_mask "
+                        "and instigators: " + path);
+                }
+                volume_trigger_seen = true;
+                entity_template.overlap_trigger_mask = mask;
+                entity_template.overlap_trigger_instigators = instigators;
+                *binding = trigger_binding_from_yaml(
+                    trigger,
+                    path,
+                    source_kind,
+                    KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+                    entity_template.actor_template_id,
+                    true,
+                    true);
+            }
+            if (volume_trigger_seen &&
+                entity_template.trigger_collider_template_id == 0u) {
+                throw std::runtime_error(
+                    "on_enter, on_overlap and on_exit need "
+                    "physics.trigger_collider_template: " + path);
             }
             if (node["triggers"]["on_health_depleted"]) {
                 entity_template.health_depleted_trigger =
@@ -5833,8 +5941,17 @@ TriggerBindingConfig trigger_binding_from_yaml(
     std::uint32_t source_kind,
     std::uint32_t template_kind,
     std::uint32_t template_id,
-    bool allow_collision_mask) {
-    if (allow_collision_mask) {
+    bool allow_collision_mask,
+    bool allow_instigators) {
+    if (allow_instigators) {
+        reject_unknown_keys(
+            node,
+            {"action_graph", "parameters", "collision_mask", "instigators"},
+            path,
+            source_kind,
+            template_kind,
+            template_id);
+    } else if (allow_collision_mask) {
         reject_unknown_keys(
             node,
             {"action_graph", "parameters", "collision_mask"},
@@ -6995,11 +7112,16 @@ bool event_expression_available(
     if (expression == "event.item") {
         return trigger_name == "on_item_used";
     }
+    // A trigger volume's actor is its instigator and its target both, and
+    // the direction runs from the volume to it.
+    const bool volume_trigger = trigger_name == "on_enter" ||
+        trigger_name == "on_overlap" || trigger_name == "on_exit";
     if (expression == "event.target") {
         return trigger_name == "on_activated" ||
             trigger_name == "on_item_used" ||
             trigger_name == "on_collision" ||
-            trigger_name == "on_projectile_impact";
+            trigger_name == "on_projectile_impact" ||
+            volume_trigger;
     }
     if (expression == "event.instigator") {
         return trigger_name == "on_activated" ||
@@ -7010,7 +7132,8 @@ bool event_expression_available(
             trigger_name == "on_expired" ||
             trigger_name == "on_apply" ||
             trigger_name == "on_tick" ||
-            trigger_name == "on_expire";
+            trigger_name == "on_expire" ||
+            volume_trigger;
     }
     if (expression == "event.direction") {
         // on_destroy_entity: away from whoever destroyed it, or straight up
@@ -7020,7 +7143,8 @@ bool event_expression_available(
             trigger_name == "on_collision" ||
             trigger_name == "on_projectile_impact" ||
             trigger_name == "on_expired" ||
-            trigger_name == "on_destroy_entity";
+            trigger_name == "on_destroy_entity" ||
+            volume_trigger;
     }
     if (expression == "event.subject_direction") {
         // Only a projectile's own triggers have a subject that was going
@@ -10790,6 +10914,32 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
             &config.status_effect_templates);
         entity_template.collision_trigger_mask =
             authored_template.collision_trigger_mask;
+        entity_template.trigger_collider_template_id =
+            authored_template.trigger_collider_template_id;
+        entity_template.overlap_trigger_mask = authored_template.overlap_trigger_mask;
+        entity_template.overlap_trigger_instigators =
+            authored_template.overlap_trigger_instigators;
+        for (const auto& [name, authored, compiled] :
+             std::initializer_list<std::tuple<
+                 const char*,
+                 const TriggerBindingConfig*,
+                 KernelActionTriggerDefinition*>>{
+                 {"on_enter", &authored_template.enter_trigger,
+                  &entity_template.enter_trigger},
+                 {"on_overlap", &authored_template.overlap_trigger,
+                  &entity_template.overlap_trigger},
+                 {"on_exit", &authored_template.exit_trigger,
+                  &entity_template.exit_trigger},
+             }) {
+            *compiled = compile_action_trigger_binding(
+                *authored,
+                name,
+                config.action_graph_templates,
+                config.entity_templates,
+                &config.projectile_templates,
+                nullptr,
+                &config.status_effect_templates);
+        }
         entity_template.health_depleted_trigger = compile_action_trigger_binding(
             authored_template.health_depleted_trigger,
             "on_health_depleted",

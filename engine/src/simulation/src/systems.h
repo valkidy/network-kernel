@@ -89,6 +89,13 @@ public:
     void update(KernelEngine& engine, std::uint64_t server_time_us) const;
 };
 
+// Trigger volumes (ABI 103): which actors are in each, and the enter, overlap
+// and exit graphs that follow from what changed since the last tick.
+class OverlapTriggerSystem {
+public:
+    void update(KernelEngine& engine, std::uint64_t server_time_us) const;
+};
+
 class EntityStateSystem {
 public:
     bool set_actor_template(

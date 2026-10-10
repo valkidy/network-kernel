@@ -498,3 +498,9 @@ cc_test(
         "//engine/src/transport:transport",
     ],
 )
+
+cc_test(
+    name = "trigger_volume_placement_test",
+    srcs = ["trigger_volume_placement_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)

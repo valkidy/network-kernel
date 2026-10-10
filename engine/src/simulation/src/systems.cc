@@ -2183,6 +2183,23 @@ bool EntityLifecycleSystem::create_entity(
                 *entity,
                 ActionGraphDestroyEntityBinding{*binding});
         }
+        if (entity_template->trigger_collider_template_id != 0u &&
+            type == EntityType::kProp) {
+            OverlapTriggerVolume volume{};
+            volume.collider_template_id =
+                entity_template->trigger_collider_template_id;
+            volume.collision_mask = entity_template->overlap_trigger_mask;
+            volume.players_only = entity_template->overlap_trigger_instigators ==
+                KernelOverlapInstigators_Players;
+            volume.on_enter = compile_entity_trigger_binding(
+                entity_template->enter_trigger, TriggerEventType::kEnter);
+            volume.on_overlap = compile_entity_trigger_binding(
+                entity_template->overlap_trigger, TriggerEventType::kOverlap);
+            volume.on_exit = compile_entity_trigger_binding(
+                entity_template->exit_trigger, TriggerEventType::kExit);
+            registry.emplace_or_replace<OverlapTriggerVolume>(
+                *entity, std::move(volume));
+        }
         if (entity_template->actor_template_id != 0u) {
             registry.emplace_or_replace<ActorTemplateRef>(
                 *entity,
@@ -2638,6 +2655,200 @@ void CollisionTriggerSystem::update(
             provenance,
             sequence,
         });
+    }
+    std::vector<ActionGraphCommandBatch> command_batches;
+    if (!dispatch_action_graph_triggers(
+            &queued_triggers, &command_batches, nullptr)) {
+        return;
+    }
+    for (const ActionGraphCommandBatch& batch : command_batches) {
+        (void)execute_action_graph_commands(
+            engine,
+            engine.world_,
+            &engine.damage_pipeline_,
+            engine.entity_templates_,
+            batch,
+            server_time_us);
+    }
+}
+
+void OverlapTriggerSystem::update(
+    KernelEngine& engine,
+    std::uint64_t server_time_us) const {
+    if (!engine.running_ || !is_server_mode(engine.config_.mode) ||
+        engine.physics_world_ == nullptr) {
+        return;
+    }
+    World& world = engine.world_;
+    entt::registry& registry = world.registry();
+
+    // Whether an actor found in a volume counts. Sheltered and dead actors
+    // never do, whatever the volume says: losing either is leaving.
+    const auto qualifies = [&](const OverlapTriggerVolume& volume,
+                               const physics::CollisionHit& hit) {
+        if ((hit.identity.gameplay_category & volume.collision_mask) == 0u) {
+            return false;
+        }
+        const std::optional<entt::entity> actor =
+            world.find_entity(hit.identity.entity_net_id);
+        if (!actor.has_value() || !registry.all_of<EntityKind>(*actor)) {
+            return false;
+        }
+        const EntityKind& kind = registry.get<EntityKind>(*actor);
+        if (kind.type != EntityType::kActor ||
+            (volume.players_only && kind.actor_type != ActorType::kPlayer) ||
+            registry.all_of<Sheltered>(*actor)) {
+            return false;
+        }
+        const Health* health = registry.try_get<Health>(*actor);
+        return health == nullptr || health->max_hp == 0u || health->hp != 0u;
+    };
+
+    struct OverlapFact {
+        TriggerEventType type = TriggerEventType::kEnter;
+        NetId subject = 0;
+        NetId actor = 0;
+        PeerId owner_peer = 0;
+        const CompiledActionGraphBinding* binding = nullptr;
+    };
+    std::vector<OverlapFact> facts;
+    auto view = registry.view<NetworkIdentity, Transform, OverlapTriggerVolume>();
+    for (const entt::entity entity : view) {
+        const NetworkIdentity& identity = view.get<NetworkIdentity>(entity);
+        OverlapTriggerVolume& volume = view.get<OverlapTriggerVolume>(entity);
+        std::vector<NetId> now;
+        for (const std::uint32_t index :
+             world.collider_registry().entity_collider_indices(identity.net_id)) {
+            const ColliderInstance& collider =
+                world.collider_registry().instances()[index];
+            if (!collider.enabled ||
+                collider.collider_template_id != volume.collider_template_id ||
+                collider.purpose_flags != KernelColliderPurpose_Trigger) {
+                continue;
+            }
+            physics::OverlapRequest request{};
+            request.shape.type = physics::CollisionShapeType::kBox;
+            request.shape.half_extents = collider.half_extents;
+            request.position = collider.world_center;
+            request.rotation = collider.world_rotation;
+            // The body an actor walks with, not its hit volume: an actor is in
+            // the volume when it stands in it.
+            request.filter.collision_mask =
+                physics::collision_layer_bit(physics::CollisionLayer::kActorMovement);
+            request.filter.object_kind_mask =
+                1u << static_cast<std::uint32_t>(
+                    physics::CollisionObjectKind::kActorMovement);
+            request.filter.ignored_entity_net_id = identity.net_id;
+            for (const physics::CollisionHit& hit :
+                 engine.physics_world_->overlap_all(request)) {
+                if (qualifies(volume, hit)) {
+                    now.push_back(hit.identity.entity_net_id);
+                }
+            }
+        }
+        std::sort(now.begin(), now.end());
+        now.erase(std::unique(now.begin(), now.end()), now.end());
+
+        const auto add = [&](TriggerEventType type,
+                             NetId actor,
+                             const std::optional<CompiledActionGraphBinding>& binding) {
+            if (binding.has_value()) {
+                facts.push_back(OverlapFact{
+                    type, identity.net_id, actor, identity.owner_peer, &*binding});
+            }
+        };
+        // Leaving, whether it walked out or stopped qualifying. One that no
+        // longer exists runs nothing: there is no one to run it on.
+        for (const NetId actor : volume.inside) {
+            if (!std::binary_search(now.begin(), now.end(), actor) &&
+                world.find_entity(actor).has_value()) {
+                add(TriggerEventType::kExit, actor, volume.on_exit);
+            }
+        }
+        for (const NetId actor : now) {
+            add(std::binary_search(volume.inside.begin(), volume.inside.end(), actor)
+                    ? TriggerEventType::kOverlap
+                    : TriggerEventType::kEnter,
+                actor,
+                std::binary_search(volume.inside.begin(), volume.inside.end(), actor)
+                    ? volume.on_overlap
+                    : volume.on_enter);
+        }
+        volume.inside = std::move(now);
+    }
+    // Exits first, so a graph that hands something back on the way out runs
+    // before one that takes it on the way in; then by volume and actor.
+    const auto order = [](TriggerEventType type) {
+        return type == TriggerEventType::kExit ? 0
+            : type == TriggerEventType::kEnter ? 1
+                                               : 2;
+    };
+    std::stable_sort(
+        facts.begin(),
+        facts.end(),
+        [&order](const OverlapFact& lhs, const OverlapFact& rhs) {
+            if (order(lhs.type) != order(rhs.type)) {
+                return order(lhs.type) < order(rhs.type);
+            }
+            return lhs.subject != rhs.subject
+                ? lhs.subject < rhs.subject
+                : lhs.actor < rhs.actor;
+        });
+
+    std::vector<ActionGraphQueuedTrigger> queued_triggers;
+    queued_triggers.reserve(facts.size());
+    for (const OverlapFact& fact : facts) {
+        const std::optional<entt::entity> subject = world.find_entity(fact.subject);
+        const std::optional<entt::entity> actor = world.find_entity(fact.actor);
+        if (!subject.has_value() || !actor.has_value() ||
+            !registry.all_of<Transform>(*subject) ||
+            !registry.all_of<Transform, NetworkIdentity>(*actor)) {
+            continue;
+        }
+        const glm::vec3 actor_position = registry.get<Transform>(*actor).position;
+        glm::vec3 direction = normalized_direction_or_zero(
+            actor_position - registry.get<Transform>(*subject).position);
+        if (direction == glm::vec3{0.0f}) {
+            direction = glm::vec3{1.0f, 0.0f, 0.0f};
+        }
+        if (engine.next_action_graph_sequence_ == 0u) {
+            engine.next_action_graph_sequence_ = 1u;
+        }
+        const std::uint32_t sequence = engine.next_action_graph_sequence_++;
+        const TriggerEvent event{
+            fact.type,
+            fact.subject,
+            fact.actor,
+            fact.actor,
+            actor_position,
+            direction,
+            std::nullopt,
+        };
+        const ActionExecutionProvenance provenance{
+            action_trigger_request_id(
+                engine.tick_loop_.current_tick(),
+                fact.type,
+                fact.subject,
+                fact.actor,
+                sequence),
+            0u,
+            engine.tick_loop_.current_tick(),
+            fact.actor,
+            fact.owner_peer,
+            0u,
+            ActionAuthoritySource::kAuthoritativeSimulation,
+            registry.get<NetworkIdentity>(*actor).owner_peer,
+        };
+        queued_triggers.push_back(ActionGraphQueuedTrigger{
+            *fact.binding,
+            fact.subject,
+            event,
+            provenance,
+            sequence,
+        });
+    }
+    if (queued_triggers.empty()) {
+        return;
     }
     std::vector<ActionGraphCommandBatch> command_batches;
     if (!dispatch_action_graph_triggers(

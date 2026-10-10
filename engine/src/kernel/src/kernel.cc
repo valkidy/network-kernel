@@ -605,6 +605,31 @@ bool stagger_profile_is_authorable(const KernelEntityTemplateDefinition& entity_
         entity_template.stagger_immunity_ticks <= KERNEL_MAX_STAGGER_TICKS;
 }
 
+// A trigger volume is a prop's, and its three triggers come with it: any one
+// of them needs the volume and a camp to count, and a camp with no trigger to
+// run is a template that says something nothing reads. The collider's own
+// shape and purpose are checked with the other collider references.
+bool overlap_trigger_is_authorable(const KernelEntityTemplateDefinition& entity_template) {
+    const bool any_trigger =
+        entity_template.enter_trigger.struct_size != 0u ||
+        entity_template.overlap_trigger.struct_size != 0u ||
+        entity_template.exit_trigger.struct_size != 0u;
+    if (entity_template.overlap_trigger_instigators >
+            KernelOverlapInstigators_Players ||
+        (entity_template.overlap_trigger_mask & ~KERNEL_COLLISION_MASK_ACTOR) != 0u) {
+        return false;
+    }
+    if (!any_trigger) {
+        return entity_template.overlap_trigger_mask == 0u &&
+            entity_template.overlap_trigger_instigators == 0u &&
+            (entity_template.trigger_collider_template_id == 0u ||
+             entity_template.entity_type == KernelEntityType_Prop);
+    }
+    return entity_template.entity_type == KernelEntityType_Prop &&
+        entity_template.trigger_collider_template_id != 0u &&
+        entity_template.overlap_trigger_mask != 0u;
+}
+
 glm::vec3 input_aim_to_world(const KernelPlayerInput& input) {
     glm::vec3 aim{input.aim_dir.x, input.aim_dir.y, input.aim_dir.z};
     if (glm::length(aim) <= 0.0001f) {
@@ -3223,7 +3248,8 @@ bool KernelEngine::load_gameplay_catalog(
             (entity_template.entity_type != KernelEntityType_Prop &&
              (entity_template.shelter_capacity != 0u ||
               entity_template.shelter_hides_occupants != 0u)) ||
-            entity_template.death_policy > KernelDeathPolicy_Dormant) {
+            entity_template.death_policy > KernelDeathPolicy_Dormant ||
+            !overlap_trigger_is_authorable(entity_template)) {
             return false;
         }
         const KernelSkeletonBindingDefinition& skeleton =
@@ -3333,6 +3359,9 @@ bool KernelEngine::load_gameplay_catalog(
                  &entity_template.collision_trigger,
                  &entity_template.health_depleted_trigger,
                  &entity_template.destroy_entity_trigger,
+                 &entity_template.enter_trigger,
+                 &entity_template.overlap_trigger,
+                 &entity_template.exit_trigger,
              }) {
             if (trigger->struct_size == 0u) {
                 continue;
@@ -3833,6 +3862,9 @@ bool KernelEngine::load_gameplay_catalog(
                  &entity_template.collision_trigger,
                  &entity_template.health_depleted_trigger,
                  &entity_template.destroy_entity_trigger,
+                 &entity_template.enter_trigger,
+                 &entity_template.overlap_trigger,
+                 &entity_template.exit_trigger,
              }) {
             const std::uint32_t count = trigger->action_count == 0u
                 ? (trigger->action_type == KernelEntityTriggerActionType_None
@@ -3863,6 +3895,19 @@ bool KernelEngine::load_gameplay_catalog(
                 validated_collider_templates,
                 entity_template.collider_template_id) == nullptr) {
             return false;
+        }
+        if (entity_template.trigger_collider_template_id != 0u) {
+            const KernelColliderTemplateDefinition* trigger_collider =
+                find_collider_template(
+                    validated_collider_templates,
+                    entity_template.trigger_collider_template_id);
+            if (trigger_collider == nullptr ||
+                trigger_collider->purpose_flags != KernelColliderPurpose_Trigger ||
+                (trigger_collider->shape_type != KernelColliderShapeType_Aabb &&
+                 trigger_collider->shape_type !=
+                     KernelColliderShapeType_OrientedBox)) {
+                return false;
+            }
         }
         if (entity_template.entity_type == KernelEntityType_Prop &&
             (entity_template.prop.interaction.capability_flags &
@@ -4626,6 +4671,9 @@ std::uint32_t KernelEngine::get_collider_bindings(
 }
 
 void KernelEngine::materialize_entity_collider(NetId net_id) {
+    // Ahead of the hit volume's early returns: a trigger volume does not
+    // depend on the prop having one.
+    materialize_entity_trigger_collider(net_id);
     const std::optional<entt::entity> entity = world_.find_entity(net_id);
     if (!entity.has_value() ||
         !world_.registry().all_of<NetworkIdentity, EntityKind, Transform, Hitbox>(
@@ -4736,6 +4784,50 @@ void KernelEngine::materialize_entity_movement_collider(NetId net_id) {
         collider_template->template_id,
         collider);
     movement.movement_collider_id = stored.collider_id;
+}
+
+void KernelEngine::materialize_entity_trigger_collider(NetId net_id) {
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (!entity.has_value() ||
+        !world_.registry().all_of<
+            NetworkIdentity,
+            EntityKind,
+            Transform,
+            OverlapTriggerVolume>(*entity)) {
+        return;
+    }
+    const OverlapTriggerVolume& volume =
+        world_.registry().get<OverlapTriggerVolume>(*entity);
+    const KernelColliderTemplateDefinition* collider_template =
+        find_collider_template(collider_templates_, volume.collider_template_id);
+    if (collider_template == nullptr) {
+        return;
+    }
+    const NetworkIdentity& identity =
+        world_.registry().get<NetworkIdentity>(*entity);
+    const EntityKind& kind = world_.registry().get<EntityKind>(*entity);
+    const Transform& transform = world_.registry().get<Transform>(*entity);
+    ColliderInstance collider{};
+    collider.collider_template_id = collider_template->template_id;
+    collider.owner_net_id = identity.net_id;
+    collider.entity_net_id = identity.net_id;
+    collider.entity_type = kind.type;
+    collider.actor_type = kind.actor_type;
+    collider.shape_type = to_collider_shape_type(collider_template->shape_type);
+    collider.purpose_flags = collider_template->purpose_flags;
+    collider.layer_mask = collider_template->layer_mask;
+    collider.local_center = from_kernel_vec3(collider_template->center);
+    collider.local_rotation = glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
+    collider.world_rotation = transform.rotation * collider.local_rotation;
+    collider.world_center =
+        transform.position + transform.rotation * collider.local_center;
+    collider.half_extents = collider_template_half_extents(*collider_template);
+    collider.radius = collider_template_radius(*collider_template);
+    collider.world_bounds = collider_world_bounds(collider);
+    world_.collider_registry().upsert_entity_collider(
+        identity.net_id,
+        collider_template->template_id,
+        collider);
 }
 
 void KernelEngine::materialize_entity_limb_colliders(
@@ -4862,6 +4954,12 @@ void KernelEngine::materialize_projectile_collider(NetId net_id) {
 // it if it is not there yet. Returns false when the collider does not belong in
 // the world at all, so the caller can leave it out of its bookkeeping.
 bool KernelEngine::push_collider_into_physics(const ColliderInstance& collider) {
+    // A trigger volume is only ever a query shape (OverlapTriggerSystem). As a
+    // body it would be a static obstacle: walked into, swept against, placed
+    // around -- everything it must not be.
+    if (collider.purpose_flags == KernelColliderPurpose_Trigger) {
+        return false;
+    }
     if (collider.lifetime_ticks != 0 || collider.entity_net_id == 0 ||
         collider.entity_type == EntityType::kProjectile ||
         collider.shape_type == ColliderShapeType::kSegment ||
@@ -13164,6 +13262,7 @@ void KernelEngine::simulate_tick() {
     simulate_velocity_movement(world_, fixed_delta);
     sync_entity_colliders_from_world();
     CollisionTriggerSystem{}.update(*this, server_time_us);
+    OverlapTriggerSystem{}.update(*this, server_time_us);
     bool released_first_physics_actor = false;
     for (const NetId net_id : physics_finalized_actor_net_ids) {
         released_first_physics_actor =

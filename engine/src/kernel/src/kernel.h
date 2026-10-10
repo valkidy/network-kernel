@@ -38,6 +38,7 @@ class EntityStateSystem;
 class ItemGameplaySystem;
 class ActivationSystem;
 class CollisionTriggerSystem;
+class OverlapTriggerSystem;
 class ListenServerTransport;
 class MovementSystem;
 struct EntityDespawnPacket;
@@ -442,6 +443,7 @@ private:
     friend class ActivationSystem;
     friend class ItemGameplaySystem;
     friend class CollisionTriggerSystem;
+    friend class OverlapTriggerSystem;
     friend class MovementSystem;
     friend class KernelRpcDispatcher;
     friend class KernelRpcWorldHandlers;
@@ -1178,6 +1180,7 @@ private:
     void remove_session(PeerId peer);
     void materialize_entity_collider(NetId net_id);
     void materialize_entity_movement_collider(NetId net_id);
+    void materialize_entity_trigger_collider(NetId net_id);
     // Registers (or refreshes) one collider per bone the rig declares, from the
     // pose the solve just produced. Best-effort by contract: an actor whose
     // skeleton, template or solve is unavailable simply contributes no limbs.
