@@ -62,6 +62,10 @@ private:
 
 // include_limbs defaults to false so that a caller which has not been taught
 // about limbs keeps the results it had.
+//
+// excluded_net_ids, when given, must be sorted; volumes belonging to any of
+// them are passed through. The frame records no side, so this is how a caller
+// that knows which sides its shot may reach says so.
 bool raycast_history_frame(
     const HistoryFrame& frame,
     const glm::vec3& ray_origin,
@@ -69,7 +73,8 @@ bool raycast_history_frame(
     float max_range,
     NetId ignored_net_id,
     HistoricalHitResult* out_hit,
-    bool include_limbs = false);
+    bool include_limbs = false,
+    const std::vector<NetId>* excluded_net_ids = nullptr);
 
 bool sweep_history_frame(
     const HistoryFrame& frame,
