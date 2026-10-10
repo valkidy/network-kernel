@@ -119,6 +119,35 @@ N：錐形內偵測到的目標數。M：單次最大鎖定數。T：一顆飛�
 - 加 `cancel_pending_for_target(net_id)`，在兩個地方呼叫（D14，P0-1）：`EntityLifecycleSystem::enter_death_state`（[systems.cc:2858](../engine/src/simulation/src/systems.cc)，所有傷害造成的死亡都經過這裡），和 `server_set_entity_health` 把 hp 設成 0 時（[kernel.cc:6284](../engine/src/kernel/src/kernel.cc)，這條路不走死亡流程）。
 - `apply_damage_applications`（[damage_system.cc:164](../engine/src/simulation/src/damage_system.cc)）補「血量已是 0 就跳過」。
 
+**P2 實作紀錄（2026-10-10，`c376fb0f`）**：
+- `DamageRequest`、`PendingDamage` 結尾加 `apply_tick`（0 = 不排定）。`drain_ready_damage` 多一個必填的 `current_tick` 參數：
+  - 排定的傷害只看 tick。
+  - 其他照舊看 `confirm_time_us`。
+  - 呼叫端都改了：kernel、beam、`confirm_ready`，加上 5 個測試檔。
+  沒有給預設值，因為預設值會讓排定的傷害提早落地。
+- D15「排定的傷害不加 grace」不需要另外寫程式：排定的傷害本來就不看 `confirm_time_us`，grace 只加在那上面。mutation M5 證明多寫的條件沒有作用，所以拿掉了，改成在程式裡註明這條規則。
+- 閃避判定用的還是 `hit_time_us`，由開火的武器設成到達 tick 對應的時間（P3）。
+- `cancel_pending_for_target` 會刪掉 queued 裡的，pending 裡的標成 canceled。兩個地方會呼叫：
+  - `enter_death_state`。
+  - `server_set_entity_health` 把 hp 設成 0 時。
+- 已死跳過：條件是 `max_hp > 0 && hp == 0`，和 `destroy_dead_entities` 對「死亡」的定義一樣。
+  - 一開始只寫 `hp == 0`，結果 `combat_event_delivery_end_to_end_test` 紅了。那個測試打的是 `spawn_player` 預設的 `Health{0, 0}`，這種 entity 從來沒有活過，不算死。
+- 測試：
+  - `scheduled_damage_test`：
+    - 到 tick 才落地。
+    - 不加 grace（同時送一筆不排定的當對照）。
+    - 到達時閃避會取消，太早閃避不會。
+    - queued 和 pending 都能取消。
+    - 打已死的目標沒有事件。
+  - `scheduled_damage_death_test`（kernel）：
+    - 因傷害死亡後馬上復活，不會被打到。
+    - `set_health(0)` 後復活，不會被打到。
+    - 對照組：沒死的會被打到。
+  - mutation：
+    - M1–M4 都會讓測試紅：拿掉死亡時取消、拿掉 `set_health` 時取消、拿掉已死跳過、拿掉 tick 判斷。
+    - M5 存活，原因見上。
+- 既有測試：四組在分支上一樣是那 14 個失敗。逐一和 `main` 比對失敗的那一行，只有兩個測試的行號位移，原因是我在檔案上方加了行，斷言內容相同。
+
 `weapon_system.cc` 的 `lock_missile` 分支：
 - 先選目標。N = 0 時（D9）：照常 push Committed、設冷卻，但不扣彈、不送 `DamageRequest`、不產生飛彈記錄。
   不 emit `FireConfirmed` 這個本機事件，因為這一輪沒有射出東西。
