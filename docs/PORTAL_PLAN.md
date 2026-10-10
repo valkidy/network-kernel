@@ -1,6 +1,6 @@
 # 傳送門（Portal）實作計劃書
 
-狀態：**P0 實測完成（§7.1）；P1（K1、K2、K6）與 P2（K3、K4、catalog）完成，ABI 103（§6.1、§6.2）。** 下一步是 P3（K5 傳送通知、Unity）。
+狀態：**kernel 端全部完成：P0（§7.1）、P1、P2、P3（K5，§6.3），ABI 103、packet schema 32。** 剩下 Unity 端（§5，使用者負責）。
 分支：`claude/portal`（從 main fc4e964 開出）。
 最後更新：2026-10-10（第七輪 review：與帳篷共用 population group 並改名 `building`；觸發區分成 on_enter / on_overlap / on_exit）。
 
@@ -254,6 +254,22 @@ triggers:
   grace 和 immunity 都做過 mutation check：拿掉其中一個，測試會在對應的那一行失敗。
 - **尚未做（P3）**：K5 傳送通知。在那之前，Unity 端的鏡頭不會轉向 forward，觀察者仍會看到一個中間幀（R2）。
 
+### 6.3 P3 實作紀錄（2026-10-10，分支 `claude/portal-p3`）
+
+- **K5 用 event 傳**（使用者決定，避免增加 snapshot 的負擔）。新增封包 `ActorTeleportBatch`（`MessageType` 33，packet schema **31 → 32**），走可靠的 event channel。每筆 12 bytes：actor 的 net_id、傳送門的 entity template id、傳送門的 net_id。目的地和 forward 不上線：client 用 template id 從自己的 catalog 查。
+- **送給誰**：actor 自己的 session 一定送（鏡頭要轉），另外送給傳送當下看得到這個 actor 的 session（也就是在出發點畫著它的 client）。只在終點才看到它的 session 會直接收到新出現的 entity，沒有內插可以切。
+- **時間戳**：在傳送的那個 tick 送出，所以封包的 tick 等於「第一個把 actor 放在目的地的 snapshot」的 tick。
+- **client 端**：
+  - 記下每個 actor 最近一次被傳送的 tick，並清掉這個 actor 的擊退 anchor。
+  - push `KernelEventType_ActorTeleported`：`net_id` 是 actor，`code` 是傳送門的 template id，`related_net_id` 是傳送門的 net_id，`tick` 是 server tick。
+  - `bridge_remote_actor_samples` 遇到前後兩個樣本之間有傳送時不內插：傳送的 tick 之前畫在舊位置，之後畫在新位置。
+- **新增 export `Kernel_GetPortalDefinition(kernel, template_id, out)`**：client 用 event 的 `code` 讀出傳送門的 `forward`（Windows 的 `.def` 和 macOS 的 BUILD 清單都已加入）。
+- **測試**：在 `portal_feasibility_probe_test` 加了 R2'，用真的 `portal_entrance`，以 60 fps 取樣（兩次各半個 tick 的 client update）。
+  - 結果：被傳送的玩家和觀察者都只 snap 一次、**沒有中間幀**；兩個 client 都只收到一個 `ActorTeleported`，template id 和傳送門 net_id 都正確；`Kernel_GetPortalDefinition` 讀到 forward (0, 0, 1)。
+  - **mutation check**：拿掉內插的切斷，觀察者會在中途（約 13 m 處）畫出 1 個中間幀，測試失敗。
+  - 一開始用 30 fps 取樣時這個檢查是空的：render 時間剛好落在 snapshot 的邊界上，看不出混合。所以改成 60 fps，也比較接近 Unity。
+- `dynamic_abi_smoke_test` 和 `kernel_api_test` 裡寫死的 packet schema 已改成 32。
+
 ---
 
 ## 7. 尚未量測的風險
@@ -261,7 +277,7 @@ triggers:
 | # | 風險 | 量測方式 |
 |---|---|---|
 | R1 | 本地玩家的跳躍 | **P0 已量測，沒問題**（§7.1） |
-| R2 | 其他 client 看到的傳送者 | **P0 已量測，有一個中間幀**（§7.1），列入 K5 |
+| R2 | 其他 client 看到的傳送者 | **P0 量到一個中間幀；P3 已修正，沒有中間幀**（§6.3） |
 | R3 | relevance 空窗 | **P0 已量測，沒問題**（§7.1） |
 | ~~R4~~ | ~~`CarriedBy` 的 prop 不跟著搬運者~~：**撤回，判斷錯誤**。`ItemGameplaySystem::update_carried_props`（`item_gameplay_system.cc:1508`）每個 tick 把搬著的 prop 移到搬運者位置加上 `carry_offset`。D5（放在入口）仍然成立，但是設計選擇，不是繞過 bug | — |
 | R5 | 終點附近的觀察者能不能看到出口：出口是一般 prop，照 relevance 同步，應該沒問題 | P2 |
@@ -304,7 +320,7 @@ triggers:
 
 - ~~Q1~~：已定案，D21。
 - ~~Q2~~：已定案，D22。
-- **Q3**：K5 走 event 還是 snapshot 欄位。
+- ~~Q3~~：已定案，用 event（ActorTeleportBatch），不增加 snapshot 的負擔，見 §6.3。
 
 ---
 

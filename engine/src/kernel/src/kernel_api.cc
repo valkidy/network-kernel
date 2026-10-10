@@ -824,6 +824,31 @@ uint32_t Kernel_GetActorTemplates(
     });
 }
 
+bool Kernel_GetPortalDefinition(
+    KernelHandle* kernel,
+    uint32_t entity_template_id,
+    KernelPortalDefinition* out_definition) {
+    return abi_call("Kernel_GetPortalDefinition", false, [&]() {
+        if (kernel == nullptr || out_definition == nullptr ||
+            out_definition->struct_size < sizeof(KernelPortalDefinition) ||
+            entity_template_id == 0u) {
+            return false;
+        }
+        for (const KernelEntityTemplateDefinition& entity_template :
+             kernel->engine->authored_entity_templates()) {
+            if (entity_template.entity_template_id == entity_template_id) {
+                if (entity_template.portal.struct_size == 0u) {
+                    return false;
+                }
+                *out_definition = entity_template.portal;
+                out_definition->struct_size = sizeof(KernelPortalDefinition);
+                return true;
+            }
+        }
+        return false;
+    });
+}
+
 uint32_t Kernel_GetColliderTemplates(
     KernelHandle* kernel,
     KernelColliderTemplateDefinition* out_templates,

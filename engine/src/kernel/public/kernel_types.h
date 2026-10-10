@@ -25,6 +25,11 @@
  *     KernelPortalDefinition), appended after overlap_trigger_instigators,
  *     and KernelEntityTriggerActionType gained _Teleport. A portal's exit
  *     prop is created and destroyed with it, for the same despawn reason.
+ *     KernelEventType gained _ActorTeleported, the client's word that a
+ *     portal moved an actor; packet schema 32 carries it
+ *     (ActorTeleportBatch), and remote interpolation no longer blends across
+ *     the jump. Kernel_GetPortalDefinition reads a loaded template's portal
+ *     block, for the template id the event carries.
  * 102: status-bound crowd control (the water bubble). KernelEntityTriggerActionType
  *     gained _ApplyBlockActions: a status on_apply action that, for as long as
  *     that status instance stands, refuses its target new actions and ends the
@@ -773,6 +778,14 @@ typedef enum KernelEventType {
      * entered. Not emitted when the actor itself is removed (a disconnect).
      * Server-local: never replicated. */
     KernelEventType_ShelterChanged = 17,
+    /* A portal moved an actor (ABI 103), on every client that sees it,
+     * including its own. `net_id` is the actor, `code` the portal's entity
+     * template id -- whose KernelPortalDefinition says where it went and
+     * which way it faces -- and `related_net_id` the portal, which the
+     * client may no longer see. `tick` is the server tick whose snapshot
+     * first has it there. A client's own player is drawn there already;
+     * this is what tells it to turn the camera and end any transition. */
+    KernelEventType_ActorTeleported = 18,
 } KernelEventType;
 
 typedef enum KernelDespawnReason {

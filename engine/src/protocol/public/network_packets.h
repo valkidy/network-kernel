@@ -214,6 +214,20 @@ struct ActorImpulseBatchPacket {
     std::vector<ActorImpulseRecord> records;
 };
 
+// An actor a portal moved (packet schema 32). Where to and which way it faces
+// are the portal template's own, which every client has in its catalog; the
+// position itself arrives in the snapshot stamped with the same tick.
+struct ActorTeleportRecord {
+    std::uint32_t net_id = 0;
+    std::uint32_t portal_entity_template_id = 0;
+    std::uint32_t portal_net_id = 0;
+};
+
+struct ActorTeleportBatchPacket {
+    std::uint32_t server_tick = 0;
+    std::vector<ActorTeleportRecord> records;
+};
+
 // One procedural step an authoritative actor's leg took, addressed to the
 // entity that took it. Both swing endpoints are frozen at lift-off, so this is
 // the whole of a step: a receiver reproduces the swing from it without the
@@ -474,6 +488,15 @@ bool decode_actor_impulse_batch_packet(
     const std::uint8_t* data,
     std::size_t size,
     ActorImpulseBatchPacket* out_packet);
+
+std::vector<std::uint8_t> encode_actor_teleport_batch_packet(
+    const ActorTeleportBatchPacket& packet,
+    std::uint32_t sequence);
+
+bool decode_actor_teleport_batch_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    ActorTeleportBatchPacket* out_packet);
 
 }  // namespace network_example
 

@@ -30,6 +30,12 @@
 // R3. 94 m, past the 40 m relevance radius: the observer and both tents
 //     standing there are drawn 2 frames after the teleport.
 //
+// P3 (K5) adds a fourth case, through a real portal_entrance rather than
+// Kernel_ServerSetEntityTransform:
+// R2'. The same observer, now told by an ActorTeleportBatch: no frame in
+//     between, and both clients get KernelEventType_ActorTeleported naming
+//     the portal's template.
+//
 // Every case prints what it measured. The requires pin only the controls, so
 // "nothing happened" cannot pass for an answer.
 
@@ -145,14 +151,22 @@ struct Session {
     network_example::game_server::GameServer* game_server = nullptr;
     // What the traveller is asked to do each frame.
     KernelVec2 traveller_move{0.0f, 0.0f};
+    // ActorTeleported events each client has polled.
+    std::vector<KernelEvent> traveller_teleports;
+    std::vector<KernelEvent> observer_teleports;
 
-    void drain(KernelHandle* kernel, bool to_game_server) {
+    void drain(KernelHandle* kernel, bool to_game_server,
+               std::vector<KernelEvent>* teleports = nullptr) {
         std::array<KernelEvent, 256> events{};
         const std::uint32_t count = Kernel_PollEvents(
             kernel, events.data(), static_cast<std::uint32_t>(events.size()));
         for (std::uint32_t index = 0; index < count; ++index) {
             if (to_game_server) {
                 game_server->handle_event(events[index]);
+            }
+            if (teleports != nullptr &&
+                events[index].type == KernelEventType_ActorTeleported) {
+                teleports->push_back(events[index]);
             }
         }
     }
@@ -169,10 +183,36 @@ struct Session {
         game_server->tick(kTickSeconds);
         Kernel_Update(server, kTickSeconds);
         drain(server, true);
-        drain(traveller, false);
-        drain(observer, false);
+        drain(traveller, false, &traveller_teleports);
+        drain(observer, false, &observer_teleports);
         // Lets localhost deliver what the server just sent.
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+
+    // One server tick drawn at 60 fps, as Unity draws it: the clients update
+    // twice, half a tick each, and `sample` runs after each -- so a blend
+    // across two snapshots shows up halfway rather than landing on one.
+    template <typename Sample>
+    void frame_at_60fps(Sample&& sample) {
+        for (int half = 0; half < 2; ++half) {
+            KernelPlayerInput input{};
+            input.move = traveller_move;
+            input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
+            Kernel_SubmitPlayerInput(traveller, 0, &input);
+            const KernelPlayerInput idle{};
+            Kernel_SubmitPlayerInput(observer, 0, &idle);
+            Kernel_Update(traveller, kTickSeconds * 0.5f);
+            Kernel_Update(observer, kTickSeconds * 0.5f);
+            if (half == 1) {
+                game_server->tick(kTickSeconds);
+                Kernel_Update(server, kTickSeconds);
+                drain(server, true);
+            }
+            drain(traveller, false, &traveller_teleports);
+            drain(observer, false, &observer_teleports);
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            sample();
+        }
     }
 
     void frames(int count) {
@@ -290,6 +330,68 @@ Track follow_teleport(
         track.final_lag = distance(*now, truth);
     }
     return track;
+}
+
+// Walks the traveller until the server moves it more than kSnapMeters in one
+// tick -- a portal -- and follows how both clients draw it from there, at 60
+// fps (frame counts below are 60 fps frames from the start of the walk). A
+// frame drawn in between only counts once the jump is known.
+struct PortalWalk {
+    Track own;
+    Track seen;
+    bool jumped = false;
+};
+
+PortalWalk walk_through_portal(Session& session, int frame_count) {
+    PortalWalk walk;
+    KernelVec3 from = session.server_position(session.traveller_id);
+    std::optional<KernelVec3> previous_own = drawn(session.traveller, session.traveller_id);
+    std::optional<KernelVec3> previous_seen = drawn(session.observer, session.traveller_id);
+    require(previous_own.has_value() && previous_seen.has_value());
+    const auto note = [&](Track* track, const std::optional<KernelVec3>& now,
+                          std::optional<KernelVec3>* previous, const KernelVec3& truth,
+                          int index) {
+        if (!now.has_value()) {
+            ++track->frames_missing;
+            return;
+        }
+        const float step = distance(*now, **previous);
+        track->largest_step = std::fmax(track->largest_step, step);
+        if (step > kSnapMeters) {
+            ++track->snaps;
+        }
+        if (walk.jumped && distance(*now, from) > kSnapMeters &&
+            distance(*now, truth) > kSnapMeters &&
+            off_segment(*now, from, truth) < kSnapMeters) {
+            ++track->in_between;
+            track->in_between_at.push_back(*now);
+        }
+        if (walk.jumped && track->frames_until_caught_up < 0 &&
+            distance(*now, truth) < kCaughtUpMeters) {
+            track->frames_until_caught_up = index;
+        }
+        *previous = now;
+        track->final_lag = distance(*now, truth);
+    };
+    int frame = 0;
+    for (int index = 1; index <= frame_count; ++index) {
+        const KernelVec3 before = session.server_position(session.traveller_id);
+        session.frame_at_60fps([&]() {
+            ++frame;
+            const KernelVec3 truth = session.server_position(session.traveller_id);
+            if (!walk.jumped && distance(truth, before) > kSnapMeters) {
+                walk.jumped = true;
+                from = before;
+                // Arrived: stop walking, so "caught up" is about the jump.
+                session.traveller_move = KernelVec2{0.0f, 0.0f};
+            }
+            note(&walk.own, drawn(session.traveller, session.traveller_id),
+                 &previous_own, truth, frame);
+            note(&walk.seen, drawn(session.observer, session.traveller_id),
+                 &previous_seen, truth, frame);
+        });
+    }
+    return walk;
 }
 
 int frames_until_drawn(Session& session, KernelHandle* client, std::uint32_t net_id, int limit) {
@@ -432,6 +534,55 @@ int main() {
                     observer_frames, tent_frames);
         require(observer_frames > 0);
         require(tent_frames > 0);
+    }
+
+    // R2': through a real portal, the observer seeing both ends.
+    {
+        const std::uint32_t entrance_template =
+            entity_template_id_of(config, "portal_entrance");
+        require(entrance_template != 0u);
+        const KernelVec3 entrance_at{60.0f, 0.0f, 75.0f};
+        session.teleport(session.observer_id, KernelVec3{55.0f, 0.5f, 62.0f});
+        session.teleport(session.traveller_id, KernelVec3{60.0f, 0.5f, 72.0f});
+        KernelServerEntityCreateInfo create{};
+        create.struct_size = sizeof(create);
+        create.entity_template_id = entrance_template;
+        create.owner_peer = 1u;
+        create.position = entrance_at;
+        create.rotation = kIdentityRotation;
+        std::uint32_t entrance = 0;
+        require(Kernel_ServerCreateEntity(session.server, &create, &entrance));
+        session.frames(60);
+        session.traveller_teleports.clear();
+        session.observer_teleports.clear();
+        // Its gate faces -z: walk +z into it.
+        session.traveller_move = KernelVec2{0.0f, 1.0f};
+        const PortalWalk walk = walk_through_portal(session, 60);
+        require(walk.jumped);
+        print_track("R2' traveller draws itself through a portal", walk.own);
+        print_track("R2' observer draws the traveller through a portal", walk.seen);
+        std::printf("R2' events: traveller %zu, observer %zu\n",
+                    session.traveller_teleports.size(),
+                    session.observer_teleports.size());
+        for (const auto* events :
+             {&session.traveller_teleports, &session.observer_teleports}) {
+            require(events->size() == 1u);
+            require(events->front().net_id == session.traveller_id);
+            require(events->front().code == entrance_template);
+            require(events->front().related_net_id == entrance);
+        }
+        // What a client turns its camera to: the portal's forward, read
+        // from its own catalog by the template id the event named.
+        KernelPortalDefinition portal{};
+        portal.struct_size = sizeof(portal);
+        require(Kernel_GetPortalDefinition(
+            session.traveller, session.traveller_teleports.front().code, &portal));
+        std::printf("R2' portal forward (%.1f, %.1f, %.1f)\n",
+                    portal.forward.x, portal.forward.y, portal.forward.z);
+        require(portal.forward.z > 0.99f);
+        require(walk.own.in_between == 0);
+        require(walk.seen.in_between == 0);
+        require(walk.seen.frames_until_caught_up > 0);
     }
 
     Kernel_Destroy(session.observer);

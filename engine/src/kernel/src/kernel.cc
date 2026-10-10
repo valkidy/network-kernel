@@ -7060,6 +7060,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     client_metadata_timeout_reported_entities_.clear();
     client_despawned_entities_.clear();
     client_knockback_anchors_.clear();
+    client_teleport_ticks_.clear();
     deferred_flight_despawns_.clear();
     pending_prediction_inputs_.clear();
     latest_client_input_ = KernelPlayerInput{};
@@ -7697,6 +7698,16 @@ void KernelEngine::handle_client_reliable_event(const TransportEvent& transport_
             &actor_impulse_batch)) {
         record_packet_deserialization_cost(elapsed_cost_us(decode_start));
         handle_client_actor_impulse_batch(actor_impulse_batch);
+        return;
+    }
+    ActorTeleportBatchPacket actor_teleport_batch;
+    decode_start = std::chrono::steady_clock::now();
+    if (decode_actor_teleport_batch_packet(
+            transport_event.payload.data(),
+            transport_event.payload.size(),
+            &actor_teleport_batch)) {
+        record_packet_deserialization_cost(elapsed_cost_us(decode_start));
+        handle_client_actor_teleport_batch(actor_teleport_batch);
         return;
     }
     PropStateChangeBatchPacket prop_state_batch;
@@ -8950,6 +8961,7 @@ void KernelEngine::clear_client_session() {
     client_metadata_timeout_reported_entities_.clear();
     client_despawned_entities_.clear();
     client_knockback_anchors_.clear();
+    client_teleport_ticks_.clear();
     deferred_flight_despawns_.clear();
     latest_client_snapshot_ = WorldSnapshot{};
     predicted_local_entity_ = EntitySnapshot{};
@@ -11175,6 +11187,7 @@ void apply_knockback_anchor(
 void bridge_remote_actor_samples(
     const std::vector<WorldSnapshot>& buffer,
     const std::unordered_map<NetId, RemoteKnockbackAnchor>& knockback_anchors,
+    const std::unordered_map<NetId, std::uint32_t>& teleport_ticks,
     float fixed_delta_seconds,
     std::uint64_t snapshot_interval_us,
     std::uint64_t target_server_time_us,
@@ -11252,6 +11265,24 @@ void bridge_remote_actor_samples(
             // first sample is the only place it has ever been.
             bridged = *bracket.next.entity;
         }
+        // A portal between the two samples: the actor was at the older one
+        // until the tick it moved and at the newer one from then on, never
+        // anywhere in between.
+        if (const auto teleport = teleport_ticks.find(net_id);
+            teleport != teleport_ticks.end() &&
+            bracket.previous.entity != nullptr && bracket.next.entity != nullptr) {
+            const std::uint64_t teleport_us =
+                tick_time_us(teleport->second, fixed_delta_seconds);
+            if (bracket.previous.time_us < teleport_us &&
+                teleport_us <= bracket.next.time_us) {
+                const EntitySnapshot& side = target_server_time_us < teleport_us
+                    ? *bracket.previous.entity
+                    : *bracket.next.entity;
+                bridged.position = side.position;
+                bridged.rotation = side.rotation;
+                bridged.velocity = glm::vec3{0.0f};
+            }
+        }
         if (const auto anchor = knockback_anchors.find(net_id);
             anchor != knockback_anchors.end()) {
             apply_knockback_anchor(
@@ -11295,6 +11326,7 @@ bool KernelEngine::build_interpolated_snapshot_for_server_time(
         bridge_remote_actor_samples(
             client_snapshot_buffer_,
             client_knockback_anchors_,
+            client_teleport_ticks_,
             fixed_delta_seconds,
             snapshot_interval_us,
             target_server_time_us,
@@ -11310,6 +11342,7 @@ bool KernelEngine::build_interpolated_snapshot_for_server_time(
         bridge_remote_actor_samples(
             client_snapshot_buffer_,
             client_knockback_anchors_,
+            client_teleport_ticks_,
             fixed_delta_seconds,
             snapshot_interval_us,
             target_server_time_us,
@@ -11337,6 +11370,7 @@ bool KernelEngine::build_interpolated_snapshot_for_server_time(
         bridge_remote_actor_samples(
             client_snapshot_buffer_,
             client_knockback_anchors_,
+            client_teleport_ticks_,
             fixed_delta_seconds,
             snapshot_interval_us,
             target_server_time_us,
@@ -11374,6 +11408,7 @@ bool KernelEngine::build_interpolated_snapshot_for_server_time(
     bridge_remote_actor_samples(
         client_snapshot_buffer_,
         client_knockback_anchors_,
+        client_teleport_ticks_,
         fixed_delta_seconds,
         snapshot_interval_us,
         target_server_time_us,
@@ -13484,6 +13519,7 @@ void KernelEngine::simulate_tick() {
     flush_inventory_replication();
     flush_prop_state_changes();
     flush_actor_impulses();
+    flush_actor_teleports();
     // With the snapshot rather than every tick, which is what
     // LocomotionStepRecord has always said it does: start_tick_delta exists so
     // that a batch can span a snapshot interval. Flushing per tick sent a packet
@@ -14516,6 +14552,19 @@ void KernelEngine::queue_prop_state_change(NetId net_id) {
     if (net_id != 0u) pending_prop_state_changes_.push_back(net_id);
 }
 
+void KernelEngine::queue_actor_teleport(
+    NetId net_id,
+    std::uint32_t portal_entity_template_id,
+    NetId portal_net_id) {
+    if (net_id == 0u || portal_entity_template_id == 0u) return;
+    // A second portal in the same tick: the last one is where it is.
+    std::erase_if(pending_actor_teleports_, [net_id](const auto& pending) {
+        return std::get<0>(pending) == net_id;
+    });
+    pending_actor_teleports_.emplace_back(
+        net_id, portal_entity_template_id, portal_net_id);
+}
+
 void KernelEngine::queue_actor_impulse(NetId net_id, float floor_y) {
     if (net_id == 0u) return;
     // A second impulse in the same tick re-arms the lockout and changes the
@@ -14953,6 +15002,82 @@ void KernelEngine::flush_actor_impulses() {
     }
     for (PeerSession& session : peer_sessions_) {
         if (session.welcomed) send(&session);
+    }
+}
+
+// Sent on the tick it happened, so it is stamped with the tick whose snapshot
+// first has the actor at its destination. To the actor's own client always --
+// its camera has to turn -- and to every session that sees the actor now,
+// which is every client drawing it on the way out; a session that only sees it
+// at the destination is introduced to it there and has nothing to cut.
+void KernelEngine::flush_actor_teleports() {
+    if (pending_actor_teleports_.empty()) return;
+    ActorTeleportBatchPacket batch{};
+    batch.server_tick = tick_loop_.current_tick();
+    for (const auto& [net_id, portal_template, portal_net_id] : pending_actor_teleports_) {
+        if (world_.find_entity(net_id).has_value()) {
+            batch.records.push_back(
+                ActorTeleportRecord{net_id, portal_template, portal_net_id});
+        }
+    }
+    pending_actor_teleports_.clear();
+    if (batch.records.empty()) return;
+
+    const auto send = [&](PeerSession* session) {
+        ActorTeleportBatchPacket relevant{};
+        relevant.server_tick = batch.server_tick;
+        for (const ActorTeleportRecord& record : batch.records) {
+            if (record.net_id == session->player ||
+                session->relevant_entities.contains(record.net_id)) {
+                relevant.records.push_back(record);
+            }
+        }
+        if (relevant.records.empty()) return;
+        const std::vector<std::uint8_t> encoded =
+            encode_actor_teleport_batch_packet(relevant, next_packet_sequence_++);
+        if (encoded.empty() || !transport_->Send(
+                session->peer,
+                encoded.data(),
+                static_cast<std::uint32_t>(encoded.size()),
+                SendMode::kReliable,
+                ChannelId::kReliableEvent)) {
+            push_event(KernelEventType_Error, 0u, session->peer, 34u);
+            return;
+        }
+        record_sent_packet(
+            static_cast<std::uint32_t>(encoded.size()),
+            SendMode::kReliable,
+            ChannelId::kReliableEvent);
+    };
+    if (config_.mode == KernelMode_ListenServer && local_listen_session_.welcomed) {
+        send(&local_listen_session_);
+    }
+    for (PeerSession& session : peer_sessions_) {
+        if (session.welcomed) send(&session);
+    }
+}
+
+void KernelEngine::handle_client_actor_teleport_batch(
+    const ActorTeleportBatchPacket& packet) {
+    for (const ActorTeleportRecord& record : packet.records) {
+        auto& tick = client_teleport_ticks_[record.net_id];
+        if (tick != 0u && static_cast<std::int32_t>(packet.server_tick - tick) < 0) {
+            continue;
+        }
+        tick = packet.server_tick;
+        // A flight that began before the jump ends with it.
+        client_knockback_anchors_.erase(record.net_id);
+        push_event(
+            KernelEventType_ActorTeleported,
+            record.net_id,
+            0u,
+            record.portal_entity_template_id,
+            record.portal_net_id);
+        if (!events_.empty() &&
+            events_.back().type == KernelEventType_ActorTeleported &&
+            events_.back().net_id == record.net_id) {
+            events_.back().tick = packet.server_tick;
+        }
     }
 }
 

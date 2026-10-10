@@ -3727,6 +3727,13 @@ void EntityStateSystem::teleport_through_portal(
           }();
     (void)set_transform(
         engine, target_net_id, to_kernel_vec3(link.destination), rotation);
+    // So clients turn the arrival's camera and cut its interpolation here.
+    const EntityTemplateRef* portal_template =
+        registry.try_get<EntityTemplateRef>(*portal);
+    engine.queue_actor_teleport(
+        target_net_id,
+        portal_template == nullptr ? 0u : portal_template->entity_template_id,
+        portal_net_id);
     // The same reset a revive gives: nothing it was doing comes with it.
     registry.remove<ImpulseLockout>(*target);
     clear_stagger(world, *target);

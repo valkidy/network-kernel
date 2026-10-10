@@ -281,6 +281,18 @@ uint32_t Kernel_GetActorTemplates(
     KernelActorTemplateDefinition* out_templates,
     uint32_t max_templates);
 
+/*
+ * The portal block of a loaded entity template (ABI 103): where its teleport
+ * sends an actor and which way it faces there. A client reads it with the
+ * template id a KernelEventType_ActorTeleported carries in `code`. False when
+ * the template is unknown or not a portal; the caller sets
+ * out_definition->struct_size.
+ */
+bool Kernel_GetPortalDefinition(
+    KernelHandle* kernel,
+    uint32_t entity_template_id,
+    KernelPortalDefinition* out_definition);
+
 uint32_t Kernel_GetColliderTemplates(
     KernelHandle* kernel,
     KernelColliderTemplateDefinition* out_templates,

@@ -250,6 +250,7 @@ cc_shared_library(
         "-Wl,-exported_symbol,_Kernel_GetProjectileTemplates",
         "-Wl,-exported_symbol,_Kernel_GetActionTemplate",
             "-Wl,-exported_symbol,_Kernel_GetActorTemplates",
+            "-Wl,-exported_symbol,_Kernel_GetPortalDefinition",
             "-Wl,-exported_symbol,_Kernel_GetColliderTemplates",
             "-Wl,-exported_symbol,_Kernel_GetColliderBindings",
             "-Wl,-exported_symbol,_Kernel_ServerCreateEntity",

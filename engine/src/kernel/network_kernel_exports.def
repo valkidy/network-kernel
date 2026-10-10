@@ -51,6 +51,7 @@ EXPORTS
     Kernel_GetProjectileTemplates
     Kernel_GetActionTemplate
     Kernel_GetActorTemplates
+    Kernel_GetPortalDefinition
     Kernel_GetColliderTemplates
     Kernel_GetColliderBindings
     Kernel_ServerCreateEntity

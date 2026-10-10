@@ -8,6 +8,7 @@
 #include <memory>
 #include <span>
 #include <string_view>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -54,6 +55,7 @@ struct InventorySnapshotRequestPacket;
 struct LocalActionResultBatchPacket;
 struct LocomotionStepBatchPacket;
 struct ActorImpulseBatchPacket;
+struct ActorTeleportBatchPacket;
 struct ProjectileSpawnBatchPacket;
 struct RemoteActionPresentationBatchPacket;
 struct WelcomePacket;
@@ -92,6 +94,11 @@ public:
     // An actor was knocked back this tick. floor_y is where it stood when
     // struck; the rest of its anchor is read at the end of the tick.
     void queue_actor_impulse(NetId net_id, float floor_y);
+    // A portal moved this actor this tick (packet schema 32).
+    void queue_actor_teleport(
+        NetId net_id,
+        std::uint32_t portal_entity_template_id,
+        NetId portal_net_id);
     // A building's graph asked for its interface: KernelEventType_UiOpened.
     void queue_ui_opened(
         NetId building_net_id,
@@ -1113,6 +1120,7 @@ private:
     void handle_client_prop_state_change_batch(
         const PropStateChangeBatchPacket& packet);
     void handle_client_actor_impulse_batch(const ActorImpulseBatchPacket& packet);
+    void handle_client_actor_teleport_batch(const ActorTeleportBatchPacket& packet);
     bool is_prop_in_flight_on_client(const ClientReplicatedEntity& entity) const;
     void release_deferred_flight_despawns();
     bool is_anchored_in_flight_prop(NetId net_id) const;
@@ -1125,6 +1133,7 @@ private:
     void broadcast_reliable_event(const KernelEvent& event);
     void flush_prop_state_changes();
     void flush_actor_impulses();
+    void flush_actor_teleports();
     bool make_prop_state_change_record(
         NetId net_id,
         PropStateChangeRecord* out_record) const;
@@ -1268,6 +1277,9 @@ private:
     std::unordered_map<NetId, std::uint32_t> client_metadata_timeout_reported_entities_;
     std::unordered_map<NetId, ClientEntityTombstone> client_despawned_entities_;
     std::unordered_map<NetId, RemoteKnockbackAnchor> client_knockback_anchors_;
+    // The latest tick a portal moved each actor, as a client heard it:
+    // interpolation cuts there instead of blending across the jump.
+    std::unordered_map<NetId, std::uint32_t> client_teleport_ticks_;
     std::vector<DeferredDespawn> deferred_flight_despawns_;
     // The unrounded server instant the last render pass drew the world
     // timeline at; valid once has_client_render_time_ is set.
@@ -1351,6 +1363,8 @@ private:
     std::vector<NetId> pending_prop_state_changes_;
     // net_id -> floor_y, first impulse of the tick wins the floor.
     std::vector<std::pair<NetId, float>> pending_actor_impulses_;
+    // Actor, portal template, portal: what flush_actor_teleports sends.
+    std::vector<std::tuple<NetId, std::uint32_t, NetId>> pending_actor_teleports_;
     std::unordered_set<KernelItemInstanceId> claimed_item_instances_;
     std::unordered_set<NetId> claimed_prop_entities_;
     std::vector<KernelDebugInfo> debug_records_;
