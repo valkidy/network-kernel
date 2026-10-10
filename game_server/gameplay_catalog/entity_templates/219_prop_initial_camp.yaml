@@ -49,6 +49,8 @@ loadout:
       quantity: 3
     - item_template: fungible_tent_kit
       quantity: 1
+    - item_template: fungible_portal_kit
+      quantity: 1
     - item_template: fungible_camp_kit
       quantity: 1
   weapons:

@@ -1,0 +1,18 @@
+# A portal kit: thrown only (docs/PORTAL_PLAN.md D1). Where it lands becomes a
+# portal_entrance.
+id: 3032
+name: fungible_portal_kit
+mode: fungible
+max_stack: 1
+capabilities: [throwable]
+entity_template: portal_kit
+world_interaction:
+  range: 3.0
+  line_of_sight_required: false
+throw:
+  mode: identity_preserving
+  trajectory_projectile: grenade_shell
+use:
+  quantity_cost: 0
+  cooldown_ticks: 0
+  destroy_when_empty: false

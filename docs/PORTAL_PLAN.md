@@ -1,6 +1,6 @@
 # 傳送門（Portal）實作計劃書
 
-狀態：**設計已定案；P0 實測完成（§7.1）；P1（K1、K2、K6，ABI 103）完成（§6.1）。** 下一步是 P2。
+狀態：**P0 實測完成（§7.1）；P1（K1、K2、K6）與 P2（K3、K4、catalog）完成，ABI 103（§6.1、§6.2）。** 下一步是 P3（K5 傳送通知、Unity）。
 分支：`claude/portal`（從 main fc4e964 開出）。
 最後更新：2026-10-10（第七輪 review：與帳篷共用 population group 並改名 `building`；觸發區分成 on_enter / on_overlap / on_exit）。
 
@@ -201,7 +201,7 @@ triggers:
 |---|---|---|
 | **P0 實測（已完成）** | 測試直接呼叫 `Kernel_ServerSetEntityTransform` 做傳送，量測 R1–R3（§7.1）。入口的落點校正需要綠色觸發區，留到 P1 再測 | 不變 |
 | P1（已完成） | K1 + K2 + K6，見 §6.1 | 103 |
-| P2 | K3 + K4 | 103 |
+| P2（已完成） | K3 + K4 + 傳送門 catalog，見 §6.2 | 103 |
 | P3 | K5；Unity 的銜接動畫與鏡頭（使用者） | 103，可能加 packet 或 snapshot schema |
 
 ### 6.1 P1 實作紀錄（2026-10-10，分支 `claude/portal-p1`）
@@ -218,6 +218,41 @@ triggers:
 - 已知限制：
   - **沒有移動膠囊的 actor 永遠不會觸發**（例如不會動的 sentry）。傳送門只給玩家用，沒有影響。
   - 帳篷住客那個情境的測試是**空的**：進入帳篷會把移動遮罩改成只有 terrain，膠囊因此離開 physics world，查詢本來就找不到它；拿掉 `Sheltered` 規則測試照樣通過。規則保留作為保險，測試只能證明結果，不能證明規則。
+
+### 6.2 P2 實作紀錄（2026-10-10，分支 `claude/portal-p2`）
+
+- **ABI 仍然是 103**：103 還沒打包，所以 P2 的改動併入 103，沒有再升版。新增：
+  - `KernelPortalDefinition`：`exit_entity_template_id`、`destination`、`forward`、`arrival_grace_ticks`、`arrival_immunity_ticks`。附加在 `KernelEntityTemplateDefinition` 的 `portal` 欄位，`struct_size` 為 0 代表不是傳送門。
+  - `KernelEntityTriggerActionType_Teleport = 15`。
+- **與 §3 示意的差異**：`teleport` action 只有 `target` 一個參數。傳送門就是執行這個 graph 的 prop 本身，不用另外傳 `portal: self`。目的地、方向、grace、immunity 都從入口的 `portal:` 區塊讀取。
+- **K3**：入口建立時，kernel 在 `destination` 生成出口，owner 和入口相同；出口的 yaw 取自 `forward` 的水平分量。入口被刪除時，在 `destroy_entity_with_context` 裡用**同一個 despawn 原因**刪除出口，位置在釋放帳篷住客之後。
+- **K4**：`EntityStateSystem::teleport_through_portal` 依序做：
+  1. 放下搬著的 prop。
+  2. 移到 destination：forward 是水平的話面向 forward，朝正下方就保留原本的朝向。
+  3. 清掉 `ImpulseLockout`、stagger、速度。
+  4. 加上 `PortalArrivalGrace`：只對有 `portal:` 的觸發區生效，一般觸發區照常觸發。
+  5. 加上 `DamageImmunity`：和已有的無敵時間取較長者。
+
+  死亡、在帳篷裡、或不是 actor 的目標都不會被傳送。
+- **同一個 tick 的順序**：傳送發生在 `OverlapTriggerSystem` 執行 graph 的時候，而這個 tick 的重疊判斷已經用傳送前的位置算完了。所以終點的其他觸發區要到**下一個 tick** 才會看到抵達的玩家。
+- **Catalog**：
+  - `42_collider_portal_hitbox`、`43_collider_portal_gate`
+  - `225_prop_portal_kit`、`226_prop_portal_entrance`、`227_prop_portal_exit`
+  - `3032_fungible_portal_kit`（只有 throwable）
+  - `action_teleport_through_portal`
+  - initial camp 的選項加上 `fungible_portal_kit`
+
+  目的地暫定 (50, 0, 50)，forward 是 +z，grace 30 tick，immunity 60 tick。
+- **測試**：`//game_server:portal_test`，使用出貨的 catalog，另外加一個測試用的「進入就扣血」觸發區。驗證項目：
+  - 入口生成時，出口出現在目的地。
+  - 走進門會被傳送到 (50.00, 0.00, 50.00)，面向 +z。
+  - 抵達後 2 tick，扣血觸發區執行了，但 HP 不變（無敵）。無敵結束後再走進去會扣 100（對照組）。
+  - grace 期間站在另一個傳送門的門內不會被傳回去，grace 結束後會。
+  - 入口以 Expired 刪除時，出口也以 Expired（reason 3）刪除。
+  - 沿 +x 丟出 kit，傳送門落在約 35 m 外，面向 +x，門口朝向丟的人。
+
+  grace 和 immunity 都做過 mutation check：拿掉其中一個，測試會在對應的那一行失敗。
+- **尚未做（P3）**：K5 傳送通知。在那之前，Unity 端的鏡頭不會轉向 forward，觀察者仍會看到一個中間幀（R2）。
 
 ---
 

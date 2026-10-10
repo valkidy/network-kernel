@@ -1,0 +1,9 @@
+# A portal sends whoever walked in to its destination. Where that is, which way
+# they face and how long they are left alone on arrival are the portal's own
+# (its template's portal: block), not the graph's.
+id: action_teleport_through_portal
+parameters:
+  target: null
+actions:
+  - type: teleport
+    target: params.target
