@@ -13,7 +13,7 @@ lifecycle:
   # Three minutes at 30 Hz, from the moment it exists. The first player to go
   # inside shortens what is left; nothing lengthens it.
   lifetime_ticks: 5400
-  population_group: tent
+  population_group: building
 health:
   hp: 600
   max_hp: 600
