@@ -1,6 +1,6 @@
 # 傳送門（Portal）實作計劃書
 
-狀態：**設計已定案，尚未實作。** 下一步是 P0 實測（§6）。
+狀態：**設計已定案；P0 實測完成（§7.1），尚未實作 kernel。** 下一步是 P1。
 分支：`claude/portal`（從 main fc4e964 開出）。
 最後更新：2026-10-10（第七輪 review：與帳篷共用 population group 並改名 `building`；觸發區分成 on_enter / on_overlap / on_exit）。
 
@@ -166,7 +166,7 @@ triggers:
 | K3 | **`portal:` 區塊。** 解析與檢查（`forward` 正規化、`y > 0` 拒絕、`exit_template` 存在）；入口生成時生成出口並記錄關聯；在 `destroy_entity_with_context` 裡用同一個 despawn 原因刪除出口（位置同帳篷 K3 釋放住客） | D3、D4、D7 |
 | K4 | **`teleport` action。** 依序：`drop_carried_props` → 移到 destination（目的地被擋住時用 `available_lift` 或站立點搜尋）→ 速度歸零、清掉 `ImpulseLockout` 和 stagger、清掉 controller height（同 `Kernel_ServerSetEntityTransform`）→ 加上 arrival grace 和 `DamageImmunity` → 送出 K5 | D5、D9、D11 |
 | K6 | **population group 改名 `tent` → `building`。** 改 `gameplay_catalog.yaml`、`216_prop_tent.yaml`、`223_prop_field_camp.yaml`；`gameplay_config_test.cc:1328` 寫死了 group 名稱 `"tent"`，要一起改。`max_alive: 4` 與 `cleanup_runs_on_destroy: true` 現在也套用到傳送門（傳送門沒有 on_destroy graph，不受影響） | D21 |
-| K5 | **傳送通知。** 給被傳送的玩家（帶 net_id、destination、forward），讓 Unity 結束銜接動畫並轉鏡頭 | D4、D12 |
+| K5 | **傳送通知。** 給被傳送的玩家（帶 net_id、destination、forward），讓 Unity 結束銜接動畫並轉鏡頭。另外要讓**其他 client 的內插不要跨過傳送**：P0 量到觀察者會在舊位置與新位置的連線上畫出一個中間幀（R2）。做法待定：snapshot 帶「這個 tick 被傳送」的標記，或 client 端對單一 snapshot 間隔內的超大位移不做內插 | D4、D12、R2 |
 
 **K2 的觸發語意（D22）：**
 - 每個 trigger prop 記住上一個 tick「有資格的重疊 actor」集合。這個 tick 新出現的 actor 觸發 `on_enter`，持續存在的觸發 `on_overlap`，消失的觸發 `on_exit`。
@@ -199,7 +199,7 @@ triggers:
 
 | 階段 | 內容 | ABI |
 |---|---|---|
-| **P0 實測** | 只用現有欄位：portal kit 沿用 tent kit 的 graph 生成一個只有紅色碰撞盒的入口；測試直接呼叫 `Kernel_ServerSetEntityTransform` 做長距離傳送（dedicated server + pure client 兩個 process）。量測 §7 的 R1–R3 | 不變 |
+| **P0 實測（已完成）** | 測試直接呼叫 `Kernel_ServerSetEntityTransform` 做傳送，量測 R1–R3（§7.1）。入口的落點校正需要綠色觸發區，留到 P1 再測 | 不變 |
 | P1 | K1 + K2 + K6 | 103 |
 | P2 | K3 + K4 | 103 |
 | P3 | K5；Unity 的銜接動畫與鏡頭（使用者） | 103，可能加 packet 或 snapshot schema |
@@ -210,11 +210,31 @@ triggers:
 
 | # | 風險 | 量測方式 |
 |---|---|---|
-| R1 | 本地玩家的跳躍：表現層位移超過 2 m 時會直接跳過去（`kernel.cc:11725`，`kPredictionCorrectionSnapDistanceMeters`），預期不會慢慢滑。待確認 pending input 重播後是否穩定 | P0 |
-| R2 | 其他 client 看到的傳送者：遠端 actor 的內插遇到大距離跳躍時，會不會一路滑過整張地圖 | P0 |
-| R3 | relevance 空窗：傳送後 relevance 中心換地方，目的地附近的 entity 會陸續出現。量測要幾個 snapshot 才補齊 | P0 |
-| R4 | `CarriedBy` 的 prop 位置似乎不會跟著搬運者更新（沒有找到相關程式）。D5 讓傳送不受影響，但這本身是一個潛在問題；目前 catalog 沒有可以搬的 prop | 之後 |
+| R1 | 本地玩家的跳躍 | **P0 已量測，沒問題**（§7.1） |
+| R2 | 其他 client 看到的傳送者 | **P0 已量測，有一個中間幀**（§7.1），列入 K5 |
+| R3 | relevance 空窗 | **P0 已量測，沒問題**（§7.1） |
+| ~~R4~~ | ~~`CarriedBy` 的 prop 不跟著搬運者~~：**撤回，判斷錯誤**。`ItemGameplaySystem::update_carried_props`（`item_gameplay_system.cc:1508`）每個 tick 把搬著的 prop 移到搬運者位置加上 `carry_offset`。D5（放在入口）仍然成立，但是設計選擇，不是繞過 bug | — |
 | R5 | 終點附近的觀察者能不能看到出口：出口是一般 prop，照 relevance 同步，應該沒問題 | P2 |
+
+### 7.1 P0 實測結果（2026-10-10）
+
+測試：`game_server/tests/portal_feasibility_probe_test.cc`（分支 `claude/portal-p0`）。一個 dedicated server 加兩個真實 client，經 localhost UDP 連線，全部使用出貨的 catalog 和地面，只用 public API（跟 Unity 一樣）。伺服器跑真的 `GameServer`，但清掉 `game_rules`，地圖上沒有敵人。傳送用 `Kernel_ServerSetEntityTransform` 代替，被傳送的玩家在傳送期間持續往前走。tick 和 snapshot 都是 30 Hz。
+
+| # | 情境 | 結果 |
+|---|---|---|
+| 對照 | 正常行走 30 幀 | 走了 5.00 m，畫面上每幀最大位移 0.206 m（沒有 snap） |
+| R1 | 被傳送的玩家自己的畫面，跳 30 m | **一次 snap（33.6 m），2 幀後畫在伺服器的位置；沒有中間幀；預測沒有失敗** |
+| R2 | 觀察者看被傳送的玩家（兩端都在 relevance 範圍內） | **畫出 1 個中間幀**，位置 (-8.65, 0, 3.98)，在舊位置到新位置的連線上；之後 snap。5 幀後追上，之後是一般的內插延遲（走路中約 0.65 m） |
+| R3 | 跳 94 m，超過 40 m 的 relevance 半徑，終點有另一個玩家和兩頂帳篷 | **2 幀後全部畫出來** |
+
+解讀：
+- R1：kernel 現有的「超過 2 m 就 snap」（`kernel.cc:11725`）已經足夠，本地玩家不需要額外處理。
+- R2：遠端內插會在「傳送前最後一個 snapshot」和「傳送後第一個 snapshot」之間混合，所以會畫出一個中間位置。30 Hz 的 snapshot 只有一幀；snapshot 頻率較低或畫面更新率高於 30 fps 時，這段混合會畫更多幀。列入 K5 處理。
+- R3：entity 少的情況下，relevance 換地方沒有空窗。終點附近 entity 很多時（例如數百個 agent），snapshot 的 byte budget 可能讓補齊變慢，這次沒有量。
+
+限制：
+- localhost 幾乎沒有延遲，所有等待時間在真實網路下都要加上 RTT。
+- 測試期間 client 印出兩次 `render clock reset: ~5000 ms behind its target`。測試每幀只 sleep 1 ms，模擬時間比真實時間快，推測是測試本身造成的，但沒有確認是否影響 R2 的幀數。
 
 ---
 
