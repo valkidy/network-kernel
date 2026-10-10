@@ -1,0 +1,16 @@
+# Chain Lightning: two locks a second while held. Each commit spends a whole
+# lock (the bolt's max_hit_count), found or not, so a 24-round magazine is four
+# commits.
+#
+# Its own fire action, not shared with any other weapon: a client tells a
+# remote shooter's lock weapon from this template id.
+id: 4126
+name: chain_lightning_fire
+trigger_mode: hold
+flags: [cancel_on_release, cancel_on_death, cancel_on_weapon_change, cancel_before_first_commit]
+ammo_cost_per_commit: 6
+commit_offset_ticks: 0
+commit_interval_ticks: 15
+max_commit_count: 0
+recovery_ticks: 4
+hold_input_timeout_ticks: 6

@@ -15,6 +15,7 @@
 // can only come from what the case added: the plain lock weapon loading is the
 // control.
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -297,6 +298,69 @@ void a_lock_missile_loads_with_its_flight_on_the_shot() {
     Kernel_Destroy(client);
 }
 
+// The shipped Chain Lightning (18) and Magic Missile (19): they load, the
+// kernel accepts them, and a pure client reads their cones back.
+void the_shipped_lock_weapons_load() {
+    const fs::path catalog = catalog_with("shipped", {});
+    const gs::GameServerGameplayConfig config =
+        gs::load_gameplay_config_from_catalog_file(catalog.string());
+    require(config.weapons.configured[18]);
+    require(config.weapons.configured[19]);
+    require(config.weapons.definitions[18].fire_mode == KernelWeaponFireMode_LockInstant);
+    require(config.weapons.definitions[19].fire_mode == KernelWeaponFireMode_LockMissile);
+    const gs::KernelGameplayCatalogStorage storage =
+        gs::build_kernel_gameplay_catalog(config);
+    KernelConfig kernel_config{};
+    kernel_config.mode = KernelMode_Client;
+    kernel_config.tick.server_tick_rate = 30;
+    kernel_config.tick.snapshot_rate = 15;
+    KernelHandle* client = Kernel_Create(&kernel_config);
+    require(client != nullptr);
+    require(Kernel_LoadGameplayCatalog(client, &storage.definition, nullptr));
+    for (const std::uint8_t weapon_id : {std::uint8_t{18}, std::uint8_t{19}}) {
+        KernelWeaponMechanicsDefinition read{};
+        read.struct_size = sizeof(read);
+        require(Kernel_GetCatalogWeaponDefinition(client, weapon_id, &read));
+        require(read.melee_collider_template_id != 0u);
+        require(read.damage > 0u);
+        require(read.collision_mask == KERNEL_COLLISION_LAYER_HOSTILE_SIDE);
+    }
+    Kernel_Destroy(client);
+
+    // And what a server does with them in play: set them on an actor. That is
+    // where the cone is resolved and the actions are looked up for real.
+    KernelConfig server_config = kernel_config;
+    server_config.mode = KernelMode_DedicatedServer;
+    KernelHandle* server = Kernel_Create(&server_config);
+    require(server != nullptr);
+    // A real socket: a port no other test binds (memory: test port collisions).
+    require(Kernel_StartDedicatedServer(server, 8020));
+    require(Kernel_LoadGameplayCatalog(server, &storage.definition, nullptr));
+    KernelServerEntityCreateInfo create{};
+    create.struct_size = sizeof(create);
+    create.entity_type = KernelEntityType_Actor;
+    create.actor_type = KernelActorType_Player;
+    create.owner_peer = 1;
+    create.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+    std::uint32_t actor = 0;
+    require(Kernel_ServerCreateEntity(server, &create, &actor));
+    for (const std::uint8_t weapon_id : {std::uint8_t{18}, std::uint8_t{19}}) {
+        const auto shipped = std::find_if(
+            storage.weapon_definitions.begin(),
+            storage.weapon_definitions.end(),
+            [weapon_id](const KernelWeaponMechanicsDefinition& weapon) {
+                return weapon.weapon_id == weapon_id;
+            });
+        require(shipped != storage.weapon_definitions.end());
+        require(Kernel_ServerSetEntityWeaponMechanics(server, actor, &*shipped));
+        KernelWeaponMechanicsDefinition set{};
+        set.struct_size = sizeof(set);
+        require(Kernel_ServerGetEntityWeaponMechanics(server, actor, weapon_id, &set));
+        require(set.fire_mode == shipped->fire_mode);
+    }
+    Kernel_Destroy(server);
+}
+
 void a_lock_missile_flight_must_fit_a_byte() {
     require(refused_for(
         catalog_with("missile_long", missile_files(256u)),
@@ -324,6 +388,7 @@ int main() {
     a_lock_weapon_fire_action_cannot_be_shared();
     a_lock_missile_loads_with_its_flight_on_the_shot();
     a_lock_missile_flight_must_fit_a_byte();
+    the_shipped_lock_weapons_load();
     std::puts("lock_weapon_catalog_test passed");
     return 0;
 }

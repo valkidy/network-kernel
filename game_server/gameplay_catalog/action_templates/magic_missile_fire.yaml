@@ -1,0 +1,14 @@
+# Magic Missile: a missile every tick while held and something is locked. A
+# commit that locks nothing spends nothing and the hold keeps looking, so a
+# magazine lasts exactly as long as there was something to shoot at -- one
+# second of targets for 30 rounds.
+id: 4128
+name: magic_missile_fire
+trigger_mode: hold
+flags: [cancel_on_release, cancel_on_death, cancel_on_weapon_change, cancel_before_first_commit]
+ammo_cost_per_commit: 1
+commit_offset_ticks: 0
+commit_interval_ticks: 1
+max_commit_count: 0
+recovery_ticks: 4
+hold_input_timeout_ticks: 6

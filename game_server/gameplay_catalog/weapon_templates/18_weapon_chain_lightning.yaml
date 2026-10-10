@@ -1,0 +1,15 @@
+# Locks the nearest six enemies inside an 18 m, 50-degree cone and strikes
+# each at once, twice a second while held. A wall hides a target and the next
+# nearest takes its place. Not in any loadout.
+id: 18
+name: Chain Lightning
+# Weapon container slot 0-3 (wand, scepter, staff, tome / their gun twins).
+category: 2
+weapon_type: lock_instant
+# A multiple of the bolt's max_hit_count (6).
+magazine_size: 24
+reserve_magazines: 4
+fire_action_template: chain_lightning_fire
+reload_action_template: chain_lightning_reload
+lock_collider: chain_lightning_cone
+projectile_template: chain_lightning_bolt

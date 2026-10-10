@@ -1,0 +1,15 @@
+# Locks up to four enemies inside a 25 m, 60-degree cone and fires a missile
+# every tick while held, at each of them in turn, nearest first. Every missile
+# hits: the hit is decided when it is fired and lands when it arrives, unless
+# the target dies first. Not in any loadout.
+id: 19
+name: Magic Missile
+# Weapon container slot 0-3 (wand, scepter, staff, tome / their gun twins).
+category: 2
+weapon_type: lock_missile
+magazine_size: 30
+reserve_magazines: 4
+fire_action_template: magic_missile_fire
+reload_action_template: magic_missile_reload
+lock_collider: magic_missile_cone
+projectile_template: magic_missile_bolt

@@ -1,0 +1,28 @@
+id: 32
+name: chain_lightning_bolt
+# One arc of Chain Lightning. Nothing spawns from this -- a lock_instant weapon
+# damages what it locks at once -- but the arc is described here, so damage and
+# collision_mask are authored in the same place as for every other weapon.
+#
+# max_hit_count is the lock size, M: each commit locks the nearest M actors in
+# the cone and spends M rounds whether or not it found that many. The fire
+# action's ammo_cost_per_commit must equal it, and the magazine must hold whole
+# locks.
+type: standard
+movement_model: linear
+sync_mode: server_snapshot_only
+hit_response: destroy
+damage_shape: direct_hit
+damage: 20
+# hostile_side only: a player's weapon must name the side it hits, or it locks
+# the player's own team as well.
+collision_mask: hostile_side
+max_hit_count: 6
+# Unsimulated, and present only because a standard template is validated for
+# them.
+speed: 0.1
+lifetime_ticks: 3
+gravity:
+  x: 0.0
+  y: 0.0
+  z: 0.0
