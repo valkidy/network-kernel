@@ -107,9 +107,29 @@ struct EntitySnapshot {
     NetId carrier_entity_id = 0;
 };
 
+// One lock-on missile (snapshot schema 30). The server has already scheduled
+// its hit; this is only what a client needs to draw a flight from the shooter
+// that reaches the target on its arrival tick. 12 B on the wire, in an
+// optional section of the first snapshot packet of an interval -- unreliable,
+// like the snapshot: a lost one is a missile not drawn, and the damage lands
+// anyway. Each is sent once, so a client tells them apart by shooter, launch
+// tick and commit.
+struct SnapshotLockMissile {
+    NetId shooter_net_id = 0;
+    NetId target_net_id = 0;
+    // The commit it was fired on, counted from zero.
+    std::uint16_t commit_index = 0;
+    // Ticks before the snapshot's server_tick that it was launched: the
+    // snapshot carries every missile since the last one.
+    std::uint8_t launch_tick_delta = 0;
+    // Ticks from launch to arrival, 1..255.
+    std::uint8_t flight_ticks = 1;
+};
+
 struct WorldSnapshot {
     SnapshotHeader header;
     std::vector<EntitySnapshot> entities;
+    std::vector<SnapshotLockMissile> lock_missiles;
 };
 
 // The visual flags a world entity's own components imply: moving, reloading,

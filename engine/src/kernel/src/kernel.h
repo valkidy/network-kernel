@@ -53,7 +53,6 @@ struct InventorySnapshotRequestPacket;
 struct LocalActionResultBatchPacket;
 struct LocomotionStepBatchPacket;
 struct ActorImpulseBatchPacket;
-struct LockMissileBatchPacket;
 struct ProjectileSpawnBatchPacket;
 struct RemoteActionPresentationBatchPacket;
 struct WelcomePacket;
@@ -1147,8 +1146,11 @@ private:
     // stepping entity is relevant to, and seeds a session that has just started
     // seeing an entity with where its feet currently are.
     void flush_locomotion_steps();
-    void flush_lock_missiles();
-    void handle_client_lock_missile_batch(const LockMissileBatchPacket& packet);
+    // This session's share of the missiles fired since the last snapshot:
+    // those whose shooter it sees, its own included.
+    std::vector<SnapshotLockMissile> lock_missiles_for(
+        const PeerSession& session) const;
+    void handle_client_lock_missiles(const WorldSnapshot& snapshot);
     void send_locomotion_steps(
         PeerSession* session,
         const LocomotionStepBatchPacket& packet);
@@ -1272,15 +1274,13 @@ private:
     std::vector<PendingLocomotionStep> pending_follower_steps_;
     std::vector<PendingLocomotionStep> outgoing_locomotion_steps_;
     // Lock-on missiles the weapon passes fired since the last snapshot. Their
-    // hits are already scheduled; these are only reported, with the snapshot.
+    // hits are already scheduled; these are only reported, in the snapshot.
     std::vector<LockMissileLaunch> pending_lock_missiles_;
     // A client's lock-on missiles, from the server's records: what to draw and
     // when it lands. Kept until a little after arrival.
     struct ClientLockMissile {
         NetId shooter_net_id = 0;
-        std::uint32_t action_instance_id = 0;
         std::uint16_t commit_index = 0;
-        std::uint8_t burst_index = 0;
         NetId target_net_id = 0;
         std::uint32_t launch_tick = 0;
         std::uint32_t arrival_tick = 0;

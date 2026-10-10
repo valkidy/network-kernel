@@ -2719,10 +2719,10 @@ typedef struct KernelLockMissileView {
     uint32_t struct_size;
     uint32_t shooter_net_id;
     uint32_t target_net_id;
-    uint32_t action_instance_id;
+    /* The commit it was fired on, counted from zero. Restarts with each hold:
+     * shooter, launch_tick and commit_index together name a missile. */
     uint16_t commit_index;
-    uint8_t burst_index;
-    uint8_t reserved;
+    uint16_t reserved;
     uint32_t launch_tick;
     uint32_t arrival_tick;
 } KernelLockMissileView;

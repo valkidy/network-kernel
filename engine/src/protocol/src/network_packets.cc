@@ -245,7 +245,12 @@ enum class SnapshotSectionType : std::uint16_t {
     kGeneric = 4,
     kProjectileBeam = 5,
     kActorAgent = 6,
+    // Snapshot schema 30. Lock-on missiles, not entities: written only when
+    // there is one, like the beam section.
+    kLockMissile = 7,
 };
+
+constexpr std::size_t kSnapshotLockMissilePayloadSize = 12;
 
 enum AgentSnapshotRecordFlag : std::uint8_t {
     kAgentSnapshotHasActionTimeline = 1u << 0,
@@ -596,8 +601,11 @@ std::vector<std::uint8_t> encode_snapshot_packet(
     // reader is driven by this count, so a variable number of sections is fine.
     const bool has_beam_section =
         !section_entities(snapshot, SnapshotSectionType::kProjectileBeam).empty();
-    payload.write_u16(
-        has_beam_section ? kSnapshotSectionCount + 1 : kSnapshotSectionCount);
+    const bool has_missile_section = !snapshot.lock_missiles.empty() &&
+        snapshot.lock_missiles.size() <= UINT16_MAX;
+    payload.write_u16(static_cast<std::uint16_t>(
+        kSnapshotSectionCount + (has_beam_section ? 1u : 0u) +
+        (has_missile_section ? 1u : 0u)));
     payload.write_u16(0);
 
     for (const SnapshotSectionType section_type : {
@@ -775,6 +783,18 @@ std::vector<std::uint8_t> encode_snapshot_packet(
         }
     }
 
+    if (has_missile_section) {
+        payload.write_u16(static_cast<std::uint16_t>(SnapshotSectionType::kLockMissile));
+        payload.write_u16(static_cast<std::uint16_t>(snapshot.lock_missiles.size()));
+        for (const SnapshotLockMissile& missile : snapshot.lock_missiles) {
+            payload.write_u32(missile.shooter_net_id);
+            payload.write_u32(missile.target_net_id);
+            payload.write_u16(missile.commit_index);
+            payload.write_u8(missile.launch_tick_delta);
+            payload.write_u8(missile.flight_ticks);
+        }
+    }
+
     return protocol_internal::wrap_packet(
         MessageType::kSnapshotPacket,
         payload.bytes(),
@@ -814,8 +834,10 @@ bool decode_snapshot_packet(
     // either the four sections every packet always has or those plus the beam
     // one. Requiring exactly four here rejected the entire packet the moment
     // anything fired a beam, which drops every entity in it, not just the beam.
-    if ((section_count != kSnapshotSectionCount &&
-         section_count != kSnapshotSectionCount + 1) ||
+    // Plus the beam section, the missile section, or both, each written only
+    // when it has something in it.
+    if (section_count < kSnapshotSectionCount ||
+        section_count > kSnapshotSectionCount + 2 ||
         reserved != 0) {
         return false;
     }
@@ -829,6 +851,27 @@ bool decode_snapshot_packet(
         }
         const SnapshotSectionType section_type =
             static_cast<SnapshotSectionType>(raw_section_type);
+        if (section_type == SnapshotSectionType::kLockMissile) {
+            if (entity_count == 0u || !snapshot.lock_missiles.empty()) {
+                return false;
+            }
+            snapshot.lock_missiles.reserve(entity_count);
+            for (std::uint16_t index = 0; index < entity_count; ++index) {
+                SnapshotLockMissile missile;
+                if (!reader.read_u32(&missile.shooter_net_id) ||
+                    !reader.read_u32(&missile.target_net_id) ||
+                    !reader.read_u16(&missile.commit_index) ||
+                    !reader.read_u8(&missile.launch_tick_delta) ||
+                    !reader.read_u8(&missile.flight_ticks) ||
+                    missile.shooter_net_id == 0u ||
+                    missile.target_net_id == 0u ||
+                    missile.flight_ticks == 0u) {
+                    return false;
+                }
+                snapshot.lock_missiles.push_back(missile);
+            }
+            continue;
+        }
         AgentPositionFrame agent_frame;
         if (section_type == SnapshotSectionType::kActorAgent) {
             if (!reader.read_vec3(&agent_frame.anchor) ||
@@ -1258,6 +1301,10 @@ std::size_t estimate_snapshot_packet_size(const WorldSnapshot& snapshot) {
     std::size_t size = estimate_snapshot_base_packet_size();
     for (const EntitySnapshot& entity : snapshot.entities) {
         size += estimate_snapshot_entity_size(entity);
+    }
+    if (!snapshot.lock_missiles.empty()) {
+        size += kSnapshotSectionHeaderPayloadSize +
+            snapshot.lock_missiles.size() * kSnapshotLockMissilePayloadSize;
     }
     return size;
 }
@@ -2517,75 +2564,6 @@ bool decode_actor_impulse_batch_packet(
             !reader.read_float(&record.floor_y) ||
             !reader.read_u16(&record.lockout_ticks) ||
             !valid_actor_impulse_record(record)) {
-            return false;
-        }
-        packet.records.push_back(record);
-    }
-    if (!reader.done()) return false;
-    *out_packet = std::move(packet);
-    return true;
-}
-
-namespace {
-
-bool valid_lock_missile_record(const LockMissileRecord& record) {
-    return record.shooter_net_id != 0u && record.target_net_id != 0u &&
-        record.flight_ticks != 0u;
-}
-
-}  // namespace
-
-std::vector<std::uint8_t> encode_lock_missile_batch_packet(
-    const LockMissileBatchPacket& packet,
-    std::uint32_t sequence) {
-    if (packet.records.empty() || packet.records.size() > UINT16_MAX) return {};
-    protocol_internal::PacketWriter payload;
-    payload.write_u32(packet.server_tick);
-    payload.write_u16(static_cast<std::uint16_t>(packet.records.size()));
-    for (const LockMissileRecord& record : packet.records) {
-        if (!valid_lock_missile_record(record)) return {};
-        payload.write_u32(record.shooter_net_id);
-        payload.write_u32(record.action_instance_id);
-        payload.write_u16(record.commit_index);
-        payload.write_u8(record.burst_index);
-        payload.write_u32(record.target_net_id);
-        payload.write_u8(record.launch_tick_delta);
-        payload.write_u8(record.flight_ticks);
-    }
-    return protocol_internal::wrap_packet(
-        MessageType::kLockMissileBatch, payload.bytes(), sequence);
-}
-
-bool decode_lock_missile_batch_packet(
-    const std::uint8_t* data,
-    std::size_t size,
-    LockMissileBatchPacket* out_packet) {
-    const std::uint8_t* payload = nullptr;
-    std::size_t payload_size = 0;
-    if (out_packet == nullptr ||
-        !protocol_internal::unwrap_packet(
-            data, size, MessageType::kLockMissileBatch,
-            &payload, &payload_size) || payload_size < 6u) {
-        return false;
-    }
-    LockMissileBatchPacket packet;
-    std::uint16_t count = 0;
-    protocol_internal::PacketReader reader(payload, payload_size);
-    if (!reader.read_u32(&packet.server_tick) || !reader.read_u16(&count) ||
-        count == 0u) {
-        return false;
-    }
-    packet.records.reserve(count);
-    for (std::uint16_t index = 0; index < count; ++index) {
-        LockMissileRecord record;
-        if (!reader.read_u32(&record.shooter_net_id) ||
-            !reader.read_u32(&record.action_instance_id) ||
-            !reader.read_u16(&record.commit_index) ||
-            !reader.read_u8(&record.burst_index) ||
-            !reader.read_u32(&record.target_net_id) ||
-            !reader.read_u8(&record.launch_tick_delta) ||
-            !reader.read_u8(&record.flight_ticks) ||
-            !valid_lock_missile_record(record)) {
             return false;
         }
         packet.records.push_back(record);

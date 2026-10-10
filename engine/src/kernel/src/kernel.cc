@@ -6967,9 +6967,7 @@ std::uint32_t KernelEngine::get_lock_missiles(
         view.struct_size = sizeof(KernelLockMissileView);
         view.shooter_net_id = missile.shooter_net_id;
         view.target_net_id = missile.target_net_id;
-        view.action_instance_id = missile.action_instance_id;
         view.commit_index = missile.commit_index;
-        view.burst_index = missile.burst_index;
         view.launch_tick = missile.launch_tick;
         view.arrival_tick = missile.arrival_tick;
         out_missiles[count++] = view;
@@ -7503,14 +7501,6 @@ void KernelEngine::poll_transport() {
                     transport_event.payload.size(),
                     &locomotion_steps)) {
                 handle_client_locomotion_step_batch(locomotion_steps);
-                continue;
-            }
-            LockMissileBatchPacket lock_missiles;
-            if (decode_lock_missile_batch_packet(
-                    transport_event.payload.data(),
-                    transport_event.payload.size(),
-                    &lock_missiles)) {
-                handle_client_lock_missile_batch(lock_missiles);
                 continue;
             }
             WorldSnapshot snapshot;
@@ -9439,14 +9429,6 @@ void KernelEngine::poll_client_transport() {
             handle_client_locomotion_step_batch(locomotion_steps);
             continue;
         }
-        LockMissileBatchPacket lock_missiles;
-        if (decode_lock_missile_batch_packet(
-                transport_event.payload.data(),
-                transport_event.payload.size(),
-                &lock_missiles)) {
-            handle_client_lock_missile_batch(lock_missiles);
-            continue;
-        }
 
         WorldSnapshot snapshot;
         const auto decode_start = std::chrono::steady_clock::now();
@@ -9465,6 +9447,12 @@ void KernelEngine::poll_client_transport() {
 }
 
 void KernelEngine::handle_client_snapshot(WorldSnapshot snapshot) {
+    // Missiles ride the snapshot but are not part of the world it draws, and
+    // are taken out before it is buffered for interpolation.
+    if (!snapshot.lock_missiles.empty()) {
+        handle_client_lock_missiles(snapshot);
+        snapshot.lock_missiles.clear();
+    }
     // Before anything reads or stores it: beams arrive as a bare reach and are
     // not renderable until they have been hung off their shooter. Both the
     // interpolation buffer and latest_client_snapshot_ are fed from here, and
@@ -13715,7 +13703,6 @@ void KernelEngine::simulate_tick() {
     // carry no new step.
     if (wrote_snapshot) {
         flush_locomotion_steps();
-        flush_lock_missiles();
     }
     flush_network_gameplay_request_outcomes();
     send_due_clock_sync_pings(server_time_us);
@@ -14962,103 +14949,66 @@ void KernelEngine::flush_locomotion_steps() {
     outgoing_locomotion_steps_.clear();
 }
 
-void KernelEngine::flush_lock_missiles() {
-    if (pending_lock_missiles_.empty()) {
-        return;
-    }
+std::vector<SnapshotLockMissile> KernelEngine::lock_missiles_for(
+    const PeerSession& session) const {
+    std::vector<SnapshotLockMissile> missiles;
     const std::uint32_t current_tick = tick_loop_.current_tick();
-    const auto send = [&](PeerSession* session) {
-        LockMissileBatchPacket batch{};
-        batch.server_tick = current_tick;
-        for (const LockMissileLaunch& launch : pending_lock_missiles_) {
-            // Everyone who sees the shooter draws its missiles, the shooter
-            // included: it does not predict them, the target being the
-            // server's to choose.
-            if (launch.shooter_net_id != session->player &&
-                !session->relevant_entities.contains(launch.shooter_net_id)) {
-                continue;
-            }
-            const std::int32_t age = static_cast<std::int32_t>(
-                current_tick - launch.launch_tick);
-            if (age < 0 || age > static_cast<std::int32_t>(UINT8_MAX)) {
-                continue;
-            }
-            LockMissileRecord record{};
-            record.shooter_net_id = launch.shooter_net_id;
-            record.action_instance_id = launch.action_instance_id;
-            record.commit_index = launch.commit_index;
-            record.burst_index = launch.burst_index;
-            record.target_net_id = launch.target_net_id;
-            record.launch_tick_delta = static_cast<std::uint8_t>(age);
-            record.flight_ticks = launch.flight_ticks;
-            batch.records.push_back(record);
+    for (const LockMissileLaunch& launch : pending_lock_missiles_) {
+        // Everyone who sees the shooter draws its missiles, the shooter
+        // included: it does not predict them, the target being the server's
+        // to choose.
+        if (launch.shooter_net_id != session.player &&
+            !session.relevant_entities.contains(launch.shooter_net_id)) {
+            continue;
         }
-        if (batch.records.empty()) {
-            return;
+        const std::int32_t age = static_cast<std::int32_t>(
+            current_tick - launch.launch_tick);
+        if (age < 0 || age > static_cast<std::int32_t>(UINT8_MAX)) {
+            continue;
         }
-        const std::vector<std::uint8_t> encoded =
-            encode_lock_missile_batch_packet(batch, next_packet_sequence_++);
-        // Unreliable, with the snapshot, on purpose: a lost record is a
-        // missile not drawn, while the hit it stands for lands regardless.
-        if (encoded.empty() || !transport_->Send(
-                session->peer,
-                encoded.data(),
-                static_cast<std::uint32_t>(encoded.size()),
-                SendMode::kUnreliable,
-                ChannelId::kSnapshot)) {
-            push_event(KernelEventType_Error, 0u, session->peer, 36u);
-            return;
-        }
-        record_sent_packet(
-            static_cast<std::uint32_t>(encoded.size()),
-            SendMode::kUnreliable,
-            ChannelId::kSnapshot);
-    };
-    if (config_.mode == KernelMode_ListenServer &&
-        local_listen_session_.welcomed) {
-        send(&local_listen_session_);
+        missiles.push_back(SnapshotLockMissile{
+            launch.shooter_net_id,
+            launch.target_net_id,
+            launch.commit_index,
+            static_cast<std::uint8_t>(age),
+            launch.flight_ticks,
+        });
     }
-    for (PeerSession& session : peer_sessions_) {
-        if (session.welcomed) {
-            send(&session);
-        }
-    }
-    pending_lock_missiles_.clear();
+    return missiles;
 }
 
-void KernelEngine::handle_client_lock_missile_batch(
-    const LockMissileBatchPacket& packet) {
+void KernelEngine::handle_client_lock_missiles(const WorldSnapshot& snapshot) {
     // A missile long landed has nothing left to draw. A record is kept for a
     // second past its arrival so a late reader still sees the impact.
     constexpr std::uint32_t kKeepAfterArrivalTicks = 30u;
+    const std::uint32_t server_tick = snapshot.header.server_tick;
     std::erase_if(client_lock_missiles_, [&](const ClientLockMissile& missile) {
         return static_cast<std::int32_t>(
-                   packet.server_tick -
+                   server_tick -
                    (missile.arrival_tick + kKeepAfterArrivalTicks)) > 0;
     });
-    for (const LockMissileRecord& record : packet.records) {
-        const auto same = [&](const ClientLockMissile& missile) {
-            return missile.shooter_net_id == record.shooter_net_id &&
-                   missile.action_instance_id == record.action_instance_id &&
-                   missile.commit_index == record.commit_index &&
-                   missile.burst_index == record.burst_index;
-        };
-        if (std::any_of(
-                client_lock_missiles_.begin(),
-                client_lock_missiles_.end(),
-                same)) {
-            continue;
-        }
+    for (const SnapshotLockMissile& record : snapshot.lock_missiles) {
         ClientLockMissile missile{};
         missile.shooter_net_id = record.shooter_net_id;
-        missile.action_instance_id = record.action_instance_id;
         missile.commit_index = record.commit_index;
-        missile.burst_index = record.burst_index;
         missile.target_net_id = record.target_net_id;
         missile.launch_tick =
-            packet.server_tick - static_cast<std::uint32_t>(record.launch_tick_delta);
+            server_tick - static_cast<std::uint32_t>(record.launch_tick_delta);
         missile.arrival_tick = missile.launch_tick + record.flight_ticks;
-        client_lock_missiles_.push_back(missile);
+        // Each is sent once, so the same one twice is a duplicated packet.
+        // Shooter, launch tick and commit tell them apart: a new hold starts
+        // its commits from zero again, but never on the same tick.
+        const bool seen = std::any_of(
+            client_lock_missiles_.begin(),
+            client_lock_missiles_.end(),
+            [&](const ClientLockMissile& existing) {
+                return existing.shooter_net_id == missile.shooter_net_id &&
+                       existing.launch_tick == missile.launch_tick &&
+                       existing.commit_index == missile.commit_index;
+            });
+        if (!seen) {
+            client_lock_missiles_.push_back(missile);
+        }
     }
 }
 
@@ -16080,8 +16030,12 @@ void KernelEngine::publish_snapshot() {
             local_listen_session_,
             peer_snapshot,
             snapshot_send_set_budget(kSnapshotMaxPacketsPerInterval));
-        for (const WorldSnapshot& part :
-             split_snapshot_for_packets(send_snapshot, kSnapshotSendBudgetBytes)) {
+        std::vector<WorldSnapshot> parts =
+            split_snapshot_for_packets(send_snapshot, kSnapshotSendBudgetBytes);
+        if (!parts.empty()) {
+            parts.front().lock_missiles = lock_missiles_for(local_listen_session_);
+        }
+        for (const WorldSnapshot& part : parts) {
             const std::vector<std::uint8_t> packet =
                 encode_snapshot_packet(part, next_packet_sequence_++);
             if (!listen_server_transport_->Send(
@@ -16115,8 +16069,13 @@ void KernelEngine::publish_snapshot() {
                 session,
                 peer_snapshot,
                 snapshot_send_set_budget(kSnapshotMaxPacketsPerInterval));
-            for (const WorldSnapshot& part :
-                 split_snapshot_for_packets(send_snapshot, kSnapshotSendBudgetBytes)) {
+            // The missiles ride the first packet of the interval, once.
+            std::vector<WorldSnapshot> parts =
+                split_snapshot_for_packets(send_snapshot, kSnapshotSendBudgetBytes);
+            if (!parts.empty()) {
+                parts.front().lock_missiles = lock_missiles_for(session);
+            }
+            for (const WorldSnapshot& part : parts) {
                 const std::vector<std::uint8_t> packet =
                     encode_snapshot_packet(part, next_packet_sequence_++);
                 if (!transport_->Send(
@@ -16135,6 +16094,7 @@ void KernelEngine::publish_snapshot() {
             }
         }
     }
+    pending_lock_missiles_.clear();
 }
 
 void KernelEngine::send_gameplay_catalog_manifest_request() {

@@ -355,7 +355,6 @@ void lock_missiles_reach_every_client_and_land_on_their_arrival() {
         const ne::NetId order[] = {near, mid, far};
         for (std::size_t index = 0; index < missiles.size(); ++index) {
             require(missiles[index].shooter_net_id == arena.shooter);
-            require(missiles[index].action_instance_id == kInstance);
             require(missiles[index].commit_index == index);
             require(missiles[index].target_net_id == order[index]);
             require(missiles[index].launch_tick ==
