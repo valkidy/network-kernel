@@ -268,6 +268,38 @@ N：錐形內偵測到的目標數。M：單次最大鎖定數。T：一顆飛�
 - 既有測試：四組一樣是那 14 個失敗，位置相同。
 - **listen host 沒有做**：host 本機的 render 走另一條路，`derive_lock_strikes` 只在 `FireCommit` 被釋出時才跑，host 上不一定有這個事件。要用 host 遊玩時再確認。
 
+**流量調整 A+B（2026-10-10，`8fd2f5f9`）**：P4 之後回頭檢查流量，使用者決定兩個都做。
+- **A**：記錄從 17 B 縮成 12 B，內容是 shooter、target、commit、launch_tick_delta、flight。拿掉 instance 和 burst：
+  - 每筆記錄只送一次，client 改用「射手 + 發射 tick + commit」辨認是哪顆飛彈。
+  - 不能只用「射手 + commit」，因為新的一次按住，commit 又會從 0 開始。
+  - `KernelLockMissileView` 也拿掉這兩個欄位。
+- **B**：不再用自己的 `LockMissileBatch` 封包，改成放進每個 session 每個 snapshot 間隔的第一個 snapshot 封包，當成一個選用 section：
+  - 有飛彈才寫，和 beam section 一樣。
+  - 沒飛彈的 snapshot 一個 byte 都不會多。
+  - client 在 `handle_client_snapshot` 開頭取出飛彈，再把 snapshot 放進內插的緩衝區。
+- **版本**：
+  - snapshot schema 29 → 30。
+  - packet schema 改回 31：32 唯一的改動就是那個獨立封包，現在已經拿掉了。
+  - `dynamic_abi_smoke_test`、`kernel_api_test` 寫死的版本號跟著改。
+- **流量**（每個 client，飛彈全速時）：
+
+  | 情境 | 改之前 | 改之後 |
+  |---|---|---|
+  | 1 個射手（每秒 30 顆） | 約 1,020 B/s | 約 15 × 4 + 30 × 12 = 420 B/s |
+  | 10 個射手 | 約 5,610 B/s | 約 3,660 B/s |
+
+- **測試**：
+  - `snapshot_lock_missile_roundtrip_test` 取代 `lock_missile_roundtrip_test`：
+    - 和實體一起往返後內容不變。
+    - 多出的大小剛好是 4 B section header 加每顆 12 B。
+    - beam section 和飛彈 section 可以同時存在。
+    - 沒飛彈就沒有這個 section。
+    - 壞掉的記錄、被截斷的封包都會被拒絕。
+  - e2e 照樣通過。
+  - mutation：「沒附上飛彈」和「只送給射手」都會讓 e2e 紅。
+- **既有測試**：四組一樣是那 14 個失敗，位置相同。
+- **風險**：飛彈 section 一定放在第一個封包裡，不受 `kSnapshotSendBudgetBytes` 的分割控制。同一個間隔內飛彈非常多時，第一個封包可能超過預算。每顆 12 B，100 顆也只有 1.2 KB，目前不處理。
+
 ### 3.5 Content
 
 - 兩把武器各四個檔（shot、fire action、reload action、weapon）加上 cone collider 模板，照 `$id_<kind>_$name` 命名。不放進任何配裝。
@@ -303,8 +335,7 @@ N：錐形內偵測到的目標數。M：單次最大鎖定數。T：一顆飛�
 
 ## 5. 版本與交付
 
-- **Packet schema 31 → 32**：client 和 server 一定要用同一版 native library。`dynamic_abi_smoke_test`、`kernel_api_test` 寫死了版本號，要跟著改（memory「Schema bump touch points」）。
-- **Snapshot schema 維持 29**（P0 確認後定案）。
+- **Packet schema 維持 31**，**snapshot schema 29 → 30**（流量調整 A+B 後的結果）：client 和 server 一定要用同一版 native library。`dynamic_abi_smoke_test`、`kernel_api_test` 寫死了版本號，要跟著改（memory「Schema bump touch points」）。
 - **ABI 102 → 103**（D22）：`KernelGameplayCatalogDefinition` 多了欄位，Unity 的 C# 鏡像要跟著改（使用者負責）。新的 fire mode enum 值和新 export（capability flag）一起放在這一版。寫死 ABI 版本號的測試要跟著改（memory「Schema bump touch points」）。開工時先查其他還沒 merge 的分支有沒有用到 103（memory「Parallel branches collide on numbers」）。
 - **`bundle.bytes` 需要更新**：P5 加了新的 catalog 內容。由使用者處理。
 - Unity 的 C# 鏡像和演出由使用者處理。
