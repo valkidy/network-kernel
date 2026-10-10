@@ -2,9 +2,9 @@
 
 狀態：**設計已定案，尚未實作。** 下一步是 P0 實測（§6）。
 分支：`claude/portal`（從 main fc4e964 開出）。
-最後更新：2026-10-10（第六輪 review：單面進入的碰撞盒、落點校正連觸發區一起檢查、門被打壞沿用現有機制）。
+最後更新：2026-10-10（第七輪 review：與帳篷共用 population group 並改名 `building`；觸發區分成 on_enter / on_overlap / on_exit）。
 
-本文件整理 2026-10-10 六輪設計討論的結論。
+本文件整理 2026-10-10 七輪設計討論的結論。
 
 ---
 
@@ -50,6 +50,8 @@
 | D18 | 第一版不讓丟出去的 prop 穿過傳送門 | 正式版的終點在另一張地圖，飛行中的 prop 要整包搬到另一個 world；在同一張地圖裡還要處理軌跡同步、碰撞檢查掃過整張地圖、client 預測、玩法上的濫用。見 §8 |
 | D19 | 地圖原點放在中央（±4 km）；地圖做大時由 Unity 端加 floating origin | float32 在 4–8 km 的最小間距是 0.49 mm，傳送目的地不是瓶頸。kernel 不用改 |
 | D20 | 幾乎垂直往下丟：水平分量是 0，rotation 是單位旋轉，門朝世界座標 +z | 視為玩家操作失誤 |
+| D21 | 傳送門與帳篷共用 population group；group 從 `tent` 改名為 `building` | 沿用帳篷 D 決策「所有建築共用一個 group」。lifetime 是各 template 的 lifecycle 欄位，不是 group 的屬性，所以名稱不加 timed。共用的後果見 §4 的 K6 |
+| D22 | 觸發區比照物理引擎分成三個 trigger：`on_enter`（進入時一次）、`on_overlap`（重疊期間每個 tick）、`on_exit`（離開時一次）。傳送門用 `on_enter` | 語意見 §4 的 K2 |
 
 ---
 
@@ -88,7 +90,7 @@ entity_type: prop
 impulse_resistance: 1000.0
 lifecycle:
   lifetime_ticks: 5400
-  population_group: portal
+  population_group: building                   # 與帳篷共用（D21）
 health:
   hp: 600
   max_hp: 600
@@ -102,7 +104,7 @@ portal:                                         # NEW；只能寫在 prop 上
   arrival_grace_ticks: 30
   arrival_immunity_ticks: 60
 triggers:
-  on_overlap:                                   # NEW
+  on_enter:                                     # NEW；另有 on_overlap、on_exit（D22）
     collision_mask: player_side
     instigators: players                        # NEW：players | actors
     action_graph: action_teleport_through_portal
@@ -151,7 +153,7 @@ triggers:
       self_damage: 1
 ```
 
-另外需要一個 item template（`fungible_portal_kit`，只有 throw），以及 population rule（見 §9 待決 Q1）。
+另外需要一個 item template（`fungible_portal_kit`，只有 throw）。population rule 沿用現有的 id 2，只改名（K6）。
 
 ---
 
@@ -160,10 +162,21 @@ triggers:
 | # | 內容 | 對應決策 |
 |---|---|---|
 | K1 | **觸發區碰撞盒。** `purpose: trigger` 註冊到內部 `kTrigger` layer（目前 prop 的碰撞盒一律是 static obstacle，`kernel.cc:4902`）；解析 `physics.trigger_collider_template` 並檢查用途；`find_clear_spawn_spot` 改成明確使用 `collider_template` 加上觸發區，不再拿「第一個 Hit box」 | D13、D16 |
-| K2 | **`on_overlap` entity trigger。** 每個 tick，對放在地上、有觸發區的 prop 做 overlap 查詢；依 `collision_mask`、`instigators` 篩選；略過 `Sheltered`、HP 為 0、還在 arrival grace 期間的 actor；以 instigator 執行 graph。觸發語意（只在進入時觸發，或重疊期間每個 tick 都觸發）在 K2 決定，傳送門兩種都可以 | D6、D10、D14 |
+| K2 | **`on_enter` / `on_overlap` / `on_exit` entity trigger。** 每個 tick，對放在地上、有觸發區的 prop 做 overlap 查詢，依 `collision_mask`、`instigators` 和 kernel 規則篩出「有資格的重疊 actor」，跟上一個 tick 的集合比較。語意見下方 | D6、D10、D14、D22 |
 | K3 | **`portal:` 區塊。** 解析與檢查（`forward` 正規化、`y > 0` 拒絕、`exit_template` 存在）；入口生成時生成出口並記錄關聯；在 `destroy_entity_with_context` 裡用同一個 despawn 原因刪除出口（位置同帳篷 K3 釋放住客） | D3、D4、D7 |
 | K4 | **`teleport` action。** 依序：`drop_carried_props` → 移到 destination（目的地被擋住時用 `available_lift` 或站立點搜尋）→ 速度歸零、清掉 `ImpulseLockout` 和 stagger、清掉 controller height（同 `Kernel_ServerSetEntityTransform`）→ 加上 arrival grace 和 `DamageImmunity` → 送出 K5 | D5、D9、D11 |
+| K6 | **population group 改名 `tent` → `building`。** 改 `gameplay_catalog.yaml`、`216_prop_tent.yaml`、`223_prop_field_camp.yaml`；`gameplay_config_test.cc:1328` 寫死了 group 名稱 `"tent"`，要一起改。`max_alive: 4` 與 `cleanup_runs_on_destroy: true` 現在也套用到傳送門（傳送門沒有 on_destroy graph，不受影響） | D21 |
 | K5 | **傳送通知。** 給被傳送的玩家（帶 net_id、destination、forward），讓 Unity 結束銜接動畫並轉鏡頭 | D4、D12 |
+
+**K2 的觸發語意（D22）：**
+- 每個 trigger prop 記住上一個 tick「有資格的重疊 actor」集合。這個 tick 新出現的 actor 觸發 `on_enter`，持續存在的觸發 `on_overlap`，消失的觸發 `on_exit`。
+- 進入的那個 tick 只觸發 `on_enter`，下一個 tick 才開始 `on_overlap`（同 Unity 的 Enter／Stay）。
+- **失去資格就算離開**：actor 進入帳篷、死亡、或進入 arrival grace 時觸發 `on_exit`；重新取得資格時再觸發 `on_enter`。所以站在傳送門裡等 grace 結束，會在結束那個 tick 被傳送。陷阱可以靠 `on_exit` 清掉自己給的 status。
+- **被刪除不觸發**：trigger prop 被刪除時，不對裡面的 actor 觸發 `on_exit`（清理交給 `on_destroy_entity`）；actor 被刪除或斷線時也不觸發。同 Unity 的行為。
+- 被傳送的玩家，下一個 tick 不在觸發區裡，會觸發入口的 `on_exit`（傳送門沒有寫，所以沒有效果）。
+- 三個 trigger 都可以各自寫 `collision_mask`、`instigators`；同一個 prop 上必須一致，否則載入時拒絕（集合只有一份）。
+
+**共用 group 的後果（K6）：** 4 個名額由帳篷、field camp、傳送門共用，丟出新的傳送門可能擠掉最舊的帳篷，裡面的住客會被擊退（帳篷 K4 的設計行為）。這是帳篷計畫已經接受的「建築太多是 gameplay 設計問題」。
 
 版本影響：
 - 新 trigger、新 action 和新欄位都會讓 **ABI 從 102 升到 103**，catalog schema 也要加欄位。
@@ -187,7 +200,7 @@ triggers:
 | 階段 | 內容 | ABI |
 |---|---|---|
 | **P0 實測** | 只用現有欄位：portal kit 沿用 tent kit 的 graph 生成一個只有紅色碰撞盒的入口；測試直接呼叫 `Kernel_ServerSetEntityTransform` 做長距離傳送（dedicated server + pure client 兩個 process）。量測 §7 的 R1–R3 | 不變 |
-| P1 | K1 + K2 | 103 |
+| P1 | K1 + K2 + K6 | 103 |
 | P2 | K3 + K4 | 103 |
 | P3 | K5；Unity 的銜接動畫與鏡頭（使用者） | 103，可能加 packet 或 snapshot schema |
 
@@ -219,8 +232,8 @@ triggers:
 
 ## 9. 待決問題
 
-- **Q1**：傳送門要自己一個 population group（示意中是 `portal`），還是跟帳篷共用？帳篷目前的 group 名字是 `tent`、`max_alive: 4`。如果共用，group 最好改名成 `building`。
-- **Q2**：K2 的觸發語意（只在進入時觸發，或重疊期間每個 tick 都觸發）。傳送門兩種都可以，之後的陷阱、壓力板會需要。
+- ~~Q1~~：已定案，D21。
+- ~~Q2~~：已定案，D22。
 - **Q3**：K5 走 event 還是 snapshot 欄位。
 
 ---
