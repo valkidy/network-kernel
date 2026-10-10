@@ -1,6 +1,6 @@
 # 鎖定類武器（連鎖閃電、魔法飛彈）實作計劃書
 
-狀態：規格討論完成（2026-10-10），尚未開工。§2 標「待確認」的項目要先定。
+狀態：P0–P5 全部完成（2026-10-10），在 `claude/lock-on-weapons-plan`，尚未 merge。
 前置：`main`（`fc4e964`，ABI 102、packet schema 31、snapshot schema 29）。
 
 ---
@@ -304,6 +304,34 @@ N：錐形內偵測到的目標數。M：單次最大鎖定數。T：一顆飛�
 
 - 兩把武器各四個檔（shot、fire action、reload action、weapon）加上 cone collider 模板，照 `$id_<kind>_$name` 命名。不放進任何配裝。
 - id 在 P5 開工時查目前最大值再定，merge 時再查一次（memory「Parallel branches collide on numbers」）。
+
+**P5 實作紀錄（2026-10-10，`5f54d97c`）**：
+- id 先查過所有本機分支，避開已經用掉的：
+  - 武器 18、19。
+  - collider 44、45。另一個分支已經用了 42、43。
+  - projectile 32、33。
+  - action 4126–4129。
+- 兩把都只打 `hostile_side`，`category: 2`（staff），**沒有放進任何配裝**。要試玩時，把 id 加進 `entity_templates/1_player.yaml` 的 `weapon_slots`，由使用者決定。
+- 數值（第一版，等試玩後再調）：
+
+  | | Chain Lightning（18，`lock_instant`） | Magic Missile（19，`lock_missile`） |
+  |---|---|---|
+  | 錐形 | 18 m、50° | 25 m、60° |
+  | 鎖定數 M | 6 | 4（輪流打） |
+  | 傷害 | 20／目標 | 8／顆 |
+  | 間隔 | 15 tick（每秒 2 次） | 1 tick |
+  | 每次 commit 扣彈 | 6（沒目標也扣） | 1（沒目標不扣） |
+  | 彈匣 | 24（4 次 commit） | 30（有目標時連射 1 秒） |
+  | 最長飛行 | — | 20 tick（約 0.67 秒，37.5 m/s） |
+  | reload | 45 tick | 45 tick |
+
+- `lock_weapon_catalog_test` 加了 `the_shipped_lock_weapons_load`：
+  - 從 shipped catalog 載入這兩把。
+  - 純 client 讀得回來。
+  - 在真的 dedicated server（port 8020）上設定到一個 actor 身上，走遊戲實際用的路徑：解析錐形、確認 action 存在。
+- 沒有做「用真的模板跑 e2e」：kernel 的 e2e 測試接觸不到 game_server 的 YAML 載入。真的模板只驗證到載入和設定這一步，開火的行為由 P1–P4 的測試（手動建的模板）涵蓋。
+- 既有測試：四組一樣是那 14 個失敗，位置相同。
+- **`bundle.bytes` 需要更新**：catalog 多了 10 個檔案。由使用者處理。
 
 ### 3.6 不用改的
 
