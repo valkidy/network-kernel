@@ -438,22 +438,33 @@ LockCandidates lock_candidates(
     return out;
 }
 
-// A lock-on commit: the actors locked inside the cone are each damaged once,
-// at once. Nothing is spawned. The commit has already spent its ammunition, so
-// a cone with nobody in it is a shot that hit nothing, not a refused one.
-void apply_lock_instant_damage(
+// What a lock-on weapon locks on this commit: the shared rule applied to the
+// candidates above, a static wall between the shooter and a target hiding it.
+struct LockSelection {
+    std::vector<lock_targets::Candidate> locked;
+    std::vector<std::pair<NetId, std::uint16_t>> hit_zones;
+
+    std::uint16_t hit_zone_of(NetId net_id) const {
+        for (const auto& [candidate, zone] : hit_zones) {
+            if (candidate == net_id) {
+                return zone;
+            }
+        }
+        return kHitZoneUnscaled;
+    }
+};
+
+LockSelection select_lock_targets(
     World& world,
     const WeaponMechanicsDefinition& definition,
     const HistoryFrame* rewind_frame,
-    std::uint32_t current_tick,
     NetId shooter_net_id,
     PeerId shooter_peer_id,
     const glm::vec3& origin,
-    const glm::vec3& direction,
-    std::uint64_t hit_time_us,
-    DamagePipeline* damage_pipeline) {
-    if (damage_pipeline == nullptr || definition.melee_range <= 0.0f) {
-        return;
+    const glm::vec3& direction) {
+    LockSelection selection;
+    if (definition.melee_range <= 0.0f) {
+        return selection;
     }
     const RuntimeProjectileTemplate* shot =
         world.find_projectile_template(definition.projectile_template_id);
@@ -495,17 +506,39 @@ void apply_lock_instant_damage(
         shooter_net_id,
         shooter_peer_id,
         definition.collision_mask);
-    const std::vector<lock_targets::Candidate> locked =
+    selection.locked =
         lock_targets::select(std::move(found.candidates), cone, behind_a_wall);
+    selection.hit_zones = std::move(found.hit_zones);
+    return selection;
+}
+
+// A lock-on commit: the actors locked inside the cone are each damaged once,
+// at once. Nothing is spawned. The commit has already spent its ammunition, so
+// a cone with nobody in it is a shot that hit nothing, not a refused one.
+void apply_lock_instant_damage(
+    World& world,
+    const WeaponMechanicsDefinition& definition,
+    const HistoryFrame* rewind_frame,
+    std::uint32_t current_tick,
+    NetId shooter_net_id,
+    PeerId shooter_peer_id,
+    const glm::vec3& origin,
+    const glm::vec3& direction,
+    std::uint64_t hit_time_us,
+    DamagePipeline* damage_pipeline) {
+    if (damage_pipeline == nullptr) {
+        return;
+    }
+    const LockSelection selection = select_lock_targets(
+        world,
+        definition,
+        rewind_frame,
+        shooter_net_id,
+        shooter_peer_id,
+        origin,
+        direction);
     std::uint32_t sequence_id = 0;
-    for (const lock_targets::Candidate& target : locked) {
-        std::uint16_t hit_zone = kHitZoneUnscaled;
-        for (const auto& [net_id, zone] : found.hit_zones) {
-            if (net_id == target.net_id) {
-                hit_zone = zone;
-                break;
-            }
-        }
+    for (const lock_targets::Candidate& target : selection.locked) {
         (void)damage_pipeline->submit_damage_request(damage_request_at(
             current_tick,
             sequence_id++,
@@ -516,7 +549,82 @@ void apply_lock_instant_damage(
             definition.damage,
             hit_time_us,
             target.center,
-            hit_zone));
+            selection.hit_zone_of(target.net_id)));
+    }
+}
+
+// A lock-on missile: one per commit, at the (commit_index % locked)-th
+// nearest of what the commit locked. Its hit is certain and decided now --
+// scheduled in the pipeline for its arrival -- so the missile itself is never
+// simulated, only reported for clients to draw. It flies at the speed that
+// covers the cone's full reach in the shot template's lifetime_ticks, so a
+// target at the edge is hit at the end of that lifetime and a nearer one
+// proportionally sooner, never in fewer than one tick.
+void launch_lock_missile(
+    World& world,
+    const WeaponMechanicsDefinition& definition,
+    const LockSelection& selection,
+    std::uint16_t commit_index,
+    std::uint32_t current_tick,
+    float fixed_delta_seconds,
+    std::uint64_t action_time_us,
+    NetId shooter_net_id,
+    PeerId shooter_peer_id,
+    std::uint32_t action_instance_id,
+    const glm::vec3& origin,
+    DamagePipeline* damage_pipeline,
+    std::vector<LockMissileLaunch>* launches) {
+    if (selection.locked.empty() || damage_pipeline == nullptr ||
+        definition.melee_range <= 0.0f) {
+        return;
+    }
+    const lock_targets::Candidate& target =
+        selection.locked[commit_index % selection.locked.size()];
+    const RuntimeProjectileTemplate* shot =
+        world.find_projectile_template(definition.projectile_template_id);
+    const std::uint32_t max_flight_ticks = std::clamp<std::uint32_t>(
+        shot == nullptr ? 1u : shot->lifetime_ticks, 1u, UINT8_MAX);
+    const float meters_per_tick =
+        definition.melee_range / static_cast<float>(max_flight_ticks);
+    const float distance = glm::length(target.center - origin);
+    const std::uint32_t flight_ticks = std::clamp<std::uint32_t>(
+        static_cast<std::uint32_t>(std::ceil(distance / meters_per_tick)),
+        1u,
+        max_flight_ticks);
+    const std::uint32_t arrival_tick = current_tick + flight_ticks;
+    // The dodge window is judged against this, so it is the arrival.
+    const std::uint64_t arrival_time_us = fixed_delta_seconds > 0.0f
+        ? static_cast<std::uint64_t>(
+              static_cast<double>(arrival_tick) *
+              static_cast<double>(fixed_delta_seconds) * 1000000.0)
+        : action_time_us;
+
+    DamageRequest request = damage_request_at(
+        current_tick,
+        commit_index,
+        shooter_net_id,
+        target.net_id,
+        shooter_peer_id,
+        definition.id,
+        definition.damage,
+        arrival_time_us,
+        target.center,
+        selection.hit_zone_of(target.net_id));
+    request.apply_tick = arrival_tick;
+    if (!damage_pipeline->submit_damage_request(request)) {
+        return;
+    }
+    if (launches != nullptr) {
+        launches->push_back(LockMissileLaunch{
+            shooter_net_id,
+            shooter_peer_id,
+            action_instance_id,
+            commit_index,
+            0u,
+            target.net_id,
+            current_tick,
+            static_cast<std::uint8_t>(flight_ticks),
+        });
     }
 }
 
@@ -1124,8 +1232,28 @@ void simulate_weapons(
                     break;
                 }
             }
+            // A lock-on missile looks before it spends (D9 of the lock-on
+            // plan): a commit that locks nothing is still a commit -- it is
+            // Committed, starts the cooldown and keeps the hold running -- but
+            // it costs no ammunition and fires nothing, so a magazine lasts
+            // exactly as long as there was something to shoot at. Refusing it
+            // instead would read as the end of the hold on the client.
+            std::optional<LockSelection> missile_lock;
+            if (definition->mode == WeaponFireMode::kLockMissile) {
+                missile_lock = select_lock_targets(
+                    world,
+                    *definition,
+                    context.rewind_frame,
+                    player_identity.net_id,
+                    queued_input.owner_peer,
+                    projectile_launch_position(
+                        player_view.get<Transform>(player_entity)),
+                    input_aim_to_world(queued_input.input));
+            }
+            const bool locked_nothing =
+                missile_lock.has_value() && missile_lock->locked.empty();
             weapon.ammo[slot] = static_cast<std::uint16_t>(
-                weapon.ammo[slot] - ammo_cost);
+                weapon.ammo[slot] - (locked_nothing ? 0u : ammo_cost));
             weapon.next_primary_commit_tick[slot] =
                 commit.authoritative_tick +
                 (legacy_button_commit
@@ -1141,13 +1269,15 @@ void simulate_weapons(
                     ActionOutcomeType::Completed,
                     KernelLocalActionResultReason_None);
             }
-            push_event(
-                events,
-                KernelEventType_FireConfirmed,
-                current_tick,
-                player_identity.net_id,
-                queued_input.owner_peer,
-                definition->id);
+            if (!locked_nothing) {
+                push_event(
+                    events,
+                    KernelEventType_FireConfirmed,
+                    current_tick,
+                    player_identity.net_id,
+                    queued_input.owner_peer,
+                    definition->id);
+            }
 
             const Transform& player_transform =
                 player_view.get<Transform>(player_entity);
@@ -1210,6 +1340,23 @@ void simulate_weapons(
                     direction,
                     hit_time_us,
                     damage_pipeline);
+            } else if (definition->mode == WeaponFireMode::kLockMissile) {
+                launch_lock_missile(
+                    world,
+                    *definition,
+                    *missile_lock,
+                    commit.commit_count > 0u
+                        ? static_cast<std::uint16_t>(commit.commit_count - 1u)
+                        : 0u,
+                    current_tick,
+                    context.fixed_delta_seconds,
+                    context.action_time_us,
+                    player_identity.net_id,
+                    queued_input.owner_peer,
+                    queued_input.input.action_intent.action_instance_id,
+                    origin,
+                    damage_pipeline,
+                    context.lock_missile_launches);
             } else if (definition->mode == WeaponFireMode::kTargetedStrike) {
                 (void)spawn_projectile_at(
                     world,

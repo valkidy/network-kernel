@@ -2526,4 +2526,73 @@ bool decode_actor_impulse_batch_packet(
     return true;
 }
 
+namespace {
+
+bool valid_lock_missile_record(const LockMissileRecord& record) {
+    return record.shooter_net_id != 0u && record.target_net_id != 0u &&
+        record.flight_ticks != 0u;
+}
+
+}  // namespace
+
+std::vector<std::uint8_t> encode_lock_missile_batch_packet(
+    const LockMissileBatchPacket& packet,
+    std::uint32_t sequence) {
+    if (packet.records.empty() || packet.records.size() > UINT16_MAX) return {};
+    protocol_internal::PacketWriter payload;
+    payload.write_u32(packet.server_tick);
+    payload.write_u16(static_cast<std::uint16_t>(packet.records.size()));
+    for (const LockMissileRecord& record : packet.records) {
+        if (!valid_lock_missile_record(record)) return {};
+        payload.write_u32(record.shooter_net_id);
+        payload.write_u32(record.action_instance_id);
+        payload.write_u16(record.commit_index);
+        payload.write_u8(record.burst_index);
+        payload.write_u32(record.target_net_id);
+        payload.write_u8(record.launch_tick_delta);
+        payload.write_u8(record.flight_ticks);
+    }
+    return protocol_internal::wrap_packet(
+        MessageType::kLockMissileBatch, payload.bytes(), sequence);
+}
+
+bool decode_lock_missile_batch_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    LockMissileBatchPacket* out_packet) {
+    const std::uint8_t* payload = nullptr;
+    std::size_t payload_size = 0;
+    if (out_packet == nullptr ||
+        !protocol_internal::unwrap_packet(
+            data, size, MessageType::kLockMissileBatch,
+            &payload, &payload_size) || payload_size < 6u) {
+        return false;
+    }
+    LockMissileBatchPacket packet;
+    std::uint16_t count = 0;
+    protocol_internal::PacketReader reader(payload, payload_size);
+    if (!reader.read_u32(&packet.server_tick) || !reader.read_u16(&count) ||
+        count == 0u) {
+        return false;
+    }
+    packet.records.reserve(count);
+    for (std::uint16_t index = 0; index < count; ++index) {
+        LockMissileRecord record;
+        if (!reader.read_u32(&record.shooter_net_id) ||
+            !reader.read_u32(&record.action_instance_id) ||
+            !reader.read_u16(&record.commit_index) ||
+            !reader.read_u8(&record.burst_index) ||
+            !reader.read_u32(&record.target_net_id) ||
+            !reader.read_u8(&record.launch_tick_delta) ||
+            !reader.read_u8(&record.flight_ticks) ||
+            !valid_lock_missile_record(record)) {
+            return false;
+        }
+        packet.records.push_back(record);
+    }
+    if (!reader.done()) return false;
+    *out_packet = std::move(packet);
+    return true;
+}
+
 }  // namespace network_example

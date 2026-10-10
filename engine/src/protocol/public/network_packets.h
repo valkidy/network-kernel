@@ -214,6 +214,32 @@ struct ActorImpulseBatchPacket {
     std::vector<ActorImpulseRecord> records;
 };
 
+// One lock-on missile. The server has already scheduled its hit; this is only
+// what a client needs to draw a flight from the shooter that reaches the
+// target on its arrival tick. Identified by the shooter's action instance,
+// commit and burst, the way a projectile spawn is.
+//
+// Unreliable, on the snapshot channel and at its cadence, like a locomotion
+// step: a lost record is one missile not drawn, and the damage lands anyway.
+// Sent to every session that sees the shooter. 17 B a missile.
+struct LockMissileRecord {
+    NetId shooter_net_id = 0;
+    std::uint32_t action_instance_id = 0;
+    std::uint16_t commit_index = 0;
+    std::uint8_t burst_index = 0;
+    NetId target_net_id = 0;
+    // Ticks before the batch's server_tick that it was launched: a batch goes
+    // out with the snapshot and may carry several ticks' missiles.
+    std::uint8_t launch_tick_delta = 0;
+    // Ticks from launch to arrival, 1..255.
+    std::uint8_t flight_ticks = 1;
+};
+
+struct LockMissileBatchPacket {
+    std::uint32_t server_tick = 0;
+    std::vector<LockMissileRecord> records;
+};
+
 // One procedural step an authoritative actor's leg took, addressed to the
 // entity that took it. Both swing endpoints are frozen at lift-off, so this is
 // the whole of a step: a receiver reproduces the swing from it without the
@@ -474,6 +500,14 @@ bool decode_actor_impulse_batch_packet(
     const std::uint8_t* data,
     std::size_t size,
     ActorImpulseBatchPacket* out_packet);
+
+std::vector<std::uint8_t> encode_lock_missile_batch_packet(
+    const LockMissileBatchPacket& packet,
+    std::uint32_t sequence = 0);
+bool decode_lock_missile_batch_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    LockMissileBatchPacket* out_packet);
 
 }  // namespace network_example
 

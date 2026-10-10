@@ -318,6 +318,9 @@ enum class WeaponFireMode : std::uint8_t {
     kTargetedStrike = 4,
     // Damages up to max_hit_count actors locked inside a cone, at once.
     kLockInstant = 5,
+    // Locks the same way, then schedules one certain hit per commit on the
+    // (commit_index % locked)-th nearest, landing after a flight.
+    kLockMissile = 6,
 };
 
 enum class ProjectileMotionModel : std::uint8_t {
@@ -552,7 +555,8 @@ struct WeaponMechanicsDefinition {
     std::uint32_t reload_action_template_id = 0;
     // KERNEL_COLLISION_LAYER_* bits; zero keeps the engine default.
     std::uint32_t collision_mask = 0;
-    // kMelee and kLockInstant. The cone's shape, and the reach with it -- a
+    // kMelee, kLockInstant and kLockMissile. The cone's shape, and the reach
+    // with it -- a
     // cone template's range and fov are read from here, not from max_range.
     std::uint32_t melee_collider_template_id = 0;
     // The two numbers that template stands for, resolved once when the weapon

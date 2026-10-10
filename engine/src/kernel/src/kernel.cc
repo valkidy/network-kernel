@@ -1627,6 +1627,9 @@ WeaponFireMode to_weapon_fire_mode(std::uint8_t fire_mode) {
     if (fire_mode == KernelWeaponFireMode_LockInstant) {
         return WeaponFireMode::kLockInstant;
     }
+    if (fire_mode == KernelWeaponFireMode_LockMissile) {
+        return WeaponFireMode::kLockMissile;
+    }
     return WeaponFireMode::kHitscan;
 }
 
@@ -2013,7 +2016,7 @@ bool validate_weapon_mechanics(const KernelWeaponMechanicsDefinition& definition
         definition.reload_action_template_id == 0u) {
         return false;
     }
-    if (definition.fire_mode > KernelWeaponFireMode_LockInstant) {
+    if (definition.fire_mode > KernelWeaponFireMode_LockMissile) {
         return false;
     }
     if (definition.fire_mode == KernelWeaponFireMode_Projectile) {
@@ -2031,7 +2034,8 @@ bool validate_weapon_mechanics(const KernelWeaponMechanicsDefinition& definition
     // already required non-zero above, and comes from the projectile template
     // it names -- the same one authoring surface a hitscan uses.
     if (definition.fire_mode == KernelWeaponFireMode_Melee ||
-        definition.fire_mode == KernelWeaponFireMode_LockInstant) {
+        definition.fire_mode == KernelWeaponFireMode_LockInstant ||
+        definition.fire_mode == KernelWeaponFireMode_LockMissile) {
         return definition.melee_collider_template_id != 0 &&
                definition.projectile_template_id != 0;
     }
@@ -2060,7 +2064,8 @@ bool resolve_weapon_cone(
     const std::vector<KernelColliderTemplateDefinition>& collider_templates,
     WeaponMechanicsDefinition* mechanics) {
     if (mechanics->mode != WeaponFireMode::kMelee &&
-        mechanics->mode != WeaponFireMode::kLockInstant) {
+        mechanics->mode != WeaponFireMode::kLockInstant &&
+        mechanics->mode != WeaponFireMode::kLockMissile) {
         return true;
     }
     const KernelColliderTemplateDefinition* cone = find_collider_template(
@@ -6931,6 +6936,8 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     client_inventory_resync_pending_.clear();
     pending_prop_state_changes_.clear();
     pending_actor_impulses_.clear();
+    pending_lock_missiles_.clear();
+    client_lock_missiles_.clear();
     claimed_item_instances_.clear();
     claimed_prop_entities_.clear();
     std::string item_validation_error;
@@ -7224,6 +7231,14 @@ void KernelEngine::poll_transport() {
                     transport_event.payload.size(),
                     &locomotion_steps)) {
                 handle_client_locomotion_step_batch(locomotion_steps);
+                continue;
+            }
+            LockMissileBatchPacket lock_missiles;
+            if (decode_lock_missile_batch_packet(
+                    transport_event.payload.data(),
+                    transport_event.payload.size(),
+                    &lock_missiles)) {
+                handle_client_lock_missile_batch(lock_missiles);
                 continue;
             }
             WorldSnapshot snapshot;
@@ -9149,6 +9164,14 @@ void KernelEngine::poll_client_transport() {
                 transport_event.payload.size(),
                 &locomotion_steps)) {
             handle_client_locomotion_step_batch(locomotion_steps);
+            continue;
+        }
+        LockMissileBatchPacket lock_missiles;
+        if (decode_lock_missile_batch_packet(
+                transport_event.payload.data(),
+                transport_event.payload.size(),
+                &lock_missiles)) {
+            handle_client_lock_missile_batch(lock_missiles);
             continue;
         }
 
@@ -13283,7 +13306,8 @@ void KernelEngine::simulate_tick() {
                 fixed_delta,
                 compensated_action_time_us(pending_input),
                 &action_outcomes,
-                &action_graph_batches},
+                &action_graph_batches,
+                &pending_lock_missiles_},
             &events_);
     }
     simulate_weapons(
@@ -13298,7 +13322,8 @@ void KernelEngine::simulate_tick() {
             fixed_delta,
             server_time_us,
             &action_outcomes,
-            &action_graph_batches},
+            &action_graph_batches,
+            &pending_lock_missiles_},
         &events_);
     const std::size_t first_projectile_simulation_event = events_.size();
     simulate_projectiles(
@@ -13417,6 +13442,7 @@ void KernelEngine::simulate_tick() {
     // carry no new step.
     if (wrote_snapshot) {
         flush_locomotion_steps();
+        flush_lock_missiles();
     }
     flush_network_gameplay_request_outcomes();
     send_due_clock_sync_pings(server_time_us);
@@ -14661,6 +14687,106 @@ void KernelEngine::flush_locomotion_steps() {
         }
     }
     outgoing_locomotion_steps_.clear();
+}
+
+void KernelEngine::flush_lock_missiles() {
+    if (pending_lock_missiles_.empty()) {
+        return;
+    }
+    const std::uint32_t current_tick = tick_loop_.current_tick();
+    const auto send = [&](PeerSession* session) {
+        LockMissileBatchPacket batch{};
+        batch.server_tick = current_tick;
+        for (const LockMissileLaunch& launch : pending_lock_missiles_) {
+            // Everyone who sees the shooter draws its missiles, the shooter
+            // included: it does not predict them, the target being the
+            // server's to choose.
+            if (launch.shooter_net_id != session->player &&
+                !session->relevant_entities.contains(launch.shooter_net_id)) {
+                continue;
+            }
+            const std::int32_t age = static_cast<std::int32_t>(
+                current_tick - launch.launch_tick);
+            if (age < 0 || age > static_cast<std::int32_t>(UINT8_MAX)) {
+                continue;
+            }
+            LockMissileRecord record{};
+            record.shooter_net_id = launch.shooter_net_id;
+            record.action_instance_id = launch.action_instance_id;
+            record.commit_index = launch.commit_index;
+            record.burst_index = launch.burst_index;
+            record.target_net_id = launch.target_net_id;
+            record.launch_tick_delta = static_cast<std::uint8_t>(age);
+            record.flight_ticks = launch.flight_ticks;
+            batch.records.push_back(record);
+        }
+        if (batch.records.empty()) {
+            return;
+        }
+        const std::vector<std::uint8_t> encoded =
+            encode_lock_missile_batch_packet(batch, next_packet_sequence_++);
+        // Unreliable, with the snapshot, on purpose: a lost record is a
+        // missile not drawn, while the hit it stands for lands regardless.
+        if (encoded.empty() || !transport_->Send(
+                session->peer,
+                encoded.data(),
+                static_cast<std::uint32_t>(encoded.size()),
+                SendMode::kUnreliable,
+                ChannelId::kSnapshot)) {
+            push_event(KernelEventType_Error, 0u, session->peer, 36u);
+            return;
+        }
+        record_sent_packet(
+            static_cast<std::uint32_t>(encoded.size()),
+            SendMode::kUnreliable,
+            ChannelId::kSnapshot);
+    };
+    if (config_.mode == KernelMode_ListenServer &&
+        local_listen_session_.welcomed) {
+        send(&local_listen_session_);
+    }
+    for (PeerSession& session : peer_sessions_) {
+        if (session.welcomed) {
+            send(&session);
+        }
+    }
+    pending_lock_missiles_.clear();
+}
+
+void KernelEngine::handle_client_lock_missile_batch(
+    const LockMissileBatchPacket& packet) {
+    // A missile long landed has nothing left to draw. A record is kept for a
+    // second past its arrival so a late reader still sees the impact.
+    constexpr std::uint32_t kKeepAfterArrivalTicks = 30u;
+    std::erase_if(client_lock_missiles_, [&](const ClientLockMissile& missile) {
+        return static_cast<std::int32_t>(
+                   packet.server_tick -
+                   (missile.arrival_tick + kKeepAfterArrivalTicks)) > 0;
+    });
+    for (const LockMissileRecord& record : packet.records) {
+        const auto same = [&](const ClientLockMissile& missile) {
+            return missile.shooter_net_id == record.shooter_net_id &&
+                   missile.action_instance_id == record.action_instance_id &&
+                   missile.commit_index == record.commit_index &&
+                   missile.burst_index == record.burst_index;
+        };
+        if (std::any_of(
+                client_lock_missiles_.begin(),
+                client_lock_missiles_.end(),
+                same)) {
+            continue;
+        }
+        ClientLockMissile missile{};
+        missile.shooter_net_id = record.shooter_net_id;
+        missile.action_instance_id = record.action_instance_id;
+        missile.commit_index = record.commit_index;
+        missile.burst_index = record.burst_index;
+        missile.target_net_id = record.target_net_id;
+        missile.launch_tick =
+            packet.server_tick - static_cast<std::uint32_t>(record.launch_tick_delta);
+        missile.arrival_tick = missile.launch_tick + record.flight_ticks;
+        client_lock_missiles_.push_back(missile);
+    }
 }
 
 void KernelEngine::handle_client_locomotion_step_batch(

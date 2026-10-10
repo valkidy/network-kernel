@@ -253,6 +253,56 @@ void a_lock_weapon_needs_its_cone() {
         "lock_instant weapon requires lock_collider"));
 }
 
+// The missile variant: the same cone and shot, whose lifetime_ticks is the
+// longest flight and travels in a byte.
+Files missile_files(std::uint32_t lifetime) {
+    Files files = lock_files(1u, 24u);
+    std::string weapon = lock_weapon(24u);
+    weapon.replace(
+        weapon.find("weapon_type: lock_instant"),
+        std::string("weapon_type: lock_instant").size(),
+        "weapon_type: lock_missile");
+    files[4].second = weapon;
+    std::string shot = kShot;
+    shot.replace(
+        shot.find("lifetime_ticks: 3"),
+        std::string("lifetime_ticks: 3").size(),
+        "lifetime_ticks: " + std::to_string(lifetime));
+    files[1].second = shot;
+    return files;
+}
+
+void a_lock_missile_loads_with_its_flight_on_the_shot() {
+    const fs::path catalog = catalog_with("missile", missile_files(30u));
+    const gs::GameServerGameplayConfig config =
+        gs::load_gameplay_config_from_catalog_file(catalog.string());
+    const KernelWeaponMechanicsDefinition& authored =
+        config.weapons.definitions[kLockWeapon];
+    require(authored.fire_mode == KernelWeaponFireMode_LockMissile);
+    require(authored.melee_collider_template_id == kConeTemplate);
+    require(authored.projectile_template_id == kShotTemplate);
+    const gs::KernelGameplayCatalogStorage storage =
+        gs::build_kernel_gameplay_catalog(config);
+    KernelConfig kernel_config{};
+    kernel_config.mode = KernelMode_Client;
+    kernel_config.tick.server_tick_rate = 30;
+    kernel_config.tick.snapshot_rate = 15;
+    KernelHandle* client = Kernel_Create(&kernel_config);
+    require(client != nullptr);
+    require(Kernel_LoadGameplayCatalog(client, &storage.definition, nullptr));
+    KernelWeaponMechanicsDefinition read{};
+    read.struct_size = sizeof(read);
+    require(Kernel_GetCatalogWeaponDefinition(client, kLockWeapon, &read));
+    require(read.fire_mode == KernelWeaponFireMode_LockMissile);
+    Kernel_Destroy(client);
+}
+
+void a_lock_missile_flight_must_fit_a_byte() {
+    require(refused_for(
+        catalog_with("missile_long", missile_files(256u)),
+        "lifetime_ticks is its longest flight and must be 1 to 255"));
+}
+
 void a_lock_weapon_fire_action_cannot_be_shared() {
     Files files = lock_files(6u, 24u);
     files.emplace_back("weapon_templates/201_weapon_test_sharer.yaml", kSharingWeapon);
@@ -272,6 +322,8 @@ int main() {
     a_lock_weapon_magazine_must_hold_whole_locks();
     a_lock_weapon_needs_its_cone();
     a_lock_weapon_fire_action_cannot_be_shared();
+    a_lock_missile_loads_with_its_flight_on_the_shot();
+    a_lock_missile_flight_must_fit_a_byte();
     std::puts("lock_weapon_catalog_test passed");
     return 0;
 }

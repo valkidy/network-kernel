@@ -740,7 +740,7 @@ bool validate_weapon_mechanics(
          weapon.damage == 0) ||
         weapon.fire_action_template_id == 0u ||
         weapon.reload_action_template_id == 0u ||
-        weapon.fire_mode > KernelWeaponFireMode_LockInstant) {
+        weapon.fire_mode > KernelWeaponFireMode_LockMissile) {
         return false;
     }
     if (weapon.fire_mode == KernelWeaponFireMode_Projectile) {
@@ -754,7 +754,8 @@ bool validate_weapon_mechanics(
     // it is deliberately not held to max_range the way the other instant modes
     // are. Mirrors validate_weapon_mechanics on the kernel side.
     if (weapon.fire_mode == KernelWeaponFireMode_Melee ||
-        weapon.fire_mode == KernelWeaponFireMode_LockInstant) {
+        weapon.fire_mode == KernelWeaponFireMode_LockInstant ||
+        weapon.fire_mode == KernelWeaponFireMode_LockMissile) {
         return weapon.melee_collider_template_id != 0 &&
                weapon.projectile_template_id != 0;
     }
@@ -2764,21 +2765,23 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
         weapon.reserve_magazines = reserve_magazines;
         return weapon;
     }
-    if (type == "lock_instant") {
+    if (type == "lock_instant" || type == "lock_missile") {
         if (node["projectile"] || node["area_effect"] || node["beam"]) {
             throw std::runtime_error(
-                "lock_instant weapons must use lock_collider and "
+                type + " weapons must use lock_collider and "
                 "projectile_template, not inline mechanics");
         }
         if (!node["lock_collider"]) {
-            throw std::runtime_error("lock_instant weapon requires lock_collider");
+            throw std::runtime_error(type + " weapon requires lock_collider");
         }
         if (!node["projectile_template"]) {
             throw std::runtime_error(
-                "lock_instant weapon requires projectile_template");
+                type + " weapon requires projectile_template");
         }
         KernelWeaponMechanicsDefinition weapon = melee_weapon(id, magazine_size);
-        weapon.fire_mode = KernelWeaponFireMode_LockInstant;
+        weapon.fire_mode = type == "lock_instant"
+            ? KernelWeaponFireMode_LockInstant
+            : KernelWeaponFireMode_LockMissile;
         weapon.reserve_magazines = reserve_magazines;
         return weapon;
     }
@@ -8078,7 +8081,7 @@ void apply_weapon_template_references(
             continue;
         }
 
-        if (type == "lock_instant") {
+        if (type == "lock_instant" || type == "lock_missile") {
             // The cone, exactly as a melee weapon's: reach and angle on one
             // collider template, so no max_range.
             const std::uint32_t template_id =
@@ -8097,6 +8100,18 @@ void apply_weapon_template_references(
             lock.damage = shot_template->definition.mechanics.damage;
             lock.collision_mask =
                 shot_template->definition.mechanics.collision_mask;
+            if (type == "lock_missile") {
+                // A missile's longest flight, to the edge of the cone, is the
+                // shot's lifetime; it travels as one byte on the wire.
+                const std::uint32_t lifetime =
+                    shot_template->definition.mechanics.lifetime_ticks;
+                if (lifetime == 0u || lifetime > UINT8_MAX) {
+                    throw std::runtime_error(
+                        "lock_missile projectile_template lifetime_ticks is "
+                        "its longest flight and must be 1 to 255: " + file);
+                }
+                continue;
+            }
             // Every commit spends a full lock's worth, M, whether or not M
             // targets were found -- so the magazine has to hold whole locks,
             // or its last commit would be refused for want of ammunition.
@@ -10635,7 +10650,8 @@ std::vector<std::string> validate_gameplay_config(
             (weapon.fire_mode == KernelWeaponFireMode_Hitscan ||
              weapon.fire_mode == KernelWeaponFireMode_Shotgun ||
              weapon.fire_mode == KernelWeaponFireMode_Melee ||
-             weapon.fire_mode == KernelWeaponFireMode_LockInstant)) {
+             weapon.fire_mode == KernelWeaponFireMode_LockInstant ||
+             weapon.fire_mode == KernelWeaponFireMode_LockMissile)) {
             unspawned_shot_ids.push_back(weapon.projectile_template_id);
         }
     }

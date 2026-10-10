@@ -14,7 +14,9 @@
  *     weapon_definitions and weapon_definition_count, appended: the catalog's
  *     weapons, installed in every mode as a read-only table, so a pure client
  *     knows a weapon's cone without a per-entity setting it never receives.
- *     Kernel_GetCatalogWeaponDefinition reads it back.
+ *     Kernel_GetCatalogWeaponDefinition reads it back. KernelWeaponFireMode
+ *     gained _LockMissile: the same lock, then one certain hit per commit,
+ *     scheduled for the arrival of a missile that is only ever drawn.
  * 102: status-bound crowd control (the water bubble). KernelEntityTriggerActionType
  *     gained _ApplyBlockActions: a status on_apply action that, for as long as
  *     that status instance stands, refuses its target new actions and ends the
@@ -1427,6 +1429,16 @@ typedef enum KernelWeaponFireMode {
      * was locked, so a magazine always empties in the same time.
      */
     KernelWeaponFireMode_LockInstant = 5,
+    /*
+     * Locks onto actors the way _LockInstant does, then fires one missile per
+     * commit at the (commit index modulo locked count)-th nearest. The hit is
+     * certain and scheduled for the missile's arrival: the farthest the cone
+     * reaches is the shot template's lifetime_ticks away, nearer targets
+     * proportionally sooner. Nothing is simulated in flight; clients are told
+     * the target and the arrival tick and draw the rest. A commit that locks
+     * nothing spends no ammunition.
+     */
+    KernelWeaponFireMode_LockMissile = 6,
 } KernelWeaponFireMode;
 
 typedef enum KernelProjectileMotionModel {
@@ -2641,8 +2653,8 @@ typedef struct KernelWeaponMechanicsDefinition {
     /*
      * Melee and lock-on only, and the only place their reach lives: a cone
      * template carries range and fov_degrees, so max_range is not consulted
-     * for KernelWeaponFireMode_Melee or _LockInstant. Zero for every other
-     * fire mode. This is
+     * for KernelWeaponFireMode_Melee, _LockInstant or _LockMissile. Zero for
+     * every other fire mode. This is
      * the melee counterpart of segment_collider_template_id, kept separate
      * because that one is built as a segment by every consumer that reads it.
      */

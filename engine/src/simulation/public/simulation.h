@@ -26,6 +26,24 @@ struct QueuedInput {
     NetId controlled_net_id = 0;
 };
 
+// One lock-on missile, as the weapon system decided it on a commit: who it is
+// certain to hit and when. The damage is already scheduled in the pipeline;
+// this is what clients are told, so they can draw a flight that arrives on
+// arrival_tick. Nothing simulates the missile itself.
+struct LockMissileLaunch {
+    NetId shooter_net_id = 0;
+    PeerId owner_peer = 0;
+    std::uint32_t action_instance_id = 0;
+    // The commit it was fired on, counted from zero.
+    std::uint16_t commit_index = 0;
+    std::uint8_t burst_index = 0;
+    NetId target_net_id = 0;
+    std::uint32_t launch_tick = 0;
+    // 1..255: the flight is never longer than the shot template's
+    // lifetime_ticks, which the loader holds to 255.
+    std::uint8_t flight_ticks = 1;
+};
+
 struct WeaponSimulationContext {
     const HistoryBuffer* history_buffer = nullptr;
     const HistoryFrame* rewind_frame = nullptr;
@@ -39,6 +57,9 @@ struct WeaponSimulationContext {
     // silently does nothing -- which is why apply_melee_damage falls back to
     // submitting plain damage when there is nowhere to put the batches.
     std::vector<ActionGraphCommandBatch>* action_graph_batches = nullptr;
+    // Where lock-on missiles are reported. Left null, they still hit -- the
+    // damage is scheduled either way -- but no client is told to draw them.
+    std::vector<LockMissileLaunch>* lock_missile_launches = nullptr;
 };
 
 struct DamageRequest {
