@@ -72,6 +72,42 @@ N：錐形內偵測到的目標數。M：單次最大鎖定數。T：一顆飛�
   - 呼叫 §3.1 選目標，對每個目標 `submit_damage_request`，`hit_time_us` 用 `context.action_time_us`。
 - `gameplay_config.cc`：解析新的 `weapon_type`、要求 cone collider（D18），檢查 D19。
 
+**P1 實作紀錄（2026-10-10）**：
+- commit：`25b619af`（共用選擇函式）、`3a1bdeae`（`lock_instant` 和 catalog 武器表，ABI 103）。
+- 共用選擇函式：`simulation/public/lock_target_selection.h` 的 `lock_targets::select`。只決定「選哪幾個」；誰能當候選由呼叫端決定。
+- server 候選：有回溯畫面時用回溯畫面（`alive`、不是 limb），否則用 live world。陣營和「是不是 actor」都查 live world。陣營用 collider registry 的 `entity_collider_indices`（每個 entity 有索引），沒有用 `entity_gameplay_collision_category`，也沒有自己建表。§3.1 原本寫「每次掃描建一張表」，registry 本來就有索引，所以不用建。
+- 規則和 homing 一致：沒有 hit collider 的 actor（陣營 0）任何武器都能鎖；武器 mask 是 0 時當成 `damageable`。同一個 peer 控制的 actor 不鎖。
+- 遮擋：射線從 launch 位置到目標中心，只檢查 terrain 和 static obstacle。
+- 錐形沿用 `melee_collider_template_id`。kernel 解析錐形的程式抽成 `resolve_weapon_cone`，`server_set_entity_weapon_mechanics` 和 catalog 載入共用。
+- YAML 的錐形 key 是 `lock_collider`（不是 `melee_collider`），寫進 ABI 的同一個欄位。
+- catalog 武器表：kernel 用 `WeaponTuning catalog_weapons_` 存，所有模式都裝。載入時會做三件事：
+  - 驗證每把武器（`validate_weapon_mechanics`）。
+  - 確認它引用的 fire 和 reload action 在同一個 catalog 裡。
+  - 解析錐形。
+  任何一把不過，整個 catalog 都會被拒絕。shipped catalog 全部通過（`lock_weapon_catalog_test` 第一個案例）。
+- 新 export `Kernel_GetCatalogWeaponDefinition`，兩份 export 清單都加了。
+- game_server：有兩處原本只認到 `TargetedStrike` / `Melee`，都補了 `LockInstant`：
+  - `validate_weapon_mechanics`。
+  - 「不 spawn 的 shot 可以沒有 collider」的清單。
+- 測試：
+  - `lock_target_selection_test`：3D 錐形、距離排序、同距離比 net id、遮擋後由下一個補上。
+  - `lock_instant_test`：
+    - 最近的 M 個。
+    - N = 0 照常 Committed、扣彈、按住不中斷。
+    - 牆。
+    - 陣營。
+    - 回溯畫面。
+  - `catalog_weapon_definition_test`：純 client 讀回武器；錐形錯誤或 action 不存在時拒絕 catalog。
+  - `lock_weapon_catalog_test`（game_server）：
+    - 載入 shipped catalog 並讓純 client 讀回。
+    - ammo cost、彈匣倍數、缺 `lock_collider`、fire action 共用，四種都會被拒絕。
+  - mutation：
+    - 拿掉遮擋、陣營、回溯畫面，`lock_instant_test` 會紅。
+    - 拿掉 ammo cost 檢查、共用檢查，`lock_weapon_catalog_test` 會紅。
+- `kernel_c_header_test` 的 ABI 斷言改成 103，並加上 `LockInstant == 5`。`kernel_api_test` 寫死的 72 是 `main` 上原本就壞的，沒有動。
+- 既有測試：kernel、simulation、protocol、game_server 四組在 `main`（`fc4e964`）和分支上各跑一次。兩邊失敗的都是同樣 14 個，抽查 10 個的失敗位置也相同。沒有新的失敗。
+- 已知但沒處理：`Kernel_ServerValidateMechanicsConfig`（[kernel_api.cc:1415](../engine/src/kernel/src/kernel_api.cc)）是另一份舊的驗證，只接受到 `Projectile`，melee 和 targeted strike 本來就不過。沒有改它。
+
 ### 3.3 Server：延遲傷害與魔法飛彈（`lock_missile`）
 
 `DamagePipeline`（[simulation.h:278](../engine/src/simulation/public/simulation.h)、[damage_pipeline.cc:162](../engine/src/simulation/src/damage_pipeline.cc)）：

@@ -79,6 +79,7 @@ projectile_template: smg_shot
 | `area_effect` | — |
 | `beam` | — |
 | `targeted_strike` | `max_range` |
+| `lock_instant` | `lock_collider` |
 
 **Optional**
 
@@ -92,6 +93,43 @@ projectile_template: smg_shot
 `hitscan` and `shotgun` resolve instantly by raycast and spawn nothing. They
 still name a projectile template, because that is where their damage and target
 mask are authored — and it is also what the client uses to find the tracer art.
+
+### weapon_type: lock_instant
+
+Locks onto the nearest actors inside a cone and damages each of them at once on
+every commit. Nothing spawns. This is the chain lightning shape.
+
+```yaml
+id: 18
+name: Chain Lightning
+weapon_type: lock_instant
+magazine_size: 24              # a multiple of max_hit_count
+fire_action_template: chain_lightning_fire   # ammo_cost_per_commit: 6
+reload_action_template: chain_lightning_reload
+lock_collider: chain_lightning_cone          # shape: cone, purpose: damage
+projectile_template: chain_lightning_bolt    # damage, collision_mask, max_hit_count: 6
+```
+
+- **The cone** is `lock_collider`, a cone collider template with `purpose:
+  damage`. Its `range` and `fov_degrees` are the reach. The angle is measured
+  in 3D, so a target straight overhead is outside a cone aimed at the horizon.
+  `max_range` is not read.
+- **How many** (M) is the shot template's `max_hit_count`. The nearest M
+  actors in the cone are locked; ties go to the lower net id.
+- **Walls**: a target that terrain or a static obstacle hides from the shooter
+  is skipped, and the next nearest takes its place.
+- **Sides**: only actors whose hit collider is on a side the shot's
+  `collision_mask` names. Name the side (see below).
+- **Ammunition**: every commit spends a full lock, even when fewer than M
+  targets, or none, were found. So a magazine always empties in the same time.
+  The loader enforces two rules:
+  - The fire action's `ammo_cost_per_commit` must equal `max_hit_count`.
+  - `magazine_size` must be a multiple of it.
+- **Its own fire action**: the fire action template cannot be shared with any
+  other weapon. A client recognizes a remote shooter's lock weapon by its fire
+  action.
+- Targets are tested where the shooter saw them (lag compensated), at their
+  hitbox centre.
 
 ### weapon_type: targeted_strike
 
