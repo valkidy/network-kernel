@@ -157,6 +157,54 @@ N：錐形內偵測到的目標數。M：單次最大鎖定數。T：一顆飛�
 - 送一筆 `DamageRequest`：`apply_tick = current_tick + T`，`hit_time_us` = 到達 tick 對應的時間。
 - 把 (射手, instance, commit, 目標, 發射 tick, T) 放進這個 tick 的飛彈記錄清單，交給 kernel 送出。
 
+**P3 實作紀錄（2026-10-10，`7301f13f`）**：
+- `WeaponFireMode::kLockMissile` / `KernelWeaponFireMode_LockMissile = 6`，放在 ABI 103 裡。這一版還沒發佈，所以不另外 bump。
+- 選目標的程式從 `apply_lock_instant_damage` 抽成 `select_lock_targets`，兩種模式共用。
+- `lock_missile` 在扣彈之前先掃描。沒鎖到目標時：
+  - 扣 0 發。
+  - 不送 `FireConfirmed`。
+  - 照常 Committed，照常冷卻。
+- 有鎖到目標時，`launch_lock_missile` 做兩件事：
+  - 排定一筆傷害：`apply_tick = 現在 + T`，`hit_time_us` = 到達 tick 對應的時間。
+  - 往 `WeaponSimulationContext::lock_missile_launches` 回報一筆 `LockMissileLaunch`。
+- T2 = shot 模板的 `lifetime_ticks`，game_server 載入時限制在 1–255。
+- **記錄格式和 §3.4 原本的設計不同**：改成一筆 17 B 的平面記錄，沒有做分組。內容是 shooter、instance、commit、burst、target、launch_tick_delta、flight。原因：
+  - kernel 和 locomotion step 一樣，跟著 snapshot 一起送（每秒 15 次）。一個封包裡同一個 `(射手, instance)` 通常只有一兩顆飛彈，分組的組頭（15 B）比省下的還多。
+  - 改用 `launch_tick_delta` 讓同一個封包可以裝跨 tick 的飛彈。
+- 送法：unreliable，走 snapshot channel，送給看得到射手的 session 和射手本人。送失敗時發 error event code 36。
+- client 端：兩個 snapshot channel 的解碼點都會先試解飛彈記錄，再試 snapshot。收到後存進 `client_lock_missiles_`：
+  - 用 `(shooter, instance, commit, burst)` 去重。
+  - 保留到抵達後 30 tick。
+  - 還沒 export，留給 P4。
+- **流量修正（§4）**：一個射手持續按住、interval 1、一直有目標時，每個收到的 session 大約：
+  - 飛彈記錄：每秒 30 顆 × 17 B = 510 B/s。
+  - 封包開頭：每秒 15 個封包 × 34 B = 510 B/s。
+  - 合計約 1 KB/s。§4 原本估的 240 B/s 沒算到每個封包的開頭。
+  - 想再省，可以把飛彈記錄併進 snapshot 封包本身，但那會改 snapshot schema，這次沒做。
+- packet schema 31 → 32。`dynamic_abi_smoke_test` 和 `kernel_api_test` 寫死的版本號都改了。`kernel_api_test` 在 `main` 上本來就停在第 288 行，所以那一行沒有被執行到。
+- 測試：
+  - `lock_missile_test`：
+    - 輪流打第 `k % n` 近的目標。
+    - 飛行 tick 隨距離變化，到達前不扣血、到達時扣血。
+    - N = 0 照常 Committed、不扣彈、沒有 `FireConfirmed`、按住不中斷，之後有目標就發射。
+    - 飛行時間最長是 T2，最短是 1。
+  - `lock_missile_roundtrip_test`：
+    - 往返後內容不變，邊界值也正確。
+    - 每多一顆剛好多 17 B。
+    - 缺 shooter、target 或 flight 的記錄會被拒絕。
+    - 截斷的封包、別種封包都不會被當成飛彈記錄解出來。
+  - `lock_weapon_catalog_test`：
+    - `lock_missile` 能載入，純 client 讀得到。
+    - lifetime 256 會被拒絕。
+  - mutation：五個都會讓測試紅。
+    - 沒目標也扣彈。
+    - 不輪流打。
+    - 飛行時間固定成最長。
+    - 沒目標也送 `FireConfirmed`。
+    - 拿掉 lifetime 限制。
+- 既有測試：四組一樣是那 14 個失敗，失敗的位置也相同。
+- **沒有測到**：kernel 的送出（`flush_lock_missiles`、relevance 過濾）和 client 的接收（`handle_client_lock_missile_batch`）都還沒有測試。要用 dedicated server 加純 client 的 loopback e2e 來測，排在 P4。
+
 ### 3.4 Protocol 與 kernel
 
 **魔法飛彈記錄（新封包，packet schema 31 → 32）：**

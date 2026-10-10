@@ -80,6 +80,7 @@ projectile_template: smg_shot
 | `beam` | — |
 | `targeted_strike` | `max_range` |
 | `lock_instant` | `lock_collider` |
+| `lock_missile` | `lock_collider` |
 
 **Optional**
 
@@ -130,6 +131,38 @@ projectile_template: chain_lightning_bolt    # damage, collision_mask, max_hit_c
   action.
 - Targets are tested where the shooter saw them (lag compensated), at their
   hitbox centre.
+
+### weapon_type: lock_missile
+
+The same lock as `lock_instant` (cone, nearest first, walls, sides), but each
+commit fires **one** missile, at the next locked target in turn. The first
+commit goes to the nearest, the second to the second nearest, and so on,
+wrapping around. The hit is certain: it is decided when the missile is fired
+and lands when the missile arrives. Nothing is simulated in flight. Clients
+are told the target and the arrival and draw the flight themselves.
+
+```yaml
+id: 19
+name: Magic Missile
+weapon_type: lock_missile
+magazine_size: 24
+fire_action_template: magic_missile_fire     # hold, commit_interval_ticks: 1
+reload_action_template: magic_missile_reload
+lock_collider: magic_missile_cone
+projectile_template: magic_missile_bolt      # damage, collision_mask, max_hit_count, lifetime_ticks
+```
+
+- **Flight time**: the shot template's `lifetime_ticks` (1 to 255) is the
+  flight to the edge of the cone. A nearer target is reached proportionally
+  sooner, and never in less than one tick.
+- **A commit that locks nothing spends nothing.** It still counts as a commit,
+  so the hold keeps running and the next commit looks again. A magazine
+  therefore lasts as long as there was something to shoot at.
+- **The target's death cancels the hit.** A missile still in flight when its
+  target dies does nothing, even if the target is revived before it would
+  have landed.
+- Clients get no `FireConfirmed` for a commit that locked nothing. Draw
+  missiles from the missile records, not from fire events.
 
 ### weapon_type: targeted_strike
 
