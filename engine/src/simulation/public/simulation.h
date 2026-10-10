@@ -56,6 +56,13 @@ struct DamageRequest {
     std::uint16_t hit_zone = kHitZoneUnscaled;
     // Explicit stagger meter this hit adds; negative derives it from damage.
     float stagger = kStaggerDerivedFromDamage;
+    // A hit scheduled for a later tick -- a lock-on missile that is certain to
+    // land, decided when it was fired. Zero, the default, is a hit that lands
+    // as soon as the pipeline confirms it. A scheduled hit waits for this
+    // tick instead of a confirm time, and takes no defensive grace on top: its
+    // hit_time_us is already the arrival, which is what a dodge is judged
+    // against. Ticks, not microseconds, like every other gameplay time.
+    std::uint32_t apply_tick = 0;
 };
 
 struct ConfirmedDamage {
@@ -296,15 +303,22 @@ public:
         std::uint8_t source_code,
         std::uint16_t damage,
         std::uint64_t hit_time_us);
+    // `current_tick` decides scheduled hits (apply_tick); everything else is
+    // decided by `server_time_us`, as it always was.
     std::vector<ConfirmedDamage> drain_ready_damage(
         const World& world,
-        std::uint64_t server_time_us);
+        std::uint64_t server_time_us,
+        std::uint32_t current_tick);
     void confirm_ready(
         World& world,
         std::uint64_t server_time_us,
         std::uint32_t current_tick,
         std::vector<KernelEvent>* events);
     std::uint32_t pending_count() const;
+    // Drops every hit still on its way to `target_net_id`, queued or pending.
+    // Called when the target dies: a hit locked onto a life must not land on
+    // the next one, however soon the target is revived.
+    void cancel_pending_for_target(NetId target_net_id);
 
 private:
     enum class DefensiveActionType {
@@ -334,6 +348,7 @@ private:
         bool canceled = false;
         bool parry_applied = false;
         float stagger = kStaggerDerivedFromDamage;
+        std::uint32_t apply_tick = 0;
     };
 
     void apply_defensive_actions(PendingDamage* pending);

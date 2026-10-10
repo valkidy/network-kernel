@@ -205,7 +205,8 @@ void simulate_beams(
 
     if (damage_pipeline == nullptr) {
         const std::vector<ConfirmedDamage> ready_damage =
-            active_damage_pipeline->drain_ready_damage(world, server_time_us);
+            active_damage_pipeline->drain_ready_damage(
+                world, server_time_us, current_tick);
         apply_damage_applications(world, ready_damage, current_tick, events);
     }
 }

@@ -6357,6 +6357,12 @@ bool KernelEngine::server_set_entity_health(NetId net_id, std::uint16_t hp) {
         return true;
     }
     health.hp = hp;
+    // Zeroing health here skips the death flow, so it is also the one other
+    // place a life ends: whatever was still on its way to it is dropped, as
+    // enter_death_state drops it for a death by damage.
+    if (hp == 0u) {
+        damage_pipeline_.cancel_pending_for_target(net_id);
+    }
     if (world_.registry().all_of<EntityKind>(*entity) &&
         world_.registry().get<EntityKind>(*entity).type == EntityType::kProp) {
         queue_prop_state_change(net_id);
@@ -13330,7 +13336,8 @@ void KernelEngine::simulate_tick() {
         actors_before_tick);
     sync_entity_colliders_from_world();
     const std::vector<ConfirmedDamage> ready_damage =
-        damage_pipeline_.drain_ready_damage(world_, server_time_us);
+        damage_pipeline_.drain_ready_damage(
+            world_, server_time_us, tick_loop_.current_tick());
     queue_hit_debug_records(ready_damage);
     const std::vector<ConfirmedDamage> health_depleted = apply_damage_applications(
         world_,

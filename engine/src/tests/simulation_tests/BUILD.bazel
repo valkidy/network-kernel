@@ -145,6 +145,12 @@ cc_test(
 )
 
 cc_test(
+    name = "scheduled_damage_test",
+    srcs = ["scheduled_damage_test.cc"],
+    deps = ["//engine/src/simulation:simulation"],
+)
+
+cc_test(
     name = "lock_instant_test",
     srcs = ["lock_instant_test.cc"],
     deps = ["//engine/src/simulation:simulation"],

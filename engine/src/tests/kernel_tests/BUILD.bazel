@@ -16,6 +16,12 @@ cc_test(
 )
 
 cc_test(
+    name = "scheduled_damage_death_test",
+    srcs = ["scheduled_damage_death_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
+cc_test(
     name = "activation_system_test",
     srcs = ["activation_system_test.cc"],
     deps = ["//engine/src/kernel:kernel"],
