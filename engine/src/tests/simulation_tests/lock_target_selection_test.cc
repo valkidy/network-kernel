@@ -20,6 +20,7 @@ namespace {
 using network_example::lock_targets::Candidate;
 using network_example::lock_targets::Cone;
 using network_example::lock_targets::select;
+using network_example::lock_targets::unfilled_arc_end;
 
 void require(
     bool condition,
@@ -136,6 +137,41 @@ void nothing_is_locked_by_a_degenerate_cone() {
             std::vector<std::uint32_t>{1});
 }
 
+// The spray an unfilled arc ends in: the same shot gives the same point, a
+// different commit a different one, and every point is inside the cone, at
+// 40% to 100% of its reach -- whichever way the cone is aimed, straight up
+// included.
+void unfilled_arcs_spray_inside_the_cone_and_repeat_per_shot() {
+    for (const glm::vec3 aim :
+         {glm::vec3{0.0f, 0.0f, 1.0f}, glm::vec3{1.0f, 0.3f, -2.0f},
+          glm::vec3{0.0f, 1.0f, 0.0f}}) {
+        Cone cone = forward_cone();
+        cone.origin = glm::vec3{3.0f, 1.0f, -2.0f};
+        cone.aim = aim;
+        const float half_fov_cos = std::cos(glm::radians(cone.fov_degrees * 0.5f));
+        for (std::uint32_t commit = 0; commit < 20; ++commit) {
+            for (std::uint32_t arc = 0; arc < 6; ++arc) {
+                const glm::vec3 end =
+                    unfilled_arc_end(cone, 41, 9001, static_cast<std::uint16_t>(commit), arc);
+                const glm::vec3 offset = end - cone.origin;
+                const float distance = glm::length(offset);
+                require(distance >= cone.range * 0.4f - 0.001f);
+                require(distance <= cone.range + 0.001f);
+                require(glm::dot(glm::normalize(aim), offset / distance) >=
+                        half_fov_cos - 0.0001f);
+                const glm::vec3 again =
+                    unfilled_arc_end(cone, 41, 9001, static_cast<std::uint16_t>(commit), arc);
+                require(again == end);
+            }
+        }
+    }
+    const Cone cone = forward_cone();
+    require(unfilled_arc_end(cone, 41, 9001, 0, 0) !=
+            unfilled_arc_end(cone, 41, 9001, 1, 0));
+    require(unfilled_arc_end(cone, 41, 9001, 0, 0) !=
+            unfilled_arc_end(cone, 41, 9001, 0, 1));
+}
+
 }  // namespace
 
 int main() {
@@ -144,6 +180,7 @@ int main() {
     equal_distances_break_ties_by_net_id();
     a_blocked_target_is_replaced_by_the_next_nearest();
     nothing_is_locked_by_a_degenerate_cone();
+    unfilled_arcs_spray_inside_the_cone_and_repeat_per_shot();
     std::puts("lock_target_selection_test passed");
     return 0;
 }

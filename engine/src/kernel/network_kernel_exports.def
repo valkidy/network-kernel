@@ -92,6 +92,9 @@ EXPORTS
     Kernel_ServerClearEntityWeaponMechanics
     Kernel_ServerGetEntityWeaponMechanics
     Kernel_GetCatalogWeaponDefinition
+    Kernel_ClientQueryLockTargets
+    Kernel_PollLockStrikeEvents
+    Kernel_GetLockMissiles
     Kernel_ServerGetHomingState
     Kernel_ServerValidateMechanicsConfig
     Kernel_ServerGetEntityState

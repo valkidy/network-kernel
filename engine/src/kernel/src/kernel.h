@@ -418,6 +418,19 @@ public:
     bool get_catalog_weapon_definition(
         std::uint8_t weapon_id,
         KernelWeaponMechanicsDefinition* out_definition) const;
+    bool client_query_lock_targets(
+        std::uint8_t weapon_id,
+        KernelVec3 origin,
+        KernelVec3 aim,
+        std::uint32_t action_instance_id,
+        std::uint16_t commit_index,
+        KernelLockSelection* out_selection) const;
+    std::uint32_t poll_lock_strike_events(
+        KernelLockStrikeEvent* out_events,
+        std::uint32_t max_events);
+    std::uint32_t get_lock_missiles(
+        KernelLockMissileView* out_missiles,
+        std::uint32_t max_missiles) const;
     bool server_get_homing_state(
         NetId net_id,
         KernelHomingState* out_state) const;
@@ -1273,6 +1286,25 @@ private:
         std::uint32_t arrival_tick = 0;
     };
     std::vector<ClientLockMissile> client_lock_missiles_;
+    // Remote lock_instant commits resolved as they were drawn, for Unity to
+    // poll. Bounded: the oldest go first if nobody polls.
+    std::vector<KernelLockStrikeEvent> client_lock_strike_events_;
+    // A lock weapon's lock from one aim, on this client's drawn world. Both
+    // the query export and the remote strikes come through here.
+    bool resolve_client_lock(
+        const WeaponMechanicsDefinition& weapon,
+        NetId shooter_net_id,
+        PeerId shooter_peer,
+        const glm::vec3& origin,
+        const glm::vec3& aim,
+        std::uint32_t action_instance_id,
+        std::uint16_t commit_index,
+        KernelLockSelection* out_selection) const;
+    // The catalog lock_instant weapon a fire action belongs to, or null. The
+    // loader keeps that action to the one weapon.
+    const WeaponMechanicsDefinition* catalog_lock_instant_for_fire_action(
+        std::uint32_t action_template_id) const;
+    void derive_lock_strikes(const KernelRemoteActionPresentationEvent& event);
     std::uint32_t follower_locomotion_tick_ = 0;
     bool has_follower_locomotion_tick_ = false;
     WorldSnapshot latest_snapshot_;

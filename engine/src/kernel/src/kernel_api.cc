@@ -1402,6 +1402,48 @@ bool Kernel_GetCatalogWeaponDefinition(
     });
 }
 
+bool Kernel_ClientQueryLockTargets(
+    KernelHandle* kernel,
+    uint8_t weapon_id,
+    KernelVec3 origin,
+    KernelVec3 aim,
+    uint32_t action_instance_id,
+    uint16_t commit_index,
+    KernelLockSelection* out_selection) {
+    return abi_call("Kernel_ClientQueryLockTargets", false, [&]() {
+        return kernel != nullptr &&
+               kernel->engine->client_query_lock_targets(
+                   weapon_id,
+                   origin,
+                   aim,
+                   action_instance_id,
+                   commit_index,
+                   out_selection);
+    });
+}
+
+uint32_t Kernel_PollLockStrikeEvents(
+    KernelHandle* kernel,
+    KernelLockStrikeEvent* out_events,
+    uint32_t max_events) {
+    return abi_call("Kernel_PollLockStrikeEvents", 0u, [&]() {
+        return kernel == nullptr
+            ? 0u
+            : kernel->engine->poll_lock_strike_events(out_events, max_events);
+    });
+}
+
+uint32_t Kernel_GetLockMissiles(
+    KernelHandle* kernel,
+    KernelLockMissileView* out_missiles,
+    uint32_t max_missiles) {
+    return abi_call("Kernel_GetLockMissiles", 0u, [&]() {
+        return kernel == nullptr
+            ? 0u
+            : kernel->engine->get_lock_missiles(out_missiles, max_missiles);
+    });
+}
+
 bool Kernel_ServerGetHomingState(
     KernelHandle* kernel,
     uint32_t net_id,

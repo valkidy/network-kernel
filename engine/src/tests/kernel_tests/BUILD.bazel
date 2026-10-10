@@ -381,6 +381,12 @@ cc_test(
 )
 
 cc_test(
+    name = "lock_weapons_end_to_end_test",
+    srcs = ["lock_weapons_end_to_end_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
+cc_test(
     name = "held_fire_end_to_end_test",
     srcs = ["held_fire_end_to_end_test.cc"],
     deps = ["//engine/src/kernel:kernel"],

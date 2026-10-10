@@ -51,6 +51,19 @@ std::vector<Candidate> select(
     const Cone& cone,
     const LineBlocked& line_blocked);
 
+// Where the index-th unfilled arc of a lock ends, when fewer than
+// cone.max_targets were locked: a point inside the cone, at 40% to 100% of its
+// range. Purely presentation -- the server never asks -- but a function of
+// the shot alone (shooter, action instance, commit, arc index), not of any
+// clock or random state, so every client draws the same spray for the same
+// shot from the same aim.
+glm::vec3 unfilled_arc_end(
+    const Cone& cone,
+    std::uint32_t shooter_net_id,
+    std::uint32_t action_instance_id,
+    std::uint16_t commit_index,
+    std::uint32_t arc_index);
+
 }  // namespace network_example::lock_targets
 
 #endif  // SIMULATION_PUBLIC_LOCK_TARGET_SELECTION_H_

@@ -28,6 +28,7 @@
 #include "simulation/public/action_graph.h"
 #include "simulation/public/collision_filter.h"
 #include "simulation/public/ground_follow.h"
+#include "simulation/public/lock_target_selection.h"
 #include "simulation/public/movement_solver.h"
 #include "simulation/src/command_dispatcher.h"
 #include "simulation/src/systems.h"
@@ -6706,6 +6707,276 @@ bool KernelEngine::get_catalog_weapon_definition(
     return true;
 }
 
+const WeaponMechanicsDefinition*
+KernelEngine::catalog_lock_instant_for_fire_action(
+    std::uint32_t action_template_id) const {
+    if (action_template_id == 0u) {
+        return nullptr;
+    }
+    for (std::size_t index = 0; index < kWeaponIdCount; ++index) {
+        const WeaponMechanicsDefinition& weapon =
+            catalog_weapons_.definitions[index];
+        if (catalog_weapons_.configured[index] &&
+            weapon.mode == WeaponFireMode::kLockInstant &&
+            weapon.fire_action_template_id == action_template_id) {
+            return &weapon;
+        }
+    }
+    return nullptr;
+}
+
+bool KernelEngine::resolve_client_lock(
+    const WeaponMechanicsDefinition& weapon,
+    NetId shooter_net_id,
+    PeerId shooter_peer,
+    const glm::vec3& origin,
+    const glm::vec3& aim,
+    std::uint32_t action_instance_id,
+    std::uint16_t commit_index,
+    KernelLockSelection* out_selection) const {
+    if (out_selection == nullptr ||
+        out_selection->struct_size < sizeof(KernelLockSelection) ||
+        weapon.melee_range <= 0.0f) {
+        return false;
+    }
+    const RuntimeProjectileTemplate* shot =
+        catalog_runtime_.find_projectile_template(weapon.projectile_template_id);
+    lock_targets::Cone cone;
+    cone.origin = origin;
+    cone.aim = aim;
+    cone.range = weapon.melee_range;
+    cone.fov_degrees = weapon.melee_fov_degrees;
+    cone.max_targets = std::clamp<std::uint32_t>(
+        shot == nullptr ? 1u : shot->max_hit_count, 1u, KERNEL_MAX_LOCK_ARCS);
+
+    // The server's candidates, from what this client draws: living actors on
+    // a side the weapon hits, not the shooter nor anything its peer controls,
+    // nobody inside a building. Their side and centre come from their hit
+    // collider template, the one the authority reads them from.
+    const std::uint32_t mask = weapon.collision_mask != 0u
+        ? weapon.collision_mask
+        : KERNEL_COLLISION_MASK_DAMAGEABLE;
+    std::vector<lock_targets::Candidate> candidates;
+    for (const RenderEntityState& state : render_states_) {
+        if (state.entity_type != KernelEntityType_Actor ||
+            state.net_id == 0u || state.net_id == shooter_net_id ||
+            (shooter_peer != 0u && state.owner_peer == shooter_peer) ||
+            (state.max_hp > 0u && state.hp == 0u) ||
+            state.shelter_net_id != 0u) {
+            continue;
+        }
+        glm::vec3 center = from_kernel_vec3(state.position);
+        if (const KernelColliderTemplateDefinition* hit =
+                find_collider_template(
+                    collider_templates_, state.collider_template_id);
+            hit != nullptr) {
+            if (hit->layer_mask != 0u && (hit->layer_mask & mask) == 0u) {
+                continue;
+            }
+            center += from_kernel_vec3(hit->center);
+        }
+        candidates.push_back({state.net_id, center});
+    }
+
+    const physics::PhysicsWorld* statics = prediction_physics_world_ != nullptr
+        ? prediction_physics_world_.get()
+        : world_.collision_world();
+    // The distance to the first terrain or static obstacle along a segment,
+    // or none.
+    const auto static_hit = [statics](
+                                const glm::vec3& from,
+                                const glm::vec3& to,
+                                physics::CollisionHit* out_hit) {
+        if (statics == nullptr) {
+            return false;
+        }
+        const glm::vec3 offset = to - from;
+        const float distance = glm::length(offset);
+        if (distance <= 0.0001f) {
+            return false;
+        }
+        physics::RayCastRequest ray{};
+        ray.origin = from;
+        ray.direction = offset / distance;
+        ray.max_distance = distance;
+        ray.filter = collision_filter_from_mask(
+            KERNEL_COLLISION_LAYER_TERRAIN |
+            KERNEL_COLLISION_LAYER_STATIC_OBSTACLE);
+        return statics->ray_cast_closest(ray, out_hit) &&
+               out_hit->distance < distance;
+    };
+    const lock_targets::LineBlocked behind_a_wall =
+        [&static_hit](const glm::vec3& from, const glm::vec3& to) {
+            physics::CollisionHit hit{};
+            return static_hit(from, to, &hit);
+        };
+    const std::vector<lock_targets::Candidate> locked =
+        lock_targets::select(std::move(candidates), cone, behind_a_wall);
+
+    KernelLockSelection selection{};
+    selection.struct_size = sizeof(KernelLockSelection);
+    selection.weapon_id = weapon.id;
+    selection.origin = to_kernel_vec3(origin);
+    selection.arc_count = static_cast<std::uint8_t>(cone.max_targets);
+    selection.target_count = static_cast<std::uint8_t>(locked.size());
+    for (std::size_t index = 0; index < locked.size(); ++index) {
+        selection.target_net_ids[index] = locked[index].net_id;
+        selection.arc_ends[index] = to_kernel_vec3(locked[index].center);
+    }
+    for (std::uint32_t index = static_cast<std::uint32_t>(locked.size());
+         index < cone.max_targets;
+         ++index) {
+        glm::vec3 end = lock_targets::unfilled_arc_end(
+            cone, shooter_net_id, action_instance_id, commit_index, index);
+        // An arc into a wall stops at it.
+        physics::CollisionHit hit{};
+        if (static_hit(origin, end, &hit)) {
+            end = hit.position;
+        }
+        selection.arc_ends[index] = to_kernel_vec3(end);
+    }
+    *out_selection = selection;
+    return true;
+}
+
+bool KernelEngine::client_query_lock_targets(
+    std::uint8_t weapon_id,
+    KernelVec3 origin,
+    KernelVec3 aim,
+    std::uint32_t action_instance_id,
+    std::uint16_t commit_index,
+    KernelLockSelection* out_selection) const {
+    const std::size_t index = static_cast<std::size_t>(weapon_id);
+    if (!catalog_weapons_.configured[index]) {
+        return false;
+    }
+    const WeaponMechanicsDefinition& weapon = catalog_weapons_.definitions[index];
+    if (weapon.mode != WeaponFireMode::kLockInstant &&
+        weapon.mode != WeaponFireMode::kLockMissile) {
+        return false;
+    }
+    return resolve_client_lock(
+        weapon,
+        local_player_net_id_,
+        local_client_peer_id_,
+        from_kernel_vec3(origin),
+        from_kernel_vec3(aim),
+        action_instance_id,
+        commit_index,
+        out_selection);
+}
+
+// A remote lock_instant commit, at the moment the render clock reaches it:
+// the shooter is drawn where it was when it fired, and so is everyone it could
+// have locked. Its own client draws its arcs from the query instead, at once.
+void KernelEngine::derive_lock_strikes(
+    const KernelRemoteActionPresentationEvent& event) {
+    if (event.event_type != KernelRemoteActionPresentationEventType_FireCommit ||
+        event.actor_net_id == local_player_net_id_) {
+        return;
+    }
+    const WeaponMechanicsDefinition* weapon =
+        catalog_lock_instant_for_fire_action(event.action_template_id);
+    if (weapon == nullptr) {
+        return;
+    }
+    const auto shooter = std::find_if(
+        render_states_.begin(),
+        render_states_.end(),
+        [&event](const RenderEntityState& state) {
+            return state.net_id == event.actor_net_id;
+        });
+    if (shooter == render_states_.end()) {
+        return;
+    }
+    constexpr std::size_t kMaxPendingStrikes = 256;
+    const glm::vec3 origin =
+        from_kernel_vec3(shooter->position) + glm::vec3{0.0f, 1.0f, 0.0f};
+    const glm::vec3 aim = from_kernel_vec3(shooter->aim_direction);
+    const std::uint32_t render_tick = static_cast<std::uint32_t>(
+        current_render_time_us_ /
+        std::max<std::uint64_t>(
+            1u, tick_time_us(1u, tick_loop_.fixed_delta_seconds())));
+    for (std::uint32_t offset = 0; offset < event.commit_count; ++offset) {
+        KernelLockStrikeEvent strike{};
+        strike.struct_size = sizeof(KernelLockStrikeEvent);
+        strike.shooter_net_id = event.actor_net_id;
+        strike.action_instance_id = event.action_instance_id;
+        // A FireCommit range counts commits from one -- it carries the
+        // confirmed count -- where a commit index counts from zero.
+        strike.commit_index = static_cast<std::uint16_t>(
+            event.first_commit_index + offset - (event.first_commit_index > 0u ? 1u : 0u));
+        strike.server_tick = render_tick;
+        strike.selection.struct_size = sizeof(KernelLockSelection);
+        if (!resolve_client_lock(
+                *weapon,
+                event.actor_net_id,
+                shooter->owner_peer,
+                origin,
+                aim,
+                event.action_instance_id,
+                strike.commit_index,
+                &strike.selection)) {
+            continue;
+        }
+        if (client_lock_strike_events_.size() >= kMaxPendingStrikes) {
+            client_lock_strike_events_.erase(client_lock_strike_events_.begin());
+        }
+        client_lock_strike_events_.push_back(strike);
+    }
+}
+
+std::uint32_t KernelEngine::poll_lock_strike_events(
+    KernelLockStrikeEvent* out_events,
+    std::uint32_t max_events) {
+    if (out_events == nullptr || max_events == 0u) {
+        return 0u;
+    }
+    release_remote_action_presentation_events();
+    const std::uint32_t count = std::min(
+        max_events,
+        static_cast<std::uint32_t>(client_lock_strike_events_.size()));
+    std::copy_n(client_lock_strike_events_.begin(), count, out_events);
+    client_lock_strike_events_.erase(
+        client_lock_strike_events_.begin(),
+        client_lock_strike_events_.begin() + count);
+    return count;
+}
+
+std::uint32_t KernelEngine::get_lock_missiles(
+    KernelLockMissileView* out_missiles,
+    std::uint32_t max_missiles) const {
+    if (out_missiles == nullptr) {
+        return 0u;
+    }
+    constexpr std::uint32_t kKeepAfterArrivalTicks = 30u;
+    const std::uint32_t latest = has_client_snapshot_
+        ? latest_client_snapshot_.header.server_tick
+        : 0u;
+    std::uint32_t count = 0;
+    for (const ClientLockMissile& missile : client_lock_missiles_) {
+        if (count >= max_missiles) {
+            break;
+        }
+        if (has_client_snapshot_ &&
+            static_cast<std::int32_t>(
+                latest - (missile.arrival_tick + kKeepAfterArrivalTicks)) > 0) {
+            continue;
+        }
+        KernelLockMissileView view{};
+        view.struct_size = sizeof(KernelLockMissileView);
+        view.shooter_net_id = missile.shooter_net_id;
+        view.target_net_id = missile.target_net_id;
+        view.action_instance_id = missile.action_instance_id;
+        view.commit_index = missile.commit_index;
+        view.burst_index = missile.burst_index;
+        view.launch_tick = missile.launch_tick;
+        view.arrival_tick = missile.arrival_tick;
+        out_missiles[count++] = view;
+    }
+    return count;
+}
+
 bool KernelEngine::server_get_homing_state(
     NetId net_id,
     KernelHomingState* out_state) const {
@@ -6938,6 +7209,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     pending_actor_impulses_.clear();
     pending_lock_missiles_.clear();
     client_lock_missiles_.clear();
+    client_lock_strike_events_.clear();
     claimed_item_instances_.clear();
     claimed_prop_entities_.clear();
     std::string item_validation_error;
@@ -9044,6 +9316,7 @@ void KernelEngine::release_remote_action_presentation_events() {
             tick_time_us(event_tick, tick_loop_.fixed_delta_seconds());
         if (!has_client_render_time_ || event_time_us <= render_server_time_us) {
             remote_action_presentation_events_.push_back(pending.event);
+            derive_lock_strikes(pending.event);
             if (diagnose && has_client_render_time_) {
                 diagnostics.released += pending.event.commit_count;
                 diagnostics.released_min_margin_ticks = std::min(

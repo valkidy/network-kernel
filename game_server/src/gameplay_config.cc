@@ -8100,6 +8100,13 @@ void apply_weapon_template_references(
             lock.damage = shot_template->definition.mechanics.damage;
             lock.collision_mask =
                 shot_template->definition.mechanics.collision_mask;
+            // A client draws at most this many arcs for one lock.
+            if (shot_template->definition.mechanics.max_hit_count >
+                KERNEL_MAX_LOCK_ARCS) {
+                throw std::runtime_error(
+                    type + " projectile_template max_hit_count is the lock size "
+                    "and cannot exceed 16: " + file);
+            }
             if (type == "lock_missile") {
                 // A missile's longest flight, to the edge of the cone, is the
                 // shot's lifetime; it travels as one byte on the wire.

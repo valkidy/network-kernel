@@ -17,6 +17,14 @@
  *     Kernel_GetCatalogWeaponDefinition reads it back. KernelWeaponFireMode
  *     gained _LockMissile: the same lock, then one certain hit per commit,
  *     scheduled for the arrival of a missile that is only ever drawn.
+ *     Client presentation of both, all new exports and structs:
+ *     Kernel_ClientQueryLockTargets (what a lock weapon would lock from a
+ *     given aim -- a reticle, or the shooter's own arcs drawn at once),
+ *     Kernel_PollLockStrikeEvents (a remote shooter's lock_instant commits,
+ *     resolved on this client's view as they are drawn) and
+ *     Kernel_GetLockMissiles (missiles in flight, from the server's records),
+ *     with KernelLockSelection, KernelLockStrikeEvent, KernelLockMissileView
+ *     and KERNEL_MAX_LOCK_ARCS.
  * 102: status-bound crowd control (the water bubble). KernelEntityTriggerActionType
  *     gained _ApplyBlockActions: a status on_apply action that, for as long as
  *     that status instance stands, refuses its target new actions and ends the
@@ -2660,6 +2668,64 @@ typedef struct KernelWeaponMechanicsDefinition {
      */
     uint32_t melee_collider_template_id;
 } KernelWeaponMechanicsDefinition;
+
+/* ABI 103. The most arcs a lock draws: a lock weapon's max_hit_count is held
+ * to this by the catalog loader. */
+#define KERNEL_MAX_LOCK_ARCS 16u
+
+/*
+ * What a lock weapon locks from one aim, on this client's view of the world:
+ * the nearest actors in its cone, any a static wall hides skipped -- the
+ * server's rule, run on what this client draws. Presentation only; the server
+ * decides who is hurt. arc_count is the weapon's lock size (max_hit_count):
+ * the first target_count arcs end on the locked actors' hitbox centres, in
+ * target_net_ids order, nearest first; the rest end at points inside the cone
+ * that depend only on the shot (shooter, action instance, commit), so every
+ * client draws the same spray for it.
+ */
+typedef struct KernelLockSelection {
+    uint32_t struct_size;
+    uint8_t weapon_id;
+    uint8_t target_count;
+    uint8_t arc_count;
+    uint8_t reserved;
+    KernelVec3 origin;
+    uint32_t target_net_ids[KERNEL_MAX_LOCK_ARCS];
+    KernelVec3 arc_ends[KERNEL_MAX_LOCK_ARCS];
+} KernelLockSelection;
+
+/*
+ * One lock_instant commit by another shooter, resolved when this client's
+ * render clock reaches it -- from the shooter's drawn position and aim, against
+ * the actors as drawn at that moment. Polled once.
+ */
+typedef struct KernelLockStrikeEvent {
+    uint32_t struct_size;
+    uint32_t shooter_net_id;
+    uint32_t action_instance_id;
+    uint16_t commit_index;
+    uint16_t reserved;
+    uint32_t server_tick;
+    KernelLockSelection selection;
+} KernelLockStrikeEvent;
+
+/*
+ * A lock_missile in flight, from the server's record: it leaves its shooter on
+ * launch_tick and reaches its target on arrival_tick, where the server lands
+ * its hit. Draw it against the render clock. Listed until a second after it
+ * arrives.
+ */
+typedef struct KernelLockMissileView {
+    uint32_t struct_size;
+    uint32_t shooter_net_id;
+    uint32_t target_net_id;
+    uint32_t action_instance_id;
+    uint16_t commit_index;
+    uint8_t burst_index;
+    uint8_t reserved;
+    uint32_t launch_tick;
+    uint32_t arrival_tick;
+} KernelLockMissileView;
 
 typedef struct KernelHomingState {
     uint32_t struct_size;
