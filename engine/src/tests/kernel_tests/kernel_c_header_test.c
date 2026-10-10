@@ -16,8 +16,11 @@ static void require_impl(int condition, const char* expression, int line) {
 #define require(condition) require_impl((condition) ? 1 : 0, #condition, __LINE__)
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 102u,
-    "status-bound crowd control: apply_block_actions");
+    KERNEL_ABI_VERSION == 103u,
+    "lock-on weapons: catalog weapon definitions");
+_Static_assert(
+    KernelWeaponFireMode_LockInstant == 5,
+    "lock-on weapons: the lock_instant fire mode");
 _Static_assert(
     KernelEntityTriggerActionType_ApplyBlockActions == 12 &&
         KernelEntityTriggerActionType_ApplySuspendMovement == 13 &&

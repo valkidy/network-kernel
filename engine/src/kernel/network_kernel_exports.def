@@ -91,6 +91,7 @@ EXPORTS
     Kernel_ServerSetEntityWeaponMechanics
     Kernel_ServerClearEntityWeaponMechanics
     Kernel_ServerGetEntityWeaponMechanics
+    Kernel_GetCatalogWeaponDefinition
     Kernel_ServerGetHomingState
     Kernel_ServerValidateMechanicsConfig
     Kernel_ServerGetEntityState

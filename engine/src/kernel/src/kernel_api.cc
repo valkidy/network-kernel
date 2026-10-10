@@ -1390,6 +1390,18 @@ bool Kernel_ServerGetEntityWeaponMechanics(
     });
 }
 
+bool Kernel_GetCatalogWeaponDefinition(
+    KernelHandle* kernel,
+    uint8_t weapon_id,
+    KernelWeaponMechanicsDefinition* out_definition) {
+    return abi_call("Kernel_GetCatalogWeaponDefinition", false, [&]() {
+        return kernel != nullptr &&
+               kernel->engine->get_catalog_weapon_definition(
+                   weapon_id,
+                   out_definition);
+    });
+}
+
 bool Kernel_ServerGetHomingState(
     KernelHandle* kernel,
     uint32_t net_id,

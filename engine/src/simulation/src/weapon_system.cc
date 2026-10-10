@@ -9,6 +9,7 @@
 #include "physics/public/physics_world.h"
 #include "simulation/public/action_graph.h"
 #include "simulation/public/collision_filter.h"
+#include "simulation/public/lock_target_selection.h"
 
 namespace network_example {
 
@@ -354,6 +355,171 @@ void apply_hitscan_damage(
 // No lag compensation, deliberately. The rewind path can only raycast a history
 // frame, and a swing that lands inside a couple of metres has far less to gain
 // from rewinding than a rifle shot across the map.
+// Who a lock-on weapon may lock, before the cone has a say: living actors on
+// a side the weapon hits, other than the shooter and anything its own peer
+// controls. Positions come from the rewound frame when there is one -- where
+// the shooter saw them -- and from the live world otherwise.
+//
+// The rewound frame carries no side, and it carries every hitbox, props
+// included, so both are looked up live: an actor's side does not change while
+// a shot is in flight. The side comes from the registry's per-entity index,
+// not from entity_gameplay_collision_category, which walks every collider in
+// the world for each candidate.
+struct LockCandidates {
+    std::vector<lock_targets::Candidate> candidates;
+    std::vector<std::pair<NetId, std::uint16_t>> hit_zones;
+};
+
+LockCandidates lock_candidates(
+    World& world,
+    const HistoryFrame* rewind_frame,
+    NetId shooter_net_id,
+    PeerId shooter_peer_id,
+    std::uint32_t collision_mask) {
+    const std::uint32_t mask =
+        collision_mask != 0u ? collision_mask : KERNEL_COLLISION_MASK_DAMAGEABLE;
+    const World::ColliderRegistry& colliders = world.collider_registry();
+    const auto side_of = [&colliders](NetId net_id) {
+        std::uint32_t side = 0;
+        for (const std::uint32_t index :
+             colliders.entity_collider_indices(net_id)) {
+            const ColliderInstance& collider = colliders.instances()[index];
+            if (collider.lifetime_ticks == 0 && collider.enabled) {
+                side |= collider.layer_mask;
+            }
+        }
+        return side;
+    };
+    entt::registry& registry = world.registry();
+    const auto may_lock = [&](NetId net_id) {
+        if (net_id == 0 || net_id == shooter_net_id) {
+            return false;
+        }
+        const std::optional<entt::entity> entity = world.find_entity(net_id);
+        if (!entity.has_value() || !registry.all_of<EntityKind>(*entity) ||
+            registry.get<EntityKind>(*entity).type != EntityType::kActor) {
+            return false;
+        }
+        if (shooter_peer_id != 0 && registry.all_of<NetworkIdentity>(*entity) &&
+            registry.get<NetworkIdentity>(*entity).owner_peer == shooter_peer_id) {
+            return false;
+        }
+        const std::uint32_t side = side_of(net_id);
+        return side == 0u || (side & mask) != 0u;
+    };
+
+    LockCandidates out;
+    if (rewind_frame != nullptr && rewind_frame->valid) {
+        for (const HitVolumeSnapshot& volume : rewind_frame->volumes) {
+            if (volume.is_limb != 0u || volume.alive == 0u ||
+                !may_lock(volume.net_id)) {
+                continue;
+            }
+            out.candidates.push_back({volume.net_id, volume.center});
+            out.hit_zones.emplace_back(volume.net_id, volume.hit_zone);
+        }
+        return out;
+    }
+    auto view = registry.view<NetworkIdentity, Transform, Hitbox>();
+    for (const entt::entity entity : view) {
+        const NetId net_id = view.get<NetworkIdentity>(entity).net_id;
+        const bool alive =
+            (!registry.all_of<Health>(entity) ||
+             registry.get<Health>(entity).hp > 0u) &&
+            !status_untargetable(world, entity);
+        if (!alive || !may_lock(net_id)) {
+            continue;
+        }
+        const Hitbox& hitbox = view.get<Hitbox>(entity);
+        out.candidates.push_back(
+            {net_id, view.get<Transform>(entity).position + hitbox.center});
+        out.hit_zones.emplace_back(net_id, hitbox.hit_zone);
+    }
+    return out;
+}
+
+// A lock-on commit: the actors locked inside the cone are each damaged once,
+// at once. Nothing is spawned. The commit has already spent its ammunition, so
+// a cone with nobody in it is a shot that hit nothing, not a refused one.
+void apply_lock_instant_damage(
+    World& world,
+    const WeaponMechanicsDefinition& definition,
+    const HistoryFrame* rewind_frame,
+    std::uint32_t current_tick,
+    NetId shooter_net_id,
+    PeerId shooter_peer_id,
+    const glm::vec3& origin,
+    const glm::vec3& direction,
+    std::uint64_t hit_time_us,
+    DamagePipeline* damage_pipeline) {
+    if (damage_pipeline == nullptr || definition.melee_range <= 0.0f) {
+        return;
+    }
+    const RuntimeProjectileTemplate* shot =
+        world.find_projectile_template(definition.projectile_template_id);
+    lock_targets::Cone cone;
+    cone.origin = origin;
+    cone.aim = direction;
+    cone.range = definition.melee_range;
+    cone.fov_degrees = definition.melee_fov_degrees;
+    cone.max_targets = shot == nullptr ? 1u : std::max(1u, shot->max_hit_count);
+
+    const physics::PhysicsWorld* collision_world = world.collision_world();
+    const lock_targets::LineBlocked behind_a_wall =
+        [collision_world, shooter_net_id](
+            const glm::vec3& from, const glm::vec3& to) {
+            if (collision_world == nullptr) {
+                return false;
+            }
+            const glm::vec3 offset = to - from;
+            const float distance = glm::length(offset);
+            if (distance <= 0.0001f) {
+                return false;
+            }
+            physics::RayCastRequest ray{};
+            ray.origin = from;
+            ray.direction = offset / distance;
+            ray.max_distance = distance;
+            ray.filter = collision_filter_from_mask(
+                KERNEL_COLLISION_LAYER_TERRAIN |
+                KERNEL_COLLISION_LAYER_STATIC_OBSTACLE);
+            ray.filter.ignored_entity_net_id = shooter_net_id;
+            physics::CollisionHit hit{};
+            return collision_world->ray_cast_closest(ray, &hit) &&
+                   hit.distance < distance;
+        };
+
+    LockCandidates found = lock_candidates(
+        world,
+        rewind_frame,
+        shooter_net_id,
+        shooter_peer_id,
+        definition.collision_mask);
+    const std::vector<lock_targets::Candidate> locked =
+        lock_targets::select(std::move(found.candidates), cone, behind_a_wall);
+    std::uint32_t sequence_id = 0;
+    for (const lock_targets::Candidate& target : locked) {
+        std::uint16_t hit_zone = kHitZoneUnscaled;
+        for (const auto& [net_id, zone] : found.hit_zones) {
+            if (net_id == target.net_id) {
+                hit_zone = zone;
+                break;
+            }
+        }
+        (void)damage_pipeline->submit_damage_request(damage_request_at(
+            current_tick,
+            sequence_id++,
+            shooter_net_id,
+            target.net_id,
+            shooter_peer_id,
+            definition.id,
+            definition.damage,
+            hit_time_us,
+            target.center,
+            hit_zone));
+    }
+}
+
 void apply_melee_damage(
     World& world,
     const WeaponMechanicsDefinition& definition,
@@ -1032,6 +1198,18 @@ void simulate_weapons(
                     queued_input.input.action_intent.action_instance_id,
                     damage_pipeline,
                     context.action_graph_batches);
+            } else if (definition->mode == WeaponFireMode::kLockInstant) {
+                apply_lock_instant_damage(
+                    world,
+                    *definition,
+                    context.rewind_frame,
+                    current_tick,
+                    player_identity.net_id,
+                    queued_input.owner_peer,
+                    origin,
+                    direction,
+                    hit_time_us,
+                    damage_pipeline);
             } else if (definition->mode == WeaponFireMode::kTargetedStrike) {
                 (void)spawn_projectile_at(
                     world,

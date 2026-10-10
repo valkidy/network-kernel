@@ -5,6 +5,16 @@
 #include <stdint.h>
 
 /*
+ * 103: lock-on weapons, first part. KernelWeaponFireMode gained _LockInstant:
+ *     on every commit, up to max_hit_count actors inside a cone are damaged at
+ *     once -- the nearest first, any a static wall hides skipped -- and the
+ *     commit spends its ammunition whether or not anything was locked. Its
+ *     cone is the collider template named by melee_collider_template_id, which
+ *     now serves both cone modes. KernelGameplayCatalogDefinition gained
+ *     weapon_definitions and weapon_definition_count, appended: the catalog's
+ *     weapons, installed in every mode as a read-only table, so a pure client
+ *     knows a weapon's cone without a per-entity setting it never receives.
+ *     Kernel_GetCatalogWeaponDefinition reads it back.
  * 102: status-bound crowd control (the water bubble). KernelEntityTriggerActionType
  *     gained _ApplyBlockActions: a status on_apply action that, for as long as
  *     that status instance stands, refuses its target new actions and ends the
@@ -271,7 +281,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 102u
+#define KERNEL_ABI_VERSION 103u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -1409,6 +1419,14 @@ typedef enum KernelWeaponFireMode {
      * no ammunition. Never predicted by the client.
      */
     KernelWeaponFireMode_TargetedStrike = 4,
+    /*
+     * Locks onto up to the shot template's max_hit_count actors inside the
+     * cone of melee_collider_template_id -- nearest first, any hidden behind
+     * terrain or a static obstacle skipped -- and damages each at once.
+     * Spawns nothing. Every commit spends its ammunition even when nothing
+     * was locked, so a magazine always empties in the same time.
+     */
+    KernelWeaponFireMode_LockInstant = 5,
 } KernelWeaponFireMode;
 
 typedef enum KernelProjectileMotionModel {
@@ -2317,6 +2335,15 @@ typedef struct KernelGameplayCatalogDefinition {
     uint32_t skeleton_asset_count;
     const KernelStatusEffectDefinition* status_effects;
     uint32_t status_effect_count;
+    /*
+     * ABI 103. The catalog's weapons, keyed by weapon_id. Installed in every
+     * mode as a read-only table, separate from the per-entity mechanics a
+     * server sets with Kernel_ServerSetEntityWeaponMechanics: that is still
+     * what fires a weapon. This table is what a pure client reads to know a
+     * weapon's shape -- a lock-on weapon's cone -- for its presentation.
+     */
+    const struct KernelWeaponMechanicsDefinition* weapon_definitions;
+    uint32_t weapon_definition_count;
 } KernelGameplayCatalogDefinition;
 
 typedef struct KernelGameplayCatalogLoadResult {
@@ -2612,9 +2639,10 @@ typedef struct KernelWeaponMechanicsDefinition {
      */
     uint32_t collision_mask;
     /*
-     * Melee only, and the only place a melee weapon's reach lives: a cone
+     * Melee and lock-on only, and the only place their reach lives: a cone
      * template carries range and fov_degrees, so max_range is not consulted
-     * for KernelWeaponFireMode_Melee. Zero for every other fire mode. This is
+     * for KernelWeaponFireMode_Melee or _LockInstant. Zero for every other
+     * fire mode. This is
      * the melee counterpart of segment_collider_template_id, kept separate
      * because that one is built as a segment by every consumer that reads it.
      */

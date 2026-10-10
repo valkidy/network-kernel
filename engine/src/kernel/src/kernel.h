@@ -414,6 +414,9 @@ public:
         NetId net_id,
         std::uint8_t weapon_id,
         KernelWeaponMechanicsDefinition* out_weapon_mechanics) const;
+    bool get_catalog_weapon_definition(
+        std::uint8_t weapon_id,
+        KernelWeaponMechanicsDefinition* out_definition) const;
     bool server_get_homing_state(
         NetId net_id,
         KernelHomingState* out_state) const;
@@ -1400,6 +1403,9 @@ private:
     KernelBenchmarkStats benchmark_stats_{};
     std::uint32_t catalog_version_ = 0;
     std::uint64_t catalog_hash_ = 0;
+    // The catalog's weapons, installed in every mode (ABI 103). Read-only:
+    // nothing fires from it.
+    WeaponTuning catalog_weapons_{};
     KernelGameplayCatalogManifest gameplay_catalog_manifest_{};
     std::vector<std::uint8_t> gameplay_catalog_sync_bundle_;
     std::vector<std::uint8_t> downloaded_gameplay_catalog_bundle_;

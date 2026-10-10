@@ -1624,6 +1624,9 @@ WeaponFireMode to_weapon_fire_mode(std::uint8_t fire_mode) {
     if (fire_mode == KernelWeaponFireMode_TargetedStrike) {
         return WeaponFireMode::kTargetedStrike;
     }
+    if (fire_mode == KernelWeaponFireMode_LockInstant) {
+        return WeaponFireMode::kLockInstant;
+    }
     return WeaponFireMode::kHitscan;
 }
 
@@ -2010,7 +2013,7 @@ bool validate_weapon_mechanics(const KernelWeaponMechanicsDefinition& definition
         definition.reload_action_template_id == 0u) {
         return false;
     }
-    if (definition.fire_mode > KernelWeaponFireMode_TargetedStrike) {
+    if (definition.fire_mode > KernelWeaponFireMode_LockInstant) {
         return false;
     }
     if (definition.fire_mode == KernelWeaponFireMode_Projectile) {
@@ -2027,7 +2030,8 @@ bool validate_weapon_mechanics(const KernelWeaponMechanicsDefinition& definition
     // authoring both invites two numbers that drift apart. Its damage is
     // already required non-zero above, and comes from the projectile template
     // it names -- the same one authoring surface a hitscan uses.
-    if (definition.fire_mode == KernelWeaponFireMode_Melee) {
+    if (definition.fire_mode == KernelWeaponFireMode_Melee ||
+        definition.fire_mode == KernelWeaponFireMode_LockInstant) {
         return definition.melee_collider_template_id != 0 &&
                definition.projectile_template_id != 0;
     }
@@ -2044,6 +2048,32 @@ bool validate_weapon_mechanics(const KernelWeaponMechanicsDefinition& definition
         return false;
     }
     return true;
+}
+
+// A cone weapon's reach is the cone on its collider template. Only the
+// template id crosses the ABI; the shape it stands for is read here, once,
+// because nothing downstream can. Rejecting a cone weapon whose collider is
+// missing, is not a cone, or carries no damage purpose at configuration time
+// is what keeps the swing and the lock from having to decide what a malformed
+// cone means. Every other mode has nothing to resolve.
+bool resolve_weapon_cone(
+    const std::vector<KernelColliderTemplateDefinition>& collider_templates,
+    WeaponMechanicsDefinition* mechanics) {
+    if (mechanics->mode != WeaponFireMode::kMelee &&
+        mechanics->mode != WeaponFireMode::kLockInstant) {
+        return true;
+    }
+    const KernelColliderTemplateDefinition* cone = find_collider_template(
+        collider_templates,
+        mechanics->melee_collider_template_id);
+    if (cone == nullptr ||
+        cone->shape_type != KernelColliderShapeType_Cone ||
+        (cone->purpose_flags & KernelColliderPurpose_Damage) == 0u) {
+        return false;
+    }
+    mechanics->melee_range = collider_template_cone_range(*cone);
+    mechanics->melee_fov_degrees = collider_template_cone_fov_degrees(*cone);
+    return mechanics->melee_range > 0.0f && mechanics->melee_fov_degrees > 0.0f;
 }
 
 const WeaponMechanicsDefinition* entity_weapon_mechanics(
@@ -2918,6 +2948,8 @@ bool KernelEngine::load_gameplay_catalog(
          catalog.status_effects == nullptr) ||
         (catalog.entity_template_count != 0 &&
          catalog.entity_templates == nullptr) ||
+        (catalog.weapon_definition_count != 0 &&
+         catalog.weapon_definitions == nullptr) ||
         catalog.collider_binding_count != 0) {
         return false;
     }
@@ -4035,6 +4067,36 @@ bool KernelEngine::load_gameplay_catalog(
         }
         runtime_status_effect_templates.push_back(std::move(runtime_status));
     }
+    // The catalog's weapons, for every mode. A server still fires from the
+    // mechanics it sets on each entity; this table is what a pure client,
+    // which never receives those, reads a weapon's shape from.
+    WeaponTuning validated_catalog_weapons{};
+    for (std::uint32_t index = 0; index < catalog.weapon_definition_count; ++index) {
+        const KernelWeaponMechanicsDefinition& weapon =
+            catalog.weapon_definitions[index];
+        const auto names_action = [&catalog](std::uint32_t action_template_id) {
+            for (std::uint32_t action = 0; action < catalog.action_template_count;
+                 ++action) {
+                if (catalog.action_templates[action].action_template_id ==
+                    action_template_id) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        if (!validate_weapon_mechanics(weapon) ||
+            !names_action(weapon.fire_action_template_id) ||
+            !names_action(weapon.reload_action_template_id) ||
+            validated_catalog_weapons.configured[weapon.weapon_id]) {
+            return false;
+        }
+        WeaponMechanicsDefinition mechanics = to_weapon_mechanics(weapon);
+        if (!resolve_weapon_cone(validated_collider_templates, &mechanics)) {
+            return false;
+        }
+        validated_catalog_weapons.configured[weapon.weapon_id] = true;
+        validated_catalog_weapons.definitions[weapon.weapon_id] = mechanics;
+    }
     entity_templates_ = std::move(validated_entity_templates);
     actor_templates_ = std::move(validated_actor_templates);
     projectile_templates_ = std::move(validated_projectile_templates);
@@ -4055,6 +4117,7 @@ bool KernelEngine::load_gameplay_catalog(
     catalog_runtime_.action_templates = std::move(runtime_action_templates);
     catalog_runtime_.status_effect_templates =
         std::move(runtime_status_effect_templates);
+    catalog_weapons_ = validated_catalog_weapons;
     if (running_ &&
         (catalog_version_ != catalog.catalog_version ||
          catalog_hash_ != catalog.catalog_hash)) {
@@ -6571,28 +6634,8 @@ bool KernelEngine::server_set_entity_weapon_mechanics(
         return false;
     }
     WeaponMechanicsDefinition mechanics = to_weapon_mechanics(weapon_mechanics);
-    // Only the template id crosses the ABI; the shape it stands for is read
-    // here, once, because nothing downstream can. Rejecting a melee weapon
-    // whose collider is missing, is not a cone, or carries no damage purpose
-    // at configuration time is what keeps apply_melee_damage from having to
-    // decide what a malformed swing means.
-    if (mechanics.mode == WeaponFireMode::kMelee) {
-        const KernelColliderTemplateDefinition* melee_collider =
-            find_collider_template(
-                collider_templates_,
-                weapon_mechanics.melee_collider_template_id);
-        if (melee_collider == nullptr ||
-            melee_collider->shape_type != KernelColliderShapeType_Cone ||
-            (melee_collider->purpose_flags & KernelColliderPurpose_Damage) == 0u) {
-            return false;
-        }
-        mechanics.melee_range = collider_template_cone_range(*melee_collider);
-        mechanics.melee_fov_degrees =
-            collider_template_cone_fov_degrees(*melee_collider);
-        if (mechanics.melee_range <= 0.0f ||
-            mechanics.melee_fov_degrees <= 0.0f) {
-            return false;
-        }
+    if (!resolve_weapon_cone(collider_templates_, &mechanics)) {
+        return false;
     }
     WeaponTuning& tuning = world_.registry().get_or_emplace<WeaponTuning>(*entity);
     const std::size_t index = static_cast<std::size_t>(weapon_mechanics.weapon_id);
@@ -6634,6 +6677,21 @@ bool KernelEngine::server_get_entity_weapon_mechanics(
         return false;
     }
     *out_weapon_mechanics = to_kernel_weapon_mechanics(*mechanics);
+    return true;
+}
+
+bool KernelEngine::get_catalog_weapon_definition(
+    std::uint8_t weapon_id,
+    KernelWeaponMechanicsDefinition* out_definition) const {
+    if (out_definition == nullptr ||
+        out_definition->struct_size < sizeof(KernelWeaponMechanicsDefinition)) {
+        return false;
+    }
+    const std::size_t index = static_cast<std::size_t>(weapon_id);
+    if (!catalog_weapons_.configured[index]) {
+        return false;
+    }
+    *out_definition = to_kernel_weapon_mechanics(catalog_weapons_.definitions[index]);
     return true;
 }
 

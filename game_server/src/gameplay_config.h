@@ -556,6 +556,7 @@ struct KernelGameplayCatalogStorage {
     std::vector<KernelItemTemplateDefinition> item_templates;
     std::vector<KernelPropPopulationRuleDefinition> prop_population_rules;
     std::vector<KernelStatusEffectDefinition> status_effects;
+    std::vector<KernelWeaponMechanicsDefinition> weapon_definitions;
     std::vector<std::vector<std::uint8_t>> skeleton_asset_bytes;
     std::vector<KernelSkeletonAssetDefinition> skeleton_assets;
     KernelGameplayCatalogDefinition definition{};

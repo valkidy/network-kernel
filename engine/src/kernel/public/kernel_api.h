@@ -634,6 +634,17 @@ bool Kernel_ServerGetEntityWeaponMechanics(
     uint8_t weapon_id,
     KernelWeaponMechanicsDefinition* out_weapon_mechanics);
 
+/*
+ * ABI 103. A weapon from the loaded gameplay catalog, in any mode -- the one
+ * way a pure client learns a weapon's shape, since it never receives the
+ * per-entity mechanics a server sets. False when the catalog has no such
+ * weapon.
+ */
+bool Kernel_GetCatalogWeaponDefinition(
+    KernelHandle* kernel,
+    uint8_t weapon_id,
+    KernelWeaponMechanicsDefinition* out_definition);
+
 bool Kernel_ServerGetHomingState(
     KernelHandle* kernel,
     uint32_t net_id,
