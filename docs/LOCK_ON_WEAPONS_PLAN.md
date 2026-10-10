@@ -13,7 +13,7 @@
 |---|---|---|
 | 每次 commit | 打最近的 min(N, M) 個目標，**瞬間**固定傷害 | 發 1 顆，打第 `commit_index % min(N, M)` 近的目標（發法乙） |
 | 傷害時機 | commit 當下 | 到達 tick（排定傷害） |
-| 扣彈 | 固定 M，N = 0 也扣 | 每顆 1；N = 0 時延後 commit，不扣（D9） |
+| 扣彈 | 固定 M，N = 0 也扣 | 每顆 1；N = 0 時照常 commit 但扣 0（D9） |
 | client | 自己跑同一個掃描畫電弧，不足 M 條補假電弧 | 照 server 給的 (目標, 到達 tick) 播飛行與爆炸，純演出 |
 | 新封包 | 無 | 有（packet schema 32） |
 
@@ -35,7 +35,7 @@ N：錐形內偵測到的目標數。M：單次最大鎖定數。T：一顆飛�
 | D6 | A 的傷害用鎖 actor：直接對選中的 net id 送 `DamageRequest`，位置只用於演出 | 已定 |
 | D7 | A 的 client 演出用「各 client 自己算」：不加封包。假電弧終點用 `(射手 net id, action_instance_id, commit_index)` 當種子 | 已定 |
 | D8 | B 用發法乙：每次 commit 1 顆，目標是 `commit_index % min(N, M)` 近的那個。要重現發法甲時，`commit_interval_ticks` 乘上 M 即可維持同樣的每秒飛彈數 | 已定 |
-| D9 | B 在 N = 0 時**延後 commit**：這一 tick 視為沒有 commit。不扣彈、不進冷卻、不送任何結果給 client、`commit_count` 不增加，下一 tick 再掃描。所以 A 每個彈匣打完的時間固定，B 的時間取決於有目標的時間。不能用拒絕路徑（`Corrected`），也不能用「Committed 但扣 0」，原因見 §3.3 | **待確認**（2026-10-10 提出） |
+| D9 | B 在 N = 0 時**照常 commit，但扣 0 發、不產生飛彈記錄**（做法 2）。冷卻照常、送 Accepted 給射手、`FireCommit` 照常發給旁觀者。所以 A 每個彈匣打完的時間固定，B 的時間取決於有目標的時間。代價是按住沒目標時多出一般 hold 武器等量的封包（§4），使用者接受。另外兩種做法不用：拒絕（`Corrected`）會讓 client 以為放開；延後 commit 要在武器階段回滾 action system 的狀態，太複雜 | 已定（2026-10-10） |
 | D10 | B 用排定傷害：server 在 commit 時就算好到達 tick，server 上不生飛彈 entity | 已定 |
 | D11 | 直接設定 T2，不設定速度：每 tick 速度 = range / T2，T = ceil(d / 每 tick 速度)，落在 [1, T2] | 已定 |
 | D12 | 延遲傷害用 tick：`DamageRequest` 加 `apply_tick`（0 = 不延後）。「時間用 tick」是全專案慣例，`DamagePipeline` 的微秒時間窗是延遲補償的例外，維持不動 | 已定 |
@@ -82,13 +82,10 @@ N：錐形內偵測到的目標數。M：單次最大鎖定數。T：一顆飛�
 - `apply_damage_applications`（[damage_system.cc:164](../engine/src/simulation/src/damage_system.cc)）補「血量已是 0 就跳過」。
 
 `weapon_system.cc` 的 `lock_missile` 分支：
-- N = 0 時延後 commit（D9）：把 action 的 `commit_count` 減回去、`next_commit_tick` 設成下一 tick、phase 還原，不 push 任何 outcome。
-  不能用另外兩種做法：
-  - 拒絕（`Corrected`）：client 視為 terminal、Unity 停掉開火演出（[kernel.cc:7801](../engine/src/kernel/src/kernel.cc)）；server 的 session 會放掉這個 action 的 claim，但 simulation 的 hold 還在跑（[kernel.cc:16556](../engine/src/kernel/src/kernel.cc)）；interval 1 時每秒最多 30 個結果封包。
-  - Committed 但扣 0：server 會發 `FireCommit` 的遠端演出事件，旁觀者看到施法卻沒有飛彈；listen host 預測會先扣彈再被 snapshot 拉回。
-  P0 要確認：`update_visual_flags` 在這一 tick 設的 firing 旗標會不會讓旁觀者看到閃一下；`cancel_after_first_commit` 和 `completes_action` 在回滾時的處理。
-  listen host 的本機預測要跑同一個掃描，才不會預測出 server 沒有的 commit。
-- 扣 1 發，選目標，取第 `commit_index % n` 個（D8）。
+- 先選目標。N = 0 時（D9）：照常 push Committed、設冷卻，但不扣彈、不送 `DamageRequest`、不產生飛彈記錄。
+  不 emit `FireConfirmed` 這個本機事件，因為這一輪沒有射出東西。
+- listen host 的本機預測對 `lock_missile` 不預測扣彈，由 server 的值校正。否則 host 會照模板每輪扣 1，比 server 先扣光。
+- N ≥ 1 時：扣 1 發，取第 `commit_index % n` 近的目標（D8）。`commit_index` 包含沒目標的那幾輪，結果一樣是固定的。
 - T = ceil(d ÷ (range ÷ T2))，d 用回溯畫面的距離。
 - 送一筆 `DamageRequest`：`apply_tick = current_tick + T`，`hit_time_us` = 到達 tick 對應的時間。
 - 把 (射手, instance, commit, 目標, 發射 tick, T) 放進這個 tick 的飛彈記錄清單，交給 kernel 送出。
@@ -107,7 +104,11 @@ N：錐形內偵測到的目標數。M：單次最大鎖定數。T：一顆飛�
 - 連鎖閃電：client 從 snapshot 看到射手的 `action_commit_count` 增加，且射手拿著 `lock_instant` 武器時，用 §3.1 和射手的 `aim_direction` 算出目標，產生一筆演出事件（射手、commit、目標 net id、假電弧終點）。兩個 snapshot 之間跨了好幾次 commit 時，每一次都產生一筆。
 - 新 export（照 memory「Additive ABI needs no bump」用 capability flag，macOS 和 Windows 兩份 export 清單都要加）：
   - 讀取兩種演出清單。
-  - D21 的查詢 API：給 weapon id、位置、aim、seed，回傳目標和假電弧終點。`lock_missile` 也用它：Unity 按住時用它畫鎖定標記，沒有目標時顯示「搜尋中」，不要照 §8.1 方案 1 在按下時就播開火。
+  - D21 的查詢 API：給 weapon id、位置、aim、seed，回傳目標和假電弧終點。`lock_missile` 也可以用它畫鎖定標記。
+- Unity 的 `lock_missile` 演出規則（使用者負責）：
+  - 按住期間法杖持續發光，放開才停。射手看自己的按鍵；旁觀者和 host 看 snapshot 的動作狀態。
+  - 飛彈**只**由飛彈記錄觸發。`FireCommit` 在沒目標的那幾輪也會送，不能拿來觸發飛彈。
+  - 純 client 的彈藥 UI 用 server 的值（§8.1 方案 1），不會比 server 先扣光。彈藥用完時 server 會送結束結果，client 收到才停，高延遲下大約晚半個 RTT。
 - 演出的時間軸用 `client_render_server_time_us`，不用 snapshot header 的 tick（memory「Interpolated snapshot tick is floored」）。
 
 ### 3.5 Content
@@ -126,6 +127,8 @@ N：錐形內偵測到的目標數。M：單次最大鎖定數。T：一顆飛�
 ## 4. 流量影響
 
 只有魔法飛彈有新流量；連鎖閃電沒有。
+
+**D9 的額外成本**：按住但沒目標時，每輪 commit 仍送一筆 12 B 的 Accepted 給射手（interval 1 時每秒最多 30 筆），旁觀者收到的 `FireCommit` 會合併成一筆 32 B（[kernel.cc:16583](../engine/src/kernel/src/kernel.cc)）。這和按住一把普通 hold 武器一樣，`LOCAL_ACTION_NETWORK_TRAFFIC_REPORT.md` 測過 32 人 × 每秒 30 次 commit 仍在預算內。
 
 - 每秒飛彈數 = (30 ÷ `commit_interval_ticks`) × 每次 commit 的顆數。
 - 每顆約 8 B，每個送出的封包裡每個 `(射手, instance)` 再加 15 B 組頭。
@@ -171,7 +174,7 @@ N：錐形內偵測到的目標數。M：單次最大鎖定數。T：一顆飛�
 - **連鎖閃電**：N = 0 照樣扣 M 發、不會 `Corrected`、按住不中斷；N < M 只傷 N 個；每個目標各受一次傷害。
 - **載入**：`ammo_cost_per_commit != M` 或 `magazine_size % M != 0` 會被拒絕。
 - **延遲傷害**：到 `apply_tick` 前不生效、當下生效；目標已死、已消失、無敵、在帳篷內都取消；死亡後馬上復活也不會被打到（D14）；在到達時刻按閃避會取消。
-- **魔法飛彈**：commit k 打第 `k % n` 近的目標；T 落在 [1, T2]；記錄 roundtrip，包括合成一組和分組的邊界。
+- **魔法飛彈**：N = 0 時照常 Committed、冷卻照算、彈藥不變、沒有飛彈記錄、按住不中斷；一直沒目標時彈藥一直不變；commit k 打第 `k % n` 近的目標；T 落在 [1, T2]；記錄 roundtrip，包括合成一組和分組的邊界。
 - **e2e**：純 client 收到的飛彈記錄和 server 的一致；連鎖閃電在純 client 上選中的目標，和 server 在無延遲時選中的一樣。要附一個「拿掉修正就會紅」的對照（memory「Test assertions can be vacuous」）。
 - **既有的測試**：`main` 本來就有紅的，比對失敗清單，不看「全綠」（memory「main carries a red baseline」）。
 
