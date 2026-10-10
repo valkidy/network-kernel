@@ -48,6 +48,8 @@ N：錐形內偵測到的目標數。M：單次最大鎖定數。T：一顆飛�
 | D19 | A 的 `ammo_cost_per_commit` 必須等於 M，且 `magazine_size % M == 0`，否則是載入錯誤 | 已定 |
 | D20 | B 的記錄用 unreliable 送：純演出，掉了只少一顆飛彈畫面，傷害照算。到達 tick 已過才收到的記錄只播爆炸，或直接略過 | 已定（2026-10-10） |
 | D21 | 純 client 上射手自己的 A 演出：建議 Unity 按下時就呼叫 client 查詢 API（§3.4）立即畫，不等 snapshot；旁觀者照 snapshot 的 commit 數畫 | 已定（2026-10-10） |
+| D22 | 純 client 的 kernel 要有武器資料（P0-3）：在 `KernelGameplayCatalogDefinition` 結尾加武器定義陣列（靠 `struct_size` 相容），client 和 server 都安裝到 kernel 的唯讀武器表。替代方案是另開一個 client 專用 export。兩者都動到 ABI，§5 的「ABI 維持 102」要重新確認 | **待確認**（P0 提出） |
+| D23 | 旁觀者怎麼知道 AI 射手拿的是鎖定武器（P0-6：`held_weapon_id` 只有玩家有）：client 用 snapshot 的 `action_template_id` 反查武器，載入時要求鎖定武器的 fire action 模板**不能跟其他武器共用**。不改 snapshot | **待確認**（P0 提出） |
 
 ---
 
@@ -58,7 +60,7 @@ N：錐形內偵測到的目標數。M：單次最大鎖定數。T：一顆飛�
 - 新增一個純函式，放 `simulation/public/`，server 和 client 都呼叫：
   - 輸入：候選清單（net id、中心、是否存活）、射手 launch 位置、aim、range、fov、M、遮擋判斷的 callback。
   - 輸出：依 D1–D3 選出的 net id 和中心，最多 M 個。
-- server 的候選來自回溯畫面的 `HitVolumeSnapshot`（`alive`、不是 limb、陣營照武器的 mask 過濾）；沒有回溯畫面時用 live world 的 hitbox。
+- server 的候選來自回溯畫面的 `HitVolumeSnapshot`。回溯畫面沒有陣營，也包含非 actor 的 Hitbox（P0-2），所以每次掃描先走一遍 collider registry，建出「net id → 陣營、是否為 actor」的表，再過濾回溯畫面。不要逐個呼叫 `entity_gameplay_collision_category`，它每次都掃整個 registry。原本的寫法：`HitVolumeSnapshot`（`alive`、不是 limb、陣營照武器的 mask 過濾）；沒有回溯畫面時用 live world 的 hitbox。
 - client 的候選來自畫面上內插後的遠端 actor。
 - 遮擋 callback：server 用 collision world 的 ray cast，只看地形和靜態障礙物；client 用自己的靜態世界（沒有動態道具，見 R1）。
 
@@ -78,7 +80,7 @@ N：錐形內偵測到的目標數。M：單次最大鎖定數。T：一顆飛�
   - 有 `apply_tick` 的：`current_tick < apply_tick` 就留著。
   - 沒有的：照舊用 `confirm_time_us`。
   - 有 `apply_tick` 的不加 grace（D15）。
-- 加 `cancel_pending_for_target(net_id)`，在目標死亡的地方呼叫（D14）。死亡的入口在 P0 確認。
+- 加 `cancel_pending_for_target(net_id)`，在兩個地方呼叫（D14，P0-1）：`EntityLifecycleSystem::enter_death_state`（[systems.cc:2858](../engine/src/simulation/src/systems.cc)，所有傷害造成的死亡都經過這裡），和 `server_set_entity_health` 把 hp 設成 0 時（[kernel.cc:6284](../engine/src/kernel/src/kernel.cc)，這條路不走死亡流程）。
 - `apply_damage_applications`（[damage_system.cc:164](../engine/src/simulation/src/damage_system.cc)）補「血量已是 0 就跳過」。
 
 `weapon_system.cc` 的 `lock_missile` 分支：
@@ -148,7 +150,7 @@ N：錐形內偵測到的目標數。M：單次最大鎖定數。T：一顆飛�
 
 - **Packet schema 31 → 32**：client 和 server 一定要用同一版 native library。`dynamic_abi_smoke_test`、`kernel_api_test` 寫死了版本號，要跟著改（memory「Schema bump touch points」）。
 - **Snapshot schema 維持 29**（P0 確認後定案）。
-- **ABI 預計維持 102**：新的 fire mode 只是新增 enum 值，新 export 用 capability flag。D18 如果不採用、要加 struct 欄位，就要 bump，P1 時再確認。
+- **ABI**：P0 後要看 D22。D22 不論哪個方案都會動 ABI，原本的「維持 102」不成立。原本的推論：新的 fire mode 只是新增 enum 值，新 export 用 capability flag。D18 如果不採用、要加 struct 欄位，就要 bump，P1 時再確認。
 - **`bundle.bytes` 需要更新**：P5 加了新的 catalog 內容。由使用者處理。
 - Unity 的 C# 鏡像和演出由使用者處理。
 - 照規則在 `claude/*` 分支上 commit 並測好後交給使用者，不碰 `feat-unity-plugin` 和 package。
@@ -196,7 +198,22 @@ N：錐形內偵測到的目標數。M：單次最大鎖定數。T：一顆飛�
 
 ## 9. P0 驗證結果
 
-（尚未開始）
+2026-10-10，在 `main`（`fc4e964`）上只讀，沒有改程式。
+
+| # | 問題 | 結果 | 對計劃的影響 |
+|---|---|---|---|
+| P0-1 | 目標死亡的入口 | 傷害造成的死亡只有一個入口：kernel 每 tick 在 [kernel.cc:13275](../engine/src/kernel/src/kernel.cc) drain 一次傷害，接著 `enter_death_state`（[systems.cc:2858](../engine/src/simulation/src/systems.cc)）發 `EntityDied`。其他 `confirm_ready` 呼叫點只在沒有共用 pipeline 時執行（測試用）。例外：`server_set_entity_health` 直接寫 hp，不走死亡流程 | §3.3 在兩處取消待生效傷害 |
+| P0-2 | 回溯路徑怎麼套用陣營 | **不套用**。`HitVolumeSnapshot.team` 一律寫 0（[history_buffer.cc:122](../engine/src/sync/src/history_buffer.cc)），`raycast_history_frame` 不收 mask。回溯畫面收錄所有有 Hitbox 的 entity，不只 actor。live world 的陣營在 collider 的 `layer_mask`，homing 用 `entity_gameplay_collision_category` 讀，但它每次掃整個 collider registry | §3.1 每次掃描先建陣營表。另外疑似既有問題：玩家走回溯路徑的 hitscan 不分陣營（見下） |
+| P0-3 | 純 client 讀不讀得到武器的 cone 和 M | **讀不到**。kernel 的 catalog（`KernelGameplayCatalogDefinition`）沒有武器。client 載入 bundle 時 game_server 層會解析武器，但只把 projectile、collider、action、entity 等模板裝進 kernel（[game_server_api.cc:132](../game_server/src/game_server_api.cc)）。武器只透過 `Kernel_ServerSetEntityWeaponMechanics` 給 server | 新增 D22 |
+| P0-4 | client 知不知道遠端 actor 的陣營和 hitbox 中心 | **知道**。render state 有 `template_id` 和 `collider_template_id`，collider 模板在 client 的 catalog 裡，有 `center` 和 `layer_mask`。差異：server 把同一 entity 所有 collider 的 layer 做 OR，client 只看 hitbox 那個 collider，actor 只有一個 hit collider 時結果一樣 | §3.1 client 端的候選照這個建 |
+| P0-5 | client 的靜態碰撞能不能做遮擋射線 | **可以**。derived chain 已經在 client 上對 `prediction_physics_world_` 或 `world_.collision_world()` 做查詢（[kernel.cc:15570](../engine/src/kernel/src/kernel.cc)）。沒有動態道具（R1 已知） | 無 |
+| P0-6 | AI 射手的 snapshot 有沒有 aim 和 commit 數 | **有**。action system 會替任何送出動作的 actor 建 `ActionInputState`，snapshot 對所有 entity 都寫 `aim_direction`、`action_template_id`、`action_commit_count`，完整和精簡兩種 record 都有編碼。但 `held_weapon_id` **只有玩家有**（[snapshot_builder.cc:111](../engine/src/sync/src/snapshot_builder.cc)） | 新增 D23 |
+
+**另一個發現**：server 已經把每個 commit 的 `FireCommit` 遠端演出事件（含 actor、action 模板、instance、commit 範圍）送給旁觀者。連鎖閃電的旁觀者演出可以改用它，不用比對 snapshot 的 commit 數，commit 編號就是精確的，R2 也會改善。aim 仍然從 snapshot 內插。P4 開工時再決定。
+
+**疑似既有問題（不在本計劃範圍）**：回溯路徑的 hitscan（`find_hitscan_target` 帶 `rewind_frame` 時）不看武器的 `collision_mask`，可能打到同陣營的 actor。`damage_source_may_damage` 註解說 actor 沒有 `GameplaySide`，所以傷害階段也不會擋。沒有實測。
+
+D9 改成做法 2 之後，§3.3 原本列的兩個 P0 項目（回滾時的畫面旗標、`cancel_after_first_commit`）已經不需要確認。
 
 ---
 
