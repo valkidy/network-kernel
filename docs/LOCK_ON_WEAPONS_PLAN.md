@@ -60,7 +60,7 @@ N：錐形內偵測到的目標數。M：單次最大鎖定數。T：一顆飛�
 - 新增一個純函式，放 `simulation/public/`，server 和 client 都呼叫：
   - 輸入：候選清單（net id、中心、是否存活）、射手 launch 位置、aim、range、fov、M、遮擋判斷的 callback。
   - 輸出：依 D1–D3 選出的 net id 和中心，最多 M 個。
-- server 的候選來自回溯畫面的 `HitVolumeSnapshot`。回溯畫面沒有陣營，也包含非 actor 的 Hitbox（P0-2），所以每次掃描先走一遍 collider registry，建出「net id → 陣營、是否為 actor」的表，再過濾回溯畫面。不要逐個呼叫 `entity_gameplay_collision_category`，它每次都掃整個 registry。原本的寫法：`HitVolumeSnapshot`（`alive`、不是 limb、陣營照武器的 mask 過濾）；沒有回溯畫面時用 live world 的 hitbox。
+- server 的候選來自回溯畫面的 `HitVolumeSnapshot`。回溯畫面沒有陣營，也包含非 actor 的 Hitbox（P0-2），所以每次掃描先走一遍 collider registry，建出「net id → 陣營、是否為 actor」的表，再過濾回溯畫面。不要逐個呼叫 `entity_gameplay_collision_category`，它每次都掃整個 registry。過濾條件：`alive`、不是 limb、是 actor、陣營符合武器的 mask。沒有回溯畫面時用 live world 的 hitbox。
 - client 的候選來自畫面上內插後的遠端 actor。
 - 遮擋 callback：server 用 collision world 的 ray cast，只看地形和靜態障礙物；client 用自己的靜態世界（沒有動態道具，見 R1）。
 
