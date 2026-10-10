@@ -21,6 +21,10 @@
  *     nothing. The three graphs read the actor as event.instigator and
  *     event.target. KernelEntityTemplateDefinition is a public catalog
  *     struct, so every managed mirror of it shifts.
+ *     Portals: KernelEntityTemplateDefinition also gained portal (a
+ *     KernelPortalDefinition), appended after overlap_trigger_instigators,
+ *     and KernelEntityTriggerActionType gained _Teleport. A portal's exit
+ *     prop is created and destroyed with it, for the same despawn reason.
  * 102: status-bound crowd control (the water bubble). KernelEntityTriggerActionType
  *     gained _ApplyBlockActions: a status on_apply action that, for as long as
  *     that status instance stands, refuses its target new actions and ends the
@@ -936,6 +940,13 @@ typedef enum KernelEntityTriggerActionType {
      * and damage is discarded. Status on_apply graphs only, onto the status's
      * own subject (ABI 102). */
     KernelEntityTriggerActionType_ApplyUntargetable = 14,
+    /* Moves its target to the destination of the portal whose graph ran (ABI
+     * 103): what it carries is dropped where it stood, its velocity, knockback
+     * and stagger are cleared, it faces the portal's forward when that is
+     * level, and for the portal's arrival_grace_ticks no portal takes it and
+     * for its arrival_immunity_ticks nothing hurts it. A portal's on_enter
+     * and on_overlap graphs only; target_source is the only field read. */
+    KernelEntityTriggerActionType_Teleport = 15,
 } KernelEntityTriggerActionType;
 
 typedef enum KernelStatModifierOperation {
@@ -2750,6 +2761,21 @@ typedef enum KernelDeathPolicy {
     KernelDeathPolicy_Dormant = 2,
 } KernelDeathPolicy;
 
+/* A portal (ABI 103): where its teleport action sends an actor, and the prop
+ * that marks that spot. struct_size 0 is not a portal. */
+typedef struct KernelPortalDefinition {
+    uint32_t struct_size;
+    /* A prop the kernel spawns at destination when the portal is created and
+     * destroys, for the same reason, when the portal goes. 0 for none. */
+    uint32_t exit_entity_template_id;
+    KernelVec3 destination;
+    /* Unit length, y <= 0: a level forward is the way an arrival faces,
+     * straight down a drop. */
+    KernelVec3 forward;
+    uint32_t arrival_grace_ticks;
+    uint32_t arrival_immunity_ticks;
+} KernelPortalDefinition;
+
 struct KernelEntityTemplateDefinition {
     uint32_t struct_size;
     uint32_t entity_template_id;
@@ -2809,6 +2835,8 @@ struct KernelEntityTemplateDefinition {
     uint32_t overlap_trigger_mask;
     /* A KernelOverlapInstigators. */
     uint32_t overlap_trigger_instigators;
+    /* Props only (ABI 103); see KernelPortalDefinition. */
+    KernelPortalDefinition portal;
 };
 
 /* Who a trigger volume counts, within its overlap_trigger_mask (ABI 103). */

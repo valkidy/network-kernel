@@ -502,6 +502,12 @@ void hash_actor_template(
         hash_string(hash, parameter.second);
     }
     hash_scalar(hash, actor_template.trigger_collider_template_id);
+    hash_scalar(hash, actor_template.portal.struct_size);
+    hash_string(hash, actor_template.portal_exit_template_ref);
+    hash_vec3(hash, actor_template.portal.destination);
+    hash_vec3(hash, actor_template.portal.forward);
+    hash_scalar(hash, actor_template.portal.arrival_grace_ticks);
+    hash_scalar(hash, actor_template.portal.arrival_immunity_ticks);
     hash_scalar(hash, actor_template.overlap_trigger_mask);
     hash_scalar(hash, actor_template.overlap_trigger_instigators);
     for (const TriggerBindingConfig* trigger : {
@@ -2374,7 +2380,8 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 parameter_reference_from_yaml(action["target"], "target");
             action_parameters = {&compiled_action.target_parameter};
         } else if (compiled_action.action_type == "apply_block_actions" ||
-                   compiled_action.action_type == "apply_untargetable") {
+                   compiled_action.action_type == "apply_untargetable" ||
+                   compiled_action.action_type == "teleport") {
             // Whom it holds, and nothing else: how long is the status's
             // duration_ticks, not the action's.
             for (const auto& field : action) {
@@ -4908,6 +4915,7 @@ EntityTemplateConfig entity_template_from_yaml(
                 "carry_offset",
                 "lifecycle",
                 "shelter",
+                "portal",
                 "loadout",
                 "camp",
                 "triggers",
@@ -5158,6 +5166,57 @@ EntityTemplateConfig entity_template_from_yaml(
                     node["shelter"]["hide_occupants_from_vision"].as<bool>()
                     ? 1u
                     : 0u;
+            }
+        }
+        if (node["portal"]) {
+            const YAML::Node portal = node["portal"];
+            reject_unknown_keys(
+                portal,
+                {
+                    "exit_template",
+                    "destination",
+                    "forward",
+                    "arrival_grace_ticks",
+                    "arrival_immunity_ticks",
+                },
+                path,
+                source_kind,
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+                entity_template.actor_template_id);
+            if (entity_template.entity_type != KernelEntityType_Prop) {
+                throw std::runtime_error("portal is only supported on props: " + path);
+            }
+            if (!portal["destination"] || !portal["forward"]) {
+                throw std::runtime_error(
+                    "portal requires destination and forward: " + path);
+            }
+            entity_template.portal.struct_size = sizeof(KernelPortalDefinition);
+            entity_template.portal.destination = vec3_from_yaml(portal["destination"]);
+            KernelVec3 forward = vec3_from_yaml(portal["forward"]);
+            const float length = std::sqrt(
+                forward.x * forward.x + forward.y * forward.y +
+                forward.z * forward.z);
+            // Level, or down: an arrival facing up has nowhere to go.
+            if (!std::isfinite(length) || length < 0.0001f || forward.y > 0.0f) {
+                throw std::runtime_error(
+                    "portal forward must be non-zero and level or downward "
+                    "(y <= 0): " + path);
+            }
+            forward.x /= length;
+            forward.y /= length;
+            forward.z /= length;
+            entity_template.portal.forward = forward;
+            if (portal["exit_template"]) {
+                entity_template.portal_exit_template_ref =
+                    portal["exit_template"].as<std::string>();
+            }
+            if (portal["arrival_grace_ticks"]) {
+                entity_template.portal.arrival_grace_ticks =
+                    portal["arrival_grace_ticks"].as<std::uint32_t>();
+            }
+            if (portal["arrival_immunity_ticks"]) {
+                entity_template.portal.arrival_immunity_ticks =
+                    portal["arrival_immunity_ticks"].as<std::uint32_t>();
             }
         }
         if (node["interaction"]) {
@@ -7782,6 +7841,19 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
                     binding, graph_parameter(action.target_parameter)));
             compiled_action.reserve_refill_count = action.reserve_refill_count;
             compiled_action.reserve_refill_percent = action.reserve_refill_percent;
+            continue;
+        }
+        if (action.action_type == "teleport") {
+            // Mirrors the kernel: only a portal's volume knows who walked in.
+            if (trigger_name != "on_enter" && trigger_name != "on_overlap") {
+                throw std::runtime_error(
+                    "teleport is only supported in on_enter and on_overlap: " +
+                    binding.action_graph_ref);
+            }
+            compiled_action.action_type = KernelEntityTriggerActionType_Teleport;
+            compiled_action.target_source = entity_ref_source(
+                trigger_parameter_value(
+                    binding, graph_parameter(action.target_parameter)));
             continue;
         }
         if (action.action_type == "open_ui") {
@@ -10917,6 +10989,23 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
         entity_template.trigger_collider_template_id =
             authored_template.trigger_collider_template_id;
         entity_template.overlap_trigger_mask = authored_template.overlap_trigger_mask;
+        entity_template.portal = authored_template.portal;
+        if (!authored_template.portal_exit_template_ref.empty()) {
+            const auto exit = std::find_if(
+                config.entity_templates.begin(),
+                config.entity_templates.end(),
+                [&](const EntityTemplateConfig& candidate) {
+                    return candidate.name == authored_template.portal_exit_template_ref;
+                });
+            if (exit == config.entity_templates.end() ||
+                exit->entity_type != KernelEntityType_Prop ||
+                exit->portal.struct_size != 0u) {
+                throw std::runtime_error(
+                    "portal exit_template must name a prop that is not a "
+                    "portal: " + authored_template.name);
+            }
+            entity_template.portal.exit_entity_template_id = exit->actor_template_id;
+        }
         entity_template.overlap_trigger_instigators =
             authored_template.overlap_trigger_instigators;
         for (const auto& [name, authored, compiled] :
@@ -10939,6 +11028,16 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
                 &config.projectile_templates,
                 nullptr,
                 &config.status_effect_templates);
+            // Mirrors the kernel: only a portal has somewhere to send it.
+            for (std::uint32_t index = 0; index < compiled->action_count; ++index) {
+                if (compiled->actions[index].action_type ==
+                        KernelEntityTriggerActionType_Teleport &&
+                    authored_template.portal.struct_size == 0u) {
+                    throw std::runtime_error(
+                        "teleport needs the template's portal block: " +
+                        authored_template.name);
+                }
+            }
         }
         entity_template.health_depleted_trigger = compile_action_trigger_binding(
             authored_template.health_depleted_trigger,

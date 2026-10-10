@@ -675,6 +675,16 @@ bool execute_action_graph_commands(
             }
             continue;
         }
+        if (const auto* teleport = std::get_if<ActionTeleportCommand>(&command)) {
+            const std::optional<entt::entity> source =
+                world.find_entity(teleport->source);
+            if (!source.has_value() ||
+                !world.registry().all_of<PortalLink>(*source) ||
+                !world.find_entity(teleport->target).has_value()) {
+                return false;
+            }
+            continue;
+        }
         if (const auto* refill =
                 std::get_if<ActionRefillWeaponReserveCommand>(&command)) {
             if ((refill->count == 0u) == (refill->percent == 0u) ||
@@ -1478,6 +1488,11 @@ bool execute_action_graph_commands(
                     amount);
             continue;
         }
+        if (const auto* teleport = std::get_if<ActionTeleportCommand>(&command)) {
+            EntityStateSystem{}.teleport_through_portal(
+                engine, teleport->source, teleport->target);
+            continue;
+        }
         if (const auto* open_ui = std::get_if<ActionOpenUiCommand>(&command)) {
             // The kernel only says it was asked. Which interface that is, and
             // whether the actor goes inside, is game_server's to act on.
@@ -2252,6 +2267,37 @@ bool EntityLifecycleSystem::create_entity(
         net_id,
         create_info.owner_peer,
         static_cast<std::uint32_t>(type));
+    // A portal comes with its exit, standing at the destination from the
+    // portal's first tick (ABI 103). The exit is the portal's: nothing but
+    // the portal going takes it away.
+    if (entity_template != nullptr && type == EntityType::kProp &&
+        entity_template->portal.struct_size != 0u) {
+        const KernelPortalDefinition& portal = entity_template->portal;
+        PortalLink link{
+            0u,
+            from_kernel_vec3(portal.destination),
+            from_kernel_vec3(portal.forward),
+            portal.arrival_grace_ticks,
+            portal.arrival_immunity_ticks,
+        };
+        if (portal.exit_entity_template_id != 0u) {
+            KernelServerEntityCreateInfo exit_info{};
+            exit_info.struct_size = sizeof(exit_info);
+            exit_info.entity_template_id = portal.exit_entity_template_id;
+            exit_info.owner_peer = create_info.owner_peer;
+            exit_info.position = portal.destination;
+            exit_info.rotation = yaw_rotation_from_direction(link.forward);
+            NetId exit_net_id = 0;
+            if (create_entity(engine, exit_info, &exit_net_id, false)) {
+                link.exit_net_id = exit_net_id;
+            }
+        }
+        if (const std::optional<entt::entity> portal_entity =
+                engine.world_.find_entity(net_id)) {
+            engine.world_.registry().emplace_or_replace<PortalLink>(
+                *portal_entity, link);
+        }
+    }
     if (entity_template != nullptr &&
         entity_template->prop.population_group_id != 0u) {
         enforce_prop_population_limit(
@@ -2685,6 +2731,7 @@ void OverlapTriggerSystem::update(
     // Whether an actor found in a volume counts. Sheltered and dead actors
     // never do, whatever the volume says: losing either is leaving.
     const auto qualifies = [&](const OverlapTriggerVolume& volume,
+                               bool portal,
                                const physics::CollisionHit& hit) {
         if ((hit.identity.gameplay_category & volume.collision_mask) == 0u) {
             return false;
@@ -2699,6 +2746,14 @@ void OverlapTriggerSystem::update(
             (volume.players_only && kind.actor_type != ActorType::kPlayer) ||
             registry.all_of<Sheltered>(*actor)) {
             return false;
+        }
+        // Just arrived through a portal: no portal takes it yet.
+        if (portal) {
+            if (const PortalArrivalGrace* grace =
+                    registry.try_get<PortalArrivalGrace>(*actor);
+                grace != nullptr && engine.current_tick() < grace->until_tick) {
+                return false;
+            }
         }
         const Health* health = registry.try_get<Health>(*actor);
         return health == nullptr || health->max_hp == 0u || health->hp != 0u;
@@ -2741,7 +2796,7 @@ void OverlapTriggerSystem::update(
             request.filter.ignored_entity_net_id = identity.net_id;
             for (const physics::CollisionHit& hit :
                  engine.physics_world_->overlap_all(request)) {
-                if (qualifies(volume, hit)) {
+                if (qualifies(volume, registry.all_of<PortalLink>(entity), hit)) {
                     now.push_back(hit.identity.entity_net_id);
                 }
             }
@@ -3173,6 +3228,23 @@ bool EntityLifecycleSystem::destroy_entity_with_context(
     std::sort(occupants.begin(), occupants.end());
     for (const NetId occupant : occupants) {
         (void)EntityStateSystem{}.set_shelter(engine, occupant, 0u);
+    }
+    // A portal takes its exit with it, for the same reason: whatever the
+    // portal's going looks like on a client, the exit's looks the same.
+    if (const PortalLink* link =
+            engine.world_.registry().try_get<PortalLink>(*entity);
+        link != nullptr && link->exit_net_id != 0u) {
+        const NetId exit_net_id = link->exit_net_id;
+        if (engine.world_.find_entity(exit_net_id).has_value()) {
+            (void)destroy_entity_with_context(
+                engine,
+                exit_net_id,
+                reason,
+                instigator,
+                source_code,
+                nullptr,
+                execute_destroy_graph);
+        }
     }
     glm::vec3 position = event_position == nullptr
         ? glm::vec3{0.0f}
@@ -3617,6 +3689,61 @@ bool EntityStateSystem::set_shelter(
         shelter_net_id,
         0u);
     return true;
+}
+
+// A portal's teleport (ABI 103): the actor arrives at the destination as if it
+// had stood there all along -- nothing it was doing comes with it.
+void EntityStateSystem::teleport_through_portal(
+    KernelEngine& engine,
+    NetId portal_net_id,
+    NetId target_net_id) const {
+    World& world = engine.world_;
+    entt::registry& registry = world.registry();
+    const std::optional<entt::entity> portal = world.find_entity(portal_net_id);
+    const std::optional<entt::entity> target = world.find_entity(target_net_id);
+    if (!portal.has_value() || !target.has_value() ||
+        !registry.all_of<PortalLink>(*portal) ||
+        !registry.all_of<EntityKind, Transform>(*target) ||
+        registry.get<EntityKind>(*target).type != EntityType::kActor) {
+        return;
+    }
+    const Health* health = registry.try_get<Health>(*target);
+    if ((health != nullptr && health->max_hp != 0u && health->hp == 0u) ||
+        registry.all_of<Sheltered>(*target)) {
+        return;
+    }
+    const PortalLink link = registry.get<PortalLink>(*portal);
+    // What it carries stays at the portal, as it stays outside a building.
+    ItemGameplaySystem{}.drop_carried_props(
+        engine, target_net_id, registry.get<Transform>(*target).position);
+    // A level forward is the way it faces on arrival; straight down has no
+    // heading, so it keeps its own.
+    const glm::vec3 level{link.forward.x, 0.0f, link.forward.z};
+    const KernelQuat rotation = glm::dot(level, level) > 0.000001f
+        ? yaw_rotation_from_direction(level)
+        : [&registry, &target]() {
+              const glm::quat& own = registry.get<Transform>(*target).rotation;
+              return KernelQuat{own.x, own.y, own.z, own.w};
+          }();
+    (void)set_transform(
+        engine, target_net_id, to_kernel_vec3(link.destination), rotation);
+    // The same reset a revive gives: nothing it was doing comes with it.
+    registry.remove<ImpulseLockout>(*target);
+    clear_stagger(world, *target);
+    if (Velocity* velocity = registry.try_get<Velocity>(*target)) {
+        velocity->linear = glm::vec3{0.0f};
+    }
+    const std::uint32_t now = engine.current_tick();
+    if (link.arrival_grace_ticks != 0u) {
+        registry.emplace_or_replace<PortalArrivalGrace>(
+            *target, PortalArrivalGrace{now + link.arrival_grace_ticks});
+    }
+    if (link.arrival_immunity_ticks != 0u) {
+        DamageImmunity& immunity =
+            registry.get_or_emplace<DamageImmunity>(*target, DamageImmunity{0u});
+        immunity.until_tick =
+            std::max(immunity.until_tick, now + link.arrival_immunity_ticks);
+    }
 }
 
 bool EntityStateSystem::revive(

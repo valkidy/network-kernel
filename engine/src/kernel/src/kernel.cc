@@ -630,6 +630,30 @@ bool overlap_trigger_is_authorable(const KernelEntityTemplateDefinition& entity_
         entity_template.overlap_trigger_mask != 0u;
 }
 
+// A portal sends an actor somewhere it can arrive: a finite destination and a
+// unit forward that is level or points down -- an arrival facing up has
+// nowhere to go. The exit template is checked with the other references.
+bool portal_is_authorable(const KernelEntityTemplateDefinition& entity_template) {
+    const KernelPortalDefinition& portal = entity_template.portal;
+    if (portal.struct_size == 0u) {
+        return portal.exit_entity_template_id == 0u &&
+            portal.arrival_grace_ticks == 0u &&
+            portal.arrival_immunity_ticks == 0u;
+    }
+    const auto finite = [](const KernelVec3& value) {
+        return std::isfinite(value.x) && std::isfinite(value.y) &&
+            std::isfinite(value.z);
+    };
+    const float length = std::sqrt(
+        portal.forward.x * portal.forward.x +
+        portal.forward.y * portal.forward.y +
+        portal.forward.z * portal.forward.z);
+    return portal.struct_size >= sizeof(KernelPortalDefinition) &&
+        entity_template.entity_type == KernelEntityType_Prop &&
+        finite(portal.destination) && finite(portal.forward) &&
+        std::abs(length - 1.0f) < 0.001f && portal.forward.y <= 0.0f;
+}
+
 glm::vec3 input_aim_to_world(const KernelPlayerInput& input) {
     glm::vec3 aim{input.aim_dir.x, input.aim_dir.y, input.aim_dir.z};
     if (glm::length(aim) <= 0.0001f) {
@@ -3249,7 +3273,8 @@ bool KernelEngine::load_gameplay_catalog(
              (entity_template.shelter_capacity != 0u ||
               entity_template.shelter_hides_occupants != 0u)) ||
             entity_template.death_policy > KernelDeathPolicy_Dormant ||
-            !overlap_trigger_is_authorable(entity_template)) {
+            !overlap_trigger_is_authorable(entity_template) ||
+            !portal_is_authorable(entity_template)) {
             return false;
         }
         const KernelSkeletonBindingDefinition& skeleton =
@@ -3520,6 +3545,19 @@ bool KernelEngine::load_gameplay_catalog(
                 }
                 // A building's interface, for whoever activated it: there is
                 // nobody asking on any other trigger.
+                // An actor walking into a portal: only a portal has somewhere
+                // to send it, and only its volume knows who walked in.
+                if (action.action_type ==
+                    KernelEntityTriggerActionType_Teleport) {
+                    if ((trigger != &entity_template.enter_trigger &&
+                         trigger != &entity_template.overlap_trigger) ||
+                        entity_template.portal.struct_size == 0u ||
+                        action.target_source >
+                            KernelEntityRefSource_EventInstigator) {
+                        return false;
+                    }
+                    continue;
+                }
                 if (action.action_type ==
                     KernelEntityTriggerActionType_OpenUi) {
                     if (trigger != &entity_template.activated_trigger ||
@@ -3895,6 +3933,15 @@ bool KernelEngine::load_gameplay_catalog(
                 validated_collider_templates,
                 entity_template.collider_template_id) == nullptr) {
             return false;
+        }
+        if (entity_template.portal.exit_entity_template_id != 0u) {
+            const KernelEntityTemplateDefinition* exit = find_entity_template(
+                validated_entity_templates,
+                entity_template.portal.exit_entity_template_id);
+            if (exit == nullptr || exit->entity_type != KernelEntityType_Prop ||
+                exit->portal.struct_size != 0u) {
+                return false;
+            }
         }
         if (entity_template.trigger_collider_template_id != 0u) {
             const KernelColliderTemplateDefinition* trigger_collider =

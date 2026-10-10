@@ -907,6 +907,13 @@ struct ActionOpenUiDefinition {
     ActionConditionType condition = ActionConditionType::kAlways;
 };
 
+// A portal sending its target to the portal's destination; see
+// KernelEntityTriggerActionType_Teleport.
+struct ActionTeleportDefinition {
+    std::string target_parameter;
+    ActionConditionType condition = ActionConditionType::kAlways;
+};
+
 // An item refilling its user's active weapon; see
 // KernelEntityTriggerActionType_RefillWeaponReserve. Exactly one of count and
 // percent is non-zero.
@@ -988,6 +995,7 @@ using ActionGraphAction = std::variant<
     ActionSpawnEntityDefinition,
     ActionApplyPullDefinition,
     ActionOpenUiDefinition,
+    ActionTeleportDefinition,
     ActionRefillWeaponReserveDefinition,
     ActionApplyBlockActionsDefinition,
     ActionApplySuspendMovementDefinition,
@@ -1020,6 +1028,22 @@ struct ActionGraphHealthDepletedBinding {
 
 struct ActionGraphDestroyEntityBinding {
     CompiledActionGraphBinding binding;
+};
+
+// A portal (ABI 103): where it sends whoever walks in, and the exit prop that
+// marks that spot -- destroyed with the portal, for the same reason.
+struct PortalLink {
+    NetId exit_net_id = 0;
+    glm::vec3 destination{0.0f};
+    glm::vec3 forward{0.0f, 0.0f, 1.0f};
+    std::uint32_t arrival_grace_ticks = 0;
+    std::uint32_t arrival_immunity_ticks = 0;
+};
+
+// An actor just sent through a portal: until this tick no portal takes it, so
+// one thrown on the destination cannot bounce it back every tick.
+struct PortalArrivalGrace {
+    std::uint32_t until_tick = 0;
 };
 
 // A prop's trigger volume and the actors in it as of the last tick, sorted.

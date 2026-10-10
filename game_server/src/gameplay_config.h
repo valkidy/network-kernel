@@ -316,6 +316,10 @@ struct ActorTemplateConfig {
     TriggerBindingConfig exit_trigger;
     std::uint32_t overlap_trigger_mask = KERNEL_COLLISION_MASK_NONE;
     std::uint32_t overlap_trigger_instigators = KernelOverlapInstigators_Actors;
+    // A `portal:` block (ABI 103); props only. exit_template is resolved by
+    // name into portal.exit_entity_template_id once every template is loaded.
+    KernelPortalDefinition portal{};
+    std::string portal_exit_template_ref;
     KernelPropDefinition prop{};
     SkeletonBindingConfig skeleton;
 };
