@@ -234,6 +234,40 @@ N：錐形內偵測到的目標數。M：單次最大鎖定數。T：一顆飛�
 - client 端的鎖定演出（§3.4）和查詢 API 都從這張表讀錐形、M、T2。
 - D23：client 用 snapshot 的 `action_template_id` 反查武器，反查表從同一張武器表建（fire action 模板 id → weapon id）。`gameplay_config.cc` 載入時檢查：`lock_instant` 和 `lock_missile` 的 fire action 模板不能被其他武器引用，否則是載入錯誤。
 
+**P4 實作紀錄（2026-10-10，`bf3a548e`）**：
+- 三個新 export，都放在 ABI 103 裡，兩份 export 清單都加了：
+  - `Kernel_ClientQueryLockTargets`：給定 aim，查詢 client 畫面上會鎖到誰。用途有兩個：鎖定準心，以及射手按下就立刻自己畫出電弧（D21）。
+  - `Kernel_PollLockStrikeEvents`：別人的 `lock_instant` commit。在 client 的畫面時鐘走到那個 `FireCommit` 時才算，用射手當時畫面上的位置和 aim，對當時畫出來的 actor 選目標。
+  - `Kernel_GetLockMissiles`：飛行中的飛彈，資料來自 server 的記錄。
+- client 選目標的條件和 server 一樣：
+  - 活著的 actor，且在武器打得到的陣營上。陣營和中心點從 actor 的 hit collider 模板讀。
+  - 排除射手本人，以及同一個 peer 控制的 actor。
+  - 排除躲在建築物裡的。
+  - 被靜態牆擋住的跳過。
+- 鎖不滿 M 個時，剩下的電弧終點由 `lock_targets::unfilled_arc_end` 決定。它只看射手、instance、commit 和第幾條電弧，所以每個 client 畫出來都一樣。電弧碰到牆會停在牆上。
+- `FireCommit` 帶的是確認數（從 1 開始），不是 commit 編號（從 0 開始），推導時要減 1。這是 e2e 測試抓到的錯。
+- 射手自己的 `FireCommit` 不會產生 strike，射手用查詢 API 自己畫。
+- game_server 載入時限制鎖定武器的 `max_hit_count` ≤ `KERNEL_MAX_LOCK_ARCS`（16），因為 client 的結構只放得下 16 條電弧。
+- e2e：`lock_weapons_end_to_end_test`，一台 dedicated server 加兩個純 client（射手和旁觀者）。
+  - 飛彈：兩個 client 都收到 3 顆。射手、目標、commit、發射 tick 都正確。server 在到達 tick 之前不扣血、到達時扣血。這也補上了 P3 沒測到的送出和接收路徑。
+  - 連鎖閃電：
+    - 旁觀者收到 2 個 strike，鎖到的正是 server 打到的兩個敵人，錐形外的那個沒被鎖。
+    - 第三條電弧是假的，兩次 commit 的落點不同。
+    - 射手自己不會收到 strike。射手用查詢 API 得到的目標，以及第三條電弧的落點，都和旁觀者一樣。
+  - 測試環境踩到的坑：
+    - client 不會畫沒有 actor template 的 actor，所以測試替每個 actor 都設了模板。
+    - client 的 ping 要送回 server，畫面時鐘才會對上，所以 harness 也把 client 的封包送回 server。
+- mutation：
+  - 五個都會讓 e2e 紅：commit 編號差一、不帶發射 tick 差、只送給射手本人、不推導 strike、假電弧不看 commit。
+  - 「不帶發射 tick 差」一開始沒被抓到：commit 間隔 4、snapshot 每 2 tick 一次，每次 commit 剛好都落在 snapshot 那個 tick。把間隔改成 3 之後就抓到了。
+- `lock_target_selection_test` 加了假電弧的檢查：
+  - 同一發一定在同一點。
+  - 落在錐形內，距離在射程的 40%–100%。
+  - 往正上方瞄準也成立。
+  - 換 commit 或換電弧，落點就不同。
+- 既有測試：四組一樣是那 14 個失敗，位置相同。
+- **listen host 沒有做**：host 本機的 render 走另一條路，`derive_lock_strikes` 只在 `FireCommit` 被釋出時才跑，host 上不一定有這個事件。要用 host 遊玩時再確認。
+
 ### 3.5 Content
 
 - 兩把武器各四個檔（shot、fire action、reload action、weapon）加上 cone collider 模板，照 `$id_<kind>_$name` 命名。不放進任何配裝。
