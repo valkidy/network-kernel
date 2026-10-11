@@ -646,6 +646,46 @@ bool Kernel_ServerGetEntityWeaponMechanics(
     uint8_t weapon_id,
     KernelWeaponMechanicsDefinition* out_weapon_mechanics);
 
+/*
+ * ABI 104. A weapon from the loaded gameplay catalog, in any mode -- the one
+ * way a pure client learns a weapon's shape, since it never receives the
+ * per-entity mechanics a server sets. False when the catalog has no such
+ * weapon.
+ */
+bool Kernel_GetCatalogWeaponDefinition(
+    KernelHandle* kernel,
+    uint8_t weapon_id,
+    KernelWeaponMechanicsDefinition* out_definition);
+
+/*
+ * ABI 104. What weapon_id would lock from origin along aim, on this client's
+ * view: for a lock reticle, or for the shooter to draw its own arcs at once
+ * rather than wait for the server. action_instance_id and commit_index seed
+ * the unfilled arcs. False when the catalog has no such lock weapon.
+ */
+bool Kernel_ClientQueryLockTargets(
+    KernelHandle* kernel,
+    uint8_t weapon_id,
+    KernelVec3 origin,
+    KernelVec3 aim,
+    uint32_t action_instance_id,
+    uint16_t commit_index,
+    KernelLockSelection* out_selection);
+
+/* ABI 104. Remote lock_instant commits as they are drawn. Each is returned
+ * once. */
+uint32_t Kernel_PollLockStrikeEvents(
+    KernelHandle* kernel,
+    KernelLockStrikeEvent* out_events,
+    uint32_t max_events);
+
+/* ABI 104. Lock missiles in flight, from the server's records. Not drained:
+ * the same missile is listed until a second after it arrives. */
+uint32_t Kernel_GetLockMissiles(
+    KernelHandle* kernel,
+    KernelLockMissileView* out_missiles,
+    uint32_t max_missiles);
+
 bool Kernel_ServerGetHomingState(
     KernelHandle* kernel,
     uint32_t net_id,

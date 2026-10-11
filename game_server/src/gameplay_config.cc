@@ -760,7 +760,7 @@ bool validate_weapon_mechanics(
          weapon.damage == 0) ||
         weapon.fire_action_template_id == 0u ||
         weapon.reload_action_template_id == 0u ||
-        weapon.fire_mode > KernelWeaponFireMode_TargetedStrike) {
+        weapon.fire_mode > KernelWeaponFireMode_LockMissile) {
         return false;
     }
     if (weapon.fire_mode == KernelWeaponFireMode_Projectile) {
@@ -773,7 +773,9 @@ bool validate_weapon_mechanics(
     // A melee weapon's reach is the cone on the collider template it names, so
     // it is deliberately not held to max_range the way the other instant modes
     // are. Mirrors validate_weapon_mechanics on the kernel side.
-    if (weapon.fire_mode == KernelWeaponFireMode_Melee) {
+    if (weapon.fire_mode == KernelWeaponFireMode_Melee ||
+        weapon.fire_mode == KernelWeaponFireMode_LockInstant ||
+        weapon.fire_mode == KernelWeaponFireMode_LockMissile) {
         return weapon.melee_collider_template_id != 0 &&
                weapon.projectile_template_id != 0;
     }
@@ -2672,6 +2674,7 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
             "pellet_spread",
             "segment_collider",
             "melee_collider",
+            "lock_collider",
             "projectile_template",
             "burst_count",
             "burst_spread_degrees",
@@ -2780,6 +2783,26 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
             throw std::runtime_error("melee weapon requires projectile_template");
         }
         KernelWeaponMechanicsDefinition weapon = melee_weapon(id, magazine_size);
+        weapon.reserve_magazines = reserve_magazines;
+        return weapon;
+    }
+    if (type == "lock_instant" || type == "lock_missile") {
+        if (node["projectile"] || node["area_effect"] || node["beam"]) {
+            throw std::runtime_error(
+                type + " weapons must use lock_collider and "
+                "projectile_template, not inline mechanics");
+        }
+        if (!node["lock_collider"]) {
+            throw std::runtime_error(type + " weapon requires lock_collider");
+        }
+        if (!node["projectile_template"]) {
+            throw std::runtime_error(
+                type + " weapon requires projectile_template");
+        }
+        KernelWeaponMechanicsDefinition weapon = melee_weapon(id, magazine_size);
+        weapon.fire_mode = type == "lock_instant"
+            ? KernelWeaponFireMode_LockInstant
+            : KernelWeaponFireMode_LockMissile;
         weapon.reserve_magazines = reserve_magazines;
         return weapon;
     }
@@ -8254,6 +8277,67 @@ void apply_weapon_template_references(
             continue;
         }
 
+        if (type == "lock_instant" || type == "lock_missile") {
+            // The cone, exactly as a melee weapon's: reach and angle on one
+            // collider template, so no max_range.
+            const std::uint32_t template_id =
+                collider_template_id_from_ref(document["lock_collider"], colliders);
+            weapons->definitions[weapon_id].melee_collider_template_id = template_id;
+            weapons->collider_template_ids[weapon_id] = template_id;
+            ProjectileTemplateConfig* shot_template =
+                projectile_template_from_ref(
+                    document["projectile_template"],
+                    projectile_templates);
+            KernelWeaponMechanicsDefinition& lock =
+                weapons->definitions[weapon_id];
+            shot_template->definition.weapon_id = weapon_id;
+            lock.projectile_template_id =
+                shot_template->definition.projectile_template_id;
+            lock.damage = shot_template->definition.mechanics.damage;
+            lock.collision_mask =
+                shot_template->definition.mechanics.collision_mask;
+            // A client draws at most this many arcs for one lock.
+            if (shot_template->definition.mechanics.max_hit_count >
+                KERNEL_MAX_LOCK_ARCS) {
+                throw std::runtime_error(
+                    type + " projectile_template max_hit_count is the lock size "
+                    "and cannot exceed 16: " + file);
+            }
+            if (type == "lock_missile") {
+                // A missile's longest flight, to the edge of the cone, is the
+                // shot's lifetime; it travels as one byte on the wire.
+                const std::uint32_t lifetime =
+                    shot_template->definition.mechanics.lifetime_ticks;
+                if (lifetime == 0u || lifetime > UINT8_MAX) {
+                    throw std::runtime_error(
+                        "lock_missile projectile_template lifetime_ticks is "
+                        "its longest flight and must be 1 to 255: " + file);
+                }
+                continue;
+            }
+            // Every commit spends a full lock's worth, M, whether or not M
+            // targets were found -- so the magazine has to hold whole locks,
+            // or its last commit would be refused for want of ammunition.
+            const std::uint32_t max_targets = std::max(
+                1u, shot_template->definition.mechanics.max_hit_count);
+            const ActionTemplateConfig* fire_action =
+                action_template_from_ref(
+                    document["fire_action_template"],
+                    action_templates,
+                    "fire_action_template");
+            if (fire_action->definition.ammo_cost_per_commit != max_targets) {
+                throw std::runtime_error(
+                    "lock_instant fire_action_template ammo_cost_per_commit "
+                    "must equal the shot template's max_hit_count: " + file);
+            }
+            if (lock.magazine_size % max_targets != 0u) {
+                throw std::runtime_error(
+                    "lock_instant magazine_size must be a multiple of the shot "
+                    "template's max_hit_count: " + file);
+            }
+            continue;
+        }
+
         if (type == "targeted_strike") {
             ProjectileTemplateConfig* strike_template =
                 projectile_template_from_ref(
@@ -8327,6 +8411,27 @@ void apply_weapon_template_references(
         }
         weapons->collider_template_ids[weapon_id] =
             collider_template_id_from_ref(collider_ref, colliders);
+    }
+
+    // A client tells which weapon a remote shooter fired by the fire action in
+    // its snapshot -- held_weapon_id reaches players only -- so a lock-on
+    // weapon's fire action has to name that weapon alone.
+    for (std::size_t lock_id = 0; lock_id < weapons->definitions.size(); ++lock_id) {
+        const KernelWeaponMechanicsDefinition& lock = weapons->definitions[lock_id];
+        if (!weapons->configured[lock_id] ||
+            lock.fire_mode != KernelWeaponFireMode_LockInstant) {
+            continue;
+        }
+        for (std::size_t other = 0; other < weapons->definitions.size(); ++other) {
+            if (other != lock_id && weapons->configured[other] &&
+                weapons->definitions[other].fire_action_template_id ==
+                    lock.fire_action_template_id) {
+                throw std::runtime_error(
+                    "a lock-on weapon's fire_action_template cannot be shared "
+                    "with another weapon: " + weapons->names[lock_id] +
+                    " and " + weapons->names[other]);
+            }
+        }
     }
 }
 
@@ -10747,7 +10852,9 @@ std::vector<std::string> validate_gameplay_config(
         if (config.weapons.configured[id] &&
             (weapon.fire_mode == KernelWeaponFireMode_Hitscan ||
              weapon.fire_mode == KernelWeaponFireMode_Shotgun ||
-             weapon.fire_mode == KernelWeaponFireMode_Melee)) {
+             weapon.fire_mode == KernelWeaponFireMode_Melee ||
+             weapon.fire_mode == KernelWeaponFireMode_LockInstant ||
+             weapon.fire_mode == KernelWeaponFireMode_LockMissile)) {
             unspawned_shot_ids.push_back(weapon.projectile_template_id);
         }
     }
@@ -11474,6 +11581,17 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
     storage.definition.skeleton_assets = storage.skeleton_assets.data();
     storage.definition.skeleton_asset_count =
         static_cast<std::uint32_t>(storage.skeleton_assets.size());
+    for (std::size_t weapon_id = 0;
+         weapon_id < config.weapons.definitions.size();
+         ++weapon_id) {
+        if (config.weapons.configured[weapon_id]) {
+            storage.weapon_definitions.push_back(
+                config.weapons.definitions[weapon_id]);
+        }
+    }
+    storage.definition.weapon_definitions = storage.weapon_definitions.data();
+    storage.definition.weapon_definition_count =
+        static_cast<std::uint32_t>(storage.weapon_definitions.size());
     return storage;
 }
 

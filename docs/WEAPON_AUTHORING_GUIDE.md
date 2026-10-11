@@ -79,6 +79,8 @@ projectile_template: smg_shot
 | `area_effect` | — |
 | `beam` | — |
 | `targeted_strike` | `max_range` |
+| `lock_instant` | `lock_collider` |
+| `lock_missile` | `lock_collider` |
 
 **Optional**
 
@@ -92,6 +94,75 @@ projectile_template: smg_shot
 `hitscan` and `shotgun` resolve instantly by raycast and spawn nothing. They
 still name a projectile template, because that is where their damage and target
 mask are authored — and it is also what the client uses to find the tracer art.
+
+### weapon_type: lock_instant
+
+Locks onto the nearest actors inside a cone and damages each of them at once on
+every commit. Nothing spawns. This is the chain lightning shape.
+
+```yaml
+id: 18
+name: Chain Lightning
+weapon_type: lock_instant
+magazine_size: 24              # a multiple of max_hit_count
+fire_action_template: chain_lightning_fire   # ammo_cost_per_commit: 6
+reload_action_template: chain_lightning_reload
+lock_collider: chain_lightning_cone          # shape: cone, purpose: damage
+projectile_template: chain_lightning_bolt    # damage, collision_mask, max_hit_count: 6
+```
+
+- **The cone** is `lock_collider`, a cone collider template with `purpose:
+  damage`. Its `range` and `fov_degrees` are the reach. The angle is measured
+  in 3D, so a target straight overhead is outside a cone aimed at the horizon.
+  `max_range` is not read.
+- **How many** (M) is the shot template's `max_hit_count`. The nearest M
+  actors in the cone are locked; ties go to the lower net id.
+- **Walls**: a target that terrain or a static obstacle hides from the shooter
+  is skipped, and the next nearest takes its place.
+- **Sides**: only actors whose hit collider is on a side the shot's
+  `collision_mask` names. Name the side (see below).
+- **Ammunition**: every commit spends a full lock, even when fewer than M
+  targets, or none, were found. So a magazine always empties in the same time.
+  The loader enforces two rules:
+  - The fire action's `ammo_cost_per_commit` must equal `max_hit_count`.
+  - `magazine_size` must be a multiple of it.
+- **Its own fire action**: the fire action template cannot be shared with any
+  other weapon. A client recognizes a remote shooter's lock weapon by its fire
+  action.
+- Targets are tested where the shooter saw them (lag compensated), at their
+  hitbox centre.
+
+### weapon_type: lock_missile
+
+The same lock as `lock_instant` (cone, nearest first, walls, sides), but each
+commit fires **one** missile, at the next locked target in turn. The first
+commit goes to the nearest, the second to the second nearest, and so on,
+wrapping around. The hit is certain: it is decided when the missile is fired
+and lands when the missile arrives. Nothing is simulated in flight. Clients
+are told the target and the arrival and draw the flight themselves.
+
+```yaml
+id: 19
+name: Magic Missile
+weapon_type: lock_missile
+magazine_size: 24
+fire_action_template: magic_missile_fire     # hold, commit_interval_ticks: 3
+reload_action_template: magic_missile_reload
+lock_collider: magic_missile_cone
+projectile_template: magic_missile_bolt      # damage, collision_mask, max_hit_count, lifetime_ticks
+```
+
+- **Flight time**: the shot template's `lifetime_ticks` (1 to 255) is the
+  flight to the edge of the cone. A nearer target is reached proportionally
+  sooner, and never in less than one tick.
+- **A commit that locks nothing spends nothing.** It still counts as a commit,
+  so the hold keeps running and the next commit looks again. A magazine
+  therefore lasts as long as there was something to shoot at.
+- **The target's death cancels the hit.** A missile still in flight when its
+  target dies does nothing, even if the target is revived before it would
+  have landed.
+- Clients get no `FireConfirmed` for a commit that locked nothing. Draw
+  missiles from the missile records, not from fire events.
 
 ### weapon_type: targeted_strike
 

@@ -1,0 +1,10 @@
+id: 45
+name: magic_missile_cone
+# Magic Missile's lock cone. Its range is also the farthest flight: the shot
+# template's lifetime_ticks is how long a missile takes to reach a target at
+# the edge of it, and nearer targets are reached proportionally sooner.
+shape: cone
+range: 25.0
+fov_degrees: 60.0
+purpose: damage
+layer: projectile

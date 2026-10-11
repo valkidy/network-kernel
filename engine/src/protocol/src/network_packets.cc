@@ -245,7 +245,12 @@ enum class SnapshotSectionType : std::uint16_t {
     kGeneric = 4,
     kProjectileBeam = 5,
     kActorAgent = 6,
+    // Snapshot schema 30. Lock-on missiles, not entities: written only when
+    // there is one, like the beam section.
+    kLockMissile = 7,
 };
+
+constexpr std::size_t kSnapshotLockMissilePayloadSize = 12;
 
 enum AgentSnapshotRecordFlag : std::uint8_t {
     kAgentSnapshotHasActionTimeline = 1u << 0,
@@ -596,8 +601,11 @@ std::vector<std::uint8_t> encode_snapshot_packet(
     // reader is driven by this count, so a variable number of sections is fine.
     const bool has_beam_section =
         !section_entities(snapshot, SnapshotSectionType::kProjectileBeam).empty();
-    payload.write_u16(
-        has_beam_section ? kSnapshotSectionCount + 1 : kSnapshotSectionCount);
+    const bool has_missile_section = !snapshot.lock_missiles.empty() &&
+        snapshot.lock_missiles.size() <= UINT16_MAX;
+    payload.write_u16(static_cast<std::uint16_t>(
+        kSnapshotSectionCount + (has_beam_section ? 1u : 0u) +
+        (has_missile_section ? 1u : 0u)));
     payload.write_u16(0);
 
     for (const SnapshotSectionType section_type : {
@@ -775,6 +783,18 @@ std::vector<std::uint8_t> encode_snapshot_packet(
         }
     }
 
+    if (has_missile_section) {
+        payload.write_u16(static_cast<std::uint16_t>(SnapshotSectionType::kLockMissile));
+        payload.write_u16(static_cast<std::uint16_t>(snapshot.lock_missiles.size()));
+        for (const SnapshotLockMissile& missile : snapshot.lock_missiles) {
+            payload.write_u32(missile.shooter_net_id);
+            payload.write_u32(missile.target_net_id);
+            payload.write_u16(missile.commit_index);
+            payload.write_u8(missile.launch_tick_delta);
+            payload.write_u8(missile.flight_ticks);
+        }
+    }
+
     return protocol_internal::wrap_packet(
         MessageType::kSnapshotPacket,
         payload.bytes(),
@@ -814,8 +834,10 @@ bool decode_snapshot_packet(
     // either the four sections every packet always has or those plus the beam
     // one. Requiring exactly four here rejected the entire packet the moment
     // anything fired a beam, which drops every entity in it, not just the beam.
-    if ((section_count != kSnapshotSectionCount &&
-         section_count != kSnapshotSectionCount + 1) ||
+    // Plus the beam section, the missile section, or both, each written only
+    // when it has something in it.
+    if (section_count < kSnapshotSectionCount ||
+        section_count > kSnapshotSectionCount + 2 ||
         reserved != 0) {
         return false;
     }
@@ -829,6 +851,27 @@ bool decode_snapshot_packet(
         }
         const SnapshotSectionType section_type =
             static_cast<SnapshotSectionType>(raw_section_type);
+        if (section_type == SnapshotSectionType::kLockMissile) {
+            if (entity_count == 0u || !snapshot.lock_missiles.empty()) {
+                return false;
+            }
+            snapshot.lock_missiles.reserve(entity_count);
+            for (std::uint16_t index = 0; index < entity_count; ++index) {
+                SnapshotLockMissile missile;
+                if (!reader.read_u32(&missile.shooter_net_id) ||
+                    !reader.read_u32(&missile.target_net_id) ||
+                    !reader.read_u16(&missile.commit_index) ||
+                    !reader.read_u8(&missile.launch_tick_delta) ||
+                    !reader.read_u8(&missile.flight_ticks) ||
+                    missile.shooter_net_id == 0u ||
+                    missile.target_net_id == 0u ||
+                    missile.flight_ticks == 0u) {
+                    return false;
+                }
+                snapshot.lock_missiles.push_back(missile);
+            }
+            continue;
+        }
         AgentPositionFrame agent_frame;
         if (section_type == SnapshotSectionType::kActorAgent) {
             if (!reader.read_vec3(&agent_frame.anchor) ||
@@ -1258,6 +1301,10 @@ std::size_t estimate_snapshot_packet_size(const WorldSnapshot& snapshot) {
     std::size_t size = estimate_snapshot_base_packet_size();
     for (const EntitySnapshot& entity : snapshot.entities) {
         size += estimate_snapshot_entity_size(entity);
+    }
+    if (!snapshot.lock_missiles.empty()) {
+        size += kSnapshotSectionHeaderPayloadSize +
+            snapshot.lock_missiles.size() * kSnapshotLockMissilePayloadSize;
     }
     return size;
 }

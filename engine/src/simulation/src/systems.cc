@@ -3138,6 +3138,11 @@ void EntityLifecycleSystem::enter_death_state(
             damage.target_net_id,
             damage.source_peer,
             damage.source_net_id);
+        // A hit scheduled against this life -- a lock-on missile still in
+        // flight -- must not land on the next one, however soon a revive
+        // comes. Dropping it here, at the death, means no respawn delay has to
+        // be tuned against the longest flight.
+        engine.damage_pipeline_.cancel_pending_for_target(damage.target_net_id);
         // What it had in its hands falls where it was held. The dead make no
         // requests, so left carried it would stay out of everyone's reach
         // until a revive -- or for good, with none to come.

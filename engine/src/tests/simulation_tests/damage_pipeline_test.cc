@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
@@ -127,7 +128,7 @@ void drain_ready_damage_does_not_apply_health_until_damage_system() {
     });
 
     const std::vector<network_example::ConfirmedDamage> ready =
-        pipeline.drain_ready_damage(world, 3000);
+        pipeline.drain_ready_damage(world, 3000, UINT32_MAX);
     require(ready.size() == 1);
     require(ready[0].target_net_id == enemy);
     require(ready[0].source_code == 3);

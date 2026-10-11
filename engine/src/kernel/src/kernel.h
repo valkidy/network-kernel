@@ -422,6 +422,22 @@ public:
         NetId net_id,
         std::uint8_t weapon_id,
         KernelWeaponMechanicsDefinition* out_weapon_mechanics) const;
+    bool get_catalog_weapon_definition(
+        std::uint8_t weapon_id,
+        KernelWeaponMechanicsDefinition* out_definition) const;
+    bool client_query_lock_targets(
+        std::uint8_t weapon_id,
+        KernelVec3 origin,
+        KernelVec3 aim,
+        std::uint32_t action_instance_id,
+        std::uint16_t commit_index,
+        KernelLockSelection* out_selection) const;
+    std::uint32_t poll_lock_strike_events(
+        KernelLockStrikeEvent* out_events,
+        std::uint32_t max_events);
+    std::uint32_t get_lock_missiles(
+        KernelLockMissileView* out_missiles,
+        std::uint32_t max_missiles) const;
     bool server_get_homing_state(
         NetId net_id,
         KernelHomingState* out_state) const;
@@ -1141,6 +1157,11 @@ private:
     // stepping entity is relevant to, and seeds a session that has just started
     // seeing an entity with where its feet currently are.
     void flush_locomotion_steps();
+    // This session's share of the missiles fired since the last snapshot:
+    // those whose shooter it sees, its own included.
+    std::vector<SnapshotLockMissile> lock_missiles_for(
+        const PeerSession& session) const;
+    void handle_client_lock_missiles(const WorldSnapshot& snapshot);
     void send_locomotion_steps(
         PeerSession* session,
         const LocomotionStepBatchPacket& packet);
@@ -1264,6 +1285,38 @@ private:
     // event channel will carry; nothing drains it over the wire yet.
     std::vector<PendingLocomotionStep> pending_follower_steps_;
     std::vector<PendingLocomotionStep> outgoing_locomotion_steps_;
+    // Lock-on missiles the weapon passes fired since the last snapshot. Their
+    // hits are already scheduled; these are only reported, in the snapshot.
+    std::vector<LockMissileLaunch> pending_lock_missiles_;
+    // A client's lock-on missiles, from the server's records: what to draw and
+    // when it lands. Kept until a little after arrival.
+    struct ClientLockMissile {
+        NetId shooter_net_id = 0;
+        std::uint16_t commit_index = 0;
+        NetId target_net_id = 0;
+        std::uint32_t launch_tick = 0;
+        std::uint32_t arrival_tick = 0;
+    };
+    std::vector<ClientLockMissile> client_lock_missiles_;
+    // Remote lock_instant commits resolved as they were drawn, for Unity to
+    // poll. Bounded: the oldest go first if nobody polls.
+    std::vector<KernelLockStrikeEvent> client_lock_strike_events_;
+    // A lock weapon's lock from one aim, on this client's drawn world. Both
+    // the query export and the remote strikes come through here.
+    bool resolve_client_lock(
+        const WeaponMechanicsDefinition& weapon,
+        NetId shooter_net_id,
+        PeerId shooter_peer,
+        const glm::vec3& origin,
+        const glm::vec3& aim,
+        std::uint32_t action_instance_id,
+        std::uint16_t commit_index,
+        KernelLockSelection* out_selection) const;
+    // The catalog lock_instant weapon a fire action belongs to, or null. The
+    // loader keeps that action to the one weapon.
+    const WeaponMechanicsDefinition* catalog_lock_instant_for_fire_action(
+        std::uint32_t action_template_id) const;
+    void derive_lock_strikes(const KernelRemoteActionPresentationEvent& event);
     std::uint32_t follower_locomotion_tick_ = 0;
     bool has_follower_locomotion_tick_ = false;
     WorldSnapshot latest_snapshot_;
@@ -1417,6 +1470,9 @@ private:
     KernelBenchmarkStats benchmark_stats_{};
     std::uint32_t catalog_version_ = 0;
     std::uint64_t catalog_hash_ = 0;
+    // The catalog's weapons, installed in every mode (ABI 104). Read-only:
+    // nothing fires from it.
+    WeaponTuning catalog_weapons_{};
     KernelGameplayCatalogManifest gameplay_catalog_manifest_{};
     std::vector<std::uint8_t> gameplay_catalog_sync_bundle_;
     std::vector<std::uint8_t> downloaded_gameplay_catalog_bundle_;

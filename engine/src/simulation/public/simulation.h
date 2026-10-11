@@ -26,6 +26,24 @@ struct QueuedInput {
     NetId controlled_net_id = 0;
 };
 
+// One lock-on missile, as the weapon system decided it on a commit: who it is
+// certain to hit and when. The damage is already scheduled in the pipeline;
+// this is what clients are told, so they can draw a flight that arrives on
+// arrival_tick. Nothing simulates the missile itself.
+struct LockMissileLaunch {
+    NetId shooter_net_id = 0;
+    PeerId owner_peer = 0;
+    std::uint32_t action_instance_id = 0;
+    // The commit it was fired on, counted from zero.
+    std::uint16_t commit_index = 0;
+    std::uint8_t burst_index = 0;
+    NetId target_net_id = 0;
+    std::uint32_t launch_tick = 0;
+    // 1..255: the flight is never longer than the shot template's
+    // lifetime_ticks, which the loader holds to 255.
+    std::uint8_t flight_ticks = 1;
+};
+
 struct WeaponSimulationContext {
     const HistoryBuffer* history_buffer = nullptr;
     const HistoryFrame* rewind_frame = nullptr;
@@ -39,6 +57,9 @@ struct WeaponSimulationContext {
     // silently does nothing -- which is why apply_melee_damage falls back to
     // submitting plain damage when there is nowhere to put the batches.
     std::vector<ActionGraphCommandBatch>* action_graph_batches = nullptr;
+    // Where lock-on missiles are reported. Left null, they still hit -- the
+    // damage is scheduled either way -- but no client is told to draw them.
+    std::vector<LockMissileLaunch>* lock_missile_launches = nullptr;
 };
 
 struct DamageRequest {
@@ -56,6 +77,13 @@ struct DamageRequest {
     std::uint16_t hit_zone = kHitZoneUnscaled;
     // Explicit stagger meter this hit adds; negative derives it from damage.
     float stagger = kStaggerDerivedFromDamage;
+    // A hit scheduled for a later tick -- a lock-on missile that is certain to
+    // land, decided when it was fired. Zero, the default, is a hit that lands
+    // as soon as the pipeline confirms it. A scheduled hit waits for this
+    // tick instead of a confirm time, and takes no defensive grace on top: its
+    // hit_time_us is already the arrival, which is what a dodge is judged
+    // against. Ticks, not microseconds, like every other gameplay time.
+    std::uint32_t apply_tick = 0;
 };
 
 struct ConfirmedDamage {
@@ -296,15 +324,22 @@ public:
         std::uint8_t source_code,
         std::uint16_t damage,
         std::uint64_t hit_time_us);
+    // `current_tick` decides scheduled hits (apply_tick); everything else is
+    // decided by `server_time_us`, as it always was.
     std::vector<ConfirmedDamage> drain_ready_damage(
         const World& world,
-        std::uint64_t server_time_us);
+        std::uint64_t server_time_us,
+        std::uint32_t current_tick);
     void confirm_ready(
         World& world,
         std::uint64_t server_time_us,
         std::uint32_t current_tick,
         std::vector<KernelEvent>* events);
     std::uint32_t pending_count() const;
+    // Drops every hit still on its way to `target_net_id`, queued or pending.
+    // Called when the target dies: a hit locked onto a life must not land on
+    // the next one, however soon the target is revived.
+    void cancel_pending_for_target(NetId target_net_id);
 
 private:
     enum class DefensiveActionType {
@@ -334,6 +369,7 @@ private:
         bool canceled = false;
         bool parry_applied = false;
         float stagger = kStaggerDerivedFromDamage;
+        std::uint32_t apply_tick = 0;
     };
 
     void apply_defensive_actions(PendingDamage* pending);

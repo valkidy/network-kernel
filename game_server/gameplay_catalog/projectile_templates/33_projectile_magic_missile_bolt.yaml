@@ -1,0 +1,24 @@
+id: 33
+name: magic_missile_bolt
+# One Magic Missile. Nothing spawns from this either: the hit is certain,
+# decided when the missile is fired and scheduled for its arrival, and clients
+# draw the flight from the server's record.
+#
+# max_hit_count is how many targets a hold cycles through: commit k goes to the
+# (k mod locked)-th nearest.
+type: standard
+movement_model: linear
+sync_mode: server_snapshot_only
+hit_response: destroy
+damage_shape: direct_hit
+damage: 8
+collision_mask: hostile_side
+max_hit_count: 4
+speed: 0.1
+# The longest flight, to the edge of the cone (25 m): 20 ticks, two thirds of
+# a second. 1 to 255.
+lifetime_ticks: 20
+gravity:
+  x: 0.0
+  y: 0.0
+  z: 0.0

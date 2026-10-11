@@ -161,7 +161,8 @@ bool DamagePipeline::submit_damage_request(const DamageRequest& request) {
 
 std::vector<ConfirmedDamage> DamagePipeline::drain_ready_damage(
     const World& world,
-    std::uint64_t server_time_us) {
+    std::uint64_t server_time_us,
+    std::uint32_t current_tick) {
     for (const DamageRequest& request : queued_damage_) {
         const std::optional<entt::entity> target_entity =
             world.find_entity(request.target_net_id);
@@ -195,6 +196,7 @@ std::vector<ConfirmedDamage> DamagePipeline::drain_ready_damage(
             false,
             false,
             request.stagger,
+            request.apply_tick,
         };
         apply_defensive_actions(&pending);
         pending_damage_.push_back(pending);
@@ -228,7 +230,13 @@ std::vector<ConfirmedDamage> DamagePipeline::drain_ready_damage(
     std::vector<PendingDamage> still_pending;
     still_pending.reserve(pending_damage_.size());
     for (const PendingDamage& pending : pending_damage_) {
-        if (server_time_us < pending.confirm_time_us) {
+        // A scheduled hit waits for its tick alone. Its confirm time -- and
+        // with it the defensive grace folded into it -- is not consulted: the
+        // hit time is already the arrival, which is what a dodge is judged by.
+        const bool waiting = pending.apply_tick != 0u
+            ? current_tick < pending.apply_tick
+            : server_time_us < pending.confirm_time_us;
+        if (waiting) {
             still_pending.push_back(pending);
             continue;
         }
@@ -260,13 +268,29 @@ void DamagePipeline::confirm_ready(
     std::uint32_t current_tick,
     std::vector<KernelEvent>* events) {
     const std::vector<ConfirmedDamage> ready_damage =
-        drain_ready_damage(world, server_time_us);
+        drain_ready_damage(world, server_time_us, current_tick);
     apply_damage_applications(world, ready_damage, current_tick, events);
 }
 
 std::uint32_t DamagePipeline::pending_count() const {
     return static_cast<std::uint32_t>(
         pending_damage_.size() + queued_damage_.size());
+}
+
+void DamagePipeline::cancel_pending_for_target(NetId target_net_id) {
+    queued_damage_.erase(
+        std::remove_if(
+            queued_damage_.begin(),
+            queued_damage_.end(),
+            [target_net_id](const DamageRequest& request) {
+                return request.target_net_id == target_net_id;
+            }),
+        queued_damage_.end());
+    for (PendingDamage& pending : pending_damage_) {
+        if (pending.target_net_id == target_net_id) {
+            pending.canceled = true;
+        }
+    }
 }
 
 void DamagePipeline::apply_defensive_actions(PendingDamage* pending) {

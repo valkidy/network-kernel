@@ -175,7 +175,7 @@ void a_beam_passes_through_it() {
         for (std::uint32_t tick = 1; tick <= 30; ++tick) {
             simulate_beams(world, tick, 1.0f / 30.0f, tick * 33333ull, &events, &pipeline);
             apply_damage_applications(
-                world, pipeline.drain_ready_damage(world, tick * 33333ull), tick,
+                world, pipeline.drain_ready_damage(world, tick * 33333ull, UINT32_MAX), tick,
                 &events);
         }
         require(held ? hp(world, target) == 50u : hp(world, target) < 50u);

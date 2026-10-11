@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -119,7 +120,7 @@ void beam_damages_targets_with_dps_accumulator() {
     std::vector<KernelEvent> events;
     network_example::simulate_beams(world, 1, 1.0f / 30.0f, 33333, &events, &pipeline);
     std::vector<network_example::ConfirmedDamage> ready =
-        pipeline.drain_ready_damage(world, 33333);
+        pipeline.drain_ready_damage(world, 33333, UINT32_MAX);
     require(ready.size() == 1);
     require(ready[0].target_net_id == enemy);
     require(ready[0].damage == 1);
@@ -157,7 +158,7 @@ void beam_respects_range_radius_and_collision_mask() {
     std::vector<KernelEvent> events;
     network_example::simulate_beams(world, 1, 1.0f / 30.0f, 33333, &events, &pipeline);
     const std::vector<network_example::ConfirmedDamage> ready =
-        pipeline.drain_ready_damage(world, 33333);
+        pipeline.drain_ready_damage(world, 33333, UINT32_MAX);
     require(ready.size() == 1);
     require(ready[0].target_net_id == in_beam);
     network_example::apply_damage_applications(world, ready, 1, &events);
@@ -505,7 +506,7 @@ void beam_is_blocked_by_cover_regardless_of_side() {
                 control_world, 1, 1.0f / 30.0f, 33333, &control_events,
                 &control_pipeline);
             const std::vector<network_example::ConfirmedDamage> control_ready =
-                control_pipeline.drain_ready_damage(control_world, 33333);
+                control_pipeline.drain_ready_damage(control_world, 33333, UINT32_MAX);
             network_example::apply_damage_applications(
                 control_world, control_ready, 1, &control_events);
             require(health(control_world, reachable).hp == 99);
@@ -533,7 +534,7 @@ void beam_is_blocked_by_cover_regardless_of_side() {
         network_example::simulate_beams(
             world, 1, 1.0f / 30.0f, 33333, &events, &pipeline);
         const std::vector<network_example::ConfirmedDamage> ready =
-            pipeline.drain_ready_damage(world, 33333);
+            pipeline.drain_ready_damage(world, 33333, UINT32_MAX);
         network_example::apply_damage_applications(world, ready, 1, &events);
         require(health(world, sheltered).hp == 100);
     }
@@ -568,7 +569,7 @@ void beam_damages_only_cover_on_a_side_it_attacks() {
         network_example::simulate_beams(
             world, 1, 1.0f / 30.0f, 33333, &events, &pipeline);
         const std::vector<network_example::ConfirmedDamage> ready =
-            pipeline.drain_ready_damage(world, 33333);
+            pipeline.drain_ready_damage(world, 33333, UINT32_MAX);
         network_example::apply_damage_applications(world, ready, 1, &events);
         return health(world, cover).hp;
     };
@@ -614,7 +615,7 @@ void beam_damages_cover_without_a_side() {
     network_example::simulate_beams(
         world, 1, 1.0f / 30.0f, 33333, &events, &pipeline);
     const std::vector<network_example::ConfirmedDamage> ready =
-        pipeline.drain_ready_damage(world, 33333);
+        pipeline.drain_ready_damage(world, 33333, UINT32_MAX);
     network_example::apply_damage_applications(world, ready, 1, &events);
     require(health(world, scenery).hp == 99);
 }

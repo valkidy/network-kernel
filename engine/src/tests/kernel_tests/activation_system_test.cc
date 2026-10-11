@@ -150,7 +150,9 @@ void activated_prop_applies_damage_exactly_once() {
     require(engine.damage_pipeline_.pending_count() == 2);
 
     const auto ready = engine.damage_pipeline_.drain_ready_damage(
-        engine.world_, std::numeric_limits<std::uint64_t>::max());
+        engine.world_,
+        std::numeric_limits<std::uint64_t>::max(),
+        std::numeric_limits<std::uint32_t>::max());
     require(ready.size() == 2);
     require(ready[0].source_net_id == prop);
     require(ready[0].target_net_id == prop);
@@ -274,7 +276,9 @@ void collision_prop_applies_damage_on_contact_enter() {
     require(engine.damage_pipeline_.pending_count() == 2);
 
     const auto ready = engine.damage_pipeline_.drain_ready_damage(
-        engine.world_, std::numeric_limits<std::uint64_t>::max());
+        engine.world_,
+        std::numeric_limits<std::uint64_t>::max(),
+        std::numeric_limits<std::uint32_t>::max());
     require(ready.size() == 2);
     require(ready[0].source_net_id == prop);
     require(ready[0].target_net_id == target);
@@ -398,7 +402,9 @@ void lifecycle_triggers_capture_context_before_prop_destruction() {
     require(spawned != 0u);
 
     const auto ready = engine.damage_pipeline_.drain_ready_damage(
-        engine.world_, std::numeric_limits<std::uint64_t>::max());
+        engine.world_,
+        std::numeric_limits<std::uint64_t>::max(),
+        std::numeric_limits<std::uint32_t>::max());
     require(ready.size() == 1);
     require(ready.front().source_net_id == prop);
     require(ready.front().target_net_id == instigator);
@@ -495,7 +501,9 @@ void health_change_applies_signed_clamped_delta() {
     require(engine.server_activate_entity(activation));
     require(engine.damage_pipeline_.pending_count() == 1u);
     const auto ready = engine.damage_pipeline_.drain_ready_damage(
-        engine.world_, std::numeric_limits<std::uint64_t>::max());
+        engine.world_,
+        std::numeric_limits<std::uint64_t>::max(),
+        std::numeric_limits<std::uint32_t>::max());
     require(ready.size() == 1u);
     require(ready.front().damage == 30u);
     const auto depleted = network_example::apply_damage_applications(
@@ -707,7 +715,9 @@ void static_collision_runs_once_for(
     require(ice_count == 1u);
 
     const auto ready = engine.damage_pipeline_.drain_ready_damage(
-        engine.world_, std::numeric_limits<std::uint64_t>::max());
+        engine.world_,
+        std::numeric_limits<std::uint64_t>::max(),
+        std::numeric_limits<std::uint32_t>::max());
     const auto depleted = network_example::apply_damage_applications(
         engine.world_, ready, 1, nullptr);
     require(depleted.size() == 1u);
