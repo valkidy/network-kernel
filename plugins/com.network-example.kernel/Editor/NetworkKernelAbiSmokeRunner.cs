@@ -24,7 +24,7 @@ namespace NetworkExample.Kernel.Editor
             KernelAbi.ValidateNativeAbi();
             GameServerAbi.ValidateNativeAbi();
             KernelAbiInfo info = KernelAbi.GetInfo();
-            Require(KernelConstants.AbiVersion == 102, "Managed kernel ABI version was not v102.");
+            Require(KernelConstants.AbiVersion == 104, "Managed kernel ABI version was not v104.");
             Require(
                 KernelLocalWeaponState.StructSize == 20 &&
                 info.local_weapon_state_size == KernelLocalWeaponState.StructSize,
@@ -250,6 +250,20 @@ namespace NetworkExample.Kernel.Editor
                 KernelLocalActionResultReason.StatusBlocked == (KernelLocalActionResultReason)17 &&
                 KernelConstants.VisualFlagSuspended == 0x00000400U,
                 "Kernel status-bound crowd control (ABI 102) mismatch.");
+            Require(
+                KernelPortalDefinition.StructSize == 40 &&
+                KernelLockSelection.StructSize == 276 &&
+                KernelLockStrikeEvent.StructSize == 296 &&
+                KernelLockMissileView.StructSize == 24 &&
+                KernelEventType.ActorTeleported == (KernelEventType)18 &&
+                KernelEntityTriggerActionType.Teleport == (KernelEntityTriggerActionType)15 &&
+                KernelWeaponFireMode.LockInstant == (KernelWeaponFireMode)5 &&
+                KernelWeaponFireMode.LockMissile == (KernelWeaponFireMode)6 &&
+                (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelEntityTemplateDefinition>("enter_trigger") ==
+                    (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelEntityTemplateDefinition>("trigger_collider_template_id") + 4 &&
+                (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelEntityTemplateDefinition>("portal") ==
+                    (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelEntityTemplateDefinition>("overlap_trigger_instigators") + 4,
+                "Kernel portal and lock-on weapon ABI mismatch.");
             Require(
                 KernelColliderShapeType.Capsule == (KernelColliderShapeType)5 &&
                 KernelColliderShapeType.Cylinder == (KernelColliderShapeType)6,

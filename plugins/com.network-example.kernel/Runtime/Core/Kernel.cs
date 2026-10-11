@@ -1200,6 +1200,83 @@ namespace NetworkExample.Kernel
                 ref weaponMechanics);
         }
 
+        public bool TryGetPortalDefinition(
+            uint entityTemplateId, out KernelPortalDefinition definition)
+        {
+            ThrowIfDisposed();
+            definition = new KernelPortalDefinition
+            {
+                struct_size = KernelPortalDefinition.StructSize,
+            };
+            return KernelNative.Kernel_GetPortalDefinition(handle, entityTemplateId, ref definition);
+        }
+
+        public bool TryGetCatalogWeaponDefinition(
+            byte weaponId, out KernelWeaponMechanicsDefinition definition)
+        {
+            ThrowIfDisposed();
+            definition = new KernelWeaponMechanicsDefinition();
+            PrepareWeaponMechanics(ref definition);
+            return KernelNative.Kernel_GetCatalogWeaponDefinition(handle, weaponId, ref definition);
+        }
+
+        /// <summary>Queries presentation targets on this client's view; authority decides damage.</summary>
+        public bool ClientQueryLockTargets(
+            byte weaponId, KernelVec3 origin, KernelVec3 aim,
+            uint actionInstanceId, ushort commitIndex, out KernelLockSelection selection)
+        {
+            ThrowIfDisposed();
+            selection = new KernelLockSelection();
+            PrepareLockSelection(ref selection);
+            return KernelNative.Kernel_ClientQueryLockTargets(
+                handle, weaponId, origin, aim, actionInstanceId, commitIndex, ref selection);
+        }
+
+        /// <summary>Drains remote lock-instant commits resolved against the client's render view.</summary>
+        public uint PollLockStrikeEvents(KernelLockStrikeEvent[] events)
+        {
+            ThrowIfDisposed();
+            if (events == null || events.Length == 0)
+            {
+                return 0;
+            }
+            for (int index = 0; index < events.Length; ++index)
+            {
+                events[index].struct_size = KernelLockStrikeEvent.StructSize;
+                PrepareLockSelection(ref events[index].selection);
+            }
+            return KernelNative.Kernel_PollLockStrikeEvents(handle, events, (uint)events.Length);
+        }
+
+        /// <summary>Lists authoritative lock missiles until one second after arrival; does not drain.</summary>
+        public uint GetLockMissiles(KernelLockMissileView[] missiles)
+        {
+            ThrowIfDisposed();
+            if (missiles == null || missiles.Length == 0)
+            {
+                return 0;
+            }
+            for (int index = 0; index < missiles.Length; ++index)
+            {
+                missiles[index].struct_size = KernelLockMissileView.StructSize;
+            }
+            return KernelNative.Kernel_GetLockMissiles(handle, missiles, (uint)missiles.Length);
+        }
+
+        private static void PrepareLockSelection(ref KernelLockSelection selection)
+        {
+            selection.struct_size = KernelLockSelection.StructSize;
+            if (selection.target_net_ids == null ||
+                selection.target_net_ids.Length != KernelConstants.MaxLockArcs)
+            {
+                selection.target_net_ids = new uint[KernelConstants.MaxLockArcs];
+            }
+            if (selection.arc_ends == null || selection.arc_ends.Length != KernelConstants.MaxLockArcs)
+            {
+                selection.arc_ends = new KernelVec3[KernelConstants.MaxLockArcs];
+            }
+        }
+
         public bool ServerGetHomingState(uint netId, out KernelHomingState state)
         {
             ThrowIfDisposed();
@@ -1386,6 +1463,13 @@ namespace NetworkExample.Kernel
             KernelSkeletonAssetDefinition[] skeletonAssets =
                 catalog.SkeletonAssets ?? new KernelSkeletonAssetDefinition[0];
 
+            KernelWeaponMechanicsDefinition[] weaponDefinitions =
+                catalog.WeaponDefinitions ?? new KernelWeaponMechanicsDefinition[0];
+            for (int index = 0; index < weaponDefinitions.Length; ++index)
+            {
+                PrepareWeaponMechanics(ref weaponDefinitions[index]);
+            }
+
             PrepareActorTemplates(actorTemplates);
             PrepareProjectileTemplates(projectileTemplates);
             PrepareColliderTemplates(colliderTemplates);
@@ -1401,6 +1485,7 @@ namespace NetworkExample.Kernel
             GCHandle colliderTemplatesHandle = PinArray(colliderTemplates, out IntPtr colliderTemplatesPtr);
             GCHandle colliderBindingsHandle = PinArray(colliderBindings, out IntPtr colliderBindingsPtr);
             IntPtr entityTemplatesPtr = MarshalArray(entityTemplates);
+            IntPtr weaponDefinitionsPtr = MarshalArray(weaponDefinitions);
             GCHandle actionTemplatesHandle = PinArray(actionTemplates, out IntPtr actionTemplatesPtr);
             IntPtr itemTemplatesPtr = MarshalArray(itemTemplates);
             GCHandle propPopulationRulesHandle =
@@ -1432,6 +1517,8 @@ namespace NetworkExample.Kernel
                     prop_population_rule_count = (uint)propPopulationRules.Length,
                     skeleton_assets = skeletonAssetsPtr,
                     skeleton_asset_count = (uint)skeletonAssets.Length,
+                    weapon_definitions = weaponDefinitionsPtr,
+                    weapon_definition_count = (uint)weaponDefinitions.Length,
                 };
                 return KernelNative.Kernel_LoadGameplayCatalog(
                     kernel,
@@ -1455,6 +1542,8 @@ namespace NetworkExample.Kernel
                     itemTemplates.Length);
                 FreeIfAllocated(propPopulationRulesHandle);
                 FreeIfAllocated(skeletonAssetsHandle);
+                FreeMarshaledArray<KernelWeaponMechanicsDefinition>(
+                    weaponDefinitionsPtr, weaponDefinitions.Length);
             }
         }
 
@@ -1513,6 +1602,9 @@ namespace NetworkExample.Kernel
                 PrepareActionTrigger(ref templates[index].collision_trigger);
                 PrepareActionTrigger(ref templates[index].health_depleted_trigger);
                 PrepareActionTrigger(ref templates[index].destroy_entity_trigger);
+                PrepareActionTrigger(ref templates[index].enter_trigger);
+                PrepareActionTrigger(ref templates[index].overlap_trigger);
+                PrepareActionTrigger(ref templates[index].exit_trigger);
                 if (templates[index].prop.struct_size == 0)
                 {
                     templates[index].prop.struct_size = KernelPropDefinition.StructSize;

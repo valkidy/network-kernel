@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 102;
+        public const uint AbiVersion = 104;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int LogMessageTextSize = 512;
@@ -136,6 +136,7 @@ namespace NetworkExample.Kernel
 
         // Largest KernelGameMessage body (ABI 101).
         public const int MaxGameMessageBytes = 512;
+        public const int MaxLockArcs = 16;
         // A weapon container's slot count; a weapon's category is its slot.
         public const int WeaponCategoryCount = 4;
         // KernelItemInstanceView.drop_tag (ABI 101): what drops at a death or
@@ -270,6 +271,8 @@ namespace NetworkExample.Kernel
         // Server-local: an actor went into a building (`code` = the building) or
         // came out (`code` = 0, `related_net_id` = the building it left).
         ShelterChanged = 17,
+        // Portal jump: code is the portal template id, net_id is the actor.
+        ActorTeleported = 18,
     }
 
     public enum KernelDespawnReason : uint
@@ -494,6 +497,7 @@ namespace NetworkExample.Kernel
         ApplyBlockActions = 12,
         ApplySuspendMovement = 13,
         ApplyUntargetable = 14,
+        Teleport = 15,
     }
 
     public enum KernelEntityRefSource
@@ -621,6 +625,8 @@ namespace NetworkExample.Kernel
         Projectile = 2,
         Melee = 3,
         TargetedStrike = 4,
+        LockInstant = 5,
+        LockMissile = 6,
     }
 
     public enum KernelProjectileMotionModel : byte
@@ -1879,6 +1885,7 @@ namespace NetworkExample.Kernel
         public KernelItemTemplateDefinition[] ItemTemplates;
         public KernelPropPopulationRuleDefinition[] PropPopulationRules;
         public KernelSkeletonAssetDefinition[] SkeletonAssets;
+        public KernelWeaponMechanicsDefinition[] WeaponDefinitions;
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
@@ -2014,6 +2021,8 @@ namespace NetworkExample.Kernel
         public uint skeleton_asset_count;
         public IntPtr status_effects;
         public uint status_effect_count;
+        public IntPtr weapon_definitions;
+        public uint weapon_definition_count;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelGameplayCatalogDefinition>();
     }
@@ -2631,6 +2640,70 @@ namespace NetworkExample.Kernel
         }
     }
 
+    public enum KernelOverlapInstigators : uint
+    {
+        Actors = 0,
+        Players = 1,
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelPortalDefinition
+    {
+        public uint struct_size;
+        public uint exit_entity_template_id;
+        public KernelVec3 destination;
+        public KernelVec3 forward;
+        public uint arrival_grace_ticks;
+        public uint arrival_immunity_ticks;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelPortalDefinition>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelLockSelection
+    {
+        public uint struct_size;
+        public byte weapon_id;
+        public byte target_count;
+        public byte arc_count;
+        public byte reserved;
+        public KernelVec3 origin;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = KernelConstants.MaxLockArcs)]
+        public uint[] target_net_ids;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = KernelConstants.MaxLockArcs)]
+        public KernelVec3[] arc_ends;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelLockSelection>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelLockStrikeEvent
+    {
+        public uint struct_size;
+        public uint shooter_net_id;
+        public uint action_instance_id;
+        public ushort commit_index;
+        public ushort reserved;
+        public uint server_tick;
+        public KernelLockSelection selection;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelLockStrikeEvent>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelLockMissileView
+    {
+        public uint struct_size;
+        public uint shooter_net_id;
+        public uint target_net_id;
+        public ushort commit_index;
+        public ushort reserved;
+        public uint launch_tick;
+        public uint arrival_tick;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelLockMissileView>();
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     public struct KernelEntityTemplateDefinition
     {
@@ -2672,6 +2745,14 @@ namespace NetworkExample.Kernel
         public uint shelter_capacity;
         // 0 or 1 (ABI 96): occupants drop out of every agent's vision.
         public uint shelter_hides_occupants;
+        // ABI 103: prop trigger volumes and portal destination.
+        public uint trigger_collider_template_id;
+        public KernelActionTriggerDefinition enter_trigger;
+        public KernelActionTriggerDefinition overlap_trigger;
+        public KernelActionTriggerDefinition exit_trigger;
+        public uint overlap_trigger_mask;
+        public uint overlap_trigger_instigators;
+        public KernelPortalDefinition portal;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelEntityTemplateDefinition>();
     }

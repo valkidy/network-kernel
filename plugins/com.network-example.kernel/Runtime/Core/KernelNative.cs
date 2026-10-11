@@ -621,6 +621,30 @@ namespace NetworkExample.Kernel
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_GetPortalDefinition(
+            IntPtr kernel, uint entityTemplateId, ref KernelPortalDefinition definition);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_GetCatalogWeaponDefinition(
+            IntPtr kernel, byte weaponId, ref KernelWeaponMechanicsDefinition definition);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_ClientQueryLockTargets(
+            IntPtr kernel, byte weaponId, KernelVec3 origin, KernelVec3 aim,
+            uint actionInstanceId, ushort commitIndex, ref KernelLockSelection selection);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern uint Kernel_PollLockStrikeEvents(
+            IntPtr kernel, [Out] KernelLockStrikeEvent[] events, uint maxEvents);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern uint Kernel_GetLockMissiles(
+            IntPtr kernel, [Out] KernelLockMissileView[] missiles, uint maxMissiles);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
         internal static extern bool Kernel_ServerGetHomingState(
             IntPtr kernel,
             uint netId,

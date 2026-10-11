@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- aligns Unity bindings with ABI 104 for portals, trigger volumes and lock-on weapons, including Chain Lightning and Magic Missile
+
+
+0.7.0 release notes:
+
 - updates held and burst fire prediction for every shot, preserves released bullets in flight and refreshes water bubble staff tuning
 
 
