@@ -501,6 +501,26 @@ void hash_actor_template(
         hash_string(hash, parameter.first);
         hash_string(hash, parameter.second);
     }
+    hash_scalar(hash, actor_template.trigger_collider_template_id);
+    hash_scalar(hash, actor_template.portal.struct_size);
+    hash_string(hash, actor_template.portal_exit_template_ref);
+    hash_vec3(hash, actor_template.portal.destination);
+    hash_vec3(hash, actor_template.portal.forward);
+    hash_scalar(hash, actor_template.portal.arrival_grace_ticks);
+    hash_scalar(hash, actor_template.portal.arrival_immunity_ticks);
+    hash_scalar(hash, actor_template.overlap_trigger_mask);
+    hash_scalar(hash, actor_template.overlap_trigger_instigators);
+    for (const TriggerBindingConfig* trigger : {
+             &actor_template.enter_trigger,
+             &actor_template.overlap_trigger,
+             &actor_template.exit_trigger,
+         }) {
+        hash_string(hash, trigger->action_graph_ref);
+        for (const auto& parameter : trigger->parameters) {
+            hash_string(hash, parameter.first);
+            hash_string(hash, parameter.second);
+        }
+    }
     hash_scalar(hash, actor_template.prop.interaction.capability_flags);
     hash_scalar(hash, actor_template.prop.interaction.line_of_sight_required);
     hash_float(hash, actor_template.prop.interaction.interaction_range);
@@ -740,7 +760,7 @@ bool validate_weapon_mechanics(
          weapon.damage == 0) ||
         weapon.fire_action_template_id == 0u ||
         weapon.reload_action_template_id == 0u ||
-        weapon.fire_mode > KernelWeaponFireMode_TargetedStrike) {
+        weapon.fire_mode > KernelWeaponFireMode_LockMissile) {
         return false;
     }
     if (weapon.fire_mode == KernelWeaponFireMode_Projectile) {
@@ -753,7 +773,9 @@ bool validate_weapon_mechanics(
     // A melee weapon's reach is the cone on the collider template it names, so
     // it is deliberately not held to max_range the way the other instant modes
     // are. Mirrors validate_weapon_mechanics on the kernel side.
-    if (weapon.fire_mode == KernelWeaponFireMode_Melee) {
+    if (weapon.fire_mode == KernelWeaponFireMode_Melee ||
+        weapon.fire_mode == KernelWeaponFireMode_LockInstant ||
+        weapon.fire_mode == KernelWeaponFireMode_LockMissile) {
         return weapon.melee_collider_template_id != 0 &&
                weapon.projectile_template_id != 0;
     }
@@ -2360,7 +2382,8 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 parameter_reference_from_yaml(action["target"], "target");
             action_parameters = {&compiled_action.target_parameter};
         } else if (compiled_action.action_type == "apply_block_actions" ||
-                   compiled_action.action_type == "apply_untargetable") {
+                   compiled_action.action_type == "apply_untargetable" ||
+                   compiled_action.action_type == "teleport") {
             // Whom it holds, and nothing else: how long is the status's
             // duration_ticks, not the action's.
             for (const auto& field : action) {
@@ -2651,6 +2674,7 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
             "pellet_spread",
             "segment_collider",
             "melee_collider",
+            "lock_collider",
             "projectile_template",
             "burst_count",
             "burst_spread_degrees",
@@ -2762,6 +2786,26 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
         weapon.reserve_magazines = reserve_magazines;
         return weapon;
     }
+    if (type == "lock_instant" || type == "lock_missile") {
+        if (node["projectile"] || node["area_effect"] || node["beam"]) {
+            throw std::runtime_error(
+                type + " weapons must use lock_collider and "
+                "projectile_template, not inline mechanics");
+        }
+        if (!node["lock_collider"]) {
+            throw std::runtime_error(type + " weapon requires lock_collider");
+        }
+        if (!node["projectile_template"]) {
+            throw std::runtime_error(
+                type + " weapon requires projectile_template");
+        }
+        KernelWeaponMechanicsDefinition weapon = melee_weapon(id, magazine_size);
+        weapon.fire_mode = type == "lock_instant"
+            ? KernelWeaponFireMode_LockInstant
+            : KernelWeaponFireMode_LockMissile;
+        weapon.reserve_magazines = reserve_magazines;
+        return weapon;
+    }
     if (type == "area_effect") {
         if (node["projectile"] || node["area_effect"] || node["beam"]) {
             throw std::runtime_error(
@@ -2866,7 +2910,8 @@ TriggerBindingConfig trigger_binding_from_yaml(
     std::uint32_t source_kind,
     std::uint32_t template_kind,
     std::uint32_t template_id,
-    bool allow_collision_mask = false);
+    bool allow_collision_mask = false,
+    bool allow_instigators = false);
 
 std::uint32_t item_capability_from_yaml(const std::string& value);
 
@@ -2926,6 +2971,11 @@ std::uint32_t collider_purpose_from_yaml(const YAML::Node& node) {
     }
     if (value == "movement") {
         return KernelColliderPurpose_Movement;
+    }
+    // A trigger volume (ABI 103): a prop's physics.trigger_collider_template,
+    // never a physics body.
+    if (value == "trigger") {
+        return KernelColliderPurpose_Trigger;
     }
     throw std::runtime_error("unsupported collider purpose: " + value);
 }
@@ -4888,6 +4938,7 @@ EntityTemplateConfig entity_template_from_yaml(
                 "carry_offset",
                 "lifecycle",
                 "shelter",
+                "portal",
                 "loadout",
                 "camp",
                 "triggers",
@@ -4939,7 +4990,7 @@ EntityTemplateConfig entity_template_from_yaml(
         if (node["physics"]) {
             reject_unknown_keys(
                 node["physics"],
-                {"collider_template"},
+                {"collider_template", "trigger_collider_template"},
                 path,
                 source_kind,
                 KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
@@ -4947,6 +4998,29 @@ EntityTemplateConfig entity_template_from_yaml(
             if (node["physics"]["collider_template"]) {
                 entity_template.collider_template_id = collider_template_id_from_ref(
                     node["physics"]["collider_template"], colliders);
+            }
+            if (node["physics"]["trigger_collider_template"]) {
+                entity_template.trigger_collider_template_id =
+                    collider_template_id_from_ref(
+                        node["physics"]["trigger_collider_template"], colliders);
+                const auto collider = std::find_if(
+                    colliders.templates.begin(),
+                    colliders.templates.end(),
+                    [&](const ColliderTemplateConfig& candidate) {
+                        return candidate.definition.template_id ==
+                            entity_template.trigger_collider_template_id;
+                    });
+                if (collider == colliders.templates.end() ||
+                    collider->definition.purpose_flags !=
+                        KernelColliderPurpose_Trigger ||
+                    (collider->definition.shape_type !=
+                         KernelColliderShapeType_Aabb &&
+                     collider->definition.shape_type !=
+                         KernelColliderShapeType_OrientedBox)) {
+                    throw std::runtime_error(
+                        "trigger_collider_template must be a box with purpose: "
+                        "trigger and nothing else: " + path);
+                }
             }
         }
         entity_template.prop.struct_size = sizeof(entity_template.prop);
@@ -5117,6 +5191,57 @@ EntityTemplateConfig entity_template_from_yaml(
                     : 0u;
             }
         }
+        if (node["portal"]) {
+            const YAML::Node portal = node["portal"];
+            reject_unknown_keys(
+                portal,
+                {
+                    "exit_template",
+                    "destination",
+                    "forward",
+                    "arrival_grace_ticks",
+                    "arrival_immunity_ticks",
+                },
+                path,
+                source_kind,
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+                entity_template.actor_template_id);
+            if (entity_template.entity_type != KernelEntityType_Prop) {
+                throw std::runtime_error("portal is only supported on props: " + path);
+            }
+            if (!portal["destination"] || !portal["forward"]) {
+                throw std::runtime_error(
+                    "portal requires destination and forward: " + path);
+            }
+            entity_template.portal.struct_size = sizeof(KernelPortalDefinition);
+            entity_template.portal.destination = vec3_from_yaml(portal["destination"]);
+            KernelVec3 forward = vec3_from_yaml(portal["forward"]);
+            const float length = std::sqrt(
+                forward.x * forward.x + forward.y * forward.y +
+                forward.z * forward.z);
+            // Level, or down: an arrival facing up has nowhere to go.
+            if (!std::isfinite(length) || length < 0.0001f || forward.y > 0.0f) {
+                throw std::runtime_error(
+                    "portal forward must be non-zero and level or downward "
+                    "(y <= 0): " + path);
+            }
+            forward.x /= length;
+            forward.y /= length;
+            forward.z /= length;
+            entity_template.portal.forward = forward;
+            if (portal["exit_template"]) {
+                entity_template.portal_exit_template_ref =
+                    portal["exit_template"].as<std::string>();
+            }
+            if (portal["arrival_grace_ticks"]) {
+                entity_template.portal.arrival_grace_ticks =
+                    portal["arrival_grace_ticks"].as<std::uint32_t>();
+            }
+            if (portal["arrival_immunity_ticks"]) {
+                entity_template.portal.arrival_immunity_ticks =
+                    portal["arrival_immunity_ticks"].as<std::uint32_t>();
+            }
+        }
         if (node["interaction"]) {
             reject_unknown_keys(
                 node["interaction"],
@@ -5183,6 +5308,9 @@ EntityTemplateConfig entity_template_from_yaml(
                     "on_collision",
                     "on_health_depleted",
                     "on_destroy_entity",
+                    "on_enter",
+                    "on_overlap",
+                    "on_exit",
                 },
                 path,
                 source_kind,
@@ -5218,6 +5346,68 @@ EntityTemplateConfig entity_template_from_yaml(
                     KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
                     entity_template.actor_template_id,
                     true);
+            }
+            // A trigger volume's three triggers watch one set of actors, so
+            // they share what counts: every one names the same collision_mask
+            // and instigators.
+            bool volume_trigger_seen = false;
+            for (const auto& [key, binding] :
+                 std::initializer_list<std::pair<const char*, TriggerBindingConfig*>>{
+                     {"on_enter", &entity_template.enter_trigger},
+                     {"on_overlap", &entity_template.overlap_trigger},
+                     {"on_exit", &entity_template.exit_trigger},
+                 }) {
+                const YAML::Node trigger = node["triggers"][key];
+                if (!trigger) {
+                    continue;
+                }
+                if (!trigger["collision_mask"]) {
+                    throw std::runtime_error(
+                        std::string(key) + " requires collision_mask: " + path);
+                }
+                const std::uint32_t mask =
+                    collision_mask_from_yaml(trigger["collision_mask"]);
+                require_supported_collision_mask(
+                    mask, KERNEL_COLLISION_MASK_ACTOR, key);
+                if (mask == 0u) {
+                    throw std::runtime_error(
+                        std::string(key) + " collision_mask names no camp: " + path);
+                }
+                std::uint32_t instigators = KernelOverlapInstigators_Actors;
+                if (trigger["instigators"]) {
+                    const std::string value = trigger["instigators"].as<std::string>();
+                    if (value == "players") {
+                        instigators = KernelOverlapInstigators_Players;
+                    } else if (value != "actors") {
+                        throw std::runtime_error(
+                            std::string(key) +
+                            " instigators must be players or actors: " + path);
+                    }
+                }
+                if (volume_trigger_seen &&
+                    (mask != entity_template.overlap_trigger_mask ||
+                     instigators != entity_template.overlap_trigger_instigators)) {
+                    throw std::runtime_error(
+                        "on_enter, on_overlap and on_exit must share collision_mask "
+                        "and instigators: " + path);
+                }
+                volume_trigger_seen = true;
+                entity_template.overlap_trigger_mask = mask;
+                entity_template.overlap_trigger_instigators = instigators;
+                *binding = trigger_binding_from_yaml(
+                    trigger,
+                    path,
+                    source_kind,
+                    KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+                    entity_template.actor_template_id,
+                    true,
+                    true);
+            }
+            if (volume_trigger_seen &&
+                entity_template.trigger_collider_template_id == 0u) {
+                throw std::runtime_error(
+                    "on_enter, on_overlap and on_exit need "
+                    "physics.trigger_collider_template: " + path);
             }
             if (node["triggers"]["on_health_depleted"]) {
                 entity_template.health_depleted_trigger =
@@ -5833,8 +6023,17 @@ TriggerBindingConfig trigger_binding_from_yaml(
     std::uint32_t source_kind,
     std::uint32_t template_kind,
     std::uint32_t template_id,
-    bool allow_collision_mask) {
-    if (allow_collision_mask) {
+    bool allow_collision_mask,
+    bool allow_instigators) {
+    if (allow_instigators) {
+        reject_unknown_keys(
+            node,
+            {"action_graph", "parameters", "collision_mask", "instigators"},
+            path,
+            source_kind,
+            template_kind,
+            template_id);
+    } else if (allow_collision_mask) {
         reject_unknown_keys(
             node,
             {"action_graph", "parameters", "collision_mask"},
@@ -6995,11 +7194,16 @@ bool event_expression_available(
     if (expression == "event.item") {
         return trigger_name == "on_item_used";
     }
+    // A trigger volume's actor is its instigator and its target both, and
+    // the direction runs from the volume to it.
+    const bool volume_trigger = trigger_name == "on_enter" ||
+        trigger_name == "on_overlap" || trigger_name == "on_exit";
     if (expression == "event.target") {
         return trigger_name == "on_activated" ||
             trigger_name == "on_item_used" ||
             trigger_name == "on_collision" ||
-            trigger_name == "on_projectile_impact";
+            trigger_name == "on_projectile_impact" ||
+            volume_trigger;
     }
     if (expression == "event.instigator") {
         return trigger_name == "on_activated" ||
@@ -7010,7 +7214,8 @@ bool event_expression_available(
             trigger_name == "on_expired" ||
             trigger_name == "on_apply" ||
             trigger_name == "on_tick" ||
-            trigger_name == "on_expire";
+            trigger_name == "on_expire" ||
+            volume_trigger;
     }
     if (expression == "event.direction") {
         // on_destroy_entity: away from whoever destroyed it, or straight up
@@ -7020,7 +7225,8 @@ bool event_expression_available(
             trigger_name == "on_collision" ||
             trigger_name == "on_projectile_impact" ||
             trigger_name == "on_expired" ||
-            trigger_name == "on_destroy_entity";
+            trigger_name == "on_destroy_entity" ||
+            volume_trigger;
     }
     if (expression == "event.subject_direction") {
         // Only a projectile's own triggers have a subject that was going
@@ -7660,6 +7866,19 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
             compiled_action.reserve_refill_percent = action.reserve_refill_percent;
             continue;
         }
+        if (action.action_type == "teleport") {
+            // Mirrors the kernel: only a portal's volume knows who walked in.
+            if (trigger_name != "on_enter" && trigger_name != "on_overlap") {
+                throw std::runtime_error(
+                    "teleport is only supported in on_enter and on_overlap: " +
+                    binding.action_graph_ref);
+            }
+            compiled_action.action_type = KernelEntityTriggerActionType_Teleport;
+            compiled_action.target_source = entity_ref_source(
+                trigger_parameter_value(
+                    binding, graph_parameter(action.target_parameter)));
+            continue;
+        }
         if (action.action_type == "open_ui") {
             // Mirrors the kernel: only an activation has someone asking.
             if (trigger_name != "on_activated") {
@@ -8058,6 +8277,67 @@ void apply_weapon_template_references(
             continue;
         }
 
+        if (type == "lock_instant" || type == "lock_missile") {
+            // The cone, exactly as a melee weapon's: reach and angle on one
+            // collider template, so no max_range.
+            const std::uint32_t template_id =
+                collider_template_id_from_ref(document["lock_collider"], colliders);
+            weapons->definitions[weapon_id].melee_collider_template_id = template_id;
+            weapons->collider_template_ids[weapon_id] = template_id;
+            ProjectileTemplateConfig* shot_template =
+                projectile_template_from_ref(
+                    document["projectile_template"],
+                    projectile_templates);
+            KernelWeaponMechanicsDefinition& lock =
+                weapons->definitions[weapon_id];
+            shot_template->definition.weapon_id = weapon_id;
+            lock.projectile_template_id =
+                shot_template->definition.projectile_template_id;
+            lock.damage = shot_template->definition.mechanics.damage;
+            lock.collision_mask =
+                shot_template->definition.mechanics.collision_mask;
+            // A client draws at most this many arcs for one lock.
+            if (shot_template->definition.mechanics.max_hit_count >
+                KERNEL_MAX_LOCK_ARCS) {
+                throw std::runtime_error(
+                    type + " projectile_template max_hit_count is the lock size "
+                    "and cannot exceed 16: " + file);
+            }
+            if (type == "lock_missile") {
+                // A missile's longest flight, to the edge of the cone, is the
+                // shot's lifetime; it travels as one byte on the wire.
+                const std::uint32_t lifetime =
+                    shot_template->definition.mechanics.lifetime_ticks;
+                if (lifetime == 0u || lifetime > UINT8_MAX) {
+                    throw std::runtime_error(
+                        "lock_missile projectile_template lifetime_ticks is "
+                        "its longest flight and must be 1 to 255: " + file);
+                }
+                continue;
+            }
+            // Every commit spends a full lock's worth, M, whether or not M
+            // targets were found -- so the magazine has to hold whole locks,
+            // or its last commit would be refused for want of ammunition.
+            const std::uint32_t max_targets = std::max(
+                1u, shot_template->definition.mechanics.max_hit_count);
+            const ActionTemplateConfig* fire_action =
+                action_template_from_ref(
+                    document["fire_action_template"],
+                    action_templates,
+                    "fire_action_template");
+            if (fire_action->definition.ammo_cost_per_commit != max_targets) {
+                throw std::runtime_error(
+                    "lock_instant fire_action_template ammo_cost_per_commit "
+                    "must equal the shot template's max_hit_count: " + file);
+            }
+            if (lock.magazine_size % max_targets != 0u) {
+                throw std::runtime_error(
+                    "lock_instant magazine_size must be a multiple of the shot "
+                    "template's max_hit_count: " + file);
+            }
+            continue;
+        }
+
         if (type == "targeted_strike") {
             ProjectileTemplateConfig* strike_template =
                 projectile_template_from_ref(
@@ -8131,6 +8411,27 @@ void apply_weapon_template_references(
         }
         weapons->collider_template_ids[weapon_id] =
             collider_template_id_from_ref(collider_ref, colliders);
+    }
+
+    // A client tells which weapon a remote shooter fired by the fire action in
+    // its snapshot -- held_weapon_id reaches players only -- so a lock-on
+    // weapon's fire action has to name that weapon alone.
+    for (std::size_t lock_id = 0; lock_id < weapons->definitions.size(); ++lock_id) {
+        const KernelWeaponMechanicsDefinition& lock = weapons->definitions[lock_id];
+        if (!weapons->configured[lock_id] ||
+            lock.fire_mode != KernelWeaponFireMode_LockInstant) {
+            continue;
+        }
+        for (std::size_t other = 0; other < weapons->definitions.size(); ++other) {
+            if (other != lock_id && weapons->configured[other] &&
+                weapons->definitions[other].fire_action_template_id ==
+                    lock.fire_action_template_id) {
+                throw std::runtime_error(
+                    "a lock-on weapon's fire_action_template cannot be shared "
+                    "with another weapon: " + weapons->names[lock_id] +
+                    " and " + weapons->names[other]);
+            }
+        }
     }
 }
 
@@ -10551,7 +10852,9 @@ std::vector<std::string> validate_gameplay_config(
         if (config.weapons.configured[id] &&
             (weapon.fire_mode == KernelWeaponFireMode_Hitscan ||
              weapon.fire_mode == KernelWeaponFireMode_Shotgun ||
-             weapon.fire_mode == KernelWeaponFireMode_Melee)) {
+             weapon.fire_mode == KernelWeaponFireMode_Melee ||
+             weapon.fire_mode == KernelWeaponFireMode_LockInstant ||
+             weapon.fire_mode == KernelWeaponFireMode_LockMissile)) {
             unspawned_shot_ids.push_back(weapon.projectile_template_id);
         }
     }
@@ -10790,6 +11093,59 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
             &config.status_effect_templates);
         entity_template.collision_trigger_mask =
             authored_template.collision_trigger_mask;
+        entity_template.trigger_collider_template_id =
+            authored_template.trigger_collider_template_id;
+        entity_template.overlap_trigger_mask = authored_template.overlap_trigger_mask;
+        entity_template.portal = authored_template.portal;
+        if (!authored_template.portal_exit_template_ref.empty()) {
+            const auto exit = std::find_if(
+                config.entity_templates.begin(),
+                config.entity_templates.end(),
+                [&](const EntityTemplateConfig& candidate) {
+                    return candidate.name == authored_template.portal_exit_template_ref;
+                });
+            if (exit == config.entity_templates.end() ||
+                exit->entity_type != KernelEntityType_Prop ||
+                exit->portal.struct_size != 0u) {
+                throw std::runtime_error(
+                    "portal exit_template must name a prop that is not a "
+                    "portal: " + authored_template.name);
+            }
+            entity_template.portal.exit_entity_template_id = exit->actor_template_id;
+        }
+        entity_template.overlap_trigger_instigators =
+            authored_template.overlap_trigger_instigators;
+        for (const auto& [name, authored, compiled] :
+             std::initializer_list<std::tuple<
+                 const char*,
+                 const TriggerBindingConfig*,
+                 KernelActionTriggerDefinition*>>{
+                 {"on_enter", &authored_template.enter_trigger,
+                  &entity_template.enter_trigger},
+                 {"on_overlap", &authored_template.overlap_trigger,
+                  &entity_template.overlap_trigger},
+                 {"on_exit", &authored_template.exit_trigger,
+                  &entity_template.exit_trigger},
+             }) {
+            *compiled = compile_action_trigger_binding(
+                *authored,
+                name,
+                config.action_graph_templates,
+                config.entity_templates,
+                &config.projectile_templates,
+                nullptr,
+                &config.status_effect_templates);
+            // Mirrors the kernel: only a portal has somewhere to send it.
+            for (std::uint32_t index = 0; index < compiled->action_count; ++index) {
+                if (compiled->actions[index].action_type ==
+                        KernelEntityTriggerActionType_Teleport &&
+                    authored_template.portal.struct_size == 0u) {
+                    throw std::runtime_error(
+                        "teleport needs the template's portal block: " +
+                        authored_template.name);
+                }
+            }
+        }
         entity_template.health_depleted_trigger = compile_action_trigger_binding(
             authored_template.health_depleted_trigger,
             "on_health_depleted",
@@ -11225,6 +11581,17 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
     storage.definition.skeleton_assets = storage.skeleton_assets.data();
     storage.definition.skeleton_asset_count =
         static_cast<std::uint32_t>(storage.skeleton_assets.size());
+    for (std::size_t weapon_id = 0;
+         weapon_id < config.weapons.definitions.size();
+         ++weapon_id) {
+        if (config.weapons.configured[weapon_id]) {
+            storage.weapon_definitions.push_back(
+                config.weapons.definitions[weapon_id]);
+        }
+    }
+    storage.definition.weapon_definitions = storage.weapon_definitions.data();
+    storage.definition.weapon_definition_count =
+        static_cast<std::uint32_t>(storage.weapon_definitions.size());
     return storage;
 }
 

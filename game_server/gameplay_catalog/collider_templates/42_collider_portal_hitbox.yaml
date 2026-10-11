@@ -1,0 +1,14 @@
+# A portal's frame: base, posts and the door in one thin slab, on the far side
+# of the gate as it lands (local +z is the way it was thrown; the open side,
+# the gate, faces the thrower at -z). What a body is stopped by, what a shot
+# or a blast hits, and what placement keeps clear of walls. Its bottom sits on
+# the ground (center.y == half_extents.y), or placement can never fit it.
+#
+# docs/PORTAL_PLAN.md D15.
+id: 42
+name: portal_hitbox
+shape: oriented_box
+center: {x: 0.0, y: 1.3, z: 0.15}
+half_extents: {x: 1.0, y: 1.3, z: 0.15}
+purpose: hit
+layer: damageable

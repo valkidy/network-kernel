@@ -9,8 +9,8 @@ namespace network_example {
 
 constexpr std::uint32_t kPacketMagic = 0x4e584b31u;
 constexpr std::uint16_t kProtocolVersion = 3;
-constexpr std::uint16_t kPacketSchemaVersion = 31;
-constexpr std::uint16_t kSnapshotSchemaVersion = 29;
+constexpr std::uint16_t kPacketSchemaVersion = 32;
+constexpr std::uint16_t kSnapshotSchemaVersion = 30;
 constexpr std::uint16_t kSchemaVersion = kPacketSchemaVersion;
 constexpr std::size_t kPacketHeaderSize = 28;
 
@@ -51,6 +51,9 @@ enum class MessageType : std::uint16_t {
     // A container the session no longer sees -- a camp it left, or one that
     // is gone -- for the client to drop its copy of. Packet schema 30.
     kInventoryContainerClosed = 32,
+    // Actors a portal moved this tick, for the owner's camera and for every
+    // client's interpolation to cut rather than blend. Packet schema 32.
+    kActorTeleportBatch = 33,
 };
 
 struct PacketHeader {

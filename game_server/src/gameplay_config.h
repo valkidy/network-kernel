@@ -307,6 +307,19 @@ struct ActorTemplateConfig {
     std::uint32_t collision_trigger_mask = KERNEL_COLLISION_MASK_NONE;
     TriggerBindingConfig health_depleted_trigger;
     TriggerBindingConfig destroy_entity_trigger;
+    // A trigger volume (ABI 103); props only. physics.trigger_collider_template
+    // and triggers.on_enter / on_overlap / on_exit, which share one
+    // collision_mask and one instigators.
+    std::uint32_t trigger_collider_template_id = 0;
+    TriggerBindingConfig enter_trigger;
+    TriggerBindingConfig overlap_trigger;
+    TriggerBindingConfig exit_trigger;
+    std::uint32_t overlap_trigger_mask = KERNEL_COLLISION_MASK_NONE;
+    std::uint32_t overlap_trigger_instigators = KernelOverlapInstigators_Actors;
+    // A `portal:` block (ABI 103); props only. exit_template is resolved by
+    // name into portal.exit_entity_template_id once every template is loaded.
+    KernelPortalDefinition portal{};
+    std::string portal_exit_template_ref;
     KernelPropDefinition prop{};
     SkeletonBindingConfig skeleton;
 };
@@ -556,6 +569,7 @@ struct KernelGameplayCatalogStorage {
     std::vector<KernelItemTemplateDefinition> item_templates;
     std::vector<KernelPropPopulationRuleDefinition> prop_population_rules;
     std::vector<KernelStatusEffectDefinition> status_effects;
+    std::vector<KernelWeaponMechanicsDefinition> weapon_definitions;
     std::vector<std::vector<std::uint8_t>> skeleton_asset_bytes;
     std::vector<KernelSkeletonAssetDefinition> skeleton_assets;
     KernelGameplayCatalogDefinition definition{};

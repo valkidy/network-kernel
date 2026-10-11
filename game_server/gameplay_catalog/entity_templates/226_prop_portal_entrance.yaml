@@ -1,0 +1,48 @@
+# A portal: walk into its gate and you are at its destination.
+#
+# Never thrown itself. fungible_portal_kit throws portal_kit, which spawns this
+# where it lands, placed clear -- frame and gate both out of terrain and props
+# -- and facing the way it was thrown, so the gate faces the thrower. A spot
+# that is clear but out of reach (on top of something) is the thrower's
+# mistake.
+#
+# One-way: the exit at the destination is only something to see. There is no
+# map system yet, so the destination is a fixed spot on this map.
+#
+# docs/PORTAL_PLAN.md.
+id: 226
+name: portal_entrance
+entity_type: prop
+impulse_resistance: 1000.0
+lifecycle:
+  # Three minutes at 30 Hz, from the moment it exists.
+  lifetime_ticks: 5400
+  # With tents and field camps: a new building may evict the oldest (D21).
+  population_group: building
+# Shots and blasts break it, as they break a tent (D17).
+health:
+  hp: 600
+  max_hp: 600
+physics:
+  collider_template: portal_hitbox
+  trigger_collider_template: portal_gate
+portal:
+  exit_template: portal_exit
+  destination: {x: 50.0, y: 0.0, z: 50.0}
+  # Level: an arrival faces +z. {x: 0, y: -1, z: 0} drops it instead, keeping
+  # its own heading. Never upward.
+  forward: {x: 0.0, y: 0.0, z: 1.0}
+  # One second in which no portal takes it, so a portal thrown on the
+  # destination cannot bounce it back every tick (D9).
+  arrival_grace_ticks: 30
+  # Two seconds unhurt: it is already there while its own client is still
+  # drawing the way in (D11).
+  arrival_immunity_ticks: 60
+triggers:
+  on_enter:
+    collision_mask: player_side
+    # Not the allied sentries, who are player_side too (D6).
+    instigators: players
+    action_graph: action_teleport_through_portal
+    parameters:
+      target: event.instigator

@@ -15,7 +15,7 @@ entity_type: prop
 impulse_resistance: 1000.0
 lifecycle:
   lifetime_ticks: 5400
-  population_group: tent
+  population_group: building
 health:
   hp: 600
   max_hp: 600

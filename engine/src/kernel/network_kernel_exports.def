@@ -51,6 +51,7 @@ EXPORTS
     Kernel_GetProjectileTemplates
     Kernel_GetActionTemplate
     Kernel_GetActorTemplates
+    Kernel_GetPortalDefinition
     Kernel_GetColliderTemplates
     Kernel_GetColliderBindings
     Kernel_ServerCreateEntity
@@ -91,6 +92,10 @@ EXPORTS
     Kernel_ServerSetEntityWeaponMechanics
     Kernel_ServerClearEntityWeaponMechanics
     Kernel_ServerGetEntityWeaponMechanics
+    Kernel_GetCatalogWeaponDefinition
+    Kernel_ClientQueryLockTargets
+    Kernel_PollLockStrikeEvents
+    Kernel_GetLockMissiles
     Kernel_ServerGetHomingState
     Kernel_ServerValidateMechanicsConfig
     Kernel_ServerGetEntityState

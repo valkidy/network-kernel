@@ -174,6 +174,16 @@ std::vector<ConfirmedDamage> apply_damage_applications(
             !world.registry().all_of<Health>(*target)) {
             continue;
         }
+        // The dead take nothing more: no second death, and no stagger or hit
+        // events on a corpse. This is what catches a hit that was already on
+        // its way when the killing blow landed in the same tick -- one
+        // scheduled from further back is cancelled when the target dies.
+        // Dead is what destroy_dead_entities means by it: health that had a
+        // maximum and ran out. A zeroed Health{0, 0} was never alive to die.
+        const Health& target_health = world.registry().get<Health>(*target);
+        if (target_health.max_hp > 0u && target_health.hp == 0u) {
+            continue;
+        }
         if (const DamageImmunity* immunity =
                 world.registry().try_get<DamageImmunity>(*target);
             immunity != nullptr && current_tick < immunity->until_tick) {

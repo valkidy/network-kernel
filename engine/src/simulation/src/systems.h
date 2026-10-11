@@ -89,8 +89,22 @@ public:
     void update(KernelEngine& engine, std::uint64_t server_time_us) const;
 };
 
+// Trigger volumes (ABI 103): which actors are in each, and the enter, overlap
+// and exit graphs that follow from what changed since the last tick.
+class OverlapTriggerSystem {
+public:
+    void update(KernelEngine& engine, std::uint64_t server_time_us) const;
+};
+
 class EntityStateSystem {
 public:
+    // A portal's teleport action (ABI 103); see
+    // KernelEntityTriggerActionType_Teleport. Does nothing to a dead,
+    // sheltered or non-actor target.
+    void teleport_through_portal(
+        KernelEngine& engine,
+        NetId portal_net_id,
+        NetId target_net_id) const;
     bool set_actor_template(
         KernelEngine& engine,
         NetId net_id,

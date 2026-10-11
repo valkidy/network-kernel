@@ -5,6 +5,51 @@
 #include <stdint.h>
 
 /*
+ * 104: lock-on weapons, first part. KernelWeaponFireMode gained _LockInstant:
+ *     on every commit, up to max_hit_count actors inside a cone are damaged at
+ *     once -- the nearest first, any a static wall hides skipped -- and the
+ *     commit spends its ammunition whether or not anything was locked. Its
+ *     cone is the collider template named by melee_collider_template_id, which
+ *     now serves both cone modes. KernelGameplayCatalogDefinition gained
+ *     weapon_definitions and weapon_definition_count, appended: the catalog's
+ *     weapons, installed in every mode as a read-only table, so a pure client
+ *     knows a weapon's cone without a per-entity setting it never receives.
+ *     Kernel_GetCatalogWeaponDefinition reads it back. KernelWeaponFireMode
+ *     gained _LockMissile: the same lock, then one certain hit per commit,
+ *     scheduled for the arrival of a missile that is only ever drawn.
+ *     Client presentation of both, all new exports and structs:
+ *     Kernel_ClientQueryLockTargets (what a lock weapon would lock from a
+ *     given aim -- a reticle, or the shooter's own arcs drawn at once),
+ *     Kernel_PollLockStrikeEvents (a remote shooter's lock_instant commits,
+ *     resolved on this client's view as they are drawn) and
+ *     Kernel_GetLockMissiles (missiles in flight, from the server's records),
+ *     with KernelLockSelection, KernelLockStrikeEvent, KernelLockMissileView
+ *     and KERNEL_MAX_LOCK_ARCS.
+ * 103: trigger volumes (the portal, first part). KernelEntityTemplateDefinition
+ *     gained trigger_collider_template_id, enter_trigger, overlap_trigger,
+ *     exit_trigger, overlap_trigger_mask and overlap_trigger_instigators,
+ *     appended after shelter_hides_occupants; props only. The collider named
+ *     by trigger_collider_template_id must have the trigger purpose and a box
+ *     shape. It is never a physics body: nothing moves against it, sweeps
+ *     through it or is placed around it. Each server tick the kernel finds the
+ *     actors whose movement capsule overlaps it -- of a camp in
+ *     overlap_trigger_mask, players only if overlap_trigger_instigators is
+ *     KernelOverlapInstigators_Players, and never one sheltered or dead -- and
+ *     runs enter_trigger for each that was not there the tick before,
+ *     overlap_trigger for each that was, and exit_trigger for each that left
+ *     or stopped qualifying. An actor or trigger that is destroyed runs
+ *     nothing. The three graphs read the actor as event.instigator and
+ *     event.target. KernelEntityTemplateDefinition is a public catalog
+ *     struct, so every managed mirror of it shifts.
+ *     Portals: KernelEntityTemplateDefinition also gained portal (a
+ *     KernelPortalDefinition), appended after overlap_trigger_instigators,
+ *     and KernelEntityTriggerActionType gained _Teleport. A portal's exit
+ *     prop is created and destroyed with it, for the same despawn reason.
+ *     KernelEventType gained _ActorTeleported, the client's word that a
+ *     portal moved an actor; packet schema 32 carries it
+ *     (ActorTeleportBatch), and remote interpolation no longer blends across
+ *     the jump. Kernel_GetPortalDefinition reads a loaded template's portal
+ *     block, for the template id the event carries.
  * 102: status-bound crowd control (the water bubble). KernelEntityTriggerActionType
  *     gained _ApplyBlockActions: a status on_apply action that, for as long as
  *     that status instance stands, refuses its target new actions and ends the
@@ -271,7 +316,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 102u
+#define KERNEL_ABI_VERSION 104u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -753,6 +798,14 @@ typedef enum KernelEventType {
      * entered. Not emitted when the actor itself is removed (a disconnect).
      * Server-local: never replicated. */
     KernelEventType_ShelterChanged = 17,
+    /* A portal moved an actor (ABI 103), on every client that sees it,
+     * including its own. `net_id` is the actor, `code` the portal's entity
+     * template id -- whose KernelPortalDefinition says where it went and
+     * which way it faces -- and `related_net_id` the portal, which the
+     * client may no longer see. `tick` is the server tick whose snapshot
+     * first has it there. A client's own player is drawn there already;
+     * this is what tells it to turn the camera and end any transition. */
+    KernelEventType_ActorTeleported = 18,
 } KernelEventType;
 
 typedef enum KernelDespawnReason {
@@ -920,6 +973,13 @@ typedef enum KernelEntityTriggerActionType {
      * and damage is discarded. Status on_apply graphs only, onto the status's
      * own subject (ABI 102). */
     KernelEntityTriggerActionType_ApplyUntargetable = 14,
+    /* Moves its target to the destination of the portal whose graph ran (ABI
+     * 103): what it carries is dropped where it stood, its velocity, knockback
+     * and stagger are cleared, it faces the portal's forward when that is
+     * level, and for the portal's arrival_grace_ticks no portal takes it and
+     * for its arrival_immunity_ticks nothing hurts it. A portal's on_enter
+     * and on_overlap graphs only; target_source is the only field read. */
+    KernelEntityTriggerActionType_Teleport = 15,
 } KernelEntityTriggerActionType;
 
 typedef enum KernelStatModifierOperation {
@@ -1409,6 +1469,24 @@ typedef enum KernelWeaponFireMode {
      * no ammunition. Never predicted by the client.
      */
     KernelWeaponFireMode_TargetedStrike = 4,
+    /*
+     * Locks onto up to the shot template's max_hit_count actors inside the
+     * cone of melee_collider_template_id -- nearest first, any hidden behind
+     * terrain or a static obstacle skipped -- and damages each at once.
+     * Spawns nothing. Every commit spends its ammunition even when nothing
+     * was locked, so a magazine always empties in the same time.
+     */
+    KernelWeaponFireMode_LockInstant = 5,
+    /*
+     * Locks onto actors the way _LockInstant does, then fires one missile per
+     * commit at the (commit index modulo locked count)-th nearest. The hit is
+     * certain and scheduled for the missile's arrival: the farthest the cone
+     * reaches is the shot template's lifetime_ticks away, nearer targets
+     * proportionally sooner. Nothing is simulated in flight; clients are told
+     * the target and the arrival tick and draw the rest. A commit that locks
+     * nothing spends no ammunition.
+     */
+    KernelWeaponFireMode_LockMissile = 6,
 } KernelWeaponFireMode;
 
 typedef enum KernelProjectileMotionModel {
@@ -2317,6 +2395,15 @@ typedef struct KernelGameplayCatalogDefinition {
     uint32_t skeleton_asset_count;
     const KernelStatusEffectDefinition* status_effects;
     uint32_t status_effect_count;
+    /*
+     * ABI 104. The catalog's weapons, keyed by weapon_id. Installed in every
+     * mode as a read-only table, separate from the per-entity mechanics a
+     * server sets with Kernel_ServerSetEntityWeaponMechanics: that is still
+     * what fires a weapon. This table is what a pure client reads to know a
+     * weapon's shape -- a lock-on weapon's cone -- for its presentation.
+     */
+    const struct KernelWeaponMechanicsDefinition* weapon_definitions;
+    uint32_t weapon_definition_count;
 } KernelGameplayCatalogDefinition;
 
 typedef struct KernelGameplayCatalogLoadResult {
@@ -2612,14 +2699,73 @@ typedef struct KernelWeaponMechanicsDefinition {
      */
     uint32_t collision_mask;
     /*
-     * Melee only, and the only place a melee weapon's reach lives: a cone
+     * Melee and lock-on only, and the only place their reach lives: a cone
      * template carries range and fov_degrees, so max_range is not consulted
-     * for KernelWeaponFireMode_Melee. Zero for every other fire mode. This is
+     * for KernelWeaponFireMode_Melee, _LockInstant or _LockMissile. Zero for
+     * every other fire mode. This is
      * the melee counterpart of segment_collider_template_id, kept separate
      * because that one is built as a segment by every consumer that reads it.
      */
     uint32_t melee_collider_template_id;
 } KernelWeaponMechanicsDefinition;
+
+/* ABI 104. The most arcs a lock draws: a lock weapon's max_hit_count is held
+ * to this by the catalog loader. */
+#define KERNEL_MAX_LOCK_ARCS 16u
+
+/*
+ * What a lock weapon locks from one aim, on this client's view of the world:
+ * the nearest actors in its cone, any a static wall hides skipped -- the
+ * server's rule, run on what this client draws. Presentation only; the server
+ * decides who is hurt. arc_count is the weapon's lock size (max_hit_count):
+ * the first target_count arcs end on the locked actors' hitbox centres, in
+ * target_net_ids order, nearest first; the rest end at points inside the cone
+ * that depend only on the shot (shooter, action instance, commit), so every
+ * client draws the same spray for it.
+ */
+typedef struct KernelLockSelection {
+    uint32_t struct_size;
+    uint8_t weapon_id;
+    uint8_t target_count;
+    uint8_t arc_count;
+    uint8_t reserved;
+    KernelVec3 origin;
+    uint32_t target_net_ids[KERNEL_MAX_LOCK_ARCS];
+    KernelVec3 arc_ends[KERNEL_MAX_LOCK_ARCS];
+} KernelLockSelection;
+
+/*
+ * One lock_instant commit by another shooter, resolved when this client's
+ * render clock reaches it -- from the shooter's drawn position and aim, against
+ * the actors as drawn at that moment. Polled once.
+ */
+typedef struct KernelLockStrikeEvent {
+    uint32_t struct_size;
+    uint32_t shooter_net_id;
+    uint32_t action_instance_id;
+    uint16_t commit_index;
+    uint16_t reserved;
+    uint32_t server_tick;
+    KernelLockSelection selection;
+} KernelLockStrikeEvent;
+
+/*
+ * A lock_missile in flight, from the server's record: it leaves its shooter on
+ * launch_tick and reaches its target on arrival_tick, where the server lands
+ * its hit. Draw it against the render clock. Listed until a second after it
+ * arrives.
+ */
+typedef struct KernelLockMissileView {
+    uint32_t struct_size;
+    uint32_t shooter_net_id;
+    uint32_t target_net_id;
+    /* The commit it was fired on, counted from zero. Restarts with each hold:
+     * shooter, launch_tick and commit_index together name a missile. */
+    uint16_t commit_index;
+    uint16_t reserved;
+    uint32_t launch_tick;
+    uint32_t arrival_tick;
+} KernelLockMissileView;
 
 typedef struct KernelHomingState {
     uint32_t struct_size;
@@ -2734,6 +2880,21 @@ typedef enum KernelDeathPolicy {
     KernelDeathPolicy_Dormant = 2,
 } KernelDeathPolicy;
 
+/* A portal (ABI 103): where its teleport action sends an actor, and the prop
+ * that marks that spot. struct_size 0 is not a portal. */
+typedef struct KernelPortalDefinition {
+    uint32_t struct_size;
+    /* A prop the kernel spawns at destination when the portal is created and
+     * destroys, for the same reason, when the portal goes. 0 for none. */
+    uint32_t exit_entity_template_id;
+    KernelVec3 destination;
+    /* Unit length, y <= 0: a level forward is the way an arrival faces,
+     * straight down a drop. */
+    KernelVec3 forward;
+    uint32_t arrival_grace_ticks;
+    uint32_t arrival_immunity_ticks;
+} KernelPortalDefinition;
+
 struct KernelEntityTemplateDefinition {
     uint32_t struct_size;
     uint32_t entity_template_id;
@@ -2779,7 +2940,29 @@ struct KernelEntityTemplateDefinition {
      * inside: nothing sees, chases or aims at them, though an agent keeps its
      * last sighting and may still come looking. */
     uint32_t shelter_hides_occupants;
+    /* Props only (ABI 103). A box collider template with the trigger purpose,
+     * or 0. Required by, and only meaningful with, the three triggers below. */
+    uint32_t trigger_collider_template_id;
+    /* Run once for an actor that starts overlapping the trigger volume, every
+     * tick it stays, and once when it leaves or stops qualifying. */
+    KernelActionTriggerDefinition enter_trigger;
+    KernelActionTriggerDefinition overlap_trigger;
+    KernelActionTriggerDefinition exit_trigger;
+    /* Which camps count, as KERNEL_COLLISION_LAYER_PLAYER_SIDE,
+     * _HOSTILE_SIDE and _NEUTRAL bits. Non-zero whenever any of the three
+     * triggers is authored, zero otherwise. */
+    uint32_t overlap_trigger_mask;
+    /* A KernelOverlapInstigators. */
+    uint32_t overlap_trigger_instigators;
+    /* Props only (ABI 103); see KernelPortalDefinition. */
+    KernelPortalDefinition portal;
 };
+
+/* Who a trigger volume counts, within its overlap_trigger_mask (ABI 103). */
+typedef enum KernelOverlapInstigators {
+    KernelOverlapInstigators_Actors = 0,
+    KernelOverlapInstigators_Players = 1,
+} KernelOverlapInstigators;
 
 /* The largest body a game message may carry. */
 #define KERNEL_MAX_GAME_MESSAGE_BYTES 512u

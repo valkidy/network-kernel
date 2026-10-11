@@ -155,6 +155,14 @@ ParameterType expression_type(const ActionGraphParameterExpression& expression) 
     return ParameterType::kVec3;
 }
 
+// A trigger volume's events: the actor is both instigator and target, the
+// position is the actor's and the direction runs from the volume to it.
+bool is_trigger_volume_event(TriggerEventType event_type) {
+    return event_type == TriggerEventType::kEnter ||
+        event_type == TriggerEventType::kOverlap ||
+        event_type == TriggerEventType::kExit;
+}
+
 bool expression_available_for_event(
     const ActionGraphParameterExpression& expression,
     TriggerEventType event_type) {
@@ -167,7 +175,8 @@ bool expression_available_for_event(
                 event_type == TriggerEventType::kProjectileImpact ||
                 event_type == TriggerEventType::kStatusApplied ||
                 event_type == TriggerEventType::kStatusTick ||
-                event_type == TriggerEventType::kStatusExpired;
+                event_type == TriggerEventType::kStatusExpired ||
+                is_trigger_volume_event(event_type);
         }
         if (entity_ref->source == EntityRefSource::kEventInstigator) {
             return event_type != TriggerEventType::kCollision;
@@ -204,7 +213,8 @@ bool expression_available_for_event(
         event_type == TriggerEventType::kCollision ||
         event_type == TriggerEventType::kProjectileImpact ||
         event_type == TriggerEventType::kExpired ||
-        event_type == TriggerEventType::kDestroyEntity;
+        event_type == TriggerEventType::kDestroyEntity ||
+        is_trigger_volume_event(event_type);
 }
 
 // Deliberately a switch rather than the cast this used to be. The two enums are
@@ -553,6 +563,26 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
                 target_name,
                 action.reserve_refill_count,
                 action.reserve_refill_percent,
+                *condition,
+            });
+            binding.parameters.push_back({
+                target_name,
+                EntityRefExpression{static_cast<EntityRefSource>(
+                    action.target_source)},
+            });
+            continue;
+        }
+        if (action.action_type == KernelEntityTriggerActionType_Teleport) {
+            // Only a portal's volume knows who walked in.
+            if ((event_type != TriggerEventType::kEnter &&
+                 event_type != TriggerEventType::kOverlap) ||
+                action.target_source > KernelEntityRefSource_EventInstigator) {
+                return std::nullopt;
+            }
+            const std::string target_name = "target" + suffix;
+            binding.graph.parameters.push_back({target_name, std::monostate{}});
+            binding.graph.actions.push_back(ActionTeleportDefinition{
+                target_name,
                 *condition,
             });
             binding.parameters.push_back({
@@ -1021,6 +1051,14 @@ bool validate_action_graph_binding(
             }
             continue;
         }
+        if (const auto* teleport = std::get_if<ActionTeleportDefinition>(&action)) {
+            if (!validate_action_parameter(
+                    binding, teleport->target_parameter, ParameterType::kEntityId,
+                    error)) {
+                return false;
+            }
+            continue;
+        }
         if (const auto* open_ui = std::get_if<ActionOpenUiDefinition>(&action)) {
             if (open_ui->ui_id == 0u) {
                 return fail(error, "open_ui requires a non-zero ui_id");
@@ -1353,6 +1391,20 @@ bool evaluate_action_graph(
             continue;
         }
 
+        if (const auto* teleport = std::get_if<ActionTeleportDefinition>(&action)) {
+            const ActionGraphParameterValue* target_value =
+                find_resolved_parameter(parameters, teleport->target_parameter);
+            if (target_value == nullptr ||
+                !std::holds_alternative<EntityIdValue>(*target_value)) {
+                return fail(error, "teleport action input type mismatch");
+            }
+            const NetId target = std::get<EntityIdValue>(*target_value).value;
+            if (target == 0u) {
+                return fail(error, "teleport target must not be null");
+            }
+            commands->push_back(ActionTeleportCommand{self, target, provenance});
+            continue;
+        }
         if (const auto* open_ui = std::get_if<ActionOpenUiDefinition>(&action)) {
             const ActionGraphParameterValue* target_value =
                 find_resolved_parameter(parameters, open_ui->target_parameter);

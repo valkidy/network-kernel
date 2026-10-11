@@ -316,6 +316,11 @@ enum class WeaponFireMode : std::uint8_t {
     kMelee = 3,
     // Lands its projectile on a point resolved from the aim, not the muzzle.
     kTargetedStrike = 4,
+    // Damages up to max_hit_count actors locked inside a cone, at once.
+    kLockInstant = 5,
+    // Locks the same way, then schedules one certain hit per commit on the
+    // (commit_index % locked)-th nearest, landing after a flight.
+    kLockMissile = 6,
 };
 
 enum class ProjectileMotionModel : std::uint8_t {
@@ -550,8 +555,9 @@ struct WeaponMechanicsDefinition {
     std::uint32_t reload_action_template_id = 0;
     // KERNEL_COLLISION_LAYER_* bits; zero keeps the engine default.
     std::uint32_t collision_mask = 0;
-    // kMelee only. The swept volume's shape, and the reach with it -- a cone
-    // template's range and fov are read from here, not from max_range.
+    // kMelee, kLockInstant and kLockMissile. The cone's shape, and the reach
+    // with it -- a
+    // cone template's range and fov are read from here, not from max_range.
     std::uint32_t melee_collider_template_id = 0;
     // The two numbers that template stands for, resolved once when the weapon
     // is configured. They are cached here because the simulation layer has no
@@ -685,6 +691,10 @@ enum class TriggerEventType : std::uint8_t {
     kStatusApplied,
     kStatusTick,
     kStatusExpired,
+    // A trigger volume's (ABI 103): an actor came in, is still in, went out.
+    kEnter,
+    kOverlap,
+    kExit,
 };
 
 struct OnCollisionTriggerTag {};
@@ -903,6 +913,13 @@ struct ActionOpenUiDefinition {
     ActionConditionType condition = ActionConditionType::kAlways;
 };
 
+// A portal sending its target to the portal's destination; see
+// KernelEntityTriggerActionType_Teleport.
+struct ActionTeleportDefinition {
+    std::string target_parameter;
+    ActionConditionType condition = ActionConditionType::kAlways;
+};
+
 // An item refilling its user's active weapon; see
 // KernelEntityTriggerActionType_RefillWeaponReserve. Exactly one of count and
 // percent is non-zero.
@@ -984,6 +1001,7 @@ using ActionGraphAction = std::variant<
     ActionSpawnEntityDefinition,
     ActionApplyPullDefinition,
     ActionOpenUiDefinition,
+    ActionTeleportDefinition,
     ActionRefillWeaponReserveDefinition,
     ActionApplyBlockActionsDefinition,
     ActionApplySuspendMovementDefinition,
@@ -1016,6 +1034,36 @@ struct ActionGraphHealthDepletedBinding {
 
 struct ActionGraphDestroyEntityBinding {
     CompiledActionGraphBinding binding;
+};
+
+// A portal (ABI 103): where it sends whoever walks in, and the exit prop that
+// marks that spot -- destroyed with the portal, for the same reason.
+struct PortalLink {
+    NetId exit_net_id = 0;
+    glm::vec3 destination{0.0f};
+    glm::vec3 forward{0.0f, 0.0f, 1.0f};
+    std::uint32_t arrival_grace_ticks = 0;
+    std::uint32_t arrival_immunity_ticks = 0;
+};
+
+// An actor just sent through a portal: until this tick no portal takes it, so
+// one thrown on the destination cannot bounce it back every tick.
+struct PortalArrivalGrace {
+    std::uint32_t until_tick = 0;
+};
+
+// A prop's trigger volume and the actors in it as of the last tick, sorted.
+// The volume itself is a collider with the trigger purpose that is never a
+// physics body; OverlapTriggerSystem queries with its shape every tick.
+struct OverlapTriggerVolume {
+    std::uint32_t collider_template_id = 0;
+    // Camps that count, as KERNEL_COLLISION_LAYER_*_SIDE / _NEUTRAL bits.
+    std::uint32_t collision_mask = 0;
+    bool players_only = false;
+    std::optional<CompiledActionGraphBinding> on_enter;
+    std::optional<CompiledActionGraphBinding> on_overlap;
+    std::optional<CompiledActionGraphBinding> on_exit;
+    std::vector<NetId> inside;
 };
 
 struct RuntimeStatusEffectTemplate {

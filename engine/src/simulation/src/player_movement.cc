@@ -1155,14 +1155,22 @@ std::optional<glm::vec3> find_clear_spawn_spot(
         return std::nullopt;
     }
     const ColliderInstance* volume = nullptr;
+    // A trigger volume is no body, but where it reaches must be clear too: a
+    // portal whose gate is in a wall cannot be walked into.
+    const ColliderInstance* trigger = nullptr;
     for (const ColliderInstance& candidate :
          world.collider_registry().instances()) {
-        if (candidate.entity_net_id == net_id &&
-            (candidate.purpose_flags & KernelColliderPurpose_Hit) != 0u &&
-            (candidate.shape_type == ColliderShapeType::kAabb ||
-             candidate.shape_type == ColliderShapeType::kOrientedBox)) {
+        if (candidate.entity_net_id != net_id ||
+            (candidate.shape_type != ColliderShapeType::kAabb &&
+             candidate.shape_type != ColliderShapeType::kOrientedBox)) {
+            continue;
+        }
+        if (volume == nullptr &&
+            (candidate.purpose_flags & KernelColliderPurpose_Hit) != 0u) {
             volume = &candidate;
-            break;
+        } else if (trigger == nullptr &&
+                   candidate.purpose_flags == KernelColliderPurpose_Trigger) {
+            trigger = &candidate;
         }
     }
     if (volume == nullptr) {
@@ -1218,7 +1226,18 @@ std::optional<glm::vec3> find_clear_spawn_spot(
         clear.filter = filter;
         const std::vector<physics::CollisionHit> touching =
             physics_world->overlap_all(clear);
-        if (std::none_of(touching.begin(), touching.end(), not_spawner)) {
+        bool trigger_clear = true;
+        if (trigger != nullptr) {
+            physics::OverlapRequest reach = clear;
+            reach.shape.half_extents = trigger->half_extents;
+            reach.shape.local_center = trigger->local_center;
+            const std::vector<physics::CollisionHit> reached =
+                physics_world->overlap_all(reach);
+            trigger_clear =
+                std::none_of(reached.begin(), reached.end(), not_spawner);
+        }
+        if (trigger_clear &&
+            std::none_of(touching.begin(), touching.end(), not_spawner)) {
             return stand - glm::vec3{0.0f, kStandSkinMeters, 0.0f};
         }
     }

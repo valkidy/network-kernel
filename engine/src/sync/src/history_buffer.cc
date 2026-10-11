@@ -257,7 +257,8 @@ bool raycast_history_frame(
     float max_range,
     NetId ignored_net_id,
     HistoricalHitResult* out_hit,
-    bool include_limbs) {
+    bool include_limbs,
+    const std::vector<NetId>* excluded_net_ids) {
     if (!frame.valid) {
         return false;
     }
@@ -267,7 +268,12 @@ bool raycast_history_frame(
     bool has_hit = false;
     for (const HitVolumeSnapshot& volume : frame.volumes) {
         if (volume.net_id == ignored_net_id || volume.alive == 0 ||
-            (volume.is_limb != 0u && !include_limbs)) {
+            (volume.is_limb != 0u && !include_limbs) ||
+            (excluded_net_ids != nullptr &&
+             std::binary_search(
+                 excluded_net_ids->begin(),
+                 excluded_net_ids->end(),
+                 volume.net_id))) {
             continue;
         }
 
@@ -302,7 +308,8 @@ bool sweep_history_frame(
     const glm::vec3& segment_end,
     NetId ignored_net_id,
     HistoricalHitResult* out_hit,
-    bool include_limbs) {
+    bool include_limbs,
+    const std::vector<NetId>* excluded_net_ids) {
     const glm::vec3 displacement = segment_end - segment_start;
     const float length = glm::length(displacement);
     if (length <= 0.0001f) {
@@ -315,7 +322,8 @@ bool sweep_history_frame(
         length,
         ignored_net_id,
         out_hit,
-        include_limbs);
+        include_limbs,
+        excluded_net_ids);
 }
 
 }  // namespace network_example

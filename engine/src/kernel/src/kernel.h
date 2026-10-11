@@ -8,6 +8,7 @@
 #include <memory>
 #include <span>
 #include <string_view>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -38,6 +39,7 @@ class EntityStateSystem;
 class ItemGameplaySystem;
 class ActivationSystem;
 class CollisionTriggerSystem;
+class OverlapTriggerSystem;
 class ListenServerTransport;
 class MovementSystem;
 struct EntityDespawnPacket;
@@ -53,6 +55,7 @@ struct InventorySnapshotRequestPacket;
 struct LocalActionResultBatchPacket;
 struct LocomotionStepBatchPacket;
 struct ActorImpulseBatchPacket;
+struct ActorTeleportBatchPacket;
 struct ProjectileSpawnBatchPacket;
 struct RemoteActionPresentationBatchPacket;
 struct WelcomePacket;
@@ -91,6 +94,11 @@ public:
     // An actor was knocked back this tick. floor_y is where it stood when
     // struck; the rest of its anchor is read at the end of the tick.
     void queue_actor_impulse(NetId net_id, float floor_y);
+    // A portal moved this actor this tick (packet schema 32).
+    void queue_actor_teleport(
+        NetId net_id,
+        std::uint32_t portal_entity_template_id,
+        NetId portal_net_id);
     // A building's graph asked for its interface: KernelEventType_UiOpened.
     void queue_ui_opened(
         NetId building_net_id,
@@ -414,6 +422,22 @@ public:
         NetId net_id,
         std::uint8_t weapon_id,
         KernelWeaponMechanicsDefinition* out_weapon_mechanics) const;
+    bool get_catalog_weapon_definition(
+        std::uint8_t weapon_id,
+        KernelWeaponMechanicsDefinition* out_definition) const;
+    bool client_query_lock_targets(
+        std::uint8_t weapon_id,
+        KernelVec3 origin,
+        KernelVec3 aim,
+        std::uint32_t action_instance_id,
+        std::uint16_t commit_index,
+        KernelLockSelection* out_selection) const;
+    std::uint32_t poll_lock_strike_events(
+        KernelLockStrikeEvent* out_events,
+        std::uint32_t max_events);
+    std::uint32_t get_lock_missiles(
+        KernelLockMissileView* out_missiles,
+        std::uint32_t max_missiles) const;
     bool server_get_homing_state(
         NetId net_id,
         KernelHomingState* out_state) const;
@@ -442,6 +466,7 @@ private:
     friend class ActivationSystem;
     friend class ItemGameplaySystem;
     friend class CollisionTriggerSystem;
+    friend class OverlapTriggerSystem;
     friend class MovementSystem;
     friend class KernelRpcDispatcher;
     friend class KernelRpcWorldHandlers;
@@ -1111,6 +1136,7 @@ private:
     void handle_client_prop_state_change_batch(
         const PropStateChangeBatchPacket& packet);
     void handle_client_actor_impulse_batch(const ActorImpulseBatchPacket& packet);
+    void handle_client_actor_teleport_batch(const ActorTeleportBatchPacket& packet);
     bool is_prop_in_flight_on_client(const ClientReplicatedEntity& entity) const;
     void release_deferred_flight_despawns();
     bool is_anchored_in_flight_prop(NetId net_id) const;
@@ -1123,6 +1149,7 @@ private:
     void broadcast_reliable_event(const KernelEvent& event);
     void flush_prop_state_changes();
     void flush_actor_impulses();
+    void flush_actor_teleports();
     bool make_prop_state_change_record(
         NetId net_id,
         PropStateChangeRecord* out_record) const;
@@ -1130,6 +1157,11 @@ private:
     // stepping entity is relevant to, and seeds a session that has just started
     // seeing an entity with where its feet currently are.
     void flush_locomotion_steps();
+    // This session's share of the missiles fired since the last snapshot:
+    // those whose shooter it sees, its own included.
+    std::vector<SnapshotLockMissile> lock_missiles_for(
+        const PeerSession& session) const;
+    void handle_client_lock_missiles(const WorldSnapshot& snapshot);
     void send_locomotion_steps(
         PeerSession* session,
         const LocomotionStepBatchPacket& packet);
@@ -1178,6 +1210,7 @@ private:
     void remove_session(PeerId peer);
     void materialize_entity_collider(NetId net_id);
     void materialize_entity_movement_collider(NetId net_id);
+    void materialize_entity_trigger_collider(NetId net_id);
     // Registers (or refreshes) one collider per bone the rig declares, from the
     // pose the solve just produced. Best-effort by contract: an actor whose
     // skeleton, template or solve is unavailable simply contributes no limbs.
@@ -1252,6 +1285,38 @@ private:
     // event channel will carry; nothing drains it over the wire yet.
     std::vector<PendingLocomotionStep> pending_follower_steps_;
     std::vector<PendingLocomotionStep> outgoing_locomotion_steps_;
+    // Lock-on missiles the weapon passes fired since the last snapshot. Their
+    // hits are already scheduled; these are only reported, in the snapshot.
+    std::vector<LockMissileLaunch> pending_lock_missiles_;
+    // A client's lock-on missiles, from the server's records: what to draw and
+    // when it lands. Kept until a little after arrival.
+    struct ClientLockMissile {
+        NetId shooter_net_id = 0;
+        std::uint16_t commit_index = 0;
+        NetId target_net_id = 0;
+        std::uint32_t launch_tick = 0;
+        std::uint32_t arrival_tick = 0;
+    };
+    std::vector<ClientLockMissile> client_lock_missiles_;
+    // Remote lock_instant commits resolved as they were drawn, for Unity to
+    // poll. Bounded: the oldest go first if nobody polls.
+    std::vector<KernelLockStrikeEvent> client_lock_strike_events_;
+    // A lock weapon's lock from one aim, on this client's drawn world. Both
+    // the query export and the remote strikes come through here.
+    bool resolve_client_lock(
+        const WeaponMechanicsDefinition& weapon,
+        NetId shooter_net_id,
+        PeerId shooter_peer,
+        const glm::vec3& origin,
+        const glm::vec3& aim,
+        std::uint32_t action_instance_id,
+        std::uint16_t commit_index,
+        KernelLockSelection* out_selection) const;
+    // The catalog lock_instant weapon a fire action belongs to, or null. The
+    // loader keeps that action to the one weapon.
+    const WeaponMechanicsDefinition* catalog_lock_instant_for_fire_action(
+        std::uint32_t action_template_id) const;
+    void derive_lock_strikes(const KernelRemoteActionPresentationEvent& event);
     std::uint32_t follower_locomotion_tick_ = 0;
     bool has_follower_locomotion_tick_ = false;
     WorldSnapshot latest_snapshot_;
@@ -1265,6 +1330,9 @@ private:
     std::unordered_map<NetId, std::uint32_t> client_metadata_timeout_reported_entities_;
     std::unordered_map<NetId, ClientEntityTombstone> client_despawned_entities_;
     std::unordered_map<NetId, RemoteKnockbackAnchor> client_knockback_anchors_;
+    // The latest tick a portal moved each actor, as a client heard it:
+    // interpolation cuts there instead of blending across the jump.
+    std::unordered_map<NetId, std::uint32_t> client_teleport_ticks_;
     std::vector<DeferredDespawn> deferred_flight_despawns_;
     // The unrounded server instant the last render pass drew the world
     // timeline at; valid once has_client_render_time_ is set.
@@ -1348,6 +1416,8 @@ private:
     std::vector<NetId> pending_prop_state_changes_;
     // net_id -> floor_y, first impulse of the tick wins the floor.
     std::vector<std::pair<NetId, float>> pending_actor_impulses_;
+    // Actor, portal template, portal: what flush_actor_teleports sends.
+    std::vector<std::tuple<NetId, std::uint32_t, NetId>> pending_actor_teleports_;
     std::unordered_set<KernelItemInstanceId> claimed_item_instances_;
     std::unordered_set<NetId> claimed_prop_entities_;
     std::vector<KernelDebugInfo> debug_records_;
@@ -1400,6 +1470,9 @@ private:
     KernelBenchmarkStats benchmark_stats_{};
     std::uint32_t catalog_version_ = 0;
     std::uint64_t catalog_hash_ = 0;
+    // The catalog's weapons, installed in every mode (ABI 104). Read-only:
+    // nothing fires from it.
+    WeaponTuning catalog_weapons_{};
     KernelGameplayCatalogManifest gameplay_catalog_manifest_{};
     std::vector<std::uint8_t> gameplay_catalog_sync_bundle_;
     std::vector<std::uint8_t> downloaded_gameplay_catalog_bundle_;

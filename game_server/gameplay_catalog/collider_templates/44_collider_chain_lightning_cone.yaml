@@ -1,0 +1,13 @@
+id: 44
+name: chain_lightning_cone
+# Chain Lightning's lock cone. Reach and angle live here and nowhere else: a
+# lock_instant weapon authors no max_range. The angle is tested in 3D, so a
+# target straight overhead is outside a cone aimed at the horizon.
+#
+# `purpose: damage` is required: a cone without it is refused when the weapon
+# is configured. Nothing builds a body from it.
+shape: cone
+range: 18.0
+fov_degrees: 50.0
+purpose: damage
+layer: projectile

@@ -332,6 +332,13 @@ struct ActionOpenUiCommand {
     ActionExecutionProvenance provenance;
 };
 
+// `source` is the portal whose graph ran, `target` the actor it sends.
+struct ActionTeleportCommand {
+    NetId source = 0;
+    NetId target = 0;
+    ActionExecutionProvenance provenance;
+};
+
 // Refills the target's active weapon at commit, from what it holds then.
 struct ActionRefillWeaponReserveCommand {
     NetId source = 0;
@@ -382,6 +389,7 @@ using ActionGraphCommand = std::variant<
     ActionSpawnEntityCommand,
     ActionApplyPullCommand,
     ActionOpenUiCommand,
+    ActionTeleportCommand,
     ActionRefillWeaponReserveCommand,
     ActionApplyBlockActionsCommand,
     ActionApplySuspendMovementCommand,

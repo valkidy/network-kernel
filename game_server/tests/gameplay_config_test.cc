@@ -1325,7 +1325,7 @@ int main() {
     require(
         config.prop_population_rules[0].definition.population_group_id == 1u);
     require(config.prop_population_rules[0].definition.max_alive == 256u);
-    require(config.prop_population_rules[1].name == "tent");
+    require(config.prop_population_rules[1].name == "building");
     require(
         config.prop_population_rules[1].definition.population_group_id == 2u);
     require(config.prop_population_rules[1].definition.max_alive == 4u);

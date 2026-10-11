@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
@@ -352,7 +353,7 @@ void tick_keeps_instigator_attribution_after_despawn() {
 
     simulate_status_effects(engine, 0u);
     const std::vector<ConfirmedDamage> damage =
-        engine.damage_pipeline().drain_ready_damage(world, 0u);
+        engine.damage_pipeline().drain_ready_damage(world, 0u, UINT32_MAX);
     require(damage.size() == 2u);
     require(damage[0].source_net_id == source);
     require(damage[0].source_peer == 7u);
@@ -436,7 +437,7 @@ void stack_scales_lifecycle_and_speed_and_keeps_latest_instigator() {
     require(world.destroy(source3));
     simulate_status_effects(engine, 0u);
     const std::vector<ConfirmedDamage> damage =
-        engine.damage_pipeline().drain_ready_damage(world, 0u);
+        engine.damage_pipeline().drain_ready_damage(world, 0u, UINT32_MAX);
     require(damage.size() == 2u);
     require(damage[0].damage == 15u);
     require(damage[1].damage == 6u);
@@ -446,7 +447,7 @@ void stack_scales_lifecycle_and_speed_and_keeps_latest_instigator() {
     state.active[0].expire_tick = 0u;
     simulate_status_effects(engine, 0u);
     const std::vector<ConfirmedDamage> expire_damage =
-        engine.damage_pipeline().drain_ready_damage(world, 0u);
+        engine.damage_pipeline().drain_ready_damage(world, 0u, UINT32_MAX);
     require(expire_damage.size() == 2u);
     require(expire_damage[0].damage == 15u);
     require(expire_damage[1].damage == 6u);
@@ -551,11 +552,11 @@ void replace_orders_callbacks_and_preserves_failed_state() {
     movement.base_speed_meters_per_second = 10.0f;
     movement.speed_meters_per_second = 10.0f;
     require(apply_status(engine, source, target, 1001u, 1u));
-    require(engine.damage_pipeline().drain_ready_damage(world, 0u).empty());
+    require(engine.damage_pipeline().drain_ready_damage(world, 0u, UINT32_MAX).empty());
     require(movement.speed_meters_per_second == 12.0f);
     require(apply_status(engine, source, target, 1002u, 2u));
     const std::vector<ConfirmedDamage> replacement_damage =
-        engine.damage_pipeline().drain_ready_damage(world, 0u);
+        engine.damage_pipeline().drain_ready_damage(world, 0u, UINT32_MAX);
     require(replacement_damage.size() == 4u);
     require(replacement_damage[0].damage == 5u);
     require(replacement_damage[1].damage == 7u);
@@ -602,7 +603,7 @@ void replace_orders_callbacks_and_preserves_failed_state() {
     require(!apply_status(
         failure_engine, failure_source, failure_target, 2002u, 11u));
     require(failure_engine.damage_pipeline().drain_ready_damage(
-                failure_world, 0u).empty());
+                failure_world, 0u, UINT32_MAX).empty());
     require(failure_movement.speed_meters_per_second == 12.0f);
     require(failure_state.speed_modifiers.size() == 1u);
     require(failure_state.active.size() == 1u);
@@ -640,10 +641,10 @@ void lifecycle_duplicate_is_a_noop() {
         event, provenance, 4u, std::move(commands)};
     require(execute_action_graph_command_batch(engine, batch, 0u));
     const std::vector<ConfirmedDamage> first =
-        engine.damage_pipeline().drain_ready_damage(world, 0u);
+        engine.damage_pipeline().drain_ready_damage(world, 0u, UINT32_MAX);
     require(first.size() == 2u);
     require(execute_action_graph_command_batch(engine, batch, 0u));
-    require(engine.damage_pipeline().drain_ready_damage(world, 0u).empty());
+    require(engine.damage_pipeline().drain_ready_damage(world, 0u, UINT32_MAX).empty());
 }
 
 void cross_channel_modifiers_restore_independently() {
