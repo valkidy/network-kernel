@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -1391,6 +1392,152 @@ void rewind_shotgun_respects_range() {
     require(count_events(events, KernelEventType_DamageApplied) == 0);
 }
 
+/*
+ * A rifle authored to hit hostile_side only must not hurt a player-side actor,
+ * whether the shot is resolved live or rewound for lag compensation.
+ *
+ * The rewound path tests history volumes, not the collision world, so it never
+ * saw collision_filter_from_mask -- and damage_source_may_damage cannot catch
+ * it afterwards, because actors carry no GameplaySide. Each world has a
+ * hostile control on the same ray so a miss cannot pass for want of reach.
+ *
+ * A bare World's live ray reads the side off actor_type; the kernel reads it
+ * off each actor's registered collider, and so does the rewound filter. The
+ * colliders below are those the kernel would have materialized.
+ */
+void rewind_hitscan_honours_weapon_collision_mask() {
+    const auto register_side = [](network_example::World& world,
+                                  network_example::NetId net_id,
+                                  std::uint32_t side) {
+        network_example::ColliderInstance collider{};
+        collider.entity_net_id = net_id;
+        collider.entity_type = network_example::EntityType::kActor;
+        collider.layer_mask = side;
+        world.collider_registry().upsert_entity_collider(net_id, 1u, collider);
+    };
+    const auto hostile_only_rifle = [](network_example::World& world,
+                                       network_example::NetId shooter) {
+        const auto entity = world.find_entity(shooter);
+        require(entity.has_value());
+        world.registry()
+            .get<network_example::WeaponTuning>(*entity)
+            .definitions[network_example::kWeaponSlot0]
+            .collision_mask = network_example::kCollisionLayerHostileSide;
+    };
+
+    for (const bool rewound : {false, true}) {
+        // The ally stands in front; with it removed from the ray the shot
+        // must carry on to the enemy behind.
+        network_example::World world;
+        const network_example::NetId shooter =
+            spawn_player(world, 1, glm::vec3{0.0f, 0.0f, 0.0f});
+        hostile_only_rifle(world, shooter);
+        const network_example::NetId ally =
+            spawn_player(world, 2, glm::vec3{5.0f, 0.0f, 0.0f});
+        const network_example::NetId enemy =
+            spawn_enemy(world, glm::vec3{10.0f, 0.0f, 0.0f});
+        register_side(world, shooter, network_example::kCollisionLayerPlayerSide);
+        register_side(world, ally, network_example::kCollisionLayerPlayerSide);
+        register_side(world, enemy, network_example::kCollisionLayerHostileSide);
+        network_example::HistoryBuffer history(2);
+        history.write_frame(world, 1);
+
+        std::vector<KernelEvent> events;
+        network_example::simulate_weapons(
+            world,
+            queue(fire_input(network_example::kWeaponSlot0)),
+            2,
+            &events,
+            rewound ? history.find_frame(1) : nullptr);
+        if (health(world, ally).hp != 100 || health(world, enemy).hp != 25) {
+            std::fprintf(
+                stderr,
+                "rewound=%d ally hp=%u enemy hp=%u\n",
+                rewound ? 1 : 0,
+                static_cast<unsigned>(health(world, ally).hp),
+                static_cast<unsigned>(health(world, enemy).hp));
+        }
+        require(health(world, ally).hp == 100);
+        require(health(world, enemy).hp == 25);
+        require(count_events(events, KernelEventType_DamageApplied) == 1);
+    }
+}
+
+/*
+ * The projectile half of rewind_hitscan_honours_weapon_collision_mask: a
+ * projectile fired with a rewind sweeps history volumes along its catch-up
+ * path, which record no side, so a hostile_side-only shot must still pass
+ * through the ally in front and land on the enemy behind. The mask that names
+ * every side is the control that the ally really stands on the path.
+ */
+void rewind_projectile_honours_collision_mask() {
+    const auto register_side = [](network_example::World& world,
+                                  network_example::NetId net_id,
+                                  std::uint32_t side) {
+        network_example::ColliderInstance collider{};
+        collider.entity_net_id = net_id;
+        collider.entity_type = network_example::EntityType::kActor;
+        collider.layer_mask = side;
+        world.collider_registry().upsert_entity_collider(net_id, 1u, collider);
+    };
+
+    for (const bool hostile_only : {false, true}) {
+        network_example::World world;
+        const network_example::NetId shooter =
+            spawn_player(world, 1, glm::vec3{0.0f, 0.0f, 0.0f});
+        const network_example::NetId ally =
+            spawn_player(world, 2, glm::vec3{5.0f, 0.0f, 0.0f});
+        const network_example::NetId enemy =
+            spawn_enemy(world, glm::vec3{10.0f, 0.0f, 0.0f});
+        register_side(world, shooter, network_example::kCollisionLayerPlayerSide);
+        register_side(world, ally, network_example::kCollisionLayerPlayerSide);
+        register_side(world, enemy, network_example::kCollisionLayerHostileSide);
+        network_example::HistoryBuffer history(16);
+        for (std::uint32_t tick = 1; tick <= 10; ++tick) {
+            history.write_frame(world, tick);
+        }
+
+        network_example::ProjectileState projectile{};
+        projectile.damage = 10;
+        projectile.shooter_net_id = shooter;
+        projectile.collision_mask =
+            hostile_only ? network_example::kCollisionLayerHostileSide
+                         : network_example::kCollisionMaskDamageable;
+        network_example::DamagePipeline pipeline;
+        std::vector<KernelEvent> events;
+        require(network_example::resolve_projectile_historical_hit(
+            world,
+            history,
+            9999,
+            shooter,
+            1,
+            projectile,
+            glm::vec3{0.0f, 0.5f, 0.0f},
+            glm::vec3{20.0f, 0.0f, 0.0f},
+            0,
+            10,
+            0.1f,
+            &events,
+            &pipeline));
+
+        const std::vector<network_example::ConfirmedDamage> damage =
+            pipeline.drain_ready_damage(
+                world, std::numeric_limits<std::uint64_t>::max());
+        const network_example::NetId expected = hostile_only ? enemy : ally;
+        if (damage.size() != 1 || damage[0].target_net_id != expected) {
+            std::fprintf(
+                stderr,
+                "hostile_only=%d damage=%zu target=%u expected=%u\n",
+                hostile_only ? 1 : 0,
+                damage.size(),
+                damage.empty() ? 0u : static_cast<unsigned>(damage[0].target_net_id),
+                static_cast<unsigned>(expected));
+        }
+        require(damage.size() == 1);
+        require(damage[0].target_net_id == expected);
+    }
+}
+
 void area_effect_weapon_spawns_and_damages_enemy() {
     network_example::World world;
     spawn_player(world, 1, glm::vec3{0.0f, 0.0f, 0.0f});
@@ -1690,6 +1837,8 @@ int main() {
     projectile_historical_hit_query_ignores_current_only_target();
     rewind_hitscan_uses_historical_hit_volumes();
     rewind_shotgun_respects_range();
+    rewind_hitscan_honours_weapon_collision_mask();
+    rewind_projectile_honours_collision_mask();
     area_effect_weapon_spawns_and_damages_enemy();
     weapon_fired_projectile_carries_collider_geometry();
     weapon_fired_area_effect_survives_the_tick_it_lands();
