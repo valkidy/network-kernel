@@ -140,9 +140,10 @@ D4a-1 之後，5 個大型身形的 collider 是 `purpose: hit` 的大盒子，�
    - 對有 bounds 的 rigged actor：任何會打到該 actor 的 mask（`actor`／`damageable`／該 actor 的 side）都要打到它的 limb，category 仍以 limb 的 `layer`（`collision_flags.layer`）比對。
    - 這推翻了「limb 必須明寫才打得到」的舊規則，但只對 rigged actor；沒有 rig 的世界不受影響。
    - 實作重點：不能把 limb 塞進 `actor_hit_*_mask()` 共用 helper（舊坑：會把 limb 發給所有沒要的查詢），而是在 filter 建立時針對 `kActorLimb` kind 另開條件。
-6. **Area effect／melee 去重與 `hit_zone`**
-   - 實作前先讀 `area_effect_system.cc` 與 melee 路徑，確認現在「同一個 entity 只吃一次」是以 net_id 去重，還是以 collider 去重。若以 collider，一顆爆炸碰到 giant 3 根骨骼會扣 3 次血，必須改成以 net_id 去重。
-   - `hit_zone` 取法見 Q4。
+6. **Area effect／melee 去重與 `hit_zone`**（Q4 已定）
+   - Area effect：已以 net_id 去重（`area_effect_system.cc:154-161`），不用改；damage request 改為明確傳 `KERNEL_HIT_ZONE_UNSCALED`。
+   - Melee：實作前先讀 melee 路徑，確認以 net_id 去重（若以 collider，一次揮擊碰到 3 根骨骼會扣 3 次血，必須改）；同一 entity 被碰到的骨骼取最大 `hit_zone`。
+   - 測試補一條：quadruped 被 area effect 同時碰到腿（0.5）與 Body（1.5）→ 傷害 × 1.0；melee 同時碰到 → × 1.5。
 7. **測試**
    - Rewind：射線穿過 quadruped 腿與腿之間（在 bounds 內、不碰骨骼）→ miss；修改前同一條射線 → hit（先確認修改前確實 hit）。
    - Rewind：射中 quadruped 腿 → 傷害 × 0.5；射中 Body → × 1.5。
@@ -221,13 +222,13 @@ D4a-1 之後，5 個大型身形的 collider 是 `purpose: hit` 的大盒子，�
 - **Q1（D4b）— 已定 2026-10-13：採 (a)。** client debug record 的 projectile `weapon_id` 填「未知」（255），不改線上格式，packet schema 不動。目前沒有任何遊戲邏輯或 Unity 程式讀它。
   - 不採 (b)：在 `ProjectileSpawnRecord` 加 1 byte weapon_id 會讓 packet schema 32→33，每筆 spawn record 多 1 byte，只為了 debug。
 - **Q2（D4a）— 已定 2026-10-13：兩層判定。** 大盒子只當 bounds，rig collider 判定傷害（§1.5、§2b）。原本「大盒子直接當傷害體積」的方案不採用：它比身體大很多，空處也會算命中。
-- **Q3（D4a-2，待定）**：`limb` mask token 的去留。rigged actor 的骨骼改為「打得到 actor 就打得到骨骼」後，`limb` 對它們變成多餘。
-  - (a) 建議：保留 token 但只作用於「沒有 bounds 的 limb」（目前 catalog 沒有這種 entity），5 個寫了 `limb` 的 projectile template（`rifle_shot`、`rocket`、`water_bubble_spammer_bullet`、`grunt_claw_hit`、`grunt_slam_hit`）移除它；loader 不報錯。
-  - (b) 直接移除 token，loader 拒絕；日後要「只打腿」的武器時再設計。
-- **Q4（D4a-2，待定）**：area effect／melee 一次碰到同一隻怪的多根骨骼時用哪個 `hit_zone`。
-  - (a) 建議：若 area effect 現在本來就不套 `hit_zone`，維持不套（爆炸不分部位）；melee 取被碰到骨骼中最大的。
-  - (b) 一律取最大。
-  - (c) 一律取離中心最近的骨骼。
+- **Q3（D4a-2）— 已定 2026-10-13：採 (a)。** `limb` token 保留，但只作用於「沒有 bounds 的 limb」（目前 catalog 沒有這種 entity）；從 `rifle_shot`、`rocket`、`water_bubble_spammer_bullet`、`grunt_claw_hit`、`grunt_slam_hit` 移除它；loader 不報錯。
+  - 不採 (b)：直接移除 token、loader 拒絕。
+- **Q4（D4a-2）— 已定 2026-10-13：採 (a)。** area effect 不套 `hit_zone`（爆炸不分部位）；melee 取被碰到骨骼中最大的 `hit_zone`。
+  - 核對結果（靜態）：area effect **其實有**傳 `hit_zone`——`area_effect_system.cc:154-161` 以 net_id 去重、保留查詢結果裡該 entity 的**第一個** hit，`damage_request_from_hit` 帶上它的 `hit.identity.hit_zone`（`damage_pipeline.cc:125`）。但整個 catalog 只有 `simplified_quadruped.rig.yaml` 設了 `hit_zone`，而 area effect 的 mask 都沒寫 `limb`，所以今天實際上永遠是 1.0。
+  - 因此實作方式是：area effect 建 damage request 時明確傳 `KERNEL_HIT_ZONE_UNSCALED`。今天零行為變化，也避免兩層判定後「哪根骨骼先回傳就用誰的倍率」這種依查詢順序決定的結果。
+  - 去重已經是以 net_id 為準，§2b 第 6 步的 area effect 部分不用改；melee 路徑仍要在實作前確認。
+  - 不採 (b) 一律取最大、(c) 取最近。
 
 ---
 
@@ -243,6 +244,6 @@ D4a-1 之後，5 個大型身形的 collider 是 `purpose: hit` 的大盒子，�
 
 ABI 106 只 bump 一次，D4a-2 與 D4b 共用，接在 refactor 的 105 之後。
 
-建議順序：D4a-1 → D4a-2 → D4b，三個 commit 放在同一個 `claude/*` 分支，**一起交付**（D4a-1 單獨交付會出現「大盒子當傷害體積」的中間狀態）。D4a-2 動工前先回答 Q3、Q4。分支從 `main` 開（等 `claude/action-graph-refactor` 進 main 之後再開，避免 ABI 105/106 與 `hash_projectile_template` 衝突）。不 merge 到 `feat-unity-plugin`／`dev-*`，不碰 Unity package。
+建議順序：D4a-1 → D4a-2 → D4b，三個 commit 放在同一個 `claude/*` 分支，**一起交付**（D4a-1 單獨交付會出現「大盒子當傷害體積」的中間狀態）。Q1-Q4 皆已定，沒有待決事項。分支從 `main` 開（等 `claude/action-graph-refactor` 進 main 之後再開，避免 ABI 105/106 與 `hash_projectile_template` 衝突）。不 merge 到 `feat-unity-plugin`／`dev-*`，不碰 Unity package。
 
 驗證只跑 targeted tests：loader test、gameplay_config_test、§2b 與 §4 新增的 kernel smoke test、`limb_collider_test`、`history_buffer_test`、`projectile_interaction_test`、ABI 版本 3 個測試。不跑 full build/test。
