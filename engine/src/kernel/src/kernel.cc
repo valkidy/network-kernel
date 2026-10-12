@@ -7449,6 +7449,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     predicted_impulse_lockout_until_tick_ = 0u;
     predicted_impulse_lockout_armed_tick_ = 0u;
     predicted_impulse_lockout_recovering_ = false;
+    predicted_impulse_is_knockback_ = false;
     predicted_suspension_velocity_ = glm::vec3{0.0f};
     predicted_suspension_until_tick_ = 0u;
     predicted_shelter_net_id_ = 0u;
@@ -9318,6 +9319,7 @@ void KernelEngine::clear_client_session() {
     predicted_impulse_lockout_until_tick_ = 0u;
     predicted_impulse_lockout_armed_tick_ = 0u;
     predicted_impulse_lockout_recovering_ = false;
+    predicted_impulse_is_knockback_ = false;
     predicted_suspension_velocity_ = glm::vec3{0.0f};
     predicted_suspension_until_tick_ = 0u;
     predicted_shelter_net_id_ = 0u;
@@ -10208,6 +10210,7 @@ bool KernelEngine::step_local_character_prediction(
         predicted_impulse_lockout_until_tick_ =
             prediction_tick + KERNEL_MAX_IMPULSE_LOCKOUT_TICKS;
         predicted_impulse_lockout_recovering_ = false;
+        predicted_impulse_is_knockback_ = false;
     }
     const bool impulse_locked =
         prediction_tick < predicted_impulse_lockout_until_tick_;
@@ -10560,6 +10563,8 @@ void KernelEngine::adopt_authoritative_impulse_lockout(
                 authoritative.impulse_lockout_armed_tick;
             predicted_impulse_lockout_recovering_ =
                 authoritative.impulse_lockout_recovering;
+            predicted_impulse_is_knockback_ =
+                (authoritative.flags & kVisualFlagKnockedBack) != 0u;
         }
         return;
     }
@@ -10567,6 +10572,7 @@ void KernelEngine::adopt_authoritative_impulse_lockout(
         predicted_impulse_lockout_until_tick_ = 0u;
         predicted_impulse_lockout_armed_tick_ = 0u;
         predicted_impulse_lockout_recovering_ = false;
+        predicted_impulse_is_knockback_ = false;
     }
 }
 
@@ -12307,11 +12313,18 @@ void KernelEngine::append_predicted_local_render_state() {
     // physics prediction steps ground contact; without one the snapshot's
     // answer is the only one there is.
     if (prediction_physics_world_ != nullptr) {
-        state.visual_flags &= ~(kVisualFlagGrounded | kVisualFlagFalling);
+        state.visual_flags &= ~(kVisualFlagGrounded | kVisualFlagFalling |
+                                kVisualFlagKnockedBack);
         state.visual_flags |= predicted_character_state_.ground_state ==
                 physics::CharacterGroundState::kGrounded
             ? kVisualFlagGrounded
             : kVisualFlagFalling;
+        if (predicted_impulse_is_knockback_ &&
+            predicted_character_tick_ < predicted_impulse_lockout_until_tick_ &&
+            !predicted_impulse_lockout_recovering_ &&
+            (state.visual_flags & kVisualFlagDead) == 0u) {
+            state.visual_flags |= kVisualFlagKnockedBack;
+        }
     }
     const auto replicated = std::find_if(
         client_replicated_entities_.begin(),
@@ -12813,6 +12826,7 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
                                             predicted_character_tick_;
                                         predicted_impulse_lockout_recovering_ =
                                             false;
+                                        predicted_impulse_is_knockback_ = true;
                                     }
                                     break;
                                 }

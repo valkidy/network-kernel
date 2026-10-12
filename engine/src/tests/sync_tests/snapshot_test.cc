@@ -252,5 +252,34 @@ int main() {
                 movement_world,
                 *movement_world.find_entity(grounded_player)) &
             network_example::kVisualFlagLanded) != 0u);
+    // Velocity from terrain following never implies an impulse flight.
+    const auto falling_entity = *movement_world.find_entity(airborne_player);
+    movement_world.registry().get<network_example::Health>(falling_entity).hp = 100;
+    movement_world.registry().get<network_example::Velocity>(falling_entity).linear =
+        glm::vec3{8.0f, 4.0f, 0.0f};
+    require((network_example::derived_visual_flags(movement_world, falling_entity) &
+             network_example::kVisualFlagKnockedBack) == 0u);
+    auto& lockout = movement_world.registry().emplace<network_example::ImpulseLockout>(
+        falling_entity, network_example::ImpulseLockout{100u, 10u});
+    require((network_example::derived_visual_flags(movement_world, falling_entity) &
+             network_example::kVisualFlagKnockedBack) != 0u);
+    const auto knocked_snapshot = network_example::build_world_snapshot(
+        movement_world, 11u, 366u, 0u);
+    for (const auto& entity : knocked_snapshot.entities) {
+        if (entity.net_id == airborne_player) {
+            require((entity.flags & network_example::kVisualFlagKnockedBack) != 0u);
+        }
+    }
+    lockout.recovering = true;
+    require((network_example::derived_visual_flags(movement_world, falling_entity) &
+             network_example::kVisualFlagKnockedBack) == 0u);
+    lockout.recovering = false;
+    lockout.free_fall = true;
+    require((network_example::derived_visual_flags(movement_world, falling_entity) &
+             network_example::kVisualFlagKnockedBack) == 0u);
+    lockout.free_fall = false;
+    movement_world.registry().get<network_example::Health>(falling_entity).hp = 0;
+    require((network_example::derived_visual_flags(movement_world, falling_entity) &
+             network_example::kVisualFlagKnockedBack) == 0u);
     return 0;
 }

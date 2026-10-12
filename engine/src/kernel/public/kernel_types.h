@@ -568,6 +568,9 @@ typedef enum KernelFootholdQueryType {
 #define KERNEL_VISUAL_FLAG_FIRING UINT32_C(0x00000200)
 /* Core state, but bits 0-7 are full. */
 #define KERNEL_VISUAL_FLAG_SUSPENDED UINT32_C(0x00000400)
+/* Impulse flight. Predicted locally when the client resolves its own impulse;
+ * ordinary movement, suspension drops and knockdown recovery do not set it. */
+#define KERNEL_VISUAL_FLAG_KNOCKED_BACK UINT32_C(0x00000800)
 
 #define KERNEL_MAX_VISIBLE_HOSTILES 16u
 #define KERNEL_MAX_VISIBLE_ALLIES 16u

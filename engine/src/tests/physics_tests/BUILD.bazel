@@ -1,5 +1,15 @@
 licenses(["notice"])
 
+cc_binary(
+    name = "terrain_scaling_bench",
+    srcs = ["terrain_scaling_bench.cc"],
+    deps = [
+        "//engine/src/geometry:geometry",
+        "//engine/src/physics:physics",
+        "@jolt_physics//:jolt",
+    ],
+)
+
 cc_test(
     name = "physics_world_test",
     srcs = ["physics_world_test.cc"],

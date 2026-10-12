@@ -1984,15 +1984,19 @@ void authoritative_lockout_respects_a_newer_local_one() {
     network_example::EntitySnapshot quiet;
     engine.predicted_impulse_lockout_armed_tick_ = 45;
     engine.predicted_impulse_lockout_until_tick_ = 60;
+    engine.predicted_impulse_is_knockback_ = true;
     engine.adopt_authoritative_impulse_lockout(quiet, 40);
     require(engine.predicted_impulse_lockout_until_tick_ == 60u);
+    require(engine.predicted_impulse_is_knockback_);
 
     engine.adopt_authoritative_impulse_lockout(quiet, 45);
     require(engine.predicted_impulse_lockout_until_tick_ == 0u);
     require(engine.predicted_impulse_lockout_armed_tick_ == 0u);
+    require(!engine.predicted_impulse_is_knockback_);
 
     network_example::EntitySnapshot thrown;
     thrown.has_impulse_lockout = true;
+    thrown.flags |= network_example::kVisualFlagKnockedBack;
     thrown.impulse_lockout_armed_tick = 30;
     thrown.impulse_lockout_until_tick = 58;
     engine.predicted_impulse_lockout_armed_tick_ = 45;
@@ -2006,6 +2010,41 @@ void authoritative_lockout_respects_a_newer_local_one() {
     engine.adopt_authoritative_impulse_lockout(thrown, 40);
     require(engine.predicted_impulse_lockout_until_tick_ == 58u);
     require(engine.predicted_impulse_lockout_armed_tick_ == 30u);
+    require(engine.predicted_impulse_is_knockback_);
+}
+
+void local_knockback_visual_uses_prediction_not_velocity() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+    prepare_character_prediction(&engine);
+    const auto knocked_back = [&]() {
+        engine.render_states_.clear();
+        engine.append_predicted_local_render_state();
+        require(engine.render_states_.size() == 1u);
+        return (engine.render_states_.front().visual_flags &
+                network_example::kVisualFlagKnockedBack) != 0u;
+    };
+    engine.predicted_local_entity_.velocity = glm::vec3{8.0f, 4.0f, 0.0f};
+    engine.predicted_character_state_.ground_state =
+        network_example::physics::CharacterGroundState::kAirborne;
+    require(!knocked_back());
+    engine.predicted_character_tick_ = 10u;
+    engine.predicted_impulse_lockout_armed_tick_ = 10u;
+    engine.predicted_impulse_lockout_until_tick_ = 30u;
+    engine.predicted_impulse_is_knockback_ = true;
+    // No authoritative knockback flag has arrived: the local prediction owns it.
+    require(knocked_back());
+    engine.predicted_impulse_lockout_recovering_ = true;
+    require(!knocked_back());
+    engine.predicted_impulse_lockout_recovering_ = false;
+    engine.predicted_impulse_is_knockback_ = false;
+    require(!knocked_back());
+    engine.predicted_impulse_is_knockback_ = true;
+    engine.predicted_character_tick_ = 30u;
+    require(!knocked_back());
 }
 
 void owner_action_prediction_and_discrete_interpolation() {
@@ -4095,6 +4134,7 @@ void predicted_area_effect_impulse_skips_the_local_shooter() {
         impact.actions[0].target_source = KernelEntityRefSource_EventTarget;
         impact.actions[0].direction_source = KernelEventVec3Source_Direction;
         impact.actions[0].impulse_strength = 12.0f;
+        impact.actions[0].impulse_lockout_ticks = 30u;
         impact.actions[0].impulse_collision_mask = KERNEL_COLLISION_MASK_ACTOR;
 
         KernelColliderTemplateDefinition collider = projectile_collider_template();
@@ -4132,6 +4172,8 @@ void predicted_area_effect_impulse_skips_the_local_shooter() {
         client.predicted_projectiles_.push_back(projectile);
 
         client.advance_predicted_projectiles(1.0f / 30.0f);
+        const bool expected_impulse = projectile_owner_peer != 7u || hit_instigator != 0u;
+        require(client.predicted_impulse_is_knockback_ == expected_impulse);
         return client.predicted_local_entity_.velocity;
     };
 
@@ -5965,6 +6007,7 @@ int main() {
     local_presentation_does_not_lead_a_blocked_character();
     reconcile_replays_an_authoritative_knockback();
     authoritative_lockout_respects_a_newer_local_one();
+    local_knockback_visual_uses_prediction_not_velocity();
     predicted_knockdown_holds_the_local_player_down();
     predicted_suspension_rises_then_drops_like_the_authority();
     predicted_shelter_holds_the_local_player_inside();

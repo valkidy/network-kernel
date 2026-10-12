@@ -1544,6 +1544,8 @@ private:
     // that landed: rooted, released only by the count. The twin of
     // ImpulseLockout::recovering.
     bool predicted_impulse_lockout_recovering_ = false;
+    // Suspension drops share the movement lockout, but are not knockbacks.
+    bool predicted_impulse_is_knockback_ = false;
     // The status suspension holding the local player, as the last owner
     // snapshot said: until predicted_suspension_until_tick_ the prediction
     // moves at exactly this velocity, as the authority does, and on that tick
