@@ -135,7 +135,7 @@ Prop 已經是單一來源：它不寫 `hitbox:`，`materialize_entity_collider`
 6. **Client**
    - `PredictedProjectile.weapon_id`：write-only，直接刪。
    - `DerivedChainPresenter`：傳 0（或在 `DerivedChainRoot` 加 weapon_id 但沒有來源，不做）。
-   - Projectile debug record 的 `weapon_id`：**需要決定**（見 §5 Q1）。建議：client 端填 `KERNEL_DEBUG_WILDCARD_U8`／0 表示未知，不改線上格式。
+   - Projectile debug record 的 `weapon_id`（§5 Q1 已定 (a)）：client 端填 255（`KERNEL_HELD_WEAPON_NONE`，與 `KERNEL_DEBUG_WILDCARD_U8` 同值，任何武器都不得使用）表示「未知」，不改線上格式。**不能填 0**：0 是 rifle。副作用：client 上以特定 weapon_id 過濾 projectile debug record 不再命中任何紀錄，在 `KernelProjectileDebugInfo` 註解寫明；server 端 debug record 不受影響（仍讀 `ProjectileState.weapon_id`）。
 7. **ABI 欄位 `KernelProjectileTemplateDefinition::weapon_id`（`kernel_types.h:2224`）**：改名為 `reserved_weapon_id`（保持 layout），kernel 驗證要求為 0。語意與驗證都變了，舊 `bundle.bytes` 會被拒 → **bump ABI 106**，`NETWORK_KERNEL_ABI.md` 加一段說明。C# mirror 的對應改名是使用者的事。
 8. **測試**
    - 改寫目前斷言 template weapon_id 的測試（`weapon_template_loader_test`、`gameplay_config_test`、`lock_weapon_catalog_test`、`tornado_catalog_test`、`catalog_weapon_definition_test` 等；實作時逐一確認，只改真的讀 projectile template weapon_id 的斷言）。
@@ -150,9 +150,8 @@ Prop 已經是單一來源：它不寫 `hitbox:`，`materialize_entity_collider`
 
 ## 5. 需要使用者決定
 
-- **Q1（D4b）**：client debug record 的 projectile `weapon_id`。
-  - (a) 建議：client 填「未知」，不改線上格式，packet schema 不動。目前沒有任何遊戲邏輯或 Unity 程式讀它。
-  - (b) 在 `ProjectileSpawnRecord` 加 1 byte weapon_id：client debug 正確，但 **packet schema 32→33**，每筆 spawn record 多 1 byte。
+- **Q1（D4b）— 已定 2026-10-13：採 (a)。** client debug record 的 projectile `weapon_id` 填「未知」（255），不改線上格式，packet schema 不動。目前沒有任何遊戲邏輯或 Unity 程式讀它。
+  - 不採 (b)：在 `ProjectileSpawnRecord` 加 1 byte weapon_id 會讓 packet schema 32→33，每筆 spawn record 多 1 byte，只為了 debug。
 - **Q2（D4a）**：大型身形改成大盒子後，即時命中（area effect／melee／lock）會開始打中原本打不到的位置。這是預期的修正，但會改手感；若要保留小盒子給某些系統，就違反「單一來源」，需要另外討論。
 
 ---
@@ -163,7 +162,7 @@ Prop 已經是單一來源：它不寫 `hitbox:`，`materialize_entity_collider`
 |---|---|---|
 | ABI | 不變 | **106**（`KernelProjectileTemplateDefinition.weapon_id` → reserved、驗證為 0）；接在 refactor 的 105 之後 |
 | Snapshot schema（30） | 不變 | 不變 |
-| Packet schema（32） | 不變 | 不變（Q1 選 b 才變 33） |
+| Packet schema（32） | 不變 | 不變（Q1 採 (a)） |
 | catalog hash／`bundle.bytes` | 變，需重產 | 變，需重產 |
 | C# mirror | 不需 | 欄位改名（使用者處理） |
 
