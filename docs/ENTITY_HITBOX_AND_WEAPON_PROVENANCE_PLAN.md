@@ -2,13 +2,14 @@
 
 狀態：計畫（尚未實作）。2026-10-13。
 來源：`docs/ACTION_GRAPH_REFACTOR_PLAN.md` §0 D4（從 action graph refactor 拆出）。
-ABI：action graph refactor（`claude/action-graph-refactor`）用 105；本批若需 bump 用 **106**，合併時再核對一次。
+ABI：action graph refactor（`claude/action-graph-refactor`）用 105；本批 D4a-2 與 D4b 共用 **106**，合併時再核對一次。
 
 ---
 
 ## 0. 已定方向（不重開）
 
 - **D4a**：大型身形各自建 collider template；entity 只引用 `collider_template:`，移除 `hitbox:`；兩者同時出現時 loader 報錯。
+- **D4a-2（Q2，2026-10-13 定）**：有 rig 的大型身形改兩層判定——collider template 是 bounds（broad phase），`rig.yaml` 的骨骼 collider 判定實際傷害（narrow phase）。
 - **D4b**：projectile 的 `weapon_id` 從發射當下的事件來源（provenance）帶入，不寫回 projectile template。
 
 ---
@@ -50,20 +51,48 @@ Prop 已經是單一來源：它不寫 `hitbox:`，`materialize_entity_collider`
 - client 的預測代理體和 Unity debug 畫的都是小盒子，所以 debug 畫面看不到 rewind 實際打的範圍。
 同一顆子彈在 rewind 窗口內外會打到不同大小的目標。
 
-### 1.4 改成單一來源後的行為變化（要讓使用者知道）
+### 1.4 Rig collider 已經存在，但被大盒子遮住
 
-以「大盒子」為準（數值沿用現在的 `hitbox:`）：
-- 17 個一致的 template：**零行為變化**。
-- 5 個大型身形：rewind／relevance／瞄準點不變；**即時碰撞世界的命中體積從小盒子變大盒子**，area effect、melee、lock、client 預測與 Unity debug 都會開始打到／畫出大盒子。這是修正，但會改變手感（例如 grenade 炸在 giant 腰部現在會中）。
-- 需要確認的風險：大盒子是 `kDamageable` layer，確認視線（vision LOS）與移動查詢不會被它擋住（`push_collider_into_physics` 把它歸為 `kActorHitbox`，只有 damage 查詢會看到；實作時用 smoke test 驗證，不靠推論）。
+5 個大型身形全部設了 `skeleton.collision_flags: {purpose: limb | hit, layer: hostile_side}`（只有這 5 個 entity 有），每個 tick 由 `skeleton_assets/raw/*.rig.yaml` 的 `GEO_*` 骨骼產生逐骨骼 collider：
+
+| rig | collider 數 | 涵蓋 | `hit_zone` |
+|---|---|---|---|
+| quadruped（21） | 9 | 4 腿 × 2 段 + Body | 腿 0.5、Body 1.5 |
+| tripod（22、211） | 7 | 3 腿 × 2 段 + Body（sphere） | 未設（1.0） |
+| biped（23） | 12 | 腿、手臂、Hip、Torso、Body、Head | 未設 |
+| gingerbread_giant（39） | 8 | 腿、Hip、Torso、Body、Head | 未設 |
+
+它們已經在伺服器 Jolt 世界（`kActorLimb`）、rewind 歷史（`history_buffer.cc:143-175`，`is_limb`）與 client 預測代理體裡。但現在它們和大盒子是**並列目標**，不是兩層：
+
+- **Rewind**：`raycast_history_frame` 取最近的 volume。大盒子包住所有骨骼，射線一定先進大盒子，所以 limb 的 `hit_zone` 在 rewind 路徑上幾乎不生效（由程式推導，未實測）。
+- **即時路徑**：只有 mask 寫了 `limb` 的才看得到骨骼（`KERNEL_COLLISION_LAYER_LIMB` 刻意不在任何 MASK_ 聚合裡）。目前只有 `rifle_shot`、`rocket`、`water_bubble_spammer_bullet`，以及打 player_side 的 `grunt_claw_hit`／`grunt_slam_hit`。shotgun、grenade、frag、meteor、tornado、beam、homing 等打大型怪時只碰得到腳邊的小盒子。
+
+### 1.5 已定方向（Q2，2026-10-13）：大型身形改為兩層判定
+
+- **大盒子（entity 的 `collider_template:`）只當 bounds**：relevance、AI 瞄準點、homing／lock 目標中心、rewind 的 broad-phase 篩選、debug。**不再是傷害體積**。
+- **Rig collider 判定實際傷害**（narrow phase），`hit_zone` 由命中的骨骼決定。
+- **沒有 rig 的 actor**（grunt、gingerbread、玩家……）：collider 本身就是傷害體積，行為不變。
+
+行為變化（相對於今天）：
+- 17 個沒有 rig 的 template：零變化。
+- 5 個大型身形：rewind 不再打中大盒子的空處（腿與腿之間、身體旁邊），只算骨骼；即時路徑的 area effect、melee、沒寫 `limb` 的武器從「只碰得到腳邊小盒子」變成「打得到整個身體的骨骼」；quadruped 的腿 0.5／Body 1.5 開始真正生效。
+- Client 預測與 Unity debug 已經有 limb，命中位置與伺服器一致。
+
+### 1.6 計算負擔（評估）
+
+- **伺服器 Jolt**：limb 現在就每 tick 同步並進物理世界，這部分成本已在付。Jolt 自己有 broad phase（以 body AABB 建 BVH），所以**不需要也不應該**在 Jolt 查詢前用大盒子篩；bounds 根本不進 Jolt 的傷害查詢即可。新增成本 ≈ 0。
+- **Rewind**：現在 `include_limbs` 的射線對每個 volume 都做 OBB 測試；改成「先測 bounds，中了才測該 entity 的骨骼」後，沒瞄準的射線每隻少測 7–12 個 OBB。成本持平或下降。
+- **Client 預測**：limb 代理體已存在。2026-08 量過（client 端）每個 body 約 0.06 µs，64 隻 quadruped（576 body）約 34 µs，30 Hz tick 預算 33,333 µs 的約 0.1%。本次未重跑。
+- **Area effect**：一顆球對 N 個骨骼盒而非 1 個盒子，可以忽略。
+- 真正的成本在語意（mask、area effect 去重、`hit_zone` 規則），不在 CPU。
 
 ---
 
-## 2. D4a 實作步驟
+## 2. D4a-1 實作步驟：單一來源（不動 ABI）
 
 不動 ABI：`KernelCombatStateDefinition::hitbox_*` 保留，改由 game_server 從 collider template 推導後填入。kernel 端不改。
 
-1. **新增 4 個 collider template**（`game_server/gameplay_catalog/collider_templates/`，命名照 `$id_collider_$name`）
+1. **新增 4 個 collider template**（`game_server/gameplay_catalog/collider_templates/`，命名照 `$id_collider_$name`）——D4a-1 先用 `purpose: hit`，D4a-2 改為 `purpose: bounds` 並改名 `*_bounds_aabb`
    - `46_collider_quadruped_hit_aabb.yaml`：center y 12、half 12/14/12、`purpose: hit`、`layer: hostile_side`
    - `47_collider_tripod_hit_aabb.yaml`：center y 12、half 10/14/10（22 與 211 共用）
    - `48_collider_biped_hit_aabb.yaml`：center y 20、half 12/22/8
@@ -81,10 +110,49 @@ Prop 已經是單一來源：它不寫 `hitbox:`，`materialize_entity_collider`
 6. **測試**
    - 新 loader test：同時寫 `hitbox:` 與 `collider_template:` → 報錯；collider 不是 hit/aabb → 報錯。
    - 黃金比對：以本批修改前的 22 組 `hitbox:` 數值為表，斷言推導出的 `hitbox_center/half_extents` 逐一相等（17 個沒換 collider 的、5 個換了的都要）。這是本批最重要的 regression guard。
-   - 一個 kernel smoke test：spawn 一個 giant，在其 y≈9 處放 area effect，斷言即時路徑有命中（修改前是 miss）——要先確認修改前確實 fail，避免 vacuous assert。
    - 有 inline `hitbox:` 的測試 fixture 要改：`game_server/tests/{hover_controller,tent_shelter,gameplay_config,tent_feasibility_probe}_test.cc`、`engine/src/tests/kernel_tests/{client_mode,relevance}_test.cc`（實作時逐一確認是 YAML 還是註解）。
 
-**D4a 結論：ABI 不變、snapshot／packet schema 不變；catalog hash 會變（collider 新增），所以 `bundle.bytes` 需要重新產生（由使用者處理）。**
+**D4a-1 結論：ABI 不變、snapshot／packet schema 不變；catalog hash 會變（collider 新增），`bundle.bytes` 需要重新產生（由使用者處理）。中間狀態不單獨交付，見 §2b。**
+
+## 2b. D4a-2 實作步驟：大型身形兩層判定（ABI 106，與 D4b 共用）
+
+D4a-1 之後，5 個大型身形的 collider 是 `purpose: hit` 的大盒子，即時路徑會開始拿大盒子算傷害。**這個中間狀態不交付**：D4a-1 可以先 commit，但要和 D4a-2 一起交給使用者打包。
+
+1. **新增 collider purpose `bounds`**
+   - `KernelColliderPurpose_Bounds = 1u << 6`（`kernel_types.h:2015-2024`，目前用到 bit 5 `_Limb`）。語意：entity 的外框，只給 relevance、瞄準點、rewind broad phase 與 debug 用，任何傷害查詢都看不到它。
+   - YAML token `bounds`；46-49 四個 collider 改為 `purpose: bounds`（名稱改成 `*_bounds_aabb`）。
+   - 新增 purpose bit 加上語意變化 → **ABI 106**（與 D4b 同一次 bump）。
+2. **Loader 規則**（`gameplay_config.cc`，actor 解析與 `actor_collider_template_id_from_yaml`）
+   - `skeleton.collision_flags.purpose` 含 `hit` ⇒ `collider_template:` 必須是 `bounds` + `aabb`。
+   - 沒有 rig hit ⇒ 必須是 `hit` + `aabb`（D4a-1 的規則）。
+   - 不符就報錯，訊息寫出是哪一種情況。
+3. **Kernel：bounds 不進傷害世界**
+   - `materialize_entity_collider`（`kernel.cc:4789`）：bounds 照樣建 `ColliderInstance`（debug／`Kernel_QueryColliderShapes` 看得到），並在 `Hitbox` 標記 `bounds_only = true`（`components.h:609` 新增欄位）。
+   - `push_collider_into_physics`（`:5072`）：purpose 只有 bounds 的不推進 Jolt。
+   - Standalone collision world（`world.cc:279`）：跳過 `bounds_only` 的 `Hitbox`，改推該 entity 的 limb（或在 standalone 模式下直接不支援 rig 傷害——實作時看哪個測試依賴它再決定）。
+   - Client 的 `sync_client_render_colliders`／`sync_prediction_local_hitbox` 只收 `_Hit`，bounds 自動排除；limb 代理體已存在，不用改。
+4. **Rewind：先篩後判**（`history_buffer.cc`）
+   - `HitVolumeSnapshot` 加 `is_bounds`（由 `Hitbox.bounds_only` 帶入）。
+   - `raycast_history_frame`／`sweep_history_frame`：bounds volume 永遠不是命中結果；射線沒碰到某 entity 的 bounds，就跳過該 entity 的所有 limb；碰到了才測它的 limb，取最近的。
+   - **前提：bounds 必須包住所有 limb。** 腿在跨步、地形起伏時可能伸出 bounds，伸出的部分會被篩掉而打不中。實作時加一個 debug 檢查（limb 的 world AABB 超出 bounds 就記 log），並在 locomotion 測試裡斷言走一段路、跨越高低差時沒有超出；若有，放大 46-49 的尺寸，而不是取消篩選。
+   - 有 rig 的 entity，limb 一律參與（不看 `include_limbs`）；`include_limbs` 只剩對「沒有 bounds 的 limb」有意義——目前 catalog 沒有這種 entity，見 Q3。
+5. **即時路徑的 mask 語意**（`kernel.cc:1879/1994/3667/12643` 一帶的 mask→filter 轉換、`physics_world.cc:140-160`、`weapon_system.cc:112`、`projectile_system.cc:1852`）
+   - 對有 bounds 的 rigged actor：任何會打到該 actor 的 mask（`actor`／`damageable`／該 actor 的 side）都要打到它的 limb，category 仍以 limb 的 `layer`（`collision_flags.layer`）比對。
+   - 這推翻了「limb 必須明寫才打得到」的舊規則，但只對 rigged actor；沒有 rig 的世界不受影響。
+   - 實作重點：不能把 limb 塞進 `actor_hit_*_mask()` 共用 helper（舊坑：會把 limb 發給所有沒要的查詢），而是在 filter 建立時針對 `kActorLimb` kind 另開條件。
+6. **Area effect／melee 去重與 `hit_zone`**
+   - 實作前先讀 `area_effect_system.cc` 與 melee 路徑，確認現在「同一個 entity 只吃一次」是以 net_id 去重，還是以 collider 去重。若以 collider，一顆爆炸碰到 giant 3 根骨骼會扣 3 次血，必須改成以 net_id 去重。
+   - `hit_zone` 取法見 Q4。
+7. **測試**
+   - Rewind：射線穿過 quadruped 腿與腿之間（在 bounds 內、不碰骨骼）→ miss；修改前同一條射線 → hit（先確認修改前確實 hit）。
+   - Rewind：射中 quadruped 腿 → 傷害 × 0.5；射中 Body → × 1.5。
+   - 即時：grenade（mask 沒寫 `limb`）在 giant 腰部爆炸 → 命中一次，只扣一次血。
+   - 即時：同一把武器打一個沒有 rig 的 grunt → 行為與修改前完全相同（regression guard）。
+   - Loader：rigged actor 用 `hit` collider → 報錯；非 rigged 用 `bounds` → 報錯。
+   - 既有 `//game_server:limb_collider_test`、`//engine/src/tests/sync_tests:history_buffer_test` 必須仍綠；若其斷言依賴「limb 必須明寫」，逐一確認是預期改變再改。
+   - 注意 memory「test static scene needs catalog ids」：沒有地面時 limb 不會被發佈，limb 相關斷言會兩邊都空而假綠；每個 limb 測試先斷言 limb 數量 > 0。
+
+**D4a-2 結論：ABI 106（新 purpose bit + mask 語意），與 D4b 同一次 bump；snapshot／packet schema 不變（client 本地推導 limb）；catalog hash 變。**
 
 ---
 
@@ -152,20 +220,29 @@ Prop 已經是單一來源：它不寫 `hitbox:`，`materialize_entity_collider`
 
 - **Q1（D4b）— 已定 2026-10-13：採 (a)。** client debug record 的 projectile `weapon_id` 填「未知」（255），不改線上格式，packet schema 不動。目前沒有任何遊戲邏輯或 Unity 程式讀它。
   - 不採 (b)：在 `ProjectileSpawnRecord` 加 1 byte weapon_id 會讓 packet schema 32→33，每筆 spawn record 多 1 byte，只為了 debug。
-- **Q2（D4a）**：大型身形改成大盒子後，即時命中（area effect／melee／lock）會開始打中原本打不到的位置。這是預期的修正，但會改手感；若要保留小盒子給某些系統，就違反「單一來源」，需要另外討論。
+- **Q2（D4a）— 已定 2026-10-13：兩層判定。** 大盒子只當 bounds，rig collider 判定傷害（§1.5、§2b）。原本「大盒子直接當傷害體積」的方案不採用：它比身體大很多，空處也會算命中。
+- **Q3（D4a-2，待定）**：`limb` mask token 的去留。rigged actor 的骨骼改為「打得到 actor 就打得到骨骼」後，`limb` 對它們變成多餘。
+  - (a) 建議：保留 token 但只作用於「沒有 bounds 的 limb」（目前 catalog 沒有這種 entity），5 個寫了 `limb` 的 projectile template（`rifle_shot`、`rocket`、`water_bubble_spammer_bullet`、`grunt_claw_hit`、`grunt_slam_hit`）移除它；loader 不報錯。
+  - (b) 直接移除 token，loader 拒絕；日後要「只打腿」的武器時再設計。
+- **Q4（D4a-2，待定）**：area effect／melee 一次碰到同一隻怪的多根骨骼時用哪個 `hit_zone`。
+  - (a) 建議：若 area effect 現在本來就不套 `hit_zone`，維持不套（爆炸不分部位）；melee 取被碰到骨骼中最大的。
+  - (b) 一律取最大。
+  - (c) 一律取離中心最近的骨骼。
 
 ---
 
 ## 6. 版本與交付
 
-| 項目 | D4a | D4b |
-|---|---|---|
-| ABI | 不變 | **106**（`KernelProjectileTemplateDefinition.weapon_id` → reserved、驗證為 0）；接在 refactor 的 105 之後 |
-| Snapshot schema（30） | 不變 | 不變 |
-| Packet schema（32） | 不變 | 不變（Q1 採 (a)） |
-| catalog hash／`bundle.bytes` | 變，需重產 | 變，需重產 |
-| C# mirror | 不需 | 欄位改名（使用者處理） |
+| 項目 | D4a-1 | D4a-2 | D4b |
+|---|---|---|---|
+| ABI | 不變 | **106**（`KernelColliderPurpose_Bounds`、rigged actor 的 mask 語意） | **106**（`KernelProjectileTemplateDefinition.weapon_id` → reserved、驗證為 0） |
+| Snapshot schema（30） | 不變 | 不變 | 不變 |
+| Packet schema（32） | 不變 | 不變 | 不變（Q1 採 (a)） |
+| catalog hash／`bundle.bytes` | 變，需重產 | 變，需重產 | 變，需重產 |
+| C# mirror | 不需 | 新 purpose 常數（使用者處理） | 欄位改名（使用者處理） |
 
-建議順序：D4a、D4b 分兩個 commit 放在同一個 `claude/*` 分支；D4a 不碰 ABI，可以先單獨交。分支從 `main` 開（等 `claude/action-graph-refactor` 進 main 之後再開，避免 ABI 105/106 與 `hash_projectile_template` 衝突）。不 merge 到 `feat-unity-plugin`／`dev-*`，不碰 Unity package。
+ABI 106 只 bump 一次，D4a-2 與 D4b 共用，接在 refactor 的 105 之後。
 
-驗證只跑 targeted tests：loader test、gameplay_config_test、新增的兩個 kernel smoke test、projectile_interaction_test、ABI 版本 3 個測試。不跑 full build/test。
+建議順序：D4a-1 → D4a-2 → D4b，三個 commit 放在同一個 `claude/*` 分支，**一起交付**（D4a-1 單獨交付會出現「大盒子當傷害體積」的中間狀態）。D4a-2 動工前先回答 Q3、Q4。分支從 `main` 開（等 `claude/action-graph-refactor` 進 main 之後再開，避免 ABI 105/106 與 `hash_projectile_template` 衝突）。不 merge 到 `feat-unity-plugin`／`dev-*`，不碰 Unity package。
+
+驗證只跑 targeted tests：loader test、gameplay_config_test、§2b 與 §4 新增的 kernel smoke test、`limb_collider_test`、`history_buffer_test`、`projectile_interaction_test`、ABI 版本 3 個測試。不跑 full build/test。
