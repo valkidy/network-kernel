@@ -3,7 +3,7 @@ name: gingerbread_giant
 entity_type: actor
 actor_type: agent
 camp: enemy_side
-collider_template: sentry_grunt_hit_aabb
+collider_template: gingerbread_giant_hit_aabb
 health:
   hp: 500
   max_hp: 500
@@ -24,9 +24,6 @@ movement:
 # and 4.8 m either side: the arms carry no collider (the client animates them,
 # the server never sees where they are), so this AABB still reaches 8 m out to
 # cover where they are drawn.
-hitbox:
-  center: {x: 0.0, y: 9.0, z: 0.0}
-  half_extents: {x: 8.0, y: 10.7, z: 3.0}
 weapon_slots: [2]
 active_weapon_slot: 0
 vision:

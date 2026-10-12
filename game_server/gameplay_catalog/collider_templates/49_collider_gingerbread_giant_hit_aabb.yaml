@@ -1,0 +1,9 @@
+# gingerbread_giant's whole body, for being shot: the box its hitbox block used to
+# author, now the one source for both the rewound and the live hit tests.
+id: 49
+name: gingerbread_giant_hit_aabb
+shape: aabb
+center: {x: 0.0, y: 9.0, z: 0.0}
+half_extents: {x: 8.0, y: 10.7, z: 3.0}
+purpose: hit
+layer: hostile_side

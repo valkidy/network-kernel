@@ -1,0 +1,9 @@
+# biped_actor's whole body, for being shot: the box its hitbox block used to
+# author, now the one source for both the rewound and the live hit tests.
+id: 48
+name: biped_hit_aabb
+shape: aabb
+center: {x: 0.0, y: 20.0, z: 0.0}
+half_extents: {x: 12.0, y: 22.0, z: 8.0}
+purpose: hit
+layer: hostile_side

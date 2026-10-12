@@ -326,14 +326,12 @@ name: sentry_grunt
 entity_type: actor
 actor_type: agent
 camp: enemy_side
+collider_template: sentry_grunt_hit_aabb
 health:
   hp: 240
   max_hp: 240
 movement:
   move_speed_meters_per_second: 2.5
-hitbox:
-  center: {x: 0.0, y: 0.8, z: 0.0}
-  half_extents: {x: 0.4, y: 0.8, z: 0.4}
 weapon_slots:
   - 2
 active_weapon_slot: 0
@@ -374,7 +372,10 @@ Validation:
 - actor templates declare `actor_type` and `camp`.
 - health values must be positive, with `hp <= max_hp`.
 - movement speed must be positive.
-- hitbox center and half extents are required; half extents must be positive.
+- `collider_template` names a `purpose: hit`, `shape: aabb` collider; it is the
+  actor's only hit volume. Every hit test, rewound or live, and the relevance
+  radius and aim point read that box. A `hitbox:` block is rejected: it used to
+  be a second, separately authored box, and the two drifted apart.
 - `weapon_slots` must contain 1 to 4 loaded weapon template references.
 - `active_weapon_slot` defaults to `0` and must be in range.
 - enemy AI derived from actor data must reference usable weapon timing, reload,
@@ -508,7 +509,7 @@ changes. It should cover:
   sync modes, and derived projectile data
 - player entity-template references
 - director spawn position, count, target entity template, radius, and seed
-- actor IDs, names, entity types, health, movement, hitboxes, weapon slots,
+- actor IDs, names, entity types, health, movement, hit colliders, weapon slots,
   active slots, animation states, AI tunables, collider template references,
   and vision collider template references
 - collider template definitions

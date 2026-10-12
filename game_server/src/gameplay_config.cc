@@ -3599,6 +3599,35 @@ std::uint32_t actor_collider_template_id_from_yaml(
     throw std::runtime_error("unknown actor collider_template name: " + value);
 }
 
+// An actor's hit volume is its collider_template and nothing else. The live hit
+// tests read the collider; the rewound ones, relevance and aim points read the
+// Hitbox filled here. They used to be authored separately, as a `hitbox:` block,
+// and five rigs drifted apart by a factor of thirty: shot in the rewound window
+// a giant was 16 m wide, after it 0.8 m.
+void apply_actor_hit_collider(
+    const ColliderCatalogConfig& colliders,
+    ActorTemplateConfig* actor_template) {
+    const auto found = std::find_if(
+        colliders.templates.begin(),
+        colliders.templates.end(),
+        [actor_template](const ColliderTemplateConfig& collider_template) {
+            return collider_template.definition.template_id ==
+                actor_template->collider_template_id;
+        });
+    // Hitbox is a centred box and nothing else, so that is all an actor's hit
+    // collider may be.
+    if (found == colliders.templates.end() ||
+        (found->definition.purpose_flags & KernelColliderPurpose_Hit) == 0u ||
+        found->definition.shape_type != KernelColliderShapeType_Aabb) {
+        throw std::runtime_error(
+            "actor collider_template must be a hit aabb: " +
+            actor_template->name);
+    }
+    const KernelVec4& box = found->definition.shape_params;
+    actor_template->hitbox_center = found->definition.center;
+    actor_template->hitbox_half_extents = KernelVec3{box.x, box.y, box.z};
+}
+
 std::uint64_t uint64_from_yaml(const YAML::Node& node) {
     const std::string value = node.as<std::string>();
     std::size_t consumed = 0u;
@@ -4255,21 +4284,15 @@ ActorTemplateConfig actor_template_from_yaml(
             hover["vertical_speed_meters_per_second"].as<float>();
     }
 
-    const YAML::Node hitbox = node["hitbox"];
-    if (!hitbox || !hitbox["center"] || !hitbox["half_extents"]) {
+    // Still a known key, so that an old template is told where its box went
+    // rather than only that the key is unknown.
+    if (node["hitbox"]) {
         throw std::runtime_error(
-            "actor template requires hitbox center and half_extents: " +
+            "actor template sets hitbox; its hit volume is its "
+            "collider_template: " +
             actor_template.name);
     }
-    reject_unknown_keys(
-        hitbox,
-        {"center", "half_extents"},
-        path,
-        source_kind,
-        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
-        actor_template.actor_template_id);
-    actor_template.hitbox_center = vec3_from_yaml(hitbox["center"]);
-    actor_template.hitbox_half_extents = vec3_from_yaml(hitbox["half_extents"]);
+    apply_actor_hit_collider(colliders, &actor_template);
 
     const YAML::Node weapon_slots = node["weapon_slots"];
     if (!weapon_slots || !weapon_slots.IsSequence()) {

@@ -682,8 +682,8 @@ void a_large_rig_is_measured_by_its_edge_not_its_origin() {
         engine.world_.spawn_enemy(glm::vec3{50.0f, 0.0f, 0.0f});
     const network_example::NetId rig =
         engine.world_.spawn_enemy(glm::vec3{50.0f, 0.0f, 0.0f});
-    // The quadruped's authored hitbox: 12 m in x and z, so a horizontal radius
-    // of about 17 m.
+    // The quadruped's hit collider (quadruped_hit_aabb): 12 m in x and z, so a
+    // horizontal radius of about 17 m.
     const std::optional<entt::entity> rig_entity = engine.world_.find_entity(rig);
     require(rig_entity.has_value());
     engine.world_.registry().get<network_example::Hitbox>(*rig_entity)

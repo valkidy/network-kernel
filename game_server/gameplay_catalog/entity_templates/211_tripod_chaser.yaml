@@ -6,7 +6,7 @@ name: tripod_chaser
 entity_type: actor
 actor_type: agent
 camp: enemy_side
-collider_template: sentry_grunt_hit_aabb
+collider_template: tripod_hit_aabb
 health:
   hp: 10000
   max_hp: 10000
@@ -32,9 +32,6 @@ movement:
   # static_obstacle so a chase is blocked by props and nests instead of walking
   # through them. No actor: it would shove the rest of its squad around.
   collision_mask: terrain | static_obstacle
-hitbox:
-  center: {x: 0.0, y: 12.0, z: 0.0}
-  half_extents: {x: 10.0, y: 14.0, z: 10.0}
 weapon_slots: [2]
 active_weapon_slot: 0
 vision:
@@ -55,7 +52,7 @@ ai:
     animation_attack: chasing
   chaser:
     # Scaled to the body, not copied from the gingerbread's 1.8/2.1: the
-    # hitbox is 10 m in half extent, so a metre-scale stop would park it on
+    # hit collider is 10 m in half extent, so a metre-scale stop would park it on
     # top of its target.
     stop_distance_meters: 14.0
     resume_distance_meters: 18.0

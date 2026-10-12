@@ -16,9 +16,6 @@ movement:
   step_height: 0.4
   ground_probe_distance: 0.25
   ground_snap_distance: 0.5
-hitbox:
-  center: {x: 0.0, y: 0.8, z: 0.0}
-  half_extents: {x: 0.4, y: 0.8, z: 0.4}
 weapon_slots:
   - 2
 active_weapon_slot: 0

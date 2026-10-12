@@ -503,6 +503,7 @@ std::vector<std::uint8_t> make_entity_template_bundle_zip(
         "catalog_version: 8\n"
         "action_template_dir: action_templates\n"
         "action_graph_template_dir: action_graph_templates\n"
+        "status_effect_template_dir: status_effect_templates\n"
         "reload_action_template:\n"
         "  id: 4199\n"
         "  name: shared_reload\n"
@@ -536,9 +537,6 @@ std::vector<std::uint8_t> make_entity_template_bundle_zip(
         "  controller: character\n"
         "  move_speed_meters_per_second: 5.0\n"
         "  collider_template: player_movement_capsule\n"
-        "hitbox:\n"
-        "  center: {x: 0.0, y: 0.9, z: 0.0}\n"
-        "  half_extents: {x: 0.35, y: 0.9, z: 0.35}\n"
         "weapon_slots:\n"
         "  - 3\n"
         "  - 1\n"
@@ -561,6 +559,9 @@ std::vector<std::uint8_t> make_entity_template_bundle_zip(
     // to need: every projectile the enumeration pulls in may reference a graph,
     // area effects included.
     append_directory_files(&files, "action_graph_templates");
+    // A weapon may bind a status effect (the water bubble staff does), so the
+    // weapons above need the effects they name.
+    append_directory_files(&files, "status_effect_templates");
     append_directory_files(&files, "projectile_templates");
     return make_store_zip(files);
 }
@@ -580,9 +581,6 @@ std::string sentry_grunt_entity_template_yaml(std::string entity_type) {
         "  controller: grounded\n"
         "  move_speed_meters_per_second: 2.5\n"
         "  collider_template: sentry_grunt_movement_capsule\n"
-        "hitbox:\n"
-        "  center: {x: 0.0, y: 0.8, z: 0.0}\n"
-        "  half_extents: {x: 0.4, y: 0.8, z: 0.4}\n"
         "weapon_slots:\n"
         "  - 2\n"
         "active_weapon_slot: 0\n"
@@ -1309,6 +1307,128 @@ int main() {
             std::string::npos;
     }
     require(enemy_entity_type_rejected);
+
+    // An actor's Hitbox now comes from its collider_template. These are the
+    // boxes every actor authored as `hitbox:` before that block was removed:
+    // seventeen were already equal to their collider, five rigs moved to a
+    // collider of their own, and all of them must come out exactly as before.
+    {
+        struct AuthoredHitbox {
+            std::uint32_t id;
+            float center_y;
+            float half_x;
+            float half_y;
+            float half_z;
+        };
+        constexpr std::array<AuthoredHitbox, 22> kAuthoredHitboxes{{
+            {1u, 0.9f, 0.35f, 0.9f, 0.35f},
+            {2u, 0.8f, 0.4f, 0.8f, 0.4f},
+            {21u, 12.0f, 12.0f, 14.0f, 12.0f},
+            {22u, 12.0f, 10.0f, 14.0f, 10.0f},
+            {23u, 20.0f, 12.0f, 22.0f, 8.0f},
+            {24u, 0.8f, 0.4f, 0.8f, 0.4f},
+            {25u, 0.8f, 0.4f, 0.8f, 0.4f},
+            {26u, 0.8f, 0.4f, 0.8f, 0.4f},
+            {27u, 0.8f, 0.4f, 0.8f, 0.4f},
+            {28u, 0.8f, 0.4f, 0.8f, 0.4f},
+            {29u, 0.8f, 0.4f, 0.8f, 0.4f},
+            {30u, 0.8f, 0.4f, 0.8f, 0.4f},
+            {31u, 0.8f, 0.4f, 0.8f, 0.4f},
+            {32u, 0.8f, 0.4f, 0.8f, 0.4f},
+            {33u, 0.8f, 0.4f, 0.8f, 0.4f},
+            {34u, 0.8f, 0.4f, 0.8f, 0.4f},
+            {35u, 0.8f, 0.4f, 0.8f, 0.4f},
+            {36u, 0.8f, 0.4f, 0.8f, 0.4f},
+            {37u, 1.5f, 3.0f, 1.5f, 3.0f},
+            {38u, 0.8f, 0.4f, 0.8f, 0.4f},
+            {39u, 9.0f, 8.0f, 10.7f, 3.0f},
+            {211u, 12.0f, 10.0f, 14.0f, 10.0f},
+        }};
+        for (const AuthoredHitbox& expected : kAuthoredHitboxes) {
+            const auto found = std::find_if(
+                config.entity_templates.begin(),
+                config.entity_templates.end(),
+                [&expected](
+                    const network_example::game_server::ActorTemplateConfig&
+                        entity_template) {
+                    return entity_template.actor_template_id == expected.id;
+                });
+            if (found == config.entity_templates.end() ||
+                found->hitbox_center.x != 0.0f ||
+                found->hitbox_center.y != expected.center_y ||
+                found->hitbox_center.z != 0.0f ||
+                found->hitbox_half_extents.x != expected.half_x ||
+                found->hitbox_half_extents.y != expected.half_y ||
+                found->hitbox_half_extents.z != expected.half_z) {
+                std::fprintf(
+                    stderr,
+                    "actor %u hitbox differs from its authored box\n",
+                    expected.id);
+            }
+            require(found != config.entity_templates.end());
+            require(found->hitbox_center.x == 0.0f);
+            require(found->hitbox_center.y == expected.center_y);
+            require(found->hitbox_center.z == 0.0f);
+            require(found->hitbox_half_extents.x == expected.half_x);
+            require(found->hitbox_half_extents.y == expected.half_y);
+            require(found->hitbox_half_extents.z == expected.half_z);
+        }
+    }
+
+    // `hitbox:` is refused with a pointer to where the box lives now, and an
+    // actor's collider must be something a Hitbox can describe.
+    const auto rejects_actor_with = [](const std::string& sentry_yaml,
+                                       const std::string& message) {
+        const std::vector<std::uint8_t> bundle =
+            make_entity_template_bundle_zip(sentry_yaml);
+        try {
+            (void)network_example::game_server::
+                load_gameplay_config_from_bundle_memory(
+                    bundle.data(),
+                    static_cast<std::uint32_t>(bundle.size()),
+                    "gameplay_catalog.yaml");
+        } catch (const std::exception& error) {
+            return std::string(error.what()).find(message) != std::string::npos;
+        }
+        return false;
+    };
+    require(rejects_actor_with(
+        sentry_grunt_entity_template_yaml("actor") +
+            "hitbox:\n"
+            "  center: {x: 0.0, y: 0.8, z: 0.0}\n"
+            "  half_extents: {x: 0.4, y: 0.8, z: 0.4}\n",
+        "actor template sets hitbox"));
+    require(rejects_actor_with(
+        replace_once(
+            sentry_grunt_entity_template_yaml("actor"),
+            "collider_template: sentry_grunt_hit_aabb\n",
+            "collider_template: sentry_grunt_movement_capsule\n"),
+        "actor collider_template must be a hit aabb"));
+    // The control: the unmodified template loads, and with the collider's box,
+    // so the two refusals above are about what was changed and nothing else.
+    {
+        const std::vector<std::uint8_t> control_bundle =
+            make_entity_template_bundle_zip(
+                sentry_grunt_entity_template_yaml("actor"));
+        const network_example::game_server::GameServerGameplayConfig
+            control_config =
+                network_example::game_server::
+                    load_gameplay_config_from_bundle_memory(
+                        control_bundle.data(),
+                        static_cast<std::uint32_t>(control_bundle.size()),
+                        "gameplay_catalog.yaml");
+        const auto sentry = std::find_if(
+            control_config.entity_templates.begin(),
+            control_config.entity_templates.end(),
+            [](const network_example::game_server::ActorTemplateConfig&
+                   entity_template) {
+                return entity_template.actor_template_id == 2u;
+            });
+        require(sentry != control_config.entity_templates.end());
+        require(sentry->hitbox_center.y == 0.8f);
+        require(sentry->hitbox_half_extents.x == 0.4f);
+        require(sentry->hitbox_half_extents.y == 0.8f);
+    }
 
     require(config.player.actor_template_id == 1);
     require(

@@ -35,9 +35,6 @@ movement:
   hover:
     height_meters: 9.0
     vertical_speed_meters_per_second: 3.0
-hitbox:
-  center: {x: 0.0, y: 0.8, z: 0.0}
-  half_extents: {x: 0.4, y: 0.8, z: 0.4}
 weapon_slots:
   - 16
 active_weapon_slot: 0
