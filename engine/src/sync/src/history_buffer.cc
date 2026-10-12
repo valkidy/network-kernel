@@ -128,6 +128,7 @@ void HistoryBuffer::write_frame(const World& world, std::uint32_t server_tick) {
             0,
             static_cast<std::uint8_t>(alive ? 1 : 0),
             0,
+            static_cast<std::uint8_t>(hitbox.bounds_only ? 1 : 0),
         });
         alive_by_net_id.emplace_back(identity.net_id, alive);
     }
@@ -263,20 +264,19 @@ bool raycast_history_frame(
         return false;
     }
 
-    float best_distance = max_range;
-    HistoricalHitResult best_hit;
-    bool has_hit = false;
-    for (const HitVolumeSnapshot& volume : frame.volumes) {
-        if (volume.net_id == ignored_net_id || volume.alive == 0 ||
-            (volume.is_limb != 0u && !include_limbs) ||
+    const auto skipped = [&](const HitVolumeSnapshot& volume) {
+        return volume.net_id == ignored_net_id || volume.alive == 0 ||
             (excluded_net_ids != nullptr &&
              std::binary_search(
                  excluded_net_ids->begin(),
                  excluded_net_ids->end(),
-                 volume.net_id))) {
-            continue;
-        }
+                 volume.net_id));
+    };
 
+    float best_distance = max_range;
+    HistoricalHitResult best_hit;
+    bool has_hit = false;
+    const auto test = [&](const HitVolumeSnapshot& volume) {
         float distance = 0.0f;
         if (ray_intersects_obb(
                 ray_origin,
@@ -294,6 +294,47 @@ bool raycast_history_frame(
                 volume};
             has_hit = true;
         }
+    };
+
+    // The broad phase: every actor that has bounds, and which of them the ray
+    // enters within range. A few per frame, so a flat list beats a set.
+    std::vector<NetId> bounded;
+    std::vector<NetId> entered;
+    for (const HitVolumeSnapshot& volume : frame.volumes) {
+        if (volume.is_bounds == 0u) {
+            continue;
+        }
+        bounded.push_back(volume.net_id);
+        float distance = 0.0f;
+        if (!skipped(volume) &&
+            ray_intersects_obb(
+                ray_origin,
+                ray_direction,
+                volume.center,
+                volume.half_extents,
+                volume.rotation,
+                &distance) &&
+            distance <= max_range) {
+            entered.push_back(volume.net_id);
+        }
+    }
+    const auto contains = [](const std::vector<NetId>& ids, NetId net_id) {
+        return std::find(ids.begin(), ids.end(), net_id) != ids.end();
+    };
+
+    for (const HitVolumeSnapshot& volume : frame.volumes) {
+        if (volume.is_bounds != 0u || skipped(volume)) {
+            continue;
+        }
+        if (volume.is_limb != 0u) {
+            const bool tested = contains(bounded, volume.net_id)
+                ? contains(entered, volume.net_id)
+                : include_limbs;
+            if (!tested) {
+                continue;
+            }
+        }
+        test(volume);
     }
 
     if (has_hit && out_hit != nullptr) {

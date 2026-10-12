@@ -144,6 +144,125 @@ int main() {
         require(hit.net_id == 42u);
     }
 
+    // Two layers (ABI 106). An actor with bounds is hit on its bones and only
+    // on them: the bounds box is a gate and never a hit, and include_limbs
+    // does not decide whether those bones are tested.
+    {
+        // A 12 m-wide body standing on two legs 8 m apart, the way the
+        // quadruped's bounds and two of its legs are laid out.
+        network_example::HitVolumeSnapshot bounds{};
+        bounds.net_id = 50u;
+        bounds.center = glm::vec3{0.0f, 12.0f, 0.0f};
+        bounds.half_extents = glm::vec3{12.0f, 14.0f, 12.0f};
+        bounds.alive = 1u;
+        bounds.is_bounds = 1u;
+        network_example::HitVolumeSnapshot left_leg{};
+        left_leg.net_id = 50u;
+        left_leg.center = glm::vec3{-4.0f, 5.0f, 0.0f};
+        left_leg.half_extents = glm::vec3{1.0f, 5.0f, 1.0f};
+        left_leg.hit_zone = 50u;
+        left_leg.alive = 1u;
+        left_leg.is_limb = 1u;
+        network_example::HitVolumeSnapshot right_leg = left_leg;
+        right_leg.center.x = 4.0f;
+        network_example::HitVolumeSnapshot body = left_leg;
+        body.center = glm::vec3{0.0f, 14.0f, 0.0f};
+        body.half_extents = glm::vec3{6.0f, 3.0f, 3.0f};
+        body.hit_zone = 150u;
+        network_example::HistoryFrame rig = frame_with(bounds);
+        rig.volumes.push_back(left_leg);
+        rig.volumes.push_back(right_leg);
+        rig.volumes.push_back(body);
+
+        const glm::vec3 north{0.0f, 0.0f, 1.0f};
+        network_example::HistoricalHitResult hit;
+
+        // Between the legs, under the body: inside the bounds, on nothing.
+        // Before bounds this was a hit on the box.
+        require(!network_example::raycast_history_frame(
+            rig, glm::vec3{0.0f, 3.0f, -30.0f}, north, 100.0f, 0u, &hit));
+
+        // Through a leg, with include_limbs left false: the bones are this
+        // actor's body, not an opt-in.
+        require(network_example::raycast_history_frame(
+            rig, glm::vec3{-4.0f, 3.0f, -30.0f}, north, 100.0f, 0u, &hit));
+        require(hit.net_id == 50u);
+        require(hit.volume.is_limb == 1u);
+        require(hit.volume.hit_zone == 50u);
+        // At the leg's face, not the bounds' face 11 m nearer.
+        require(std::fabs(hit.distance - 29.0f) < 0.001f);
+
+        // Through the body: its own multiplier.
+        require(network_example::raycast_history_frame(
+            rig, glm::vec3{0.0f, 14.0f, -30.0f}, north, 100.0f, 0u, &hit));
+        require(hit.volume.hit_zone == 150u);
+
+        // The gate. A bone outside the bounds is never tested, even on a
+        // line that crosses it, and even when the caller asks for limbs.
+        network_example::HitVolumeSnapshot stray = left_leg;
+        stray.center = glm::vec3{40.0f, 5.0f, 0.0f};
+        network_example::HistoryFrame gated = frame_with(bounds);
+        gated.volumes.push_back(stray);
+        require(!network_example::raycast_history_frame(
+            gated, glm::vec3{40.0f, 5.0f, -30.0f}, north, 100.0f, 0u, &hit,
+            true));
+        // The control: the same stray bone with no bounds in the frame is an
+        // ordinary limb, and the same ray finds it when limbs are asked for.
+        const network_example::HistoryFrame ungated = frame_with(stray);
+        require(network_example::raycast_history_frame(
+            ungated, glm::vec3{40.0f, 5.0f, -30.0f}, north, 100.0f, 0u, &hit,
+            true));
+
+        // A dead or ignored actor's bones are skipped with its bounds.
+        network_example::HistoryFrame dead_rig = rig;
+        for (network_example::HitVolumeSnapshot& volume : dead_rig.volumes) {
+            volume.alive = 0u;
+        }
+        require(!network_example::raycast_history_frame(
+            dead_rig, glm::vec3{-4.0f, 3.0f, -30.0f}, north, 100.0f, 0u, &hit));
+        require(!network_example::raycast_history_frame(
+            rig, glm::vec3{-4.0f, 3.0f, -30.0f}, north, 100.0f, 50u, &hit));
+    }
+
+    // Recording carries Hitbox::bounds_only into the frame.
+    {
+        network_example::World world;
+        const network_example::NetId rigged = world.spawn_entity(
+            network_example::EntityType::kActor,
+            network_example::ActorType::kAgent,
+            0u,
+            glm::vec3{0.0f, 0.0f, 0.0f});
+        const auto entity = world.find_entity(rigged);
+        require(entity.has_value());
+        network_example::Hitbox bounds_box{
+            glm::vec3{0.0f, 12.0f, 0.0f},
+            glm::vec3{12.0f, 14.0f, 12.0f},
+            0u};
+        bounds_box.bounds_only = true;
+        world.registry().emplace_or_replace<network_example::Hitbox>(
+            *entity, bounds_box);
+        network_example::HistoryBuffer history(4u);
+        history.write_frame(world, 3u);
+        const network_example::HistoryFrame* recorded = history.find_frame(3u);
+        require(recorded != nullptr);
+        bool saw_bounds = false;
+        for (const network_example::HitVolumeSnapshot& volume : recorded->volumes) {
+            if (volume.net_id == rigged) {
+                saw_bounds = volume.is_bounds == 1u;
+            }
+        }
+        require(saw_bounds);
+        // With no bones recorded there is nothing to hit at all.
+        network_example::HistoricalHitResult hit;
+        require(!network_example::raycast_history_frame(
+            *recorded,
+            glm::vec3{0.0f, 12.0f, -30.0f},
+            glm::vec3{0.0f, 0.0f, 1.0f},
+            100.0f,
+            0u,
+            &hit));
+    }
+
     // Recording. A placed prop is in the rewound world -- a lag-compensated shot
     // has to be able to land on it -- and a carried one is not: its collider is
     // off while it rides the carrier, and a shot at the carrier must not stop on

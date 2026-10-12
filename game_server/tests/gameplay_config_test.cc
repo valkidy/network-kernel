@@ -1310,8 +1310,8 @@ int main() {
 
     // An actor's Hitbox now comes from its collider_template. These are the
     // boxes every actor authored as `hitbox:` before that block was removed:
-    // seventeen were already equal to their collider, five rigs moved to a
-    // collider of their own, and all of them must come out exactly as before.
+    // seventeen were already equal to their collider, five rigs moved to
+    // bounds of their own, and all of them must come out exactly as before.
     {
         struct AuthoredHitbox {
             std::uint32_t id;
@@ -1404,6 +1404,70 @@ int main() {
             "collider_template: sentry_grunt_hit_aabb\n",
             "collider_template: sentry_grunt_movement_capsule\n"),
         "actor collider_template must be a hit aabb"));
+    // An actor hit on its skeleton colliders (ABI 106) names bounds, and only
+    // such an actor may: a hit box on a rig would be struck between its legs,
+    // and bounds on anything else would leave it with nothing to be hit on.
+    {
+        const std::string quadruped = read_text_file(
+            "game_server/gameplay_catalog/entity_templates/21_quadruped_actor.yaml");
+        const std::string sentry = read_text_file(
+            "game_server/gameplay_catalog/entity_templates/2_sentry_grunt.yaml");
+        const auto rejects_legged_with = [&sentry](
+                                             const std::string& legged_yaml,
+                                             const std::string& message) {
+            const std::vector<std::uint8_t> bundle =
+                make_gameplay_bundle_zip(sentry, {}, {}, {}, legged_yaml);
+            try {
+                (void)network_example::game_server::
+                    load_gameplay_config_from_bundle_memory(
+                        bundle.data(),
+                        static_cast<std::uint32_t>(bundle.size()),
+                        "gameplay_catalog.yaml");
+            } catch (const std::exception& error) {
+                return std::string(error.what()).find(message) !=
+                    std::string::npos;
+            }
+            return false;
+        };
+        require(rejects_legged_with(
+            replace_once(
+                quadruped,
+                "collider_template: quadruped_bounds_aabb\n",
+                "collider_template: sentry_grunt_hit_aabb\n"),
+            "needs a bounds aabb as its collider_template"));
+        require(rejects_legged_with(
+            replace_once(
+                quadruped,
+                "collision_flags: {purpose: limb | hit, layer: hostile_side}",
+                "collision_flags: {purpose: limb, layer: hostile_side}"),
+            "skeleton collision_flags must include hit"));
+        require(rejects_actor_with(
+            replace_once(
+                sentry_grunt_entity_template_yaml("actor"),
+                "collider_template: sentry_grunt_hit_aabb\n",
+                "collider_template: quadruped_bounds_aabb\n"),
+            "actor collider_template must be a hit aabb"));
+        // The control: the unmodified rig loads, and its Hitbox is its bounds.
+        const std::vector<std::uint8_t> legged_bundle =
+            make_gameplay_bundle_zip(sentry, {}, {}, {}, quadruped);
+        const network_example::game_server::GameServerGameplayConfig
+            legged_config = network_example::game_server::
+                load_gameplay_config_from_bundle_memory(
+                    legged_bundle.data(),
+                    static_cast<std::uint32_t>(legged_bundle.size()),
+                    "gameplay_catalog.yaml");
+        const auto legged = std::find_if(
+            legged_config.entity_templates.begin(),
+            legged_config.entity_templates.end(),
+            [](const network_example::game_server::ActorTemplateConfig&
+                   entity_template) {
+                return entity_template.actor_template_id == 21u;
+            });
+        require(legged != legged_config.entity_templates.end());
+        require(legged->skeleton.has_collision_flags);
+        require(legged->hitbox_half_extents.x == 12.0f);
+    }
+
     // The control: the unmodified template loads, and with the collider's box,
     // so the two refusals above are about what was changed and nothing else.
     {

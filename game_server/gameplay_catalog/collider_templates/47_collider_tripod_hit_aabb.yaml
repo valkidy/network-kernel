@@ -1,9 +1,0 @@
-# The tripod rig's whole body (tripod_actor and tripod_chaser share the rig): the
-# box their hitbox blocks used to author, now the one source for every hit test.
-id: 47
-name: tripod_hit_aabb
-shape: aabb
-center: {x: 0.0, y: 12.0, z: 0.0}
-half_extents: {x: 10.0, y: 14.0, z: 10.0}
-purpose: hit
-layer: hostile_side

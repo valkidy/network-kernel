@@ -1,6 +1,6 @@
 # The Water Bubble Staff's bullet: the Projectile Spammer's bullet -- the
 # same sphere, slow, straight and locally predicted -- with two differences.
-# It strikes actors (damageable, and limb as the rocket has it), where the
+# It strikes actors (damageable, bones and all, as the rocket does), where the
 # spammer's passes through them; and it does no damage of its own, but puts
 # the one actor it strikes in a bubble (status water_bubble), drifting the
 # way the bullet flew.
@@ -17,7 +17,7 @@ hit_response: destroy
 damage_shape: none
 speed: 5.0
 lifetime_ticks: 120
-collision_mask: damageable | limb | terrain | static_obstacle
+collision_mask: damageable | terrain | static_obstacle
 max_hit_count: 1
 gravity:
   x: 0.0

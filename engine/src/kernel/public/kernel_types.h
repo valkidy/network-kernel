@@ -5,6 +5,16 @@
 #include <stdint.h>
 
 /*
+ * 106: two-layer hits on rigged actors. KernelColliderPurpose gained _Bounds:
+ *     an actor whose skeleton colliders are hit volumes names a bounds box as
+ *     its collider_template, and that box is never hit itself -- it only says
+ *     which actors' bones a rewound shot goes on to test, and it is never a
+ *     physics body. Its bones are what gets hit, with their own hit_zone, and
+ *     any gameplay mask that reaches an actor now reaches those bones: they are
+ *     that actor's body, no longer an opt-in (KERNEL_COLLISION_LAYER_LIMB is
+ *     still accepted and reaches nothing more). An area effect no longer
+ *     scales by hit_zone. No struct changed; 105 is held by the action graph
+ *     refactor.
  * 104: lock-on weapons, first part. KernelWeaponFireMode gained _LockInstant:
  *     on every commit, up to max_hit_count actors inside a cone are damaged at
  *     once -- the nearest first, any a static wall hides skipped -- and the
@@ -316,7 +326,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 104u
+#define KERNEL_ABI_VERSION 106u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -460,9 +470,10 @@ typedef enum KernelFootholdQueryType {
  * carry a different value in a different bit space -- these two are never
  * interchangeable and the value matching anything there is a coincidence.
  *
- * Naming it is the only way a projectile, beam or thrown prop can touch a leg.
- * It is absent from every MASK_ aggregate for that reason: a weapon that says
- * nothing about limbs keeps the results and the cost it has today.
+ * Since ABI 106 every limb belongs to an actor that is hit on its bones (a
+ * bounds actor), and any mask that reaches that actor reaches them, so naming
+ * this adds nothing. It is still accepted, and still absent from every MASK_
+ * aggregate, for a limb without bounds should one ever exist.
  */
 #define KERNEL_COLLISION_LAYER_LIMB UINT32_C(0x00000008)
 
@@ -2022,6 +2033,13 @@ typedef enum KernelColliderPurpose {
     // every limb into a weapon target: a limb is a hitbox only when the author
     // also sets _Hit on it.
     KernelColliderPurpose_Limb = 1u << 5,
+    // The whole of an actor whose bones are what gets hit (ABI 106). Only a
+    // template whose skeleton colliders are hit volumes may name it. It is
+    // where the actor is -- relevance, aim points, homing, the rewound shot's
+    // first test -- and never a damage volume itself: a rewound shot that
+    // enters it goes on to test that actor's bones and hits only those, and
+    // it is never a physics body, so no live query can stop on it.
+    KernelColliderPurpose_Bounds = 1u << 6,
 } KernelColliderPurpose;
 
 typedef enum KernelDebugRecordType {

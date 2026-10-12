@@ -14,7 +14,7 @@ sync_mode: server_snapshot_only
 hit_response: destroy
 damage_shape: direct_hit
 damage: 40
-collision_mask: player_side | limb
+collision_mask: player_side
 max_hit_count: 3
 speed: 0.1
 lifetime_ticks: 3

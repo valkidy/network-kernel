@@ -3809,6 +3809,13 @@ bool KernelEngine::load_gameplay_catalog(
             // authored a `length` nothing read.
             (collider_template.shape_type == KernelColliderShapeType_Segment &&
              collider_template.shape_params.y < 0.0f) ||
+            // Bounds are an actor's Hitbox, which is a centred box, and are
+            // nothing else: never a body, so no second purpose would be
+            // honoured.
+            ((collider_template.purpose_flags & KernelColliderPurpose_Bounds) != 0u &&
+             (collider_template.purpose_flags != KernelColliderPurpose_Bounds ||
+              collider_template.shape_type != KernelColliderShapeType_Aabb ||
+              collider_template.lifetime_ticks != 0u)) ||
             // A cone is a query shape, never a body: Jolt has no cone, so
             // every consumer resolves one as a bounding query plus an angle
             // test. Vision was the only consumer until melee, which sweeps the
@@ -4813,6 +4820,8 @@ void KernelEngine::materialize_entity_collider(NetId net_id) {
     if (collider_template == nullptr) {
         return;
     }
+    hitbox.bounds_only =
+        collider_template->purpose_flags == KernelColliderPurpose_Bounds;
     // A lag-compensated shot tests Hitbox volumes, not colliders (see
     // raycast_history_frame). A prop template authors a collider and no hitbox
     // block, so its extents arrive as zero and every rewound weapon passed
@@ -5074,6 +5083,12 @@ bool KernelEngine::push_collider_into_physics(const ColliderInstance& collider) 
     // body it would be a static obstacle: walked into, swept against, placed
     // around -- everything it must not be.
     if (collider.purpose_flags == KernelColliderPurpose_Trigger) {
+        return false;
+    }
+    // Bounds are not a body either. They enclose an actor whose bones are its
+    // hit volumes, and Jolt's own broad phase already culls those bones; as a
+    // kActorHitbox the box would be struck in the gaps between the legs.
+    if (collider.purpose_flags == KernelColliderPurpose_Bounds) {
         return false;
     }
     if (collider.lifetime_ticks != 0 || collider.entity_net_id == 0 ||
@@ -12120,15 +12135,18 @@ void KernelEngine::advance_predicted_throws(float fixed_delta_seconds) {
         const bool authority_ended = known && prop->has_thrown_flight_end;
         if (!authority_ended && !predicted_throw->landed &&
             prediction_physics_world_ != nullptr) {
+            // Limbs too: an actor with bounds has no hit body but its bones.
             physics::CollisionQueryFilter filter{};
             filter.collision_mask =
                 physics::collision_layer_bit(physics::CollisionLayer::kTerrain) |
                 physics::collision_layer_bit(physics::CollisionLayer::kStaticObstacle) |
-                physics::collision_layer_bit(physics::CollisionLayer::kDamageable);
+                physics::collision_layer_bit(physics::CollisionLayer::kDamageable) |
+                physics::collision_layer_bit(physics::CollisionLayer::kActorLimb);
             filter.object_kind_mask =
                 (1u << static_cast<std::uint32_t>(physics::CollisionObjectKind::kTerrain)) |
                 (1u << static_cast<std::uint32_t>(physics::CollisionObjectKind::kStaticObstacle)) |
-                (1u << static_cast<std::uint32_t>(physics::CollisionObjectKind::kActorHitbox));
+                (1u << static_cast<std::uint32_t>(physics::CollisionObjectKind::kActorHitbox)) |
+                (1u << static_cast<std::uint32_t>(physics::CollisionObjectKind::kActorLimb));
             filter.gameplay_category_mask = 0xFFFFFFFFu;
             filter.ignored_entity_net_id = local_player_net_id_;
             while (predicted_throw->swept_until_us + step_us <= now_us) {

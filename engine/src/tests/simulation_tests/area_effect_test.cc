@@ -755,6 +755,59 @@ void area_effect_impulse_direction_is_level_for_a_level_blast() {
     require(std::abs(impulse.direction.y) < 0.05f);
 }
 
+// One bone of an actor hit on its bones (ABI 106): a hostile-side limb with
+// its own multiplier, the way a rig publishes it.
+network_example::physics::CollisionObjectDescriptor bone(
+    network_example::NetId owner,
+    std::uint32_t collider_id,
+    std::uint32_t hit_zone,
+    const glm::vec3& position) {
+    network_example::physics::CollisionObjectDescriptor object{};
+    object.identity.entity_net_id = owner;
+    object.identity.collider_id = collider_id;
+    object.identity.hit_zone = hit_zone;
+    object.identity.kind = network_example::physics::CollisionObjectKind::kActorLimb;
+    object.identity.layer = network_example::physics::CollisionLayer::kActorLimb;
+    object.identity.gameplay_category =
+        network_example::physics::kGameplayCategoryHostileSide;
+    object.shape.type = network_example::physics::CollisionShapeType::kBox;
+    object.shape.half_extents = glm::vec3{0.25f, 0.5f, 0.25f};
+    object.position = position;
+    return object;
+}
+
+// A blast that reaches two bones of one actor wounds it once and unscaled. It
+// used to take the first volume's hit_zone, and with bones that is whichever
+// the sort put first -- here the 0.5 leg, which would have halved the damage.
+// And the actor is reached at all through `damageable` alone: its bounds are
+// not a body, so without the bones there would be nothing to hit.
+void a_blast_wounds_an_actor_on_its_bones_once_and_unscaled() {
+    network_example::World world;
+    const network_example::NetId rig = spawn_enemy(world, glm::vec3{1.0f, 0.0f, 0.0f});
+    world.registry().get<network_example::Hitbox>(*world.find_entity(rig))
+        .bounds_only = true;
+    network_example::physics::PhysicsWorld physics(
+        network_example::physics::PhysicsWorldConfig{0, true});
+    require(physics.valid());
+    std::string error;
+    require(physics.upsert_object(
+        bone(rig, 1u, 50u, glm::vec3{1.0f, 0.5f, 0.0f}), &error));
+    require(physics.upsert_object(
+        bone(rig, 2u, 150u, glm::vec3{1.0f, 1.5f, 0.0f}), &error));
+    world.set_collision_world(&physics);
+    spawn_area_projectile(
+        world, 0, glm::vec3{0.0f, 0.5f, 0.0f}, 3.0f, 10, 0, 20, 7);
+    network_example::DamagePipeline pipeline;
+    std::vector<KernelEvent> events;
+
+    network_example::simulate_area_effects(world, 0, &events, &pipeline);
+    pipeline.confirm_ready(world, 0, 0, &events);
+
+    require(count_damage_events(events) == 1);
+    require(health(world, rig).hp == 30);
+    world.set_collision_world(nullptr);
+}
+
 }  // namespace
 
 int main() {
@@ -774,5 +827,6 @@ int main() {
     a_ground_following_area_effect_rides_up_a_ramp();
     a_ground_following_area_effect_parks_at_a_wall();
     a_cylinder_area_effect_leaves_out_what_is_above_its_column();
+    a_blast_wounds_an_actor_on_its_bones_once_and_unscaled();
     return 0;
 }

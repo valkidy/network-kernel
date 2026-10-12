@@ -124,6 +124,9 @@ void simulate_area_effects(
             : projectile.shooter_net_id;
         std::vector<physics::CollisionHit> hits =
             collision_world->overlap_all(request);
+        // Each target is taken once, at its first hit below, so within a
+        // target the nearest volume comes first: an actor hit on its bones can
+        // overlap several, and the falloff is how far the nearest one is.
         std::sort(
             hits.begin(),
             hits.end(),
@@ -132,13 +135,13 @@ void simulate_area_effects(
                 if (lhs.identity.entity_net_id != rhs.identity.entity_net_id) {
                     return lhs.identity.entity_net_id < rhs.identity.entity_net_id;
                 }
+                if (lhs.distance != rhs.distance) {
+                    return lhs.distance < rhs.distance;
+                }
                 if (lhs.identity.collider_id != rhs.identity.collider_id) {
                     return lhs.identity.collider_id < rhs.identity.collider_id;
                 }
-                if (lhs.subshape_id != rhs.subshape_id) {
-                    return lhs.subshape_id < rhs.subshape_id;
-                }
-                return lhs.distance < rhs.distance;
+                return lhs.subshape_id < rhs.subshape_id;
             });
 
         // initial_velocity rather than the live one, to match what a projectile
@@ -245,6 +248,11 @@ void simulate_area_effects(
                     target_sequence,
                 });
             } else {
+                // A blast is not aimed at a body part: hit_zone scales a shot
+                // by where it struck, and which bone a sphere reaches first
+                // says nothing of the kind.
+                physics::CollisionHit unscaled = hit;
+                unscaled.identity.hit_zone = kHitZoneUnscaled;
                 active_damage_pipeline->submit_damage_request(
                     damage_request_from_hit(
                         current_tick,
@@ -254,7 +262,7 @@ void simulate_area_effects(
                         area_effect.source_code,
                         damage,
                         server_time_us,
-                        hit));
+                        unscaled));
             }
         }
         area_effect.next_damage_tick =

@@ -2977,6 +2977,10 @@ std::uint32_t collider_purpose_from_yaml(const YAML::Node& node) {
     if (value == "trigger") {
         return KernelColliderPurpose_Trigger;
     }
+    // An actor's bounds (ABI 106): only an actor hit on its bones names one.
+    if (value == "bounds") {
+        return KernelColliderPurpose_Bounds;
+    }
     throw std::runtime_error("unsupported collider purpose: " + value);
 }
 
@@ -3604,9 +3608,24 @@ std::uint32_t actor_collider_template_id_from_yaml(
 // Hitbox filled here. They used to be authored separately, as a `hitbox:` block,
 // and five rigs drifted apart by a factor of thirty: shot in the rewound window
 // a giant was 16 m wide, after it 0.8 m.
+//
+// An actor whose skeleton colliders are hit volumes is hit on those and only
+// those, so its collider_template is its bounds instead: where it is, and which
+// actors' bones a rewound shot goes on to test, never something struck itself.
+// The two kinds cannot be mixed up -- a hit box on a rig would be struck in the
+// gaps between its legs, and bounds on anything else would make it unhittable.
 void apply_actor_hit_collider(
     const ColliderCatalogConfig& colliders,
     ActorTemplateConfig* actor_template) {
+    const bool rigged = actor_template->skeleton.has_collision_flags;
+    if (rigged &&
+        (actor_template->skeleton.collision_flags.purpose_flags &
+         KernelColliderPurpose_Hit) == 0u) {
+        throw std::runtime_error(
+            "skeleton collision_flags must include hit; a rig's colliders are "
+            "the actor's hit volumes: " +
+            actor_template->name);
+    }
     const auto found = std::find_if(
         colliders.templates.begin(),
         colliders.templates.end(),
@@ -3614,14 +3633,18 @@ void apply_actor_hit_collider(
             return collider_template.definition.template_id ==
                 actor_template->collider_template_id;
         });
-    // Hitbox is a centred box and nothing else, so that is all an actor's hit
-    // collider may be.
+    const std::uint32_t expected_purpose =
+        rigged ? KernelColliderPurpose_Bounds : KernelColliderPurpose_Hit;
+    // Hitbox is a centred box and nothing else, so that is all either kind
+    // may be.
     if (found == colliders.templates.end() ||
-        (found->definition.purpose_flags & KernelColliderPurpose_Hit) == 0u ||
+        found->definition.purpose_flags != expected_purpose ||
         found->definition.shape_type != KernelColliderShapeType_Aabb) {
         throw std::runtime_error(
-            "actor collider_template must be a hit aabb: " +
-            actor_template->name);
+            rigged ? "an actor hit on its skeleton colliders needs a bounds "
+                     "aabb as its collider_template: " + actor_template->name
+                   : "actor collider_template must be a hit aabb: " +
+                    actor_template->name);
     }
     const KernelVec4& box = found->definition.shape_params;
     actor_template->hitbox_center = found->definition.center;
@@ -4292,7 +4315,6 @@ ActorTemplateConfig actor_template_from_yaml(
             "collider_template: " +
             actor_template.name);
     }
-    apply_actor_hit_collider(colliders, &actor_template);
 
     const YAML::Node weapon_slots = node["weapon_slots"];
     if (!weapon_slots || !weapon_slots.IsSequence()) {
@@ -4880,6 +4902,9 @@ ActorTemplateConfig actor_template_from_yaml(
         path,
         source_kind,
         actor_template.actor_template_id);
+    // Last, since which kind of collider an actor needs depends on whether its
+    // skeleton colliders are hit volumes.
+    apply_actor_hit_collider(colliders, &actor_template);
     return actor_template;
 }
 

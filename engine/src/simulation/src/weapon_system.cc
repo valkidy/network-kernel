@@ -106,8 +106,9 @@ bool find_hitscan_target(
     std::uint32_t collision_mask,
     NetId* target_net_id,
     std::uint16_t* target_hit_zone) {
-    // Reaching a rig's bones means naming their layer, on the rewound path and
-    // the live one alike -- a weapon that says nothing keeps the shot it had.
+    // An actor with bounds is hit on its bones whatever the mask says, on the
+    // rewound path and the live one alike (collision_filter_from_mask); naming
+    // the limb layer only matters for a limb without bounds.
     const bool include_limbs =
         (collision_mask & KERNEL_COLLISION_LAYER_LIMB) != 0u;
     if (rewind_frame != nullptr) {
@@ -715,6 +716,16 @@ void apply_melee_damage(
         action_graph_batches != nullptr;
     std::vector<ActionGraphQueuedTrigger> queued_triggers;
 
+    // Measured to the contact point, not to the target's origin: a body
+    // whose edge clips the cone is in it. That is the forgiving reading, and
+    // the one that matches what the swing looks like.
+    const auto in_cone = [&](const physics::CollisionHit& hit) {
+        const glm::vec3 radial{
+            hit.position.x - origin.x, 0.0f, hit.position.z - origin.z};
+        return glm::dot(radial, radial) <= 0.000001f ||
+            glm::dot(forward, glm::normalize(radial)) >= half_fov_cos;
+    };
+
     std::vector<NetId> damaged;
     std::uint32_t sequence_id = 0;
     for (const physics::CollisionHit& hit : hits) {
@@ -734,15 +745,11 @@ void apply_melee_damage(
             damaged.end()) {
             continue;
         }
-        // Measured to the contact point, not to the target's origin: a body
-        // whose edge clips the cone is in it. That is the forgiving reading,
-        // and the one that matches what the swing looks like.
-        glm::vec3 radial{
-            hit.position.x - origin.x, 0.0f, hit.position.z - origin.z};
-        if (glm::dot(radial, radial) > 0.000001f &&
-            glm::dot(forward, glm::normalize(radial)) < half_fov_cos) {
+        if (!in_cone(hit)) {
             continue;
         }
+        const glm::vec3 radial{
+            hit.position.x - origin.x, 0.0f, hit.position.z - origin.z};
         const std::uint32_t target_sequence = sequence_id++;
         if (dispatches_impact_graph) {
             // Attacker to contact point, flattened. A knockback authored off
@@ -790,6 +797,17 @@ void apply_melee_damage(
             damaged.push_back(target_net_id);
             continue;
         }
+        // The swing lands where it lands hardest: of the target's volumes in
+        // the cone -- several, on an actor hit on its bones -- the largest
+        // hit_zone, rather than whichever happened to be nearest.
+        physics::CollisionHit struck = hit;
+        for (const physics::CollisionHit& other : hits) {
+            if (other.identity.entity_net_id == target_net_id &&
+                is_actor_hit(other.identity.kind) && in_cone(other)) {
+                struck.identity.hit_zone =
+                    std::max(struck.identity.hit_zone, other.identity.hit_zone);
+            }
+        }
         if (damage_pipeline->submit_damage_request(damage_request_from_hit(
                 current_tick,
                 target_sequence,
@@ -798,7 +816,7 @@ void apply_melee_damage(
                 definition.id,
                 definition.damage,
                 hit_time_us,
-                hit))) {
+                struck))) {
             damaged.push_back(target_net_id);
         }
     }

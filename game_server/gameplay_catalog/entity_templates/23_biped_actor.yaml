@@ -3,7 +3,7 @@ name: biped_actor
 entity_type: actor
 actor_type: agent
 camp: enemy_side
-collider_template: biped_hit_aabb
+collider_template: biped_bounds_aabb
 health:
   hp: 500
   max_hp: 500

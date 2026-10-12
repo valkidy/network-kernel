@@ -285,6 +285,12 @@ void World::synchronize_standalone_collision_world() {
         }
         const Transform& transform = view.get<Transform>(entity);
         const Hitbox& hitbox = view.get<Hitbox>(entity);
+        // A bounds box is where an actor is, not something to hit; its bones
+        // are, and this fallback world holds none, so such an actor is simply
+        // not here.
+        if (hitbox.bounds_only) {
+            continue;
+        }
         physics::CollisionObjectDescriptor object{};
         object.identity.entity_net_id = identity.net_id;
         object.identity.collider_id = 0x40000000u | identity.net_id;

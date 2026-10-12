@@ -16,7 +16,7 @@ static void require_impl(int condition, const char* expression, int line) {
 #define require(condition) require_impl((condition) ? 1 : 0, #condition, __LINE__)
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 104u,
+    KERNEL_ABI_VERSION == 106u,
     "lock-on weapons: catalog weapon definitions");
 _Static_assert(
     KernelWeaponFireMode_LockInstant == 5 &&

@@ -3,7 +3,7 @@ name: quadruped_actor
 entity_type: actor
 actor_type: agent
 camp: enemy_side
-collider_template: quadruped_hit_aabb
+collider_template: quadruped_bounds_aabb
 health:
   hp: 500
   max_hp: 500

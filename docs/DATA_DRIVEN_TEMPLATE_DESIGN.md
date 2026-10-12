@@ -376,6 +376,13 @@ Validation:
   actor's only hit volume. Every hit test, rewound or live, and the relevance
   radius and aim point read that box. A `hitbox:` block is rejected: it used to
   be a second, separately authored box, and the two drifted apart.
+- An actor whose `skeleton.collision_flags` are hit volumes (`purpose` must
+  include `hit`) is hit on its rig's bones instead, and its `collider_template`
+  must be a `purpose: bounds`, `shape: aabb` collider (ABI 106). The bounds box
+  is never struck: it is where the actor is (relevance, aim point, homing) and
+  the rewound shot's first test, and only a shot that enters it tests the
+  bones. Any gameplay mask that reaches the actor reaches its bones; `limb`
+  need not be named.
 - `weapon_slots` must contain 1 to 4 loaded weapon template references.
 - `active_weapon_slot` defaults to `0` and must be in range.
 - enemy AI derived from actor data must reference usable weapon timing, reload,
