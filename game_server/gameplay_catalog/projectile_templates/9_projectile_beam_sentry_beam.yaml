@@ -1,16 +1,14 @@
 # Agent-side twin of beam_rifle_beam. It exists as its own template rather than
-# being shared with the player's beam rifle for two reasons:
+# being shared with the player's beam rifle because of collision_mask.
+# `hostile_side` is an absolute category, not a category relative to the
+# shooter: world.cc:272 tags player actors `player_side` and every other actor
+# -- including this sentry -- `hostile_side`. A beam an agent fires with the
+# player weapon's mask would sweep past players and damage its own allies.
+# `player_side` is the mirror image of what the player's beam carries.
 #
-# 1. collision_mask. `hostile_side` is an absolute category, not a category
-#    relative to the shooter: world.cc:272 tags player actors `player_side` and
-#    every other actor -- including this sentry -- `hostile_side`. A beam an
-#    agent fires with the player weapon's mask would sweep past players and
-#    damage its own allies. `player_side` is the mirror image of what the
-#    player's beam carries.
-# 2. apply_weapon_template_references stamps `weapon_id` onto the projectile
-#    template it resolves (gameplay_config.cc:6078), so one projectile template
-#    belongs to exactly one weapon. Sharing is not available even if the mask
-#    were right.
+# (Templates used to be stamped with the weapon that named them, which also
+# ruled sharing out. Since ABI 106 a projectile's weapon comes from the shot,
+# so two weapons whose masks agree may share one.)
 #
 id: 9
 name: beam_sentry_beam

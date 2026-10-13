@@ -232,7 +232,6 @@ void hash_projectile_template(
         projectile_template.definition;
     const KernelProjectileMechanicsDefinition& mechanics = definition.mechanics;
     hash_scalar(hash, definition.projectile_template_id);
-    hash_scalar(hash, definition.weapon_id);
     hash_scalar(hash, mechanics.projectile_type);
     hash_scalar(hash, mechanics.motion_model);
     hash_scalar(hash, mechanics.sync_mode);
@@ -8285,7 +8284,6 @@ void apply_weapon_template_references(
                     projectile_templates);
             KernelWeaponMechanicsDefinition& instant_weapon =
                 weapons->definitions[weapon_id];
-            shot_template->definition.weapon_id = weapon_id;
             instant_weapon.projectile_template_id =
                 shot_template->definition.projectile_template_id;
             instant_weapon.damage = shot_template->definition.mechanics.damage;
@@ -8316,7 +8314,6 @@ void apply_weapon_template_references(
                     projectile_templates);
             KernelWeaponMechanicsDefinition& melee =
                 weapons->definitions[weapon_id];
-            shot_template->definition.weapon_id = weapon_id;
             melee.projectile_template_id =
                 shot_template->definition.projectile_template_id;
             melee.damage = shot_template->definition.mechanics.damage;
@@ -8338,7 +8335,6 @@ void apply_weapon_template_references(
                     projectile_templates);
             KernelWeaponMechanicsDefinition& lock =
                 weapons->definitions[weapon_id];
-            shot_template->definition.weapon_id = weapon_id;
             lock.projectile_template_id =
                 shot_template->definition.projectile_template_id;
             lock.damage = shot_template->definition.mechanics.damage;
@@ -8407,7 +8403,6 @@ void apply_weapon_template_references(
             }
             KernelWeaponMechanicsDefinition& weapon =
                 weapons->definitions[weapon_id];
-            strike_template->definition.weapon_id = weapon_id;
             weapon.projectile_template_id =
                 strike_template->definition.projectile_template_id;
             weapon.damage = mechanics.damage;
@@ -8435,7 +8430,6 @@ void apply_weapon_template_references(
                     "a projectile with a launch rule cannot be fired from "
                     "the muzzle: " + file);
             }
-            projectile_template->definition.weapon_id = weapon_id;
             weapon.fire_mode = KernelWeaponFireMode_Projectile;
             weapon.projectile_template_id = definition.projectile_template_id;
             weapon.damage = definition.mechanics.damage;

@@ -310,20 +310,30 @@ void valid_repo_templates_load_all_slots() {
     bool found_rocket_explosion_template = false;
     const network_example::game_server::KernelGameplayCatalogStorage storage =
         network_example::game_server::build_kernel_gameplay_catalog(config);
+    // Each weapon's projectile is found from the weapon: the template names no
+    // weapon since ABI 106.
+    const auto fired_by = [&config](
+                              const KernelProjectileTemplateDefinition& projectile,
+                              std::uint8_t weapon_id) {
+        return config.weapons.definitions[weapon_id].projectile_template_id ==
+            projectile.projectile_template_id;
+    };
     for (std::uint32_t index = 0; index < storage.definition.projectile_template_count;
          ++index) {
         const KernelProjectileTemplateDefinition& projectile_template =
             storage.definition.projectile_templates[index];
-        if (projectile_template.weapon_id == network_example::game_server::kWeaponSpammer ||
-            projectile_template.weapon_id ==
-                network_example::game_server::kWeaponHomingMissile) {
+        require(projectile_template.reserved_weapon_id == 0u);
+        if (fired_by(projectile_template, network_example::game_server::kWeaponSpammer) ||
+            fired_by(
+                projectile_template,
+                network_example::game_server::kWeaponHomingMissile)) {
             require(projectile_template.mechanics.collider_template_id == 7);
         }
         // The grenade shell has been a box (projectile_aabb) since ca61488.
-        if (projectile_template.weapon_id == network_example::game_server::kWeaponGrenade) {
+        if (fired_by(projectile_template, network_example::game_server::kWeaponGrenade)) {
             require(projectile_template.mechanics.collider_template_id == 16);
         }
-        if (projectile_template.weapon_id == network_example::game_server::kWeaponRocket) {
+        if (fired_by(projectile_template, network_example::game_server::kWeaponRocket)) {
             require(projectile_template.mechanics.collider_template_id == 3);
             require(projectile_template.mechanics
                        .projectile_impact_trigger.action_type ==
@@ -2082,6 +2092,37 @@ void weapons_without_a_reload_action_fall_back_to_the_shared_one() {
     }
 }
 
+// Two weapons may fire one projectile template (ABI 106). The catalog used to
+// stamp weapon_id onto the template each weapon named, so the second weapon
+// silently took it from the first; now the template names no weapon at all and
+// a shot carries the weapon it was fired from.
+void two_weapons_share_a_projectile_template() {
+    const std::filesystem::path dir = tmp_dir("shared_projectile_template");
+    write_valid_templates(dir);
+    write_file(
+        dir / "rocket_twin.yaml",
+        "id: 7\nname: Rocket Twin\nweapon_type: projectile\nmagazine_size: 2\n"
+        "fire_action_template: rocket_fire\n"
+        "projectile_template: rocket_projectile\n");
+    const network_example::game_server::GameServerGameplayConfig config =
+        network_example::game_server::
+            load_gameplay_config_from_weapon_template_directory(dir.string());
+    require(config.weapons.configured[network_example::game_server::kWeaponRocket]);
+    require(config.weapons.configured[7]);
+    require(
+        config.weapons.definitions[network_example::game_server::kWeaponRocket]
+            .projectile_template_id == 3u);
+    require(config.weapons.definitions[7].projectile_template_id == 3u);
+    bool saw_rocket_projectile = false;
+    for (const network_example::game_server::ProjectileTemplateConfig& projectile :
+         config.projectile_templates) {
+        require(projectile.definition.reserved_weapon_id == 0u);
+        saw_rocket_projectile = saw_rocket_projectile ||
+            projectile.definition.projectile_template_id == 3u;
+    }
+    require(saw_rocket_projectile);
+}
+
 // Damage is authored in exactly one place per projectile template -- the
 // top-level `damage` -- whatever the type. The beam block and the area-effect
 // block used to carry their own copies, which the loader then overwrote or
@@ -2120,12 +2161,14 @@ void damage_is_authored_once_per_projectile_template() {
                .definitions[network_example::game_server::kWeaponShotgun]
                .damage == shotgun_shot.damage);
 
-    // collision_mask travels the same way, and the shotgun still does not ask
-    // for limbs while the rifle does.
+    // collision_mask travels the same way. Neither names `limb` since ABI 106:
+    // a mask that reaches actors reaches a rig's bones without it.
     require(config.weapons.definitions[network_example::game_server::kWeaponRifle]
                .collision_mask == rifle_shot.collision_mask);
     require((config.weapons.definitions[network_example::game_server::kWeaponRifle]
-                .collision_mask & KERNEL_COLLISION_LAYER_LIMB) != 0u);
+                .collision_mask & KERNEL_COLLISION_MASK_ACTOR) != 0u);
+    require((config.weapons.definitions[network_example::game_server::kWeaponRifle]
+                .collision_mask & KERNEL_COLLISION_LAYER_LIMB) == 0u);
     require((config.weapons
                 .definitions[network_example::game_server::kWeaponShotgun]
                 .collision_mask & KERNEL_COLLISION_LAYER_LIMB) == 0u);
@@ -2148,6 +2191,7 @@ int main() {
     weapons_name_their_own_reload_action();
     weapons_without_a_reload_action_fall_back_to_the_shared_one();
     damage_is_authored_once_per_projectile_template();
+    two_weapons_share_a_projectile_template();
     instant_weapon_keeps_its_fire_mode_and_segment();
     valid_repo_templates_load_all_slots();
     projectile_collision_query_modes_are_loaded();

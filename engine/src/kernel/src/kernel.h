@@ -641,7 +641,6 @@ private:
         std::uint32_t max_lifetime_ticks = 0;
         std::uint32_t projectile_template_id = 0;
         std::uint32_t collider_template_id = 0;
-        std::uint8_t weapon_id = 0;
         std::uint8_t sync_mode = KernelProjectileSyncMode_HybridDeterministicThenSnapshot;
         glm::vec3 correction_offset{0.0f, 0.0f, 0.0f};
         bool bound = false;

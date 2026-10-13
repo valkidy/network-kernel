@@ -1128,7 +1128,6 @@ struct StatusEffectState {
 
 struct RuntimeProjectileTemplate {
     std::uint32_t projectile_template_id = 0;
-    std::uint8_t weapon_id = 0;
     ProjectileType projectile_type = ProjectileType::kStandard;
     ProjectileMotionModel motion_model = ProjectileMotionModel::kLinear;
     ProjectileSyncMode sync_mode = ProjectileSyncMode::kHybridDeterministicThenSnapshot;

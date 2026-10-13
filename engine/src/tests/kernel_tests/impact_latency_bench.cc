@@ -93,7 +93,6 @@ KernelProjectileTemplateDefinition rocket_template() {
     KernelProjectileTemplateDefinition definition{};
     definition.struct_size = sizeof(definition);
     definition.projectile_template_id = kRocketTemplateId;
-    definition.weapon_id = 3;
     definition.mechanics.struct_size = sizeof(KernelProjectileMechanicsDefinition);
     definition.mechanics.projectile_type = KernelProjectileType_Standard;
     definition.mechanics.motion_model = KernelProjectileMotionModel_Linear;

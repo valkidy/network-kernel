@@ -88,7 +88,9 @@ void DerivedChainPresenter::advance_to_tick(
                 *root_template,
                 chain.root.owner_peer,
                 chain.root.instigator,
-                root_template->weapon_id,
+                // The strike's weapon is not in the spawn record, and nothing
+                // a derived pick draws on depends on it (ABI 106).
+                0u,
                 chain.root.action_instance_id,
                 chain.root.position,
                 glm::vec3{1.0f, 0.0f, 0.0f},

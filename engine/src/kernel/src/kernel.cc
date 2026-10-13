@@ -1539,7 +1539,6 @@ RuntimeProjectileTemplate to_runtime_projectile_template(
     RuntimeProjectileTemplate projectile_template{};
     const KernelProjectileMechanicsDefinition& mechanics = definition.mechanics;
     projectile_template.projectile_template_id = definition.projectile_template_id;
-    projectile_template.weapon_id = definition.weapon_id;
     projectile_template.projectile_type =
         to_projectile_type(mechanics.projectile_type);
     projectile_template.motion_model =
@@ -3779,9 +3778,13 @@ bool KernelEngine::load_gameplay_catalog(
     for (std::uint32_t index = 0; index < catalog.projectile_template_count; ++index) {
         const KernelProjectileTemplateDefinition& projectile_template =
             catalog.projectile_templates[index];
+        // reserved_weapon_id was weapon_id, stamped by the catalog: a catalog
+        // that still writes one expects the old meaning, so it is refused
+        // rather than silently ignored.
         if (projectile_template.struct_size <
                 sizeof(KernelProjectileTemplateDefinition) ||
             projectile_template.projectile_template_id == 0 ||
+            projectile_template.reserved_weapon_id != 0u ||
             !validate_projectile_mechanics(projectile_template.mechanics)) {
             return false;
         }
@@ -4489,11 +4492,15 @@ bool KernelEngine::get_benchmark_stats(KernelBenchmarkStats* out_stats) const {
             sync_mode = to_kernel_projectile_sync_mode(
                 world_.registry().get<HomingState>(entity).sync_mode);
         } else {
+            // By the template it was spawned from. The weapon id is the
+            // weapon that fired the shot, which for a projectile spawned off
+            // another's impact is not the template that describes it.
             const auto found = std::find_if(
                 projectile_templates_.begin(),
                 projectile_templates_.end(),
                 [&projectile](const KernelProjectileTemplateDefinition& definition) {
-                    return definition.weapon_id == projectile.weapon_id;
+                    return definition.projectile_template_id ==
+                        projectile.projectile_template_id;
                 });
             if (found != projectile_templates_.end()) {
                 sync_mode = found->mechanics.sync_mode;
@@ -8801,7 +8808,6 @@ void KernelEngine::handle_client_projectile_spawn_batch(
                     projectile_template->projectile_template_id;
                 predicted->collider_template_id =
                     projectile_template->collider_template_id;
-                predicted->weapon_id = projectile_template->weapon_id;
                 predicted->sync_mode = to_kernel_projectile_sync_mode(
                     projectile_template->sync_mode);
                 predicted->bound = true;
@@ -8835,7 +8841,6 @@ void KernelEngine::handle_client_projectile_spawn_batch(
                     projectile_template->lifetime_ticks,
                     projectile_template->projectile_template_id,
                     projectile_template->collider_template_id,
-                    projectile_template->weapon_id,
                     to_kernel_projectile_sync_mode(
                         projectile_template->sync_mode),
                     glm::vec3{0.0f, 0.0f, 0.0f},
@@ -8904,7 +8909,10 @@ void KernelEngine::handle_client_projectile_spawn_batch(
             debug_info.data.projectile.projectile_net_id = record.projectile_net_id;
             debug_info.data.projectile.owner_net_id = record.owner_net_id;
             debug_info.data.projectile.owner_peer = record.owner_peer;
-            debug_info.data.projectile.weapon_id = projectile_template->weapon_id;
+            // Unknown here: the spawn record does not carry the weapon, and
+            // the template no longer names one (ABI 106). 0 would read as the
+            // rifle.
+            debug_info.data.projectile.weapon_id = KERNEL_HELD_WEAPON_NONE;
             debug_info.data.projectile.motion_model =
                 to_kernel_projectile_motion_model(
                     projectile_template->motion_model);
@@ -11194,7 +11202,6 @@ void KernelEngine::predict_local_projectile(const KernelPlayerInput& input) {
             projectile_template->lifetime_ticks,
             weapon->projectile_template_id,
             collider_template_id,
-            weapon->id,
             sync_mode,
             glm::vec3{0.0f, 0.0f, 0.0f},
             false,

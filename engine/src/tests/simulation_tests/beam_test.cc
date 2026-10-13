@@ -79,11 +79,9 @@ network_example::NetId spawn_projectile_beam(
 }
 
 network_example::RuntimeProjectileTemplate beam_template(
-    std::uint32_t template_id,
-    std::uint8_t weapon_id) {
+    std::uint32_t template_id) {
     network_example::RuntimeProjectileTemplate projectile_template;
     projectile_template.projectile_template_id = template_id;
-    projectile_template.weapon_id = weapon_id;
     projectile_template.projectile_type = network_example::ProjectileType::kBeam;
     projectile_template.motion_model = network_example::ProjectileMotionModel::kLinear;
     projectile_template.speed = 0.0f;
@@ -215,7 +213,7 @@ void beam_fire_spawns_or_refreshes_server_beam() {
             10,
         };
     tuning.definitions[network_example::kWeaponId5].projectile_template_id = 55;
-    world.set_projectile_templates({beam_template(55, network_example::kWeaponId5)});
+    world.set_projectile_templates({beam_template(55)});
 
     KernelPlayerInput input{};
     input.buttons = InputButton_Fire;
@@ -276,7 +274,7 @@ void beam_survives_continuous_refresh() {
             10,
         };
     tuning.definitions[network_example::kWeaponId5].projectile_template_id = 55;
-    world.set_projectile_templates({beam_template(55, network_example::kWeaponId5)});
+    world.set_projectile_templates({beam_template(55)});
 
     KernelPlayerInput input{};
     input.buttons = InputButton_Fire;

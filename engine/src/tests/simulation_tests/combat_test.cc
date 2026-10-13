@@ -108,7 +108,6 @@ network_example::WeaponMechanicsDefinition weapon_definition(
 void configure_projectile_response_templates(network_example::World& world) {
     network_example::RuntimeProjectileTemplate grenade_template;
     grenade_template.projectile_template_id = network_example::kWeaponSlot2;
-    grenade_template.weapon_id = network_example::kWeaponSlot2;
     grenade_template.projectile_type = network_example::ProjectileType::kStandard;
     grenade_template.motion_model = network_example::ProjectileMotionModel::kParabolic;
     grenade_template.damage = 0;
@@ -127,7 +126,6 @@ void configure_projectile_response_templates(network_example::World& world) {
 
     network_example::RuntimeProjectileTemplate area_template;
     area_template.projectile_template_id = 8;
-    area_template.weapon_id = network_example::kWeaponSlot2;
     area_template.projectile_type = network_example::ProjectileType::kAreaEffect;
     area_template.damage = 40;
     area_template.area_radius = 4.0f;
@@ -140,7 +138,6 @@ void configure_projectile_response_templates(network_example::World& world) {
 
     network_example::RuntimeProjectileTemplate rocket_template;
     rocket_template.projectile_template_id = network_example::kWeaponSlot3;
-    rocket_template.weapon_id = network_example::kWeaponSlot3;
     rocket_template.projectile_type = network_example::ProjectileType::kStandard;
     rocket_template.damage = 45;
     rocket_template.speed = 35.0f;
@@ -149,7 +146,6 @@ void configure_projectile_response_templates(network_example::World& world) {
 
     network_example::RuntimeProjectileTemplate fire_floor_template;
     fire_floor_template.projectile_template_id = network_example::kWeaponId4;
-    fire_floor_template.weapon_id = network_example::kWeaponId4;
     fire_floor_template.projectile_type =
         network_example::ProjectileType::kAreaEffect;
     fire_floor_template.damage = 12;
@@ -586,7 +582,6 @@ void action_timeline_drives_rocket_rifle_and_beam() {
     beam_weapon.ammo[0] = 10;
     network_example::RuntimeProjectileTemplate beam_template;
     beam_template.projectile_template_id = 5;
-    beam_template.weapon_id = network_example::kWeaponId5;
     beam_template.projectile_type = network_example::ProjectileType::kBeam;
     beam_template.damage = 1;
     beam_template.lifetime_ticks = 30;
@@ -1063,7 +1058,6 @@ void local_predicted_spammer_can_spawn_many_low_damage_projectiles() {
     spammer.projectile_template_id = network_example::kWeaponSlot2;
     network_example::RuntimeProjectileTemplate spammer_template;
     spammer_template.projectile_template_id = network_example::kWeaponSlot2;
-    spammer_template.weapon_id = network_example::kWeaponSlot2;
     spammer_template.projectile_type = network_example::ProjectileType::kStandard;
     spammer_template.damage = 1;
     spammer_template.speed = 30.0f;
@@ -1130,7 +1124,6 @@ void projectile_spammer_burst_spawns_three_spread_projectiles() {
     spammer.projectile_template_id = network_example::kWeaponSlot2;
     network_example::RuntimeProjectileTemplate spammer_template;
     spammer_template.projectile_template_id = network_example::kWeaponSlot2;
-    spammer_template.weapon_id = network_example::kWeaponSlot2;
     spammer_template.projectile_type = network_example::ProjectileType::kStandard;
     spammer_template.damage = 1;
     spammer_template.speed = 30.0f;
@@ -1736,7 +1729,6 @@ void weapon_fired_projectile_carries_collider_geometry() {
 
     network_example::RuntimeProjectileTemplate projectile_template;
     projectile_template.projectile_template_id = network_example::kWeaponId4;
-    projectile_template.weapon_id = network_example::kWeaponId4;
     projectile_template.speed = 30.0f;
     projectile_template.lifetime_ticks = 30;
     projectile_template.has_collision_geometry = true;
@@ -1783,7 +1775,6 @@ void weapon_fired_area_effect_survives_the_tick_it_lands() {
 
     network_example::RuntimeProjectileTemplate area_template;
     area_template.projectile_template_id = network_example::kWeaponId4;
-    area_template.weapon_id = network_example::kWeaponId4;
     area_template.projectile_type = network_example::ProjectileType::kAreaEffect;
     area_template.damage = 5;
     area_template.area_radius = 2.0f;

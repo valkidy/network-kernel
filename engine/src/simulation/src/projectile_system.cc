@@ -56,9 +56,10 @@ bool spawn_projectile_from_template(
     std::uint32_t lifetime_ticks = 0,
     std::uint32_t extra_lifetime_ticks = 0,
     std::uint32_t launch_salt = 0) {
-    const std::uint8_t weapon_id =
-        projectile_template.weapon_id == 0 ? source_weapon_id
-                                           : projectile_template.weapon_id;
+    // The weapon is the firing event's, never the template's: one template may
+    // be fired by several weapons, or spawned by an item or another
+    // projectile's impact, and each of those knows what it was (ABI 106).
+    const std::uint8_t weapon_id = source_weapon_id;
     // An area effect used to be forced to a standstill here regardless of what
     // it authored. It no longer needs the special case: its speed defaults to
     // zero, so a blast still spawns exactly as motionless as before, while a
@@ -1205,11 +1206,19 @@ void process_projectile_interactions(
             const NetId source_net_id =
                 match.lhs_is_rule_lhs ? match.lhs_net_id : match.rhs_net_id;
             PeerId owner_peer = 0;
+            // What it spawns was fired, in effect, by the rule's left-hand
+            // projectile, so it carries that projectile's weapon.
+            std::uint8_t source_weapon_id = 0;
             const auto source_entity = world.find_entity(source_net_id);
             if (source_entity.has_value() &&
                 world.registry().all_of<NetworkIdentity>(*source_entity)) {
                 owner_peer =
                     world.registry().get<NetworkIdentity>(*source_entity).owner_peer;
+            }
+            if (source_entity.has_value() &&
+                world.registry().all_of<ProjectileState>(*source_entity)) {
+                source_weapon_id =
+                    world.registry().get<ProjectileState>(*source_entity).weapon_id;
             }
             const RuntimeProjectileTemplate* spawn_template =
                 world.find_projectile_template(
@@ -1222,7 +1231,7 @@ void process_projectile_interactions(
                 *spawn_template,
                 owner_peer,
                 source_net_id,
-                0,
+                source_weapon_id,
                 0,
                 match.position,
                 glm::vec3{1.0f, 0.0f, 0.0f},
