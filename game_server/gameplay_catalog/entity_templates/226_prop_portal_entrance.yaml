@@ -43,6 +43,6 @@ triggers:
     collision_mask: player_side
     # Not the allied sentries, who are player_side too (D6).
     instigators: players
-    action_graph: action_teleport_through_portal
+    action_graph: action_teleport
     parameters:
       target: event.instigator

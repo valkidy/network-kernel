@@ -16,7 +16,7 @@ physics:
 triggers:
   on_collision:
     collision_mask: actor | terrain | static_obstacle
-    action_graph: action_heal_target_and_consume_self_at_collision
+    action_graph: action_apply_health_change_and_damage_self_if_target
     parameters:
       source: self
       target: event.target

@@ -2,7 +2,7 @@
 # living 10 ticks plus a share of a 60-tick window, so they expire one after
 # another rather than together. The spread is seeded from the caster, the cast
 # and the iteration, so one cast always produces the same storm.
-id: action_meteor_storm
+id: action_meteor_storm_marker_expired
 parameters:
   template: null
   position: null

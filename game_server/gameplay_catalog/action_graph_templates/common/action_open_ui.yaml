@@ -1,0 +1,12 @@
+# Opens interface `ui_id` for `target`, usually whoever activated a building.
+# Which interface a building offers is its binding's ui_id (1 rest, 2 loadout,
+# 3 camp); what it shows, and whether the actor goes inside, is game_server's
+# (KernelEventType_UiOpened).
+id: action_open_ui
+parameters:
+  target: null
+  ui_id: null
+actions:
+  - type: open_ui
+    target: params.target
+    ui_id: params.ui_id

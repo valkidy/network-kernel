@@ -875,7 +875,7 @@ CompiledActionGraphBinding compile_spawn_entity_binding(
             case TriggerEventType::kHealthDepleted:
                 return "action_spawn_entity_at_health_depleted";
             case TriggerEventType::kDestroyEntity:
-                return "action_spawn_entity_at_destroy_entity";
+                return "action_spawn_entity";
             default:
                 return "action_spawn_entity_at_activated";
         }

@@ -35,7 +35,7 @@ int main() {
         "action_apply_damage");
     require(
         prop->destroy_entity_trigger.action_graph_ref ==
-        "action_spawn_entity_at_destroy_entity");
+        "action_spawn_entity");
 
     const network_example::game_server::KernelGameplayCatalogStorage catalog =
         network_example::game_server::build_kernel_gameplay_catalog(config);
@@ -73,7 +73,7 @@ int main() {
     require(collision_prop != config.entity_templates.end());
     require(
         collision_prop->collision_trigger.action_graph_ref ==
-        "action_apply_damage_at_collision");
+        "action_apply_damage_to_source_and_target");
     const auto compiled_collision = std::find_if(
         catalog.entity_templates.begin(),
         catalog.entity_templates.end(),

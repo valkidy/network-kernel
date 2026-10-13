@@ -14,7 +14,7 @@ physics:
 triggers:
   on_collision:
     collision_mask: actor | terrain | static_obstacle
-    action_graph: action_encase_target_and_break_self_at_collision
+    action_graph: action_water_balloon_collision
     parameters:
       source: self
       target: event.target

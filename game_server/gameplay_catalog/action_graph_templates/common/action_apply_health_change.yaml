@@ -1,4 +1,4 @@
-id: action_apply_health_change_at_item_used
+id: action_apply_health_change
 parameters:
   target: null
   amount: 1

@@ -713,13 +713,16 @@ int main() {
         run_landing_case(terrain_only, scene, 7963, ground.tent.x, 2.2f);
     print_landing("onto ice, terrain only", through_ice);
 
-    // The control for clear placement: the same throw at the block through
-    // the ice bottle's graph, which spawns exactly at the contact point.
+    // The control for clear placement: the same throw at the block with the
+    // kit's binding set to exact, which spawns at the contact point.
     GameServerGameplayConfig exact = config;
     for (auto& candidate : exact.entity_templates) {
         if (candidate.name == "tent_kit") {
-            candidate.collision_trigger.action_graph_ref =
-                "action_spawn_ice_and_damage_self_at_collision";
+            for (auto& [name, value] : candidate.collision_trigger.parameters) {
+                if (name == "placement") {
+                    value = "exact";
+                }
+            }
         }
     }
     const LandingOutcome exact_on_ice =

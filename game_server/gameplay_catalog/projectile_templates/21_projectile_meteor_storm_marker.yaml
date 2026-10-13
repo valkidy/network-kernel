@@ -1,5 +1,5 @@
 # Meteor Storm Staff's centre mark. After 10 ticks it expires into the storm:
-# action_meteor_storm scatters the fuses around it.
+# action_meteor_storm_marker_expired scatters the fuses around it.
 id: 21
 name: meteor_storm_marker
 type: standard
@@ -11,7 +11,7 @@ sync_mode: server_snapshot_only
 lifetime_ticks: 10
 triggers:
   on_expired:
-    action_graph: action_meteor_storm
+    action_graph: action_meteor_storm_marker_expired
     parameters:
       template: meteor_storm_fuse
       position: event.position

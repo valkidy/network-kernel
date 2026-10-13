@@ -10,7 +10,7 @@
 # 10 spares the hive airship (resistance 10). It is a literal on the action
 # for the reason apply_pull's is -- who is affected must not depend on the
 # binding.
-id: action_encase_target_and_break_self_at_collision
+id: action_water_balloon_collision
 parameters:
   source: null
   target: null

@@ -5,7 +5,7 @@
 #
 # The amount is a literal, like open_ui's ui_id: a potion that refills a
 # different share is its own graph. `count: N` refills a fixed number instead.
-id: action_refill_weapon_reserve_half_at_item_used
+id: action_fungible_mp_potion_item_used
 parameters:
   target: null
 actions:

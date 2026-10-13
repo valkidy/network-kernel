@@ -14,6 +14,6 @@ use:
   destroy_when_empty: true
 triggers:
   on_item_used:
-    action_graph: action_refill_weapon_reserve_half_at_item_used
+    action_graph: action_fungible_mp_potion_item_used
     parameters:
       target: event.instigator

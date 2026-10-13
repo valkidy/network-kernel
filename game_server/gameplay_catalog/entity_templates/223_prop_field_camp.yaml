@@ -30,8 +30,9 @@ interaction:
   line_of_sight_required: false
 triggers:
   on_activated:
-    action_graph: action_open_camp_ui
+    action_graph: action_open_ui
     parameters:
+      ui_id: 3
       target: event.instigator
 camp:
   stock:

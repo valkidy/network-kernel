@@ -174,6 +174,36 @@ std::string graph_body(const fs::path& path) {
     return body;
 }
 
+// Where a shipped graph sits says what it is: common/ for a flow any owner can
+// bind with its own numbers, derived/<owner_type>/ for one owner's own flow.
+// Nothing is left loose at the top.
+void every_shipped_graph_is_common_or_derived() {
+    const fs::path root = shipped_catalog() / "action_graph_templates";
+    const std::vector<std::string> owner_types = {
+        "projectile", "entity", "prop", "item", "status_effect"};
+    std::size_t count = 0;
+    for (const fs::directory_entry& entry : fs::recursive_directory_iterator(root)) {
+        if (!entry.is_regular_file()) {
+            continue;
+        }
+        const fs::path relative = entry.path().lexically_relative(root);
+        std::vector<std::string> parts;
+        for (const fs::path& part : relative) {
+            parts.push_back(part.string());
+        }
+        const bool common = parts.size() == 2u && parts[0] == "common";
+        const bool derived = parts.size() == 3u && parts[0] == "derived" &&
+            std::find(owner_types.begin(), owner_types.end(), parts[1]) !=
+                owner_types.end();
+        if (!common && !derived) {
+            std::fprintf(stderr, "misplaced graph: %s\n", relative.string().c_str());
+            require(false);
+        }
+        ++count;
+    }
+    require(count > 0u);
+}
+
 void the_unmodified_copy_loads() {
     require(load_error(catalog_with("control", {})).empty());
 }
@@ -675,6 +705,7 @@ void the_bundle_carries_the_same_graphs() {
 int main() {
     the_unmodified_copy_loads();
     the_shipped_catalog_is_accepted_and_hashes_stably();
+    every_shipped_graph_is_common_or_derived();
     no_two_shipped_graphs_are_the_same_flow();
     a_graph_in_a_subdirectory_is_loaded();
     the_same_id_in_two_directories_is_refused();

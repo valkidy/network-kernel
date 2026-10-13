@@ -53,7 +53,7 @@ constexpr std::uint32_t kPeer = 7;
 // tent_hitbox: half 1.2 across the ground. A player's capsule is 0.35 wide.
 constexpr float kTentHalf = 1.2f;
 constexpr float kCapsuleRadius = 0.35f;
-// action_open_rest_ui.
+// action_open_ui.
 constexpr std::uint32_t kRestUi = 1;
 // gingerbread_mage's lobbed grenade: an area effect, which the tent's walls do
 // not stop (tent_feasibility_probe_test, case 6).
@@ -754,7 +754,7 @@ void collapse_throws_occupants_clear(
         for (auto& candidate : config.entity_templates) {
             if (candidate.name == "tent") {
                 candidate.destroy_entity_trigger.action_graph_ref =
-                    "action_spawn_entity_at_destroy_entity";
+                    "action_spawn_entity";
                 candidate.destroy_entity_trigger.parameters = {
                     {"template", "tent"},
                     {"position", "event.position"},

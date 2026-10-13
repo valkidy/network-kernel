@@ -28,8 +28,9 @@ interaction:
   line_of_sight_required: false
 triggers:
   on_activated:
-    action_graph: action_open_loadout_ui
+    action_graph: action_open_ui
     parameters:
+      ui_id: 2
       target: event.instigator
 loadout:
   options:

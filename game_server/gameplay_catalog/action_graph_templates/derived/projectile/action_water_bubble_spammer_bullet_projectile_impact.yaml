@@ -4,7 +4,7 @@
 #
 # strength is a literal for the reason the balloon's is: 10 spares the hive
 # airship (force_resistance 10).
-id: action_apply_status_at_impact
+id: action_water_bubble_spammer_bullet_projectile_impact
 parameters:
   target: null
   status: null
