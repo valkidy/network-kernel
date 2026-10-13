@@ -11,7 +11,7 @@ package 打包與 `bundle.bytes` 更新、C# ABI mirror 都由使用者處理，
 
 | # | 決策 | 結論（2026-10-13） |
 |---|---|---|
-| D1 | graph 路徑的傷害來源 | **採建議。** area effect／standard impact 把已解析傷害（含 falloff）放進事件，新增 event 來源 `event.damage`；graph `amount` 綁 `event.damage`；projectile `damage` 是唯一數值來源。ABI bump。 |
+| D1 | 傷害與 graph 的契約 | **修訂（2026-10-13，P0 後）：一律都算。** 命中的普通傷害（含 falloff）一律由 projectile `damage` 經傷害管線提交，不論有沒有綁 graph；graph 只負責附加效果（推、拉、狀態、生成）。stagger 移到 projectile 的選填欄位 `stagger`（未寫＝依傷害衍生，0＝不 stagger），經 `DamageRequest::stagger` 帶入。不新增 `event.damage`。原 D1（event.damage）作廢。 |
 | D2 | 取代 `apply_impulse.collision_mask` | **使用者確認的路徑：** projectile `collision_mask` 決定誰被測試 → action 的 strength 對目標的 resistance 決定誰被推／拉／施加 status。graph 不再有 mask。執行器保留**硬性能力限制**（非 authoring）：actor 可推；prop 只在 world mode 且非 carrying 時可推；其他 kind 不推。`impulse_resistance` 改成通用名稱（見 D2a），因為 apply_impulse、apply_pull、apply_status 的 `status_strength` 三者都比它。 |
 | D2a | resistance 新名稱 | **`force_resistance`**（component `ForceResistance`）。舊 YAML 鍵 `impulse_resistance` 載入時報錯並提示新名稱，不默默接受。 |
 | D3 | tornado 飛行中重拉 | **接受飛行中重拉（預期效果）**，數值不動，只修正註解。 |
@@ -37,7 +37,7 @@ package 打包與 `bundle.bytes` 更新、C# ABI mirror 都由使用者處理，
 - rocket（projectile 3）`damage: 45` 且 impact 綁 `action_spawn_projectile_at_impact`；依 grunt_slam_hit 註解「綁了 impact graph 就由 graph 出傷害」，**直擊 45 可能目前根本沒有造成傷害**。未經 runtime 驗證，列入 P0。
 - `KernelActionDefinition::impulse_collision_mask` 在 ABI struct 內（[kernel_types.h:1104](../engine/src/kernel/public/kernel_types.h)）。
 
-## 1a. P0 結果（2026-10-13，基準 main 656f90bd）
+## 1a. P0 結果（導致 D1 修訂）（2026-10-13，基準 main 656f90bd）
 
 **現況的傷害／graph 契約依命中路徑而不同**（推翻 §1 的「rocket 直擊可能無傷害」假設）：
 
@@ -102,31 +102,29 @@ graph 數：32 → 26。
 沿用 `compile_impulse_strength` 的模式：binding 在載入時解析成 `KernelActionDefinition` 的字面值，kernel 不需新欄位。
 
 1. impulse strength：binding 可寫 scalar 或 `[horizontal, vertical]`；pair 覆寫 → SPLIT，不再默默改成 RADIAL。
-2. 把下列 action 欄位改為可接受 `params.<name>`：impulse `lockout_ticks`；damage `stagger`；pull `distance`／`airtime_ticks`／`max_speed`／`strength`；open_ui `ui_id`；spawn `placement`。
+2. 把下列 action 欄位改為可接受 `params.<name>`：impulse `lockout_ticks`；pull `distance`／`airtime_ticks`／`max_speed`／`strength`；open_ui `ui_id`；spawn `placement`。
 3. 型別、有限值與範圍檢查沿用各欄位現有的 validator（例如 pull 的 range check、lockout ≤ `KERNEL_MAX_IMPULSE_LOCKOUT_TICKS`）。
-4. stagger：「未指定」＝依傷害衍生，「0」＝明確不 stagger，兩者在 binding 與 default 都要能區分。
 5. graph `parameters` 的 default 僅作為持有者未提供時的值；持有者有寫就以持有者為準（不新增 preset 檔）。
-6. 測試：同一 graph 兩個持有者給不同數值；pair 覆寫保留 vertical；stagger 未指定 vs 0；非法值拒絕。
+5. 測試：同一 graph 兩個持有者給不同數值；pair 覆寫保留 vertical；非法值拒絕。
 
 ### P4 傷害契約與 mask 移除（ABI 105，依 D1／D2）
 
-1. 依 D1 新增 `event.damage`：area effect 與 standard impact 在 graph 路徑把已解析傷害（含 falloff）放入事件；graph `amount` 綁 `event.damage`。
-2. 明確契約（寫入 guide）：綁了 graph 的命中階段，普通傷害**不**提交，傷害由 graph 透過 `event.damage` 套用；P0 量到的 rocket 直擊行為以明確設定保留，不隱含切換。
-3. 允許 `damage: 0` 表示無傷害；tent_collapse_blast／tornado 改 0。
-4. 移除 graph `collision_mask`（D2）：authoring 寫了就**報錯**，錯誤訊息指出改用 projectile mask＋目標 resistance；`KernelActionDefinition::impulse_collision_mask` 改 reserved（版面不變）；執行器（[systems.cc:652](../engine/src/simulation/src/systems.cc)）改成只看 kind 能力：actor，或 world mode 且非 carrying 的 prop。若 P0 量到 tent_collapse 的 `player_side` 會選到 prop，就把該 prop 的 resistance 調高，不加回 mask。
-5. resistance 改名（D2a）：`KernelEntityTemplateDefinition::impulse_resistance`、`ImpulseResistance` component、loader、12 個 catalog YAML、相關註解；版面不變，名稱改動併入 105。
-6. 同步三個寫死 ABI／schema 版本的測試（見 memory：schema-bump-touch-points），以及直接設 `impulse_collision_mask` 的 kernel／simulation 測試（約 6 處）。
-7. 測試：rocket_explosion 遠近兩點傷害不同（falloff 生效）；無傷害 push／pull 不扣血；舊 mask 與舊 resistance 鍵被拒；carrying 中的 prop 不被推。
+1. 依修訂後 D1：移除 area effect（area_effect_system.cc:190 起）與 melee（weapon_system.cc:712）的「綁 graph 就不提交傷害」分支；兩者都照常提交管線傷害（area effect 帶 falloff），graph 另外執行。standard direct_hit 已是此行為；piercing 維持現狀（graph 只在非 actor 命中觸發）。
+2. projectile 新增選填 `stagger`（ABI：projectile 定義新增欄位＋「是否指定」），一路帶到 `DamageRequest::stagger`；melee 從 shot template 取得。未寫＝`kStaggerDerivedFromDamage`，0＝不 stagger。
+3. 允許 `damage: 0` 表示無傷害（管線不提交）；tent_collapse_blast／tornado 改 0。
+4. 確認同 tick 內「傷害致死」與「推／拉」的先後與改前一致（改前兩者同在一個 graph batch）；不一致就停下回報。
+5. 移除 graph `collision_mask`（D2）：authoring 寫了就**報錯**，錯誤訊息指出改用 projectile mask＋目標 resistance；`KernelActionDefinition::impulse_collision_mask` 改 reserved（版面不變）；執行器（[systems.cc:652](../engine/src/simulation/src/systems.cc)）改成只看 kind 能力：actor，或 world mode 且非 carrying 的 prop。P0 已確認 tent_collapse 不會選到 prop，直接移除。
+6. resistance 改名（D2a）：`KernelEntityTemplateDefinition::impulse_resistance`、`ImpulseResistance` component、loader、12 個 catalog YAML、相關註解；版面不變，名稱改動併入 105。
+7. 同步三個寫死 ABI／schema 版本的測試（見 memory：schema-bump-touch-points），以及直接設 `impulse_collision_mask` 的 kernel／simulation 測試（約 6 處）。
+8. 測試（放新 target）：rocket_explosion 綁 graph 時遠近兩點傷害不同（falloff 生效）且仍被推；melee 綁 graph 時傷害 40＋stagger 120；`damage: 0` 不扣血；stagger 未寫 vs 0；舊 mask 與舊 resistance 鍵被拒；carrying 中的 prop 不被推。
 
 ### P5 參數化合併（依 P3／P4）
 
 | 合併 | 目標 | 每個持有者 binding 提供 |
 |---|---|---|
-| rocket_explosion／shockwave／melee_impact | `common/action_apply_damage_and_impulse` | amount=`event.damage`、strength pair、stagger、lockout |
-| tornado_pull | `common/action_apply_pull` | pull 四數值 |
-| pull_at_target | `common/action_apply_damage_and_pull` | amount、stagger、pull 四數值 |
-| tent_collapse | `common/action_apply_impulse` | strength pair、lockout |
-| frag | `common/action_apply_damage` | amount、`stagger: 0` |
+| rocket_explosion／shockwave／melee_impact／tent_collapse | `common/action_apply_impulse` | strength pair、lockout；傷害與 stagger 改由 projectile（shockwave 150、grunt_slam 120） |
+| tornado_pull／pull_at_target | `common/action_apply_pull` | pull 四數值；pull_blast 的 10 傷害與 stagger 150 改由 projectile |
+| frag | 不再需要 graph | projectile `damage: 1000`、`stagger: 0`，falloff 維持 none |
 | 三個 open UI | `common/action_open_ui` | `ui_id` |
 | spawn ice／building＋傷害自身 | `common/action_spawn_entity_and_damage_self`（名稱實作時依行為定） | placement 等 |
 
@@ -142,7 +140,7 @@ graph 數：32 → 26。
 ## 3. 交付
 
 - 分支 `claude/action-graph-refactor`，每個 phase 的 commit hash。
-- ABI：P4 起 104 → 105（`impulse_collision_mask` 退為 reserved、新增 `event.damage` 來源、`impulse_resistance` 改名）；snapshot schema 不變。client 與 server 必須同版，C# mirror 由使用者更新。
+- ABI：P4 起 104 → 105（`impulse_collision_mask` 退為 reserved、projectile 新增 `stagger`、`impulse_resistance` 改名）；snapshot schema 不變。client 與 server 必須同版，C# mirror 由使用者更新。
 - `bundle.bytes`：需要更新（catalog 內容與 hash 都變了），由使用者執行。
 - 完成回報：讀取檔案、修改檔案、搜尋次數、build／test 命令。
 
@@ -150,7 +148,7 @@ graph 數：32 → 26。
 
 - smoke-test-first；只跑受影響的目標測試，不跑完整 build／test。
 - 以下任一情況就停下回報，不自行擴大範圍：
-  - P0 量到的行為與本計劃假設不同（例如 rocket 直擊確實有傷害）。
+  - 實作中量到的行為與本計劃假設不同。
   - ABI 105 已被其他分支佔用。
   - 某合併會改變觸發次數或順序。
   - 需要碰 Unity 專案或 package。
