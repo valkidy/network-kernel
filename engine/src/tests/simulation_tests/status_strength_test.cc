@@ -1,5 +1,5 @@
 // apply_status's strength: when authored, the status lands only on a target
-// whose impulse_resistance it strictly exceeds -- the hive airship
+// whose force_resistance it strictly exceeds -- the hive airship
 // (resistance 10) takes a water balloon's damage but never its bubble. The
 // rest of the hit is unaffected. The water bubble's fourth part
 // (docs/WATER_BUBBLE_PLAN.md, P4).
@@ -52,8 +52,8 @@ Outcome hit(float strength, std::optional<float> resistance) {
     const entt::entity entity = *world.find_entity(target);
     world.registry().get_or_emplace<Health>(entity) = Health{50, 50};
     if (resistance.has_value()) {
-        world.registry().emplace_or_replace<ImpulseResistance>(
-            entity, ImpulseResistance{*resistance});
+        world.registry().emplace_or_replace<ForceResistance>(
+            entity, ForceResistance{*resistance});
     }
     RuntimeStatusEffectTemplate status;
     status.status_effect_id = kStatusId;

@@ -4128,7 +4128,6 @@ void predicted_area_effect_impulse_skips_the_local_shooter() {
         impact.actions[0].direction_source = KernelEventVec3Source_Direction;
         impact.actions[0].impulse_strength = 12.0f;
         impact.actions[0].impulse_lockout_ticks = 30u;
-        impact.actions[0].impulse_collision_mask = KERNEL_COLLISION_MASK_ACTOR;
 
         KernelColliderTemplateDefinition collider = projectile_collider_template();
         collider.shape_params = KernelVec4{3.0f, 0.0f, 0.0f, 0.0f};

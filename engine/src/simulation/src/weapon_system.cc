@@ -332,17 +332,20 @@ void apply_hitscan_damage(
     }
 
     if (damage_pipeline == nullptr ||
-        !damage_pipeline->submit_damage_request(damage_request_at(
-            current_tick,
-            0,
-            shooter_net_id,
-            target_net_id,
-            shooter_peer_id,
-            definition.id,
-            definition.damage,
-            hit_time_us,
-            origin,
-            target_hit_zone))) {
+        !damage_pipeline->submit_damage_request(with_projectile_stagger(
+            damage_request_at(
+                current_tick,
+                0,
+                shooter_net_id,
+                target_net_id,
+                shooter_peer_id,
+                definition.id,
+                definition.damage,
+                hit_time_us,
+                origin,
+                target_hit_zone),
+            world,
+            definition.projectile_template_id))) {
         return;
     }
 }
@@ -545,17 +548,20 @@ void apply_lock_instant_damage(
         direction);
     std::uint32_t sequence_id = 0;
     for (const lock_targets::Candidate& target : selection.locked) {
-        (void)damage_pipeline->submit_damage_request(damage_request_at(
-            current_tick,
-            sequence_id++,
-            shooter_net_id,
-            target.net_id,
-            shooter_peer_id,
-            definition.id,
-            definition.damage,
-            hit_time_us,
-            target.center,
-            selection.hit_zone_of(target.net_id)));
+        (void)damage_pipeline->submit_damage_request(with_projectile_stagger(
+            damage_request_at(
+                current_tick,
+                sequence_id++,
+                shooter_net_id,
+                target.net_id,
+                shooter_peer_id,
+                definition.id,
+                definition.damage,
+                hit_time_us,
+                target.center,
+                selection.hit_zone_of(target.net_id)),
+            world,
+            definition.projectile_template_id));
     }
 }
 
@@ -605,17 +611,20 @@ void launch_lock_missile(
               static_cast<double>(fixed_delta_seconds) * 1000000.0)
         : action_time_us;
 
-    DamageRequest request = damage_request_at(
-        current_tick,
-        commit_index,
-        shooter_net_id,
-        target.net_id,
-        shooter_peer_id,
-        definition.id,
-        definition.damage,
-        arrival_time_us,
-        target.center,
-        selection.hit_zone_of(target.net_id));
+    DamageRequest request = with_projectile_stagger(
+        damage_request_at(
+            current_tick,
+            commit_index,
+            shooter_net_id,
+            target.net_id,
+            shooter_peer_id,
+            definition.id,
+            definition.damage,
+            arrival_time_us,
+            target.center,
+            selection.hit_zone_of(target.net_id)),
+        world,
+        definition.projectile_template_id);
     request.apply_tick = arrival_tick;
     if (!damage_pipeline->submit_damage_request(request)) {
         return;
@@ -705,12 +714,11 @@ void apply_melee_damage(
     const float half_fov_cos = std::cos(
         definition.melee_fov_degrees * 0.5f * (std::acos(-1.0f) / 180.0f));
 
-    // A swing whose shot template names an impact graph hands every target to
-    // that graph instead of submitting damage itself, exactly as an area effect
-    // does: the graph is then responsible for the damage as well as whatever
-    // else it does, which is how one authoring surface expresses "hurt and
-    // shove" without a second one for the shoving. Falls back to plain damage
-    // when the caller gave nowhere to put the batches.
+    // A swing's damage is its shot template's, submitted for every target it
+    // finds, as an area effect's is. A shot template that names an impact
+    // graph runs it on each target as well -- the shove, the pull -- and the
+    // graph adds to the damage, never replaces it. Without anywhere to put
+    // the batches the graph is skipped and the damage still lands.
     const bool dispatches_impact_graph = shot != nullptr &&
         shot->projectile_impact_binding.has_value() &&
         action_graph_batches != nullptr;
@@ -751,6 +759,31 @@ void apply_melee_damage(
         const glm::vec3 radial{
             hit.position.x - origin.x, 0.0f, hit.position.z - origin.z};
         const std::uint32_t target_sequence = sequence_id++;
+        // The swing lands where it lands hardest: of the target's volumes in
+        // the cone -- several, on an actor hit on its bones -- the largest
+        // hit_zone, rather than whichever happened to be nearest.
+        physics::CollisionHit struck = hit;
+        for (const physics::CollisionHit& other : hits) {
+            if (other.identity.entity_net_id == target_net_id &&
+                is_actor_hit(other.identity.kind) && in_cone(other)) {
+                struck.identity.hit_zone =
+                    std::max(struck.identity.hit_zone, other.identity.hit_zone);
+            }
+        }
+        const bool landed = definition.damage > 0 &&
+            damage_pipeline != nullptr &&
+            damage_pipeline->submit_damage_request(with_projectile_stagger(
+                damage_request_from_hit(
+                    current_tick,
+                    target_sequence,
+                    shooter_net_id,
+                    shooter_peer_id,
+                    definition.id,
+                    definition.damage,
+                    hit_time_us,
+                    struck),
+                world,
+                definition.projectile_template_id));
         if (dispatches_impact_graph) {
             // Attacker to contact point, flattened. A knockback authored off
             // this has a y of roughly zero, so its vertical component has to be
@@ -797,26 +830,7 @@ void apply_melee_damage(
             damaged.push_back(target_net_id);
             continue;
         }
-        // The swing lands where it lands hardest: of the target's volumes in
-        // the cone -- several, on an actor hit on its bones -- the largest
-        // hit_zone, rather than whichever happened to be nearest.
-        physics::CollisionHit struck = hit;
-        for (const physics::CollisionHit& other : hits) {
-            if (other.identity.entity_net_id == target_net_id &&
-                is_actor_hit(other.identity.kind) && in_cone(other)) {
-                struck.identity.hit_zone =
-                    std::max(struck.identity.hit_zone, other.identity.hit_zone);
-            }
-        }
-        if (damage_pipeline->submit_damage_request(damage_request_from_hit(
-                current_tick,
-                target_sequence,
-                shooter_net_id,
-                shooter_peer_id,
-                definition.id,
-                definition.damage,
-                hit_time_us,
-                struck))) {
+        if (landed) {
             damaged.push_back(target_net_id);
         }
     }

@@ -15,13 +15,13 @@ launch:
   fall_ticks: 2
 triggers:
   on_projectile_impact:
-    action_graph: action_spawn_projectile_at_impact
+    action_graph: action_spawn_projectile
     parameters:
       template: sky_laser_burn
       position: event.position
       direction: event.direction
   on_expired:
-    action_graph: action_spawn_projectile_at_expired
+    action_graph: action_spawn_projectile
     parameters:
       template: sky_laser_burn
       position: event.position

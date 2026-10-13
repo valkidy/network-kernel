@@ -1,5 +1,5 @@
 # A portal in flight: tent_kit's flow, unfolding into portal_entrance where it
-# lands, placed clear (action_spawn_building_and_damage_self_at_collision).
+# lands, placed clear (action_spawn_entity_and_damage_self).
 # terrain|static_obstacle and no camp: a kit that lands on someone would put
 # the portal on them (docs/PORTAL_PLAN.md D1, D2).
 id: 225
@@ -13,8 +13,9 @@ physics:
 triggers:
   on_collision:
     collision_mask: terrain|static_obstacle
-    action_graph: action_spawn_building_and_damage_self_at_collision
+    action_graph: action_spawn_entity_and_damage_self
     parameters:
+      placement: clear
       template: portal_entrance
       position: event.position
       direction: event.direction

@@ -949,15 +949,18 @@ ProjectileHitOutcome process_projectile_hit_records(
                     world, projectile.collision_mask, record.target_net_id)) {
                 continue;
             }
-            damage_pipeline->submit_damage_request(damage_request_from_hit(
-                current_tick,
-                record.sequence_id,
-                identity.net_id,
-                identity.owner_peer,
-                projectile.weapon_id,
-                projectile.damage,
-                hit_time_us,
-                record.hit));
+            damage_pipeline->submit_damage_request(with_projectile_stagger(
+                damage_request_from_hit(
+                    current_tick,
+                    record.sequence_id,
+                    identity.net_id,
+                    identity.owner_peer,
+                    projectile.weapon_id,
+                    projectile.damage,
+                    hit_time_us,
+                    record.hit),
+                world,
+                projectile.projectile_template_id));
             ++projectile.hit_count;
         }
         outcome.destroy_projectile = projectile.hit_count >= projectile.max_hit_count;
@@ -994,18 +997,21 @@ ProjectileHitOutcome process_projectile_hit_records(
         is_actor_hit(records.front().hit.identity.kind) &&
         damage_source_may_damage(
             world, projectile.collision_mask, records.front().target_net_id)) {
-        damage_pipeline->submit_damage_request(damage_request_at(
-            current_tick,
-            0,
-            identity.net_id,
-            records.front().target_net_id,
-            identity.owner_peer,
-            projectile.weapon_id,
-            projectile.damage,
-            hit_time_us,
-            impact_position,
-            static_cast<std::uint16_t>(
-                records.front().hit.identity.hit_zone)));
+        damage_pipeline->submit_damage_request(with_projectile_stagger(
+            damage_request_at(
+                current_tick,
+                0,
+                identity.net_id,
+                records.front().target_net_id,
+                identity.owner_peer,
+                projectile.weapon_id,
+                projectile.damage,
+                hit_time_us,
+                impact_position,
+                static_cast<std::uint16_t>(
+                    records.front().hit.identity.hit_zone)),
+            world,
+            projectile.projectile_template_id));
     }
 
     outcome.destroy_projectile = true;
@@ -1881,17 +1887,20 @@ bool resolve_projectile_historical_hit(
                 if (projectile.damage_shape == ProjectileDamageShape::kDirectHit &&
                     projectile.damage > 0 &&
                     damage_pipeline != nullptr) {
-                    damage_pipeline->submit_damage_request(damage_request_at(
-                        current_tick,
-                        0,
-                        projectile_net_id,
-                        hit.net_id,
-                        owner_peer,
-                        projectile.weapon_id,
-                        projectile.damage,
-                        hit_time_us,
-                        hit.impact_position,
-                        hit.volume.hit_zone));
+                    damage_pipeline->submit_damage_request(with_projectile_stagger(
+                        damage_request_at(
+                            current_tick,
+                            0,
+                            projectile_net_id,
+                            hit.net_id,
+                            owner_peer,
+                            projectile.weapon_id,
+                            projectile.damage,
+                            hit_time_us,
+                            hit.impact_position,
+                            hit.volume.hit_zone),
+                        world,
+                        projectile.projectile_template_id));
                 }
                 execute_queued_trigger_events(
                     world, &trigger_events, fixed_delta_seconds, events, nullptr,

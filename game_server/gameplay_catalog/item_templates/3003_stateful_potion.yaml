@@ -21,7 +21,7 @@ portable_state:
     world_projection: health_current
 triggers:
   on_item_used:
-    action_graph: action_apply_health_change_at_item_used
+    action_graph: action_apply_health_change
     parameters:
       target: event.target
       amount: 30

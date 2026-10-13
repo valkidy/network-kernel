@@ -13,7 +13,7 @@
 id: 226
 name: portal_entrance
 entity_type: prop
-impulse_resistance: 1000.0
+force_resistance: 1000.0
 lifecycle:
   # Three minutes at 30 Hz, from the moment it exists.
   lifetime_ticks: 5400
@@ -43,6 +43,6 @@ triggers:
     collision_mask: player_side
     # Not the allied sentries, who are player_side too (D6).
     instigators: players
-    action_graph: action_teleport_through_portal
+    action_graph: action_teleport
     parameters:
       target: event.instigator

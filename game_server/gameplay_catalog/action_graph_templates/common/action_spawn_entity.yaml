@@ -1,4 +1,4 @@
-id: action_spawn_entity_at_destroy_entity
+id: action_spawn_entity
 parameters:
   template: null
   position: null

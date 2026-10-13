@@ -1,0 +1,25 @@
+# A thrown prop that puts `status` on what it hits, then breaks. Only a hit
+# names a target, so `when: event.has_target` keeps a landing from trying to
+# give the status to nobody; the self-damage is on every contact, so a prop
+# that lands breaks too.
+#
+# `strength` is weighed against the target's force_resistance, strictly; 0
+# weighs against nobody. Each owner binds its own.
+id: action_apply_status_if_target_and_damage_self
+parameters:
+  source: null
+  target: null
+  status: null
+  direction: null
+  strength: 0.0
+  self_damage: 1
+actions:
+  - type: apply_status
+    target: params.target
+    status: params.status
+    direction: params.direction
+    strength: params.strength
+    when: event.has_target
+  - type: apply_damage
+    target: params.source
+    amount: params.self_damage

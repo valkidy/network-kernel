@@ -27,7 +27,12 @@ for src in $(SRCS); do
       cp "$$src" "$$bundle_root/action_templates/$$(basename "$$src")"
       ;;
     */action_graph_templates/*.yaml)
-      cp "$$src" "$$bundle_root/action_graph_templates/$$(basename "$$src")"
+      # Graphs keep their subdirectory (common/, derived/<owner_type>/). The
+      # loader reads the whole tree; flattening it here would let two
+      # same-named files overwrite each other instead of being refused.
+      graph_path="$${src#*/action_graph_templates/}"
+      mkdir -p "$$bundle_root/action_graph_templates/$$(dirname "$$graph_path")"
+      cp "$$src" "$$bundle_root/action_graph_templates/$$graph_path"
       ;;
     */status_effect_templates/*.yaml)
       cp "$$src" "$$bundle_root/status_effect_templates/$$(basename "$$src")"

@@ -1,4 +1,4 @@
-id: action_apply_damage_at_collision
+id: action_apply_damage_to_source_and_target
 parameters:
   source: null
   target: null

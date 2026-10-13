@@ -8,7 +8,7 @@
 id: 216
 name: tent
 entity_type: prop
-impulse_resistance: 1000.0
+force_resistance: 1000.0
 lifecycle:
   # Three minutes at 30 Hz, from the moment it exists. The first player to go
   # inside shortens what is left; nothing lengthens it.
@@ -35,13 +35,14 @@ interaction:
   line_of_sight_required: false
 triggers:
   on_activated:
-    action_graph: action_open_rest_ui
+    action_graph: action_open_ui
     parameters:
+      ui_id: 1
       target: event.instigator
   # However it goes. Its occupants are already out when this runs, and the
   # tent group's cleanup_runs_on_destroy makes expiry and eviction run it too.
   on_destroy_entity:
-    action_graph: action_spawn_projectile_at_destroy_entity
+    action_graph: action_spawn_projectile
     parameters:
       template: tent_collapse_blast
       position: event.position

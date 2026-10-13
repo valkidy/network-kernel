@@ -1554,6 +1554,9 @@ RuntimeProjectileTemplate to_runtime_projectile_template(
     projectile_template.collision_query_mode =
         to_projectile_collision_query_mode(mechanics.collision_query_mode);
     projectile_template.damage = mechanics.damage;
+    projectile_template.stagger = mechanics.stagger_authored != 0u
+        ? mechanics.stagger
+        : kStaggerDerivedFromDamage;
     projectile_template.speed = mechanics.speed;
     projectile_template.lifetime_ticks = mechanics.lifetime_ticks;
     projectile_template.gravity = from_kernel_vec3(mechanics.gravity);
@@ -1850,7 +1853,7 @@ bool validate_area_effect_mechanics(
     const KernelAreaEffectMechanicsDefinition& area_effect) {
     return area_effect.struct_size >= sizeof(KernelAreaEffectMechanicsDefinition) &&
            area_effect.radius > 0.0f &&
-           area_effect.damage_per_interval > 0 &&
+           // Zero is a field that only shoves or pulls (ABI 105).
            area_effect.damage_interval_ticks > 0 &&
            area_effect.lifetime_ticks > 0 &&
            (area_effect.collision_mask &
@@ -1901,7 +1904,6 @@ bool validate_projectile_mechanics(
                 action.health_change_amount = trigger.health_change_amount;
                 action.condition_type = trigger.condition_type;
                 action.impulse_strength = trigger.impulse_strength;
-                action.impulse_collision_mask = trigger.impulse_collision_mask;
                 action.impulse_direction = trigger.impulse_direction;
                 action.impulse_lockout_ticks = trigger.impulse_lockout_ticks;
                 action.impulse_strength_mode = trigger.impulse_strength_mode;
@@ -1942,10 +1944,6 @@ bool validate_projectile_mechanics(
                       (action.impulse_direction.x == 0.0f &&
                        action.impulse_direction.y == 0.0f &&
                        action.impulse_direction.z == 0.0f))) ||
-                    (action.impulse_collision_mask &
-                     (KERNEL_COLLISION_MASK_ACTOR | KERNEL_COLLISION_MASK_PROP)) == 0u ||
-                    (action.impulse_collision_mask &
-                     ~(KERNEL_COLLISION_MASK_ACTOR | KERNEL_COLLISION_MASK_PROP)) != 0u ||
                     action.impulse_lockout_ticks >
                         KERNEL_MAX_IMPULSE_LOCKOUT_TICKS) {
                     return false;
@@ -1977,6 +1975,8 @@ bool validate_projectile_mechanics(
         mechanics.damage_shape > KernelProjectileDamageShape_PiercingSegment ||
         mechanics.damage_falloff > KernelProjectileDamageFalloff_Linear ||
         mechanics.collision_query_mode > KernelProjectileCollisionQueryMode_Ray ||
+        !damage_stagger_is_authorable(
+            mechanics.stagger_authored, mechanics.stagger) ||
         mechanics.hit_response == KernelProjectileHitResponse_Bounce ||
         mechanics.hit_response == KernelProjectileHitResponse_Attach ||
         (mechanics.damage_shape == KernelProjectileDamageShape_None
@@ -3472,8 +3472,6 @@ bool KernelEngine::load_gameplay_catalog(
                     action.health_change_amount =
                         trigger->health_change_amount;
                     action.impulse_strength = trigger->impulse_strength;
-                    action.impulse_collision_mask =
-                        trigger->impulse_collision_mask;
                     action.impulse_direction = trigger->impulse_direction;
                     action.impulse_lockout_ticks =
                         trigger->impulse_lockout_ticks;
@@ -3539,12 +3537,6 @@ bool KernelEngine::load_gameplay_catalog(
                           (action.impulse_direction.x == 0.0f &&
                            action.impulse_direction.y == 0.0f &&
                            action.impulse_direction.z == 0.0f))) ||
-                        (action.impulse_collision_mask &
-                         (KERNEL_COLLISION_MASK_ACTOR |
-                          KERNEL_COLLISION_MASK_PROP)) == 0u ||
-                        (action.impulse_collision_mask &
-                         ~(KERNEL_COLLISION_MASK_ACTOR |
-                           KERNEL_COLLISION_MASK_PROP)) != 0u ||
                         action.impulse_lockout_ticks >
                             KERNEL_MAX_IMPULSE_LOCKOUT_TICKS) {
                         return false;
@@ -12829,7 +12821,7 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
                                 }
                                 const float resistance = local_template == nullptr
                                     ? 0.0f
-                                    : local_template->impulse_resistance;
+                                    : local_template->force_resistance;
                                 for (std::uint32_t action_index = 0u;
                                      action_index < (action_count == 0u ? 1u : action_count);
                                      ++action_index) {
@@ -12841,7 +12833,6 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
                                         action.target_source = trigger.target_source;
                                         action.direction_source = trigger.direction_source;
                                         action.impulse_strength = trigger.impulse_strength;
-                                        action.impulse_collision_mask = trigger.impulse_collision_mask;
                                         action.impulse_direction = trigger.impulse_direction;
                                         action.impulse_lockout_ticks = trigger.impulse_lockout_ticks;
                                         action.impulse_strength_mode = trigger.impulse_strength_mode;
@@ -12853,8 +12844,6 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
                                             KernelEntityTriggerActionType_ApplyImpulse ||
                                         action.target_source !=
                                             KernelEntityRefSource_EventTarget ||
-                                        (action.impulse_collision_mask &
-                                         KERNEL_COLLISION_MASK_ACTOR) == 0u ||
                                         !impulse_strength_is_authorable(
                                             action.impulse_strength_mode,
                                             action.impulse_strength,

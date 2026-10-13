@@ -9,7 +9,7 @@ physics:
 triggers:
   on_collision:
     collision_mask: terrain
-    action_graph: action_spawn_ice_and_damage_self_at_collision
+    action_graph: action_spawn_entity_and_damage_self
     parameters:
       template: ice_block
       position: event.position

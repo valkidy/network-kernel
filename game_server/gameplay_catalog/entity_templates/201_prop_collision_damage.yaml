@@ -12,7 +12,7 @@ triggers:
     # prop thrown into a leg counts as hitting the monster rather than landing
     # on scenery. Limbs are opt-in and this is the only prop that asks.
     collision_mask: actor | limb
-    action_graph: action_apply_damage_at_collision
+    action_graph: action_apply_damage_to_source_and_target
     parameters:
       source: self
       target: event.target

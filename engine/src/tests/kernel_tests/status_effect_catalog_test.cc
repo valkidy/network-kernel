@@ -32,7 +32,6 @@ KernelActionTriggerDefinition trigger_with_action(
     action.damage_amount = 1u;
     action.health_change_amount = -1;
     action.impulse_strength = 1.0f;
-    action.impulse_collision_mask = KERNEL_COLLISION_MASK_ACTOR;
     action.impulse_direction = KernelVec3{1.0f, 0.0f, 0.0f};
     action.status_effect_id = 1001u;
     action.modifier_operation = KernelStatModifierOperation_Additive;

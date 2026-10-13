@@ -1,0 +1,19 @@
+# Shoves `target` along `direction` and holds it off its own movement for
+# `lockout` ticks. `strength` is a scalar (radial: the whole direction scaled)
+# or [horizontal, vertical] (vertical an absolute lift, which a level blast
+# needs). Every number is the owner's: a rocket's explosion, a shockwave, a
+# slam, a tent folding away all bind this one graph with their own.
+#
+# It deals no damage: a hit's damage is its projectile's.
+id: action_apply_impulse
+parameters:
+  target: null
+  strength: null
+  direction: null
+  lockout: 0
+actions:
+  - type: apply_impulse
+    target: params.target
+    strength: params.strength
+    direction: params.direction
+    lockout_ticks: params.lockout

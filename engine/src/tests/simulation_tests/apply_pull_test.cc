@@ -313,8 +313,8 @@ Pulled pull(
     world.registry().get_or_emplace<Velocity>(target_entity).linear =
         existing_velocity;
     if (resistance > 0.0f) {
-        world.registry().emplace<ImpulseResistance>(
-            target_entity, ImpulseResistance{resistance});
+        world.registry().emplace<ForceResistance>(
+            target_entity, ForceResistance{resistance});
     }
     const std::optional<CompiledActionGraphBinding> binding =
         compile_action_trigger_definition(

@@ -1,0 +1,23 @@
+# Lands `target` `distance` metres short of `anchor`, `airtime` ticks later,
+# no faster than `max_speed`. Moves only a target whose force_resistance
+# `strength` strictly exceeds; strength never scales the launch. Velocity is
+# replaced, not added to. The pull grenade and the tornado bind this one graph
+# with their own numbers.
+#
+# It deals no damage: a hit's damage is its projectile's.
+id: action_apply_pull
+parameters:
+  target: null
+  anchor: null
+  distance: null
+  airtime: null
+  max_speed: null
+  strength: null
+actions:
+  - type: apply_pull
+    target: params.target
+    anchor: params.anchor
+    distance: params.distance
+    airtime_ticks: params.airtime
+    max_speed: params.max_speed
+    strength: params.strength

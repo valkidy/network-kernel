@@ -11,7 +11,7 @@ use:
   destroy_when_empty: true
 triggers:
   on_item_used:
-    action_graph: action_spawn_projectile_at_impact
+    action_graph: action_spawn_projectile
     parameters:
       template: grenade_shell
       position: event.position
