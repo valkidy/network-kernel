@@ -4,13 +4,15 @@
 # team is in: players and props are never pushed. It does not break props.
 #
 # One hit per blast -- lifetime equals the interval, as in rocket_explosion.
-# The damage here is not what lands: an area effect with a graph binding
-# submits no damage of its own, so the graph's amount is the real number.
+# Low damage on purpose: the shockwave softens and displaces, it does not kill.
 id: 16
 name: shockwave_blast
 type: area_effect
 collider_template: shockwave_area_sphere
 damage: 20
+# Authored, not derived: 20 damage would never stagger on its own. 150 is the
+# highest threshold in the catalog, so this staggers every actor.
+stagger: 150
 lifetime_ticks: 30
 damage_behavior:
   type: area_interval
@@ -19,7 +21,12 @@ damage_behavior:
 collision_mask: hostile_side
 triggers:
   on_projectile_impact:
-    action_graph: action_shockwave_at_target
+    action_graph: action_apply_impulse
     parameters:
       target: event.target
       direction: event.direction
+      # Split for the rocket's reason, stronger because shoving is this
+      # grenade's whole job.
+      strength: [14.0, 6.0]
+      # ~1.2 s of airtime (~37 ticks); a ceiling, released on landing.
+      lockout: 60

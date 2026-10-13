@@ -16,6 +16,14 @@
  *     is tested against (the projectile's collision_mask does), and
  *     apply_impulse moves any actor, or any prop in the world and not being
  *     carried, whose force_resistance its strength exceeds.
+ *     A hit's damage is always its projectile's: an impact graph adds effects
+ *     and no longer replaces the damage of an area effect or a melee swing,
+ *     which now go through the damage pipeline (falloff included) like a
+ *     direct hit always has. KernelProjectileMechanicsDefinition gained
+ *     stagger_authored and stagger, appended after launch: the stagger every
+ *     hit of that projectile adds, which a graph's apply_damage used to carry.
+ *     An area effect may author damage 0 (with damage_shape none) and deal
+ *     none.
  * 104: lock-on weapons, first part. KernelWeaponFireMode gained _LockInstant:
  *     on every commit, up to max_hit_count actors inside a cone are damaged at
  *     once -- the nearest first, any a static wall hides skipped -- and the
@@ -2233,6 +2241,11 @@ typedef struct KernelProjectileMechanicsDefinition {
     uint8_t replication;
     uint16_t reserved1;
     KernelProjectileLaunchDefinition launch;
+    /* ABI 105. Non-zero: every hit this projectile's damage lands adds
+     * `stagger` to the target's meter, zero meaning none. Zero, the default:
+     * the stagger is derived from the damage, as before. */
+    uint32_t stagger_authored;
+    float stagger;
 } KernelProjectileMechanicsDefinition;
 
 typedef struct KernelProjectileTemplateDefinition {

@@ -147,6 +147,14 @@ DamageRequest damage_request_at(
     const glm::vec3& hit_position,
     std::uint16_t hit_zone = kHitZoneUnscaled);
 
+// `request` with the stagger its projectile authors -- every hit a
+// projectile's damage lands carries the same one, whatever path landed it --
+// or the derived default when it authors none or is unknown.
+DamageRequest with_projectile_stagger(
+    DamageRequest request,
+    const World& world,
+    std::uint32_t projectile_template_id);
+
 glm::vec3 projectile_launch_position(const Transform& transform);
 
 // Maps a beam's aim onto the local +Z its collider template and presentation

@@ -5,13 +5,15 @@
 # team is in: players and props are never pulled.
 #
 # One hit per blast -- lifetime equals the interval, as in shockwave_blast.
-# The damage here is not what lands: an area effect with a graph binding
-# submits no damage of its own, so the graph's amount is the real number.
+# Low damage on purpose: the pull gathers, it does not kill.
 id: 26
 name: pull_blast
 type: area_effect
 collider_template: pull_area_sphere
 damage: 10
+# Authored, as on the shockwave: being yanked off your feet interrupts
+# whatever you were doing. 150 is the highest threshold in the catalog.
+stagger: 150
 lifetime_ticks: 30
 damage_behavior:
   type: area_interval
@@ -20,7 +22,19 @@ damage_behavior:
 collision_mask: hostile_side
 triggers:
   on_projectile_impact:
-    action_graph: action_pull_at_target
+    action_graph: action_apply_pull
     parameters:
       target: event.target
+      # The blast's centre: for an area effect the one point every target
+      # shares; event.position would be where each was hit.
       anchor: event.subject_position
+      # Land 1 m from the centre, each on the side it came from: gathered for
+      # a follow-up, not all dropped onto one point.
+      distance: 1.0
+      # 0.8 s in the air; every target lands on the same tick, since the
+      # speed is worked out per target.
+      airtime: 24
+      # The farthest target in the 6 m radius needs (6 - 1) / 0.8 = 6.25 m/s.
+      max_speed: 12.0
+      # Who is moved, not how fast: pulled only past its force_resistance.
+      strength: 10.0

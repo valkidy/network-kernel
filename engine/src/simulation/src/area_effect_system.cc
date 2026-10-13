@@ -151,6 +151,11 @@ void simulate_area_effects(
                 : glm::vec3{0.0f};
 
         std::uint32_t sequence_id = 0;
+        const RuntimeProjectileTemplate* hit_template =
+            world.find_projectile_template(projectile.projectile_template_id);
+        const float hit_stagger = hit_template != nullptr
+            ? hit_template->stagger
+            : kStaggerDerivedFromDamage;
         std::unordered_set<NetId> seen_targets;
         std::vector<ActionGraphQueuedTrigger> queued_triggers;
         for (const physics::CollisionHit& hit : hits) {
@@ -202,6 +207,23 @@ void simulate_area_effects(
             }
 
             const std::uint32_t target_sequence = sequence_id++;
+            // The hit's damage is the projectile's, falloff and all, whether
+            // or not a graph is bound: a graph adds effects (a shove, a pull,
+            // a status) and never replaces or repeats the damage. Zero
+            // authors a field that deals none.
+            if (area_effect.damage_per_interval > 0) {
+                DamageRequest request = damage_request_from_hit(
+                    current_tick,
+                    target_sequence,
+                    identity.net_id,
+                    identity.owner_peer,
+                    area_effect.source_code,
+                    damage,
+                    server_time_us,
+                    hit);
+                request.stagger = hit_stagger;
+                active_damage_pipeline->submit_damage_request(request);
+            }
             if (area_effect.action_graph_binding.has_value()) {
                 const glm::vec3 radial = hit.position - transform.position;
                 const glm::vec3 direction = glm::length(radial) > 0.0001f
@@ -244,17 +266,6 @@ void simulate_area_effects(
                         0u},
                     target_sequence,
                 });
-            } else {
-                active_damage_pipeline->submit_damage_request(
-                    damage_request_from_hit(
-                        current_tick,
-                        target_sequence,
-                        identity.net_id,
-                        identity.owner_peer,
-                        area_effect.source_code,
-                        damage,
-                        server_time_us,
-                        hit));
             }
         }
         area_effect.next_damage_tick =

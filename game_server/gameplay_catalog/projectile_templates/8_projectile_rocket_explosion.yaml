@@ -12,12 +12,18 @@ damage_behavior:
 collision_mask: damageable | prop
 triggers:
   on_projectile_impact:
-    action_graph: action_rocket_explosion_at_target
+    # The damage is the 45 above, with its linear falloff; the graph only
+    # shoves.
+    action_graph: action_apply_impulse
     parameters:
       target: event.target
-      amount: 45
-      # No `strength` here on purpose. A binding override is always read as the
-      # scalar form, so passing one would silently defeat the graph's
-      # [horizontal, vertical] default and put the knockback back to what it
-      # was before it worked.
       direction: event.direction
+      # [horizontal, vertical] m/s. An area effect's event.direction is the
+      # radial from the blast centre, so for a blast level with what it hits
+      # its y is ~0: the lift has to be added outright. 5.0 m/s against 9.81
+      # is ~1.0 s of airtime, and the airtime is what lets the horizontal 12
+      # carry -- a flat shove re-lands on the next movement tick.
+      strength: [12.0, 5.0]
+      # A ceiling, not the duration: landing releases it, around tick 31.
+      # The headroom covers a target blasted off a ledge.
+      lockout: 40

@@ -247,6 +247,8 @@ void hash_projectile_template(
     hash_scalar(hash, mechanics.collider_template_id);
     hash_scalar(hash, mechanics.collision_mask);
     hash_scalar(hash, mechanics.max_hit_count);
+    hash_scalar(hash, mechanics.stagger_authored);
+    hash_float(hash, mechanics.stagger);
     hash_scalar(hash, mechanics.homing.homing_mode);
     hash_scalar(hash, mechanics.homing.sync_mode);
     hash_scalar(hash, mechanics.homing.boost_ticks);
@@ -6862,6 +6864,7 @@ ProjectileTemplateConfig projectile_template_from_yaml(
             "beam",
             "launch",
             "replication",
+            "stagger",
         },
         path,
         source_kind,
@@ -6920,6 +6923,19 @@ ProjectileTemplateConfig projectile_template_from_yaml(
                 "replication must be replicated or derived: " +
                 projectile_template.name);
         }
+    }
+    // What each hit's damage adds to the target's stagger meter. Left out, it
+    // is derived from the damage; 0 is none. Authored here, with the damage,
+    // because an impact graph no longer carries the hit's damage.
+    if (node["stagger"]) {
+        const float stagger = node["stagger"].as<float>();
+        if (!std::isfinite(stagger) || stagger < 0.0f) {
+            throw std::runtime_error(
+                "projectile stagger must be finite and >= 0: " +
+                projectile_template.name);
+        }
+        mechanics.stagger_authored = 1u;
+        mechanics.stagger = stagger;
     }
     const bool derived =
         mechanics.replication == KernelProjectileReplication_Derived;
@@ -7061,8 +7077,12 @@ ProjectileTemplateConfig projectile_template_from_yaml(
             ? projectile_sync_mode_from_yaml(node["sync_mode"])
             : KernelProjectileSyncMode_ServerSnapshotOnly;
         mechanics.hit_response = KernelProjectileHitResponse_Destroy;
-        mechanics.damage_shape = KernelProjectileDamageShape_DirectHit;
         mechanics.damage = node["damage"].as<std::uint16_t>();
+        // Zero is a field that deals no damage of its own -- a push, a pull --
+        // rather than a placeholder 1 its graph is trusted to ignore.
+        mechanics.damage_shape = mechanics.damage == 0
+            ? KernelProjectileDamageShape_None
+            : KernelProjectileDamageShape_DirectHit;
         mechanics.damage_falloff =
             damage_falloff_from_yaml(damage_behavior["falloff"]);
         mechanics.max_hit_count = 1;
@@ -11231,7 +11251,6 @@ std::vector<std::string> validate_gameplay_config(
              (mechanics.area_effect.struct_size <
                   sizeof(KernelAreaEffectMechanicsDefinition) ||
               mechanics.area_effect.radius <= 0.0f ||
-              mechanics.area_effect.damage_per_interval == 0 ||
               mechanics.area_effect.damage_interval_ticks == 0 ||
               mechanics.area_effect.lifetime_ticks == 0)) ||
             (mechanics.projectile_type == KernelProjectileType_Beam &&

@@ -8,7 +8,7 @@
 // flung it ~4.6 m past the centre (measured 2026-09-30 on the impulse
 // version). apply_pull replaces the velocity and works the speed out per
 // target, so distance and what it was doing both drop out. The printed table
-// is the thing to read when retuning action_pull_at_target.
+// is the thing to read when retuning pull_blast's apply_pull binding.
 //
 // The shipped game, headless, as the dedicated server runs it. One throw finds
 // where the bottle lands; the units are placed around that point and the same

@@ -592,6 +592,67 @@ void the_old_resistance_key_names_the_new_one() {
         {"impulse_resistance", "renamed force_resistance"}));
 }
 
+const KernelProjectileMechanicsDefinition& compiled_projectile(
+    const gs::KernelGameplayCatalogStorage& storage,
+    std::uint32_t id) {
+    for (const KernelProjectileTemplateDefinition& projectile :
+         storage.projectile_templates) {
+        if (projectile.projectile_template_id == id) {
+            return projectile.mechanics;
+        }
+    }
+    std::fprintf(stderr, "no compiled projectile %u\n", id);
+    require(false);
+    return storage.projectile_templates.front().mechanics;
+}
+
+// A hit's damage and stagger are the projectile's (ABI 105). The shipped
+// numbers, now authored where the damage is: the shockwave and the slam
+// stagger on their own, the frag never does, the rocket derives it, and the
+// two shoves deal no damage at all.
+void hit_damage_and_stagger_live_on_the_projectile() {
+    const gs::KernelGameplayCatalogStorage storage =
+        built(shipped_catalog() / "gameplay_catalog.yaml");
+    const KernelProjectileMechanicsDefinition& rocket = compiled_projectile(storage, 8u);
+    require(rocket.damage == 45u);
+    require(rocket.damage_falloff == KernelProjectileDamageFalloff_Linear);
+    require(rocket.stagger_authored == 0u);
+    const KernelProjectileMechanicsDefinition& shockwave = compiled_projectile(storage, 16u);
+    require(shockwave.stagger_authored == 1u && shockwave.stagger == 150.0f);
+    const KernelProjectileMechanicsDefinition& slam = compiled_projectile(storage, 14u);
+    require(slam.damage == 40u);
+    require(slam.stagger_authored == 1u && slam.stagger == 120.0f);
+    const KernelProjectileMechanicsDefinition& frag = compiled_projectile(storage, 17u);
+    require(frag.stagger_authored == 1u && frag.stagger == 0.0f);
+    require(frag.projectile_impact_trigger.action_count == 0u);
+    for (const std::uint32_t shove : {27u, 29u}) {
+        const KernelProjectileMechanicsDefinition& field = compiled_projectile(storage, shove);
+        require(field.damage == 0u);
+        require(field.damage_shape == KernelProjectileDamageShape_None);
+    }
+    // The impulse the rocket's explosion binds keeps its lift.
+    const KernelActionDefinition& rocket_push = rocket.projectile_impact_trigger.actions[0];
+    require(rocket_push.action_type == KernelEntityTriggerActionType_ApplyImpulse);
+    require(rocket_push.impulse_strength_mode == KERNEL_IMPULSE_STRENGTH_MODE_SPLIT);
+    require(rocket_push.impulse_strength == 12.0f);
+    require(rocket_push.impulse_strength_vertical == 5.0f);
+    require(rocket_push.impulse_lockout_ticks == 40u);
+}
+
+void a_negative_projectile_stagger_is_refused() {
+    std::string shockwave = read_file(
+        shipped_catalog() / "projectile_templates" / "16_projectile_shockwave_blast.yaml");
+    const std::string from = "stagger: 150";
+    const std::size_t at = shockwave.find(from);
+    require(at != std::string::npos);
+    shockwave.replace(at, from.size(), "stagger: -1");
+    require(refused_for(
+        catalog_with(
+            "negative_stagger",
+            {{"projectile_templates/16_projectile_shockwave_blast.yaml", shockwave}}),
+        {"projectile stagger must be finite and >= 0"}));
+}
+
 // The archive the client loads must hold every graph the source tree does,
 // subdirectories included: the bundle rule copies files by path.
 void the_bundle_carries_the_same_graphs() {
@@ -630,6 +691,8 @@ int main() {
     placement_comes_from_the_binding();
     the_old_resistance_key_names_the_new_one();
     a_graph_collision_mask_is_refused();
+    hit_damage_and_stagger_live_on_the_projectile();
+    a_negative_projectile_stagger_is_refused();
     the_bundle_carries_the_same_graphs();
     return 0;
 }

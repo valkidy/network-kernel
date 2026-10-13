@@ -1555,6 +1555,9 @@ RuntimeProjectileTemplate to_runtime_projectile_template(
     projectile_template.collision_query_mode =
         to_projectile_collision_query_mode(mechanics.collision_query_mode);
     projectile_template.damage = mechanics.damage;
+    projectile_template.stagger = mechanics.stagger_authored != 0u
+        ? mechanics.stagger
+        : kStaggerDerivedFromDamage;
     projectile_template.speed = mechanics.speed;
     projectile_template.lifetime_ticks = mechanics.lifetime_ticks;
     projectile_template.gravity = from_kernel_vec3(mechanics.gravity);
@@ -1851,7 +1854,7 @@ bool validate_area_effect_mechanics(
     const KernelAreaEffectMechanicsDefinition& area_effect) {
     return area_effect.struct_size >= sizeof(KernelAreaEffectMechanicsDefinition) &&
            area_effect.radius > 0.0f &&
-           area_effect.damage_per_interval > 0 &&
+           // Zero is a field that only shoves or pulls (ABI 105).
            area_effect.damage_interval_ticks > 0 &&
            area_effect.lifetime_ticks > 0 &&
            (area_effect.collision_mask &
@@ -1973,6 +1976,8 @@ bool validate_projectile_mechanics(
         mechanics.damage_shape > KernelProjectileDamageShape_PiercingSegment ||
         mechanics.damage_falloff > KernelProjectileDamageFalloff_Linear ||
         mechanics.collision_query_mode > KernelProjectileCollisionQueryMode_Ray ||
+        !damage_stagger_is_authorable(
+            mechanics.stagger_authored, mechanics.stagger) ||
         mechanics.hit_response == KernelProjectileHitResponse_Bounce ||
         mechanics.hit_response == KernelProjectileHitResponse_Attach ||
         (mechanics.damage_shape == KernelProjectileDamageShape_None

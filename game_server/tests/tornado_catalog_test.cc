@@ -223,7 +223,7 @@ void the_shipped_tornado_is_a_ground_following_column() {
     require(mechanics.area_effect.damage_interval_ticks == 15u);
     require(mechanics.area_effect.lifetime_ticks == 300u);
     require(tornado->projectile_impact_trigger.action_graph_ref ==
-            "action_tornado_pull");
+            "action_apply_pull");
 }
 
 // The shipped scene and catalog, a player whose fire floor throws a tornado,
@@ -353,7 +353,7 @@ void the_tornado_pulls_what_it_reaches_without_hurting_it() {
         KernelColliderShapeView shape{};
         require(Kernel_QueryColliderShapes(arena.kernel, &shape_query, &shape, 1) == 1u);
         require(shape.shape_type == KernelColliderShapeType_Cylinder);
-        require(shape.shape_params.x == 15.0f && shape.shape_params.y == 3.0f);
+        require(shape.shape_params.x == 15.0f && shape.shape_params.y == 6.0f);
         require(std::fabs(shape.world_center.y - live.front().position.y) < 0.001f);
         require(shape.world_rotation.w == 1.0f);
 

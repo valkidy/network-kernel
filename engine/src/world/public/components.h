@@ -1135,6 +1135,9 @@ struct RuntimeProjectileTemplate {
     bool has_collision_geometry = false;
     ProjectileDamageFalloff damage_falloff = ProjectileDamageFalloff::kNone;
     std::uint16_t damage = 0;
+    // The stagger each hit's damage adds; kStaggerDerivedFromDamage unless
+    // the template authors one.
+    float stagger = kStaggerDerivedFromDamage;
     float speed = 0.0f;
     std::uint32_t lifetime_ticks = 0;
     glm::vec3 gravity{0.0f, 0.0f, 0.0f};
