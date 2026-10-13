@@ -261,7 +261,6 @@ struct ActionApplyImpulseCommand {
     NetId target = 0;
     float strength = 0.0f;
     glm::vec3 direction{0.0f};
-    std::uint32_t collision_mask = KERNEL_COLLISION_MASK_ACTOR;
     std::uint32_t lockout_ticks = 0;
     std::uint32_t strength_mode = KERNEL_IMPULSE_STRENGTH_MODE_RADIAL;
     float vertical_strength = 0.0f;

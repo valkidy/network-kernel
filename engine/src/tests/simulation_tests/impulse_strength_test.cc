@@ -64,7 +64,6 @@ CompiledActionGraphBinding impulse_binding(
     impulse.target_parameter = "target";
     impulse.strength_parameter = "strength";
     impulse.direction_parameter = "direction";
-    impulse.collision_mask = KERNEL_COLLISION_MASK_ACTOR;
     impulse.strength_mode = strength_mode;
     impulse.vertical_strength = vertical;
     binding.graph.actions = {impulse};
@@ -79,16 +78,32 @@ struct Fired {
     glm::vec3 velocity{0.0f};
 };
 
+// What the impulse is fired at. An enemy unless a prop mode is given, in
+// which case a prop in that mode.
+struct Target {
+    std::optional<PropMode> prop_mode;
+};
+
 Fired fire(
     std::uint32_t strength_mode,
     float horizontal,
     float vertical,
     const glm::vec3& direction,
-    float resistance = 0.0f) {
+    float resistance = 0.0f,
+    Target target_kind = {}) {
     KernelEngine engine(KernelConfig{});
     World& world = engine.simulation_world();
     const NetId source = world.spawn_player(1, glm::vec3{0.0f});
-    const NetId target = world.spawn_enemy(glm::vec3{5.0f, 0.0f, 0.0f});
+    const glm::vec3 target_position{5.0f, 0.0f, 0.0f};
+    NetId target = 0;
+    if (target_kind.prop_mode.has_value()) {
+        target = world.spawn_entity(
+            EntityType::kProp, ActorType::kUnknown, 0, target_position);
+        world.registry().emplace_or_replace<PropWorldMode>(
+            *world.find_entity(target), PropWorldMode{*target_kind.prop_mode});
+    } else {
+        target = world.spawn_enemy(target_position);
+    }
     const entt::entity target_entity = *world.find_entity(target);
     if (resistance > 0.0f) {
         world.registry().emplace<ForceResistance>(
@@ -217,8 +232,26 @@ void split_strength_is_weighed_on_its_larger_axis() {
 
 }  // namespace
 
+// No graph says who an impulse may move (ABI 105): any actor, and a prop
+// standing in the world, but never one in someone's hands.
+void a_carried_prop_is_never_moved() {
+    const glm::vec3 axis{1.0f, 0.0f, 0.0f};
+    const Fired placed = fire(
+        KERNEL_IMPULSE_STRENGTH_MODE_RADIAL, 12.0f, 0.0f, axis, 0.0f,
+        Target{PropMode::kPlaced});
+    require(placed.ok);
+    require(nearly(placed.velocity.x, 12.0f));
+
+    const Fired carried = fire(
+        KERNEL_IMPULSE_STRENGTH_MODE_RADIAL, 12.0f, 0.0f, axis, 0.0f,
+        Target{PropMode::kCarrying});
+    require(carried.ok);
+    require(nearly(carried.velocity.x, 0.0f));
+}
+
 int main() {
     scalar_strength_still_scales_the_whole_direction();
+    a_carried_prop_is_never_moved();
     split_strength_lifts_out_of_a_level_blast();
     split_strength_allows_a_pure_vertical_launch();
     split_strength_is_weighed_on_its_larger_axis();

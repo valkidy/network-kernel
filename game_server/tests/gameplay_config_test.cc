@@ -2620,8 +2620,6 @@ int main() {
     require(impulse_entity->force_resistance == 9.0f);
     require(impulse_entity->collision_trigger.actions[0].action_type ==
             KernelEntityTriggerActionType_ApplyImpulse);
-    require(impulse_entity->collision_trigger.actions[0].impulse_collision_mask ==
-            KERNEL_COLLISION_MASK_ACTOR);
     require(impulse_entity->collision_trigger.actions[0].impulse_strength == 4.5f);
     require(impulse_entity->collision_trigger.actions[0].direction_source ==
             KernelEventVec3Source_Literal);

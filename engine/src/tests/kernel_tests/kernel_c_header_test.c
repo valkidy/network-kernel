@@ -267,12 +267,12 @@ _Static_assert(
         offsetof(KernelActionDefinition, condition_type),
     "impulse strength is appended to action ABI");
 _Static_assert(
-    offsetof(KernelActionDefinition, impulse_collision_mask) >
+    offsetof(KernelActionDefinition, retired_impulse_collision_mask) >
         offsetof(KernelActionDefinition, impulse_strength),
-    "impulse collision mask is appended to action ABI");
+    "the retired impulse collision mask keeps its slot");
 _Static_assert(
     offsetof(KernelActionDefinition, impulse_direction) >
-        offsetof(KernelActionDefinition, impulse_collision_mask),
+        offsetof(KernelActionDefinition, retired_impulse_collision_mask),
     "impulse direction is appended to action ABI");
 _Static_assert(
     offsetof(KernelEntityTemplateDefinition, collision_trigger_mask) >

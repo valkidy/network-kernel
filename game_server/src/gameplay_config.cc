@@ -297,7 +297,6 @@ void hash_projectile_template(
             hash_scalar(hash, action.damage_amount);
             hash_scalar(hash, action.health_change_amount);
             hash_scalar(hash, action.impulse_strength);
-            hash_scalar(hash, action.impulse_collision_mask);
             hash_scalar(hash, action.impulse_lockout_ticks);
             hash_scalar(hash, action.impulse_strength_mode);
             hash_scalar(hash, action.impulse_strength_vertical);
@@ -2064,6 +2063,15 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
     for (std::size_t action_index = 0; action_index < actions.size();
          ++action_index) {
         const YAML::Node action = actions[action_index];
+        // Who an effect is tested against is its owner's (a projectile's
+        // collision_mask); who it then moves is its strength against the
+        // target's force_resistance. A graph has no say in either.
+        if (action["collision_mask"]) {
+            throw std::runtime_error(
+                "action graph actions have no collision_mask: the owner's "
+                "collision_mask picks who is tested, and force_resistance who "
+                "is moved: " + path);
+        }
         reject_unknown_keys(
             action,
             {
@@ -2079,7 +2087,6 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 "status",
                 "operation",
                 "value",
-                "collision_mask",
                 "lockout_ticks",
                 "stagger",
                 "item_template",
@@ -2240,7 +2247,7 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 action["direction"] || action["entity_template"] ||
                 action["owner"] || action["item_template"] ||
                 action["quantity"] || action["strength"] ||
-                action["collision_mask"] || action["lockout_ticks"]) {
+                action["lockout_ticks"]) {
                 throw std::runtime_error(
                     compiled_action.action_type +
                     " action has unsupported fields: " + path);
@@ -2268,15 +2275,6 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 parameter_reference_from_yaml(action["strength"], "strength");
             compiled_action.direction_parameter =
                 parameter_reference_from_yaml(action["direction"], "direction");
-            compiled_action.collision_mask = collision_mask_from_yaml(
-                action["collision_mask"], KERNEL_COLLISION_MASK_ACTOR);
-            if ((compiled_action.collision_mask &
-                 ~(KERNEL_COLLISION_MASK_ACTOR | KERNEL_COLLISION_MASK_PROP)) != 0u ||
-                compiled_action.collision_mask == KERNEL_COLLISION_MASK_NONE) {
-                throw std::runtime_error(
-                    "apply_impulse collision_mask must contain actor and/or prop: " +
-                    path);
-            }
             // Authored on the action, not the target: a rocket and a shove
             // want different hold times against the same actor. A
             // params.<name> leaves the number to each binding.
@@ -2306,7 +2304,6 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 action["owner"] || action["amount"] ||
                 action["entity_template"] || action["item_template"] ||
                 action["quantity"] || action["lockout_ticks"] ||
-                action["collision_mask"] ||
                 static_cast<bool>(action["anchor"]) ==
                     static_cast<bool>(action["direction"]) ||
                 !action["airtime_ticks"] || !action["max_speed"] ||
@@ -2387,7 +2384,7 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 action["owner"] || action["amount"] ||
                 action["operation"] || action["value"] ||
                 action["entity_template"] || action["item_template"] ||
-                action["quantity"] || action["collision_mask"] ||
+                action["quantity"] ||
                 action["lockout_ticks"]) {
                 throw std::runtime_error(
                     compiled_action.action_type +
@@ -2425,7 +2422,7 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 action["strength"] || action["status"] ||
                 action["operation"] || action["value"] ||
                 action["entity_template"] || action["item_template"] ||
-                action["quantity"] || action["collision_mask"] ||
+                action["quantity"] ||
                 action["lockout_ticks"] || action["ui_id"] ||
                 action["count"].IsDefined() == action["percent"].IsDefined()) {
                 throw std::runtime_error(
@@ -2460,7 +2457,7 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 action["strength"] || action["status"] ||
                 action["operation"] || action["value"] ||
                 action["entity_template"] || action["item_template"] ||
-                action["quantity"] || action["collision_mask"] ||
+                action["quantity"] ||
                 action["lockout_ticks"] || !action["ui_id"]) {
                 throw std::runtime_error(
                     "open_ui requires target and ui_id and nothing else: " +
@@ -2528,7 +2525,7 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 action["direction"] || action["owner"] || action["amount"] ||
                 action["strength"] || action["status"] ||
                 action["entity_template"] || action["item_template"] ||
-                action["quantity"] || action["collision_mask"] ||
+                action["quantity"] ||
                 action["lockout_ticks"]) {
                 throw std::runtime_error(
                     "apply_speed_modifier action has unsupported fields: " +
@@ -7583,7 +7580,6 @@ void mirror_first_action(KernelActionTriggerDefinition* trigger) {
     trigger->health_change_amount = action.health_change_amount;
     trigger->condition_type = action.condition_type;
     trigger->impulse_strength = action.impulse_strength;
-    trigger->impulse_collision_mask = action.impulse_collision_mask;
     trigger->impulse_direction = action.impulse_direction;
     trigger->impulse_lockout_ticks = action.impulse_lockout_ticks;
     trigger->impulse_strength_mode = action.impulse_strength_mode;
@@ -7881,7 +7877,6 @@ void compile_projectile_trigger_binding(
                             ? KernelEventVec3Source_SubjectDirection
                             : KernelEventVec3Source_Direction;
                 }
-                compiled_action.impulse_collision_mask = action.collision_mask;
                 compiled_action.impulse_lockout_ticks =
                     compile_impulse_lockout(binding, *graph, action);
             } else {
@@ -8164,7 +8159,6 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
                 compiled_action.direction_source =
                     KernelEventVec3Source_Direction;
             }
-            compiled_action.impulse_collision_mask = action.collision_mask;
             compiled_action.impulse_lockout_ticks =
                 compile_impulse_lockout(binding, *graph, action);
             continue;
@@ -10008,8 +10002,8 @@ std::uint64_t compute_gameplay_catalog_hash(
             hash_string(&hash, action.status_parameter);
             hash_string(&hash, action.operation_parameter);
             hash_string(&hash, action.value_parameter);
-            hash_scalar(&hash, action.collision_mask);
             hash_scalar(&hash, action.lockout_ticks);
+            hash_string(&hash, action.lockout_ticks_parameter);
             hash_scalar(&hash, action.stagger.has_value());
             hash_scalar(&hash, action.stagger.value_or(0.0f));
             hash_string(&hash, action.item_template_ref);
@@ -10028,6 +10022,12 @@ std::uint64_t compute_gameplay_catalog_hash(
             hash_scalar(&hash, action.ui_id);
             hash_scalar(&hash, action.spawn_placement);
             hash_float(&hash, action.pull_strength);
+            hash_string(&hash, action.pull_distance_parameter);
+            hash_string(&hash, action.pull_airtime_ticks_parameter);
+            hash_string(&hash, action.pull_max_speed_parameter);
+            hash_string(&hash, action.pull_strength_parameter);
+            hash_string(&hash, action.ui_id_parameter);
+            hash_string(&hash, action.spawn_placement_parameter);
             hash_scalar(&hash, action.reserve_refill_count);
             hash_scalar(&hash, action.reserve_refill_percent);
         }

@@ -563,6 +563,19 @@ void placement_comes_from_the_binding() {
         {"placement must be exact or clear, got nearby"}));
 }
 
+// A graph does not choose who it is tested against or who it moves: the
+// owner's collision_mask and the target's force_resistance do. Refused by
+// name, not ignored.
+void a_graph_collision_mask_is_refused() {
+    std::string graph = kPushGraph;
+    graph += "    collision_mask: actor\n";
+    require(refused_for(
+        catalog_with(
+            "graph_mask",
+            {{"action_graph_templates/common/action_test_push.yaml", graph}}),
+        {"action graph actions have no collision_mask", "action_test_push"}));
+}
+
 // impulse_resistance became force_resistance (ABI 105); the old key is
 // refused by name rather than as an anonymous unknown field.
 void the_old_resistance_key_names_the_new_one() {
@@ -616,6 +629,7 @@ int main() {
     ui_id_comes_from_the_binding();
     placement_comes_from_the_binding();
     the_old_resistance_key_names_the_new_one();
+    a_graph_collision_mask_is_refused();
     the_bundle_carries_the_same_graphs();
     return 0;
 }

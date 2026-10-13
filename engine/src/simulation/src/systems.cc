@@ -648,24 +648,8 @@ bool execute_action_graph_commands(
                 glm::dot(impulse->direction, impulse->direction) <= 0.0f) {
                 return false;
             }
-            const EntityKind& kind = world.registry().get<EntityKind>(*target);
-            const bool actor_target = kind.type == EntityType::kActor &&
-                (impulse->collision_mask & KERNEL_COLLISION_MASK_ACTOR) != 0u;
-            const bool prop_target = kind.type == EntityType::kProp &&
-                (impulse->collision_mask & KERNEL_COLLISION_MASK_PROP) != 0u &&
-                world.registry().all_of<PropWorldMode>(*target) &&
-                world.registry().get<PropWorldMode>(*target).mode !=
-                    PropMode::kCarrying;
-            if (!actor_target && !prop_target) {
-                continue;
-            }
-            const ForceResistance* resistance =
-                world.registry().try_get<ForceResistance>(*target);
-            if (resistance != nullptr &&
-                (!std::isfinite(resistance->value) ||
-                 impulse->strength <= resistance->value)) {
-                continue;
-            }
+            // A target it cannot move is skipped when the batch is applied,
+            // not refused here: the rest of the batch still runs.
             continue;
         }
         if (const auto* open_ui = std::get_if<ActionOpenUiCommand>(&command)) {
@@ -1568,6 +1552,20 @@ bool execute_action_graph_commands(
             if (world.registry().all_of<Sheltered>(target)) {
                 continue;
             }
+            // What an impulse can move at all: any actor, and a prop only
+            // while it stands in the world -- not one being carried, and
+            // nothing else (a projectile, a marker). No graph narrows this;
+            // who is tested is the owner's collision_mask, and who among
+            // these is moved is the strength against force_resistance below.
+            const EntityKind& kind = world.registry().get<EntityKind>(target);
+            const bool movable = kind.type == EntityType::kActor ||
+                (kind.type == EntityType::kProp &&
+                 world.registry().all_of<PropWorldMode>(target) &&
+                 world.registry().get<PropWorldMode>(target).mode !=
+                     PropMode::kCarrying);
+            if (!movable) {
+                continue;
+            }
             const glm::vec3 direction =
                 glm::normalize(impulse->direction);
             const float resistance = world.registry().all_of<ForceResistance>(target)
@@ -1596,7 +1594,6 @@ bool execute_action_graph_commands(
                         engine.current_tick() + impulse->lockout_ticks,
                         engine.current_tick()});
             }
-            const EntityKind& kind = world.registry().get<EntityKind>(target);
             if (kind.type == EntityType::kActor) {
                 // Only a locked-out flight is the authority's alone to steer;
                 // without the lockout the controller overwrites it next tick,

@@ -875,7 +875,6 @@ struct ActionApplyImpulseDefinition {
     std::string target_parameter;
     std::string strength_parameter;
     std::string direction_parameter;
-    std::uint32_t collision_mask = kCollisionMaskDamageable;
     std::uint32_t lockout_ticks = 0;
     // KERNEL_IMPULSE_STRENGTH_MODE_RADIAL / _SPLIT. Spelled as a plain zero
     // default because this header sits below the kernel's public types and

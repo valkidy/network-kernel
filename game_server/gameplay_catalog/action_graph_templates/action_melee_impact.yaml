@@ -26,7 +26,6 @@ actions:
     target: params.target
     strength: params.strength
     direction: params.direction
-    collision_mask: actor | prop
     # A ceiling, not the expected duration: landing releases the lockout on any
     # tick after the one that armed it, so ~0.7 s of airtime ends this around
     # tick 22. The headroom covers a target shoved off a ledge.

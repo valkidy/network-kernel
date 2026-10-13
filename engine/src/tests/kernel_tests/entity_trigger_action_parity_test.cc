@@ -48,7 +48,6 @@ KernelActionDefinition well_formed_action(std::uint8_t action_type) {
     action.status_effect_id = kStatusEffectId;
     action.impulse_strength = 1.0f;
     action.impulse_strength_mode = KERNEL_IMPULSE_STRENGTH_MODE_RADIAL;
-    action.impulse_collision_mask = KERNEL_COLLISION_MASK_ACTOR;
     action.impulse_direction = KernelVec3{1.0f, 0.0f, 0.0f};
     action.modifier_operation = KernelStatModifierOperation_Additive;
     action.modifier_value = 1.0f;
@@ -141,7 +140,6 @@ KernelActionTriggerDefinition legacy_mirror_trigger(std::uint8_t action_type) {
     trigger.status_effect_id = action.status_effect_id;
     trigger.impulse_strength = action.impulse_strength;
     trigger.impulse_strength_mode = action.impulse_strength_mode;
-    trigger.impulse_collision_mask = action.impulse_collision_mask;
     trigger.impulse_direction = action.impulse_direction;
     trigger.modifier_operation = action.modifier_operation;
     trigger.modifier_value = action.modifier_value;

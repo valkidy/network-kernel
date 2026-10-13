@@ -388,7 +388,6 @@ struct ActionGraphActionConfig {
     std::string status_parameter;
     std::string operation_parameter;
     std::string value_parameter;
-    std::uint32_t collision_mask = KERNEL_COLLISION_MASK_ACTOR;
     std::uint32_t lockout_ticks = 0;
     // Set when lockout_ticks is authored as params.<name>; the binding then
     // supplies the number and lockout_ticks above is unused.

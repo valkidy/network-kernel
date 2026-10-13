@@ -616,7 +616,6 @@ network_example::CompiledActionGraphBinding impulse_on_impact_binding(
     trigger.target_source = KernelEntityRefSource_EventTarget;
     trigger.direction_source = direction_source;
     trigger.impulse_strength = strength;
-    trigger.impulse_collision_mask = KERNEL_COLLISION_MASK_ACTOR;
     std::optional<network_example::CompiledActionGraphBinding> binding =
         network_example::compile_action_trigger_definition(
             network_example::TriggerEventType::kProjectileImpact, trigger);

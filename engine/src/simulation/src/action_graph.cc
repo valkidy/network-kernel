@@ -389,7 +389,6 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
             action.modifier_operation = trigger.modifier_operation;
             action.modifier_value = trigger.modifier_value;
             action.impulse_strength = trigger.impulse_strength;
-            action.impulse_collision_mask = trigger.impulse_collision_mask;
             action.impulse_direction = trigger.impulse_direction;
             action.impulse_lockout_ticks = trigger.impulse_lockout_ticks;
             action.impulse_strength_mode = trigger.impulse_strength_mode;
@@ -753,7 +752,6 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
                 target_name,
                 "strength" + suffix,
                 direction_name,
-                action.impulse_collision_mask,
                 action.impulse_lockout_ticks,
                 action.impulse_strength_mode,
                 action.impulse_strength_vertical,
@@ -1599,7 +1597,6 @@ bool evaluate_action_graph(
                 target,
                 amount,
                 direction / direction_length,
-                impulse->collision_mask,
                 impulse->lockout_ticks,
                 impulse->strength_mode,
                 impulse->vertical_strength,

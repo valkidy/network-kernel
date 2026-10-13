@@ -12,6 +12,5 @@ actions:
     target: params.target
     strength: params.strength
     direction: params.direction
-    collision_mask: actor
     # 5.0 m/s against 9.81 is ~1 s up and down; landing releases it sooner.
     lockout_ticks: 45

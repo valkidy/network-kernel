@@ -1249,8 +1249,7 @@ void subject_direction_needs_a_projectile_that_travels() {
             "  - type: apply_impulse\n"
             "    target: params.target\n"
             "    strength: params.strength\n"
-            "    direction: params.direction\n"
-            "    collision_mask: actor\n");
+            "    direction: params.direction\n");
         return "triggers:\n"
                "  on_projectile_impact:\n"
                "    action_graph: action_sweep_impulse\n"

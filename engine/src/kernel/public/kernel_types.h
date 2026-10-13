@@ -10,6 +10,12 @@
  *     apply_impulse, apply_pull and apply_status's status_strength all weigh
  *     their strength against it, so the name no longer says impulse. Every
  *     managed mirror renames the field; the layout does not move.
+ *     KernelActionDefinition's and KernelActionTriggerDefinition's
+ *     impulse_collision_mask become retired_impulse_collision_mask, at the
+ *     same offset, and are ignored: an action graph no longer filters who it
+ *     is tested against (the projectile's collision_mask does), and
+ *     apply_impulse moves any actor, or any prop in the world and not being
+ *     carried, whose force_resistance its strength exceeds.
  * 104: lock-on weapons, first part. KernelWeaponFireMode gained _LockInstant:
  *     on every commit, up to max_hit_count actors inside a cone are damaged at
  *     once -- the nearest first, any a static wall hides skipped -- and the
@@ -1109,7 +1115,10 @@ typedef struct KernelActionDefinition {
     int32_t health_change_amount;
     uint32_t condition_type;
     float impulse_strength;
-    uint32_t impulse_collision_mask;
+    /* impulse_collision_mask before ABI 105, kept for its slot. Ignored;
+     * write zero. Who an impulse can move is the target's kind and
+     * force_resistance. */
+    uint32_t retired_impulse_collision_mask;
     KernelVec3 impulse_direction;
     uint32_t status_effect_id;
     uint8_t modifier_operation;
@@ -1211,7 +1220,10 @@ typedef struct KernelActionTriggerDefinition {
     int32_t health_change_amount;
     uint32_t condition_type;
     float impulse_strength;
-    uint32_t impulse_collision_mask;
+    /* impulse_collision_mask before ABI 105, kept for its slot. Ignored;
+     * write zero. Who an impulse can move is the target's kind and
+     * force_resistance. */
+    uint32_t retired_impulse_collision_mask;
     KernelVec3 impulse_direction;
     uint32_t status_effect_id;
     uint8_t modifier_operation;
