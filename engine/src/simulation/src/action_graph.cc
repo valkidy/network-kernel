@@ -819,9 +819,7 @@ CompiledActionGraphBinding compile_spawn_projectile_binding(
     return CompiledActionGraphBinding{
         event_type,
         ActionGraphTemplate{
-            event_type == TriggerEventType::kExpired
-                ? "action_spawn_projectile_at_expired"
-                : "action_spawn_projectile_at_impact",
+            "action_spawn_projectile",
             {
                 {"template", std::monostate{}},
                 {"position", std::monostate{}},
@@ -846,22 +844,10 @@ CompiledActionGraphBinding compile_apply_damage_binding(
     TriggerEventType event_type,
     EntityRefSource target_source,
     std::uint16_t amount) {
-    const std::string graph_id = [&]() {
-        switch (event_type) {
-            case TriggerEventType::kCollision:
-                return "action_apply_damage_at_collision";
-            case TriggerEventType::kHealthDepleted:
-                return "action_apply_damage_at_health_depleted";
-            case TriggerEventType::kDestroyEntity:
-                return "action_apply_damage_at_destroy_entity";
-            default:
-                return "action_apply_damage_at_activated";
-        }
-    }();
     return CompiledActionGraphBinding{
         event_type,
         ActionGraphTemplate{
-            graph_id,
+            "action_apply_damage",
             {
                 {"target", std::monostate{}},
                 {"amount", static_cast<float>(amount)},

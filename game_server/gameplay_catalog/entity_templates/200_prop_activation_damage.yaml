@@ -6,12 +6,12 @@ health:
   max_hp: 1
 triggers:
   on_activated:
-    action_graph: action_apply_damage_at_activated
+    action_graph: action_apply_damage
     parameters:
       target: event.target
       amount: 25
   on_health_depleted:
-    action_graph: action_apply_damage_at_health_depleted
+    action_graph: action_apply_damage
     parameters:
       target: event.instigator
       amount: 7

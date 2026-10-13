@@ -9,7 +9,7 @@ physics:
 triggers:
   on_collision:
     collision_mask: actor|terrain|static_obstacle
-    action_graph: action_apply_damage_at_destroy_entity
+    action_graph: action_apply_damage
     parameters:
       target: self
       amount: 1

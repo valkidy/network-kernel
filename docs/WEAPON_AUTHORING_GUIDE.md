@@ -322,7 +322,7 @@ sync_mode: server_snapshot_only
 lifetime_ticks: 20          # the delay
 triggers:
   on_expired:
-    action_graph: action_spawn_projectile_at_expired
+    action_graph: action_spawn_projectile
     parameters:
       template: meteor_body
       position: event.position
@@ -355,7 +355,7 @@ launch:
   fall_ticks: 15
 triggers:
   on_projectile_impact:
-    action_graph: action_spawn_projectile_at_impact
+    action_graph: action_spawn_projectile
     parameters: { template: meteor_blast, position: event.position, direction: event.direction }
 ```
 

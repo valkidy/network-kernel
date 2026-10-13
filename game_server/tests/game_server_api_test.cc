@@ -379,9 +379,11 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip() {
     for (const std::string& directory : template_dirs) {
         const std::filesystem::path source =
             root / "game_server" / "gameplay_catalog" / directory;
+        // Recursive, keeping subdirectories: action graphs sit in common/
+        // and derived/<owner_type>/.
         std::vector<std::filesystem::path> entries;
         for (const std::filesystem::directory_entry& entry :
-             std::filesystem::directory_iterator(source)) {
+             std::filesystem::recursive_directory_iterator(source)) {
             if (entry.is_regular_file() &&
                 entry.path().extension() == ".yaml") {
                 entries.push_back(entry.path());
@@ -390,7 +392,8 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip() {
         std::sort(entries.begin(), entries.end());
         for (const std::filesystem::path& entry : entries) {
             files.push_back({
-                directory + "/" + entry.filename().string(),
+                directory + "/" +
+                    entry.lexically_relative(source).generic_string(),
                 read_text_file(entry)});
         }
     }

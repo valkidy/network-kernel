@@ -32,7 +32,7 @@ int main() {
     require(prop->entity_type == KernelEntityType_Prop);
     require(
         prop->activated_trigger.action_graph_ref ==
-        "action_apply_damage_at_activated");
+        "action_apply_damage");
     require(
         prop->destroy_entity_trigger.action_graph_ref ==
         "action_spawn_entity_at_destroy_entity");

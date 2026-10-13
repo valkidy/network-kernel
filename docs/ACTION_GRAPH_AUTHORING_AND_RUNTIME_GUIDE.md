@@ -40,7 +40,7 @@ actions               ≈ ordered function body
 基本格式：
 
 ```yaml
-id: action_apply_damage_at_activated
+id: action_apply_damage
 
 parameters:
   target: null
@@ -69,7 +69,7 @@ Entity Template 或 Projectile Template 負責將 event 綁定到 graph，並提
 ```yaml
 triggers:
   on_activated:
-    action_graph: action_apply_damage_at_activated
+    action_graph: action_apply_damage
     parameters:
       target: event.target
       amount: 25
@@ -567,7 +567,7 @@ triggers:
 ```yaml
 triggers:
   on_activated:
-    action_graph: action_apply_damage_at_activated
+    action_graph: action_apply_damage
     parameters:
       target: event.target
       amount: 25
@@ -596,7 +596,7 @@ Binding 與 event snapshot 必須在原 entity 刪除前保存。Graph 不應再
 ```yaml
 triggers:
   on_projectile_impact:
-    action_graph: action_spawn_projectile_at_impact
+    action_graph: action_spawn_projectile
     parameters:
       template: rocket_explosion
       position: event.position
@@ -615,7 +615,7 @@ Guidelines：
 ```yaml
 triggers:
   on_expired:
-    action_graph: action_spawn_projectile_at_expired
+    action_graph: action_spawn_projectile
     parameters:
       template: lingering_area
       position: event.position

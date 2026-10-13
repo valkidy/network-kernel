@@ -274,10 +274,12 @@ std::vector<std::uint8_t> make_store_zip(
 void append_directory_files(
     std::vector<std::pair<std::string, std::string>>* files,
     const std::string& directory) {
+    // Recursive, keeping subdirectories: action graphs sit in common/ and
+    // derived/<owner_type>/.
+    const std::filesystem::path root = "game_server/gameplay_catalog/" + directory;
     std::vector<std::filesystem::path> entries;
     for (const std::filesystem::directory_entry& entry :
-         std::filesystem::directory_iterator(
-             "game_server/gameplay_catalog/" + directory)) {
+         std::filesystem::recursive_directory_iterator(root)) {
         if (entry.is_regular_file() && entry.path().extension() == ".yaml") {
             entries.push_back(entry.path());
         }
@@ -285,7 +287,7 @@ void append_directory_files(
     std::sort(entries.begin(), entries.end());
     for (const std::filesystem::path& entry : entries) {
         files->push_back({
-            directory + "/" + entry.filename().string(),
+            directory + "/" + entry.lexically_relative(root).generic_string(),
             read_text_file(entry.string())});
     }
 }

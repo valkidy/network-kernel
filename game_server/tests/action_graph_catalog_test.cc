@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "game_server/src/gameplay_config.h"
+#include "kernel/public/kernel_api.h"
 
 namespace {
 
@@ -143,8 +144,76 @@ bool has_graph(const fs::path& catalog, const std::string& id) {
     return std::find(ids.begin(), ids.end(), id) != ids.end();
 }
 
+bool kernel_accepts(const gs::KernelGameplayCatalogStorage& storage) {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    KernelHandle* kernel = Kernel_Create(&config);
+    require(kernel != nullptr);
+    const bool loaded = Kernel_LoadGameplayCatalog(kernel, &storage.definition, nullptr);
+    Kernel_Destroy(kernel);
+    return loaded;
+}
+
+// A graph's text with its id, comments and blank lines dropped: what it does,
+// not what it is called.
+std::string graph_body(const fs::path& path) {
+    std::ifstream file(path);
+    require(file.good());
+    std::string body;
+    std::string line;
+    while (std::getline(file, line)) {
+        const std::size_t first = line.find_first_not_of(' ');
+        if (first == std::string::npos || line[first] == '#' ||
+            line.rfind("id:", 0) == 0) {
+            continue;
+        }
+        body += line + "\n";
+    }
+    return body;
+}
+
 void the_unmodified_copy_loads() {
     require(load_error(catalog_with("control", {})).empty());
+}
+
+// The shipped catalog, as the kernel would get it, twice: accepted, and
+// hashed the same both times.
+void the_shipped_catalog_is_accepted_and_hashes_stably() {
+    const fs::path catalog = shipped_catalog() / "gameplay_catalog.yaml";
+    const gs::GameServerGameplayConfig first =
+        gs::load_gameplay_config_from_catalog_file(catalog.string());
+    const gs::GameServerGameplayConfig second =
+        gs::load_gameplay_config_from_catalog_file(catalog.string());
+    require(gs::compute_gameplay_catalog_hash(first) ==
+            gs::compute_gameplay_catalog_hash(second));
+    require(kernel_accepts(gs::build_kernel_gameplay_catalog(first)));
+}
+
+// Two graphs that differ only in their id are one graph: owners that need
+// different numbers say so in their bindings, not with a copy.
+void no_two_shipped_graphs_are_the_same_flow() {
+    std::vector<std::pair<std::string, fs::path>> bodies;
+    for (const fs::directory_entry& entry : fs::recursive_directory_iterator(
+             shipped_catalog() / "action_graph_templates")) {
+        if (!entry.is_regular_file() || entry.path().extension() != ".yaml") {
+            continue;
+        }
+        const std::string body = graph_body(entry.path());
+        for (const auto& [other_body, other_path] : bodies) {
+            if (other_body == body) {
+                std::fprintf(
+                    stderr,
+                    "same flow: %s and %s\n",
+                    other_path.string().c_str(),
+                    entry.path().string().c_str());
+                require(false);
+            }
+        }
+        bodies.emplace_back(body, entry.path());
+    }
+    require(!bodies.empty());
 }
 
 void a_graph_in_a_subdirectory_is_loaded() {
@@ -210,7 +279,7 @@ void an_unknown_graph_names_who_referenced_it() {
     const fs::path rocket =
         shipped_catalog() / "projectile_templates" / "3_projectile_rocket.yaml";
     std::string text = read_file(rocket);
-    const std::string from = "action_graph: action_spawn_projectile_at_impact";
+    const std::string from = "action_graph: action_spawn_projectile";
     const std::size_t at = text.find(from);
     require(at != std::string::npos);
     text.replace(at, from.size(), "action_graph: action_test_missing");
@@ -244,6 +313,8 @@ void the_bundle_carries_the_same_graphs() {
 
 int main() {
     the_unmodified_copy_loads();
+    the_shipped_catalog_is_accepted_and_hashes_stably();
+    no_two_shipped_graphs_are_the_same_flow();
     a_graph_in_a_subdirectory_is_loaded();
     the_same_id_in_two_directories_is_refused();
     an_id_that_is_not_its_file_name_is_refused();
