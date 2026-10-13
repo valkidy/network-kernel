@@ -4994,6 +4994,66 @@ void KernelEngine::materialize_entity_limb_colliders(
                 locomotion_state.last_root_position,
                 locomotion_state.applied_root_rotation));
     }
+    check_limbs_inside_bounds(identity.net_id);
+}
+
+void KernelEngine::check_limbs_inside_bounds(NetId net_id) {
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (!entity.has_value() ||
+        !world_.registry().all_of<Transform, Hitbox>(*entity)) {
+        return;
+    }
+    const Hitbox& hitbox = world_.registry().get<Hitbox>(*entity);
+    if (!hitbox.bounds_only) {
+        return;
+    }
+    // The bounds exactly as the rewound frame records them (history_buffer.cc):
+    // centre offset unrotated, box turned with the actor.
+    const Transform& transform = world_.registry().get<Transform>(*entity);
+    const glm::vec3 bounds_center = transform.position + hitbox.center;
+    const glm::quat to_bounds = glm::conjugate(transform.rotation);
+    float worst = std::numeric_limits<float>::lowest();
+    for (const ColliderInstance& collider :
+         world_.collider_registry().instances()) {
+        if (collider.entity_net_id != net_id ||
+            collider.bone_index == UINT32_MAX) {
+            continue;
+        }
+        // The bone's reach along each of the bounds' axes: a sphere's radius,
+        // or a box's half extents projected through the relative rotation.
+        const glm::vec3 center = to_bounds * (collider.world_center - bounds_center);
+        glm::vec3 reach{collider.radius};
+        if (collider.shape_type != ColliderShapeType::kSphere) {
+            const glm::mat3 relative =
+                glm::mat3_cast(to_bounds * collider.world_rotation);
+            for (int axis = 0; axis < 3; ++axis) {
+                reach[axis] =
+                    std::abs(relative[0][axis]) * collider.half_extents.x +
+                    std::abs(relative[1][axis]) * collider.half_extents.y +
+                    std::abs(relative[2][axis]) * collider.half_extents.z;
+            }
+        }
+        for (int axis = 0; axis < 3; ++axis) {
+            worst = std::max(
+                worst,
+                std::abs(center[axis]) + reach[axis] - hitbox.half_extents[axis]);
+        }
+    }
+    if (worst == std::numeric_limits<float>::lowest()) {
+        return;
+    }
+    max_limb_bounds_overshoot_meters_ =
+        std::max(max_limb_bounds_overshoot_meters_, worst);
+    // A centimetre of slack, so float noise at a flush face is not reported.
+    if (worst > 0.01f && limb_bounds_overshoot_warned_.insert(net_id).second) {
+        spdlog::warn(
+            "actor {} (collider template {}): a bone reaches {:.2f} m outside "
+            "its bounds, where a rewound shot cannot hit it; enlarge the "
+            "bounds collider",
+            net_id,
+            hitbox.collider_template_id,
+            worst);
+    }
 }
 
 void KernelEngine::materialize_projectile_collider(NetId net_id) {

@@ -1,10 +1,14 @@
 # quadruped_actor's bounds: the whole body, but never what gets hit -- the
 # rig's bone colliders are. Where the actor is (relevance, aim point, homing)
 # and the rewound shot's first test: only a shot that enters it tests the bones.
+# Sized to enclose the bones, with a metre to spare on every axis and the
+# centre kept where the old hitbox had it: walking the undulating scene
+# (limb_collider_test), its bones reached, from the root:
+# x -13.1..12.4, y -3.1..25.9, z -16.6..12.1 m.
 id: 46
 name: quadruped_bounds_aabb
 shape: aabb
 center: {x: 0.0, y: 12.0, z: 0.0}
-half_extents: {x: 12.0, y: 14.0, z: 12.0}
+half_extents: {x: 14.5, y: 16.5, z: 18.0}
 purpose: bounds
 layer: hostile_side

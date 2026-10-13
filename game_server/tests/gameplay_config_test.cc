@@ -1310,8 +1310,9 @@ int main() {
 
     // An actor's Hitbox now comes from its collider_template. These are the
     // boxes every actor authored as `hitbox:` before that block was removed:
-    // seventeen were already equal to their collider, five rigs moved to
-    // bounds of their own, and all of them must come out exactly as before.
+    // seventeen were already equal to their collider and must come out exactly
+    // as before. The five rigs moved to bounds of their own, kept their centres
+    // and grew to enclose their bones (limb_collider_test measures that).
     {
         struct AuthoredHitbox {
             std::uint32_t id;
@@ -1323,9 +1324,9 @@ int main() {
         constexpr std::array<AuthoredHitbox, 22> kAuthoredHitboxes{{
             {1u, 0.9f, 0.35f, 0.9f, 0.35f},
             {2u, 0.8f, 0.4f, 0.8f, 0.4f},
-            {21u, 12.0f, 12.0f, 14.0f, 12.0f},
-            {22u, 12.0f, 10.0f, 14.0f, 10.0f},
-            {23u, 20.0f, 12.0f, 22.0f, 8.0f},
+            {21u, 12.0f, 14.5f, 16.5f, 18.0f},
+            {22u, 12.0f, 11.5f, 16.5f, 16.0f},
+            {23u, 20.0f, 24.0f, 27.5f, 12.0f},
             {24u, 0.8f, 0.4f, 0.8f, 0.4f},
             {25u, 0.8f, 0.4f, 0.8f, 0.4f},
             {26u, 0.8f, 0.4f, 0.8f, 0.4f},
@@ -1341,8 +1342,8 @@ int main() {
             {36u, 0.8f, 0.4f, 0.8f, 0.4f},
             {37u, 1.5f, 3.0f, 1.5f, 3.0f},
             {38u, 0.8f, 0.4f, 0.8f, 0.4f},
-            {39u, 9.0f, 8.0f, 10.7f, 3.0f},
-            {211u, 12.0f, 10.0f, 14.0f, 10.0f},
+            {39u, 9.0f, 8.0f, 12.5f, 9.0f},
+            {211u, 12.0f, 11.5f, 16.5f, 16.0f},
         }};
         for (const AuthoredHitbox& expected : kAuthoredHitboxes) {
             const auto found = std::find_if(
@@ -1465,7 +1466,7 @@ int main() {
             });
         require(legged != legged_config.entity_templates.end());
         require(legged->skeleton.has_collision_flags);
-        require(legged->hitbox_half_extents.x == 12.0f);
+        require(legged->hitbox_half_extents.x == 14.5f);
     }
 
     // The control: the unmodified template loads, and with the collider's box,
