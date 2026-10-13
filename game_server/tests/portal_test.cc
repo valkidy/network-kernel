@@ -293,10 +293,10 @@ int main() {
                 exits.front().position.x, exits.front().position.y,
                 exits.front().position.z);
 
-    // Waiting at the destination: a second portal, whose gate the arrival
-    // stands in (its frame starts 0.6 m on), and a volume that hurts on entry.
+    // Waiting at the destination: a second portal, whose gate starts 0.35 m
+    // on (its frame 0.45 m on), and a volume that hurts on entry.
     world.create("portal_entrance",
-                 KernelVec3{kDestination.x, 0.0f, kDestination.z + 0.6f});
+                 KernelVec3{kDestination.x, 0.0f, kDestination.z + 0.45f});
     world.create("test_hurt_gate", kDestination);
 
     // Walk into the gate: it faces -z, the frame behind it at +z.
@@ -324,9 +324,10 @@ int main() {
     std::printf("two ticks after arriving: hp %u\n", world.state(player).hp);
     require(world.state(player).hp == full_hp);
 
-    // Grace: still in the waiting portal's gate, a step to one side; it does
-    // not take the player back until the grace is over.
-    const KernelVec3 aside{kDestination.x, 0.0f, kDestination.z + 0.1f};
+    // Grace: a short step into the waiting portal's gate (the capsule reaches
+    // 0.40 m on, the gate starts at 0.35 m, the frame at 0.45 m); it does not
+    // take the player back until the grace is over.
+    const KernelVec3 aside{kDestination.x, 0.0f, kDestination.z + 0.05f};
     world.move(player, aside);
     world.step(5);
     require(horizontal_distance(world.state(player).position, aside) < 0.02f);

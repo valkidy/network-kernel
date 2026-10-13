@@ -44,7 +44,7 @@
 | D12 | 走過去就傳送；client 用銜接動畫蓋住 RTT 的等待 | 動畫要有逾時取消（client 預測碰到門，但伺服器沒有觸發）；動畫期間送零輸入 |
 | D13 | 觸發區是 collider template，`purpose: trigger`，由 `physics.trigger_collider_template` 引用 | 不新增 template 類別。kernel 把 trigger 用途的碰撞盒註冊到新的**內部** physics layer `kTrigger`，不再當成 static obstacle，不用掉 `KERNEL_COLLISION_LAYER_*` bit |
 | D14 | 觸發篩選分三層：陣營用 `collision_mask: player_side`；身分用 trigger 欄位 `instigators: players`；狀態用 kernel 規則（D10） | 不擴充 collision mask：mask 是固定分類，放不進「在帳篷裡」這種狀態；另外加一個 `player` bit 會和 `player_side` 混淆，所有讀 mask 的系統都受影響 |
-| D15 | 碰撞盒幾何（側視圖）：紅色 hitbox 涵蓋底座、門框和門；綠色觸發區只在開口那一面（local −z，朝向丟的人）；底部都貼地；綠色頂部比紅色低 5 cm；綠色伸進紅色 0.1 m；綠色凸出門面 0.3–0.5 m | 只能從開口那一面進入。生成的 rotation 是 `yaw = atan2(x, z)`，local +z 朝丟擲方向（`systems.cc:190`） |
+| D15 | 碰撞盒幾何（側視圖）：紅色 hitbox 涵蓋底座、門框和門；綠色觸發區只在開口那一面（local −z，朝向丟的人）；底部都貼地；綠色頂部比紅色低 5 cm；綠色伸進紅色 0.1 m；綠色凸出門面 0.1 m（2026-10-14 由 0.4 m 縮短：Unity 把傳送門的畫面畫在門面上，傳送要在玩家幾乎碰到門面時才發生） | 只能從開口那一面進入。生成的 rotation 是 `yaw = atan2(x, z)`，local +z 朝丟擲方向（`systems.cc:190`） |
 | D16 | 落點校正把紅色加綠色一起拿去跟 terrain 和 static obstacle 檢查 | 避免開口那一面埋在牆裡。校正是往丟擲的反方向退，也就是往開口那一側退 |
 | D17 | 入口有 HP；門被子彈或爆炸打壞，完全沿用現有機制，不做特殊處理。入口和出口消失時都播建築物被破壞的演出 | 紅色是 `layer: damageable`，跟 `tent_hitbox` 一樣 |
 | D18 | 第一版不讓丟出去的 prop 穿過傳送門 | 正式版的終點在另一張地圖，飛行中的 prop 要整包搬到另一個 world；在同一張地圖裡還要處理軌跡同步、碰撞檢查掃過整張地圖、client 預測、玩法上的濫用。見 §8 |
@@ -73,12 +73,12 @@ layer: damageable
 
 ```yaml
 # collider_templates/<id>_collider_portal_gate.yaml     綠色：只在開口那一面
-# z 範圍 [−0.4, 0.1]：凸出門面 0.4 m，伸進紅色 0.1 m；頂部比紅色低 5 cm。
+# z 範圍 [−0.1, 0.1]：凸出門面 0.1 m，伸進紅色 0.1 m；頂部比紅色低 5 cm。
 id: <id>
 name: portal_gate
 shape: oriented_box
-center: {x: 0.0, y: 1.275, z: -0.15}
-half_extents: {x: 0.9, y: 1.275, z: 0.25}
+center: {x: 0.0, y: 1.275, z: 0.0}
+half_extents: {x: 0.9, y: 1.275, z: 0.1}
 purpose: trigger
 ```
 
