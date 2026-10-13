@@ -166,7 +166,6 @@ network_example::CompiledActionGraphBinding impulse_on_impact_binding(
     trigger.target_source = KernelEntityRefSource_EventTarget;
     trigger.direction_source = KernelEventVec3Source_Direction;
     trigger.impulse_strength = strength;
-    trigger.impulse_collision_mask = KERNEL_COLLISION_MASK_ACTOR;
     std::optional<network_example::CompiledActionGraphBinding> binding =
         network_example::compile_action_trigger_definition(
             network_example::TriggerEventType::kProjectileImpact, trigger);
@@ -184,12 +183,11 @@ const network_example::ActionApplyImpulseCommand& only_impulse_command(
     return *impulse;
 }
 
-// A swing whose shot template names an impact graph takes a different branch
-// from one that only hurts: it queues one trigger per target it found and
-// submits no damage of its own, so a graph that forgets apply_damage deals
-// none. That is the same trade an area effect makes, and it is what lets one
-// authoring surface say "hurt and shove" without a second one for the shoving.
-void a_swing_with_an_impact_graph_dispatches_it_instead_of_dealing_damage() {
+// A swing whose shot template names an impact graph queues one trigger per
+// target it found, and still deals its own damage to each: the graph adds the
+// shove, it does not replace the hit (ABI 105). Authoring "hurt and shove" is
+// the projectile's damage plus a graph that only shoves.
+void a_swing_with_an_impact_graph_dispatches_it_and_still_deals_damage() {
     network_example::World world;
     const network_example::NetId front =
         spawn_enemy(world, glm::vec3{1.5f, 0.0f, 0.0f});
@@ -212,9 +210,9 @@ void a_swing_with_an_impact_graph_dispatches_it_instead_of_dealing_damage() {
     require(impulse.target == front);
     require(impulse.strength == 8.0f);
 
-    // Neither target is hurt: the graph owns the damage now. A swing that kept
-    // submitting its own would double up on whatever the graph deals.
-    require(health(world, front).hp == 100);
+    // The one in the cone takes the swing's 35, once; the one behind it
+    // nothing.
+    require(health(world, front).hp == 65);
     require(health(world, behind).hp == 100);
 }
 
@@ -247,7 +245,7 @@ int main() {
     a_swing_reaches_what_is_in_front_and_not_what_is_behind();
     a_swing_does_not_reach_past_its_range();
     a_swing_cleaves_the_nearest_targets_up_to_max_hit_count();
-    a_swing_with_an_impact_graph_dispatches_it_instead_of_dealing_damage();
+    a_swing_with_an_impact_graph_dispatches_it_and_still_deals_damage();
     the_impact_direction_a_swing_reports_is_level();
     return 0;
 }

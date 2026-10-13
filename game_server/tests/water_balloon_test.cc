@@ -8,7 +8,7 @@
 //     after which it can be moved again;
 //   - a beam drone (hover at 9 m): bubbled, floated, dropped all the way to
 //     the ground, and back at its height a few seconds later;
-//   - the hive airship (hover at 14 m, impulse_resistance 10): hit -- the
+//   - the hive airship (hover at 14 m, force_resistance 10): hit -- the
 //     balloon bursts on it -- but never bubbled, because the balloon's
 //     strength is 10 and the rule is strictly greater.
 //

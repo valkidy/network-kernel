@@ -4,7 +4,7 @@
 //
 // The shipped catalog does this with no kernel change. Prop 218 `potion`
 // binds on_collision {actor | terrain | static_obstacle} to
-// action_heal_target_and_consume_self_at_collision, whose two actions are both
+// action_apply_health_change_and_damage_self_if_target, whose two actions are both
 // `when: event.has_target` -- an actor contact has a target, a landing has
 // none.
 //

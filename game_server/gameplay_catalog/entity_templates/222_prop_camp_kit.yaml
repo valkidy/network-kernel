@@ -11,8 +11,9 @@ physics:
 triggers:
   on_collision:
     collision_mask: terrain|static_obstacle
-    action_graph: action_spawn_building_and_damage_self_at_collision
+    action_graph: action_spawn_entity_and_damage_self
     parameters:
+      placement: clear
       template: field_camp
       position: event.position
       direction: event.direction

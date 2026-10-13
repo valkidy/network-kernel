@@ -1,0 +1,14 @@
+# Spawns `template` at `position`, heading `direction`. Bound on impact (a
+# rocket's explosion), on expiry (a marker's delay ending) and on an entity's
+# destruction (a nest bursting, away from whoever destroyed it or straight up
+# when nobody did) -- the event supplies the position and direction.
+id: action_spawn_projectile
+parameters:
+  template: null
+  position: null
+  direction: null
+actions:
+  - type: spawn_projectile
+    projectile_template: params.template
+    position: params.position
+    direction: params.direction

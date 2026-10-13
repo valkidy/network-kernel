@@ -7,7 +7,7 @@ interval_ticks: 15
 replace_policy: replace
 triggers:
   on_tick:
-    action_graph: action_status_damage_tick
+    action_graph: action_apply_damage
     parameters:
       target: event.subject
       amount: 5

@@ -96,12 +96,16 @@ void write_valid_action_graph_catalog(const std::filesystem::path& weapon_dir) {
     const std::filesystem::path destination_dir =
         weapon_dir.parent_path() / "action_graph_templates";
     std::filesystem::create_directories(destination_dir);
+    // Recursive, keeping each graph's subdirectory (common/, derived/...).
     for (const std::filesystem::directory_entry& entry :
-         std::filesystem::directory_iterator(source_dir)) {
+         std::filesystem::recursive_directory_iterator(source_dir)) {
         if (entry.is_regular_file() && entry.path().extension() == ".yaml") {
+            const std::filesystem::path destination =
+                destination_dir / entry.path().lexically_relative(source_dir);
+            std::filesystem::create_directories(destination.parent_path());
             std::filesystem::copy_file(
                 entry.path(),
-                destination_dir / entry.path().filename(),
+                destination,
                 std::filesystem::copy_options::overwrite_existing);
         }
     }
@@ -147,7 +151,7 @@ void write_valid_templates(const std::filesystem::path& dir) {
         "gravity: {x: 0.0, y: 0.0, z: 0.0}\n"
         "triggers:\n"
         "  on_projectile_impact:\n"
-        "    action_graph: action_spawn_projectile_at_impact\n"
+        "    action_graph: action_spawn_projectile\n"
         "    parameters:\n"
         "      template: rocket_explosion\n"
         "      position: event.position\n"
@@ -193,7 +197,7 @@ void write_valid_templates(const std::filesystem::path& dir) {
         "gravity: {x: 0.0, y: -9.81, z: 0.0}\n"
         "triggers:\n"
         "  on_projectile_impact:\n"
-        "    action_graph: action_spawn_projectile_at_impact\n"
+        "    action_graph: action_spawn_projectile\n"
         "    parameters:\n"
         "      template: rocket_explosion\n"
         "      position: event.position\n"
@@ -1035,7 +1039,7 @@ void area_effect_ground_follow_and_cylinder_are_authored() {
     area = projectile_mechanics(config, 4).area_effect;
     // The column is the collider's: radius and half height both.
     require(area.shape == KernelAreaEffectShape_Cylinder);
-    require(area.radius == 3.0f);
+    require(area.radius == 6.0f);
     require(area.half_height == 15.0f);
     require(area.max_slope_degrees == 40.0f);
     require(area.step_up == 0.3f && area.probe_depth == 0.8f);
@@ -1245,8 +1249,7 @@ void subject_direction_needs_a_projectile_that_travels() {
             "  - type: apply_impulse\n"
             "    target: params.target\n"
             "    strength: params.strength\n"
-            "    direction: params.direction\n"
-            "    collision_mask: actor\n");
+            "    direction: params.direction\n");
         return "triggers:\n"
                "  on_projectile_impact:\n"
                "    action_graph: action_sweep_impulse\n"
@@ -1303,7 +1306,7 @@ void stationary_marker_loads_only_when_inert() {
     const std::string expired_trigger =
         "triggers:\n"
         "  on_expired:\n"
-        "    action_graph: action_spawn_projectile_at_impact\n"
+        "    action_graph: action_spawn_projectile\n"
         "    parameters:\n"
         "      template: rocket_explosion\n"
         "      position: event.position\n"
@@ -1356,7 +1359,7 @@ void area_effect_rejects_on_expired() {
     const auto binding = [](const char* trigger) {
         return std::string("triggers:\n  ") + trigger +
             ":\n"
-            "    action_graph: action_spawn_projectile_at_impact\n"
+            "    action_graph: action_spawn_projectile\n"
             "    parameters:\n"
             "      template: rocket_explosion\n"
             "      position: event.position\n"
@@ -1673,7 +1676,7 @@ void derived_replication_is_authored() {
         "lifetime_ticks: 20\n"
         "triggers:\n"
         "  on_expired:\n"
-        "    action_graph: action_spawn_projectile_at_impact\n"
+        "    action_graph: action_spawn_projectile\n"
         "    parameters:\n"
         "      template: meteor_body\n"
         "      position: event.position\n"

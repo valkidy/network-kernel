@@ -7,7 +7,7 @@ interval_ticks: 0
 replace_policy: replace
 triggers:
   on_apply:
-    action_graph: action_status_speed_modifier
+    action_graph: action_apply_speed_modifier
     parameters:
       target: event.subject
       operation: additive

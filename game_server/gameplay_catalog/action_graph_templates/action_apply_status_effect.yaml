@@ -1,8 +1,0 @@
-id: action_apply_status_effect
-parameters:
-  target: null
-  status: burn
-actions:
-  - type: apply_status
-    target: params.target
-    status: params.status

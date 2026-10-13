@@ -1,4 +1,4 @@
-id: action_status_speed_modifier
+id: action_apply_speed_modifier
 parameters:
   target: null
   operation: additive

@@ -11,7 +11,7 @@ physics:
 triggers:
   on_collision:
     collision_mask: terrain | static_obstacle | actor
-    action_graph: action_spawn_projectile_and_damage_self_at_collision
+    action_graph: action_spawn_projectile_and_damage_self
     parameters:
       template: frag_blast
       position: event.position

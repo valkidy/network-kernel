@@ -83,7 +83,7 @@ std::string spawn_on(const std::string& trigger,
     return "  " + trigger + ":\n"
         "    collision_mask: " + mask + "\n"
         "    instigators: " + instigators + "\n"
-        "    action_graph: action_spawn_entity_at_destroy_entity\n"
+        "    action_graph: action_spawn_entity\n"
         "    parameters:\n"
         "      template: " + marker_name + "\n"
         "      position: event.position\n"

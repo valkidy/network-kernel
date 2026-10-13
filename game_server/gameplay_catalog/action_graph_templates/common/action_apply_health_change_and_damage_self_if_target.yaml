@@ -8,7 +8,7 @@
 # The self-damage is what stops a hit potion flying on through the actor and
 # landing, which would make one potion a heal that can be thrown again and
 # again (measured before this graph, thrown_potion_test).
-id: action_heal_target_and_consume_self_at_collision
+id: action_apply_health_change_and_damage_self_if_target
 parameters:
   source: null
   target: null

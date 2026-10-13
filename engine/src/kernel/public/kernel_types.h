@@ -5,6 +5,25 @@
 #include <stdint.h>
 
 /*
+ * 105: action graph refactor. KernelEntityTemplateDefinition's
+ *     impulse_resistance is renamed force_resistance, at the same offset:
+ *     apply_impulse, apply_pull and apply_status's status_strength all weigh
+ *     their strength against it, so the name no longer says impulse. Every
+ *     managed mirror renames the field; the layout does not move.
+ *     KernelActionDefinition's and KernelActionTriggerDefinition's
+ *     impulse_collision_mask become retired_impulse_collision_mask, at the
+ *     same offset, and are ignored: an action graph no longer filters who it
+ *     is tested against (the projectile's collision_mask does), and
+ *     apply_impulse moves any actor, or any prop in the world and not being
+ *     carried, whose force_resistance its strength exceeds.
+ *     A hit's damage is always its projectile's: an impact graph adds effects
+ *     and no longer replaces the damage of an area effect or a melee swing,
+ *     which now go through the damage pipeline (falloff included) like a
+ *     direct hit always has. KernelProjectileMechanicsDefinition gained
+ *     stagger_authored and stagger, appended after launch: the stagger every
+ *     hit of that projectile adds, which a graph's apply_damage used to carry.
+ *     An area effect may author damage 0 (with damage_shape none) and deal
+ *     none.
  * 104: lock-on weapons, first part. KernelWeaponFireMode gained _LockInstant:
  *     on every commit, up to max_hit_count actors inside a cone are damaged at
  *     once -- the nearest first, any a static wall hides skipped -- and the
@@ -316,7 +335,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 104u
+#define KERNEL_ABI_VERSION 105u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -1104,7 +1123,10 @@ typedef struct KernelActionDefinition {
     int32_t health_change_amount;
     uint32_t condition_type;
     float impulse_strength;
-    uint32_t impulse_collision_mask;
+    /* impulse_collision_mask before ABI 105, kept for its slot. Ignored;
+     * write zero. Who an impulse can move is the target's kind and
+     * force_resistance. */
+    uint32_t retired_impulse_collision_mask;
     KernelVec3 impulse_direction;
     uint32_t status_effect_id;
     uint8_t modifier_operation;
@@ -1159,7 +1181,7 @@ typedef struct KernelActionDefinition {
      * where the spawned entity is put relative to the position it was given. */
     uint32_t spawn_placement;
     /* apply_pull only; zero on every other action. Finite and > 0. The pull
-     * moves a target only when this exceeds its impulse_resistance -- the
+     * moves a target only when this exceeds its force_resistance -- the
      * same strictly-greater test apply_impulse uses. It decides who is moved,
      * never how fast: the launch velocity comes from pull_* above. */
     float pull_strength;
@@ -1182,7 +1204,7 @@ typedef struct KernelActionDefinition {
     float suspend_drift_speed;
     /* apply_status only; zero on every other action. Finite and >= 0. When
      * non-zero the status is applied only to a target whose
-     * impulse_resistance is strictly below it; zero applies it to anyone. */
+     * force_resistance is strictly below it; zero applies it to anyone. */
     float status_strength;
 } KernelActionDefinition;
 
@@ -1206,7 +1228,10 @@ typedef struct KernelActionTriggerDefinition {
     int32_t health_change_amount;
     uint32_t condition_type;
     float impulse_strength;
-    uint32_t impulse_collision_mask;
+    /* impulse_collision_mask before ABI 105, kept for its slot. Ignored;
+     * write zero. Who an impulse can move is the target's kind and
+     * force_resistance. */
+    uint32_t retired_impulse_collision_mask;
     KernelVec3 impulse_direction;
     uint32_t status_effect_id;
     uint8_t modifier_operation;
@@ -2216,6 +2241,11 @@ typedef struct KernelProjectileMechanicsDefinition {
     uint8_t replication;
     uint16_t reserved1;
     KernelProjectileLaunchDefinition launch;
+    /* ABI 105. Non-zero: every hit this projectile's damage lands adds
+     * `stagger` to the target's meter, zero meaning none. Zero, the default:
+     * the stagger is derived from the damage, as before. */
+    uint32_t stagger_authored;
+    float stagger;
 } KernelProjectileMechanicsDefinition;
 
 typedef struct KernelProjectileTemplateDefinition {
@@ -2920,7 +2950,7 @@ struct KernelEntityTemplateDefinition {
     KernelPropDefinition prop;
     uint32_t collision_trigger_mask;
     KernelSkeletonBindingDefinition skeleton;
-    float impulse_resistance;
+    float force_resistance;
     /* Hit stagger profile. stagger_threshold == 0 disables it; a zero
      * stagger_per_damage leaves only hits that author a stagger able to fill
      * the meter. */

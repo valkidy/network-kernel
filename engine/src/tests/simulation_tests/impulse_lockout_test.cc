@@ -73,7 +73,6 @@ CompiledActionGraphBinding impulse_binding(std::uint32_t lockout_ticks) {
     impulse.target_parameter = "target";
     impulse.strength_parameter = "strength";
     impulse.direction_parameter = "direction";
-    impulse.collision_mask = KERNEL_COLLISION_MASK_ACTOR;
     impulse.lockout_ticks = lockout_ticks;
     binding.graph.actions = {impulse};
     binding.parameters = {

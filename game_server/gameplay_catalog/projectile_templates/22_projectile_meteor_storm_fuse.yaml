@@ -12,7 +12,7 @@ sync_mode: server_snapshot_only
 lifetime_ticks: 10
 triggers:
   on_expired:
-    action_graph: action_spawn_projectile_at_expired
+    action_graph: action_spawn_projectile
     parameters:
       template: meteor_body
       position: event.position

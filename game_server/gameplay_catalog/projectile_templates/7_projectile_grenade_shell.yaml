@@ -16,7 +16,7 @@ gravity:
   z: 0.0
 triggers:
   on_projectile_impact:
-    action_graph: action_spawn_projectile_at_impact
+    action_graph: action_spawn_projectile
     parameters:
       template: rocket_explosion
       position: event.position

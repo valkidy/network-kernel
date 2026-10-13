@@ -616,7 +616,6 @@ network_example::CompiledActionGraphBinding impulse_on_impact_binding(
     trigger.target_source = KernelEntityRefSource_EventTarget;
     trigger.direction_source = direction_source;
     trigger.impulse_strength = strength;
-    trigger.impulse_collision_mask = KERNEL_COLLISION_MASK_ACTOR;
     std::optional<network_example::CompiledActionGraphBinding> binding =
         network_example::compile_action_trigger_definition(
             network_example::TriggerEventType::kProjectileImpact, trigger);
@@ -679,11 +678,81 @@ void area_effect_dispatches_its_graph_once_per_target_in_radius() {
     require(first_impulse.strength == 12.0f);
     require(second_impulse.strength == 12.0f);
 
-    // The graph branch replaces the damage branch outright: neither target is
-    // in the damage pipeline, so a graph that forgets apply_damage deals none.
-    require(pipeline.pending_count() == 0);
-    require(health(world, first).hp == 50);
-    require(health(world, second).hp == 50);
+    // The graph adds to the hit; it does not replace its damage (ABI 105).
+    // Both targets are in the pipeline with the field's own damage.
+    require(pipeline.pending_count() == 2);
+    pipeline.confirm_ready(world, 0, 0, &events);
+    require(health(world, first).hp == 5);
+    require(health(world, second).hp == 5);
+}
+
+// The falloff a bound field used to lose: the damage is the field's, measured
+// per target, and the graph still runs for each.
+void a_bound_area_effect_deals_its_own_damage_with_falloff() {
+    network_example::World world;
+    const network_example::NetId near =
+        spawn_enemy(world, glm::vec3{1.0f, 0.0f, 0.0f});
+    const network_example::NetId far =
+        spawn_enemy(world, glm::vec3{3.0f, 0.0f, 0.0f});
+    const network_example::NetId area = spawn_area_projectile(
+        world, 0, glm::vec3{0.0f, 0.5f, 0.0f}, 4.0f, 45, 0, 40, 7);
+    world.registry()
+        .get<network_example::ProjectileAreaEffectRuntime>(*world.find_entity(area))
+        .damage_falloff = network_example::ProjectileDamageFalloff::kLinear;
+    bind_impulse_graph(world, area, 12.0f);
+
+    network_example::DamagePipeline pipeline;
+    std::vector<KernelEvent> events;
+    std::vector<network_example::ActionGraphCommandBatch> batches;
+    network_example::simulate_area_effects(
+        world, 0, 0, &events, &pipeline, &batches);
+    pipeline.confirm_ready(world, 0, 0, &events);
+
+    require(batches.size() == 2);
+    const std::uint16_t near_damage = 50 - health(world, near).hp;
+    const std::uint16_t far_damage = 50 - health(world, far).hp;
+    require(far_damage > 0);
+    require(near_damage > far_damage);
+    require(near_damage < 40);
+}
+
+// A hit's stagger is its projectile's: authored on the template, carried by
+// every hit the field lands, where a graph's apply_damage used to carry it.
+float stagger_meter_after_hit(bool authored) {
+    network_example::World world;
+    constexpr std::uint32_t kTemplateId = 901u;
+    if (authored) {
+        network_example::RuntimeProjectileTemplate projectile_template;
+        projectile_template.projectile_template_id = kTemplateId;
+        projectile_template.stagger = 150.0f;
+        world.set_projectile_templates({projectile_template});
+    }
+    const network_example::NetId target =
+        spawn_enemy(world, glm::vec3{1.0f, 0.0f, 0.0f});
+    const auto target_entity = world.find_entity(target);
+    world.registry().emplace_or_replace<network_example::StaggerProfile>(
+        *target_entity, network_example::StaggerProfile{1000.0f, 1.0f});
+    world.registry().emplace_or_replace<network_example::StaggerState>(
+        *target_entity);
+    const network_example::NetId area = spawn_area_projectile(
+        world, 0, glm::vec3{0.0f, 0.5f, 0.0f}, 4.0f, 45, 0, 20, 7);
+    world.registry()
+        .get<network_example::ProjectileState>(*world.find_entity(area))
+        .projectile_template_id = kTemplateId;
+
+    network_example::DamagePipeline pipeline;
+    std::vector<KernelEvent> events;
+    network_example::simulate_area_effects(world, 0, &events, &pipeline);
+    pipeline.confirm_ready(world, 0, 0, &events);
+    require(health(world, target).hp == 30);
+    return world.registry().get<network_example::StaggerState>(*target_entity).meter;
+}
+
+void an_area_effect_hit_carries_its_projectiles_stagger() {
+    // Derived from 20 damage at 1.0 per point without one; the template's 150
+    // with one.
+    require(stagger_meter_after_hit(false) == 20.0f);
+    require(stagger_meter_after_hit(true) == 150.0f);
 }
 
 // `direction` is radial, so it is a different vector for every target one blast
@@ -758,6 +827,8 @@ void area_effect_impulse_direction_is_level_for_a_level_blast() {
 }  // namespace
 
 int main() {
+    a_bound_area_effect_deals_its_own_damage_with_falloff();
+    an_area_effect_hit_carries_its_projectiles_stagger();
     area_effect_damages_only_targets_inside_radius();
     area_effect_respects_its_damage_interval();
     a_target_that_arrives_between_evaluations_waits_for_the_next_one();
