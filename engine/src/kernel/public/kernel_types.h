@@ -5,6 +5,24 @@
 #include <stdint.h>
 
 /*
+ * 106: two-layer hits on rigged actors. KernelColliderPurpose gained _Bounds:
+ *     an actor whose skeleton colliders are hit volumes names a bounds box as
+ *     its collider_template, and that box is never hit itself -- it only says
+ *     which actors' bones a rewound shot goes on to test, and it is never a
+ *     physics body. Its bones are what gets hit, with their own hit_zone, and
+ *     any gameplay mask that reaches an actor now reaches those bones: they are
+ *     that actor's body, no longer an opt-in (KERNEL_COLLISION_LAYER_LIMB is
+ *     still accepted and reaches nothing more). An area effect no longer
+ *     scales by hit_zone.
+ *     Weapon provenance: KernelProjectileTemplateDefinition's weapon_id became
+ *     reserved_weapon_id and must be zero. A projectile's weapon -- for damage
+ *     source codes, kill attribution, impact graphs and interaction rules --
+ *     is the weapon whose event spawned it, carried down from the shot, not a
+ *     number stamped on the template by whichever weapon named it last; a
+ *     template may now be shared by several weapons. A projectile spawned by
+ *     an interaction rule carries the rule's left-hand projectile's weapon. A
+ *     client's projectile debug record reports weapon_id 255 (unknown): the
+ *     spawn record does not carry it. Layout unchanged.
  * 105: action graph refactor. KernelEntityTemplateDefinition's
  *     impulse_resistance is renamed force_resistance, at the same offset:
  *     apply_impulse, apply_pull and apply_status's status_strength all weigh
@@ -335,7 +353,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 105u
+#define KERNEL_ABI_VERSION 106u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -479,9 +497,10 @@ typedef enum KernelFootholdQueryType {
  * carry a different value in a different bit space -- these two are never
  * interchangeable and the value matching anything there is a coincidence.
  *
- * Naming it is the only way a projectile, beam or thrown prop can touch a leg.
- * It is absent from every MASK_ aggregate for that reason: a weapon that says
- * nothing about limbs keeps the results and the cost it has today.
+ * Since ABI 106 every limb belongs to an actor that is hit on its bones (a
+ * bounds actor), and any mask that reaches that actor reaches them, so naming
+ * this adds nothing. It is still accepted, and still absent from every MASK_
+ * aggregate, for a limb without bounds should one ever exist.
  */
 #define KERNEL_COLLISION_LAYER_LIMB UINT32_C(0x00000008)
 
@@ -2047,6 +2066,13 @@ typedef enum KernelColliderPurpose {
     // every limb into a weapon target: a limb is a hitbox only when the author
     // also sets _Hit on it.
     KernelColliderPurpose_Limb = 1u << 5,
+    // The whole of an actor whose bones are what gets hit (ABI 106). Only a
+    // template whose skeleton colliders are hit volumes may name it. It is
+    // where the actor is -- relevance, aim points, homing, the rewound shot's
+    // first test -- and never a damage volume itself: a rewound shot that
+    // enters it goes on to test that actor's bones and hits only those, and
+    // it is never a physics body, so no live query can stop on it.
+    KernelColliderPurpose_Bounds = 1u << 6,
 } KernelColliderPurpose;
 
 typedef enum KernelDebugRecordType {
@@ -2251,7 +2277,11 @@ typedef struct KernelProjectileMechanicsDefinition {
 typedef struct KernelProjectileTemplateDefinition {
     uint32_t struct_size;
     uint32_t projectile_template_id;
-    uint8_t weapon_id;
+    /* Was weapon_id, written back by the catalog from whichever weapon named
+     * the template (ABI 106). A projectile's weapon is where it was fired
+     * from, not what it is, so it now comes from the firing event and this
+     * must be zero. */
+    uint8_t reserved_weapon_id;
     uint8_t reserved0;
     uint16_t reserved1;
     KernelProjectileMechanicsDefinition mechanics;

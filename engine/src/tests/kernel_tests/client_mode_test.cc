@@ -122,14 +122,12 @@ KernelColliderTemplateDefinition vision_collider_template() {
 
 KernelProjectileTemplateDefinition projectile_template(
     std::uint32_t template_id,
-    std::uint8_t weapon_id,
     std::uint8_t sync_mode =
         KernelProjectileSyncMode_HybridDeterministicThenSnapshot,
     std::uint32_t lifetime_ticks = 60) {
     KernelProjectileTemplateDefinition projectile_template{};
     projectile_template.struct_size = sizeof(projectile_template);
     projectile_template.projectile_template_id = template_id;
-    projectile_template.weapon_id = weapon_id;
     projectile_template.mechanics.struct_size =
         sizeof(KernelProjectileMechanicsDefinition);
     projectile_template.mechanics.projectile_type = KernelProjectileType_Standard;
@@ -154,7 +152,7 @@ void load_projectile_collision_catalog(
     std::uint8_t shape_type = KernelColliderShapeType_Sphere,
     KernelVec4 shape_params = KernelVec4{0.25f, 0.0f, 0.0f, 0.0f}) {
     KernelProjectileTemplateDefinition definition =
-        projectile_template(3, 3, sync_mode);
+        projectile_template(3, sync_mode);
     KernelColliderTemplateDefinition collider = projectile_collider_template();
     collider.shape_type = shape_type;
     collider.shape_params = shape_params;
@@ -207,7 +205,6 @@ network_example::KernelEngine::PredictedProjectile predicted_projectile(
     projectile.max_lifetime_ticks = 60;
     projectile.projectile_template_id = 3;
     projectile.collider_template_id = 10;
-    projectile.weapon_id = 3;
     projectile.sync_mode = sync_mode;
     return projectile;
 }
@@ -259,7 +256,7 @@ void client_query_collider_shapes_reports_render_colliders() {
     client.reset_runtime_state(KernelMode_Client);
 
     KernelProjectileTemplateDefinition projectile_template =
-        ::projectile_template(3, 3);
+        ::projectile_template(3);
     std::array<KernelColliderTemplateDefinition, 3> collider_templates = {
         projectile_collider_template(),
         actor_collider_template(),
@@ -378,7 +375,6 @@ void local_deterministic_prediction_query_uses_projectile_template_collider() {
     KernelProjectileTemplateDefinition projectile_template =
         ::projectile_template(
             3,
-            2,
             KernelProjectileSyncMode_LocalPredictedDeterministic);
     projectile_template.mechanics.speed = 30.0f;
     KernelColliderTemplateDefinition collider_template = projectile_collider_template();
@@ -791,7 +787,6 @@ void snapshot_only_projectile_spawn_sends_metadata_batch() {
     engine.reset_runtime_state(KernelMode_DedicatedServer);
     KernelProjectileTemplateDefinition projectile_template =
         ::projectile_template(
-            3,
             3,
             KernelProjectileSyncMode_ServerSnapshotOnly);
     KernelColliderTemplateDefinition collider_template = projectile_collider_template();
@@ -2726,7 +2721,7 @@ void projectile_spawn_batch_renders_and_binds_to_snapshot() {
     network_example::KernelEngine client(config);
     client.reset_runtime_state(KernelMode_Client);
     KernelProjectileTemplateDefinition projectile_template =
-        ::projectile_template(3, 3);
+        ::projectile_template(3);
     KernelColliderTemplateDefinition collider_template = projectile_collider_template();
     KernelGameplayCatalogDefinition catalog{};
     catalog.struct_size = sizeof(catalog);
@@ -2786,7 +2781,9 @@ void projectile_spawn_batch_renders_and_binds_to_snapshot() {
                 static_cast<std::uint32_t>(debug_records.size())) == 1);
     require(debug_records[0].record_type == KernelDebugRecordType_Projectile);
     require(debug_records[0].data.projectile.projectile_net_id == 101);
-    require(debug_records[0].data.projectile.weapon_id == 3);
+    // Unknown on a client: the spawn record does not carry the weapon and the
+    // template no longer names one (ABI 106). Not 0, which is the rifle.
+    require(debug_records[0].data.projectile.weapon_id == KERNEL_HELD_WEAPON_NONE);
     require(client.poll_debug_records(
                 &debug_filter,
                 debug_records.data(),
@@ -2826,7 +2823,6 @@ void projectile_snapshot_waits_for_reliable_metadata_before_render() {
     client.reset_runtime_state(KernelMode_Client);
     KernelProjectileTemplateDefinition projectile_template =
         ::projectile_template(
-            3,
             3,
             KernelProjectileSyncMode_ServerSnapshotOnly);
     KernelColliderTemplateDefinition collider_template = projectile_collider_template();
@@ -2904,7 +2900,6 @@ void projectile_snapshot_missing_metadata_after_grace_ticks_is_diagnosed() {
     KernelProjectileTemplateDefinition projectile_template =
         ::projectile_template(
             3,
-            3,
             KernelProjectileSyncMode_ServerSnapshotOnly);
     KernelColliderTemplateDefinition collider_template = projectile_collider_template();
     KernelGameplayCatalogDefinition catalog{};
@@ -2954,7 +2949,6 @@ void projectile_spawn_event_and_batch_do_not_duplicate_render_state() {
     client.reset_runtime_state(KernelMode_Client);
     KernelProjectileTemplateDefinition projectile_template =
         ::projectile_template(
-            3,
             3,
             KernelProjectileSyncMode_LocalPredictedDeterministic);
     projectile_template.mechanics.speed = 30.0f;
@@ -4052,7 +4046,6 @@ void predicted_projectile_lifetime_cleanup_removes_batch_projectile() {
     KernelProjectileTemplateDefinition projectile_template =
         ::projectile_template(
             3,
-            3,
             KernelProjectileSyncMode_HybridDeterministicThenSnapshot,
             1);
     KernelColliderTemplateDefinition collider_template = projectile_collider_template();
@@ -4112,7 +4105,7 @@ void predicted_area_effect_impulse_skips_the_local_shooter() {
         client.reset_runtime_state(KernelMode_Client);
 
         KernelProjectileTemplateDefinition definition = projectile_template(
-            3, 3, KernelProjectileSyncMode_LocalPredictedDeterministic);
+            3, KernelProjectileSyncMode_LocalPredictedDeterministic);
         definition.mechanics.projectile_type = KernelProjectileType_AreaEffect;
         definition.mechanics.speed = 0.0f;
         definition.mechanics.collision_mask = KERNEL_COLLISION_MASK_ACTOR;
@@ -4478,7 +4471,7 @@ struct HeldBurstClient {
     HeldBurstClient() : client(config()) {
         client.reset_runtime_state(KernelMode_Client);
         KernelProjectileTemplateDefinition projectile = ::projectile_template(
-            3, 2, KernelProjectileSyncMode_LocalPredictedDeterministic);
+            3, KernelProjectileSyncMode_LocalPredictedDeterministic);
         KernelColliderTemplateDefinition collider = projectile_collider_template();
         KernelGameplayCatalogDefinition catalog{};
         catalog.struct_size = sizeof(catalog);

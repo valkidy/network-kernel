@@ -12,7 +12,7 @@ damage: 40
 # Authored, not derived: a slam should stagger on its own regardless of its
 # damage number. 120 is the player's threshold.
 stagger: 120
-collision_mask: player_side | limb
+collision_mask: player_side
 max_hit_count: 3
 speed: 0.1
 lifetime_ticks: 3

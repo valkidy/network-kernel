@@ -232,7 +232,6 @@ void hash_projectile_template(
         projectile_template.definition;
     const KernelProjectileMechanicsDefinition& mechanics = definition.mechanics;
     hash_scalar(hash, definition.projectile_template_id);
-    hash_scalar(hash, definition.weapon_id);
     hash_scalar(hash, mechanics.projectile_type);
     hash_scalar(hash, mechanics.motion_model);
     hash_scalar(hash, mechanics.sync_mode);
@@ -3194,6 +3193,10 @@ std::uint32_t collider_purpose_from_yaml(const YAML::Node& node) {
     if (value == "trigger") {
         return KernelColliderPurpose_Trigger;
     }
+    // An actor's bounds (ABI 106): only an actor hit on its bones names one.
+    if (value == "bounds") {
+        return KernelColliderPurpose_Bounds;
+    }
     throw std::runtime_error("unsupported collider purpose: " + value);
 }
 
@@ -3814,6 +3817,54 @@ std::uint32_t actor_collider_template_id_from_yaml(
         }
     }
     throw std::runtime_error("unknown actor collider_template name: " + value);
+}
+
+// An actor's hit volume is its collider_template and nothing else. The live hit
+// tests read the collider; the rewound ones, relevance and aim points read the
+// Hitbox filled here. They used to be authored separately, as a `hitbox:` block,
+// and five rigs drifted apart by a factor of thirty: shot in the rewound window
+// a giant was 16 m wide, after it 0.8 m.
+//
+// An actor whose skeleton colliders are hit volumes is hit on those and only
+// those, so its collider_template is its bounds instead: where it is, and which
+// actors' bones a rewound shot goes on to test, never something struck itself.
+// The two kinds cannot be mixed up -- a hit box on a rig would be struck in the
+// gaps between its legs, and bounds on anything else would make it unhittable.
+void apply_actor_hit_collider(
+    const ColliderCatalogConfig& colliders,
+    ActorTemplateConfig* actor_template) {
+    const bool rigged = actor_template->skeleton.has_collision_flags;
+    if (rigged &&
+        (actor_template->skeleton.collision_flags.purpose_flags &
+         KernelColliderPurpose_Hit) == 0u) {
+        throw std::runtime_error(
+            "skeleton collision_flags must include hit; a rig's colliders are "
+            "the actor's hit volumes: " +
+            actor_template->name);
+    }
+    const auto found = std::find_if(
+        colliders.templates.begin(),
+        colliders.templates.end(),
+        [actor_template](const ColliderTemplateConfig& collider_template) {
+            return collider_template.definition.template_id ==
+                actor_template->collider_template_id;
+        });
+    const std::uint32_t expected_purpose =
+        rigged ? KernelColliderPurpose_Bounds : KernelColliderPurpose_Hit;
+    // Hitbox is a centred box and nothing else, so that is all either kind
+    // may be.
+    if (found == colliders.templates.end() ||
+        found->definition.purpose_flags != expected_purpose ||
+        found->definition.shape_type != KernelColliderShapeType_Aabb) {
+        throw std::runtime_error(
+            rigged ? "an actor hit on its skeleton colliders needs a bounds "
+                     "aabb as its collider_template: " + actor_template->name
+                   : "actor collider_template must be a hit aabb: " +
+                    actor_template->name);
+    }
+    const KernelVec4& box = found->definition.shape_params;
+    actor_template->hitbox_center = found->definition.center;
+    actor_template->hitbox_half_extents = KernelVec3{box.x, box.y, box.z};
 }
 
 std::uint64_t uint64_from_yaml(const YAML::Node& node) {
@@ -4472,21 +4523,14 @@ ActorTemplateConfig actor_template_from_yaml(
             hover["vertical_speed_meters_per_second"].as<float>();
     }
 
-    const YAML::Node hitbox = node["hitbox"];
-    if (!hitbox || !hitbox["center"] || !hitbox["half_extents"]) {
+    // Still a known key, so that an old template is told where its box went
+    // rather than only that the key is unknown.
+    if (node["hitbox"]) {
         throw std::runtime_error(
-            "actor template requires hitbox center and half_extents: " +
+            "actor template sets hitbox; its hit volume is its "
+            "collider_template: " +
             actor_template.name);
     }
-    reject_unknown_keys(
-        hitbox,
-        {"center", "half_extents"},
-        path,
-        source_kind,
-        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
-        actor_template.actor_template_id);
-    actor_template.hitbox_center = vec3_from_yaml(hitbox["center"]);
-    actor_template.hitbox_half_extents = vec3_from_yaml(hitbox["half_extents"]);
 
     const YAML::Node weapon_slots = node["weapon_slots"];
     if (!weapon_slots || !weapon_slots.IsSequence()) {
@@ -5074,6 +5118,9 @@ ActorTemplateConfig actor_template_from_yaml(
         path,
         source_kind,
         actor_template.actor_template_id);
+    // Last, since which kind of collider an actor needs depends on whether its
+    // skeleton colliders are hit volumes.
+    apply_actor_hit_collider(colliders, &actor_template);
     return actor_template;
 }
 
@@ -8701,7 +8748,6 @@ void apply_weapon_template_references(
                     projectile_templates);
             KernelWeaponMechanicsDefinition& instant_weapon =
                 weapons->definitions[weapon_id];
-            shot_template->definition.weapon_id = weapon_id;
             instant_weapon.projectile_template_id =
                 shot_template->definition.projectile_template_id;
             instant_weapon.damage = shot_template->definition.mechanics.damage;
@@ -8732,7 +8778,6 @@ void apply_weapon_template_references(
                     projectile_templates);
             KernelWeaponMechanicsDefinition& melee =
                 weapons->definitions[weapon_id];
-            shot_template->definition.weapon_id = weapon_id;
             melee.projectile_template_id =
                 shot_template->definition.projectile_template_id;
             melee.damage = shot_template->definition.mechanics.damage;
@@ -8754,7 +8799,6 @@ void apply_weapon_template_references(
                     projectile_templates);
             KernelWeaponMechanicsDefinition& lock =
                 weapons->definitions[weapon_id];
-            shot_template->definition.weapon_id = weapon_id;
             lock.projectile_template_id =
                 shot_template->definition.projectile_template_id;
             lock.damage = shot_template->definition.mechanics.damage;
@@ -8823,7 +8867,6 @@ void apply_weapon_template_references(
             }
             KernelWeaponMechanicsDefinition& weapon =
                 weapons->definitions[weapon_id];
-            strike_template->definition.weapon_id = weapon_id;
             weapon.projectile_template_id =
                 strike_template->definition.projectile_template_id;
             weapon.damage = mechanics.damage;
@@ -8851,7 +8894,6 @@ void apply_weapon_template_references(
                     "a projectile with a launch rule cannot be fired from "
                     "the muzzle: " + file);
             }
-            projectile_template->definition.weapon_id = weapon_id;
             weapon.fire_mode = KernelWeaponFireMode_Projectile;
             weapon.projectile_template_id = definition.projectile_template_id;
             weapon.damage = definition.mechanics.damage;

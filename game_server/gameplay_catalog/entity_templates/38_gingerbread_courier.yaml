@@ -31,9 +31,6 @@ movement:
   ground_probe_distance: 0.25
   ground_snap_distance: 0.5
   collision_mask: terrain | static_obstacle | actor
-hitbox:
-  center: {x: 0.0, y: 0.8, z: 0.0}
-  half_extents: {x: 0.4, y: 0.8, z: 0.4}
 # The plain claw: damage on contact, nothing else.
 weapon_slots:
   - 10

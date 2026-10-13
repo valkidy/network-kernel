@@ -264,16 +264,18 @@ so the rule is:
 
 Omitting the side is not a neutral choice — it selects both.
 
-This is why the same weapon needs a per-side twin, and the twin is mandatory
-rather than stylistic: `apply_weapon_template_references` stamps `weapon_id`
-onto the projectile template it resolves, so **a projectile template belongs to
-exactly one weapon** and cannot be shared even when the mask would suit both.
+This is why the same weapon needs a per-side twin: the mask lives on the
+projectile template, so a weapon aimed at the other side needs a template with
+the other mask.
 
-Fire and reload action templates, and collider templates, have no such
-back-stamping — they are resolved by reference and only their id is copied, so
-two weapons may share them freely. `allied_sentry_rifle` reuses
+Two weapons whose masks agree may share a projectile template. A projectile's
+`weapon_id` -- what damage, kill attribution and impact graphs report -- is the
+weapon that fired it, carried from the shot, not a property of the template
+(ABI 106; the catalog used to stamp it onto the template, which made a template
+belong to whichever weapon named it last). The same holds for fire and reload
+action templates and collider templates: `allied_sentry_rifle` reuses
 `beam_sentry_fire`, `beam_sentry_reload` and `beam_sentry_beam_box`, and
-authors only its own projectile.
+authors only its own projectile because its mask differs.
 
 ### The other half of a side lives on the target
 

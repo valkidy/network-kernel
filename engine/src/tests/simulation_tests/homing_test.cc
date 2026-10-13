@@ -78,7 +78,6 @@ network_example::WeaponMechanicsDefinition homing_weapon_definition() {
 network_example::RuntimeProjectileTemplate homing_projectile_template() {
     network_example::RuntimeProjectileTemplate projectile_template{};
     projectile_template.projectile_template_id = 66;
-    projectile_template.weapon_id = network_example::kWeaponId6;
     projectile_template.projectile_type = network_example::ProjectileType::kStandard;
     projectile_template.motion_model = network_example::ProjectileMotionModel::kHoming;
     projectile_template.sync_mode =

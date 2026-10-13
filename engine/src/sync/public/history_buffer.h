@@ -25,6 +25,10 @@ struct HitVolumeSnapshot {
     // contributes one hitbox and a legged rig contributes a dozen, and a query
     // that never asked should not pay for them or start hitting them.
     std::uint8_t is_limb = 0;
+    // The actor's bounds rather than a damage volume (Hitbox::bounds_only).
+    // Never a hit: a ray that enters it goes on to test that actor's limbs,
+    // and only an actor whose bounds it entered has its limbs tested.
+    std::uint8_t is_bounds = 0;
 };
 
 struct HistoryFrame {
@@ -60,8 +64,12 @@ private:
     std::vector<std::pair<NetId, bool>> alive_by_net_id_;
 };
 
-// include_limbs defaults to false so that a caller which has not been taught
-// about limbs keeps the results it had.
+// Two layers on an actor with bounds: its bounds volume is tested first and
+// never returned, and only if the ray enters it are that actor's limbs tested;
+// a limb is then the hit. include_limbs does not gate those limbs -- they are
+// that actor's body -- only a limb whose actor has no bounds, which defaults
+// to false so that a caller which has not been taught about limbs keeps the
+// results it had.
 //
 // excluded_net_ids, when given, must be sorted; volumes belonging to any of
 // them are passed through. The frame records no side, so this is how a caller

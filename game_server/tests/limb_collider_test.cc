@@ -897,13 +897,20 @@ int main() {
             (limbs.gameplay_category_mask &
              KERNEL_COLLISION_LAYER_HOSTILE_SIDE) != 0u);
 
-        // Not naming it leaves every existing weapon exactly as it was.
-        const network_example::physics::CollisionQueryFilter without =
+        // Since ABI 106 a rig is hit on its bones and its bounds are no body,
+        // so any mask that reaches actors reaches limbs without naming them.
+        const network_example::physics::CollisionQueryFilter actors =
             network_example::collision_filter_from_mask(
                 KERNEL_COLLISION_MASK_DAMAGEABLE |
                 KERNEL_COLLISION_MASK_STATIC_WORLD);
-        require((without.collision_mask & limb_layer) == 0u);
-        require((without.object_kind_mask & limb_kind) == 0u);
+        require((actors.collision_mask & limb_layer) != 0u);
+        require((actors.object_kind_mask & limb_kind) != 0u);
+        // One that reaches no actor still never pays for them.
+        const network_example::physics::CollisionQueryFilter world_only =
+            network_example::collision_filter_from_mask(
+                KERNEL_COLLISION_MASK_STATIC_WORLD);
+        require((world_only.collision_mask & limb_layer) == 0u);
+        require((world_only.object_kind_mask & limb_kind) == 0u);
 
         // The trap: gameplay_category_mask is built from the side bits alone,
         // so a mask that names limbs and no side produces an empty category and
@@ -1017,10 +1024,11 @@ int main() {
             network_example::scale_damage_by_hit_zone(60000u, 60000u) ==
             std::numeric_limits<std::uint16_t>::max());
 
-        // The one projectile that asks. A rocket strikes the leg in its path
-        // instead of sailing between them, and the hit resolves to the actor
-        // wearing it -- projectile hit records carry
-        // hit.identity.entity_net_id, which every limb above asserts is the rig.
+        // A rocket strikes the leg in its path instead of sailing between
+        // them, and the hit resolves to the actor wearing it -- projectile hit
+        // records carry hit.identity.entity_net_id, which every limb above
+        // asserts is the rig. Since ABI 106 it gets there through
+        // `damageable` alone: the limb token is no longer in the catalog.
         const network_example::game_server::ProjectileTemplateConfig* rocket =
             nullptr;
         for (const network_example::game_server::ProjectileTemplateConfig&
@@ -1032,40 +1040,36 @@ int main() {
         require(rocket != nullptr);
         const std::uint32_t rocket_mask =
             rocket->definition.mechanics.collision_mask;
-        require((rocket_mask & KERNEL_COLLISION_LAYER_LIMB) != 0u);
-        // Still a side-filtered weapon: the limb bit is not a side, so it can
-        // neither widen nor narrow who the rocket is allowed to damage.
+        require((rocket_mask & KERNEL_COLLISION_LAYER_LIMB) == 0u);
         require((rocket_mask & KERNEL_COLLISION_MASK_DAMAGEABLE) != 0u);
         const network_example::physics::CollisionQueryFilter rocket_filter =
             network_example::collision_filter_from_mask(rocket_mask);
         require((rocket_filter.collision_mask & limb_layer) != 0u);
         require((rocket_filter.object_kind_mask & limb_kind) != 0u);
 
-        // The rifle is the one hitscan that asks for limbs, which is what makes
-        // a rewound shot able to resolve against a leg at all: the rewound path
-        // never touches the physics world, so its opt-in is this mask reaching
-        // raycast_history_frame rather than a collision filter.
+        // The rifle and the shotgun reach the same bones the same way, and a
+        // rewound shot tests a rig's bones whenever it enters the rig's bounds
+        // (raycast_history_frame), so no weapon has to opt in any more.
         const std::uint8_t rifle_id =
             network_example::game_server::kWeaponRifle;
         require(config.weapons.configured[rifle_id]);
         require(config.weapons.names[rifle_id] == "Rifle");
         const std::uint32_t rifle_mask =
             config.weapons.definitions[rifle_id].collision_mask;
-        require((rifle_mask & KERNEL_COLLISION_LAYER_LIMB) != 0u);
         require((rifle_mask & KERNEL_COLLISION_MASK_DAMAGEABLE) != 0u);
         // Walls still stop it, which the engine default did for free before the
         // mask existed and would silently stop doing if it were dropped.
         require((rifle_mask & KERNEL_COLLISION_MASK_STATIC_WORLD) != 0u);
-
-        // The shotgun does not ask, and its pellets go through the same
-        // resolver -- so this is also the assertion that the opt-in is
-        // per weapon rather than per code path.
         const std::uint8_t shotgun_id =
             network_example::game_server::kWeaponShotgun;
         require(config.weapons.configured[shotgun_id]);
-        require(
-            (config.weapons.definitions[shotgun_id].collision_mask &
-             KERNEL_COLLISION_LAYER_LIMB) == 0u);
+        for (const std::uint8_t weapon_id : {rifle_id, shotgun_id}) {
+            const network_example::physics::CollisionQueryFilter filter =
+                network_example::collision_filter_from_mask(
+                    config.weapons.definitions[weapon_id].collision_mask);
+            require((filter.collision_mask & limb_layer) != 0u);
+            require((filter.object_kind_mask & limb_kind) != 0u);
+        }
 
         // The rocket into a quadruped's leg, which is what all of this was for:
         // 45 damage on a 0.5 leg is 23.
@@ -1115,6 +1119,91 @@ int main() {
         !after_despawn_found ||
         after_despawn_hit.identity.kind !=
             network_example::physics::CollisionObjectKind::kActorLimb);
+
+    // ---------------------------------------------------------------------
+    // The bones stay inside the bounds (ABI 106).
+    //
+    // A rewound shot tests a rig's bones only once it has entered the rig's
+    // bounds, so a leg that swings or reaches down a slope past them is a leg
+    // nothing rewound can hit. The authority measures that every tick it
+    // poses a rig; this walks every rigged template across the undulating
+    // scene, turning, so stepping legs, slopes and yaw all get their chance.
+    {
+        require(authority.server_destroy_entity(
+            parity_net_id, KernelDespawnReason_Destroyed));
+        for (const std::uint32_t template_id : {21u, 22u, 23u, 39u, 211u}) {
+            KernelServerEntityCreateInfo walker_create = create;
+            walker_create.entity_template_id = template_id;
+            walker_create.actor_template_id = template_id;
+            std::uint32_t walker = 0u;
+            require(authority.server_create_entity(walker_create, &walker));
+            require(walker != 0u);
+            for (std::uint32_t frame = 0u; frame < 90u; ++frame) {
+                authority.update(1.0f / 30.0f);
+            }
+            KernelServerEntityState start{};
+            start.struct_size = sizeof(start);
+            require(authority.server_get_entity_state(walker, &start));
+            float lowest_y = start.position.y;
+            float highest_y = start.position.y;
+            std::uint32_t input_seq = 1000u;
+            const std::array<KernelVec2, 4> legs_of_the_walk{{
+                {1.0f, 0.0f},
+                {0.0f, 1.0f},
+                {-0.7071f, -0.7071f},
+                {0.7071f, -0.7071f},
+            }};
+            for (const KernelVec2& heading : legs_of_the_walk) {
+                for (std::uint32_t frame = 0u; frame < 240u; ++frame) {
+                    KernelPlayerInput input{};
+                    input.input_seq = ++input_seq;
+                    input.move = heading;
+                    input.selected_weapon = 2u;
+                    require(authority.server_submit_entity_input(walker, input));
+                    authority.update(1.0f / 30.0f);
+                    KernelServerEntityState state{};
+                    state.struct_size = sizeof(state);
+                    require(authority.server_get_entity_state(walker, &state));
+                    lowest_y = std::min(lowest_y, state.position.y);
+                    highest_y = std::max(highest_y, state.position.y);
+                }
+            }
+            KernelServerEntityState end{};
+            end.struct_size = sizeof(end);
+            require(authority.server_get_entity_state(walker, &end));
+            const float travelled = std::hypot(
+                end.position.x - start.position.x,
+                end.position.z - start.position.z);
+            std::printf(
+                "limb bounds: template %u travelled %.1f m over %.2f m of "
+                "height\n",
+                template_id,
+                static_cast<double>(travelled),
+                static_cast<double>(highest_y - lowest_y));
+            // It really walked, over uneven ground, with its bones published
+            // -- or the measurement says nothing about it.
+            require(travelled > 5.0f);
+            require(highest_y - lowest_y > 0.1f);
+            KernelColliderShapeQuery walker_query = parity_query;
+            walker_query.entity_net_id = walker;
+            std::array<KernelColliderShapeView, 32> walker_shapes{};
+            require(
+                authority.query_collider_shapes(
+                    &walker_query,
+                    walker_shapes.data(),
+                    static_cast<std::uint32_t>(walker_shapes.size())) > 0u);
+            require(authority.server_destroy_entity(
+                walker, KernelDespawnReason_Destroyed));
+        }
+        std::printf(
+            "limb bounds: worst bone %.2f m from its bounds' face (positive "
+            "is outside)\n",
+            static_cast<double>(authority.max_limb_bounds_overshoot_meters_));
+        require(authority.max_limb_bounds_overshoot_meters_ !=
+                std::numeric_limits<float>::lowest());
+        require(authority.max_limb_bounds_overshoot_meters_ <= 0.01f);
+        require(authority.limb_bounds_overshoot_warned_.empty());
+    }
 
     std::printf("limb_collider_test: PASS\n");
     return 0;

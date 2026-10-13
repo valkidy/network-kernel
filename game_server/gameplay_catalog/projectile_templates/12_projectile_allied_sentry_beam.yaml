@@ -1,18 +1,15 @@
 # Player-side twin of beam_sentry_beam. Identical geometry and damage; the only
 # difference that matters is which side the mask names.
 #
-# It has to be its own template for the same two reasons beam_sentry_beam is its
-# own template rather than sharing the player's:
+# It has to be its own template for the reason beam_sentry_beam is its own
+# rather than sharing the player's: collision_mask is an absolute category, not
+# one relative to the shooter. `hostile_side` here is what stops this beam from
+# sweeping the player and the player's other allies -- it is the same mask
+# beam_rifle_beam carries, because this sentry is on the player's side and
+# shoots at what the player shoots at.
 #
-# 1. collision_mask is an absolute category, not one relative to the shooter.
-#    `hostile_side` here is what stops this beam from sweeping the player and
-#    the player's other allies -- it is the same mask beam_rifle_beam carries,
-#    because this sentry is on the player's side and shoots at what the player
-#    shoots at.
-# 2. apply_weapon_template_references stamps `weapon_id` onto the projectile
-#    template it resolves (gameplay_config.cc:6297), so a projectile template
-#    belongs to exactly one weapon. Sharing beam_sentry_beam is not available
-#    even if the mask were right.
+# It could share beam_rifle_beam outright now (ABI 106: a projectile's weapon
+# comes from the shot, not the template), but keeps its own damage and reach.
 #
 # The collider is shared with the enemy sentry on purpose: beam_sentry_beam_box
 # is `layer: projectile` and carries only the beam's reach, which is the same

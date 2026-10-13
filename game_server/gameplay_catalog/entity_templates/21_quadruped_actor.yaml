@@ -3,7 +3,7 @@ name: quadruped_actor
 entity_type: actor
 actor_type: agent
 camp: enemy_side
-collider_template: sentry_grunt_hit_aabb
+collider_template: quadruped_bounds_aabb
 health:
   hp: 500
   max_hp: 500
@@ -22,9 +22,6 @@ movement:
   # through static_obstacle. The mask is symmetric, so dropping "actor" also
   # takes this rig out of every other actor's movement sweep.
   collision_mask: terrain
-hitbox:
-  center: {x: 0.0, y: 12.0, z: 0.0}
-  half_extents: {x: 12.0, y: 14.0, z: 12.0}
 weapon_slots: [2]
 active_weapon_slot: 0
 vision:

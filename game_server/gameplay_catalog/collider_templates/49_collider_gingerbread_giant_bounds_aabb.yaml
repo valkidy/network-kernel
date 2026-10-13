@@ -1,0 +1,14 @@
+# gingerbread_giant's bounds: the whole body, but never what gets hit -- the
+# rig's bone colliders are. Where the actor is (relevance, aim point, homing)
+# and the rewound shot's first test: only a shot that enters it tests the bones.
+# Sized to enclose the bones, with a metre to spare on every axis and the
+# centre kept where the old hitbox had it: walking the undulating scene
+# (limb_collider_test), its bones reached, from the root:
+# x -6.5..6.7, y -2.3..19.5, z -7.7..5.5 m.
+id: 49
+name: gingerbread_giant_bounds_aabb
+shape: aabb
+center: {x: 0.0, y: 9.0, z: 0.0}
+half_extents: {x: 8.0, y: 12.5, z: 9.0}
+purpose: bounds
+layer: hostile_side

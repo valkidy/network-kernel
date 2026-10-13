@@ -611,6 +611,10 @@ struct Hitbox {
     glm::vec3 half_extents{0.5f, 0.5f, 0.5f};
     std::uint32_t collider_template_id = 0;
     std::uint16_t hit_zone = kHitZoneUnscaled;
+    // The box is the actor's bounds, not a damage volume: its collider is
+    // KernelColliderPurpose_Bounds, and its bones are what gets hit. Set from
+    // the collider whenever the collider is materialized.
+    bool bounds_only = false;
 };
 
 struct ProjectileState {
@@ -1123,7 +1127,6 @@ struct StatusEffectState {
 
 struct RuntimeProjectileTemplate {
     std::uint32_t projectile_template_id = 0;
-    std::uint8_t weapon_id = 0;
     ProjectileType projectile_type = ProjectileType::kStandard;
     ProjectileMotionModel motion_model = ProjectileMotionModel::kLinear;
     ProjectileSyncMode sync_mode = ProjectileSyncMode::kHybridDeterministicThenSnapshot;

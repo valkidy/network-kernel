@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <limits>
 #include <memory>
 #include <span>
 #include <string_view>
@@ -640,7 +641,6 @@ private:
         std::uint32_t max_lifetime_ticks = 0;
         std::uint32_t projectile_template_id = 0;
         std::uint32_t collider_template_id = 0;
-        std::uint8_t weapon_id = 0;
         std::uint8_t sync_mode = KernelProjectileSyncMode_HybridDeterministicThenSnapshot;
         glm::vec3 correction_offset{0.0f, 0.0f, 0.0f};
         bool bound = false;
@@ -1219,6 +1219,9 @@ private:
         const KernelSkeletonBindingDefinition& skeleton,
         const RuntimeSkeletonAsset& skeleton_asset,
         const LocomotionState& locomotion_state);
+    // How far this actor's bones reach outside its bounds, in metres; zero or
+    // less when they all fit. Records the worst seen and warns once per actor.
+    void check_limbs_inside_bounds(NetId net_id);
     // The same colliders on a client, for actors it only follows. Rebuilt from
     // follower_locomotion_states_ rather than carried in the snapshot: the
     // follower solve already produced the frames, so this costs no wire bytes.
@@ -1516,6 +1519,15 @@ private:
     // would be new each time and Jolt would churn a whole body set per frame.
     std::unordered_map<NetId, std::vector<std::uint32_t>>
         prediction_limb_collider_ids_;
+    // A rewound shot tests an actor's bones only if it entered the actor's
+    // bounds (ABI 106), so a bone that reaches outside them cannot be hit
+    // there. check_limbs_inside_bounds measures it every tick the authority
+    // poses a rig: the worst overshoot seen (negative while every bone has
+    // room to spare, lowest() until a rig with bounds is posed), and which
+    // actors have already been warned about.
+    float max_limb_bounds_overshoot_meters_ =
+        std::numeric_limits<float>::lowest();
+    std::unordered_set<NetId> limb_bounds_overshoot_warned_;
     std::uint32_t next_prediction_proxy_collider_id_ = 0xc0000000u;
     std::unordered_map<PeerId, GameplayCatalogTransfer>
         gameplay_catalog_transfers_;
