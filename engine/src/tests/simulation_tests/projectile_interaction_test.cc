@@ -64,7 +64,6 @@ network_example::NetId spawn_test_projectile(
 
 network_example::RuntimeProjectileTemplate area_effect_template(
     std::uint32_t template_id,
-    std::uint8_t weapon_id,
     float radius,
     std::uint16_t damage,
     std::uint32_t damage_interval_ticks,
@@ -72,7 +71,6 @@ network_example::RuntimeProjectileTemplate area_effect_template(
     std::uint32_t collision_mask) {
     network_example::RuntimeProjectileTemplate projectile_template;
     projectile_template.projectile_template_id = template_id;
-    projectile_template.weapon_id = weapon_id;
     projectile_template.projectile_type = network_example::ProjectileType::kAreaEffect;
     projectile_template.motion_model = network_example::ProjectileMotionModel::kLinear;
     projectile_template.damage_shape = network_example::ProjectileDamageShape::kDirectHit;
@@ -132,7 +130,6 @@ void matching_interaction_spawns_area_effect() {
     world.set_projectile_templates({
         area_effect_template(
             8,
-            9,
             2.5f,
             12,
             3,
@@ -174,7 +171,9 @@ void matching_interaction_spawns_area_effect() {
     require(area_effect.damage_interval_ticks == 3);
     require(area_effect.expire_tick == 12);
     require(area_effect.damage_per_interval == 12);
-    require(area_effect.source_code == 9);
+    // The rule's left-hand projectile's weapon (3), carried into what the
+    // rule spawns. The template names no weapon since ABI 106.
+    require(area_effect.source_code == 3);
     require(area_effect.collision_mask == network_example::kCollisionLayerHostileSide);
 }
 
@@ -331,7 +330,6 @@ void multiple_reactions_resolve_by_projectile_pair_order() {
     world.set_projectile_templates({
         area_effect_template(
             8,
-            9,
             1.0f,
             0,
             1,
@@ -506,7 +504,6 @@ void projectile_impact_trigger_spawns_area_effect_projectile_once() {
 
     network_example::RuntimeProjectileTemplate rocket_template;
     rocket_template.projectile_template_id = 3;
-    rocket_template.weapon_id = 3;
     rocket_template.projectile_type = network_example::ProjectileType::kStandard;
     rocket_template.projectile_impact_binding =
         network_example::compile_spawn_projectile_binding(
@@ -516,7 +513,6 @@ void projectile_impact_trigger_spawns_area_effect_projectile_once() {
         rocket_template,
         area_effect_template(
             8,
-            3,
             2.5f,
             45,
             45,
@@ -591,7 +587,6 @@ void projectile_impact_trigger_is_additive_with_direct_hit_damage() {
         rocket_template,
         area_effect_template(
             8,
-            3,
             2.5f,
             45,
             45,
@@ -654,7 +649,6 @@ void static_impact_emits_projectile_trigger_once() {
         rocket_template,
         area_effect_template(
             8,
-            3,
             2.5f,
             45,
             45,
@@ -705,7 +699,6 @@ void historical_hit_emits_projectile_trigger_once() {
         rocket_template,
         area_effect_template(
             8,
-            3,
             2.5f,
             45,
             45,
@@ -776,14 +769,12 @@ void expired_trigger_does_not_reuse_impact_trigger() {
         projectile_template,
         area_effect_template(
             8,
-            8,
             1.0f,
             1,
             1,
             2,
             network_example::kCollisionMaskDamageable),
         area_effect_template(
-            9,
             9,
             1.0f,
             1,
@@ -864,7 +855,7 @@ void stationary_marker_expires_in_place_facing_its_spawn_direction() {
         marker,
         armed,
         area_effect_template(
-            9, 9, 1.0f, 1, 1, 2, network_example::kCollisionMaskDamageable),
+            9, 1.0f, 1, 1, 2, network_example::kCollisionMaskDamageable),
     });
 
     const glm::vec3 place{5.0f, 0.0f, 5.0f};

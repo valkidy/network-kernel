@@ -15,7 +15,7 @@
 id: 219
 name: initial_camp
 entity_type: prop
-impulse_resistance: 1000.0
+force_resistance: 1000.0
 physics:
   collider_template: tent_hitbox
 # Several players may be picking at once; hidden from enemies like a tent's.
@@ -28,8 +28,9 @@ interaction:
   line_of_sight_required: false
 triggers:
   on_activated:
-    action_graph: action_open_loadout_ui
+    action_graph: action_open_ui
     parameters:
+      ui_id: 2
       target: event.instigator
 loadout:
   options:

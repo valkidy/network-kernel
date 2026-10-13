@@ -43,12 +43,10 @@ bool has_version_revision_suffix(const char* value) {
 
 KernelProjectileTemplateDefinition projectile_template(
     std::uint32_t template_id,
-    std::uint8_t weapon_id,
     std::uint8_t projectile_type = KernelProjectileType_Standard) {
     KernelProjectileTemplateDefinition projectile_template{};
     projectile_template.struct_size = sizeof(projectile_template);
     projectile_template.projectile_template_id = template_id;
-    projectile_template.weapon_id = weapon_id;
     projectile_template.mechanics.struct_size =
         sizeof(KernelProjectileMechanicsDefinition);
     projectile_template.mechanics.projectile_type = projectile_type;
@@ -571,9 +569,9 @@ int main() {
     KernelHandle* kernel = Kernel_Create(&config);
     require(kernel != nullptr);
     KernelProjectileTemplateDefinition projectile_template =
-        ::projectile_template(3, 3);
+        ::projectile_template(3);
     KernelProjectileTemplateDefinition area_projectile_template =
-        ::projectile_template(4, 4, KernelProjectileType_AreaEffect);
+        ::projectile_template(4, KernelProjectileType_AreaEffect);
     area_projectile_template.mechanics.area_effect.struct_size =
         sizeof(KernelAreaEffectMechanicsDefinition);
     area_projectile_template.mechanics.area_effect.radius = 2.5f;
@@ -583,7 +581,7 @@ int main() {
     area_projectile_template.mechanics.area_effect.collision_mask =
         KERNEL_COLLISION_MASK_DAMAGEABLE;
     KernelProjectileTemplateDefinition beam_projectile_template =
-        ::projectile_template(5, 5, KernelProjectileType_Beam);
+        ::projectile_template(5, KernelProjectileType_Beam);
     beam_projectile_template.mechanics.beam.struct_size =
         sizeof(KernelBeamMechanicsDefinition);
     beam_projectile_template.mechanics.beam.length = 6.0f;
@@ -593,7 +591,7 @@ int main() {
     beam_projectile_template.mechanics.beam.collision_mask =
         KERNEL_COLLISION_LAYER_HOSTILE_SIDE;
     KernelProjectileTemplateDefinition homing_projectile_template =
-        ::projectile_template(6, 6);
+        ::projectile_template(6);
     homing_projectile_template.mechanics.motion_model =
         KernelProjectileMotionModel_Homing;
     homing_projectile_template.mechanics.homing.struct_size =

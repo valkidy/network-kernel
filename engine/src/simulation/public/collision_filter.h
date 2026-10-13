@@ -43,11 +43,9 @@ constexpr bool is_actor_hit(physics::CollisionObjectKind kind) {
 // Pins the answer, so that changing it is a deliberate edit here rather than
 // something that drifts.
 //
-// A limb counts. Reaching one still requires naming KERNEL_COLLISION_LAYER_LIMB
-// in the authored mask -- that is where the opt-in lives, and a query that did
-// not ask never receives a limb hit to classify. What this decides is what
-// happens to one that did ask: a leg resolves to the actor wearing it rather
-// than to scenery.
+// A limb counts: a leg resolves to the actor wearing it rather than to
+// scenery. Since ABI 106 every limb belongs to an actor hit on its bones, and
+// collision_filter_from_mask hands those bones to any mask that reaches actors.
 //
 // The movement capsule stays out. It is where an actor stands, not what it can
 // be hit on, and admitting it would let every weapon shoot the volume that
@@ -64,24 +62,27 @@ inline physics::CollisionQueryFilter collision_filter_from_mask(
     filter.collision_mask = 0u;
     filter.object_kind_mask = 0u;
     filter.gameplay_category_mask = mask & KERNEL_COLLISION_MASK_ACTOR;
-    // Spelled out rather than reusing actor_hit_*_mask(), which is a different
-    // question that happened to have the same answer once. Those say what
-    // counts as hitting an actor when a result is classified, and limbs count.
-    // This says what the word "actor" turns on in an authored mask, and limbs
-    // are their own token -- folding the two together silently handed every
-    // weapon the limb layer it never asked for.
+    // Spelled out rather than reusing actor_hit_*_mask(), which answers a
+    // different question: what counts as hitting an actor when a result is
+    // classified. This says what the word "actor" turns on in an authored mask.
+    //
+    // Since ABI 106 that includes a rig's bones. Every limb belongs to an
+    // actor whose bounds are not a body (KernelColliderPurpose_Bounds), so its
+    // bones are the only thing there is to hit; a weapon that reached actors
+    // and not limbs would pass straight through it. A limb carries its actor's
+    // side as its gameplay category, so the side bits still decide whose bones.
     if ((mask & KERNEL_COLLISION_MASK_ACTOR) != 0u) {
-        filter.collision_mask |= physics::collision_layer_bit(
-            physics::CollisionLayer::kDamageable);
+        filter.collision_mask |=
+            physics::collision_layer_bit(physics::CollisionLayer::kDamageable) |
+            physics::collision_layer_bit(physics::CollisionLayer::kActorLimb);
         filter.object_kind_mask |=
-            1u << static_cast<std::uint32_t>(
-                physics::CollisionObjectKind::kActorHitbox);
+            (1u << static_cast<std::uint32_t>(
+                 physics::CollisionObjectKind::kActorHitbox)) |
+            (1u << static_cast<std::uint32_t>(
+                 physics::CollisionObjectKind::kActorLimb));
     }
-    // A rig's bones are their own layer and their own kind, so a query that
-    // does not name them never pays for them. gameplay_category_mask is built
-    // from the side bits above, and a limb carries its actor's side, so
-    // "limb" without a side matches nothing -- deliberately: that is the same
-    // rule every other damageable volume follows.
+    // The explicit token, kept for a limb without bounds should one ever
+    // exist; every limb today is already reached by the side bits above.
     if ((mask & KERNEL_COLLISION_LAYER_LIMB) != 0u) {
         filter.collision_mask |=
             physics::collision_layer_bit(physics::CollisionLayer::kActorLimb);

@@ -26,6 +26,14 @@ std::uint32_t derived_visual_flags(const World& world, entt::entity entity) {
             flags |= kVisualFlagLanded;
         }
     }
+    if ((flags & kVisualFlagDead) == 0u) {
+        if (const ImpulseLockout* lockout =
+                world.registry().try_get<ImpulseLockout>(entity);
+            lockout != nullptr && lockout->until_tick > lockout->armed_tick &&
+            !lockout->recovering && !lockout->free_fall) {
+            flags |= kVisualFlagKnockedBack;
+        }
+    }
     return flags;
 }
 

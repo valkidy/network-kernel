@@ -5,6 +5,43 @@
 #include <stdint.h>
 
 /*
+ * 106: two-layer hits on rigged actors. KernelColliderPurpose gained _Bounds:
+ *     an actor whose skeleton colliders are hit volumes names a bounds box as
+ *     its collider_template, and that box is never hit itself -- it only says
+ *     which actors' bones a rewound shot goes on to test, and it is never a
+ *     physics body. Its bones are what gets hit, with their own hit_zone, and
+ *     any gameplay mask that reaches an actor now reaches those bones: they are
+ *     that actor's body, no longer an opt-in (KERNEL_COLLISION_LAYER_LIMB is
+ *     still accepted and reaches nothing more). An area effect no longer
+ *     scales by hit_zone.
+ *     Weapon provenance: KernelProjectileTemplateDefinition's weapon_id became
+ *     reserved_weapon_id and must be zero. A projectile's weapon -- for damage
+ *     source codes, kill attribution, impact graphs and interaction rules --
+ *     is the weapon whose event spawned it, carried down from the shot, not a
+ *     number stamped on the template by whichever weapon named it last; a
+ *     template may now be shared by several weapons. A projectile spawned by
+ *     an interaction rule carries the rule's left-hand projectile's weapon. A
+ *     client's projectile debug record reports weapon_id 255 (unknown): the
+ *     spawn record does not carry it. Layout unchanged.
+ * 105: action graph refactor. KernelEntityTemplateDefinition's
+ *     impulse_resistance is renamed force_resistance, at the same offset:
+ *     apply_impulse, apply_pull and apply_status's status_strength all weigh
+ *     their strength against it, so the name no longer says impulse. Every
+ *     managed mirror renames the field; the layout does not move.
+ *     KernelActionDefinition's and KernelActionTriggerDefinition's
+ *     impulse_collision_mask become retired_impulse_collision_mask, at the
+ *     same offset, and are ignored: an action graph no longer filters who it
+ *     is tested against (the projectile's collision_mask does), and
+ *     apply_impulse moves any actor, or any prop in the world and not being
+ *     carried, whose force_resistance its strength exceeds.
+ *     A hit's damage is always its projectile's: an impact graph adds effects
+ *     and no longer replaces the damage of an area effect or a melee swing,
+ *     which now go through the damage pipeline (falloff included) like a
+ *     direct hit always has. KernelProjectileMechanicsDefinition gained
+ *     stagger_authored and stagger, appended after launch: the stagger every
+ *     hit of that projectile adds, which a graph's apply_damage used to carry.
+ *     An area effect may author damage 0 (with damage_shape none) and deal
+ *     none.
  * 104: lock-on weapons, first part. KernelWeaponFireMode gained _LockInstant:
  *     on every commit, up to max_hit_count actors inside a cone are damaged at
  *     once -- the nearest first, any a static wall hides skipped -- and the
@@ -316,7 +353,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 104u
+#define KERNEL_ABI_VERSION 106u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -460,9 +497,10 @@ typedef enum KernelFootholdQueryType {
  * carry a different value in a different bit space -- these two are never
  * interchangeable and the value matching anything there is a coincidence.
  *
- * Naming it is the only way a projectile, beam or thrown prop can touch a leg.
- * It is absent from every MASK_ aggregate for that reason: a weapon that says
- * nothing about limbs keeps the results and the cost it has today.
+ * Since ABI 106 every limb belongs to an actor that is hit on its bones (a
+ * bounds actor), and any mask that reaches that actor reaches them, so naming
+ * this adds nothing. It is still accepted, and still absent from every MASK_
+ * aggregate, for a limb without bounds should one ever exist.
  */
 #define KERNEL_COLLISION_LAYER_LIMB UINT32_C(0x00000008)
 
@@ -568,6 +606,9 @@ typedef enum KernelFootholdQueryType {
 #define KERNEL_VISUAL_FLAG_FIRING UINT32_C(0x00000200)
 /* Core state, but bits 0-7 are full. */
 #define KERNEL_VISUAL_FLAG_SUSPENDED UINT32_C(0x00000400)
+/* Impulse flight. Predicted locally when the client resolves its own impulse;
+ * ordinary movement, suspension drops and knockdown recovery do not set it. */
+#define KERNEL_VISUAL_FLAG_KNOCKED_BACK UINT32_C(0x00000800)
 
 #define KERNEL_MAX_VISIBLE_HOSTILES 16u
 #define KERNEL_MAX_VISIBLE_ALLIES 16u
@@ -1101,7 +1142,10 @@ typedef struct KernelActionDefinition {
     int32_t health_change_amount;
     uint32_t condition_type;
     float impulse_strength;
-    uint32_t impulse_collision_mask;
+    /* impulse_collision_mask before ABI 105, kept for its slot. Ignored;
+     * write zero. Who an impulse can move is the target's kind and
+     * force_resistance. */
+    uint32_t retired_impulse_collision_mask;
     KernelVec3 impulse_direction;
     uint32_t status_effect_id;
     uint8_t modifier_operation;
@@ -1156,7 +1200,7 @@ typedef struct KernelActionDefinition {
      * where the spawned entity is put relative to the position it was given. */
     uint32_t spawn_placement;
     /* apply_pull only; zero on every other action. Finite and > 0. The pull
-     * moves a target only when this exceeds its impulse_resistance -- the
+     * moves a target only when this exceeds its force_resistance -- the
      * same strictly-greater test apply_impulse uses. It decides who is moved,
      * never how fast: the launch velocity comes from pull_* above. */
     float pull_strength;
@@ -1179,7 +1223,7 @@ typedef struct KernelActionDefinition {
     float suspend_drift_speed;
     /* apply_status only; zero on every other action. Finite and >= 0. When
      * non-zero the status is applied only to a target whose
-     * impulse_resistance is strictly below it; zero applies it to anyone. */
+     * force_resistance is strictly below it; zero applies it to anyone. */
     float status_strength;
 } KernelActionDefinition;
 
@@ -1203,7 +1247,10 @@ typedef struct KernelActionTriggerDefinition {
     int32_t health_change_amount;
     uint32_t condition_type;
     float impulse_strength;
-    uint32_t impulse_collision_mask;
+    /* impulse_collision_mask before ABI 105, kept for its slot. Ignored;
+     * write zero. Who an impulse can move is the target's kind and
+     * force_resistance. */
+    uint32_t retired_impulse_collision_mask;
     KernelVec3 impulse_direction;
     uint32_t status_effect_id;
     uint8_t modifier_operation;
@@ -2019,6 +2066,13 @@ typedef enum KernelColliderPurpose {
     // every limb into a weapon target: a limb is a hitbox only when the author
     // also sets _Hit on it.
     KernelColliderPurpose_Limb = 1u << 5,
+    // The whole of an actor whose bones are what gets hit (ABI 106). Only a
+    // template whose skeleton colliders are hit volumes may name it. It is
+    // where the actor is -- relevance, aim points, homing, the rewound shot's
+    // first test -- and never a damage volume itself: a rewound shot that
+    // enters it goes on to test that actor's bones and hits only those, and
+    // it is never a physics body, so no live query can stop on it.
+    KernelColliderPurpose_Bounds = 1u << 6,
 } KernelColliderPurpose;
 
 typedef enum KernelDebugRecordType {
@@ -2213,12 +2267,21 @@ typedef struct KernelProjectileMechanicsDefinition {
     uint8_t replication;
     uint16_t reserved1;
     KernelProjectileLaunchDefinition launch;
+    /* ABI 105. Non-zero: every hit this projectile's damage lands adds
+     * `stagger` to the target's meter, zero meaning none. Zero, the default:
+     * the stagger is derived from the damage, as before. */
+    uint32_t stagger_authored;
+    float stagger;
 } KernelProjectileMechanicsDefinition;
 
 typedef struct KernelProjectileTemplateDefinition {
     uint32_t struct_size;
     uint32_t projectile_template_id;
-    uint8_t weapon_id;
+    /* Was weapon_id, written back by the catalog from whichever weapon named
+     * the template (ABI 106). A projectile's weapon is where it was fired
+     * from, not what it is, so it now comes from the firing event and this
+     * must be zero. */
+    uint8_t reserved_weapon_id;
     uint8_t reserved0;
     uint16_t reserved1;
     KernelProjectileMechanicsDefinition mechanics;
@@ -2917,7 +2980,7 @@ struct KernelEntityTemplateDefinition {
     KernelPropDefinition prop;
     uint32_t collision_trigger_mask;
     KernelSkeletonBindingDefinition skeleton;
-    float impulse_resistance;
+    float force_resistance;
     /* Hit stagger profile. stagger_threshold == 0 disables it; a zero
      * stagger_per_damage leaves only hits that author a stagger able to fill
      * the meter. */

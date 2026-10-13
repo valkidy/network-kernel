@@ -12,7 +12,7 @@
 id: 223
 name: field_camp
 entity_type: prop
-impulse_resistance: 1000.0
+force_resistance: 1000.0
 lifecycle:
   lifetime_ticks: 5400
   population_group: building
@@ -30,8 +30,9 @@ interaction:
   line_of_sight_required: false
 triggers:
   on_activated:
-    action_graph: action_open_camp_ui
+    action_graph: action_open_ui
     parameters:
+      ui_id: 3
       target: event.instigator
 camp:
   stock:

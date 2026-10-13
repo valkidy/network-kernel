@@ -126,6 +126,18 @@ DamageRequest damage_request_from_hit(
     };
 }
 
+DamageRequest with_projectile_stagger(
+    DamageRequest request,
+    const World& world,
+    std::uint32_t projectile_template_id) {
+    const RuntimeProjectileTemplate* projectile_template =
+        world.find_projectile_template(projectile_template_id);
+    request.stagger = projectile_template != nullptr
+        ? projectile_template->stagger
+        : kStaggerDerivedFromDamage;
+    return request;
+}
+
 DamageRequest damage_request_at(
     std::uint32_t server_tick,
     std::uint32_t sequence_id,

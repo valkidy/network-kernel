@@ -17,11 +17,11 @@ hit_response: destroy
 damage_shape: direct_hit
 speed: 35.0
 lifetime_ticks: 75
-# limb makes a legged rig's bones a target, so a rocket aimed at a monster
-# strikes the leg in its path instead of sailing between them into the body.
-# The hit resolves to the actor wearing the leg, so damage and side filtering
-# are unchanged.
-collision_mask: damageable | limb | terrain | static_obstacle
+# damageable reaches a legged rig's bones, its only hit volumes (ABI 106), so
+# a rocket aimed at a monster strikes the leg in its path instead of sailing
+# between them. The hit resolves to the actor wearing the leg, so damage and
+# side filtering are unchanged.
+collision_mask: damageable | terrain | static_obstacle
 max_hit_count: 1
 gravity:
   x: 0.0
@@ -29,7 +29,7 @@ gravity:
   z: 0.0
 triggers:
   on_projectile_impact:
-    action_graph: action_spawn_projectile_at_impact
+    action_graph: action_spawn_projectile
     parameters:
       template: rocket_explosion
       position: event.position

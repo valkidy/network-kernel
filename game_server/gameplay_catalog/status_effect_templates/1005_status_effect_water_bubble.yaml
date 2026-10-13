@@ -17,6 +17,6 @@ interval_ticks: 0
 replace_policy: replace
 triggers:
   on_apply:
-    action_graph: action_status_water_bubble
+    action_graph: action_water_bubble_apply
     parameters:
       target: event.subject

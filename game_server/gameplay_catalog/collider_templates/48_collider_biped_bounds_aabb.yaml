@@ -1,0 +1,14 @@
+# biped_actor's bounds: the whole body, but never what gets hit -- the
+# rig's bone colliders are. Where the actor is (relevance, aim point, homing)
+# and the rewound shot's first test: only a shot that enters it tests the bones.
+# Sized to enclose the bones, with a metre to spare on every axis and the
+# centre kept where the old hitbox had it: walking the undulating scene
+# (limb_collider_test), its bones reached, from the root:
+# x -22.7..22.7, y -1.4..46.2, z -9.6..11.0 m.
+id: 48
+name: biped_bounds_aabb
+shape: aabb
+center: {x: 0.0, y: 20.0, z: 0.0}
+half_extents: {x: 24.0, y: 27.5, z: 12.0}
+purpose: bounds
+layer: hostile_side

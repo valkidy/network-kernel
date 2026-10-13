@@ -18,7 +18,7 @@ triggers:
     collision_mask: terrain | static_obstacle | actor
     # The graph under test. Despite the name this one is entirely generic --
     # it spawns whatever `template` names and then destroys the bottle.
-    action_graph: action_spawn_ice_and_damage_self_at_collision
+    action_graph: action_spawn_entity_and_damage_self
     parameters:
       template: chaser_grunt
       position: event.position

@@ -56,9 +56,10 @@ bool spawn_projectile_from_template(
     std::uint32_t lifetime_ticks = 0,
     std::uint32_t extra_lifetime_ticks = 0,
     std::uint32_t launch_salt = 0) {
-    const std::uint8_t weapon_id =
-        projectile_template.weapon_id == 0 ? source_weapon_id
-                                           : projectile_template.weapon_id;
+    // The weapon is the firing event's, never the template's: one template may
+    // be fired by several weapons, or spawned by an item or another
+    // projectile's impact, and each of those knows what it was (ABI 106).
+    const std::uint8_t weapon_id = source_weapon_id;
     // An area effect used to be forced to a standstill here regardless of what
     // it authored. It no longer needs the special case: its speed defaults to
     // zero, so a blast still spawns exactly as motionless as before, while a
@@ -948,15 +949,18 @@ ProjectileHitOutcome process_projectile_hit_records(
                     world, projectile.collision_mask, record.target_net_id)) {
                 continue;
             }
-            damage_pipeline->submit_damage_request(damage_request_from_hit(
-                current_tick,
-                record.sequence_id,
-                identity.net_id,
-                identity.owner_peer,
-                projectile.weapon_id,
-                projectile.damage,
-                hit_time_us,
-                record.hit));
+            damage_pipeline->submit_damage_request(with_projectile_stagger(
+                damage_request_from_hit(
+                    current_tick,
+                    record.sequence_id,
+                    identity.net_id,
+                    identity.owner_peer,
+                    projectile.weapon_id,
+                    projectile.damage,
+                    hit_time_us,
+                    record.hit),
+                world,
+                projectile.projectile_template_id));
             ++projectile.hit_count;
         }
         outcome.destroy_projectile = projectile.hit_count >= projectile.max_hit_count;
@@ -993,18 +997,21 @@ ProjectileHitOutcome process_projectile_hit_records(
         is_actor_hit(records.front().hit.identity.kind) &&
         damage_source_may_damage(
             world, projectile.collision_mask, records.front().target_net_id)) {
-        damage_pipeline->submit_damage_request(damage_request_at(
-            current_tick,
-            0,
-            identity.net_id,
-            records.front().target_net_id,
-            identity.owner_peer,
-            projectile.weapon_id,
-            projectile.damage,
-            hit_time_us,
-            impact_position,
-            static_cast<std::uint16_t>(
-                records.front().hit.identity.hit_zone)));
+        damage_pipeline->submit_damage_request(with_projectile_stagger(
+            damage_request_at(
+                current_tick,
+                0,
+                identity.net_id,
+                records.front().target_net_id,
+                identity.owner_peer,
+                projectile.weapon_id,
+                projectile.damage,
+                hit_time_us,
+                impact_position,
+                static_cast<std::uint16_t>(
+                    records.front().hit.identity.hit_zone)),
+            world,
+            projectile.projectile_template_id));
     }
 
     outcome.destroy_projectile = true;
@@ -1205,11 +1212,19 @@ void process_projectile_interactions(
             const NetId source_net_id =
                 match.lhs_is_rule_lhs ? match.lhs_net_id : match.rhs_net_id;
             PeerId owner_peer = 0;
+            // What it spawns was fired, in effect, by the rule's left-hand
+            // projectile, so it carries that projectile's weapon.
+            std::uint8_t source_weapon_id = 0;
             const auto source_entity = world.find_entity(source_net_id);
             if (source_entity.has_value() &&
                 world.registry().all_of<NetworkIdentity>(*source_entity)) {
                 owner_peer =
                     world.registry().get<NetworkIdentity>(*source_entity).owner_peer;
+            }
+            if (source_entity.has_value() &&
+                world.registry().all_of<ProjectileState>(*source_entity)) {
+                source_weapon_id =
+                    world.registry().get<ProjectileState>(*source_entity).weapon_id;
             }
             const RuntimeProjectileTemplate* spawn_template =
                 world.find_projectile_template(
@@ -1222,7 +1237,7 @@ void process_projectile_interactions(
                 *spawn_template,
                 owner_peer,
                 source_net_id,
-                0,
+                source_weapon_id,
                 0,
                 match.position,
                 glm::vec3{1.0f, 0.0f, 0.0f},
@@ -1872,17 +1887,20 @@ bool resolve_projectile_historical_hit(
                 if (projectile.damage_shape == ProjectileDamageShape::kDirectHit &&
                     projectile.damage > 0 &&
                     damage_pipeline != nullptr) {
-                    damage_pipeline->submit_damage_request(damage_request_at(
-                        current_tick,
-                        0,
-                        projectile_net_id,
-                        hit.net_id,
-                        owner_peer,
-                        projectile.weapon_id,
-                        projectile.damage,
-                        hit_time_us,
-                        hit.impact_position,
-                        hit.volume.hit_zone));
+                    damage_pipeline->submit_damage_request(with_projectile_stagger(
+                        damage_request_at(
+                            current_tick,
+                            0,
+                            projectile_net_id,
+                            hit.net_id,
+                            owner_peer,
+                            projectile.weapon_id,
+                            projectile.damage,
+                            hit_time_us,
+                            hit.impact_position,
+                            hit.volume.hit_zone),
+                        world,
+                        projectile.projectile_template_id));
                 }
                 execute_queued_trigger_events(
                     world, &trigger_events, fixed_delta_seconds, events, nullptr,

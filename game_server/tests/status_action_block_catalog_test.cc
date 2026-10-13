@@ -422,7 +422,7 @@ void apply_status_takes_a_literal_strength() {
     require(balloon != nullptr && airship != nullptr);
     require(balloon->collision_trigger.actions[0].status_strength == 10.0f);
     // What a balloon of 10 is weighed against on the shipped airship.
-    require(airship->impulse_resistance == 10.0f);
+    require(airship->force_resistance == 10.0f);
     require(kernel_accepts(built));
     std::string zero = kDirectedApplyGraph + "    strength: 0.0\n";
     require(refused_for(

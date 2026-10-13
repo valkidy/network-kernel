@@ -1,5 +1,6 @@
-# A tornado: a funnel that rides the ground and, once a second, pulls in
-# everything hostile its column reaches. It deals no damage of its own.
+# A tornado: a funnel that rides the ground and, every 15 ticks (0.5 s), pulls
+# in everything hostile its column reaches. It deals no damage and staggers
+# nobody.
 #
 # One entity for its whole life -- the periodic pull is the field's own
 # overlap every damage_interval_ticks, not a child spawned per pull.
@@ -10,13 +11,11 @@
 # solver over the same terrain, and nothing about it is sent after the spawn.
 # The pull itself is the server's alone.
 #
-# The damage here is not what lands: an area effect with a graph binding
-# submits no damage of its own, and the graph deals none.
 id: 29
 name: tornado
 type: area_effect
 collider_template: tornado_column
-damage: 1
+damage: 0
 speed: 6.0
 lifetime_ticks: 300
 sync_mode: local_predicted_deterministic
@@ -33,7 +32,19 @@ motion:
   hover_height: 2.0
 triggers:
   on_projectile_impact:
-    action_graph: action_tornado_pull
+    action_graph: action_apply_pull
     parameters:
       target: event.target
+      # The funnel's centre when it pulled, the one point every target of one
+      # pull shares.
       anchor: event.subject_position
+      # Land 1 m from where the centre was, each on its own side.
+      distance: 1.0
+      # 0.6 s in the air, longer than the 15-tick interval: a target still
+      # flying from one pull can be caught by the next and pulled again. That
+      # is intended -- the funnel keeps hold of what it has gathered.
+      airtime: 18
+      # The far edge of the 6 m column needs (6 - 1) / 0.6 = 8.3 m/s.
+      max_speed: 12.0
+      # Who is moved, not how fast: pulled only past its force_resistance.
+      strength: 20.0

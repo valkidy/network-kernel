@@ -95,7 +95,6 @@ void load_rocket_catalog(
     KernelProjectileTemplateDefinition definition{};
     definition.struct_size = sizeof(definition);
     definition.projectile_template_id = 3;
-    definition.weapon_id = 3;
     definition.mechanics.struct_size = sizeof(KernelProjectileMechanicsDefinition);
     definition.mechanics.projectile_type = KernelProjectileType_Standard;
     definition.mechanics.motion_model = KernelProjectileMotionModel_Linear;
@@ -170,7 +169,6 @@ Row measure(std::uint8_t sync_mode, const char* name) {
     projectile.max_lifetime_ticks = kLifetimeTicks;
     projectile.projectile_template_id = 3;
     projectile.collider_template_id = 10;
-    projectile.weapon_id = 3;
     projectile.sync_mode = sync_mode;
     projectile.bound = true;
     client.predicted_projectiles_.push_back(projectile);

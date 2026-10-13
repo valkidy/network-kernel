@@ -66,9 +66,9 @@ int main() {
          config.projectile_templates) {
         if (projectile.definition.projectile_template_id == 9u) {
             mech = &projectile.definition.mechanics;
-            std::printf("projectile bound to weapon_id=%u\n",
-                        projectile.definition.weapon_id);
-            require(projectile.definition.weapon_id == 8u);
+            // The weapon names its projectile; the projectile names no weapon
+            // (ABI 106), so another weapon could fire it too.
+            require(projectile.definition.reserved_weapon_id == 0u);
         }
     }
     require(mech != nullptr);

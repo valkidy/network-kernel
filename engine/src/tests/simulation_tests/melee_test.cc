@@ -1,12 +1,14 @@
 #include <cmath>
 #include <cstdlib>
 #include <optional>
+#include <string>
 #include <variant>
 #include <vector>
 
 #include <glm/glm.hpp>
 
 #include "kernel/public/kernel_types.h"
+#include "physics/public/physics_world.h"
 #include "simulation/public/action_graph.h"
 #include "simulation/public/simulation.h"
 
@@ -166,7 +168,6 @@ network_example::CompiledActionGraphBinding impulse_on_impact_binding(
     trigger.target_source = KernelEntityRefSource_EventTarget;
     trigger.direction_source = KernelEventVec3Source_Direction;
     trigger.impulse_strength = strength;
-    trigger.impulse_collision_mask = KERNEL_COLLISION_MASK_ACTOR;
     std::optional<network_example::CompiledActionGraphBinding> binding =
         network_example::compile_action_trigger_definition(
             network_example::TriggerEventType::kProjectileImpact, trigger);
@@ -184,12 +185,11 @@ const network_example::ActionApplyImpulseCommand& only_impulse_command(
     return *impulse;
 }
 
-// A swing whose shot template names an impact graph takes a different branch
-// from one that only hurts: it queues one trigger per target it found and
-// submits no damage of its own, so a graph that forgets apply_damage deals
-// none. That is the same trade an area effect makes, and it is what lets one
-// authoring surface say "hurt and shove" without a second one for the shoving.
-void a_swing_with_an_impact_graph_dispatches_it_instead_of_dealing_damage() {
+// A swing whose shot template names an impact graph queues one trigger per
+// target it found, and still deals its own damage to each: the graph adds the
+// shove, it does not replace the hit (ABI 105). Authoring "hurt and shove" is
+// the projectile's damage plus a graph that only shoves.
+void a_swing_with_an_impact_graph_dispatches_it_and_still_deals_damage() {
     network_example::World world;
     const network_example::NetId front =
         spawn_enemy(world, glm::vec3{1.5f, 0.0f, 0.0f});
@@ -212,9 +212,9 @@ void a_swing_with_an_impact_graph_dispatches_it_instead_of_dealing_damage() {
     require(impulse.target == front);
     require(impulse.strength == 8.0f);
 
-    // Neither target is hurt: the graph owns the damage now. A swing that kept
-    // submitting its own would double up on whatever the graph deals.
-    require(health(world, front).hp == 100);
+    // The one in the cone takes the swing's 35, once; the one behind it
+    // nothing.
+    require(health(world, front).hp == 65);
     require(health(world, behind).hp == 100);
 }
 
@@ -241,13 +241,68 @@ void the_impact_direction_a_swing_reports_is_level() {
     require(std::fabs(direction.y) < 0.01f);
 }
 
+// One bone of an actor hit on its bones (ABI 106), as in area_effect_test.
+network_example::physics::CollisionObjectDescriptor bone(
+    network_example::NetId owner,
+    std::uint32_t collider_id,
+    std::uint32_t hit_zone,
+    const glm::vec3& position) {
+    network_example::physics::CollisionObjectDescriptor object{};
+    object.identity.entity_net_id = owner;
+    object.identity.collider_id = collider_id;
+    object.identity.hit_zone = hit_zone;
+    object.identity.kind = network_example::physics::CollisionObjectKind::kActorLimb;
+    object.identity.layer = network_example::physics::CollisionLayer::kActorLimb;
+    object.identity.gameplay_category =
+        network_example::physics::kGameplayCategoryHostileSide;
+    object.shape.type = network_example::physics::CollisionShapeType::kBox;
+    object.shape.half_extents = glm::vec3{0.2f, 0.5f, 0.2f};
+    object.position = position;
+    return object;
+}
+
+// A swing that catches two bones of one actor lands once, where it lands
+// hardest: the 1.5 body, not the nearer 0.5 leg it used to take. And a claw
+// whose mask says only `damageable` reaches those bones at all.
+void a_swing_lands_on_the_hardest_bone_it_catches() {
+    network_example::World world;
+    const network_example::NetId rig =
+        spawn_enemy(world, glm::vec3{1.5f, 0.0f, 0.0f});
+    world.registry().get<network_example::Hitbox>(*world.find_entity(rig))
+        .bounds_only = true;
+    network_example::physics::PhysicsWorld physics(
+        network_example::physics::PhysicsWorldConfig{0, true});
+    require(physics.valid());
+    std::string error;
+    require(physics.upsert_object(
+        bone(rig, 1u, 50u, glm::vec3{1.0f, 0.5f, 0.0f}), &error));
+    require(physics.upsert_object(
+        bone(rig, 2u, 150u, glm::vec3{1.8f, 0.5f, 0.0f}), &error));
+    world.set_collision_world(&physics);
+    network_example::RuntimeProjectileTemplate shot{};
+    shot.projectile_template_id = 7;
+    shot.max_hit_count = 4;
+    world.set_projectile_templates({shot});
+    const network_example::NetId swinger = spawn_swinger(world, 2.4f, 100.0f, 7);
+    world.registry()
+        .get<network_example::WeaponTuning>(*world.find_entity(swinger))
+        .definitions[0]
+        .damage = 40;
+
+    swing(world, glm::vec3{1.0f, 0.0f, 0.0f});
+
+    require(health(world, rig).hp == 40);
+    world.set_collision_world(nullptr);
+}
+
 }  // namespace
 
 int main() {
     a_swing_reaches_what_is_in_front_and_not_what_is_behind();
     a_swing_does_not_reach_past_its_range();
     a_swing_cleaves_the_nearest_targets_up_to_max_hit_count();
-    a_swing_with_an_impact_graph_dispatches_it_instead_of_dealing_damage();
+    a_swing_with_an_impact_graph_dispatches_it_and_still_deals_damage();
     the_impact_direction_a_swing_reports_is_level();
+    a_swing_lands_on_the_hardest_bone_it_catches();
     return 0;
 }

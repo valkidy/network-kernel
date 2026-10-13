@@ -75,7 +75,7 @@ triggers:
   on_enter:
     collision_mask: player_side
     instigators: players
-    action_graph: action_apply_damage_at_activated
+    action_graph: action_apply_damage
     parameters:
       target: event.instigator
       amount: 100

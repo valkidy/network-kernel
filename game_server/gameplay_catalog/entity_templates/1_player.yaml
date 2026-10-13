@@ -36,9 +36,6 @@ movement:
   # the legs of something whose body they cannot pass. Limbs are opt-in: this is
   # the only place that asks for them, and every other actor is unaffected.
   collision_mask: terrain | static_obstacle | actor | limb
-hitbox:
-  center: {x: 0.0, y: 0.9, z: 0.0}
-  half_extents: {x: 0.35, y: 0.9, z: 0.35}
 weapon_slots:
   - 13 # 3
   - 14 # 1

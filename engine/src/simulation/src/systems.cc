@@ -285,7 +285,7 @@ bool strikes_untargetable(
 }
 
 // An apply_status whose authored strength does not strictly exceed the
-// target's impulse_resistance: the status never lands, as an impulse that
+// target's force_resistance: the status never lands, as an impulse that
 // strong would not move it. Weighed on the authored number, so who is
 // affected cannot depend on where anyone stands.
 bool resisted_status(const World& world, const ActionGraphCommand& command) {
@@ -297,8 +297,8 @@ bool resisted_status(const World& world, const ActionGraphCommand& command) {
     if (!entity.has_value()) {
         return false;
     }
-    const ImpulseResistance* resistance =
-        world.registry().try_get<ImpulseResistance>(*entity);
+    const ForceResistance* resistance =
+        world.registry().try_get<ForceResistance>(*entity);
     return resistance != nullptr &&
         (!std::isfinite(resistance->value) || status->strength <= resistance->value);
 }
@@ -648,24 +648,8 @@ bool execute_action_graph_commands(
                 glm::dot(impulse->direction, impulse->direction) <= 0.0f) {
                 return false;
             }
-            const EntityKind& kind = world.registry().get<EntityKind>(*target);
-            const bool actor_target = kind.type == EntityType::kActor &&
-                (impulse->collision_mask & KERNEL_COLLISION_MASK_ACTOR) != 0u;
-            const bool prop_target = kind.type == EntityType::kProp &&
-                (impulse->collision_mask & KERNEL_COLLISION_MASK_PROP) != 0u &&
-                world.registry().all_of<PropWorldMode>(*target) &&
-                world.registry().get<PropWorldMode>(*target).mode !=
-                    PropMode::kCarrying;
-            if (!actor_target && !prop_target) {
-                continue;
-            }
-            const ImpulseResistance* resistance =
-                world.registry().try_get<ImpulseResistance>(*target);
-            if (resistance != nullptr &&
-                (!std::isfinite(resistance->value) ||
-                 impulse->strength <= resistance->value)) {
-                continue;
-            }
+            // A target it cannot move is skipped when the batch is applied,
+            // not refused here: the rest of the batch still runs.
             continue;
         }
         if (const auto* open_ui = std::get_if<ActionOpenUiCommand>(&command)) {
@@ -1533,8 +1517,8 @@ bool execute_action_graph_commands(
             // worked out per target, so weighing it would let where a target
             // stands decide whether it is moved at all. Strictly greater, as
             // apply_impulse is.
-            const float resistance = world.registry().all_of<ImpulseResistance>(target)
-                ? world.registry().get<ImpulseResistance>(target).value
+            const float resistance = world.registry().all_of<ForceResistance>(target)
+                ? world.registry().get<ForceResistance>(target).value
                 : 0.0f;
             if (!std::isfinite(resistance) || pull->strength <= resistance) {
                 continue;
@@ -1568,10 +1552,24 @@ bool execute_action_graph_commands(
             if (world.registry().all_of<Sheltered>(target)) {
                 continue;
             }
+            // What an impulse can move at all: any actor, and a prop only
+            // while it stands in the world -- not one being carried, and
+            // nothing else (a projectile, a marker). No graph narrows this;
+            // who is tested is the owner's collision_mask, and who among
+            // these is moved is the strength against force_resistance below.
+            const EntityKind& kind = world.registry().get<EntityKind>(target);
+            const bool movable = kind.type == EntityType::kActor ||
+                (kind.type == EntityType::kProp &&
+                 world.registry().all_of<PropWorldMode>(target) &&
+                 world.registry().get<PropWorldMode>(target).mode !=
+                     PropMode::kCarrying);
+            if (!movable) {
+                continue;
+            }
             const glm::vec3 direction =
                 glm::normalize(impulse->direction);
-            const float resistance = world.registry().all_of<ImpulseResistance>(target)
-                ? world.registry().get<ImpulseResistance>(target).value
+            const float resistance = world.registry().all_of<ForceResistance>(target)
+                ? world.registry().get<ForceResistance>(target).value
                 : 0.0f;
             const float effective_strength = impulse_effective_strength(
                 impulse->strength_mode,
@@ -1596,7 +1594,6 @@ bool execute_action_graph_commands(
                         engine.current_tick() + impulse->lockout_ticks,
                         engine.current_tick()});
             }
-            const EntityKind& kind = world.registry().get<EntityKind>(target);
             if (kind.type == EntityType::kActor) {
                 // Only a locked-out flight is the authority's alone to steer;
                 // without the lockout the controller overwrites it next tick,
@@ -2084,9 +2081,9 @@ bool EntityLifecycleSystem::create_entity(
             0u) {
             registry.get_or_emplace<Velocity>(*entity);
         }
-        registry.emplace_or_replace<ImpulseResistance>(
+        registry.emplace_or_replace<ForceResistance>(
             *entity,
-            ImpulseResistance{entity_template->impulse_resistance});
+            ForceResistance{entity_template->force_resistance});
         apply_stagger_profile(engine.world_, *entity, *entity_template);
         apply_knockdown_profile(engine.world_, *entity, *entity_template);
         registry.emplace_or_replace<DeathBehavior>(

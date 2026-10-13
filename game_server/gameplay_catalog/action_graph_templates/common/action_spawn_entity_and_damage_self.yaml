@@ -1,4 +1,8 @@
-id: action_spawn_ice_and_damage_self_at_collision
+# Spawns `template` where a thrown prop landed, owned by `owner`, then damages
+# the prop itself (`source`) so it breaks. `placement` is exact (at the
+# contact point: an ice block) or clear (moved to open ground: a building a
+# kit puts up).
+id: action_spawn_entity_and_damage_self
 parameters:
   template: null
   position: null
@@ -6,12 +10,14 @@ parameters:
   owner: null
   source: null
   self_damage: 1
+  placement: exact
 actions:
   - type: spawn_entity
     entity_template: params.template
     position: params.position
     direction: params.direction
     owner: params.owner
+    placement: params.placement
   - type: apply_damage
     target: params.source
     amount: params.self_damage

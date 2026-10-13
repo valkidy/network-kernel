@@ -147,7 +147,7 @@ struct Velocity {
     glm::vec3 linear{0.0f, 0.0f, 0.0f};
 };
 
-struct ImpulseResistance {
+struct ForceResistance {
     float value = 0.0f;
 };
 
@@ -611,6 +611,10 @@ struct Hitbox {
     glm::vec3 half_extents{0.5f, 0.5f, 0.5f};
     std::uint32_t collider_template_id = 0;
     std::uint16_t hit_zone = kHitZoneUnscaled;
+    // The box is the actor's bounds, not a damage volume: its collider is
+    // KernelColliderPurpose_Bounds, and its bones are what gets hit. Set from
+    // the collider whenever the collider is materialized.
+    bool bounds_only = false;
 };
 
 struct ProjectileState {
@@ -875,7 +879,6 @@ struct ActionApplyImpulseDefinition {
     std::string target_parameter;
     std::string strength_parameter;
     std::string direction_parameter;
-    std::uint32_t collision_mask = kCollisionMaskDamageable;
     std::uint32_t lockout_ticks = 0;
     // KERNEL_IMPULSE_STRENGTH_MODE_RADIAL / _SPLIT. Spelled as a plain zero
     // default because this header sits below the kernel's public types and
@@ -900,7 +903,7 @@ struct ActionApplyPullDefinition {
     float distance = 0.0f;
     std::uint32_t airtime_ticks = 0;
     float max_speed = 0.0f;
-    // Weighed against impulse_resistance; never scales the launch.
+    // Weighed against force_resistance; never scales the launch.
     float strength = 0.0f;
     ActionConditionType condition = ActionConditionType::kAlways;
 };
@@ -938,7 +941,7 @@ struct ActionApplyStatusDefinition {
     // Empty applies it with none.
     std::string direction_parameter;
     // A literal, like apply_pull's strength: when > 0 the status lands only on
-    // a target whose impulse_resistance is strictly below it. Zero: anyone.
+    // a target whose force_resistance is strictly below it. Zero: anyone.
     float strength = 0.0f;
 };
 
@@ -1124,7 +1127,6 @@ struct StatusEffectState {
 
 struct RuntimeProjectileTemplate {
     std::uint32_t projectile_template_id = 0;
-    std::uint8_t weapon_id = 0;
     ProjectileType projectile_type = ProjectileType::kStandard;
     ProjectileMotionModel motion_model = ProjectileMotionModel::kLinear;
     ProjectileSyncMode sync_mode = ProjectileSyncMode::kHybridDeterministicThenSnapshot;
@@ -1136,6 +1138,9 @@ struct RuntimeProjectileTemplate {
     bool has_collision_geometry = false;
     ProjectileDamageFalloff damage_falloff = ProjectileDamageFalloff::kNone;
     std::uint16_t damage = 0;
+    // The stagger each hit's damage adds; kStaggerDerivedFromDamage unless
+    // the template authors one.
+    float stagger = kStaggerDerivedFromDamage;
     float speed = 0.0f;
     std::uint32_t lifetime_ticks = 0;
     glm::vec3 gravity{0.0f, 0.0f, 0.0f};
@@ -1363,6 +1368,8 @@ inline constexpr std::uint32_t kVisualFlagStaggered = 0x00000080u;
 inline constexpr std::uint32_t kVisualFlagAiming = 0x00000100u;
 inline constexpr std::uint32_t kVisualFlagFiring = 0x00000200u;
 inline constexpr std::uint32_t kVisualFlagSuspended = 0x00000400u;
+// An impulse flight, excluding the post-landing recovery and suspension drop.
+inline constexpr std::uint32_t kVisualFlagKnockedBack = 0x00000800u;
 
 struct ReplicationState {
     std::uint16_t animation_state = 0;

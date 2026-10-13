@@ -232,7 +232,6 @@ void hash_projectile_template(
         projectile_template.definition;
     const KernelProjectileMechanicsDefinition& mechanics = definition.mechanics;
     hash_scalar(hash, definition.projectile_template_id);
-    hash_scalar(hash, definition.weapon_id);
     hash_scalar(hash, mechanics.projectile_type);
     hash_scalar(hash, mechanics.motion_model);
     hash_scalar(hash, mechanics.sync_mode);
@@ -247,6 +246,8 @@ void hash_projectile_template(
     hash_scalar(hash, mechanics.collider_template_id);
     hash_scalar(hash, mechanics.collision_mask);
     hash_scalar(hash, mechanics.max_hit_count);
+    hash_scalar(hash, mechanics.stagger_authored);
+    hash_float(hash, mechanics.stagger);
     hash_scalar(hash, mechanics.homing.homing_mode);
     hash_scalar(hash, mechanics.homing.sync_mode);
     hash_scalar(hash, mechanics.homing.boost_ticks);
@@ -297,7 +298,6 @@ void hash_projectile_template(
             hash_scalar(hash, action.damage_amount);
             hash_scalar(hash, action.health_change_amount);
             hash_scalar(hash, action.impulse_strength);
-            hash_scalar(hash, action.impulse_collision_mask);
             hash_scalar(hash, action.impulse_lockout_ticks);
             hash_scalar(hash, action.impulse_strength_mode);
             hash_scalar(hash, action.impulse_strength_vertical);
@@ -353,7 +353,7 @@ void hash_actor_template(
     hash_float(hash, actor_template.movement_ground_probe_distance);
     hash_float(hash, actor_template.movement_ground_snap_distance);
     hash_float(hash, actor_template.movement_max_yaw_degrees_per_second);
-    hash_float(hash, actor_template.impulse_resistance);
+    hash_float(hash, actor_template.force_resistance);
     hash_float(hash, actor_template.stagger.threshold);
     hash_float(hash, actor_template.stagger.per_damage);
     hash_float(hash, actor_template.stagger.decay_per_tick);
@@ -1157,6 +1157,36 @@ std::optional<std::array<float, 2>> optional_strength_pair_from_yaml(
     return value;
 }
 
+// A binding value: a scalar as written, or a [horizontal, vertical] pair kept
+// as "[h, v]" text. Only apply_impulse's strength reads the pair form; any
+// other field handed one fails its own parse.
+std::string binding_value_from_yaml(
+    const YAML::Node& value,
+    const std::string& path) {
+    if (value.IsScalar()) {
+        return value.as<std::string>();
+    }
+    if (value.IsSequence() && value.size() == 2u && value[0].IsScalar() &&
+        value[1].IsScalar()) {
+        return "[" + value[0].as<std::string>() + ", " +
+            value[1].as<std::string>() + "]";
+    }
+    throw std::runtime_error(
+        "trigger parameters must be scalar values or a [horizontal, vertical] pair: " +
+        path);
+}
+
+// The "[h, v]" text binding_value_from_yaml keeps, checked the way a graph's
+// own list default is.
+std::optional<std::array<float, 2>> strength_pair_from_binding_text(
+    const std::string& text,
+    const std::string& context) {
+    if (text.empty() || text.front() != '[') {
+        return std::nullopt;
+    }
+    return optional_strength_pair_from_yaml(YAML::Load(text), "strength", context);
+}
+
 // Plain suffix match, deliberately not std::filesystem::path::extension(): the
 // interesting suffix here is ".skeleton_manifest.json", and extension() would
 // only ever see ".json".
@@ -1179,9 +1209,18 @@ public:
     virtual std::vector<std::string> list_files(
         const std::string& directory,
         std::string_view extension) const = 0;
+    // The same, descending into subdirectories. Sorted by full path, so the
+    // order depends on where a file sits, never on how it was enumerated.
+    virtual std::vector<std::string> list_files_recursive(
+        const std::string& directory,
+        std::string_view extension) const = 0;
     std::vector<std::string> list_yaml_files(
         const std::string& directory) const {
         return list_files(directory, ".yaml");
+    }
+    std::vector<std::string> list_yaml_files_recursive(
+        const std::string& directory) const {
+        return list_files_recursive(directory, ".yaml");
     }
     std::vector<std::string> list_json_files(
         const std::string& directory) const {
@@ -1239,6 +1278,24 @@ public:
         }
         for (const std::filesystem::directory_entry& entry :
              std::filesystem::directory_iterator(directory)) {
+            if (entry.is_regular_file() &&
+                has_extension(entry.path().filename().string(), extension)) {
+                files.push_back(entry.path().string());
+            }
+        }
+        std::sort(files.begin(), files.end());
+        return files;
+    }
+
+    std::vector<std::string> list_files_recursive(
+        const std::string& directory,
+        std::string_view extension) const override {
+        std::vector<std::string> files;
+        if (!std::filesystem::exists(directory)) {
+            return files;
+        }
+        for (const std::filesystem::directory_entry& entry :
+             std::filesystem::recursive_directory_iterator(directory)) {
             if (entry.is_regular_file() &&
                 has_extension(entry.path().filename().string(), extension)) {
                 files.push_back(entry.path().string());
@@ -1530,6 +1587,21 @@ public:
         return files;
     }
 
+    std::vector<std::string> list_files_recursive(
+        const std::string& directory,
+        std::string_view extension) const override {
+        const std::string prefix = normalize_archive_path(directory) + "/";
+        std::vector<std::string> files;
+        for (const auto& entry : files_) {
+            const std::string& path = entry.first;
+            if (has_extension(path, extension) && path.rfind(prefix, 0) == 0) {
+                files.push_back(path);
+            }
+        }
+        std::sort(files.begin(), files.end());
+        return files;
+    }
+
     std::string parent_path(const std::string& path) const override {
         return archive_parent_path(path);
     }
@@ -1605,9 +1677,16 @@ void reject_unknown_keys(
         }
         const std::string key = entry.first.as<std::string>();
         if (!key_allowed(key, keys)) {
+            // A key that was renamed says what it is called now, rather
+            // than leaving the author to guess from "unknown field".
+            const std::string renamed =
+                key == "impulse_resistance" && key_allowed("force_resistance", keys)
+                ? " (renamed force_resistance: apply_impulse, apply_pull and "
+                  "apply_status all weigh their strength against it)"
+                : "";
             throw DataLoadError(
                 KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNKNOWN_FIELD,
-                "unknown field: " + key,
+                "unknown field: " + key + renamed,
                 path,
                 key,
                 source_kind,
@@ -1849,13 +1928,33 @@ std::string parameter_reference_from_yaml(
     return value.substr(kPrefix.size());
 }
 
+// For an action field that takes a literal or params.<name>: the parameter's
+// name when it is a reference, empty when it is a literal for the caller to
+// read as before.
+std::string optional_parameter_reference(const YAML::Node& node) {
+    if (!node || !node.IsScalar()) {
+        return {};
+    }
+    const std::string value = node.as<std::string>();
+    constexpr std::string_view kPrefix = "params.";
+    if (!value.starts_with(kPrefix) || value.size() == kPrefix.size()) {
+        return {};
+    }
+    return value.substr(kPrefix.size());
+}
+
 // `lifetime_ticks` and `repeat:` on a spawn_projectile graph action.
 void read_spawn_repeat(
     const YAML::Node& action,
     ActionGraphActionConfig* compiled_action,
     const std::string& path,
     std::uint32_t source_kind) {
-    if (action["lifetime_ticks"]) {
+    // Each number may be params.<name> instead, checked when a binding
+    // supplies it (compile_spawn_repeat).
+    compiled_action->spawn_lifetime_ticks_parameter =
+        optional_parameter_reference(action["lifetime_ticks"]);
+    if (action["lifetime_ticks"] &&
+        compiled_action->spawn_lifetime_ticks_parameter.empty()) {
         compiled_action->spawn_lifetime_ticks =
             action["lifetime_ticks"].as<std::uint32_t>();
         if (compiled_action->spawn_lifetime_ticks == 0u) {
@@ -1878,7 +1977,14 @@ void read_spawn_repeat(
     if (!count) {
         throw std::runtime_error("spawn_projectile repeat needs count: " + path);
     }
-    if (count.IsSequence()) {
+    compiled_action->repeat_count_parameter = optional_parameter_reference(count);
+    compiled_action->repeat_scatter_radius_parameter =
+        optional_parameter_reference(repeat["scatter_radius"]);
+    compiled_action->repeat_stagger_lifetime_ticks_parameter =
+        optional_parameter_reference(repeat["stagger_lifetime_ticks"]);
+    if (!compiled_action->repeat_count_parameter.empty()) {
+        // Bound: checked per binding.
+    } else if (count.IsSequence()) {
         if (count.size() != 2u) {
             throw std::runtime_error(
                 "spawn_projectile repeat count must be one number or "
@@ -1890,14 +1996,16 @@ void read_spawn_repeat(
         compiled_action->repeat_count_min = count.as<std::uint32_t>();
         compiled_action->repeat_count_max = compiled_action->repeat_count_min;
     }
-    if (compiled_action->repeat_count_min < 1u ||
-        compiled_action->repeat_count_min > compiled_action->repeat_count_max ||
-        compiled_action->repeat_count_max > KERNEL_MAX_ACTION_REPEAT) {
+    if (compiled_action->repeat_count_parameter.empty() &&
+        (compiled_action->repeat_count_min < 1u ||
+         compiled_action->repeat_count_min > compiled_action->repeat_count_max ||
+         compiled_action->repeat_count_max > KERNEL_MAX_ACTION_REPEAT)) {
         throw std::runtime_error(
             "spawn_projectile repeat count must satisfy 1 <= min <= max <= " +
             std::to_string(KERNEL_MAX_ACTION_REPEAT) + ": " + path);
     }
-    if (repeat["scatter_radius"]) {
+    if (repeat["scatter_radius"] &&
+        compiled_action->repeat_scatter_radius_parameter.empty()) {
         compiled_action->repeat_scatter_radius =
             repeat["scatter_radius"].as<float>();
         if (!std::isfinite(compiled_action->repeat_scatter_radius) ||
@@ -1907,7 +2015,8 @@ void read_spawn_repeat(
                 "non-negative: " + path);
         }
     }
-    if (repeat["stagger_lifetime_ticks"]) {
+    if (repeat["stagger_lifetime_ticks"] &&
+        compiled_action->repeat_stagger_lifetime_ticks_parameter.empty()) {
         compiled_action->repeat_stagger_lifetime_ticks =
             repeat["stagger_lifetime_ticks"].as<std::uint32_t>();
     }
@@ -1970,6 +2079,15 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
     for (std::size_t action_index = 0; action_index < actions.size();
          ++action_index) {
         const YAML::Node action = actions[action_index];
+        // Who an effect is tested against is its owner's (a projectile's
+        // collision_mask); who it then moves is its strength against the
+        // target's force_resistance. A graph has no say in either.
+        if (action["collision_mask"]) {
+            throw std::runtime_error(
+                "action graph actions have no collision_mask: the owner's "
+                "collision_mask picks who is tested, and force_resistance who "
+                "is moved: " + path);
+        }
         reject_unknown_keys(
             action,
             {
@@ -1985,7 +2103,6 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 "status",
                 "operation",
                 "value",
-                "collision_mask",
                 "lockout_ticks",
                 "stagger",
                 "item_template",
@@ -2102,7 +2219,10 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
             }
             compiled_action.owner_parameter =
                 parameter_reference_from_yaml(action["owner"], "owner");
-            if (action["placement"]) {
+            compiled_action.spawn_placement_parameter =
+                optional_parameter_reference(action["placement"]);
+            if (action["placement"] &&
+                compiled_action.spawn_placement_parameter.empty()) {
                 const std::string placement = action["placement"].as<std::string>();
                 if (placement == "exact") {
                     compiled_action.spawn_placement = KERNEL_SPAWN_PLACEMENT_EXACT;
@@ -2143,7 +2263,7 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 action["direction"] || action["entity_template"] ||
                 action["owner"] || action["item_template"] ||
                 action["quantity"] || action["strength"] ||
-                action["collision_mask"] || action["lockout_ticks"]) {
+                action["lockout_ticks"]) {
                 throw std::runtime_error(
                     compiled_action.action_type +
                     " action has unsupported fields: " + path);
@@ -2171,18 +2291,13 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 parameter_reference_from_yaml(action["strength"], "strength");
             compiled_action.direction_parameter =
                 parameter_reference_from_yaml(action["direction"], "direction");
-            compiled_action.collision_mask = collision_mask_from_yaml(
-                action["collision_mask"], KERNEL_COLLISION_MASK_ACTOR);
-            if ((compiled_action.collision_mask &
-                 ~(KERNEL_COLLISION_MASK_ACTOR | KERNEL_COLLISION_MASK_PROP)) != 0u ||
-                compiled_action.collision_mask == KERNEL_COLLISION_MASK_NONE) {
-                throw std::runtime_error(
-                    "apply_impulse collision_mask must contain actor and/or prop: " +
-                    path);
-            }
             // Authored on the action, not the target: a rocket and a shove
-            // want different hold times against the same actor.
-            if (action["lockout_ticks"]) {
+            // want different hold times against the same actor. A
+            // params.<name> leaves the number to each binding.
+            compiled_action.lockout_ticks_parameter =
+                optional_parameter_reference(action["lockout_ticks"]);
+            if (action["lockout_ticks"] &&
+                compiled_action.lockout_ticks_parameter.empty()) {
                 compiled_action.lockout_ticks =
                     action["lockout_ticks"].as<std::uint32_t>();
                 if (compiled_action.lockout_ticks >
@@ -2205,7 +2320,6 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 action["owner"] || action["amount"] ||
                 action["entity_template"] || action["item_template"] ||
                 action["quantity"] || action["lockout_ticks"] ||
-                action["collision_mask"] ||
                 static_cast<bool>(action["anchor"]) ==
                     static_cast<bool>(action["direction"]) ||
                 !action["airtime_ticks"] || !action["max_speed"] ||
@@ -2228,16 +2342,37 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                     parameter_reference_from_yaml(
                         action["direction"], "direction");
             }
-            compiled_action.pull_distance =
-                action["distance"] ? action["distance"].as<float>() : 0.0f;
-            compiled_action.pull_airtime_ticks =
-                action["airtime_ticks"].as<std::uint32_t>();
-            compiled_action.pull_max_speed = action["max_speed"].as<float>();
-            // A literal, unlike apply_impulse's: it is the fixed number a
-            // target's impulse_resistance is weighed against, so it must not
-            // vary per binding.
-            compiled_action.pull_strength = action["strength"].as<float>();
-            if (!pull_is_authorable(
+            // Each number is a literal or params.<name>. Literals are checked
+            // here, where there is a file to name; a bound number is checked
+            // when each binding supplies it (compile_pull_action).
+            compiled_action.pull_distance_parameter =
+                optional_parameter_reference(action["distance"]);
+            compiled_action.pull_airtime_ticks_parameter =
+                optional_parameter_reference(action["airtime_ticks"]);
+            compiled_action.pull_max_speed_parameter =
+                optional_parameter_reference(action["max_speed"]);
+            compiled_action.pull_strength_parameter =
+                optional_parameter_reference(action["strength"]);
+            if (compiled_action.pull_distance_parameter.empty()) {
+                compiled_action.pull_distance =
+                    action["distance"] ? action["distance"].as<float>() : 0.0f;
+            }
+            if (compiled_action.pull_airtime_ticks_parameter.empty()) {
+                compiled_action.pull_airtime_ticks =
+                    action["airtime_ticks"].as<std::uint32_t>();
+            }
+            if (compiled_action.pull_max_speed_parameter.empty()) {
+                compiled_action.pull_max_speed = action["max_speed"].as<float>();
+            }
+            if (compiled_action.pull_strength_parameter.empty()) {
+                compiled_action.pull_strength = action["strength"].as<float>();
+            }
+            const bool pull_fully_literal =
+                compiled_action.pull_distance_parameter.empty() &&
+                compiled_action.pull_airtime_ticks_parameter.empty() &&
+                compiled_action.pull_max_speed_parameter.empty() &&
+                compiled_action.pull_strength_parameter.empty();
+            if (pull_fully_literal && !pull_is_authorable(
                     compiled_action.pull_mode,
                     compiled_action.pull_distance,
                     compiled_action.pull_airtime_ticks,
@@ -2265,7 +2400,7 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 action["owner"] || action["amount"] ||
                 action["operation"] || action["value"] ||
                 action["entity_template"] || action["item_template"] ||
-                action["quantity"] || action["collision_mask"] ||
+                action["quantity"] ||
                 action["lockout_ticks"]) {
                 throw std::runtime_error(
                     compiled_action.action_type +
@@ -2284,9 +2419,12 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                     parameter_reference_from_yaml(action["direction"], "direction");
                 action_parameters.push_back(&compiled_action.direction_parameter);
             }
-            // A literal, as apply_pull's is: the number a target's
-            // impulse_resistance is weighed against must not vary per binding.
-            if (action["strength"]) {
+            // A literal, or params.<name> for each binding to supply: the
+            // number a target's force_resistance is weighed against.
+            compiled_action.status_strength_parameter =
+                optional_parameter_reference(action["strength"]);
+            if (action["strength"] &&
+                compiled_action.status_strength_parameter.empty()) {
                 compiled_action.status_strength = action["strength"].as<float>();
                 if (!std::isfinite(compiled_action.status_strength) ||
                     compiled_action.status_strength <= 0.0f) {
@@ -2303,14 +2441,23 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 action["strength"] || action["status"] ||
                 action["operation"] || action["value"] ||
                 action["entity_template"] || action["item_template"] ||
-                action["quantity"] || action["collision_mask"] ||
+                action["quantity"] ||
                 action["lockout_ticks"] || action["ui_id"] ||
                 action["count"].IsDefined() == action["percent"].IsDefined()) {
                 throw std::runtime_error(
                     "refill_weapon_reserve requires target and exactly one of "
                     "count or percent, and nothing else: " + path);
             }
-            if (action["count"]) {
+            // Either may be params.<name>; a bound one is range-checked when
+            // each binding supplies it.
+            compiled_action.reserve_refill_count_parameter =
+                optional_parameter_reference(action["count"]);
+            compiled_action.reserve_refill_percent_parameter =
+                optional_parameter_reference(action["percent"]);
+            if (!compiled_action.reserve_refill_count_parameter.empty() ||
+                !compiled_action.reserve_refill_percent_parameter.empty()) {
+                // Bound: nothing to read here.
+            } else if (action["count"]) {
                 const int count = action["count"].as<int>();
                 if (count <= 0 || count > UINT16_MAX) {
                     throw std::runtime_error(
@@ -2338,14 +2485,19 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 action["strength"] || action["status"] ||
                 action["operation"] || action["value"] ||
                 action["entity_template"] || action["item_template"] ||
-                action["quantity"] || action["collision_mask"] ||
+                action["quantity"] ||
                 action["lockout_ticks"] || !action["ui_id"]) {
                 throw std::runtime_error(
                     "open_ui requires target and ui_id and nothing else: " +
                     path);
             }
-            compiled_action.ui_id = action["ui_id"].as<std::uint32_t>();
-            if (compiled_action.ui_id == 0u) {
+            compiled_action.ui_id_parameter =
+                optional_parameter_reference(action["ui_id"]);
+            if (compiled_action.ui_id_parameter.empty()) {
+                compiled_action.ui_id = action["ui_id"].as<std::uint32_t>();
+            }
+            if (compiled_action.ui_id_parameter.empty() &&
+                compiled_action.ui_id == 0u) {
                 throw std::runtime_error(
                     "open_ui ui_id must be non-zero: " + path);
             }
@@ -2401,7 +2553,7 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 action["direction"] || action["owner"] || action["amount"] ||
                 action["strength"] || action["status"] ||
                 action["entity_template"] || action["item_template"] ||
-                action["quantity"] || action["collision_mask"] ||
+                action["quantity"] ||
                 action["lockout_ticks"]) {
                 throw std::runtime_error(
                     "apply_speed_modifier action has unsupported fields: " +
@@ -2423,6 +2575,25 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 "unsupported action graph action type: " +
                 compiled_action.action_type);
         }
+        for (const std::string* bound : {
+                 &compiled_action.lockout_ticks_parameter,
+                 &compiled_action.pull_distance_parameter,
+                 &compiled_action.pull_airtime_ticks_parameter,
+                 &compiled_action.pull_max_speed_parameter,
+                 &compiled_action.pull_strength_parameter,
+                 &compiled_action.ui_id_parameter,
+                 &compiled_action.spawn_placement_parameter,
+                 &compiled_action.status_strength_parameter,
+                 &compiled_action.reserve_refill_count_parameter,
+                 &compiled_action.reserve_refill_percent_parameter,
+                 &compiled_action.spawn_lifetime_ticks_parameter,
+                 &compiled_action.repeat_count_parameter,
+                 &compiled_action.repeat_scatter_radius_parameter,
+                 &compiled_action.repeat_stagger_lifetime_ticks_parameter}) {
+            if (!bound->empty()) {
+                action_parameters.push_back(bound);
+            }
+        }
         for (const std::string* action_parameter : action_parameters) {
             if (std::none_of(
                     graph.parameters.begin(),
@@ -2440,23 +2611,63 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
     return graph;
 }
 
+// action_ and then lowercase snake_case: [a-z0-9] words joined by single
+// underscores.
+bool is_action_graph_id(const std::string& id) {
+    constexpr std::string_view kPrefix = "action_";
+    if (id.size() <= kPrefix.size() || id.compare(0, kPrefix.size(), kPrefix) != 0 ||
+        id.back() == '_') {
+        return false;
+    }
+    char previous = '_';
+    for (std::size_t index = kPrefix.size(); index < id.size(); ++index) {
+        const char c = id[index];
+        const bool word = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
+        if (!word && !(c == '_' && previous != '_')) {
+            return false;
+        }
+        previous = c;
+    }
+    return true;
+}
+
+// Graphs may sit in subdirectories (common/, derived/<owner_type>/) but are
+// still referred to by id alone, so an id has to be unique across the whole
+// tree and is the file's own name: what a reference says is where the graph
+// is found.
 std::vector<ActionGraphTemplateConfig> load_action_graph_templates_from_source(
     const GameplayConfigSource& source,
     const std::string& directory) {
     std::vector<ActionGraphTemplateConfig> graphs;
-    for (const std::string& file : source.list_yaml_files(directory)) {
+    std::vector<std::string> graph_files;
+    for (const std::string& file : source.list_yaml_files_recursive(directory)) {
         ActionGraphTemplateConfig graph = action_graph_template_from_yaml(
             source.load_yaml(file), file, source.source_kind());
-        if (std::any_of(
-                graphs.begin(),
-                graphs.end(),
-                [&](const ActionGraphTemplateConfig& existing) {
-                    return existing.id == graph.id;
-                })) {
+        if (!is_action_graph_id(graph.id)) {
             throw std::runtime_error(
-                "duplicate action graph id: " + graph.id);
+                "action graph id must be action_ followed by lowercase snake_case: " +
+                graph.id + " in " + file);
+        }
+        const std::string stem = std::filesystem::path(file).stem().string();
+        if (graph.id != stem) {
+            throw std::runtime_error(
+                "action graph id must equal its file name: id " + graph.id +
+                " in " + file);
+        }
+        const auto existing = std::find_if(
+            graphs.begin(),
+            graphs.end(),
+            [&](const ActionGraphTemplateConfig& other) {
+                return other.id == graph.id;
+            });
+        if (existing != graphs.end()) {
+            throw std::runtime_error(
+                "duplicate action graph id: " + graph.id + " in " +
+                graph_files[static_cast<std::size_t>(existing - graphs.begin())] +
+                " and " + file);
         }
         graphs.push_back(std::move(graph));
+        graph_files.push_back(file);
     }
     std::sort(
         graphs.begin(),
@@ -2552,7 +2763,8 @@ StatusEffectTemplateConfig status_effect_template_from_yaml(
             }
             for (const auto& entry : trigger["parameters"]) {
                 binding.parameters.emplace_back(
-                    entry.first.as<std::string>(), entry.second.as<std::string>());
+                    entry.first.as<std::string>(),
+                    binding_value_from_yaml(entry.second, path));
             }
         }
         return binding;
@@ -2604,15 +2816,19 @@ std::vector<StatusEffectTemplateConfig> load_status_effect_templates_from_source
     return statuses;
 }
 
+// `referrer` names who asked -- "projectile rocket on_projectile_impact" --
+// since an id alone no longer says which file to open.
 const ActionGraphTemplateConfig* action_graph_template_from_ref(
     const std::string& id,
-    const std::vector<ActionGraphTemplateConfig>& graphs) {
+    const std::vector<ActionGraphTemplateConfig>& graphs,
+    const std::string& referrer) {
     const auto found = std::find_if(
         graphs.begin(),
         graphs.end(),
         [&](const ActionGraphTemplateConfig& graph) { return graph.id == id; });
     if (found == graphs.end()) {
-        throw std::runtime_error("unknown action_graph reference: " + id);
+        throw std::runtime_error(
+            "unknown action_graph reference: " + id + " from " + referrer);
     }
     return &*found;
 }
@@ -2976,6 +3192,10 @@ std::uint32_t collider_purpose_from_yaml(const YAML::Node& node) {
     // never a physics body.
     if (value == "trigger") {
         return KernelColliderPurpose_Trigger;
+    }
+    // An actor's bounds (ABI 106): only an actor hit on its bones names one.
+    if (value == "bounds") {
+        return KernelColliderPurpose_Bounds;
     }
     throw std::runtime_error("unsupported collider purpose: " + value);
 }
@@ -3599,6 +3819,54 @@ std::uint32_t actor_collider_template_id_from_yaml(
     throw std::runtime_error("unknown actor collider_template name: " + value);
 }
 
+// An actor's hit volume is its collider_template and nothing else. The live hit
+// tests read the collider; the rewound ones, relevance and aim points read the
+// Hitbox filled here. They used to be authored separately, as a `hitbox:` block,
+// and five rigs drifted apart by a factor of thirty: shot in the rewound window
+// a giant was 16 m wide, after it 0.8 m.
+//
+// An actor whose skeleton colliders are hit volumes is hit on those and only
+// those, so its collider_template is its bounds instead: where it is, and which
+// actors' bones a rewound shot goes on to test, never something struck itself.
+// The two kinds cannot be mixed up -- a hit box on a rig would be struck in the
+// gaps between its legs, and bounds on anything else would make it unhittable.
+void apply_actor_hit_collider(
+    const ColliderCatalogConfig& colliders,
+    ActorTemplateConfig* actor_template) {
+    const bool rigged = actor_template->skeleton.has_collision_flags;
+    if (rigged &&
+        (actor_template->skeleton.collision_flags.purpose_flags &
+         KernelColliderPurpose_Hit) == 0u) {
+        throw std::runtime_error(
+            "skeleton collision_flags must include hit; a rig's colliders are "
+            "the actor's hit volumes: " +
+            actor_template->name);
+    }
+    const auto found = std::find_if(
+        colliders.templates.begin(),
+        colliders.templates.end(),
+        [actor_template](const ColliderTemplateConfig& collider_template) {
+            return collider_template.definition.template_id ==
+                actor_template->collider_template_id;
+        });
+    const std::uint32_t expected_purpose =
+        rigged ? KernelColliderPurpose_Bounds : KernelColliderPurpose_Hit;
+    // Hitbox is a centred box and nothing else, so that is all either kind
+    // may be.
+    if (found == colliders.templates.end() ||
+        found->definition.purpose_flags != expected_purpose ||
+        found->definition.shape_type != KernelColliderShapeType_Aabb) {
+        throw std::runtime_error(
+            rigged ? "an actor hit on its skeleton colliders needs a bounds "
+                     "aabb as its collider_template: " + actor_template->name
+                   : "actor collider_template must be a hit aabb: " +
+                    actor_template->name);
+    }
+    const KernelVec4& box = found->definition.shape_params;
+    actor_template->hitbox_center = found->definition.center;
+    actor_template->hitbox_half_extents = KernelVec3{box.x, box.y, box.z};
+}
+
 std::uint64_t uint64_from_yaml(const YAML::Node& node) {
     const std::string value = node.as<std::string>();
     std::size_t consumed = 0u;
@@ -4038,7 +4306,7 @@ ActorTemplateConfig actor_template_from_yaml(
             "camp",
             "collider_template",
             "health",
-            "impulse_resistance",
+            "force_resistance",
             "stagger",
             "knockdown",
             "death_policy",
@@ -4083,9 +4351,9 @@ ActorTemplateConfig actor_template_from_yaml(
     }
     actor_template.collider_template_id =
         actor_collider_template_id_from_yaml(node["collider_template"], colliders);
-    if (node["impulse_resistance"]) {
-        actor_template.impulse_resistance =
-            node["impulse_resistance"].as<float>();
+    if (node["force_resistance"]) {
+        actor_template.force_resistance =
+            node["force_resistance"].as<float>();
     }
     if (node["death_policy"]) {
         const std::string policy = node["death_policy"].as<std::string>();
@@ -4255,21 +4523,14 @@ ActorTemplateConfig actor_template_from_yaml(
             hover["vertical_speed_meters_per_second"].as<float>();
     }
 
-    const YAML::Node hitbox = node["hitbox"];
-    if (!hitbox || !hitbox["center"] || !hitbox["half_extents"]) {
+    // Still a known key, so that an old template is told where its box went
+    // rather than only that the key is unknown.
+    if (node["hitbox"]) {
         throw std::runtime_error(
-            "actor template requires hitbox center and half_extents: " +
+            "actor template sets hitbox; its hit volume is its "
+            "collider_template: " +
             actor_template.name);
     }
-    reject_unknown_keys(
-        hitbox,
-        {"center", "half_extents"},
-        path,
-        source_kind,
-        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
-        actor_template.actor_template_id);
-    actor_template.hitbox_center = vec3_from_yaml(hitbox["center"]);
-    actor_template.hitbox_half_extents = vec3_from_yaml(hitbox["half_extents"]);
 
     const YAML::Node weapon_slots = node["weapon_slots"];
     if (!weapon_slots || !weapon_slots.IsSequence()) {
@@ -4857,6 +5118,9 @@ ActorTemplateConfig actor_template_from_yaml(
         path,
         source_kind,
         actor_template.actor_template_id);
+    // Last, since which kind of collider an actor needs depends on whether its
+    // skeleton colliders are hit volumes.
+    apply_actor_hit_collider(colliders, &actor_template);
     return actor_template;
 }
 
@@ -4931,7 +5195,7 @@ EntityTemplateConfig entity_template_from_yaml(
                 "health",
                 // A prop is what an impulse actually pushes, so it carries the
                 // resistance the same way an actor does.
-                "impulse_resistance",
+                "force_resistance",
                 "physics",
                 "interaction",
                 "throw",
@@ -4953,9 +5217,9 @@ EntityTemplateConfig entity_template_from_yaml(
         entity_template.entity_type = KernelEntityType_Prop;
         entity_template.server_only =
             node["server_only"] ? node["server_only"].as<bool>() : false;
-        if (node["impulse_resistance"]) {
-            entity_template.impulse_resistance =
-                node["impulse_resistance"].as<float>();
+        if (node["force_resistance"]) {
+            entity_template.force_resistance =
+                node["force_resistance"].as<float>();
         }
         entity_template.spawner = spawner_from_yaml(
             node["spawner"],
@@ -6058,13 +6322,13 @@ TriggerBindingConfig trigger_binding_from_yaml(
     TriggerBindingConfig binding;
     binding.action_graph_ref = node["action_graph"].as<std::string>();
     for (const auto& entry : node["parameters"]) {
-        if (!entry.first.IsScalar() || !entry.second.IsScalar()) {
+        if (!entry.first.IsScalar()) {
             throw std::runtime_error(
-                "trigger parameters must be scalar values: " + path);
+                "trigger parameter names must be scalars: " + path);
         }
         binding.parameters.emplace_back(
             entry.first.as<std::string>(),
-            entry.second.as<std::string>());
+            binding_value_from_yaml(entry.second, path));
     }
     return binding;
 }
@@ -6681,6 +6945,7 @@ ProjectileTemplateConfig projectile_template_from_yaml(
             "beam",
             "launch",
             "replication",
+            "stagger",
         },
         path,
         source_kind,
@@ -6739,6 +7004,19 @@ ProjectileTemplateConfig projectile_template_from_yaml(
                 "replication must be replicated or derived: " +
                 projectile_template.name);
         }
+    }
+    // What each hit's damage adds to the target's stagger meter. Left out, it
+    // is derived from the damage; 0 is none. Authored here, with the damage,
+    // because an impact graph no longer carries the hit's damage.
+    if (node["stagger"]) {
+        const float stagger = node["stagger"].as<float>();
+        if (!std::isfinite(stagger) || stagger < 0.0f) {
+            throw std::runtime_error(
+                "projectile stagger must be finite and >= 0: " +
+                projectile_template.name);
+        }
+        mechanics.stagger_authored = 1u;
+        mechanics.stagger = stagger;
     }
     const bool derived =
         mechanics.replication == KernelProjectileReplication_Derived;
@@ -6880,8 +7158,12 @@ ProjectileTemplateConfig projectile_template_from_yaml(
             ? projectile_sync_mode_from_yaml(node["sync_mode"])
             : KernelProjectileSyncMode_ServerSnapshotOnly;
         mechanics.hit_response = KernelProjectileHitResponse_Destroy;
-        mechanics.damage_shape = KernelProjectileDamageShape_DirectHit;
         mechanics.damage = node["damage"].as<std::uint16_t>();
+        // Zero is a field that deals no damage of its own -- a push, a pull --
+        // rather than a placeholder 1 its graph is trusted to ignore.
+        mechanics.damage_shape = mechanics.damage == 0
+            ? KernelProjectileDamageShape_None
+            : KernelProjectileDamageShape_DirectHit;
         mechanics.damage_falloff =
             damage_falloff_from_yaml(damage_behavior["falloff"]);
         mechanics.max_hit_count = 1;
@@ -7143,10 +7425,136 @@ std::string trigger_parameter_value(
         "required action graph parameter is missing: " + parameter.name);
 }
 
+const ActionGraphParameterConfig& graph_parameter_named(
+    const ActionGraphTemplateConfig& graph,
+    const std::string& name) {
+    const auto found = std::find_if(
+        graph.parameters.begin(),
+        graph.parameters.end(),
+        [&](const ActionGraphParameterConfig& parameter) {
+            return parameter.name == name;
+        });
+    if (found == graph.parameters.end()) {
+        throw std::runtime_error(
+            "action references undeclared graph parameter: " + name);
+    }
+    return *found;
+}
+
+// What a binding supplied for a field authored as params.<name>, read whole:
+// "12abc" is a typo, not 12.
+float bound_float(
+    const TriggerBindingConfig& binding,
+    const ActionGraphTemplateConfig& graph,
+    const std::string& name) {
+    const std::string text =
+        trigger_parameter_value(binding, graph_parameter_named(graph, name));
+    std::size_t parsed = 0;
+    float value = 0.0f;
+    try {
+        value = std::stof(text, &parsed);
+    } catch (const std::exception&) {
+        parsed = 0;
+    }
+    if (parsed == 0 || parsed != text.size() || !std::isfinite(value)) {
+        throw std::runtime_error(
+            "action graph parameter " + name + " must be a finite number, got " +
+            text + ": " + graph.id);
+    }
+    return value;
+}
+
+std::uint32_t bound_uint32(
+    const TriggerBindingConfig& binding,
+    const ActionGraphTemplateConfig& graph,
+    const std::string& name) {
+    const std::string text =
+        trigger_parameter_value(binding, graph_parameter_named(graph, name));
+    std::size_t parsed = 0;
+    unsigned long long value = 0;
+    try {
+        value = std::stoull(text, &parsed);
+    } catch (const std::exception&) {
+        parsed = 0;
+    }
+    if (parsed == 0 || parsed != text.size() || text.front() == '-' ||
+        value > std::numeric_limits<std::uint32_t>::max()) {
+        throw std::runtime_error(
+            "action graph parameter " + name +
+            " must be a non-negative integer, got " + text + ": " + graph.id);
+    }
+    return static_cast<std::uint32_t>(value);
+}
+
+std::uint32_t compile_impulse_lockout(
+    const TriggerBindingConfig& binding,
+    const ActionGraphTemplateConfig& graph,
+    const ActionGraphActionConfig& action) {
+    if (action.lockout_ticks_parameter.empty()) {
+        return action.lockout_ticks;
+    }
+    const std::uint32_t lockout =
+        bound_uint32(binding, graph, action.lockout_ticks_parameter);
+    if (lockout > KERNEL_MAX_IMPULSE_LOCKOUT_TICKS) {
+        throw std::runtime_error(
+            "apply_impulse lockout_ticks must not exceed " +
+            std::to_string(KERNEL_MAX_IMPULSE_LOCKOUT_TICKS) + ": " + graph.id);
+    }
+    return lockout;
+}
+
+// apply_status's strength: the literal, or what the binding supplies. A bound
+// 0 is "weigh against nobody", the same as leaving the literal out.
+float compile_status_strength(
+    const TriggerBindingConfig& binding,
+    const ActionGraphTemplateConfig& graph,
+    const ActionGraphActionConfig& action) {
+    if (action.status_strength_parameter.empty()) {
+        return action.status_strength;
+    }
+    const float strength =
+        bound_float(binding, graph, action.status_strength_parameter);
+    if (strength < 0.0f) {
+        throw std::runtime_error(
+            "apply_status strength must be finite and >= 0: " + graph.id);
+    }
+    return strength;
+}
+
+// refill_weapon_reserve's count and percent, literal or bound, with the
+// ranges a literal is held to.
+void compile_reserve_refill(
+    const TriggerBindingConfig& binding,
+    const ActionGraphTemplateConfig& graph,
+    const ActionGraphActionConfig& action,
+    KernelActionDefinition* compiled_action) {
+    compiled_action->reserve_refill_count = action.reserve_refill_count;
+    compiled_action->reserve_refill_percent = action.reserve_refill_percent;
+    if (!action.reserve_refill_count_parameter.empty()) {
+        const std::uint32_t count =
+            bound_uint32(binding, graph, action.reserve_refill_count_parameter);
+        if (count == 0u || count > UINT16_MAX) {
+            throw std::runtime_error(
+                "refill_weapon_reserve count must be 1 to 65535: " + graph.id);
+        }
+        compiled_action->reserve_refill_count = static_cast<std::uint16_t>(count);
+    }
+    if (!action.reserve_refill_percent_parameter.empty()) {
+        const std::uint32_t percent =
+            bound_uint32(binding, graph, action.reserve_refill_percent_parameter);
+        if (percent == 0u || percent > 100u) {
+            throw std::runtime_error(
+                "refill_weapon_reserve percent must be 1 to 100: " + graph.id);
+        }
+        compiled_action->reserve_refill_percent = static_cast<std::uint16_t>(percent);
+    }
+}
+
 // Both trigger compilers -- projectile and entity -- resolve apply_impulse's
-// strength identically, and the two used to spell it out separately. A binding
-// that overrides the parameter always wins and is always the scalar form; only
-// an unoverridden [horizontal, vertical] default selects the split reading.
+// strength identically. A [horizontal, vertical] pair, from the binding or
+// the graph's default, is the split reading; a scalar is the radial one. A
+// binding never turns a split default radial behind the author's back: it
+// overrides a pair with a pair.
 void compile_impulse_strength(
     const TriggerBindingConfig& binding,
     const ActionGraphParameterConfig& strength_parameter,
@@ -7158,14 +7566,24 @@ void compile_impulse_strength(
         [&](const auto& value) {
             return value.first == strength_parameter.name;
         });
-    if (override_binding == binding.parameters.end() &&
-        strength_parameter.default_strength_pair.has_value()) {
-        const std::array<float, 2>& pair =
-            *strength_parameter.default_strength_pair;
+    std::optional<std::array<float, 2>> pair =
+        strength_parameter.default_strength_pair;
+    if (override_binding != binding.parameters.end()) {
+        pair = strength_pair_from_binding_text(
+            override_binding->second, binding.action_graph_ref);
+        if (!pair.has_value() &&
+            strength_parameter.default_strength_pair.has_value()) {
+            throw std::runtime_error(
+                "apply_impulse strength defaults to [horizontal, vertical]; "
+                "a binding must override it with a pair too: " +
+                binding.action_graph_ref);
+        }
+    }
+    if (pair.has_value()) {
         compiled_action->impulse_strength_mode =
             KERNEL_IMPULSE_STRENGTH_MODE_SPLIT;
-        compiled_action->impulse_strength = pair[0];
-        compiled_action->impulse_strength_vertical = pair[1];
+        compiled_action->impulse_strength = (*pair)[0];
+        compiled_action->impulse_strength_vertical = (*pair)[1];
         return;
     }
     const std::string strength =
@@ -7310,7 +7728,6 @@ void mirror_first_action(KernelActionTriggerDefinition* trigger) {
     trigger->health_change_amount = action.health_change_amount;
     trigger->condition_type = action.condition_type;
     trigger->impulse_strength = action.impulse_strength;
-    trigger->impulse_collision_mask = action.impulse_collision_mask;
     trigger->impulse_direction = action.impulse_direction;
     trigger->impulse_lockout_ticks = action.impulse_lockout_ticks;
     trigger->impulse_strength_mode = action.impulse_strength_mode;
@@ -7329,15 +7746,40 @@ void mirror_first_action(KernelActionTriggerDefinition* trigger) {
 // checked against the trigger by validate_trigger_parameters.
 void compile_pull_action(
     const TriggerBindingConfig& binding,
+    const ActionGraphTemplateConfig& graph,
     const ActionGraphParameterConfig& point_parameter,
     const ActionGraphActionConfig& action,
     KernelActionDefinition* compiled_action) {
     compiled_action->action_type = KernelEntityTriggerActionType_ApplyPull;
     compiled_action->pull_mode = action.pull_mode;
-    compiled_action->pull_distance = action.pull_distance;
-    compiled_action->pull_airtime_ticks = action.pull_airtime_ticks;
-    compiled_action->pull_max_speed = action.pull_max_speed;
-    compiled_action->pull_strength = action.pull_strength;
+    compiled_action->pull_distance = action.pull_distance_parameter.empty()
+        ? action.pull_distance
+        : bound_float(binding, graph, action.pull_distance_parameter);
+    compiled_action->pull_airtime_ticks =
+        action.pull_airtime_ticks_parameter.empty()
+        ? action.pull_airtime_ticks
+        : bound_uint32(binding, graph, action.pull_airtime_ticks_parameter);
+    compiled_action->pull_max_speed = action.pull_max_speed_parameter.empty()
+        ? action.pull_max_speed
+        : bound_float(binding, graph, action.pull_max_speed_parameter);
+    compiled_action->pull_strength = action.pull_strength_parameter.empty()
+        ? action.pull_strength
+        : bound_float(binding, graph, action.pull_strength_parameter);
+    // A literal set was checked at load; this catches the bound ones, which
+    // only exist once a binding supplies them.
+    if (!pull_is_authorable(
+            compiled_action->pull_mode,
+            compiled_action->pull_distance,
+            compiled_action->pull_airtime_ticks,
+            compiled_action->pull_max_speed,
+            compiled_action->pull_strength)) {
+        throw std::runtime_error(
+            "apply_pull needs airtime_ticks in 1.." +
+            std::to_string(KERNEL_MAX_IMPULSE_LOCKOUT_TICKS) +
+            ", a positive max_speed and strength, and a non-negative "
+            "distance with anchor or a non-zero one with direction: " +
+            graph.id);
+    }
     const bool bound = std::any_of(
         binding.parameters.begin(),
         binding.parameters.end(),
@@ -7401,17 +7843,59 @@ void compile_status_direction(
     }
 }
 
+// spawn_projectile's lifetime and repeat, literal or bound, held to the
+// limits read_spawn_repeat holds a literal to.
 void compile_spawn_repeat(
+    const TriggerBindingConfig& binding,
+    const ActionGraphTemplateConfig& graph,
     const ActionGraphActionConfig& action,
     KernelActionDefinition* compiled_action) {
-    compiled_action->spawn_lifetime_ticks = action.spawn_lifetime_ticks;
-    compiled_action->repeat_count_min =
-        static_cast<std::uint8_t>(action.repeat_count_min);
-    compiled_action->repeat_count_max =
-        static_cast<std::uint8_t>(action.repeat_count_max);
-    compiled_action->repeat_scatter_radius = action.repeat_scatter_radius;
-    compiled_action->repeat_stagger_lifetime_ticks =
-        action.repeat_stagger_lifetime_ticks;
+    std::uint32_t lifetime = action.spawn_lifetime_ticks;
+    if (!action.spawn_lifetime_ticks_parameter.empty()) {
+        lifetime = bound_uint32(binding, graph, action.spawn_lifetime_ticks_parameter);
+        if (lifetime == 0u) {
+            throw std::runtime_error(
+                "spawn_projectile lifetime_ticks must be at least 1: " + graph.id);
+        }
+    }
+    std::uint32_t count_min = action.repeat_count_min;
+    std::uint32_t count_max = action.repeat_count_max;
+    if (!action.repeat_count_parameter.empty()) {
+        const std::string text = trigger_parameter_value(
+            binding, graph_parameter_named(graph, action.repeat_count_parameter));
+        if (!text.empty() && text.front() == '[') {
+            const YAML::Node pair = YAML::Load(text);
+            count_min = pair[0].as<std::uint32_t>();
+            count_max = pair[1].as<std::uint32_t>();
+        } else {
+            count_min = bound_uint32(binding, graph, action.repeat_count_parameter);
+            count_max = count_min;
+        }
+        if (count_min < 1u || count_min > count_max ||
+            count_max > KERNEL_MAX_ACTION_REPEAT) {
+            throw std::runtime_error(
+                "spawn_projectile repeat count must satisfy 1 <= min <= max <= " +
+                std::to_string(KERNEL_MAX_ACTION_REPEAT) + ": " + graph.id);
+        }
+    }
+    float scatter = action.repeat_scatter_radius;
+    if (!action.repeat_scatter_radius_parameter.empty()) {
+        scatter = bound_float(binding, graph, action.repeat_scatter_radius_parameter);
+        if (scatter < 0.0f) {
+            throw std::runtime_error(
+                "spawn_projectile repeat scatter_radius must be finite and "
+                "non-negative: " + graph.id);
+        }
+    }
+    const std::uint32_t stagger =
+        action.repeat_stagger_lifetime_ticks_parameter.empty()
+        ? action.repeat_stagger_lifetime_ticks
+        : bound_uint32(binding, graph, action.repeat_stagger_lifetime_ticks_parameter);
+    compiled_action->spawn_lifetime_ticks = lifetime;
+    compiled_action->repeat_count_min = static_cast<std::uint8_t>(count_min);
+    compiled_action->repeat_count_max = static_cast<std::uint8_t>(count_max);
+    compiled_action->repeat_scatter_radius = scatter;
+    compiled_action->repeat_stagger_lifetime_ticks = stagger;
 }
 
 void compile_projectile_trigger_binding(
@@ -7424,10 +7908,12 @@ void compile_projectile_trigger_binding(
     if (binding.action_graph_ref.empty()) {
         return;
     }
-    const ActionGraphTemplateConfig* graph = action_graph_template_from_ref(
-        binding.action_graph_ref, action_graph_templates);
     const std::string_view trigger_name =
         expired ? "on_expired" : "on_projectile_impact";
+    const ActionGraphTemplateConfig* graph = action_graph_template_from_ref(
+        binding.action_graph_ref,
+        action_graph_templates,
+        "projectile " + projectile_template->name + " " + std::string(trigger_name));
     validate_trigger_parameters(binding, trigger_name, *graph);
     const auto graph_parameter = [&](const std::string& name)
         -> const ActionGraphParameterConfig& {
@@ -7498,7 +7984,8 @@ void compile_projectile_trigger_binding(
                 trigger_parameter_value(
                     binding, graph_parameter(action.target_parameter)));
             compiled_action.status_effect_id = found->status_effect_id;
-            compiled_action.status_strength = action.status_strength;
+            compiled_action.status_strength =
+                compile_status_strength(binding, *graph, action);
             if (!action.direction_parameter.empty()) {
                 compile_status_direction(
                     binding, graph_parameter(action.direction_parameter),
@@ -7512,6 +7999,7 @@ void compile_projectile_trigger_binding(
                     binding, graph_parameter(action.target_parameter)));
             compile_pull_action(
                 binding,
+                *graph,
                 graph_parameter(
                     action.pull_mode == KERNEL_PULL_MODE_TO_POINT
                         ? action.anchor_parameter
@@ -7580,8 +8068,8 @@ void compile_projectile_trigger_binding(
                             ? KernelEventVec3Source_SubjectDirection
                             : KernelEventVec3Source_Direction;
                 }
-                compiled_action.impulse_collision_mask = action.collision_mask;
-                compiled_action.impulse_lockout_ticks = action.lockout_ticks;
+                compiled_action.impulse_lockout_ticks =
+                    compile_impulse_lockout(binding, *graph, action);
             } else {
                 const std::string amount = trigger_parameter_value(
                     binding, graph_parameter(action.amount_parameter));
@@ -7633,7 +8121,7 @@ void compile_projectile_trigger_binding(
             spawned_projectile->definition.projectile_template_id;
         compiled_action.position_source = KernelEventVec3Source_Position;
         compiled_action.direction_source = KernelEventVec3Source_Direction;
-        compile_spawn_repeat(action, &compiled_action);
+        compile_spawn_repeat(binding, *graph, action, &compiled_action);
     }
     mirror_first_action(&compiled);
 }
@@ -7641,6 +8129,7 @@ void compile_projectile_trigger_binding(
 KernelActionTriggerDefinition compile_action_trigger_binding(
     const TriggerBindingConfig& binding,
     std::string_view trigger_name,
+    const std::string& owner,
     const std::vector<ActionGraphTemplateConfig>& action_graph_templates,
     const std::vector<EntityTemplateConfig>& entity_templates,
     const std::vector<ProjectileTemplateConfig>* projectile_templates = nullptr,
@@ -7651,7 +8140,9 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
         return compiled;
     }
     const ActionGraphTemplateConfig* graph = action_graph_template_from_ref(
-        binding.action_graph_ref, action_graph_templates);
+        binding.action_graph_ref,
+        action_graph_templates,
+        owner + " " + std::string(trigger_name));
     validate_trigger_parameters(binding, trigger_name, *graph);
     const auto graph_parameter = [&](const std::string& name)
         -> const ActionGraphParameterConfig& {
@@ -7745,7 +8236,7 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
                 found->definition.projectile_template_id;
             compiled_action.position_source = KernelEventVec3Source_Position;
             compiled_action.direction_source = KernelEventVec3Source_Direction;
-            compile_spawn_repeat(action, &compiled_action);
+            compile_spawn_repeat(binding, *graph, action, &compiled_action);
             continue;
         }
         if (action.action_type == "spawn_entity") {
@@ -7778,6 +8269,19 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
             }
             compiled_action.owner_source = entity_ref_source(owner);
             compiled_action.spawn_placement = action.spawn_placement;
+            if (!action.spawn_placement_parameter.empty()) {
+                const std::string placement = trigger_parameter_value(
+                    binding, graph_parameter(action.spawn_placement_parameter));
+                if (placement == "exact") {
+                    compiled_action.spawn_placement = KERNEL_SPAWN_PLACEMENT_EXACT;
+                } else if (placement == "clear") {
+                    compiled_action.spawn_placement = KERNEL_SPAWN_PLACEMENT_CLEAR;
+                } else {
+                    throw std::runtime_error(
+                        "spawn_entity placement must be exact or clear, got " +
+                        placement + ": " + graph->id);
+                }
+            }
             if (!action.item_template_ref.empty()) {
                 if (item_templates == nullptr) {
                     throw std::runtime_error(
@@ -7846,8 +8350,8 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
                 compiled_action.direction_source =
                     KernelEventVec3Source_Direction;
             }
-            compiled_action.impulse_collision_mask = action.collision_mask;
-            compiled_action.impulse_lockout_ticks = action.lockout_ticks;
+            compiled_action.impulse_lockout_ticks =
+                compile_impulse_lockout(binding, *graph, action);
             continue;
         }
         if (action.action_type == "refill_weapon_reserve") {
@@ -7862,8 +8366,7 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
             compiled_action.target_source = entity_ref_source(
                 trigger_parameter_value(
                     binding, graph_parameter(action.target_parameter)));
-            compiled_action.reserve_refill_count = action.reserve_refill_count;
-            compiled_action.reserve_refill_percent = action.reserve_refill_percent;
+            compile_reserve_refill(binding, *graph, action, &compiled_action);
             continue;
         }
         if (action.action_type == "teleport") {
@@ -7890,7 +8393,13 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
             compiled_action.target_source = entity_ref_source(
                 trigger_parameter_value(
                     binding, graph_parameter(action.target_parameter)));
-            compiled_action.ui_id = action.ui_id;
+            compiled_action.ui_id = action.ui_id_parameter.empty()
+                ? action.ui_id
+                : bound_uint32(binding, *graph, action.ui_id_parameter);
+            if (compiled_action.ui_id == 0u) {
+                throw std::runtime_error(
+                    "open_ui ui_id must be non-zero: " + graph->id);
+            }
             continue;
         }
         if (action.action_type == "apply_pull") {
@@ -7905,6 +8414,7 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
                     binding, graph_parameter(action.target_parameter)));
             compile_pull_action(
                 binding,
+                *graph,
                 graph_parameter(
                     action.pull_mode == KERNEL_PULL_MODE_TO_POINT
                         ? action.anchor_parameter
@@ -7925,7 +8435,8 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
             compiled_action.target_source = entity_ref_source(target);
             compiled_action.status_effect_id = status_ref(status);
             if (action.action_type == "apply_status") {
-                compiled_action.status_strength = action.status_strength;
+                compiled_action.status_strength =
+                    compile_status_strength(binding, *graph, action);
             }
             if (!action.direction_parameter.empty()) {
                 compile_status_direction(
@@ -8237,7 +8748,6 @@ void apply_weapon_template_references(
                     projectile_templates);
             KernelWeaponMechanicsDefinition& instant_weapon =
                 weapons->definitions[weapon_id];
-            shot_template->definition.weapon_id = weapon_id;
             instant_weapon.projectile_template_id =
                 shot_template->definition.projectile_template_id;
             instant_weapon.damage = shot_template->definition.mechanics.damage;
@@ -8268,7 +8778,6 @@ void apply_weapon_template_references(
                     projectile_templates);
             KernelWeaponMechanicsDefinition& melee =
                 weapons->definitions[weapon_id];
-            shot_template->definition.weapon_id = weapon_id;
             melee.projectile_template_id =
                 shot_template->definition.projectile_template_id;
             melee.damage = shot_template->definition.mechanics.damage;
@@ -8290,7 +8799,6 @@ void apply_weapon_template_references(
                     projectile_templates);
             KernelWeaponMechanicsDefinition& lock =
                 weapons->definitions[weapon_id];
-            shot_template->definition.weapon_id = weapon_id;
             lock.projectile_template_id =
                 shot_template->definition.projectile_template_id;
             lock.damage = shot_template->definition.mechanics.damage;
@@ -8359,7 +8867,6 @@ void apply_weapon_template_references(
             }
             KernelWeaponMechanicsDefinition& weapon =
                 weapons->definitions[weapon_id];
-            strike_template->definition.weapon_id = weapon_id;
             weapon.projectile_template_id =
                 strike_template->definition.projectile_template_id;
             weapon.damage = mechanics.damage;
@@ -8387,7 +8894,6 @@ void apply_weapon_template_references(
                     "a projectile with a launch rule cannot be fired from "
                     "the muzzle: " + file);
             }
-            projectile_template->definition.weapon_id = weapon_id;
             weapon.fire_mode = KernelWeaponFireMode_Projectile;
             weapon.projectile_template_id = definition.projectile_template_id;
             weapon.damage = definition.mechanics.damage;
@@ -9682,8 +10188,8 @@ std::uint64_t compute_gameplay_catalog_hash(
             hash_string(&hash, action.status_parameter);
             hash_string(&hash, action.operation_parameter);
             hash_string(&hash, action.value_parameter);
-            hash_scalar(&hash, action.collision_mask);
             hash_scalar(&hash, action.lockout_ticks);
+            hash_string(&hash, action.lockout_ticks_parameter);
             hash_scalar(&hash, action.stagger.has_value());
             hash_scalar(&hash, action.stagger.value_or(0.0f));
             hash_string(&hash, action.item_template_ref);
@@ -9702,6 +10208,20 @@ std::uint64_t compute_gameplay_catalog_hash(
             hash_scalar(&hash, action.ui_id);
             hash_scalar(&hash, action.spawn_placement);
             hash_float(&hash, action.pull_strength);
+            hash_string(&hash, action.pull_distance_parameter);
+            hash_string(&hash, action.pull_airtime_ticks_parameter);
+            hash_string(&hash, action.pull_max_speed_parameter);
+            hash_string(&hash, action.pull_strength_parameter);
+            hash_string(&hash, action.ui_id_parameter);
+            hash_string(&hash, action.spawn_placement_parameter);
+            hash_float(&hash, action.status_strength);
+            hash_string(&hash, action.status_strength_parameter);
+            hash_string(&hash, action.reserve_refill_count_parameter);
+            hash_string(&hash, action.reserve_refill_percent_parameter);
+            hash_string(&hash, action.spawn_lifetime_ticks_parameter);
+            hash_string(&hash, action.repeat_count_parameter);
+            hash_string(&hash, action.repeat_scatter_radius_parameter);
+            hash_string(&hash, action.repeat_stagger_lifetime_ticks_parameter);
             hash_scalar(&hash, action.reserve_refill_count);
             hash_scalar(&hash, action.reserve_refill_percent);
         }
@@ -10277,9 +10797,9 @@ std::vector<std::string> validate_gameplay_config(
     }
     for (const EntityTemplateConfig& entity_template :
          config.entity_templates) {
-        if (!std::isfinite(entity_template.impulse_resistance) ||
-            entity_template.impulse_resistance < 0.0f) {
-            errors.push_back("impulse_resistance must be finite and non-negative");
+        if (!std::isfinite(entity_template.force_resistance) ||
+            entity_template.force_resistance < 0.0f) {
+            errors.push_back("force_resistance must be finite and non-negative");
         }
         if (!stagger_profile_is_authorable(
                 entity_template.stagger.threshold,
@@ -10905,7 +11425,6 @@ std::vector<std::string> validate_gameplay_config(
              (mechanics.area_effect.struct_size <
                   sizeof(KernelAreaEffectMechanicsDefinition) ||
               mechanics.area_effect.radius <= 0.0f ||
-              mechanics.area_effect.damage_per_interval == 0 ||
               mechanics.area_effect.damage_interval_ticks == 0 ||
               mechanics.area_effect.lifetime_ticks == 0)) ||
             (mechanics.projectile_type == KernelProjectileType_Beam &&
@@ -11058,8 +11577,8 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
             authored_template.movement_hover_height_meters;
         entity_template.movement.hover_vertical_speed_meters_per_second =
             authored_template.movement_hover_vertical_speed_meters_per_second;
-        entity_template.impulse_resistance =
-            authored_template.impulse_resistance;
+        entity_template.force_resistance =
+            authored_template.force_resistance;
         entity_template.stagger_threshold = authored_template.stagger.threshold;
         entity_template.stagger_per_damage = authored_template.stagger.per_damage;
         entity_template.stagger_decay_per_tick =
@@ -11078,6 +11597,7 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
         entity_template.activated_trigger = compile_action_trigger_binding(
             authored_template.activated_trigger,
             "on_activated",
+            "entity " + authored_template.name,
             config.action_graph_templates,
             config.entity_templates,
             &config.projectile_templates,
@@ -11086,6 +11606,7 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
         entity_template.collision_trigger = compile_action_trigger_binding(
             authored_template.collision_trigger,
             "on_collision",
+            "entity " + authored_template.name,
             config.action_graph_templates,
             config.entity_templates,
             &config.projectile_templates,
@@ -11130,6 +11651,7 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
             *compiled = compile_action_trigger_binding(
                 *authored,
                 name,
+                "entity " + authored_template.name,
                 config.action_graph_templates,
                 config.entity_templates,
                 &config.projectile_templates,
@@ -11149,6 +11671,7 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
         entity_template.health_depleted_trigger = compile_action_trigger_binding(
             authored_template.health_depleted_trigger,
             "on_health_depleted",
+            "entity " + authored_template.name,
             config.action_graph_templates,
             config.entity_templates,
             &config.projectile_templates,
@@ -11157,6 +11680,7 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
         entity_template.destroy_entity_trigger = compile_action_trigger_binding(
             authored_template.destroy_entity_trigger,
             "on_destroy_entity",
+            "entity " + authored_template.name,
             config.action_graph_templates,
             config.entity_templates,
             &config.projectile_templates,
@@ -11408,6 +11932,7 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
         item.item_used_trigger = compile_action_trigger_binding(
             authored_item.item_used_trigger,
             "on_item_used",
+            "item " + authored_item.name,
             config.action_graph_templates,
             config.entity_templates,
             &config.projectile_templates,
@@ -11416,10 +11941,12 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
         storage.item_templates.push_back(item);
     }
     const auto compile_status_trigger = [&](const TriggerBindingConfig& binding,
-                                            const char* trigger_name) {
+                                            const char* trigger_name,
+                                            const std::string& owner) {
         KernelActionTriggerDefinition trigger = compile_action_trigger_binding(
             binding,
             trigger_name,
+            owner,
             config.action_graph_templates,
             config.entity_templates,
             nullptr,
@@ -11476,11 +12003,17 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
         status.interval_ticks = authored_status.interval_ticks;
         status.replacement_policy = authored_status.replacement_policy;
         status.on_apply_trigger = compile_status_trigger(
-            authored_status.on_apply_trigger, "on_apply");
+            authored_status.on_apply_trigger,
+            "on_apply",
+            "status_effect " + authored_status.name);
         status.on_tick_trigger = compile_status_trigger(
-            authored_status.on_tick_trigger, "on_tick");
+            authored_status.on_tick_trigger,
+            "on_tick",
+            "status_effect " + authored_status.name);
         status.on_expire_trigger = compile_status_trigger(
-            authored_status.on_expire_trigger, "on_expire");
+            authored_status.on_expire_trigger,
+            "on_expire",
+            "status_effect " + authored_status.name);
         status.max_stacks = authored_status.replacement_policy ==
                 KernelStatusEffectReplacementPolicy_Stack
             ? authored_status.max_stacks

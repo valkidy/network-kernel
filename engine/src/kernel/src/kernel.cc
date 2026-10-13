@@ -1539,7 +1539,6 @@ RuntimeProjectileTemplate to_runtime_projectile_template(
     RuntimeProjectileTemplate projectile_template{};
     const KernelProjectileMechanicsDefinition& mechanics = definition.mechanics;
     projectile_template.projectile_template_id = definition.projectile_template_id;
-    projectile_template.weapon_id = definition.weapon_id;
     projectile_template.projectile_type =
         to_projectile_type(mechanics.projectile_type);
     projectile_template.motion_model =
@@ -1555,6 +1554,9 @@ RuntimeProjectileTemplate to_runtime_projectile_template(
     projectile_template.collision_query_mode =
         to_projectile_collision_query_mode(mechanics.collision_query_mode);
     projectile_template.damage = mechanics.damage;
+    projectile_template.stagger = mechanics.stagger_authored != 0u
+        ? mechanics.stagger
+        : kStaggerDerivedFromDamage;
     projectile_template.speed = mechanics.speed;
     projectile_template.lifetime_ticks = mechanics.lifetime_ticks;
     projectile_template.gravity = from_kernel_vec3(mechanics.gravity);
@@ -1851,7 +1853,7 @@ bool validate_area_effect_mechanics(
     const KernelAreaEffectMechanicsDefinition& area_effect) {
     return area_effect.struct_size >= sizeof(KernelAreaEffectMechanicsDefinition) &&
            area_effect.radius > 0.0f &&
-           area_effect.damage_per_interval > 0 &&
+           // Zero is a field that only shoves or pulls (ABI 105).
            area_effect.damage_interval_ticks > 0 &&
            area_effect.lifetime_ticks > 0 &&
            (area_effect.collision_mask &
@@ -1902,7 +1904,6 @@ bool validate_projectile_mechanics(
                 action.health_change_amount = trigger.health_change_amount;
                 action.condition_type = trigger.condition_type;
                 action.impulse_strength = trigger.impulse_strength;
-                action.impulse_collision_mask = trigger.impulse_collision_mask;
                 action.impulse_direction = trigger.impulse_direction;
                 action.impulse_lockout_ticks = trigger.impulse_lockout_ticks;
                 action.impulse_strength_mode = trigger.impulse_strength_mode;
@@ -1943,10 +1944,6 @@ bool validate_projectile_mechanics(
                       (action.impulse_direction.x == 0.0f &&
                        action.impulse_direction.y == 0.0f &&
                        action.impulse_direction.z == 0.0f))) ||
-                    (action.impulse_collision_mask &
-                     (KERNEL_COLLISION_MASK_ACTOR | KERNEL_COLLISION_MASK_PROP)) == 0u ||
-                    (action.impulse_collision_mask &
-                     ~(KERNEL_COLLISION_MASK_ACTOR | KERNEL_COLLISION_MASK_PROP)) != 0u ||
                     action.impulse_lockout_ticks >
                         KERNEL_MAX_IMPULSE_LOCKOUT_TICKS) {
                     return false;
@@ -1978,6 +1975,8 @@ bool validate_projectile_mechanics(
         mechanics.damage_shape > KernelProjectileDamageShape_PiercingSegment ||
         mechanics.damage_falloff > KernelProjectileDamageFalloff_Linear ||
         mechanics.collision_query_mode > KernelProjectileCollisionQueryMode_Ray ||
+        !damage_stagger_is_authorable(
+            mechanics.stagger_authored, mechanics.stagger) ||
         mechanics.hit_response == KernelProjectileHitResponse_Bounce ||
         mechanics.hit_response == KernelProjectileHitResponse_Attach ||
         (mechanics.damage_shape == KernelProjectileDamageShape_None
@@ -3473,8 +3472,6 @@ bool KernelEngine::load_gameplay_catalog(
                     action.health_change_amount =
                         trigger->health_change_amount;
                     action.impulse_strength = trigger->impulse_strength;
-                    action.impulse_collision_mask =
-                        trigger->impulse_collision_mask;
                     action.impulse_direction = trigger->impulse_direction;
                     action.impulse_lockout_ticks =
                         trigger->impulse_lockout_ticks;
@@ -3540,12 +3537,6 @@ bool KernelEngine::load_gameplay_catalog(
                           (action.impulse_direction.x == 0.0f &&
                            action.impulse_direction.y == 0.0f &&
                            action.impulse_direction.z == 0.0f))) ||
-                        (action.impulse_collision_mask &
-                         (KERNEL_COLLISION_MASK_ACTOR |
-                          KERNEL_COLLISION_MASK_PROP)) == 0u ||
-                        (action.impulse_collision_mask &
-                         ~(KERNEL_COLLISION_MASK_ACTOR |
-                           KERNEL_COLLISION_MASK_PROP)) != 0u ||
                         action.impulse_lockout_ticks >
                             KERNEL_MAX_IMPULSE_LOCKOUT_TICKS) {
                         return false;
@@ -3779,9 +3770,13 @@ bool KernelEngine::load_gameplay_catalog(
     for (std::uint32_t index = 0; index < catalog.projectile_template_count; ++index) {
         const KernelProjectileTemplateDefinition& projectile_template =
             catalog.projectile_templates[index];
+        // reserved_weapon_id was weapon_id, stamped by the catalog: a catalog
+        // that still writes one expects the old meaning, so it is refused
+        // rather than silently ignored.
         if (projectile_template.struct_size <
                 sizeof(KernelProjectileTemplateDefinition) ||
             projectile_template.projectile_template_id == 0 ||
+            projectile_template.reserved_weapon_id != 0u ||
             !validate_projectile_mechanics(projectile_template.mechanics)) {
             return false;
         }
@@ -3809,6 +3804,13 @@ bool KernelEngine::load_gameplay_catalog(
             // authored a `length` nothing read.
             (collider_template.shape_type == KernelColliderShapeType_Segment &&
              collider_template.shape_params.y < 0.0f) ||
+            // Bounds are an actor's Hitbox, which is a centred box, and are
+            // nothing else: never a body, so no second purpose would be
+            // honoured.
+            ((collider_template.purpose_flags & KernelColliderPurpose_Bounds) != 0u &&
+             (collider_template.purpose_flags != KernelColliderPurpose_Bounds ||
+              collider_template.shape_type != KernelColliderShapeType_Aabb ||
+              collider_template.lifetime_ticks != 0u)) ||
             // A cone is a query shape, never a body: Jolt has no cone, so
             // every consumer resolves one as a bounding query plus an angle
             // test. Vision was the only consumer until melee, which sweeps the
@@ -4482,11 +4484,15 @@ bool KernelEngine::get_benchmark_stats(KernelBenchmarkStats* out_stats) const {
             sync_mode = to_kernel_projectile_sync_mode(
                 world_.registry().get<HomingState>(entity).sync_mode);
         } else {
+            // By the template it was spawned from. The weapon id is the
+            // weapon that fired the shot, which for a projectile spawned off
+            // another's impact is not the template that describes it.
             const auto found = std::find_if(
                 projectile_templates_.begin(),
                 projectile_templates_.end(),
                 [&projectile](const KernelProjectileTemplateDefinition& definition) {
-                    return definition.weapon_id == projectile.weapon_id;
+                    return definition.projectile_template_id ==
+                        projectile.projectile_template_id;
                 });
             if (found != projectile_templates_.end()) {
                 sync_mode = found->mechanics.sync_mode;
@@ -4813,6 +4819,8 @@ void KernelEngine::materialize_entity_collider(NetId net_id) {
     if (collider_template == nullptr) {
         return;
     }
+    hitbox.bounds_only =
+        collider_template->purpose_flags == KernelColliderPurpose_Bounds;
     // A lag-compensated shot tests Hitbox volumes, not colliders (see
     // raycast_history_frame). A prop template authors a collider and no hitbox
     // block, so its extents arrive as zero and every rewound weapon passed
@@ -4985,6 +4993,66 @@ void KernelEngine::materialize_entity_limb_colliders(
                 locomotion_state.last_root_position,
                 locomotion_state.applied_root_rotation));
     }
+    check_limbs_inside_bounds(identity.net_id);
+}
+
+void KernelEngine::check_limbs_inside_bounds(NetId net_id) {
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (!entity.has_value() ||
+        !world_.registry().all_of<Transform, Hitbox>(*entity)) {
+        return;
+    }
+    const Hitbox& hitbox = world_.registry().get<Hitbox>(*entity);
+    if (!hitbox.bounds_only) {
+        return;
+    }
+    // The bounds exactly as the rewound frame records them (history_buffer.cc):
+    // centre offset unrotated, box turned with the actor.
+    const Transform& transform = world_.registry().get<Transform>(*entity);
+    const glm::vec3 bounds_center = transform.position + hitbox.center;
+    const glm::quat to_bounds = glm::conjugate(transform.rotation);
+    float worst = std::numeric_limits<float>::lowest();
+    for (const ColliderInstance& collider :
+         world_.collider_registry().instances()) {
+        if (collider.entity_net_id != net_id ||
+            collider.bone_index == UINT32_MAX) {
+            continue;
+        }
+        // The bone's reach along each of the bounds' axes: a sphere's radius,
+        // or a box's half extents projected through the relative rotation.
+        const glm::vec3 center = to_bounds * (collider.world_center - bounds_center);
+        glm::vec3 reach{collider.radius};
+        if (collider.shape_type != ColliderShapeType::kSphere) {
+            const glm::mat3 relative =
+                glm::mat3_cast(to_bounds * collider.world_rotation);
+            for (int axis = 0; axis < 3; ++axis) {
+                reach[axis] =
+                    std::abs(relative[0][axis]) * collider.half_extents.x +
+                    std::abs(relative[1][axis]) * collider.half_extents.y +
+                    std::abs(relative[2][axis]) * collider.half_extents.z;
+            }
+        }
+        for (int axis = 0; axis < 3; ++axis) {
+            worst = std::max(
+                worst,
+                std::abs(center[axis]) + reach[axis] - hitbox.half_extents[axis]);
+        }
+    }
+    if (worst == std::numeric_limits<float>::lowest()) {
+        return;
+    }
+    max_limb_bounds_overshoot_meters_ =
+        std::max(max_limb_bounds_overshoot_meters_, worst);
+    // A centimetre of slack, so float noise at a flush face is not reported.
+    if (worst > 0.01f && limb_bounds_overshoot_warned_.insert(net_id).second) {
+        spdlog::warn(
+            "actor {} (collider template {}): a bone reaches {:.2f} m outside "
+            "its bounds, where a rewound shot cannot hit it; enlarge the "
+            "bounds collider",
+            net_id,
+            hitbox.collider_template_id,
+            worst);
+    }
 }
 
 void KernelEngine::materialize_projectile_collider(NetId net_id) {
@@ -5074,6 +5142,12 @@ bool KernelEngine::push_collider_into_physics(const ColliderInstance& collider) 
     // body it would be a static obstacle: walked into, swept against, placed
     // around -- everything it must not be.
     if (collider.purpose_flags == KernelColliderPurpose_Trigger) {
+        return false;
+    }
+    // Bounds are not a body either. They enclose an actor whose bones are its
+    // hit volumes, and Jolt's own broad phase already culls those bones; as a
+    // kActorHitbox the box would be struck in the gaps between the legs.
+    if (collider.purpose_flags == KernelColliderPurpose_Bounds) {
         return false;
     }
     if (collider.lifetime_ticks != 0 || collider.entity_net_id == 0 ||
@@ -7449,6 +7523,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     predicted_impulse_lockout_until_tick_ = 0u;
     predicted_impulse_lockout_armed_tick_ = 0u;
     predicted_impulse_lockout_recovering_ = false;
+    predicted_impulse_is_knockback_ = false;
     predicted_suspension_velocity_ = glm::vec3{0.0f};
     predicted_suspension_until_tick_ = 0u;
     predicted_shelter_net_id_ = 0u;
@@ -8725,7 +8800,6 @@ void KernelEngine::handle_client_projectile_spawn_batch(
                     projectile_template->projectile_template_id;
                 predicted->collider_template_id =
                     projectile_template->collider_template_id;
-                predicted->weapon_id = projectile_template->weapon_id;
                 predicted->sync_mode = to_kernel_projectile_sync_mode(
                     projectile_template->sync_mode);
                 predicted->bound = true;
@@ -8759,7 +8833,6 @@ void KernelEngine::handle_client_projectile_spawn_batch(
                     projectile_template->lifetime_ticks,
                     projectile_template->projectile_template_id,
                     projectile_template->collider_template_id,
-                    projectile_template->weapon_id,
                     to_kernel_projectile_sync_mode(
                         projectile_template->sync_mode),
                     glm::vec3{0.0f, 0.0f, 0.0f},
@@ -8828,7 +8901,10 @@ void KernelEngine::handle_client_projectile_spawn_batch(
             debug_info.data.projectile.projectile_net_id = record.projectile_net_id;
             debug_info.data.projectile.owner_net_id = record.owner_net_id;
             debug_info.data.projectile.owner_peer = record.owner_peer;
-            debug_info.data.projectile.weapon_id = projectile_template->weapon_id;
+            // Unknown here: the spawn record does not carry the weapon, and
+            // the template no longer names one (ABI 106). 0 would read as the
+            // rifle.
+            debug_info.data.projectile.weapon_id = KERNEL_HELD_WEAPON_NONE;
             debug_info.data.projectile.motion_model =
                 to_kernel_projectile_motion_model(
                     projectile_template->motion_model);
@@ -9318,6 +9394,7 @@ void KernelEngine::clear_client_session() {
     predicted_impulse_lockout_until_tick_ = 0u;
     predicted_impulse_lockout_armed_tick_ = 0u;
     predicted_impulse_lockout_recovering_ = false;
+    predicted_impulse_is_knockback_ = false;
     predicted_suspension_velocity_ = glm::vec3{0.0f};
     predicted_suspension_until_tick_ = 0u;
     predicted_shelter_net_id_ = 0u;
@@ -10208,6 +10285,7 @@ bool KernelEngine::step_local_character_prediction(
         predicted_impulse_lockout_until_tick_ =
             prediction_tick + KERNEL_MAX_IMPULSE_LOCKOUT_TICKS;
         predicted_impulse_lockout_recovering_ = false;
+        predicted_impulse_is_knockback_ = false;
     }
     const bool impulse_locked =
         prediction_tick < predicted_impulse_lockout_until_tick_;
@@ -10560,6 +10638,8 @@ void KernelEngine::adopt_authoritative_impulse_lockout(
                 authoritative.impulse_lockout_armed_tick;
             predicted_impulse_lockout_recovering_ =
                 authoritative.impulse_lockout_recovering;
+            predicted_impulse_is_knockback_ =
+                (authoritative.flags & kVisualFlagKnockedBack) != 0u;
         }
         return;
     }
@@ -10567,6 +10647,7 @@ void KernelEngine::adopt_authoritative_impulse_lockout(
         predicted_impulse_lockout_until_tick_ = 0u;
         predicted_impulse_lockout_armed_tick_ = 0u;
         predicted_impulse_lockout_recovering_ = false;
+        predicted_impulse_is_knockback_ = false;
     }
 }
 
@@ -11113,7 +11194,6 @@ void KernelEngine::predict_local_projectile(const KernelPlayerInput& input) {
             projectile_template->lifetime_ticks,
             weapon->projectile_template_id,
             collider_template_id,
-            weapon->id,
             sync_mode,
             glm::vec3{0.0f, 0.0f, 0.0f},
             false,
@@ -12114,15 +12194,18 @@ void KernelEngine::advance_predicted_throws(float fixed_delta_seconds) {
         const bool authority_ended = known && prop->has_thrown_flight_end;
         if (!authority_ended && !predicted_throw->landed &&
             prediction_physics_world_ != nullptr) {
+            // Limbs too: an actor with bounds has no hit body but its bones.
             physics::CollisionQueryFilter filter{};
             filter.collision_mask =
                 physics::collision_layer_bit(physics::CollisionLayer::kTerrain) |
                 physics::collision_layer_bit(physics::CollisionLayer::kStaticObstacle) |
-                physics::collision_layer_bit(physics::CollisionLayer::kDamageable);
+                physics::collision_layer_bit(physics::CollisionLayer::kDamageable) |
+                physics::collision_layer_bit(physics::CollisionLayer::kActorLimb);
             filter.object_kind_mask =
                 (1u << static_cast<std::uint32_t>(physics::CollisionObjectKind::kTerrain)) |
                 (1u << static_cast<std::uint32_t>(physics::CollisionObjectKind::kStaticObstacle)) |
-                (1u << static_cast<std::uint32_t>(physics::CollisionObjectKind::kActorHitbox));
+                (1u << static_cast<std::uint32_t>(physics::CollisionObjectKind::kActorHitbox)) |
+                (1u << static_cast<std::uint32_t>(physics::CollisionObjectKind::kActorLimb));
             filter.gameplay_category_mask = 0xFFFFFFFFu;
             filter.ignored_entity_net_id = local_player_net_id_;
             while (predicted_throw->swept_until_us + step_us <= now_us) {
@@ -12307,11 +12390,18 @@ void KernelEngine::append_predicted_local_render_state() {
     // physics prediction steps ground contact; without one the snapshot's
     // answer is the only one there is.
     if (prediction_physics_world_ != nullptr) {
-        state.visual_flags &= ~(kVisualFlagGrounded | kVisualFlagFalling);
+        state.visual_flags &= ~(kVisualFlagGrounded | kVisualFlagFalling |
+                                kVisualFlagKnockedBack);
         state.visual_flags |= predicted_character_state_.ground_state ==
                 physics::CharacterGroundState::kGrounded
             ? kVisualFlagGrounded
             : kVisualFlagFalling;
+        if (predicted_impulse_is_knockback_ &&
+            predicted_character_tick_ < predicted_impulse_lockout_until_tick_ &&
+            !predicted_impulse_lockout_recovering_ &&
+            (state.visual_flags & kVisualFlagDead) == 0u) {
+            state.visual_flags |= kVisualFlagKnockedBack;
+        }
     }
     const auto replicated = std::find_if(
         client_replicated_entities_.begin(),
@@ -12731,7 +12821,7 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
                                 }
                                 const float resistance = local_template == nullptr
                                     ? 0.0f
-                                    : local_template->impulse_resistance;
+                                    : local_template->force_resistance;
                                 for (std::uint32_t action_index = 0u;
                                      action_index < (action_count == 0u ? 1u : action_count);
                                      ++action_index) {
@@ -12743,7 +12833,6 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
                                         action.target_source = trigger.target_source;
                                         action.direction_source = trigger.direction_source;
                                         action.impulse_strength = trigger.impulse_strength;
-                                        action.impulse_collision_mask = trigger.impulse_collision_mask;
                                         action.impulse_direction = trigger.impulse_direction;
                                         action.impulse_lockout_ticks = trigger.impulse_lockout_ticks;
                                         action.impulse_strength_mode = trigger.impulse_strength_mode;
@@ -12755,8 +12844,6 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
                                             KernelEntityTriggerActionType_ApplyImpulse ||
                                         action.target_source !=
                                             KernelEntityRefSource_EventTarget ||
-                                        (action.impulse_collision_mask &
-                                         KERNEL_COLLISION_MASK_ACTOR) == 0u ||
                                         !impulse_strength_is_authorable(
                                             action.impulse_strength_mode,
                                             action.impulse_strength,
@@ -12813,6 +12900,7 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
                                             predicted_character_tick_;
                                         predicted_impulse_lockout_recovering_ =
                                             false;
+                                        predicted_impulse_is_knockback_ = true;
                                     }
                                     break;
                                 }

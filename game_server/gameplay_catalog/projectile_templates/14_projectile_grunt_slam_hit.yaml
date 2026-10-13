@@ -1,20 +1,18 @@
 id: 14
 name: grunt_slam_hit
 # The slam's contact. Nothing spawns from this -- a melee weapon resolves its
-# hits by overlap -- but naming an impact graph changes who deals the damage:
-# the swing stops submitting any of its own and hands every target it found to
-# the graph, which is what lets one authoring surface say "hurt and shove".
-#
-# `damage` below is therefore the weapon's authored damage, not the number that
-# lands; the graph's `amount` is. They are kept equal deliberately, the same way
-# rocket_explosion keeps its two in step.
+# hits by overlap. Every target the swing finds takes `damage` and `stagger`
+# below, and the impact graph adds the shove.
 type: standard
 movement_model: linear
 sync_mode: server_snapshot_only
 hit_response: destroy
 damage_shape: direct_hit
 damage: 40
-collision_mask: player_side | limb
+# Authored, not derived: a slam should stagger on its own regardless of its
+# damage number. 120 is the player's threshold.
+stagger: 120
+collision_mask: player_side
 max_hit_count: 3
 speed: 0.1
 lifetime_ticks: 3
@@ -24,11 +22,14 @@ gravity:
   z: 0.0
 triggers:
   on_projectile_impact:
-    action_graph: action_melee_impact
+    action_graph: action_apply_impulse
     parameters:
       target: event.target
-      amount: 40
       direction: event.direction
-      # No `strength` override here on purpose: a binding override is always
-      # read as the scalar form, so passing one would silently defeat the
-      # graph's [horizontal, vertical] default and take the lift back out.
+      # [horizontal, vertical] m/s. A swing's event.direction runs from the
+      # attacker to the contact point, flattened, so its y is ~0 and the lift
+      # has to be added outright. 3.5 m/s against 9.81 is ~0.7 s of airtime,
+      # which is what lets the shove carry.
+      strength: [8.0, 3.5]
+      # A ceiling: landing releases it around tick 22.
+      lockout: 28

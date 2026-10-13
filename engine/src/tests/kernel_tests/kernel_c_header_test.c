@@ -16,7 +16,7 @@ static void require_impl(int condition, const char* expression, int line) {
 #define require(condition) require_impl((condition) ? 1 : 0, #condition, __LINE__)
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 104u,
+    KERNEL_ABI_VERSION == 106u,
     "lock-on weapons: catalog weapon definitions");
 _Static_assert(
     KernelWeaponFireMode_LockInstant == 5 &&
@@ -137,7 +137,7 @@ _Static_assert(
     "damage stagger is appended to KernelActionTriggerDefinition");
 _Static_assert(
     offsetof(KernelEntityTemplateDefinition, stagger_immunity_ticks) >
-        offsetof(KernelEntityTemplateDefinition, impulse_resistance),
+        offsetof(KernelEntityTemplateDefinition, force_resistance),
     "the stagger profile is appended to KernelEntityTemplateDefinition");
 _Static_assert(
     sizeof(KernelLocalWeaponState) == 20u,
@@ -267,19 +267,19 @@ _Static_assert(
         offsetof(KernelActionDefinition, condition_type),
     "impulse strength is appended to action ABI");
 _Static_assert(
-    offsetof(KernelActionDefinition, impulse_collision_mask) >
+    offsetof(KernelActionDefinition, retired_impulse_collision_mask) >
         offsetof(KernelActionDefinition, impulse_strength),
-    "impulse collision mask is appended to action ABI");
+    "the retired impulse collision mask keeps its slot");
 _Static_assert(
     offsetof(KernelActionDefinition, impulse_direction) >
-        offsetof(KernelActionDefinition, impulse_collision_mask),
+        offsetof(KernelActionDefinition, retired_impulse_collision_mask),
     "impulse direction is appended to action ABI");
 _Static_assert(
     offsetof(KernelEntityTemplateDefinition, collision_trigger_mask) >
         offsetof(KernelEntityTemplateDefinition, prop),
     "collision trigger mask follows prop definition");
 _Static_assert(
-    offsetof(KernelEntityTemplateDefinition, impulse_resistance) >
+    offsetof(KernelEntityTemplateDefinition, force_resistance) >
         offsetof(KernelEntityTemplateDefinition, skeleton),
     "impulse resistance is appended to entity template ABI");
 _Static_assert(
@@ -298,7 +298,7 @@ _Static_assert(
     "weapon mechanics reference projectile templates instead of duplicating mechanics");
 _Static_assert(
     offsetof(KernelProjectileTemplateDefinition, mechanics) >
-        offsetof(KernelProjectileTemplateDefinition, weapon_id),
+        offsetof(KernelProjectileTemplateDefinition, reserved_weapon_id),
     "projectile templates own projectile mechanics");
 _Static_assert(
     offsetof(KernelProjectileMechanicsDefinition, projectile_type) >

@@ -264,16 +264,18 @@ so the rule is:
 
 Omitting the side is not a neutral choice — it selects both.
 
-This is why the same weapon needs a per-side twin, and the twin is mandatory
-rather than stylistic: `apply_weapon_template_references` stamps `weapon_id`
-onto the projectile template it resolves, so **a projectile template belongs to
-exactly one weapon** and cannot be shared even when the mask would suit both.
+This is why the same weapon needs a per-side twin: the mask lives on the
+projectile template, so a weapon aimed at the other side needs a template with
+the other mask.
 
-Fire and reload action templates, and collider templates, have no such
-back-stamping — they are resolved by reference and only their id is copied, so
-two weapons may share them freely. `allied_sentry_rifle` reuses
+Two weapons whose masks agree may share a projectile template. A projectile's
+`weapon_id` -- what damage, kill attribution and impact graphs report -- is the
+weapon that fired it, carried from the shot, not a property of the template
+(ABI 106; the catalog used to stamp it onto the template, which made a template
+belong to whichever weapon named it last). The same holds for fire and reload
+action templates and collider templates: `allied_sentry_rifle` reuses
 `beam_sentry_fire`, `beam_sentry_reload` and `beam_sentry_beam_box`, and
-authors only its own projectile.
+authors only its own projectile because its mask differs.
 
 ### The other half of a side lives on the target
 
@@ -322,7 +324,7 @@ sync_mode: server_snapshot_only
 lifetime_ticks: 20          # the delay
 triggers:
   on_expired:
-    action_graph: action_spawn_projectile_at_expired
+    action_graph: action_spawn_projectile
     parameters:
       template: meteor_body
       position: event.position
@@ -355,7 +357,7 @@ launch:
   fall_ticks: 15
 triggers:
   on_projectile_impact:
-    action_graph: action_spawn_projectile_at_impact
+    action_graph: action_spawn_projectile
     parameters: { template: meteor_blast, position: event.position, direction: event.direction }
 ```
 
@@ -498,11 +500,11 @@ motion:
 ```
 
 The shipped example is `projectile_templates/29_projectile_tornado.yaml`: a
-column 3 m in radius reaching from the ground to 17 m
+column 6 m in radius reaching from the ground to 17 m
 (`collider_templates/39_collider_tornado_column.yaml`, high enough for flying
-units) that rides 2 m up for 300 ticks and pulls hostiles once a second through
-`action_graph_templates/action_tornado_pull.yaml`, which does `apply_pull`
-only. `fungible_tornado_bottle` (item 3012, prop 217) throws it: where the
+units) that rides 2 m up for 300 ticks and pulls hostiles every 15 ticks
+through `action_graph_templates/common/action_apply_pull.yaml`, binding its own
+distance, airtime, speed and strength. It deals no damage (`damage: 0`). `fungible_tornado_bottle` (item 3012, prop 217) throws it: where the
 bottle breaks, the tornado rises and travels on along the level part of the
 bottle's heading.
 

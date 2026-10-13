@@ -1,0 +1,11 @@
+# Damages `target` by `amount`. The one damage step every owner shares: a prop
+# that hurts whoever activates it, a nest that hurts its destroyer, a status's
+# damage tick. Who the target is and how much comes from the binding.
+id: action_apply_damage
+parameters:
+  target: null
+  amount: 1
+actions:
+  - type: apply_damage
+    target: params.target
+    amount: params.amount
