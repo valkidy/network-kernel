@@ -21,7 +21,7 @@ Gameplay System
 → Authoritative Gameplay Side Effects
 ```
 
-目前實作版本日期：2026-08-23。
+目前實作版本日期：2026-10-13（ABI 105，action graph 重構）。
 
 ---
 
@@ -54,7 +54,8 @@ actions:
 
 規則：
 
-1. `id` 在 catalog 內必須唯一。
+1. `id` 在 catalog 內必須唯一，且必須等於檔名（去掉 `.yaml`）、以 `action_` 開頭、
+   小寫 snake_case。目錄與命名見 §2.4。
 2. `parameters` 宣告 graph 的輸入；`null` 表示 binding 必須提供。
 3. `actions` 是有序 list，目前必須包含 1～8 個 action。
 4. Action input 必須使用 `params.<name>`，不可由 parameter 動態決定 action type。
@@ -77,6 +78,21 @@ triggers:
 
 Binding 只能決定參數值或值的來源，不能改變 graph 的 action 結構。
 
+Binding 的值是純量，唯一的例外是 `apply_impulse` 的 `strength` 可以寫
+`[水平, 垂直]`（§4.4）。下列 action 欄位除了字面值，也可以寫 `params.<name>`，由各
+binding 提供數值（graph default 是持有者沒寫時的值）：
+
+| Action | 可由 binding 提供的欄位 |
+|---|---|
+| `apply_impulse` | `strength`（一直都是 parameter）、`lockout_ticks` |
+| `apply_pull` | `distance`、`airtime_ticks`、`max_speed`、`strength` |
+| `open_ui` | `ui_id` |
+| `spawn_entity` | `placement` |
+
+Binding 提供的值會整段解析（`12abc` 不是 12）並做與字面值相同的範圍檢查，錯誤訊息
+會指出 graph。只有數值不同的持有者應共用同一份 graph，各自在 binding 寫數值，不要
+複製 graph。
+
 ### 2.3 Runtime Context
 
 ```text
@@ -98,6 +114,51 @@ Status lifecycle trigger 的 runtime context 另有固定語意：`self` 是受�
 target，`event.instigator` 是儲存的最新成功 source。Refresh、stack 或 replace
 更新 source 時，後續 lifecycle event 使用該最新成功 source；source entity 即使
 despawn，provenance 仍保留原本的 net id 與 owner peer。
+
+### 2.4 目錄、命名與 ID
+
+```text
+game_server/gameplay_catalog/action_graph_templates/
+├── common/                        # 可重用流程，數值由持有者的 binding 提供
+│   └── action_<behavior>.yaml
+└── derived/<owner_type>/          # 某個持有者自己的流程
+    └── action_<owner_name>_<event>.yaml
+```
+
+- Loader 遞迴讀取整個目錄（bundle 也保留子路徑）。引用一律用全域 ID，不用路徑。
+- 跨目錄重複的 ID 會被拒絕，錯誤訊息列出兩個檔案，不依載入順序覆蓋。
+- 引用不存在的 graph 時，錯誤訊息會指出是哪個 projectile／entity／item／status 的
+  哪個 trigger。
+- Common 依行為命名，不含持有者、事件或數值（不要 `action_pull_strength_20`）；複合
+  行為用 `_and_` 依執行順序連接，影響流程的條件可加語意後綴（例如 `_if_target`）。
+- Derived 的 `owner_type` 是 `projectile`、`entity`、`prop`、`item`、`status_effect`
+  之一；`event` 是 trigger key 去掉 `on_`（`on_projectile_impact` → `projectile_impact`）。
+- 只有數值不同不構成 derived 的理由。目前的 derived 都是帶著 binding 還無法提供的
+  數值（status 的 `strength`、`refill_weapon_reserve` 的 `percent`、`spawn_projectile`
+  的 `repeat`），或是某個 status 自己的 action 組合。
+- `action_graph_catalog_test` 會檢查 shipped catalog 沒有兩份去掉 id／註解後完全相同的
+  graph，且每份都在 `common/` 或 `derived/<owner_type>/` 底下。
+
+### 2.5 誰負責什麼：projectile、collider 與 graph
+
+```text
+projectile
+  ├─ collider_template：用什麼幾何測試
+  ├─ collision_mask：與哪些對象測試
+  ├─ damage／falloff／stagger：命中造成多少傷害與硬直
+  └─ triggers：命中或到期後執行哪個 graph、用哪些數值
+```
+
+- Collider 只提供測試判定用的幾何，不擁有、不選擇、不呼叫 graph。
+- Graph action 沒有 `collision_mask`（寫了會被拒絕）。誰被測試由持有者的
+  `collision_mask` 決定；誰會被推／拉／施加 status，由 action 的 strength 與目標的
+  `force_resistance` 決定。
+- **命中的傷害一律是 projectile 的**：direct hit、piercing、area effect（含 falloff）、
+  melee、hitscan、lock 都由傷害管線提交 projectile 的 `damage`，並帶上 projectile 的
+  `stagger`（未寫 = 依傷害推算，`0` = 不造成硬直）。綁定的 impact graph 是**附加**的
+  效果，不取代也不重複傷害；graph 不應再對 `event.target` 套用命中傷害。
+- 不造成傷害的力場寫 `damage: 0`（area effect），不用 `damage: 1` 佔位。
+- Rocket 直擊與之後生成的爆炸是兩個階段，各自的 `damage` 都會生效。
 
 ---
 
@@ -178,9 +239,11 @@ schema 的欄位會在載入階段被拒絕。
   stagger: 120   # 可省略；省略時 = 傷害 × 目標的 stagger.per_damage
 ```
 
-- `stagger` 是 action 上的字面值（同 `lockout_ticks`），不是 parameter；只有
-  `apply_damage` 接受，寫在其他 action 上會被 loader 拒絕。必須是有限且 >= 0，
-  `0` 表示這一擊明確不造成硬直。
+- `stagger` 是 action 上的字面值，不是 parameter；只有 `apply_damage` 接受，寫在
+  其他 action 上會被 loader 拒絕。必須是有限且 >= 0，`0` 表示這一擊明確不造成硬直。
+- Projectile 命中的傷害與硬直不經過 graph：寫在 projectile template 的 `damage` 與
+  `stagger`（§2.5）。`apply_damage` 用在 graph 自己造成的傷害，例如 prop 被啟動、
+  status 的持續傷害、瓶子撞擊後傷害自己。
 - Status effect 的 lifecycle graph（`on_tick` 等）沒寫 `stagger` 時一律視為 `0`，
   否則持續傷害每 tick 都會補滿硬直值。
 - 目標是否會硬直由 actor template 的 `stagger:` 區塊決定；沒有這個區塊的 actor
@@ -222,8 +285,9 @@ template 沒有 `CancelBeforeFirstCommit` 也不會先打出一次；硬直期�
   `position` 附近找空位。做法是以生成物自己的 box hit volume 往下找地面，並確認不碰到
   terrain 與 static obstacle；放不下就沿 `direction` 的反方向每次退 0.5 m，最多退 4 m。
   找不到就留在原地（盡力而為，不保證）。生成者（owner，例如還沒消失的瓶子）的碰撞盒
-  不列入判斷。用途：建築 kit 撞到牆面時，建築落在牆前的地面上，而不是嵌進牆裡
-  （`action_spawn_building_and_damage_self_at_collision`）。`placement` 寫在
+  不列入判斷。用途：建築 kit 撞到牆面時，建築落在牆前的地面上，而不是嵌進牆裡。
+  可寫 `params.<name>` 由 binding 提供：`common/action_spawn_entity_and_damage_self`
+  預設 `exact`（冰塊），建築 kit 的 binding 寫 `placement: clear`。`placement` 寫在
   `spawn_entity` 以外的 action 上會在載入時被拒絕。
 
 適用於 entity-backed triggers。
@@ -271,7 +335,7 @@ parameter：
   projectile。所以引信 i 到期時生成的隕石用的是 salt i，每顆隕石的仰角都不同。
 - 在其他 action 上寫 `repeat` 或 `lifetime_ticks`，或是沒有 `repeat` 卻寫了
   scatter／stagger，都會在載入時報錯。
-- 範例：`action_meteor_storm`。
+- 範例：`derived/projectile/action_meteor_storm_marker_expired`。
 
 ### 4.4 `apply_impulse`
 
@@ -280,14 +344,14 @@ parameter：
   target: params.target
   strength: params.strength
   direction: params.direction
-  collision_mask: actor | prop
-  lockout_ticks: 20
+  lockout_ticks: params.lockout   # 或字面值，例如 20
 ```
 
 輸入契約：
 
-- `target`：有效 `EntityRef`。Runtime 只對兩種 target 生效：actor，或不在
-  `carrying` 狀態的 prop。其他 target 靜默略過，不會讓整批失敗。
+- `target`：有效 `EntityRef`。Runtime 只對兩種 target 生效：actor，或擺在世界上、
+  不在 `carrying` 狀態的 prop。這是執行器的固定能力限制，套用時檢查；其他 target
+  （projectile、被拿著的 prop）靜默略過，不會讓整批失敗。
 - `strength`：單位一律是 **m/s 的速度增量**，不參與質量計算。有兩種形式，語意
   刻意不同：
   - **純量**（`strength: 12.0`）：正的有限 float。Runtime 執行
@@ -296,28 +360,26 @@ parameter：
     `velocity += {dir.x * 水平, 垂直, dir.z * 水平}`——**垂直分量是絕對帶號增量，
     不是 `direction.y` 的縮放係數**。水平必須是非負有限值，垂直必須有限，兩者
     不能同時為零；水平為 0 就是純垂直發射。
-  兩種形式都 author 在 **graph parameter 的 default 上**，不是寫在 action 裡——
-  action 那一行永遠是 `strength: params.strength`：
+  action 那一行永遠是 `strength: params.strength`；兩種形式可以寫在 graph parameter
+  的 default，也可以寫在 binding：
 
   ```yaml
+  # common/action_apply_impulse.yaml：strength 沒有 default，由持有者提供
   parameters:
-    strength: 12.0        # 純量形式
-    # strength: [8.0, 4.0]  # list 形式：水平 8 m/s、垂直 4 m/s
-  actions:
-    - type: apply_impulse
-      strength: params.strength
+    strength: null
+  # projectile binding
+  parameters:
+    strength: [12.0, 5.0]   # list 形式：水平 12 m/s、垂直 5 m/s
   ```
 
-  若 trigger binding 自己傳了 `strength`，那一定是純量形式；只有「binding 沒有
-  覆寫、且 parameter default 是 list」才會選到 list 語意。不使用 list 形式時行為
-  與過去完全相同，既有 template 一個字都不用改。差別不是語法糖，見下方
+  Binding 給 list 就是 list 語意。Graph default 是 list 時，binding 若給純量會被
+  **拒絕**，而不是默默改成 radial 並丟掉垂直分量。差別不是語法糖，見下方
   「為什麼垂直分量必須是絕對值」。
 - `direction`：只能綁定 `event.direction`、`event.subject_direction`，或由 graph 的
   `direction` parameter 提供 vec3 default。Vec3 default 必須非零且有限，且目前只
   允許用在名為 `direction` 的 parameter 上。
-- `collision_mask`：`actor`、`prop` 或兩者的 or 組合；省略時預設 `actor`。不接受空
-  mask 或其他 collision layer bit。
-- `lockout_ticks`：非負整數，上限 `KERNEL_MAX_IMPULSE_LOCKOUT_TICKS`（300，30 Hz
+- 不接受 `collision_mask`（ABI 105 移除）；見 §2.5。
+- `lockout_ticks`：字面值或 `params.<name>`。非負整數，上限 `KERNEL_MAX_IMPULSE_LOCKOUT_TICKS`（300，30 Hz
   下的十秒）。擊退期間有多少 tick 不允許 target 自己的 movement input 重新決定
   水平速度，詳見下方 Authoring 注意。**省略或 0 等同舊行為**，既有 template 不需
   改動。時長 author 在 action 上而非 target 上，所以重型火箭可以鎖得比輕推久。
@@ -363,10 +425,11 @@ entity_type: prop
 force_resistance: 15.0   # 有效強度 <= 15.0 的 impulse 完全推不動
 ```
 
-目前只有 `204_prop_ice_block.yaml` author 了這個欄位（`15.0`），其餘 template 一律使用預設
-值 0。這個數字的實際效果值得記住：`action_rocket_explosion_at_target` 的
-`strength: [12.0, 5.0]` 有效強度是 `max(12, 5) = 12`，低於 15，所以火箭的爆風推不動
-冰塊——這是刻意的，掩體不該被一發火箭吹走。
+`force_resistance` 在 ABI 105 之前叫 `impulse_resistance`；舊鍵會被拒絕並提示新名稱。
+`apply_impulse`、`apply_pull` 與 `apply_status` 的 `strength` 都和它比較。冰塊
+（`204_prop_ice_block.yaml`）是 `15.0`：火箭爆炸 binding 的 `strength: [12.0, 5.0]`
+有效強度是 `max(12, 5) = 12`，低於 15，所以推不動冰塊——這是刻意的，掩體不該被一發
+火箭吹走。
 
 Authoring 注意：
 
@@ -444,7 +507,11 @@ Authoring 注意：
 
 - `anchor`／`direction` 必須綁定 event expression，不接受 vec3 default：固定的
   anchor 會是世界上的某個定點，固定的方向則沒有參考對象。
-- `distance`、`airtime_ticks`、`max_speed` 是 action 上的字面值，不是 parameter。
+- `strength`（必填，> 0）只用來和目標的 `force_resistance` 比較（嚴格大於才拉得動），
+  不影響發射速度。
+- `distance`、`airtime_ticks`、`max_speed`、`strength` 可寫字面值或 `params.<name>`；
+  `common/action_apply_pull` 四個都由 binding 提供。由 binding 提供的值在編譯時做與
+  字面值相同的範圍檢查。
 - 只作用在 actor。Prop 被推動後直線飛行、不受重力，沒有滯空時間能讓它落在目的地。
 - 不接受 `collision_mask`、`lockout_ticks`：lockout 自動設為滯空時間加 2 tick，
   落地時照常解除，所以擊倒（knockdown）、擋新 action 的規則與擊退相同。
@@ -457,12 +524,14 @@ Runtime 在 command commit 當下，依目標**當時**的位置算出目的地�
   中間，落地 tick 就固定是 N，不受浮點誤差影響。`apply_pull_test` 以實際的
   movement solver 驗證：9 種起點與滯空組合都在第 N tick 落地，誤差 2 cm 內。
 - 水平速度 = 水平位移 ÷ (N × dt)，超過 `max_speed` 時等比縮小，沿同一條線落得比較近。
-- `force_resistance` 比較的是算出來的 `max(水平速率, 垂直速率)`。遠處目標需要的
-  速度較大，所以重型目標可能在遠處拉不動、近處拉得動。
+- 拉不拉得動只看 action 的 `strength` 是否大於目標的 `force_resistance`，與目標站在
+  哪裡無關。
 - 同步沿用 `ActorImpulseBatch`（送的是實際速度），不需要新的封包。本地玩家被拉時
   **沒有 client 預測**，等 authoritative snapshot 修正。
 
-範例：`action_pull_at_target`（吸引手榴彈 `fungible_pull_bottle`）。
+範例：`common/action_apply_pull`，由 `pull_blast`（吸引手榴彈）與 `tornado` 以各自的
+數值綁定。Tornado 的滯空（18 ticks）比觸發間隔（15 ticks）長，飛行中的目標會被下一次
+拉到——這是預期效果。
 
 ### 4.6 `open_ui`
 
@@ -476,14 +545,14 @@ Runtime 在 command commit 當下，依目標**當時**的位置算出目的地�
 ```
 
 - 只能用在 entity 的 `on_activated` trigger。只有啟動事件有「誰在要求」。
-- `ui_id` 是 action 上的字面值，必須非 0。
+- `ui_id` 可寫字面值或 `params.<name>`，必須非 0。
 - Runtime 只發出 `KernelEventType_UiOpened`（`net_id` = 建築、`related_net_id` =
   啟動者、`peer_id` = 啟動者的 owner peer、`code` = `ui_id`），其他什麼都不做。
   要不要讓 actor 進入建築，由 game_server 收到事件後決定，再透過
   `Kernel_ServerEnqueueEntityShelter` 執行。
 - 事件只存在伺服器端，不會同步給 client。
 
-範例：`action_open_rest_ui`（帳篷 `tent`）。
+範例：`common/action_open_ui`，帳篷 binding 寫 `ui_id: 1`、初始營地 `2`、野營 `3`。
 
 Status lifecycle 目前支援的 actions 為 `apply_damage`、health change、status
 apply/remove 與 speed modifier。Lifecycle safety contract 僅允許 `on_apply` 使用
@@ -504,7 +573,7 @@ applied tick、增加 stack count；達到 max stack 時依 `refresh_on_stack` �
 actions：
 
 ```yaml
-id: action_apply_damage_at_collision
+id: action_apply_damage_to_source_and_target
 
 parameters:
   source: null
@@ -538,7 +607,7 @@ physics:
 
 triggers:
   on_collision:
-    action_graph: action_apply_damage_at_collision
+    action_graph: action_apply_damage_to_source_and_target
     parameters:
       source: self
       target: event.target
@@ -555,7 +624,7 @@ triggers:
 
 參考實作：
 
-- `game_server/gameplay_catalog/action_graph_templates/action_apply_damage_at_collision.yaml`
+- `game_server/gameplay_catalog/action_graph_templates/common/action_apply_damage_to_source_and_target.yaml`
 - `game_server/gameplay_catalog/entity_templates/201_prop_collision_damage.yaml`
 
 ---
@@ -581,7 +650,7 @@ Guideline：呼叫 activation API 時必須提供 target；若此互動不保證
 ```yaml
 triggers:
   on_destroy_entity:
-    action_graph: action_spawn_entity_at_destroy_entity
+    action_graph: action_spawn_entity
     parameters:
       template: collision_damage
       position: event.position
@@ -607,7 +676,7 @@ Guidelines：
 
 - `hit_response` 負責 projectile 的 destroy/continue/bounce/attach outcome。
 - Action Graph 只負責命中後的 gameplay side effects。
-- 若 parent projectile 與 explosion 都有 damage，兩者採明確加成語意。
+- 若 parent projectile 與 explosion 都有 damage，兩者都生效：直擊與爆炸是不同階段。
 - Graph 只在 authoritative simulation 執行；client prediction 不得再次生成。
 
 ### 6.4 Projectile 到期後生成效果
@@ -627,71 +696,45 @@ action schema，但 graph ID、trigger binding 與 exactly-once key 應清楚反
 
 ### 6.5 爆炸命中後造成傷害與擊退
 
-Area effect projectile 對半徑內每個 target 各發一次 `on_projectile_impact`，因此
-同一份 graph 會對每個受影響 target 各執行一次：
+Area effect projectile 對半徑內每個 target 各發一次 `on_projectile_impact`。傷害與
+falloff 寫在 projectile 上，由傷害管線依每個 target 的距離計算；graph 只負責擊退：
 
 ```yaml
-id: action_rocket_explosion_at_target
-
-parameters:
-  target: null
-  amount: 45
-  strength: 12.0
-  direction: null
-
-actions:
-  - type: apply_damage
-    target: params.target
-    amount: params.amount
-
-  - type: apply_impulse
-    target: params.target
-    strength: params.strength
-    direction: params.direction
-    collision_mask: actor | prop
-```
-
-Projectile binding：
-
-```yaml
+# projectile_templates/8_projectile_rocket_explosion.yaml
+type: area_effect
+damage: 45
+damage_behavior:
+  type: area_interval
+  damage_interval_ticks: 45
+  falloff: linear
 triggers:
   on_projectile_impact:
-    action_graph: action_rocket_explosion_at_target
+    action_graph: action_apply_impulse
     parameters:
       target: event.target
-      amount: 45
-      strength: 12.0
       direction: event.direction
+      strength: [12.0, 5.0]   # 沿徑向推 12 m/s，另外垂直抬 5 m/s
+      lockout: 40
 ```
+
+`common/action_apply_impulse` 同時被 `shockwave_blast`、`grunt_slam_hit`、
+`tent_collapse_blast` 以各自的數值綁定。需要硬直時寫在 projectile 上
+（`shockwave_blast` 的 `stagger: 150`），不另做一份帶傷害的 graph。
 
 此處的 `event.direction` 是爆心指向 target 的徑向向量，因此擊退方向隨相對位置改變。
-若要的是固定方向（例如把每個 target 都往同一邊推），改成不在 binding 提供
-`direction`，由 graph parameter 的 vec3 default 決定：
-
-```yaml
-parameters:
-  direction: {x: 0.0, y: 1.0, z: 0.0}
-```
-
-但「徑向推開 **並且** 往上頂」不能靠改 `direction` 做到——平地爆炸的徑向向量
-`y ≈ 0`，換成固定向上又會失去徑向。這是 `strength` list 形式存在的理由：
-
-```yaml
-parameters:
-  strength: [8.0, 4.0]   # 沿徑向推 8 m/s，另外垂直抬 4 m/s
-```
-
-配合 `lockout_ticks` 才能讓水平那一半真的留在 target 身上，見 §4.4。
+「徑向推開 **並且** 往上頂」不能靠改 `direction` 做到——平地爆炸的徑向向量
+`y ≈ 0`。這是 `strength` list 形式存在的理由，配合 `lockout_ticks` 才能讓水平那一半
+真的留在 target 身上，見 §4.4。
 
 Guidelines：
 
-- Damage 與 impulse 屬於同一個 batch：任一 command preflight 失敗時兩者都不提交。
-- `collision_mask` 決定這個擊退是否也推得動 prop；只想推 actor 時省略即可。
+- 傷害走傷害管線，擊退走 graph batch；兩者時序與過去相同：傷害在管線確認時套用。
+- 推不推得動 prop 由目標的 `force_resistance` 與執行器的類型限制決定，graph 不寫 mask。
 - 擊退強度與傷害是各自獨立的數值，不應以 damage 反推 strength。
 
 參考實作：
 
-- `game_server/gameplay_catalog/action_graph_templates/action_rocket_explosion_at_target.yaml`
+- `game_server/gameplay_catalog/action_graph_templates/common/action_apply_impulse.yaml`
 - `game_server/gameplay_catalog/projectile_templates/8_projectile_rocket_explosion.yaml`
 
 ---
@@ -756,8 +799,8 @@ sequence 代表多個不同 collision/impact occurrences。
 
 ## 8. Kernel ABI 與 Compiled Representation
 
-目前 Kernel ABI version 為 94；packet schema version 為 25，snapshot schema
-version 為 25。
+目前 Kernel ABI version 為 105；packet schema version 為 32，snapshot schema
+version 為 30。
 
 ```text
 KernelActionTriggerDefinition
@@ -790,8 +833,10 @@ KernelActionTriggerDefinition
 
 ### 9.1 應遵守
 
-- Graph ID 使用 `action_<verb>_<context>` 等可搜尋且穩定的命名。
-- Graph 描述可重用行為；entity-specific 數值與 reference 放在 binding。
+- Graph 放在 `common/` 或 `derived/<owner_type>/`，ID 依 §2.4 命名。
+- Graph 描述可重用行為；持有者專屬的數值與 reference 放在 binding。只有數值不同時
+  共用同一份 graph。
+- 命中的傷害與硬直寫在 projectile 上，graph 只放附加效果。
 - Required parameter 使用 `null`，可合理共用的數值才提供 default。
 - 使用 `self`、`event.*` 表達 runtime context，不把它們當普通字串常數。
 - 保持 action list 短小且具單一 gameplay 目的。
@@ -836,6 +881,7 @@ Catalog load/compile 會拒絕：
   `max_speed`；`airtime_ticks` 為 0 或超過上限；`max_speed` 不為正；`anchor` 模式的
   `distance` 為負，或 `direction` 模式的 `distance` 缺少或為 0。
 - `anchor`／`distance`／`airtime_ticks`／`max_speed` 寫在 `apply_pull` 以外的 action 上。
+- `apply_pull` 缺 `strength` 或不為正。
 - `open_ui` 用在 `on_activated` 以外的 trigger、缺 `ui_id` 或為 0，或帶有 `target`
   以外的欄位；`ui_id` 寫在 `open_ui` 以外的 action 上。
 - `apply_pull` 的 anchor/direction 用 vec3 default，或綁定到其他 expression；
@@ -844,7 +890,13 @@ Catalog load/compile 會拒絕：
   數字、水平為負、任一項非有限，或兩項同時為零。
 - `apply_impulse` 的 `lockout_ticks` 超過 `KERNEL_MAX_IMPULSE_LOCKOUT_TICKS`。
 - 非 `strength` parameter 使用 list default。
-- `apply_impulse` 的 `collision_mask` 為空，或含 `actor`/`prop` 以外的 bit。
+- 任何 graph action 寫了 `collision_mask`（ABI 105 移除）。
+- Graph ID 不等於檔名、不是 `action_` 加小寫 snake_case，或跨目錄重複。
+- Graph default 是 `[水平, 垂直]` 的 `strength` 被 binding 以純量覆寫。
+- Binding 提供的 `lockout_ticks`、pull 數值、`ui_id`、`placement` 不是完整的合法值
+  或超出範圍。
+- Projectile 的 `stagger` 非有限或為負。
+- Entity template 仍寫舊鍵 `impulse_resistance`。
 - `apply_impulse` 的 `direction` 既不是 `event.direction`，該 parameter 也沒有 vec3
   default。
 - 非 `direction` parameter 使用 vec3 default，或 vec3 default 是零向量／非有限值。
@@ -858,8 +910,8 @@ Runtime protection 包含：
 - 非 finite position/direction。
 - 非正整數或超過 `uint16` 的 damage amount。
 - 未通過形式檢查的 impulse strength、非有限或零長度的 impulse direction（整批拒絕）。
-- Impulse target 不是 actor，也不是非攜帶中的 prop，或有效強度未超過
-  `force_resistance`（略過該 command，不影響同批其他 commands）。
+- Impulse target 不是 actor，也不是擺在世界上、非攜帶中的 prop，或有效強度未超過
+  `force_resistance`（套用時略過該 command，不影響同批其他 commands）。
 - 非 authoritative execution 不會產生 gameplay commands。
 
 ---
@@ -872,7 +924,8 @@ presentation dedup 不改變 authoritative status ledger 的 exactly-once contra
 
 1. 確認需求代表已發生的 gameplay fact，而不是 input command 或 state transition。
 2. 選擇既有 trigger；若無適合 schema，再新增 typed Trigger Event。
-3. 優先重用既有 graph，否則建立新的通用 graph template。
+3. 優先重用 `common/` 的 graph 並在 binding 給數值；確實需要專屬流程才建立
+   `derived/<owner_type>/` graph。
 4. 在 entity/projectile template 提供 binding parameters。
 5. 確認所有 `event.*` 欄位屬於該 trigger schema。
 6. 確認 batch 內所有 actions 可提供一致的 transaction semantics。
@@ -930,4 +983,8 @@ template + quantity，或可在 world/inventory 間轉換的 instance。Action G
 - Projectile command executor：`engine/src/simulation/src/projectile_system.cc`
 - Exactly-once ledger：`engine/src/world/public/world.h`
 - 遊戲內手測載具：`docs/ACTION_GRAPH_TEST_BOTTLES.md`
+- 載入／命名／binding 契約測試：`game_server/tests/action_graph_catalog_test.cc`
+- 重構計劃與決策：`docs/ACTION_GRAPH_REFACTOR_PLAN.md`
+- 已知後續項目：entity hitbox 的雙重幾何來源、weapon_id 反寫 projectile template
+  （另一批處理，計劃在 `claude/d4-hitbox-weapon-provenance-plan` 分支）
 - 原始設計背景：`docs/plan/Trigger Event Tag 與 Action Graph 設計.md`

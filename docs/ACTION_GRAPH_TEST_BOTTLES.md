@@ -17,11 +17,11 @@ about the vehicles.
 | `stateful_test_bottle_blast` | `item_templates/3006_stateful_test_bottle_blast.yaml` (id 3006) | `on_item_used` | detonates a `rocket_explosion` at the aim point |
 
 `stateful_test_bottle_blast` is worth a note: `rocket_explosion` is an authored
-area-effect projectile that already carries the AoE damage and knockback graph
-(`projectile_templates/8_projectile_rocket_explosion.yaml` →
-`action_rocket_explosion_at_target`). Using the bottle therefore exercises the
-entire area-effect path — radius, falloff, `apply_damage` and `apply_impulse` —
-end to end, which makes it the cheapest way to eyeball knockback behaviour.
+area-effect projectile that carries the AoE damage (with falloff) and binds the
+knockback graph (`projectile_templates/8_projectile_rocket_explosion.yaml` →
+`common/action_apply_impulse`). Using the bottle therefore exercises the entire
+area-effect path — radius, falloff, damage and `apply_impulse` — end to end,
+which makes it the cheapest way to eyeball knockback behaviour.
 
 ## Getting one in your hands
 

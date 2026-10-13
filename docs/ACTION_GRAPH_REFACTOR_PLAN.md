@@ -1,6 +1,6 @@
 # Action Graph 重構實作計劃
 
-狀態：待使用者確認。日期：2026-10-12。基準：`main` ee8531ec（ABI 104）。
+狀態：P0–P6 已實作於 `claude/action-graph-refactor`（2026-10-13）。計劃建立日期：2026-10-12。基準：`main` ee8531ec（ABI 104）。
 預定執行：2026-10-13 07:01 起，分支 `claude/action-graph-refactor`（從 `main` 開，不從 HEAD）。
 
 本計劃依「Action Graph 重構需求」（2026-10-12）擬定，並以 2026-10-12 對 `main`

@@ -498,11 +498,11 @@ motion:
 ```
 
 The shipped example is `projectile_templates/29_projectile_tornado.yaml`: a
-column 3 m in radius reaching from the ground to 17 m
+column 6 m in radius reaching from the ground to 17 m
 (`collider_templates/39_collider_tornado_column.yaml`, high enough for flying
-units) that rides 2 m up for 300 ticks and pulls hostiles once a second through
-`action_graph_templates/action_tornado_pull.yaml`, which does `apply_pull`
-only. `fungible_tornado_bottle` (item 3012, prop 217) throws it: where the
+units) that rides 2 m up for 300 ticks and pulls hostiles every 15 ticks
+through `action_graph_templates/common/action_apply_pull.yaml`, binding its own
+distance, airtime, speed and strength. It deals no damage (`damage: 0`). `fungible_tornado_bottle` (item 3012, prop 217) throws it: where the
 bottle breaks, the tornado rises and travels on along the level part of the
 bottle's heading.
 
