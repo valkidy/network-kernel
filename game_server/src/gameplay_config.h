@@ -390,6 +390,9 @@ struct ActionGraphActionConfig {
     std::string value_parameter;
     std::uint32_t collision_mask = KERNEL_COLLISION_MASK_ACTOR;
     std::uint32_t lockout_ticks = 0;
+    // Set when lockout_ticks is authored as params.<name>; the binding then
+    // supplies the number and lockout_ticks above is unused.
+    std::string lockout_ticks_parameter;
     // apply_damage only: the stagger meter the hit adds. Absent derives it
     // from the damage through the target's per_damage.
     std::optional<float> stagger;
@@ -404,30 +407,37 @@ struct ActionGraphActionConfig {
     float repeat_scatter_radius = 0.0f;
     std::uint32_t repeat_stagger_lifetime_ticks = 0;
     // apply_pull only. The anchor is a graph parameter for TO_POINT, and
-    // direction_parameter is reused for ALONG; the numbers are literals
-    // authored on the action. See KernelActionDefinition's pull_* fields.
+    // direction_parameter is reused for ALONG. Each number is a literal, or
+    // params.<name> (its *_parameter set) for the binding to supply. See
+    // KernelActionDefinition's pull_* fields.
     std::string anchor_parameter;
     std::uint32_t pull_mode = KERNEL_PULL_MODE_TO_POINT;
     float pull_distance = 0.0f;
     std::uint32_t pull_airtime_ticks = 0;
     float pull_max_speed = 0.0f;
     float pull_strength = 0.0f;
+    std::string pull_distance_parameter;
+    std::string pull_airtime_ticks_parameter;
+    std::string pull_max_speed_parameter;
+    std::string pull_strength_parameter;
     // apply_status only: a literal, like apply_pull's strength. Zero is none.
     float status_strength = 0.0f;
     // apply_suspend_movement only: literals, like apply_pull's numbers. See
     // KernelActionDefinition's suspend_* fields.
     float suspend_rise_speed = 0.0f;
     float suspend_drift_speed = 0.0f;
-    // open_ui only: which interface the building offers. A literal, like
-    // apply_pull's numbers; see KernelActionDefinition::ui_id.
+    // open_ui only: which interface the building offers, as a literal or
+    // params.<name>; see KernelActionDefinition::ui_id.
     std::uint32_t ui_id = 0;
+    std::string ui_id_parameter;
     // refill_weapon_reserve only: exactly one is non-zero. See
     // KernelActionDefinition::reserve_refill_count.
     std::uint16_t reserve_refill_count = 0;
     std::uint16_t reserve_refill_percent = 0;
     // spawn_entity only: a KERNEL_SPAWN_PLACEMENT_*, authored as
-    // `placement: exact | clear`.
+    // `placement: exact | clear` or params.<name>.
     std::uint32_t spawn_placement = KERNEL_SPAWN_PLACEMENT_EXACT;
+    std::string spawn_placement_parameter;
 };
 
 struct ActionGraphTemplateConfig {

@@ -1157,6 +1157,36 @@ std::optional<std::array<float, 2>> optional_strength_pair_from_yaml(
     return value;
 }
 
+// A binding value: a scalar as written, or a [horizontal, vertical] pair kept
+// as "[h, v]" text. Only apply_impulse's strength reads the pair form; any
+// other field handed one fails its own parse.
+std::string binding_value_from_yaml(
+    const YAML::Node& value,
+    const std::string& path) {
+    if (value.IsScalar()) {
+        return value.as<std::string>();
+    }
+    if (value.IsSequence() && value.size() == 2u && value[0].IsScalar() &&
+        value[1].IsScalar()) {
+        return "[" + value[0].as<std::string>() + ", " +
+            value[1].as<std::string>() + "]";
+    }
+    throw std::runtime_error(
+        "trigger parameters must be scalar values or a [horizontal, vertical] pair: " +
+        path);
+}
+
+// The "[h, v]" text binding_value_from_yaml keeps, checked the way a graph's
+// own list default is.
+std::optional<std::array<float, 2>> strength_pair_from_binding_text(
+    const std::string& text,
+    const std::string& context) {
+    if (text.empty() || text.front() != '[') {
+        return std::nullopt;
+    }
+    return optional_strength_pair_from_yaml(YAML::Load(text), "strength", context);
+}
+
 // Plain suffix match, deliberately not std::filesystem::path::extension(): the
 // interesting suffix here is ".skeleton_manifest.json", and extension() would
 // only ever see ".json".
@@ -1891,6 +1921,21 @@ std::string parameter_reference_from_yaml(
     return value.substr(kPrefix.size());
 }
 
+// For an action field that takes a literal or params.<name>: the parameter's
+// name when it is a reference, empty when it is a literal for the caller to
+// read as before.
+std::string optional_parameter_reference(const YAML::Node& node) {
+    if (!node || !node.IsScalar()) {
+        return {};
+    }
+    const std::string value = node.as<std::string>();
+    constexpr std::string_view kPrefix = "params.";
+    if (!value.starts_with(kPrefix) || value.size() == kPrefix.size()) {
+        return {};
+    }
+    return value.substr(kPrefix.size());
+}
+
 // `lifetime_ticks` and `repeat:` on a spawn_projectile graph action.
 void read_spawn_repeat(
     const YAML::Node& action,
@@ -2144,7 +2189,10 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
             }
             compiled_action.owner_parameter =
                 parameter_reference_from_yaml(action["owner"], "owner");
-            if (action["placement"]) {
+            compiled_action.spawn_placement_parameter =
+                optional_parameter_reference(action["placement"]);
+            if (action["placement"] &&
+                compiled_action.spawn_placement_parameter.empty()) {
                 const std::string placement = action["placement"].as<std::string>();
                 if (placement == "exact") {
                     compiled_action.spawn_placement = KERNEL_SPAWN_PLACEMENT_EXACT;
@@ -2223,8 +2271,12 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                     path);
             }
             // Authored on the action, not the target: a rocket and a shove
-            // want different hold times against the same actor.
-            if (action["lockout_ticks"]) {
+            // want different hold times against the same actor. A
+            // params.<name> leaves the number to each binding.
+            compiled_action.lockout_ticks_parameter =
+                optional_parameter_reference(action["lockout_ticks"]);
+            if (action["lockout_ticks"] &&
+                compiled_action.lockout_ticks_parameter.empty()) {
                 compiled_action.lockout_ticks =
                     action["lockout_ticks"].as<std::uint32_t>();
                 if (compiled_action.lockout_ticks >
@@ -2270,16 +2322,37 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                     parameter_reference_from_yaml(
                         action["direction"], "direction");
             }
-            compiled_action.pull_distance =
-                action["distance"] ? action["distance"].as<float>() : 0.0f;
-            compiled_action.pull_airtime_ticks =
-                action["airtime_ticks"].as<std::uint32_t>();
-            compiled_action.pull_max_speed = action["max_speed"].as<float>();
-            // A literal, unlike apply_impulse's: it is the fixed number a
-            // target's impulse_resistance is weighed against, so it must not
-            // vary per binding.
-            compiled_action.pull_strength = action["strength"].as<float>();
-            if (!pull_is_authorable(
+            // Each number is a literal or params.<name>. Literals are checked
+            // here, where there is a file to name; a bound number is checked
+            // when each binding supplies it (compile_pull_action).
+            compiled_action.pull_distance_parameter =
+                optional_parameter_reference(action["distance"]);
+            compiled_action.pull_airtime_ticks_parameter =
+                optional_parameter_reference(action["airtime_ticks"]);
+            compiled_action.pull_max_speed_parameter =
+                optional_parameter_reference(action["max_speed"]);
+            compiled_action.pull_strength_parameter =
+                optional_parameter_reference(action["strength"]);
+            if (compiled_action.pull_distance_parameter.empty()) {
+                compiled_action.pull_distance =
+                    action["distance"] ? action["distance"].as<float>() : 0.0f;
+            }
+            if (compiled_action.pull_airtime_ticks_parameter.empty()) {
+                compiled_action.pull_airtime_ticks =
+                    action["airtime_ticks"].as<std::uint32_t>();
+            }
+            if (compiled_action.pull_max_speed_parameter.empty()) {
+                compiled_action.pull_max_speed = action["max_speed"].as<float>();
+            }
+            if (compiled_action.pull_strength_parameter.empty()) {
+                compiled_action.pull_strength = action["strength"].as<float>();
+            }
+            const bool pull_fully_literal =
+                compiled_action.pull_distance_parameter.empty() &&
+                compiled_action.pull_airtime_ticks_parameter.empty() &&
+                compiled_action.pull_max_speed_parameter.empty() &&
+                compiled_action.pull_strength_parameter.empty();
+            if (pull_fully_literal && !pull_is_authorable(
                     compiled_action.pull_mode,
                     compiled_action.pull_distance,
                     compiled_action.pull_airtime_ticks,
@@ -2386,8 +2459,13 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                     "open_ui requires target and ui_id and nothing else: " +
                     path);
             }
-            compiled_action.ui_id = action["ui_id"].as<std::uint32_t>();
-            if (compiled_action.ui_id == 0u) {
+            compiled_action.ui_id_parameter =
+                optional_parameter_reference(action["ui_id"]);
+            if (compiled_action.ui_id_parameter.empty()) {
+                compiled_action.ui_id = action["ui_id"].as<std::uint32_t>();
+            }
+            if (compiled_action.ui_id_parameter.empty() &&
+                compiled_action.ui_id == 0u) {
                 throw std::runtime_error(
                     "open_ui ui_id must be non-zero: " + path);
             }
@@ -2464,6 +2542,18 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
             throw std::runtime_error(
                 "unsupported action graph action type: " +
                 compiled_action.action_type);
+        }
+        for (const std::string* bound : {
+                 &compiled_action.lockout_ticks_parameter,
+                 &compiled_action.pull_distance_parameter,
+                 &compiled_action.pull_airtime_ticks_parameter,
+                 &compiled_action.pull_max_speed_parameter,
+                 &compiled_action.pull_strength_parameter,
+                 &compiled_action.ui_id_parameter,
+                 &compiled_action.spawn_placement_parameter}) {
+            if (!bound->empty()) {
+                action_parameters.push_back(bound);
+            }
         }
         for (const std::string* action_parameter : action_parameters) {
             if (std::none_of(
@@ -2634,7 +2724,8 @@ StatusEffectTemplateConfig status_effect_template_from_yaml(
             }
             for (const auto& entry : trigger["parameters"]) {
                 binding.parameters.emplace_back(
-                    entry.first.as<std::string>(), entry.second.as<std::string>());
+                    entry.first.as<std::string>(),
+                    binding_value_from_yaml(entry.second, path));
             }
         }
         return binding;
@@ -6144,13 +6235,13 @@ TriggerBindingConfig trigger_binding_from_yaml(
     TriggerBindingConfig binding;
     binding.action_graph_ref = node["action_graph"].as<std::string>();
     for (const auto& entry : node["parameters"]) {
-        if (!entry.first.IsScalar() || !entry.second.IsScalar()) {
+        if (!entry.first.IsScalar()) {
             throw std::runtime_error(
-                "trigger parameters must be scalar values: " + path);
+                "trigger parameter names must be scalars: " + path);
         }
         binding.parameters.emplace_back(
             entry.first.as<std::string>(),
-            entry.second.as<std::string>());
+            binding_value_from_yaml(entry.second, path));
     }
     return binding;
 }
@@ -7229,10 +7320,89 @@ std::string trigger_parameter_value(
         "required action graph parameter is missing: " + parameter.name);
 }
 
+const ActionGraphParameterConfig& graph_parameter_named(
+    const ActionGraphTemplateConfig& graph,
+    const std::string& name) {
+    const auto found = std::find_if(
+        graph.parameters.begin(),
+        graph.parameters.end(),
+        [&](const ActionGraphParameterConfig& parameter) {
+            return parameter.name == name;
+        });
+    if (found == graph.parameters.end()) {
+        throw std::runtime_error(
+            "action references undeclared graph parameter: " + name);
+    }
+    return *found;
+}
+
+// What a binding supplied for a field authored as params.<name>, read whole:
+// "12abc" is a typo, not 12.
+float bound_float(
+    const TriggerBindingConfig& binding,
+    const ActionGraphTemplateConfig& graph,
+    const std::string& name) {
+    const std::string text =
+        trigger_parameter_value(binding, graph_parameter_named(graph, name));
+    std::size_t parsed = 0;
+    float value = 0.0f;
+    try {
+        value = std::stof(text, &parsed);
+    } catch (const std::exception&) {
+        parsed = 0;
+    }
+    if (parsed == 0 || parsed != text.size() || !std::isfinite(value)) {
+        throw std::runtime_error(
+            "action graph parameter " + name + " must be a finite number, got " +
+            text + ": " + graph.id);
+    }
+    return value;
+}
+
+std::uint32_t bound_uint32(
+    const TriggerBindingConfig& binding,
+    const ActionGraphTemplateConfig& graph,
+    const std::string& name) {
+    const std::string text =
+        trigger_parameter_value(binding, graph_parameter_named(graph, name));
+    std::size_t parsed = 0;
+    unsigned long long value = 0;
+    try {
+        value = std::stoull(text, &parsed);
+    } catch (const std::exception&) {
+        parsed = 0;
+    }
+    if (parsed == 0 || parsed != text.size() || text.front() == '-' ||
+        value > std::numeric_limits<std::uint32_t>::max()) {
+        throw std::runtime_error(
+            "action graph parameter " + name +
+            " must be a non-negative integer, got " + text + ": " + graph.id);
+    }
+    return static_cast<std::uint32_t>(value);
+}
+
+std::uint32_t compile_impulse_lockout(
+    const TriggerBindingConfig& binding,
+    const ActionGraphTemplateConfig& graph,
+    const ActionGraphActionConfig& action) {
+    if (action.lockout_ticks_parameter.empty()) {
+        return action.lockout_ticks;
+    }
+    const std::uint32_t lockout =
+        bound_uint32(binding, graph, action.lockout_ticks_parameter);
+    if (lockout > KERNEL_MAX_IMPULSE_LOCKOUT_TICKS) {
+        throw std::runtime_error(
+            "apply_impulse lockout_ticks must not exceed " +
+            std::to_string(KERNEL_MAX_IMPULSE_LOCKOUT_TICKS) + ": " + graph.id);
+    }
+    return lockout;
+}
+
 // Both trigger compilers -- projectile and entity -- resolve apply_impulse's
-// strength identically, and the two used to spell it out separately. A binding
-// that overrides the parameter always wins and is always the scalar form; only
-// an unoverridden [horizontal, vertical] default selects the split reading.
+// strength identically. A [horizontal, vertical] pair, from the binding or
+// the graph's default, is the split reading; a scalar is the radial one. A
+// binding never turns a split default radial behind the author's back: it
+// overrides a pair with a pair.
 void compile_impulse_strength(
     const TriggerBindingConfig& binding,
     const ActionGraphParameterConfig& strength_parameter,
@@ -7244,14 +7414,24 @@ void compile_impulse_strength(
         [&](const auto& value) {
             return value.first == strength_parameter.name;
         });
-    if (override_binding == binding.parameters.end() &&
-        strength_parameter.default_strength_pair.has_value()) {
-        const std::array<float, 2>& pair =
-            *strength_parameter.default_strength_pair;
+    std::optional<std::array<float, 2>> pair =
+        strength_parameter.default_strength_pair;
+    if (override_binding != binding.parameters.end()) {
+        pair = strength_pair_from_binding_text(
+            override_binding->second, binding.action_graph_ref);
+        if (!pair.has_value() &&
+            strength_parameter.default_strength_pair.has_value()) {
+            throw std::runtime_error(
+                "apply_impulse strength defaults to [horizontal, vertical]; "
+                "a binding must override it with a pair too: " +
+                binding.action_graph_ref);
+        }
+    }
+    if (pair.has_value()) {
         compiled_action->impulse_strength_mode =
             KERNEL_IMPULSE_STRENGTH_MODE_SPLIT;
-        compiled_action->impulse_strength = pair[0];
-        compiled_action->impulse_strength_vertical = pair[1];
+        compiled_action->impulse_strength = (*pair)[0];
+        compiled_action->impulse_strength_vertical = (*pair)[1];
         return;
     }
     const std::string strength =
@@ -7415,15 +7595,40 @@ void mirror_first_action(KernelActionTriggerDefinition* trigger) {
 // checked against the trigger by validate_trigger_parameters.
 void compile_pull_action(
     const TriggerBindingConfig& binding,
+    const ActionGraphTemplateConfig& graph,
     const ActionGraphParameterConfig& point_parameter,
     const ActionGraphActionConfig& action,
     KernelActionDefinition* compiled_action) {
     compiled_action->action_type = KernelEntityTriggerActionType_ApplyPull;
     compiled_action->pull_mode = action.pull_mode;
-    compiled_action->pull_distance = action.pull_distance;
-    compiled_action->pull_airtime_ticks = action.pull_airtime_ticks;
-    compiled_action->pull_max_speed = action.pull_max_speed;
-    compiled_action->pull_strength = action.pull_strength;
+    compiled_action->pull_distance = action.pull_distance_parameter.empty()
+        ? action.pull_distance
+        : bound_float(binding, graph, action.pull_distance_parameter);
+    compiled_action->pull_airtime_ticks =
+        action.pull_airtime_ticks_parameter.empty()
+        ? action.pull_airtime_ticks
+        : bound_uint32(binding, graph, action.pull_airtime_ticks_parameter);
+    compiled_action->pull_max_speed = action.pull_max_speed_parameter.empty()
+        ? action.pull_max_speed
+        : bound_float(binding, graph, action.pull_max_speed_parameter);
+    compiled_action->pull_strength = action.pull_strength_parameter.empty()
+        ? action.pull_strength
+        : bound_float(binding, graph, action.pull_strength_parameter);
+    // A literal set was checked at load; this catches the bound ones, which
+    // only exist once a binding supplies them.
+    if (!pull_is_authorable(
+            compiled_action->pull_mode,
+            compiled_action->pull_distance,
+            compiled_action->pull_airtime_ticks,
+            compiled_action->pull_max_speed,
+            compiled_action->pull_strength)) {
+        throw std::runtime_error(
+            "apply_pull needs airtime_ticks in 1.." +
+            std::to_string(KERNEL_MAX_IMPULSE_LOCKOUT_TICKS) +
+            ", a positive max_speed and strength, and a non-negative "
+            "distance with anchor or a non-zero one with direction: " +
+            graph.id);
+    }
     const bool bound = std::any_of(
         binding.parameters.begin(),
         binding.parameters.end(),
@@ -7600,6 +7805,7 @@ void compile_projectile_trigger_binding(
                     binding, graph_parameter(action.target_parameter)));
             compile_pull_action(
                 binding,
+                *graph,
                 graph_parameter(
                     action.pull_mode == KERNEL_PULL_MODE_TO_POINT
                         ? action.anchor_parameter
@@ -7669,7 +7875,8 @@ void compile_projectile_trigger_binding(
                             : KernelEventVec3Source_Direction;
                 }
                 compiled_action.impulse_collision_mask = action.collision_mask;
-                compiled_action.impulse_lockout_ticks = action.lockout_ticks;
+                compiled_action.impulse_lockout_ticks =
+                    compile_impulse_lockout(binding, *graph, action);
             } else {
                 const std::string amount = trigger_parameter_value(
                     binding, graph_parameter(action.amount_parameter));
@@ -7869,6 +8076,19 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
             }
             compiled_action.owner_source = entity_ref_source(owner);
             compiled_action.spawn_placement = action.spawn_placement;
+            if (!action.spawn_placement_parameter.empty()) {
+                const std::string placement = trigger_parameter_value(
+                    binding, graph_parameter(action.spawn_placement_parameter));
+                if (placement == "exact") {
+                    compiled_action.spawn_placement = KERNEL_SPAWN_PLACEMENT_EXACT;
+                } else if (placement == "clear") {
+                    compiled_action.spawn_placement = KERNEL_SPAWN_PLACEMENT_CLEAR;
+                } else {
+                    throw std::runtime_error(
+                        "spawn_entity placement must be exact or clear, got " +
+                        placement + ": " + graph->id);
+                }
+            }
             if (!action.item_template_ref.empty()) {
                 if (item_templates == nullptr) {
                     throw std::runtime_error(
@@ -7938,7 +8158,8 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
                     KernelEventVec3Source_Direction;
             }
             compiled_action.impulse_collision_mask = action.collision_mask;
-            compiled_action.impulse_lockout_ticks = action.lockout_ticks;
+            compiled_action.impulse_lockout_ticks =
+                compile_impulse_lockout(binding, *graph, action);
             continue;
         }
         if (action.action_type == "refill_weapon_reserve") {
@@ -7981,7 +8202,13 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
             compiled_action.target_source = entity_ref_source(
                 trigger_parameter_value(
                     binding, graph_parameter(action.target_parameter)));
-            compiled_action.ui_id = action.ui_id;
+            compiled_action.ui_id = action.ui_id_parameter.empty()
+                ? action.ui_id
+                : bound_uint32(binding, *graph, action.ui_id_parameter);
+            if (compiled_action.ui_id == 0u) {
+                throw std::runtime_error(
+                    "open_ui ui_id must be non-zero: " + graph->id);
+            }
             continue;
         }
         if (action.action_type == "apply_pull") {
@@ -7996,6 +8223,7 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
                     binding, graph_parameter(action.target_parameter)));
             compile_pull_action(
                 binding,
+                *graph,
                 graph_parameter(
                     action.pull_mode == KERNEL_PULL_MODE_TO_POINT
                         ? action.anchor_parameter

@@ -292,6 +292,277 @@ void an_unknown_graph_names_who_referenced_it() {
          "on_projectile_impact"}));
 }
 
+// A prop that runs `graph` with `parameters` (YAML lines, already indented
+// for the map) on `trigger`.
+std::string prop_yaml(
+    std::uint32_t id,
+    const std::string& trigger,
+    const std::string& graph,
+    const std::string& parameters) {
+    const bool collision = trigger == "on_collision";
+    const bool activated = trigger == "on_activated";
+    return "id: " + std::to_string(id) +
+        "\n"
+        "name: test_prop_" + std::to_string(id) +
+        "\n"
+        "entity_type: prop\n"
+        "health:\n"
+        "  hp: 3\n"
+        "  max_hp: 3\n"
+        "physics:\n"
+        "  collider_template: collision_damage_prop_hitbox\n" +
+        (activated ? "interaction:\n"
+                     "  capabilities: [interactable]\n"
+                     "  range: 2.5\n"
+                     "  line_of_sight_required: false\n"
+                   : "") +
+        "triggers:\n"
+        "  " + trigger + ":\n" +
+        (collision ? "    collision_mask: terrain\n" : "") +
+        "    action_graph: " + graph +
+        "\n"
+        "    parameters:\n" +
+        parameters;
+}
+
+const KernelEntityTemplateDefinition& compiled_entity(
+    const gs::KernelGameplayCatalogStorage& storage,
+    std::uint32_t id) {
+    for (const KernelEntityTemplateDefinition& entity : storage.entity_templates) {
+        if (entity.entity_template_id == id) {
+            return entity;
+        }
+    }
+    std::fprintf(stderr, "no compiled entity %u\n", id);
+    require(false);
+    return storage.entity_templates.front();
+}
+
+gs::KernelGameplayCatalogStorage built(const fs::path& catalog) {
+    return gs::build_kernel_gameplay_catalog(
+        gs::load_gameplay_config_from_catalog_file(catalog.string()));
+}
+
+const std::string kPushGraph =
+    "id: action_test_push\n"
+    "parameters:\n"
+    "  target: null\n"
+    "  strength: [8.0, 4.0]\n"
+    "  direction: null\n"
+    "  lockout: 20\n"
+    "actions:\n"
+    "  - type: apply_impulse\n"
+    "    target: params.target\n"
+    "    strength: params.strength\n"
+    "    direction: params.direction\n"
+    "    lockout_ticks: params.lockout\n";
+
+const std::string kPushDefaults =
+    "      target: event.target\n"
+    "      direction: event.direction\n";
+
+// One graph, two owners, two sets of numbers: neither needs its own copy, and
+// the split strength keeps its vertical whichever owner supplies it.
+void one_graph_serves_two_owners_with_their_own_numbers() {
+    const gs::KernelGameplayCatalogStorage storage = built(catalog_with(
+        "two_owners",
+        {{"action_graph_templates/common/action_test_push.yaml", kPushGraph},
+         {"entity_templates/1901_test_prop.yaml",
+          prop_yaml(1901u, "on_collision", "action_test_push", kPushDefaults)},
+         {"entity_templates/1902_test_prop.yaml",
+          prop_yaml(
+              1902u, "on_collision", "action_test_push",
+              kPushDefaults +
+                  "      strength: [14.0, 6.0]\n"
+                  "      lockout: 60\n")}}));
+    const KernelActionDefinition& first =
+        compiled_entity(storage, 1901u).collision_trigger.actions[0];
+    const KernelActionDefinition& second =
+        compiled_entity(storage, 1902u).collision_trigger.actions[0];
+    require(first.impulse_strength_mode == KERNEL_IMPULSE_STRENGTH_MODE_SPLIT);
+    require(first.impulse_strength == 8.0f);
+    require(first.impulse_strength_vertical == 4.0f);
+    require(first.impulse_lockout_ticks == 20u);
+    require(second.impulse_strength_mode == KERNEL_IMPULSE_STRENGTH_MODE_SPLIT);
+    require(second.impulse_strength == 14.0f);
+    require(second.impulse_strength_vertical == 6.0f);
+    require(second.impulse_lockout_ticks == 60u);
+}
+
+// A scalar where the graph says [horizontal, vertical] would quietly drop the
+// lift; it is refused instead.
+void a_scalar_over_a_split_default_is_refused() {
+    require(refused_for(
+        catalog_with(
+            "scalar_over_pair",
+            {{"action_graph_templates/common/action_test_push.yaml", kPushGraph},
+             {"entity_templates/1901_test_prop.yaml",
+              prop_yaml(
+                  1901u, "on_collision", "action_test_push",
+                  kPushDefaults + "      strength: 12.0\n")}}),
+        {"a binding must override it with a pair too"}));
+}
+
+void a_bound_lockout_past_the_ceiling_is_refused() {
+    require(refused_for(
+        catalog_with(
+            "lockout_ceiling",
+            {{"action_graph_templates/common/action_test_push.yaml", kPushGraph},
+             {"entity_templates/1901_test_prop.yaml",
+              prop_yaml(
+                  1901u, "on_collision", "action_test_push",
+                  kPushDefaults + "      lockout: 100000\n")}}),
+        {"lockout_ticks must not exceed"}));
+}
+
+const std::string kPullGraph =
+    "id: action_test_pull\n"
+    "parameters:\n"
+    "  target: null\n"
+    "  anchor: null\n"
+    "  distance: 1.0\n"
+    "  airtime: 18\n"
+    "  max_speed: 12.0\n"
+    "  strength: 20.0\n"
+    "actions:\n"
+    "  - type: apply_pull\n"
+    "    target: params.target\n"
+    "    anchor: params.anchor\n"
+    "    distance: params.distance\n"
+    "    airtime_ticks: params.airtime\n"
+    "    max_speed: params.max_speed\n"
+    "    strength: params.strength\n";
+
+const std::string kPullDefaults =
+    "      target: event.target\n"
+    "      anchor: event.position\n";
+
+// Every pull number from the binding, with the graph's defaults behind them,
+// and the same range check a literal gets.
+void pull_numbers_come_from_the_binding() {
+    const gs::KernelGameplayCatalogStorage storage = built(catalog_with(
+        "pull_bound",
+        {{"action_graph_templates/common/action_test_pull.yaml", kPullGraph},
+         {"entity_templates/1901_test_prop.yaml",
+          prop_yaml(1901u, "on_collision", "action_test_pull", kPullDefaults)},
+         {"entity_templates/1902_test_prop.yaml",
+          prop_yaml(
+              1902u, "on_collision", "action_test_pull",
+              kPullDefaults +
+                  "      distance: 2.5\n"
+                  "      airtime: 24\n"
+                  "      max_speed: 9.0\n"
+                  "      strength: 10.0\n")}}));
+    const KernelActionDefinition& defaults =
+        compiled_entity(storage, 1901u).collision_trigger.actions[0];
+    const KernelActionDefinition& bound =
+        compiled_entity(storage, 1902u).collision_trigger.actions[0];
+    require(defaults.pull_distance == 1.0f);
+    require(defaults.pull_airtime_ticks == 18u);
+    require(defaults.pull_max_speed == 12.0f);
+    require(defaults.pull_strength == 20.0f);
+    require(bound.pull_distance == 2.5f);
+    require(bound.pull_airtime_ticks == 24u);
+    require(bound.pull_max_speed == 9.0f);
+    require(bound.pull_strength == 10.0f);
+}
+
+void a_bound_pull_out_of_range_is_refused() {
+    require(refused_for(
+        catalog_with(
+            "pull_zero_airtime",
+            {{"action_graph_templates/common/action_test_pull.yaml", kPullGraph},
+             {"entity_templates/1901_test_prop.yaml",
+              prop_yaml(
+                  1901u, "on_collision", "action_test_pull",
+                  kPullDefaults + "      airtime: 0\n")}}),
+        {"apply_pull needs airtime_ticks"}));
+    require(refused_for(
+        catalog_with(
+            "pull_not_a_number",
+            {{"action_graph_templates/common/action_test_pull.yaml", kPullGraph},
+             {"entity_templates/1901_test_prop.yaml",
+              prop_yaml(
+                  1901u, "on_collision", "action_test_pull",
+                  kPullDefaults + "      max_speed: fast\n")}}),
+        {"max_speed must be a finite number, got fast"}));
+}
+
+void ui_id_comes_from_the_binding() {
+    const std::string graph =
+        "id: action_test_open_ui\n"
+        "parameters:\n"
+        "  target: null\n"
+        "  ui: null\n"
+        "actions:\n"
+        "  - type: open_ui\n"
+        "    target: params.target\n"
+        "    ui_id: params.ui\n";
+    const std::string parameters = "      target: event.instigator\n";
+    const gs::KernelGameplayCatalogStorage storage = built(catalog_with(
+        "ui_bound",
+        {{"action_graph_templates/common/action_test_open_ui.yaml", graph},
+         {"entity_templates/1901_test_prop.yaml",
+          prop_yaml(
+              1901u, "on_activated", "action_test_open_ui",
+              parameters + "      ui: 3\n")}}));
+    require(compiled_entity(storage, 1901u).activated_trigger.actions[0].ui_id == 3u);
+    require(refused_for(
+        catalog_with(
+            "ui_zero",
+            {{"action_graph_templates/common/action_test_open_ui.yaml", graph},
+             {"entity_templates/1901_test_prop.yaml",
+              prop_yaml(
+                  1901u, "on_activated", "action_test_open_ui",
+                  parameters + "      ui: 0\n")}}),
+        {"open_ui ui_id must be non-zero"}));
+}
+
+void placement_comes_from_the_binding() {
+    const std::string graph =
+        "id: action_test_spawn_entity\n"
+        "parameters:\n"
+        "  template: null\n"
+        "  position: null\n"
+        "  direction: null\n"
+        "  owner: null\n"
+        "  placement: exact\n"
+        "actions:\n"
+        "  - type: spawn_entity\n"
+        "    entity_template: params.template\n"
+        "    position: params.position\n"
+        "    direction: params.direction\n"
+        "    owner: params.owner\n"
+        "    placement: params.placement\n";
+    const std::string parameters =
+        "      template: glyph_block\n"
+        "      position: event.position\n"
+        "      direction: event.direction\n"
+        "      owner: self\n";
+    const gs::KernelGameplayCatalogStorage storage = built(catalog_with(
+        "placement_bound",
+        {{"action_graph_templates/common/action_test_spawn_entity.yaml", graph},
+         {"entity_templates/1901_test_prop.yaml",
+          prop_yaml(1901u, "on_collision", "action_test_spawn_entity", parameters)},
+         {"entity_templates/1902_test_prop.yaml",
+          prop_yaml(
+              1902u, "on_collision", "action_test_spawn_entity",
+              parameters + "      placement: clear\n")}}));
+    require(compiled_entity(storage, 1901u).collision_trigger.actions[0].spawn_placement ==
+            KERNEL_SPAWN_PLACEMENT_EXACT);
+    require(compiled_entity(storage, 1902u).collision_trigger.actions[0].spawn_placement ==
+            KERNEL_SPAWN_PLACEMENT_CLEAR);
+    require(refused_for(
+        catalog_with(
+            "placement_bad",
+            {{"action_graph_templates/common/action_test_spawn_entity.yaml", graph},
+             {"entity_templates/1901_test_prop.yaml",
+              prop_yaml(
+                  1901u, "on_collision", "action_test_spawn_entity",
+                  parameters + "      placement: nearby\n")}}),
+        {"placement must be exact or clear, got nearby"}));
+}
+
 // The archive the client loads must hold every graph the source tree does,
 // subdirectories included: the bundle rule copies files by path.
 void the_bundle_carries_the_same_graphs() {
@@ -321,6 +592,13 @@ int main() {
     an_id_without_the_action_prefix_is_refused();
     an_id_that_is_not_snake_case_is_refused();
     an_unknown_graph_names_who_referenced_it();
+    one_graph_serves_two_owners_with_their_own_numbers();
+    a_scalar_over_a_split_default_is_refused();
+    a_bound_lockout_past_the_ceiling_is_refused();
+    pull_numbers_come_from_the_binding();
+    a_bound_pull_out_of_range_is_refused();
+    ui_id_comes_from_the_binding();
+    placement_comes_from_the_binding();
     the_bundle_carries_the_same_graphs();
     return 0;
 }
