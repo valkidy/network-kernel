@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- aligns Unity bindings with ABI 106 for the action graph refactor, projectile stagger, bone hit bounds and firing-event weapon provenance
+
+
+0.7.0 release notes:
+
 - aligns Unity bindings with ABI 104 for portals, trigger volumes and lock-on weapons, including Chain Lightning and Magic Missile
 
 

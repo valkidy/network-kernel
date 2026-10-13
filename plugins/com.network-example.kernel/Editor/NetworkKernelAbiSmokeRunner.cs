@@ -24,7 +24,7 @@ namespace NetworkExample.Kernel.Editor
             KernelAbi.ValidateNativeAbi();
             GameServerAbi.ValidateNativeAbi();
             KernelAbiInfo info = KernelAbi.GetInfo();
-            Require(KernelConstants.AbiVersion == 104, "Managed kernel ABI version was not v104.");
+            Require(KernelConstants.AbiVersion == 106, "Managed kernel ABI version was not v106.");
             Require(
                 KernelLocalWeaponState.StructSize == 20 &&
                 info.local_weapon_state_size == KernelLocalWeaponState.StructSize,
@@ -127,7 +127,7 @@ namespace NetworkExample.Kernel.Editor
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("damage_stagger") >
                     (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("impulse_strength_vertical") &&
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelEntityTemplateDefinition>("stagger_immunity_ticks") >
-                    (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelEntityTemplateDefinition>("impulse_resistance"),
+                    (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelEntityTemplateDefinition>("force_resistance"),
                 "Kernel hit stagger fields are not appended in native order.");
             Require(
                 KernelEventType.EntityDied == (KernelEventType)15 &&
@@ -250,6 +250,16 @@ namespace NetworkExample.Kernel.Editor
                 KernelLocalActionResultReason.StatusBlocked == (KernelLocalActionResultReason)17 &&
                 KernelConstants.VisualFlagSuspended == 0x00000400U,
                 "Kernel status-bound crowd control (ABI 102) mismatch.");
+            Require(
+                KernelColliderPurpose.Bounds == (KernelColliderPurpose)(1U << 6) &&
+                KernelConstants.VisualFlagKnockedBack == 0x00000800U &&
+                (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelProjectileMechanicsDefinition>("stagger_authored") ==
+                    (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelProjectileMechanicsDefinition>("launch") +
+                    (int)KernelProjectileLaunchDefinition.StructSize &&
+                (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelProjectileMechanicsDefinition>("stagger") ==
+                    (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelProjectileMechanicsDefinition>("stagger_authored") + 4 &&
+                (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelProjectileTemplateDefinition>("reserved_weapon_id") == 8,
+                "Kernel projectile stagger and bounds ABI mismatch.");
             Require(
                 KernelPortalDefinition.StructSize == 40 &&
                 KernelLockSelection.StructSize == 276 &&
@@ -1091,28 +1101,28 @@ namespace NetworkExample.Kernel.Editor
                 {
                     struct_size = KernelProjectileTemplateDefinition.StructSize,
                     projectile_template_id = 202,
-                    weapon_id = 3,
+                    reserved_weapon_id = 0,
                     mechanics = StandardProjectileMechanics(5, 30.0f, 60),
                 },
                 new KernelProjectileTemplateDefinition
                 {
                     struct_size = KernelProjectileTemplateDefinition.StructSize,
                     projectile_template_id = 204,
-                    weapon_id = 4,
+                    reserved_weapon_id = 0,
                     mechanics = AreaEffectProjectileMechanics(),
                 },
                 new KernelProjectileTemplateDefinition
                 {
                     struct_size = KernelProjectileTemplateDefinition.StructSize,
                     projectile_template_id = 205,
-                    weapon_id = 5,
+                    reserved_weapon_id = 0,
                     mechanics = BeamProjectileMechanics(),
                 },
                 new KernelProjectileTemplateDefinition
                 {
                     struct_size = KernelProjectileTemplateDefinition.StructSize,
                     projectile_template_id = 206,
-                    weapon_id = 6,
+                    reserved_weapon_id = 0,
                     mechanics = HomingProjectileMechanics(),
                 },
             };

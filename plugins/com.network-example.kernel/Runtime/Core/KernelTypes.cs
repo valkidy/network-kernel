@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 104;
+        public const uint AbiVersion = 106;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int LogMessageTextSize = 512;
@@ -219,6 +219,7 @@ namespace NetworkExample.Kernel
         // ABI 102: a status suspension holds the actor in the air -- the water
         // bubble. Draw the bubble from this.
         public const uint VisualFlagSuspended = 0x00000400U;
+        public const uint VisualFlagKnockedBack = 0x00000800U;
         public const uint MaxVisibleHostiles = 16;
         public const uint MaxVisibleAllies = 16;
         public const uint MaxVisibleNeutrals = 16;
@@ -710,6 +711,9 @@ namespace NetworkExample.Kernel
         Damage = 1U << 1,
         Trigger = 1U << 2,
         Vision = 1U << 3,
+        Movement = 1U << 4,
+        Limb = 1U << 5,
+        Bounds = 1U << 6,
     }
 
     public enum KernelAgentCamp : byte
@@ -1134,7 +1138,8 @@ namespace NetworkExample.Kernel
         public int health_change_amount;
         public uint condition_type;
         public float impulse_strength;
-        public uint impulse_collision_mask;
+        // ABI 105: retained layout slot, ignored; write zero.
+        public uint retired_impulse_collision_mask;
         public KernelVec3 impulse_direction;
         public uint status_effect_id;
         public byte modifier_operation;
@@ -1168,7 +1173,7 @@ namespace NetworkExample.Kernel
         public uint ui_id;
         // spawn_entity only (ABI 96): a KernelConstants.SpawnPlacement*.
         public uint spawn_placement;
-        // apply_pull only: moves targets whose impulse_resistance is lower.
+        // apply_pull only: moves targets whose force_resistance is lower.
         public float pull_strength;
         // refill_weapon_reserve only (ABI 101): a fixed count, or a percent of
         // the weapon's reserve_magazines (rounded half up, at least 1).
@@ -1183,7 +1188,7 @@ namespace NetworkExample.Kernel
         public float suspend_rise_speed;
         public float suspend_drift_speed;
         // apply_status only (ABI 102): when > 0 the status lands only on a
-        // target whose impulse_resistance is strictly below it; 0 is anyone.
+        // target whose force_resistance is strictly below it; 0 is anyone.
         public float status_strength;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelActionDefinition>();
@@ -1210,7 +1215,8 @@ namespace NetworkExample.Kernel
         public int health_change_amount;
         public uint condition_type;
         public float impulse_strength;
-        public uint impulse_collision_mask;
+        // ABI 105: retained layout slot, ignored; write zero.
+        public uint retired_impulse_collision_mask;
         public KernelVec3 impulse_direction;
         public uint status_effect_id;
         public byte modifier_operation;
@@ -1834,7 +1840,8 @@ namespace NetworkExample.Kernel
     {
         public uint struct_size;
         public uint projectile_template_id;
-        public byte weapon_id;
+        // ABI 106: weapon provenance comes from the firing event; write zero.
+        public byte reserved_weapon_id;
         public byte reserved0;
         public ushort reserved1;
         public KernelProjectileMechanicsDefinition mechanics;
@@ -2364,6 +2371,9 @@ namespace NetworkExample.Kernel
         public byte replication;
         public ushort reserved1;
         public KernelProjectileLaunchDefinition launch;
+        // ABI 105: an authored stagger overrides damage-derived stagger.
+        public uint stagger_authored;
+        public float stagger;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelProjectileMechanicsDefinition>();
     }
@@ -2728,7 +2738,7 @@ namespace NetworkExample.Kernel
         public KernelPropDefinition prop;
         public uint collision_trigger_mask;
         public KernelSkeletonBindingDefinition skeleton;
-        public float impulse_resistance;
+        public float force_resistance;
         // Hit stagger profile. stagger_threshold == 0 disables it.
         public float stagger_threshold;
         public float stagger_per_damage;
