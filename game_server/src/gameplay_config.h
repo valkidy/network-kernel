@@ -405,6 +405,12 @@ struct ActionGraphActionConfig {
     std::uint32_t repeat_count_max = 0;
     float repeat_scatter_radius = 0.0f;
     std::uint32_t repeat_stagger_lifetime_ticks = 0;
+    // Set when the matching field above is authored as params.<name>; the
+    // binding then supplies it. A bound count is one number or [min, max].
+    std::string spawn_lifetime_ticks_parameter;
+    std::string repeat_count_parameter;
+    std::string repeat_scatter_radius_parameter;
+    std::string repeat_stagger_lifetime_ticks_parameter;
     // apply_pull only. The anchor is a graph parameter for TO_POINT, and
     // direction_parameter is reused for ALONG. Each number is a literal, or
     // params.<name> (its *_parameter set) for the binding to supply. See

@@ -1,5 +1,5 @@
 # Meteor Storm Staff's centre mark. After 10 ticks it expires into the storm:
-# action_meteor_storm_marker_expired scatters the fuses around it.
+# action_spawn_projectile_repeated scatters the fuses around it.
 id: 21
 name: meteor_storm_marker
 type: standard
@@ -11,8 +11,14 @@ sync_mode: server_snapshot_only
 lifetime_ticks: 10
 triggers:
   on_expired:
-    action_graph: action_meteor_storm_marker_expired
+    action_graph: action_spawn_projectile_repeated
     parameters:
       template: meteor_storm_fuse
       position: event.position
       direction: event.direction
+      # 10-15 fuses within 6 m, each living 10 ticks plus a share of a
+      # 60-tick window, so they expire one after another.
+      lifetime: 10
+      count: [10, 15]
+      scatter_radius: 6.0
+      stagger_lifetime: 60

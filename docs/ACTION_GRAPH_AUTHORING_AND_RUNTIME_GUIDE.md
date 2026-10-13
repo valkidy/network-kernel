@@ -90,6 +90,7 @@ binding 提供數值（graph default 是持有者沒寫時的值）：
 | `spawn_entity` | `placement` |
 | `apply_status` | `strength`（binding 提供時 `0` = 不比較 resistance） |
 | `refill_weapon_reserve` | `count`、`percent` |
+| `spawn_projectile` | `lifetime_ticks`、`repeat` 的 `count`、`scatter_radius`、`stagger_lifetime_ticks` |
 
 Binding 提供的值會整段解析（`12abc` 不是 12）並做與字面值相同的範圍檢查，錯誤訊息
 會指出 graph。只有數值不同的持有者應共用同一份 graph，各自在 binding 寫數值，不要
@@ -135,8 +136,7 @@ game_server/gameplay_catalog/action_graph_templates/
   行為用 `_and_` 依執行順序連接，影響流程的條件可加語意後綴（例如 `_if_target`）。
 - Derived 的 `owner_type` 是 `projectile`、`entity`、`prop`、`item`、`status_effect`
   之一；`event` 是 trigger key 去掉 `on_`（`on_projectile_impact` → `projectile_impact`）。
-- 只有數值不同不構成 derived 的理由。目前只剩兩份 derived：meteor storm 的
-  `spawn_projectile` `repeat` 設定（binding 還無法提供），以及 water bubble status
+- 只有數值不同不構成 derived 的理由。目前唯一的 derived 是 water bubble status
   自己的 action 組合。
 - `action_graph_catalog_test` 會檢查 shipped catalog 沒有兩份去掉 id／註解後完全相同的
   graph，且每份都在 `common/` 或 `derived/<owner_type>/` 底下。
@@ -311,8 +311,8 @@ template 沒有 `CancelBeforeFirstCommit` 也不會先打出一次；硬直期�
 - owner、shooter、weapon、action instance 等 attribution 由 execution provenance
   自動向下傳遞，不應重複出現在 YAML parameters。
 
-`spawn_projectile` 可以另外 author 兩個欄位。它們是 graph action 上的常數，不是
-parameter：
+`spawn_projectile` 可以另外 author 兩個欄位。每個數字都可以寫字面值或
+`params.<name>` 由 binding 提供；binding 的 `count` 可以是一個數字或 `[min, max]`：
 
 ```yaml
 - type: spawn_projectile
@@ -337,7 +337,8 @@ parameter：
   projectile。所以引信 i 到期時生成的隕石用的是 salt i，每顆隕石的仰角都不同。
 - 在其他 action 上寫 `repeat` 或 `lifetime_ticks`，或是沒有 `repeat` 卻寫了
   scatter／stagger，都會在載入時報錯。
-- 範例：`derived/projectile/action_meteor_storm_marker_expired`。
+- 範例：`common/action_spawn_projectile_repeated`，`meteor_storm_marker` 的 binding 寫
+  `lifetime: 10`、`count: [10, 15]`、`scatter_radius: 6.0`、`stagger_lifetime: 60`。
 
 ### 4.4 `apply_impulse`
 

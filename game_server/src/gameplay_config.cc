@@ -1950,7 +1950,12 @@ void read_spawn_repeat(
     ActionGraphActionConfig* compiled_action,
     const std::string& path,
     std::uint32_t source_kind) {
-    if (action["lifetime_ticks"]) {
+    // Each number may be params.<name> instead, checked when a binding
+    // supplies it (compile_spawn_repeat).
+    compiled_action->spawn_lifetime_ticks_parameter =
+        optional_parameter_reference(action["lifetime_ticks"]);
+    if (action["lifetime_ticks"] &&
+        compiled_action->spawn_lifetime_ticks_parameter.empty()) {
         compiled_action->spawn_lifetime_ticks =
             action["lifetime_ticks"].as<std::uint32_t>();
         if (compiled_action->spawn_lifetime_ticks == 0u) {
@@ -1973,7 +1978,14 @@ void read_spawn_repeat(
     if (!count) {
         throw std::runtime_error("spawn_projectile repeat needs count: " + path);
     }
-    if (count.IsSequence()) {
+    compiled_action->repeat_count_parameter = optional_parameter_reference(count);
+    compiled_action->repeat_scatter_radius_parameter =
+        optional_parameter_reference(repeat["scatter_radius"]);
+    compiled_action->repeat_stagger_lifetime_ticks_parameter =
+        optional_parameter_reference(repeat["stagger_lifetime_ticks"]);
+    if (!compiled_action->repeat_count_parameter.empty()) {
+        // Bound: checked per binding.
+    } else if (count.IsSequence()) {
         if (count.size() != 2u) {
             throw std::runtime_error(
                 "spawn_projectile repeat count must be one number or "
@@ -1985,14 +1997,16 @@ void read_spawn_repeat(
         compiled_action->repeat_count_min = count.as<std::uint32_t>();
         compiled_action->repeat_count_max = compiled_action->repeat_count_min;
     }
-    if (compiled_action->repeat_count_min < 1u ||
-        compiled_action->repeat_count_min > compiled_action->repeat_count_max ||
-        compiled_action->repeat_count_max > KERNEL_MAX_ACTION_REPEAT) {
+    if (compiled_action->repeat_count_parameter.empty() &&
+        (compiled_action->repeat_count_min < 1u ||
+         compiled_action->repeat_count_min > compiled_action->repeat_count_max ||
+         compiled_action->repeat_count_max > KERNEL_MAX_ACTION_REPEAT)) {
         throw std::runtime_error(
             "spawn_projectile repeat count must satisfy 1 <= min <= max <= " +
             std::to_string(KERNEL_MAX_ACTION_REPEAT) + ": " + path);
     }
-    if (repeat["scatter_radius"]) {
+    if (repeat["scatter_radius"] &&
+        compiled_action->repeat_scatter_radius_parameter.empty()) {
         compiled_action->repeat_scatter_radius =
             repeat["scatter_radius"].as<float>();
         if (!std::isfinite(compiled_action->repeat_scatter_radius) ||
@@ -2002,7 +2016,8 @@ void read_spawn_repeat(
                 "non-negative: " + path);
         }
     }
-    if (repeat["stagger_lifetime_ticks"]) {
+    if (repeat["stagger_lifetime_ticks"] &&
+        compiled_action->repeat_stagger_lifetime_ticks_parameter.empty()) {
         compiled_action->repeat_stagger_lifetime_ticks =
             repeat["stagger_lifetime_ticks"].as<std::uint32_t>();
     }
@@ -2571,7 +2586,11 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                  &compiled_action.spawn_placement_parameter,
                  &compiled_action.status_strength_parameter,
                  &compiled_action.reserve_refill_count_parameter,
-                 &compiled_action.reserve_refill_percent_parameter}) {
+                 &compiled_action.reserve_refill_percent_parameter,
+                 &compiled_action.spawn_lifetime_ticks_parameter,
+                 &compiled_action.repeat_count_parameter,
+                 &compiled_action.repeat_scatter_radius_parameter,
+                 &compiled_action.repeat_stagger_lifetime_ticks_parameter}) {
             if (!bound->empty()) {
                 action_parameters.push_back(bound);
             }
@@ -7777,17 +7796,59 @@ void compile_status_direction(
     }
 }
 
+// spawn_projectile's lifetime and repeat, literal or bound, held to the
+// limits read_spawn_repeat holds a literal to.
 void compile_spawn_repeat(
+    const TriggerBindingConfig& binding,
+    const ActionGraphTemplateConfig& graph,
     const ActionGraphActionConfig& action,
     KernelActionDefinition* compiled_action) {
-    compiled_action->spawn_lifetime_ticks = action.spawn_lifetime_ticks;
-    compiled_action->repeat_count_min =
-        static_cast<std::uint8_t>(action.repeat_count_min);
-    compiled_action->repeat_count_max =
-        static_cast<std::uint8_t>(action.repeat_count_max);
-    compiled_action->repeat_scatter_radius = action.repeat_scatter_radius;
-    compiled_action->repeat_stagger_lifetime_ticks =
-        action.repeat_stagger_lifetime_ticks;
+    std::uint32_t lifetime = action.spawn_lifetime_ticks;
+    if (!action.spawn_lifetime_ticks_parameter.empty()) {
+        lifetime = bound_uint32(binding, graph, action.spawn_lifetime_ticks_parameter);
+        if (lifetime == 0u) {
+            throw std::runtime_error(
+                "spawn_projectile lifetime_ticks must be at least 1: " + graph.id);
+        }
+    }
+    std::uint32_t count_min = action.repeat_count_min;
+    std::uint32_t count_max = action.repeat_count_max;
+    if (!action.repeat_count_parameter.empty()) {
+        const std::string text = trigger_parameter_value(
+            binding, graph_parameter_named(graph, action.repeat_count_parameter));
+        if (!text.empty() && text.front() == '[') {
+            const YAML::Node pair = YAML::Load(text);
+            count_min = pair[0].as<std::uint32_t>();
+            count_max = pair[1].as<std::uint32_t>();
+        } else {
+            count_min = bound_uint32(binding, graph, action.repeat_count_parameter);
+            count_max = count_min;
+        }
+        if (count_min < 1u || count_min > count_max ||
+            count_max > KERNEL_MAX_ACTION_REPEAT) {
+            throw std::runtime_error(
+                "spawn_projectile repeat count must satisfy 1 <= min <= max <= " +
+                std::to_string(KERNEL_MAX_ACTION_REPEAT) + ": " + graph.id);
+        }
+    }
+    float scatter = action.repeat_scatter_radius;
+    if (!action.repeat_scatter_radius_parameter.empty()) {
+        scatter = bound_float(binding, graph, action.repeat_scatter_radius_parameter);
+        if (scatter < 0.0f) {
+            throw std::runtime_error(
+                "spawn_projectile repeat scatter_radius must be finite and "
+                "non-negative: " + graph.id);
+        }
+    }
+    const std::uint32_t stagger =
+        action.repeat_stagger_lifetime_ticks_parameter.empty()
+        ? action.repeat_stagger_lifetime_ticks
+        : bound_uint32(binding, graph, action.repeat_stagger_lifetime_ticks_parameter);
+    compiled_action->spawn_lifetime_ticks = lifetime;
+    compiled_action->repeat_count_min = static_cast<std::uint8_t>(count_min);
+    compiled_action->repeat_count_max = static_cast<std::uint8_t>(count_max);
+    compiled_action->repeat_scatter_radius = scatter;
+    compiled_action->repeat_stagger_lifetime_ticks = stagger;
 }
 
 void compile_projectile_trigger_binding(
@@ -8013,7 +8074,7 @@ void compile_projectile_trigger_binding(
             spawned_projectile->definition.projectile_template_id;
         compiled_action.position_source = KernelEventVec3Source_Position;
         compiled_action.direction_source = KernelEventVec3Source_Direction;
-        compile_spawn_repeat(action, &compiled_action);
+        compile_spawn_repeat(binding, *graph, action, &compiled_action);
     }
     mirror_first_action(&compiled);
 }
@@ -8128,7 +8189,7 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
                 found->definition.projectile_template_id;
             compiled_action.position_source = KernelEventVec3Source_Position;
             compiled_action.direction_source = KernelEventVec3Source_Direction;
-            compile_spawn_repeat(action, &compiled_action);
+            compile_spawn_repeat(binding, *graph, action, &compiled_action);
             continue;
         }
         if (action.action_type == "spawn_entity") {
@@ -10115,6 +10176,10 @@ std::uint64_t compute_gameplay_catalog_hash(
             hash_string(&hash, action.status_strength_parameter);
             hash_string(&hash, action.reserve_refill_count_parameter);
             hash_string(&hash, action.reserve_refill_percent_parameter);
+            hash_string(&hash, action.spawn_lifetime_ticks_parameter);
+            hash_string(&hash, action.repeat_count_parameter);
+            hash_string(&hash, action.repeat_scatter_radius_parameter);
+            hash_string(&hash, action.repeat_stagger_lifetime_ticks_parameter);
             hash_scalar(&hash, action.reserve_refill_count);
             hash_scalar(&hash, action.reserve_refill_percent);
         }
