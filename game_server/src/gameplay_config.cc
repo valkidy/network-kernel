@@ -1179,9 +1179,18 @@ public:
     virtual std::vector<std::string> list_files(
         const std::string& directory,
         std::string_view extension) const = 0;
+    // The same, descending into subdirectories. Sorted by full path, so the
+    // order depends on where a file sits, never on how it was enumerated.
+    virtual std::vector<std::string> list_files_recursive(
+        const std::string& directory,
+        std::string_view extension) const = 0;
     std::vector<std::string> list_yaml_files(
         const std::string& directory) const {
         return list_files(directory, ".yaml");
+    }
+    std::vector<std::string> list_yaml_files_recursive(
+        const std::string& directory) const {
+        return list_files_recursive(directory, ".yaml");
     }
     std::vector<std::string> list_json_files(
         const std::string& directory) const {
@@ -1239,6 +1248,24 @@ public:
         }
         for (const std::filesystem::directory_entry& entry :
              std::filesystem::directory_iterator(directory)) {
+            if (entry.is_regular_file() &&
+                has_extension(entry.path().filename().string(), extension)) {
+                files.push_back(entry.path().string());
+            }
+        }
+        std::sort(files.begin(), files.end());
+        return files;
+    }
+
+    std::vector<std::string> list_files_recursive(
+        const std::string& directory,
+        std::string_view extension) const override {
+        std::vector<std::string> files;
+        if (!std::filesystem::exists(directory)) {
+            return files;
+        }
+        for (const std::filesystem::directory_entry& entry :
+             std::filesystem::recursive_directory_iterator(directory)) {
             if (entry.is_regular_file() &&
                 has_extension(entry.path().filename().string(), extension)) {
                 files.push_back(entry.path().string());
@@ -1523,6 +1550,21 @@ public:
             }
             const std::string rest = path.substr(prefix.size());
             if (rest.find('/') == std::string::npos) {
+                files.push_back(path);
+            }
+        }
+        std::sort(files.begin(), files.end());
+        return files;
+    }
+
+    std::vector<std::string> list_files_recursive(
+        const std::string& directory,
+        std::string_view extension) const override {
+        const std::string prefix = normalize_archive_path(directory) + "/";
+        std::vector<std::string> files;
+        for (const auto& entry : files_) {
+            const std::string& path = entry.first;
+            if (has_extension(path, extension) && path.rfind(prefix, 0) == 0) {
                 files.push_back(path);
             }
         }
@@ -2440,23 +2482,63 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
     return graph;
 }
 
+// action_ and then lowercase snake_case: [a-z0-9] words joined by single
+// underscores.
+bool is_action_graph_id(const std::string& id) {
+    constexpr std::string_view kPrefix = "action_";
+    if (id.size() <= kPrefix.size() || id.compare(0, kPrefix.size(), kPrefix) != 0 ||
+        id.back() == '_') {
+        return false;
+    }
+    char previous = '_';
+    for (std::size_t index = kPrefix.size(); index < id.size(); ++index) {
+        const char c = id[index];
+        const bool word = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
+        if (!word && !(c == '_' && previous != '_')) {
+            return false;
+        }
+        previous = c;
+    }
+    return true;
+}
+
+// Graphs may sit in subdirectories (common/, derived/<owner_type>/) but are
+// still referred to by id alone, so an id has to be unique across the whole
+// tree and is the file's own name: what a reference says is where the graph
+// is found.
 std::vector<ActionGraphTemplateConfig> load_action_graph_templates_from_source(
     const GameplayConfigSource& source,
     const std::string& directory) {
     std::vector<ActionGraphTemplateConfig> graphs;
-    for (const std::string& file : source.list_yaml_files(directory)) {
+    std::vector<std::string> graph_files;
+    for (const std::string& file : source.list_yaml_files_recursive(directory)) {
         ActionGraphTemplateConfig graph = action_graph_template_from_yaml(
             source.load_yaml(file), file, source.source_kind());
-        if (std::any_of(
-                graphs.begin(),
-                graphs.end(),
-                [&](const ActionGraphTemplateConfig& existing) {
-                    return existing.id == graph.id;
-                })) {
+        if (!is_action_graph_id(graph.id)) {
             throw std::runtime_error(
-                "duplicate action graph id: " + graph.id);
+                "action graph id must be action_ followed by lowercase snake_case: " +
+                graph.id + " in " + file);
+        }
+        const std::string stem = std::filesystem::path(file).stem().string();
+        if (graph.id != stem) {
+            throw std::runtime_error(
+                "action graph id must equal its file name: id " + graph.id +
+                " in " + file);
+        }
+        const auto existing = std::find_if(
+            graphs.begin(),
+            graphs.end(),
+            [&](const ActionGraphTemplateConfig& other) {
+                return other.id == graph.id;
+            });
+        if (existing != graphs.end()) {
+            throw std::runtime_error(
+                "duplicate action graph id: " + graph.id + " in " +
+                graph_files[static_cast<std::size_t>(existing - graphs.begin())] +
+                " and " + file);
         }
         graphs.push_back(std::move(graph));
+        graph_files.push_back(file);
     }
     std::sort(
         graphs.begin(),
@@ -2604,15 +2686,19 @@ std::vector<StatusEffectTemplateConfig> load_status_effect_templates_from_source
     return statuses;
 }
 
+// `referrer` names who asked -- "projectile rocket on_projectile_impact" --
+// since an id alone no longer says which file to open.
 const ActionGraphTemplateConfig* action_graph_template_from_ref(
     const std::string& id,
-    const std::vector<ActionGraphTemplateConfig>& graphs) {
+    const std::vector<ActionGraphTemplateConfig>& graphs,
+    const std::string& referrer) {
     const auto found = std::find_if(
         graphs.begin(),
         graphs.end(),
         [&](const ActionGraphTemplateConfig& graph) { return graph.id == id; });
     if (found == graphs.end()) {
-        throw std::runtime_error("unknown action_graph reference: " + id);
+        throw std::runtime_error(
+            "unknown action_graph reference: " + id + " from " + referrer);
     }
     return &*found;
 }
@@ -7424,10 +7510,12 @@ void compile_projectile_trigger_binding(
     if (binding.action_graph_ref.empty()) {
         return;
     }
-    const ActionGraphTemplateConfig* graph = action_graph_template_from_ref(
-        binding.action_graph_ref, action_graph_templates);
     const std::string_view trigger_name =
         expired ? "on_expired" : "on_projectile_impact";
+    const ActionGraphTemplateConfig* graph = action_graph_template_from_ref(
+        binding.action_graph_ref,
+        action_graph_templates,
+        "projectile " + projectile_template->name + " " + std::string(trigger_name));
     validate_trigger_parameters(binding, trigger_name, *graph);
     const auto graph_parameter = [&](const std::string& name)
         -> const ActionGraphParameterConfig& {
@@ -7641,6 +7729,7 @@ void compile_projectile_trigger_binding(
 KernelActionTriggerDefinition compile_action_trigger_binding(
     const TriggerBindingConfig& binding,
     std::string_view trigger_name,
+    const std::string& owner,
     const std::vector<ActionGraphTemplateConfig>& action_graph_templates,
     const std::vector<EntityTemplateConfig>& entity_templates,
     const std::vector<ProjectileTemplateConfig>* projectile_templates = nullptr,
@@ -7651,7 +7740,9 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
         return compiled;
     }
     const ActionGraphTemplateConfig* graph = action_graph_template_from_ref(
-        binding.action_graph_ref, action_graph_templates);
+        binding.action_graph_ref,
+        action_graph_templates,
+        owner + " " + std::string(trigger_name));
     validate_trigger_parameters(binding, trigger_name, *graph);
     const auto graph_parameter = [&](const std::string& name)
         -> const ActionGraphParameterConfig& {
@@ -11078,6 +11169,7 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
         entity_template.activated_trigger = compile_action_trigger_binding(
             authored_template.activated_trigger,
             "on_activated",
+            "entity " + authored_template.name,
             config.action_graph_templates,
             config.entity_templates,
             &config.projectile_templates,
@@ -11086,6 +11178,7 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
         entity_template.collision_trigger = compile_action_trigger_binding(
             authored_template.collision_trigger,
             "on_collision",
+            "entity " + authored_template.name,
             config.action_graph_templates,
             config.entity_templates,
             &config.projectile_templates,
@@ -11130,6 +11223,7 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
             *compiled = compile_action_trigger_binding(
                 *authored,
                 name,
+                "entity " + authored_template.name,
                 config.action_graph_templates,
                 config.entity_templates,
                 &config.projectile_templates,
@@ -11149,6 +11243,7 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
         entity_template.health_depleted_trigger = compile_action_trigger_binding(
             authored_template.health_depleted_trigger,
             "on_health_depleted",
+            "entity " + authored_template.name,
             config.action_graph_templates,
             config.entity_templates,
             &config.projectile_templates,
@@ -11157,6 +11252,7 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
         entity_template.destroy_entity_trigger = compile_action_trigger_binding(
             authored_template.destroy_entity_trigger,
             "on_destroy_entity",
+            "entity " + authored_template.name,
             config.action_graph_templates,
             config.entity_templates,
             &config.projectile_templates,
@@ -11408,6 +11504,7 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
         item.item_used_trigger = compile_action_trigger_binding(
             authored_item.item_used_trigger,
             "on_item_used",
+            "item " + authored_item.name,
             config.action_graph_templates,
             config.entity_templates,
             &config.projectile_templates,
@@ -11416,10 +11513,12 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
         storage.item_templates.push_back(item);
     }
     const auto compile_status_trigger = [&](const TriggerBindingConfig& binding,
-                                            const char* trigger_name) {
+                                            const char* trigger_name,
+                                            const std::string& owner) {
         KernelActionTriggerDefinition trigger = compile_action_trigger_binding(
             binding,
             trigger_name,
+            owner,
             config.action_graph_templates,
             config.entity_templates,
             nullptr,
@@ -11476,11 +11575,17 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
         status.interval_ticks = authored_status.interval_ticks;
         status.replacement_policy = authored_status.replacement_policy;
         status.on_apply_trigger = compile_status_trigger(
-            authored_status.on_apply_trigger, "on_apply");
+            authored_status.on_apply_trigger,
+            "on_apply",
+            "status_effect " + authored_status.name);
         status.on_tick_trigger = compile_status_trigger(
-            authored_status.on_tick_trigger, "on_tick");
+            authored_status.on_tick_trigger,
+            "on_tick",
+            "status_effect " + authored_status.name);
         status.on_expire_trigger = compile_status_trigger(
-            authored_status.on_expire_trigger, "on_expire");
+            authored_status.on_expire_trigger,
+            "on_expire",
+            "status_effect " + authored_status.name);
         status.max_stacks = authored_status.replacement_policy ==
                 KernelStatusEffectReplacementPolicy_Stack
             ? authored_status.max_stacks
