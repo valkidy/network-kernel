@@ -176,6 +176,25 @@ struct ImpulseLockout {
     bool free_fall = false;
 };
 
+// Server-only, for the same reason as ImpulseLockout. A leap the actor's own
+// controller started (Kernel_ServerEnqueueEntityLeap): a flight solved to land
+// on one spot on one tick, which the authority steers instead of the
+// controller until it lands. Unlike a knockback it is the actor's own move, so
+// landing hands it straight back -- no KnockdownProfile recovery -- and it
+// refuses nothing: an action may start, or carry on, in the air. Anything that
+// moves the actor itself (an impulse, a pull, a suspension, a teleport, death)
+// ends it.
+struct LeapLockout {
+    // The tick whose movement step puts it down on the destination.
+    std::uint32_t landing_tick = 0;
+    // The ceiling, for a flight a collision keeps from landing where solved.
+    std::uint32_t until_tick = 0;
+    // The tick the leap was armed. Landing only ends it on a later tick.
+    std::uint32_t armed_tick = 0;
+    // The destination's ground height, for the client's anchor.
+    float landing_y = 0.0f;
+};
+
 // Server-only. On an actor a status suspension has held, from the commit that
 // started it until the tick after the last suspension on it ended, when the
 // drop is armed (settle_status_suspensions).
@@ -1370,6 +1389,8 @@ inline constexpr std::uint32_t kVisualFlagFiring = 0x00000200u;
 inline constexpr std::uint32_t kVisualFlagSuspended = 0x00000400u;
 // An impulse flight, excluding the post-landing recovery and suspension drop.
 inline constexpr std::uint32_t kVisualFlagKnockedBack = 0x00000800u;
+// A leap (LeapLockout), from the arming tick until it lands.
+inline constexpr std::uint32_t kVisualFlagLeaping = 0x00001000u;
 
 struct ReplicationState {
     std::uint16_t animation_state = 0;

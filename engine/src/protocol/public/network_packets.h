@@ -205,9 +205,16 @@ struct ActorImpulseRecord {
     // down to it.
     float floor_y = 0.0f;
     // Ticks after server_tick at which the lockout expires. Landing can end
-    // it sooner.
+    // it sooner. For a leap, exactly the ticks until the step that lands it.
     std::uint16_t lockout_ticks = 0;
+    // Schema 33. kActorImpulseFlagLeap: the actor's own leap
+    // (Kernel_ServerEnqueueEntityLeap), not a knockback. floor_y is then the
+    // ground it lands on, which may be above where it took off, so the flight
+    // is floored only on its way down; and it ends on lockout_ticks exactly.
+    std::uint8_t flags = 0;
 };
+
+inline constexpr std::uint8_t kActorImpulseFlagLeap = 1u << 0;
 
 struct ActorImpulseBatchPacket {
     std::uint32_t server_tick = 0;

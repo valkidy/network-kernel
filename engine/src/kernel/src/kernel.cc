@@ -6686,6 +6686,27 @@ bool KernelEngine::server_enqueue_entity_shelter(
     return enqueue_simulation_command(command);
 }
 
+bool KernelEngine::server_enqueue_entity_leap(
+    std::uint32_t command_source,
+    NetId net_id,
+    const KernelVec3& destination,
+    std::uint32_t airtime_ticks) {
+    if (!running_ || !is_server_mode(config_.mode) || net_id == 0u) {
+        return false;
+    }
+    simulation::CommandSource source{};
+    if (!to_simulation_command_source(command_source, &source)) {
+        return false;
+    }
+    simulation::Command command{};
+    command.id = simulation::CommandId::kStartEntityLeap;
+    command.source = source;
+    command.start_entity_leap.net_id = net_id;
+    command.start_entity_leap.destination = destination;
+    command.start_entity_leap.airtime_ticks = airtime_ticks;
+    return enqueue_simulation_command(command);
+}
+
 bool KernelEngine::server_enqueue_entity_state(
     std::uint32_t command_source,
     NetId net_id,
@@ -11577,7 +11598,13 @@ void apply_knockback_anchor(
             anchor.gravity_y,
             fixed_delta_seconds,
             elapsed_seconds);
-        position.y = std::max(position.y, anchor.floor_y);
+        // A leap up onto a ledge starts below the ground it lands on, so its
+        // floor holds only once it is coming down to it.
+        if (!anchor.leap ||
+            knockback_flight_velocity_at(
+                base_velocity, anchor.gravity_y, elapsed_seconds).y < 0.0f) {
+            position.y = std::max(position.y, anchor.floor_y);
+        }
         return position;
     };
 
@@ -15447,6 +15474,24 @@ void KernelEngine::flush_actor_impulses() {
             batch.records.push_back(record);
             continue;
         }
+        // A leap: armed by a command ahead of this tick's movement, so the
+        // state read here is already one step in, and what is left of it runs
+        // to the landing tick it was solved for.
+        if (const LeapLockout* leap = registry.try_get<LeapLockout>(*entity);
+            leap != nullptr) {
+            if (leap->landing_tick <= tick) continue;
+            ActorImpulseRecord record{};
+            record.net_id = net_id;
+            record.position = transform->position;
+            record.velocity = velocity->linear;
+            record.gravity_y = movement->gravity.y;
+            record.floor_y = leap->landing_y;
+            record.lockout_ticks = static_cast<std::uint16_t>(std::min<std::uint32_t>(
+                leap->landing_tick - tick, UINT16_MAX));
+            record.flags = kActorImpulseFlagLeap;
+            batch.records.push_back(record);
+            continue;
+        }
         // No lockout left means the flight already ended inside this tick (it
         // landed, or a death cleared it); the snapshot says the rest.
         if (lockout == nullptr || lockout->until_tick <= tick) {
@@ -15599,13 +15644,18 @@ void KernelEngine::handle_client_actor_impulse_batch(
         anchor.velocity = record.velocity;
         anchor.gravity_y = record.gravity_y;
         anchor.floor_y = record.floor_y;
-        anchor.end_tick = packet.server_tick + knockback_flight_ticks(
-            record.position,
-            record.velocity,
-            record.gravity_y,
-            record.floor_y,
-            fixed_delta_seconds,
-            record.lockout_ticks);
+        anchor.leap = (record.flags & kActorImpulseFlagLeap) != 0u;
+        // A leap was solved to land on its tick, so the record says when;
+        // a knockback's landing is worked out from where its floor is.
+        anchor.end_tick = packet.server_tick + (anchor.leap
+            ? record.lockout_ticks
+            : knockback_flight_ticks(
+                  record.position,
+                  record.velocity,
+                  record.gravity_y,
+                  record.floor_y,
+                  fixed_delta_seconds,
+                  record.lockout_ticks));
         client_knockback_anchors_[record.net_id] = anchor;
     }
 }

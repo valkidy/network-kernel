@@ -1215,6 +1215,22 @@ bool Kernel_ServerEnqueueEntityTransform(
     });
 }
 
+bool Kernel_ServerEnqueueEntityLeap(
+    KernelHandle* kernel,
+    uint32_t command_source,
+    uint32_t net_id,
+    const KernelVec3* destination,
+    uint32_t airtime_ticks) {
+    return abi_call("Kernel_ServerEnqueueEntityLeap", false, [&]() {
+        return kernel != nullptr && destination != nullptr &&
+               kernel->engine->server_enqueue_entity_leap(
+                   command_source,
+                   net_id,
+                   *destination,
+                   airtime_ticks);
+    });
+}
+
 bool Kernel_ServerEnqueueEntityShelter(
     KernelHandle* kernel,
     uint32_t command_source,

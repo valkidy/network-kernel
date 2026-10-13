@@ -583,6 +583,12 @@ void simulate_actor_movement(
             world.registry().try_get<ImpulseLockout>(entity);
         const bool impulse_locked = impulse_lockout != nullptr &&
             current_tick < impulse_lockout->until_tick;
+        // A leap is held the same way, for the same reason: the controller
+        // keeps steering at its target the whole flight.
+        const LeapLockout* leap_lockout =
+            world.registry().try_get<LeapLockout>(entity);
+        const bool leap_locked = leap_lockout != nullptr &&
+            current_tick < leap_lockout->until_tick;
         const Health* health = world.registry().try_get<Health>(entity);
         const bool dead =
             health != nullptr && health->max_hp > 0u && health->hp == 0u;
@@ -600,8 +606,10 @@ void simulate_actor_movement(
             // Down after a knockback that landed: rooted until it is up again,
             // however the controller is steering.
             desired_horizontal = glm::vec3{0.0f};
-        } else if (impulse_locked) {
-            // nothing: the seeded current-velocity horizontal stands
+        } else if (impulse_locked || leap_locked) {
+            // nothing: the seeded current-velocity horizontal stands. Ahead
+            // of the stagger, so a hit that staggers a leaping actor does not
+            // stop it dead in the air.
         } else if (is_staggered(world, entity, current_tick)) {
             // A stagger roots the actor. After the lockout test on purpose: a
             // hit that both knocks back and staggers keeps its knockback.
@@ -976,6 +984,16 @@ void simulate_actor_movement(
                 world.registry().remove<ImpulseLockout>(result.entity);
             }
         }
+        // A leap hands the actor back the tick it lands, with no recovery:
+        // landing is where the move it chose ends. The ceiling covers a
+        // flight a collision kept from coming down where it was solved to.
+        if (const LeapLockout* leap =
+                world.registry().try_get<LeapLockout>(result.entity);
+            leap != nullptr &&
+            ((result.movement.landed_this_tick && current_tick > leap->armed_tick) ||
+             current_tick >= leap->until_tick)) {
+            world.registry().remove<LeapLockout>(result.entity);
+        }
         if (result.physics_finalized &&
             physics_finalized_actor_net_ids != nullptr) {
             physics_finalized_actor_net_ids->push_back(result.net_id);
@@ -1014,7 +1032,8 @@ std::optional<float> ground_height_below(
     NetId net_id,
     const glm::vec3& position,
     const glm::quat& rotation,
-    float max_distance) {
+    float max_distance,
+    bool static_world_only) {
     physics::PhysicsWorld* physics_world = world.collision_world();
     const ColliderInstance* collider = physics_world == nullptr
         ? nullptr
@@ -1028,7 +1047,8 @@ std::optional<float> ground_height_below(
     }
     const GroundProbe ground = probe_ground(
         *physics_world, *collider, position, rotation, max_distance,
-        movement->max_slope_degrees, movement->movement_collision_mask);
+        movement->max_slope_degrees, movement->movement_collision_mask,
+        static_world_only);
     if (!ground.hit) {
         return std::nullopt;
     }
@@ -1422,6 +1442,42 @@ std::uint32_t knockback_flight_ticks(
         }
     }
     return lockout_ticks - 1u;
+}
+
+glm::vec3 leap_launch_velocity(
+    const glm::vec3& from,
+    const glm::vec3& to,
+    std::uint32_t airtime_ticks,
+    float gravity_y,
+    float fixed_delta_seconds) {
+    const float steps = static_cast<float>(airtime_ticks);
+    const float flight_seconds = steps * fixed_delta_seconds;
+    return glm::vec3{
+        (to.x - from.x) / flight_seconds,
+        (to.y - from.y) / (fixed_delta_seconds * (steps - 0.5f)) -
+            gravity_y * fixed_delta_seconds * (steps + 0.5f) * 0.5f,
+        (to.z - from.z) / flight_seconds};
+}
+
+std::uint32_t leap_airtime_ticks(
+    float horizontal_distance,
+    float height_difference,
+    float apex_meters,
+    float max_horizontal_speed,
+    float gravity_y,
+    float fixed_delta_seconds) {
+    float seconds = 0.0f;
+    if (apex_meters > 0.0f && gravity_y < 0.0f) {
+        const float rise = apex_meters + std::max(0.0f, height_difference);
+        const float fall = apex_meters + std::max(0.0f, -height_difference);
+        seconds = std::sqrt(2.0f * rise / -gravity_y) +
+            std::sqrt(2.0f * fall / -gravity_y);
+    }
+    if (max_horizontal_speed > 0.0f) {
+        seconds = std::max(seconds, horizontal_distance / max_horizontal_speed);
+    }
+    const float ticks = std::ceil(seconds / fixed_delta_seconds);
+    return ticks < 1.0f ? 1u : static_cast<std::uint32_t>(ticks);
 }
 
 glm::vec3 knockback_flight_velocity_at(

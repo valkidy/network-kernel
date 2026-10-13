@@ -158,6 +158,14 @@ Client:
     after the flight, hold where it came down until a later sample arrives.
 ```
 
+An agent's own leap (`Kernel_ServerEnqueueEntityLeap`, packet schema 33) rides
+the same record with `kActorImpulseFlagLeap`. The authority solved it to land on
+one spot on one tick, so the record says that tick outright (`lockout_ticks` is
+the ticks to the landing) and `floor_y` is the ground it lands on. The client
+ends the flight there instead of searching for it, and floors it only on the way
+down, since a leap up onto a ledge starts below that ground. Nothing else
+differs: same channel, same replay, same re-basing.
+
 The owner predicts its own knockback from the lockout block in its own
 snapshot record instead.
 

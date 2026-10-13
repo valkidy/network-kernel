@@ -91,6 +91,12 @@ cc_test(
 )
 
 cc_test(
+    name = "entity_leap_test",
+    srcs = ["entity_leap_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
+cc_test(
     name = "impulse_strength_test",
     srcs = ["impulse_strength_test.cc"],
     deps = ["//engine/src/kernel:kernel"],

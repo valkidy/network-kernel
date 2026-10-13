@@ -533,12 +533,14 @@ void an_actor_impulse_batch_survives_a_round_trip() {
     network_example::ActorImpulseRecord second = record;
     second.net_id = 78;
     second.velocity = glm::vec3{-8.0f, 0.0f, 2.0f};
+    // Schema 33: a leap rides the same record, told apart by its flag.
+    second.flags = network_example::kActorImpulseFlagLeap;
     batch.records.push_back(second);
 
     const std::vector<std::uint8_t> encoded =
         network_example::encode_actor_impulse_batch_packet(batch, 9);
-    // 28 header + 6 batch header + 38 per record.
-    require(encoded.size() == 28u + 6u + 2u * 38u);
+    // 28 header + 6 batch header + 39 per record.
+    require(encoded.size() == 28u + 6u + 2u * 39u);
     network_example::ActorImpulseBatchPacket decoded;
     require(network_example::decode_actor_impulse_batch_packet(
         encoded.data(), encoded.size(), &decoded));
@@ -550,8 +552,10 @@ void an_actor_impulse_batch_survives_a_round_trip() {
     require(decoded.records[0].gravity_y == record.gravity_y);
     require(decoded.records[0].floor_y == record.floor_y);
     require(decoded.records[0].lockout_ticks == 40u);
+    require(decoded.records[0].flags == 0u);
     require(decoded.records[1].net_id == 78u);
     require(decoded.records[1].velocity == second.velocity);
+    require(decoded.records[1].flags == network_example::kActorImpulseFlagLeap);
 
     // Not mistaken for its neighbour on the reliable-event channel, which the
     // client tries first.
@@ -563,6 +567,11 @@ void an_actor_impulse_batch_survives_a_round_trip() {
     network_example::ActorImpulseBatchPacket expired = batch;
     expired.records[1].lockout_ticks = 0;
     require(network_example::encode_actor_impulse_batch_packet(expired).empty());
+
+    // Nor a flag this schema does not define.
+    network_example::ActorImpulseBatchPacket unknown = batch;
+    unknown.records[0].flags = 0x80u;
+    require(network_example::encode_actor_impulse_batch_packet(unknown).empty());
 }
 
 int main() {

@@ -154,6 +154,11 @@ struct AgentRuntimeState {
     // Chaser only: true once the agent has closed inside its stop distance and
     // is holding position, until the target opens the gap back up.
     bool chase_holding = false;
+    // Chaser only. Ticks until a leap it started lands, counted down once per
+    // controller tick; zero when it is not leaping. And ticks until it may
+    // start another.
+    std::uint32_t leap_ticks_to_landing = 0;
+    std::uint32_t leap_cooldown_ticks = 0;
     AgentPatrolRuntimeState patrol{};
     AgentEntryRuntimeState entry{};
     // Whether the agent was engaged when its controller last ran, so that an

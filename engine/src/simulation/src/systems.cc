@@ -1407,7 +1407,7 @@ bool execute_action_graph_commands(
             active->suspend_drift_velocity = suspend->drift_velocity;
             // The suspension replaces whatever was moving the actor: a
             // knockback in flight is over, and the ground lets go of it.
-            world.registry().remove<ImpulseLockout>(target);
+            world.registry().remove<ImpulseLockout, LeapLockout>(target);
             world.registry().emplace_or_replace<HeldInSuspension>(target);
             world.registry().get_or_emplace<ReplicationState>(target).visual_flags |=
                 kVisualFlagSuspended;
@@ -1524,9 +1524,10 @@ bool execute_action_graph_commands(
                 continue;
             }
             // Replaced, not added to: what the target was already doing --
-            // running at the thrower, falling, an earlier knockback -- is not
-            // allowed to carry it past where it is being put.
+            // running at the thrower, falling, an earlier knockback, a leap --
+            // is not allowed to carry it past where it is being put.
             world.registry().get_or_emplace<Velocity>(target).linear = launch;
+            world.registry().remove<LeapLockout>(target);
             // The flight is ticks current+1 .. current+airtime, and a lockout
             // owns ticks before until_tick, so +1 covers the landing tick
             // itself. One more for margin: landing releases it anyway.
@@ -1578,6 +1579,10 @@ bool execute_action_graph_commands(
             if (!std::isfinite(resistance) || effective_strength <= resistance) {
                 continue;
             }
+            // A leap is over the moment anything else moves it: the velocity
+            // below no longer lands where the leap was solved to, and the
+            // knockback, not the leap, is what owns the flight now.
+            world.registry().remove<LeapLockout>(target);
             Velocity& velocity = world.registry().get_or_emplace<Velocity>(target);
             velocity.linear += impulse_velocity_delta(
                 impulse->strength_mode,
@@ -3148,7 +3153,7 @@ void EntityLifecycleSystem::enter_death_state(
         // would otherwise carry it on, and a dormant one keeps both into its
         // next life. Status effects run out on their own: their removal fires
         // on_expire graphs, which is the revive's business, not the death's.
-        registry.remove<ImpulseLockout>(*entity);
+        registry.remove<ImpulseLockout, LeapLockout>(*entity);
         clear_stagger(engine.world_, *entity);
         if (Velocity* velocity = registry.try_get<Velocity>(*entity)) {
             velocity->linear.x = 0.0f;
@@ -3546,6 +3551,101 @@ float shelter_footprint_radius(const World& world, NetId shelter_net_id) {
 
 }  // namespace
 
+bool EntityStateSystem::start_leap(
+    KernelEngine& engine,
+    NetId net_id,
+    const KernelVec3& destination,
+    std::uint32_t airtime_ticks) const {
+    // How far above and below the destination the ground under it is looked
+    // for: the caller names a spot near a target's feet, not a floor height.
+    constexpr float kLeapGroundProbeMeters = 4.0f;
+    // One step cannot be told apart from its own arming tick, which is the
+    // one tick a landing does not release on.
+    if (airtime_ticks < 2u || airtime_ticks > KERNEL_MAX_IMPULSE_LOCKOUT_TICKS) {
+        return false;
+    }
+    glm::vec3 to = from_kernel_vec3(destination);
+    if (!std::isfinite(to.x) || !std::isfinite(to.y) || !std::isfinite(to.z)) {
+        return false;
+    }
+    World& world = engine.world_;
+    entt::registry& registry = world.registry();
+    const std::optional<entt::entity> entity = world.find_entity(net_id);
+    if (!entity.has_value() ||
+        !registry.all_of<EntityKind, Transform, Velocity, MovementState>(*entity) ||
+        registry.get<EntityKind>(*entity).type != EntityType::kActor ||
+        // An AI move. A player's flight would need its own prediction.
+        registry.all_of<PlayerTag>(*entity) ||
+        registry.all_of<Sheltered>(*entity) ||
+        registry.all_of<LeapLockout>(*entity) ||
+        registry.all_of<HeldInSuspension>(*entity) ||
+        active_suspension(world, *entity) != nullptr) {
+        return false;
+    }
+    if (const Health* health = registry.try_get<Health>(*entity);
+        health != nullptr && health->max_hp > 0u && health->hp == 0u) {
+        return false;
+    }
+    // A knockback in flight or the recovery after it: the actor is not its
+    // own to move.
+    if (const ImpulseLockout* lockout = registry.try_get<ImpulseLockout>(*entity);
+        lockout != nullptr && engine.current_tick() < lockout->until_tick) {
+        return false;
+    }
+    MovementState& movement = registry.get<MovementState>(*entity);
+    if (movement.controller_type != MovementState::ControllerType::kCharacter ||
+        movement.ground_state != MovementState::GroundState::kGrounded ||
+        !(movement.gravity.y < 0.0f)) {
+        return false;
+    }
+    const Transform& transform = registry.get<Transform>(*entity);
+    const float probe_from = to.y + kLeapGroundProbeMeters;
+    const std::optional<float> ground = ground_height_below(
+        world,
+        net_id,
+        glm::vec3{to.x, probe_from, to.z},
+        transform.rotation,
+        2.0f * kLeapGroundProbeMeters,
+        true);
+    // A probe that starts inside something -- under a roof, in a building --
+    // hits it at once, and that is not a floor to land on.
+    if (!ground.has_value() || *ground >= probe_from - 0.01f) {
+        return false;
+    }
+    to.y = *ground;
+    const std::uint32_t tick = engine.current_tick();
+    const glm::vec3 launch = leap_launch_velocity(
+        transform.position,
+        to,
+        airtime_ticks,
+        movement.gravity.y,
+        engine.fixed_delta_seconds());
+    // A launch that does not rise on its first step -- a drop off a ledge
+    // given too little airtime -- is caught by the ground it stands on and
+    // slides off along it instead of flying the arc it was solved for.
+    if (launch.y + movement.gravity.y * engine.fixed_delta_seconds() <= 0.0f) {
+        return false;
+    }
+    registry.get<Velocity>(*entity).linear = launch;
+    // Commands drain ahead of movement, so this tick's step is the flight's
+    // first and step N lands on tick + N - 1. Two past that for the ceiling,
+    // as apply_pull leaves: landing releases it anyway.
+    registry.emplace_or_replace<LeapLockout>(
+        *entity,
+        LeapLockout{tick + airtime_ticks - 1u, tick + airtime_ticks + 1u, tick, to.y});
+    movement.ground_state = MovementState::GroundState::kAirborne;
+    movement.ground_normal = glm::vec3{0.0f, 1.0f, 0.0f};
+    movement.supporting_entity_net_id = 0u;
+    movement.supporting_collider_id = 0u;
+    movement.has_controller_height = false;
+    // The floor queued is where it stands, not where it lands: the flush
+    // reads a leap's landing height off the lockout, and if a knockback ends
+    // the leap later this same tick, the queue keeps this first floor -- the
+    // ground the knockback struck it on.
+    engine.queue_actor_impulse(net_id, transform.position.y);
+    return true;
+}
+
 bool EntityStateSystem::set_shelter(
     KernelEngine& engine,
     NetId net_id,
@@ -3622,6 +3722,10 @@ bool EntityStateSystem::set_shelter(
     }
     if (const ImpulseLockout* lockout = registry.try_get<ImpulseLockout>(*entity);
         lockout != nullptr && engine.current_tick() < lockout->until_tick) {
+        return false;
+    }
+    // Nor one in the middle of a leap, for the same reason.
+    if (registry.all_of<LeapLockout>(*entity)) {
         return false;
     }
     // Nor one held in a status suspension, for the same reason.
@@ -3737,7 +3841,7 @@ void EntityStateSystem::teleport_through_portal(
         portal_template == nullptr ? 0u : portal_template->entity_template_id,
         portal_net_id);
     // The same reset a revive gives: nothing it was doing comes with it.
-    registry.remove<ImpulseLockout>(*target);
+    registry.remove<ImpulseLockout, LeapLockout>(*target);
     clear_stagger(world, *target);
     if (Velocity* velocity = registry.try_get<Velocity>(*target)) {
         velocity->linear = glm::vec3{0.0f};
@@ -3777,7 +3881,7 @@ bool EntityStateSystem::revive(
 
     // Whatever the death left on it. enter_death_state already cleared the
     // first two; a revive does not assume nothing re-armed them since.
-    registry.remove<ImpulseLockout>(*entity);
+    registry.remove<ImpulseLockout, LeapLockout>(*entity);
     clear_stagger(world, *entity);
     if (Velocity* velocity = registry.try_get<Velocity>(*entity)) {
         velocity->linear = glm::vec3{0.0f};
@@ -3848,6 +3952,10 @@ bool EntityStateSystem::set_velocity(
     const ImpulseLockout* lockout =
         engine.world_.registry().try_get<ImpulseLockout>(*entity);
     if (lockout != nullptr && engine.current_tick() < lockout->until_tick) {
+        return false;
+    }
+    // So is a leap, whose landing is solved from the velocity it was given.
+    if (engine.world_.registry().all_of<LeapLockout>(*entity)) {
         return false;
     }
     // A status suspension is the authority's to steer in the same way.
