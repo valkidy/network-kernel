@@ -1,6 +1,6 @@
 # D4：entity 命中體積單一來源 + weapon_id 改走發射來源 — 實作計畫
 
-狀態：D4a-1、D4a-2、D4b 皆已實作（`claude/d4a-entity-hit-collider`）。2026-10-13。
+狀態：D4a-1、D4a-2、D4b 皆已實作（`claude/d4-hitbox-weapon-provenance`）。2026-10-13。
 來源：`docs/ACTION_GRAPH_REFACTOR_PLAN.md` §0 D4（從 action graph refactor 拆出）。
 ABI：action graph refactor（`claude/action-graph-refactor`）用 105；本批 D4a-2 與 D4b 共用 **106**，合併時再核對一次。
 
