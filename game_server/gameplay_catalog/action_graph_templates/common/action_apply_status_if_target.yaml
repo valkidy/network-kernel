@@ -1,0 +1,18 @@
+# Puts `status` on `target`, carrying `direction` (a bubble's drift). Striking
+# the world names no target, and `when: event.has_target` lets that pass.
+#
+# `strength` is weighed against the target's force_resistance, strictly; 0
+# weighs against nobody. Each owner binds its own.
+id: action_apply_status_if_target
+parameters:
+  target: null
+  status: null
+  direction: null
+  strength: 0.0
+actions:
+  - type: apply_status
+    target: params.target
+    status: params.status
+    direction: params.direction
+    strength: params.strength
+    when: event.has_target

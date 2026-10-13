@@ -88,6 +88,8 @@ binding 提供數值（graph default 是持有者沒寫時的值）：
 | `apply_pull` | `distance`、`airtime_ticks`、`max_speed`、`strength` |
 | `open_ui` | `ui_id` |
 | `spawn_entity` | `placement` |
+| `apply_status` | `strength`（binding 提供時 `0` = 不比較 resistance） |
+| `refill_weapon_reserve` | `count`、`percent` |
 
 Binding 提供的值會整段解析（`12abc` 不是 12）並做與字面值相同的範圍檢查，錯誤訊息
 會指出 graph。只有數值不同的持有者應共用同一份 graph，各自在 binding 寫數值，不要
@@ -133,9 +135,9 @@ game_server/gameplay_catalog/action_graph_templates/
   行為用 `_and_` 依執行順序連接，影響流程的條件可加語意後綴（例如 `_if_target`）。
 - Derived 的 `owner_type` 是 `projectile`、`entity`、`prop`、`item`、`status_effect`
   之一；`event` 是 trigger key 去掉 `on_`（`on_projectile_impact` → `projectile_impact`）。
-- 只有數值不同不構成 derived 的理由。目前的 derived 都是帶著 binding 還無法提供的
-  數值（status 的 `strength`、`refill_weapon_reserve` 的 `percent`、`spawn_projectile`
-  的 `repeat`），或是某個 status 自己的 action 組合。
+- 只有數值不同不構成 derived 的理由。目前只剩兩份 derived：meteor storm 的
+  `spawn_projectile` `repeat` 設定（binding 還無法提供），以及 water bubble status
+  自己的 action 組合。
 - `action_graph_catalog_test` 會檢查 shipped catalog 沒有兩份去掉 id／註解後完全相同的
   graph，且每份都在 `common/` 或 `derived/<owner_type>/` 底下。
 

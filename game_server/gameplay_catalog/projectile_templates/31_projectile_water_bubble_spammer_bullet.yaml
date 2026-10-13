@@ -25,8 +25,10 @@ gravity:
   z: 0.0
 triggers:
   on_projectile_impact:
-    action_graph: action_water_bubble_spammer_bullet_projectile_impact
+    action_graph: action_apply_status_if_target
     parameters:
       target: event.target
       status: water_bubble
       direction: event.direction
+      # Strictly above force_resistance: 10 spares the hive airship (10).
+      strength: 10.0

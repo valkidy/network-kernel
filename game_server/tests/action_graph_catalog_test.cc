@@ -683,6 +683,66 @@ void a_negative_projectile_stagger_is_refused() {
         {"projectile stagger must be finite and >= 0"}));
 }
 
+// apply_status's strength and refill_weapon_reserve's percent come from the
+// binding: the water bubble's 10, from the bullet and the balloon alike, and
+// the MP potion's 50%.
+void status_strength_and_refill_percent_come_from_the_binding() {
+    const gs::KernelGameplayCatalogStorage storage =
+        built(shipped_catalog() / "gameplay_catalog.yaml");
+    const KernelActionDefinition& bullet =
+        compiled_projectile(storage, 31u).projectile_impact_trigger.actions[0];
+    require(bullet.action_type == KernelEntityTriggerActionType_ApplyStatus);
+    require(bullet.status_strength == 10.0f);
+    const KernelActionDefinition& balloon =
+        compiled_entity(storage, 224u).collision_trigger.actions[0];
+    require(balloon.action_type == KernelEntityTriggerActionType_ApplyStatus);
+    require(balloon.status_strength == 10.0f);
+    bool found_potion = false;
+    for (const KernelItemTemplateDefinition& item : storage.item_templates) {
+        if (item.item_template_id != 3013u) {
+            continue;
+        }
+        found_potion = true;
+        const KernelActionDefinition& refill = item.item_used_trigger.actions[0];
+        require(refill.action_type == KernelEntityTriggerActionType_RefillWeaponReserve);
+        require(refill.reserve_refill_percent == 50u);
+        require(refill.reserve_refill_count == 0u);
+    }
+    require(found_potion);
+}
+
+std::string with_replaced(
+    const fs::path& file,
+    const std::string& from,
+    const std::string& to) {
+    std::string text = read_file(file);
+    const std::size_t at = text.find(from);
+    require(at != std::string::npos);
+    text.replace(at, from.size(), to);
+    return text;
+}
+
+void bound_status_strength_and_refill_percent_are_range_checked() {
+    require(refused_for(
+        catalog_with(
+            "status_strength_negative",
+            {{"entity_templates/224_prop_water_balloon.yaml",
+              with_replaced(
+                  shipped_catalog() / "entity_templates" / "224_prop_water_balloon.yaml",
+                  "strength: 10.0", "strength: -1.0")}}),
+        {"apply_status strength must be finite and >= 0"}));
+    for (const char* percent : {"percent: 0", "percent: 101"}) {
+        require(refused_for(
+            catalog_with(
+                "refill_percent_out_of_range",
+                {{"item_templates/3013_fungible_mp_potion.yaml",
+                  with_replaced(
+                      shipped_catalog() / "item_templates" / "3013_fungible_mp_potion.yaml",
+                      "percent: 50", percent)}}),
+            {"refill_weapon_reserve percent must be 1 to 100"}));
+    }
+}
+
 // The archive the client loads must hold every graph the source tree does,
 // subdirectories included: the bundle rule copies files by path.
 void the_bundle_carries_the_same_graphs() {
@@ -724,6 +784,8 @@ int main() {
     a_graph_collision_mask_is_refused();
     hit_damage_and_stagger_live_on_the_projectile();
     a_negative_projectile_stagger_is_refused();
+    status_strength_and_refill_percent_come_from_the_binding();
+    bound_status_strength_and_refill_percent_are_range_checked();
     the_bundle_carries_the_same_graphs();
     return 0;
 }

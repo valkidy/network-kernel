@@ -419,8 +419,10 @@ struct ActionGraphActionConfig {
     std::string pull_airtime_ticks_parameter;
     std::string pull_max_speed_parameter;
     std::string pull_strength_parameter;
-    // apply_status only: a literal, like apply_pull's strength. Zero is none.
+    // apply_status only: a literal or params.<name> (status_strength_parameter
+    // set). Zero is none.
     float status_strength = 0.0f;
+    std::string status_strength_parameter;
     // apply_suspend_movement only: literals, like apply_pull's numbers. See
     // KernelActionDefinition's suspend_* fields.
     float suspend_rise_speed = 0.0f;
@@ -433,6 +435,9 @@ struct ActionGraphActionConfig {
     // KernelActionDefinition::reserve_refill_count.
     std::uint16_t reserve_refill_count = 0;
     std::uint16_t reserve_refill_percent = 0;
+    // Set when count or percent is authored as params.<name>.
+    std::string reserve_refill_count_parameter;
+    std::string reserve_refill_percent_parameter;
     // spawn_entity only: a KERNEL_SPAWN_PLACEMENT_*, authored as
     // `placement: exact | clear` or params.<name>.
     std::uint32_t spawn_placement = KERNEL_SPAWN_PLACEMENT_EXACT;

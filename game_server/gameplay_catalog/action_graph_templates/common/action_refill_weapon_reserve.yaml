@@ -1,0 +1,12 @@
+# Refills the user's active weapon's reserve magazines: `percent` of the
+# weapon template's reserve_magazines, rounded half up, at least one, never
+# past that template value. A use with no active weapon, or with the reserve
+# already full, is refused and costs no item. Each item binds its own percent.
+id: action_refill_weapon_reserve
+parameters:
+  target: null
+  percent: null
+actions:
+  - type: refill_weapon_reserve
+    target: params.target
+    percent: params.percent

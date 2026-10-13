@@ -2405,9 +2405,12 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                     parameter_reference_from_yaml(action["direction"], "direction");
                 action_parameters.push_back(&compiled_action.direction_parameter);
             }
-            // A literal, as apply_pull's is: the number a target's
-            // force_resistance is weighed against must not vary per binding.
-            if (action["strength"]) {
+            // A literal, or params.<name> for each binding to supply: the
+            // number a target's force_resistance is weighed against.
+            compiled_action.status_strength_parameter =
+                optional_parameter_reference(action["strength"]);
+            if (action["strength"] &&
+                compiled_action.status_strength_parameter.empty()) {
                 compiled_action.status_strength = action["strength"].as<float>();
                 if (!std::isfinite(compiled_action.status_strength) ||
                     compiled_action.status_strength <= 0.0f) {
@@ -2431,7 +2434,16 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                     "refill_weapon_reserve requires target and exactly one of "
                     "count or percent, and nothing else: " + path);
             }
-            if (action["count"]) {
+            // Either may be params.<name>; a bound one is range-checked when
+            // each binding supplies it.
+            compiled_action.reserve_refill_count_parameter =
+                optional_parameter_reference(action["count"]);
+            compiled_action.reserve_refill_percent_parameter =
+                optional_parameter_reference(action["percent"]);
+            if (!compiled_action.reserve_refill_count_parameter.empty() ||
+                !compiled_action.reserve_refill_percent_parameter.empty()) {
+                // Bound: nothing to read here.
+            } else if (action["count"]) {
                 const int count = action["count"].as<int>();
                 if (count <= 0 || count > UINT16_MAX) {
                     throw std::runtime_error(
@@ -2556,7 +2568,10 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                  &compiled_action.pull_max_speed_parameter,
                  &compiled_action.pull_strength_parameter,
                  &compiled_action.ui_id_parameter,
-                 &compiled_action.spawn_placement_parameter}) {
+                 &compiled_action.spawn_placement_parameter,
+                 &compiled_action.status_strength_parameter,
+                 &compiled_action.reserve_refill_count_parameter,
+                 &compiled_action.reserve_refill_percent_parameter}) {
             if (!bound->empty()) {
                 action_parameters.push_back(bound);
             }
@@ -7422,6 +7437,53 @@ std::uint32_t compile_impulse_lockout(
     return lockout;
 }
 
+// apply_status's strength: the literal, or what the binding supplies. A bound
+// 0 is "weigh against nobody", the same as leaving the literal out.
+float compile_status_strength(
+    const TriggerBindingConfig& binding,
+    const ActionGraphTemplateConfig& graph,
+    const ActionGraphActionConfig& action) {
+    if (action.status_strength_parameter.empty()) {
+        return action.status_strength;
+    }
+    const float strength =
+        bound_float(binding, graph, action.status_strength_parameter);
+    if (strength < 0.0f) {
+        throw std::runtime_error(
+            "apply_status strength must be finite and >= 0: " + graph.id);
+    }
+    return strength;
+}
+
+// refill_weapon_reserve's count and percent, literal or bound, with the
+// ranges a literal is held to.
+void compile_reserve_refill(
+    const TriggerBindingConfig& binding,
+    const ActionGraphTemplateConfig& graph,
+    const ActionGraphActionConfig& action,
+    KernelActionDefinition* compiled_action) {
+    compiled_action->reserve_refill_count = action.reserve_refill_count;
+    compiled_action->reserve_refill_percent = action.reserve_refill_percent;
+    if (!action.reserve_refill_count_parameter.empty()) {
+        const std::uint32_t count =
+            bound_uint32(binding, graph, action.reserve_refill_count_parameter);
+        if (count == 0u || count > UINT16_MAX) {
+            throw std::runtime_error(
+                "refill_weapon_reserve count must be 1 to 65535: " + graph.id);
+        }
+        compiled_action->reserve_refill_count = static_cast<std::uint16_t>(count);
+    }
+    if (!action.reserve_refill_percent_parameter.empty()) {
+        const std::uint32_t percent =
+            bound_uint32(binding, graph, action.reserve_refill_percent_parameter);
+        if (percent == 0u || percent > 100u) {
+            throw std::runtime_error(
+                "refill_weapon_reserve percent must be 1 to 100: " + graph.id);
+        }
+        compiled_action->reserve_refill_percent = static_cast<std::uint16_t>(percent);
+    }
+}
+
 // Both trigger compilers -- projectile and entity -- resolve apply_impulse's
 // strength identically. A [horizontal, vertical] pair, from the binding or
 // the graph's default, is the split reading; a scalar is the radial one. A
@@ -7814,7 +7876,8 @@ void compile_projectile_trigger_binding(
                 trigger_parameter_value(
                     binding, graph_parameter(action.target_parameter)));
             compiled_action.status_effect_id = found->status_effect_id;
-            compiled_action.status_strength = action.status_strength;
+            compiled_action.status_strength =
+                compile_status_strength(binding, *graph, action);
             if (!action.direction_parameter.empty()) {
                 compile_status_direction(
                     binding, graph_parameter(action.direction_parameter),
@@ -8195,8 +8258,7 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
             compiled_action.target_source = entity_ref_source(
                 trigger_parameter_value(
                     binding, graph_parameter(action.target_parameter)));
-            compiled_action.reserve_refill_count = action.reserve_refill_count;
-            compiled_action.reserve_refill_percent = action.reserve_refill_percent;
+            compile_reserve_refill(binding, *graph, action, &compiled_action);
             continue;
         }
         if (action.action_type == "teleport") {
@@ -8265,7 +8327,8 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
             compiled_action.target_source = entity_ref_source(target);
             compiled_action.status_effect_id = status_ref(status);
             if (action.action_type == "apply_status") {
-                compiled_action.status_strength = action.status_strength;
+                compiled_action.status_strength =
+                    compile_status_strength(binding, *graph, action);
             }
             if (!action.direction_parameter.empty()) {
                 compile_status_direction(
@@ -10048,6 +10111,10 @@ std::uint64_t compute_gameplay_catalog_hash(
             hash_string(&hash, action.pull_strength_parameter);
             hash_string(&hash, action.ui_id_parameter);
             hash_string(&hash, action.spawn_placement_parameter);
+            hash_float(&hash, action.status_strength);
+            hash_string(&hash, action.status_strength_parameter);
+            hash_string(&hash, action.reserve_refill_count_parameter);
+            hash_string(&hash, action.reserve_refill_percent_parameter);
             hash_scalar(&hash, action.reserve_refill_count);
             hash_scalar(&hash, action.reserve_refill_percent);
         }

@@ -14,9 +14,12 @@ physics:
 triggers:
   on_collision:
     collision_mask: actor | terrain | static_obstacle
-    action_graph: action_water_balloon_collision
+    action_graph: action_apply_status_if_target_and_damage_self
     parameters:
       source: self
       target: event.target
+      status: water_bubble
       direction: event.direction
+      # Strictly above force_resistance: 10 spares the hive airship (10).
+      strength: 10.0
       self_damage: 1
