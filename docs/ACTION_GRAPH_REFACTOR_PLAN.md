@@ -37,6 +37,30 @@ package 打包與 `bundle.bytes` 更新、C# ABI mirror 都由使用者處理，
 - rocket（projectile 3）`damage: 45` 且 impact 綁 `action_spawn_projectile_at_impact`；依 grunt_slam_hit 註解「綁了 impact graph 就由 graph 出傷害」，**直擊 45 可能目前根本沒有造成傷害**。未經 runtime 驗證，列入 P0。
 - `KernelActionDefinition::impulse_collision_mask` 在 ABI struct 內（[kernel_types.h:1104](../engine/src/kernel/public/kernel_types.h)）。
 
+## 1a. P0 結果（2026-10-13，基準 main 656f90bd）
+
+**現況的傷害／graph 契約依命中路徑而不同**（推翻 §1 的「rocket 直擊可能無傷害」假設）：
+
+| 路徑 | 綁了 impact graph 時 | 位置 |
+|---|---|---|
+| standard projectile，`direct_hit` | **附加**：照常提交 `damage`，graph 也執行。rocket 直擊 45＋爆炸 | [projectile_system.cc:989](../engine/src/simulation/src/projectile_system.cc) |
+| standard projectile，`piercing_segment` | actor 命中只提交傷害；graph 只在打到非 actor 時觸發 | projectile_system.cc:922 |
+| melee（instant shot） | **替代**：不提交傷害，交給 graph | [weapon_system.cc:712](../engine/src/simulation/src/weapon_system.cc) |
+| area effect | **替代**：不提交傷害；falloff 算了但沒傳出 | area_effect_system.cc:190 |
+
+tent_collapse：area effect 本身只在 mask 含 PROP 位元時才選 prop（並排除非 world mode／carrying），`player_side` 不含 PROP，所以 graph 上的 `collision_mask: actor` 是多餘的，移除不改變行為。
+
+**基準失敗集合**（這些測試在第一個失敗就中止，後面的檢查被遮住）：
+
+| 目標 | 失敗點 |
+|---|---|
+| `//game_server:gameplay_config_test` | 崩潰：`unknown status effect: water_bubble` |
+| `//game_server:activation_gameplay_config_test` | line 86 `collision_trigger_mask == KERNEL_COLLISION_MASK_ACTOR` |
+| `//game_server:weapon_template_loader_test` | line 1038 `area.radius == 3.0f`（ee8531ec 把 tornado 改成 6 後過時） |
+| `//engine/src/tests/simulation_tests:combat_test` | 編譯失敗，combat_test.cc:1525 參數個數 |
+
+其餘 11 個目標通過：client_mode、entity_trigger_action_parity、status_effect_catalog、apply_pull、area_effect、impulse_lockout、impulse_strength、melee、projectile_interaction、status_strength、portal。
+
 ## 2. 分階段實作
 
 每個 phase 一個 commit（必要時拆小），先寫失敗的 smoke test，再改程式。
