@@ -563,6 +563,22 @@ void placement_comes_from_the_binding() {
         {"placement must be exact or clear, got nearby"}));
 }
 
+// impulse_resistance became force_resistance (ABI 105); the old key is
+// refused by name rather than as an anonymous unknown field.
+void the_old_resistance_key_names_the_new_one() {
+    std::string tent = read_file(
+        shipped_catalog() / "entity_templates" / "216_prop_tent.yaml");
+    const std::string from = "force_resistance:";
+    const std::size_t at = tent.find(from);
+    require(at != std::string::npos);
+    tent.replace(at, from.size(), "impulse_resistance:");
+    require(refused_for(
+        catalog_with(
+            "old_resistance_key",
+            {{"entity_templates/216_prop_tent.yaml", tent}}),
+        {"impulse_resistance", "renamed force_resistance"}));
+}
+
 // The archive the client loads must hold every graph the source tree does,
 // subdirectories included: the bundle rule copies files by path.
 void the_bundle_carries_the_same_graphs() {
@@ -599,6 +615,7 @@ int main() {
     a_bound_pull_out_of_range_is_refused();
     ui_id_comes_from_the_binding();
     placement_comes_from_the_binding();
+    the_old_resistance_key_names_the_new_one();
     the_bundle_carries_the_same_graphs();
     return 0;
 }

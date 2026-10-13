@@ -12744,7 +12744,7 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
                                 }
                                 const float resistance = local_template == nullptr
                                     ? 0.0f
-                                    : local_template->impulse_resistance;
+                                    : local_template->force_resistance;
                                 for (std::uint32_t action_index = 0u;
                                      action_index < (action_count == 0u ? 1u : action_count);
                                      ++action_index) {

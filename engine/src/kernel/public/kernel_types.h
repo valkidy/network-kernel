@@ -5,6 +5,11 @@
 #include <stdint.h>
 
 /*
+ * 105: action graph refactor. KernelEntityTemplateDefinition's
+ *     impulse_resistance is renamed force_resistance, at the same offset:
+ *     apply_impulse, apply_pull and apply_status's status_strength all weigh
+ *     their strength against it, so the name no longer says impulse. Every
+ *     managed mirror renames the field; the layout does not move.
  * 104: lock-on weapons, first part. KernelWeaponFireMode gained _LockInstant:
  *     on every commit, up to max_hit_count actors inside a cone are damaged at
  *     once -- the nearest first, any a static wall hides skipped -- and the
@@ -316,7 +321,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 104u
+#define KERNEL_ABI_VERSION 105u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -1159,7 +1164,7 @@ typedef struct KernelActionDefinition {
      * where the spawned entity is put relative to the position it was given. */
     uint32_t spawn_placement;
     /* apply_pull only; zero on every other action. Finite and > 0. The pull
-     * moves a target only when this exceeds its impulse_resistance -- the
+     * moves a target only when this exceeds its force_resistance -- the
      * same strictly-greater test apply_impulse uses. It decides who is moved,
      * never how fast: the launch velocity comes from pull_* above. */
     float pull_strength;
@@ -1182,7 +1187,7 @@ typedef struct KernelActionDefinition {
     float suspend_drift_speed;
     /* apply_status only; zero on every other action. Finite and >= 0. When
      * non-zero the status is applied only to a target whose
-     * impulse_resistance is strictly below it; zero applies it to anyone. */
+     * force_resistance is strictly below it; zero applies it to anyone. */
     float status_strength;
 } KernelActionDefinition;
 
@@ -2920,7 +2925,7 @@ struct KernelEntityTemplateDefinition {
     KernelPropDefinition prop;
     uint32_t collision_trigger_mask;
     KernelSkeletonBindingDefinition skeleton;
-    float impulse_resistance;
+    float force_resistance;
     /* Hit stagger profile. stagger_threshold == 0 disables it; a zero
      * stagger_per_damage leaves only hits that author a stagger able to fill
      * the meter. */

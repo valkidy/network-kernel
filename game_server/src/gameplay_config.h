@@ -229,7 +229,7 @@ struct ActorTemplateConfig {
     float movement_ground_probe_distance = 0.25f;
     float movement_ground_snap_distance = 0.5f;
     float movement_max_yaw_degrees_per_second = 0.0f;
-    float impulse_resistance = 0.0f;
+    float force_resistance = 0.0f;
     StaggerConfig stagger{};
     // actor `knockdown:` block. Ticks a knockback that lands keeps the actor
     // down -- rooted, refusing new actions -- before it may move again. Zero

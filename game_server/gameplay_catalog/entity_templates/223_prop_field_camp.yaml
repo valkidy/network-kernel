@@ -12,7 +12,7 @@
 id: 223
 name: field_camp
 entity_type: prop
-impulse_resistance: 1000.0
+force_resistance: 1000.0
 lifecycle:
   lifetime_ticks: 5400
   population_group: building

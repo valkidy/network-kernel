@@ -6,7 +6,7 @@
 # trying to bubble nobody. The self-damage is on every contact: unlike a
 # potion, a balloon that lands has burst too.
 #
-# strength is weighed against the target's impulse_resistance, strictly:
+# strength is weighed against the target's force_resistance, strictly:
 # 10 spares the hive airship (resistance 10). It is a literal on the action
 # for the reason apply_pull's is -- who is affected must not depend on the
 # binding.

@@ -3,7 +3,7 @@
 # ground -- names no target, and `when: event.has_target` lets that pass.
 #
 # strength is a literal for the reason the balloon's is: 10 spares the hive
-# airship (impulse_resistance 10).
+# airship (force_resistance 10).
 id: action_apply_status_at_impact
 parameters:
   target: null

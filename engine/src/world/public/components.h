@@ -147,7 +147,7 @@ struct Velocity {
     glm::vec3 linear{0.0f, 0.0f, 0.0f};
 };
 
-struct ImpulseResistance {
+struct ForceResistance {
     float value = 0.0f;
 };
 
@@ -900,7 +900,7 @@ struct ActionApplyPullDefinition {
     float distance = 0.0f;
     std::uint32_t airtime_ticks = 0;
     float max_speed = 0.0f;
-    // Weighed against impulse_resistance; never scales the launch.
+    // Weighed against force_resistance; never scales the launch.
     float strength = 0.0f;
     ActionConditionType condition = ActionConditionType::kAlways;
 };
@@ -938,7 +938,7 @@ struct ActionApplyStatusDefinition {
     // Empty applies it with none.
     std::string direction_parameter;
     // A literal, like apply_pull's strength: when > 0 the status lands only on
-    // a target whose impulse_resistance is strictly below it. Zero: anyone.
+    // a target whose force_resistance is strictly below it. Zero: anyone.
     float strength = 0.0f;
 };
 

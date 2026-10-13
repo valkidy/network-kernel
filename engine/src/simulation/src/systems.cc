@@ -285,7 +285,7 @@ bool strikes_untargetable(
 }
 
 // An apply_status whose authored strength does not strictly exceed the
-// target's impulse_resistance: the status never lands, as an impulse that
+// target's force_resistance: the status never lands, as an impulse that
 // strong would not move it. Weighed on the authored number, so who is
 // affected cannot depend on where anyone stands.
 bool resisted_status(const World& world, const ActionGraphCommand& command) {
@@ -297,8 +297,8 @@ bool resisted_status(const World& world, const ActionGraphCommand& command) {
     if (!entity.has_value()) {
         return false;
     }
-    const ImpulseResistance* resistance =
-        world.registry().try_get<ImpulseResistance>(*entity);
+    const ForceResistance* resistance =
+        world.registry().try_get<ForceResistance>(*entity);
     return resistance != nullptr &&
         (!std::isfinite(resistance->value) || status->strength <= resistance->value);
 }
@@ -659,8 +659,8 @@ bool execute_action_graph_commands(
             if (!actor_target && !prop_target) {
                 continue;
             }
-            const ImpulseResistance* resistance =
-                world.registry().try_get<ImpulseResistance>(*target);
+            const ForceResistance* resistance =
+                world.registry().try_get<ForceResistance>(*target);
             if (resistance != nullptr &&
                 (!std::isfinite(resistance->value) ||
                  impulse->strength <= resistance->value)) {
@@ -1533,8 +1533,8 @@ bool execute_action_graph_commands(
             // worked out per target, so weighing it would let where a target
             // stands decide whether it is moved at all. Strictly greater, as
             // apply_impulse is.
-            const float resistance = world.registry().all_of<ImpulseResistance>(target)
-                ? world.registry().get<ImpulseResistance>(target).value
+            const float resistance = world.registry().all_of<ForceResistance>(target)
+                ? world.registry().get<ForceResistance>(target).value
                 : 0.0f;
             if (!std::isfinite(resistance) || pull->strength <= resistance) {
                 continue;
@@ -1570,8 +1570,8 @@ bool execute_action_graph_commands(
             }
             const glm::vec3 direction =
                 glm::normalize(impulse->direction);
-            const float resistance = world.registry().all_of<ImpulseResistance>(target)
-                ? world.registry().get<ImpulseResistance>(target).value
+            const float resistance = world.registry().all_of<ForceResistance>(target)
+                ? world.registry().get<ForceResistance>(target).value
                 : 0.0f;
             const float effective_strength = impulse_effective_strength(
                 impulse->strength_mode,
@@ -2084,9 +2084,9 @@ bool EntityLifecycleSystem::create_entity(
             0u) {
             registry.get_or_emplace<Velocity>(*entity);
         }
-        registry.emplace_or_replace<ImpulseResistance>(
+        registry.emplace_or_replace<ForceResistance>(
             *entity,
-            ImpulseResistance{entity_template->impulse_resistance});
+            ForceResistance{entity_template->force_resistance});
         apply_stagger_profile(engine.world_, *entity, *entity_template);
         apply_knockdown_profile(engine.world_, *entity, *entity_template);
         registry.emplace_or_replace<DeathBehavior>(

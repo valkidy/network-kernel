@@ -353,7 +353,7 @@ void hash_actor_template(
     hash_float(hash, actor_template.movement_ground_probe_distance);
     hash_float(hash, actor_template.movement_ground_snap_distance);
     hash_float(hash, actor_template.movement_max_yaw_degrees_per_second);
-    hash_float(hash, actor_template.impulse_resistance);
+    hash_float(hash, actor_template.force_resistance);
     hash_float(hash, actor_template.stagger.threshold);
     hash_float(hash, actor_template.stagger.per_damage);
     hash_float(hash, actor_template.stagger.decay_per_tick);
@@ -1677,9 +1677,16 @@ void reject_unknown_keys(
         }
         const std::string key = entry.first.as<std::string>();
         if (!key_allowed(key, keys)) {
+            // A key that was renamed says what it is called now, rather
+            // than leaving the author to guess from "unknown field".
+            const std::string renamed =
+                key == "impulse_resistance" && key_allowed("force_resistance", keys)
+                ? " (renamed force_resistance: apply_impulse, apply_pull and "
+                  "apply_status all weigh their strength against it)"
+                : "";
             throw DataLoadError(
                 KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNKNOWN_FIELD,
-                "unknown field: " + key,
+                "unknown field: " + key + renamed,
                 path,
                 key,
                 source_kind,
@@ -2400,7 +2407,7 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 action_parameters.push_back(&compiled_action.direction_parameter);
             }
             // A literal, as apply_pull's is: the number a target's
-            // impulse_resistance is weighed against must not vary per binding.
+            // force_resistance is weighed against must not vary per binding.
             if (action["strength"]) {
                 compiled_action.status_strength = action["strength"].as<float>();
                 if (!std::isfinite(compiled_action.status_strength) ||
@@ -4215,7 +4222,7 @@ ActorTemplateConfig actor_template_from_yaml(
             "camp",
             "collider_template",
             "health",
-            "impulse_resistance",
+            "force_resistance",
             "stagger",
             "knockdown",
             "death_policy",
@@ -4260,9 +4267,9 @@ ActorTemplateConfig actor_template_from_yaml(
     }
     actor_template.collider_template_id =
         actor_collider_template_id_from_yaml(node["collider_template"], colliders);
-    if (node["impulse_resistance"]) {
-        actor_template.impulse_resistance =
-            node["impulse_resistance"].as<float>();
+    if (node["force_resistance"]) {
+        actor_template.force_resistance =
+            node["force_resistance"].as<float>();
     }
     if (node["death_policy"]) {
         const std::string policy = node["death_policy"].as<std::string>();
@@ -5108,7 +5115,7 @@ EntityTemplateConfig entity_template_from_yaml(
                 "health",
                 // A prop is what an impulse actually pushes, so it carries the
                 // resistance the same way an actor does.
-                "impulse_resistance",
+                "force_resistance",
                 "physics",
                 "interaction",
                 "throw",
@@ -5130,9 +5137,9 @@ EntityTemplateConfig entity_template_from_yaml(
         entity_template.entity_type = KernelEntityType_Prop;
         entity_template.server_only =
             node["server_only"] ? node["server_only"].as<bool>() : false;
-        if (node["impulse_resistance"]) {
-            entity_template.impulse_resistance =
-                node["impulse_resistance"].as<float>();
+        if (node["force_resistance"]) {
+            entity_template.force_resistance =
+                node["force_resistance"].as<float>();
         }
         entity_template.spawner = spawner_from_yaml(
             node["spawner"],
@@ -10596,9 +10603,9 @@ std::vector<std::string> validate_gameplay_config(
     }
     for (const EntityTemplateConfig& entity_template :
          config.entity_templates) {
-        if (!std::isfinite(entity_template.impulse_resistance) ||
-            entity_template.impulse_resistance < 0.0f) {
-            errors.push_back("impulse_resistance must be finite and non-negative");
+        if (!std::isfinite(entity_template.force_resistance) ||
+            entity_template.force_resistance < 0.0f) {
+            errors.push_back("force_resistance must be finite and non-negative");
         }
         if (!stagger_profile_is_authorable(
                 entity_template.stagger.threshold,
@@ -11377,8 +11384,8 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
             authored_template.movement_hover_height_meters;
         entity_template.movement.hover_vertical_speed_meters_per_second =
             authored_template.movement_hover_vertical_speed_meters_per_second;
-        entity_template.impulse_resistance =
-            authored_template.impulse_resistance;
+        entity_template.force_resistance =
+            authored_template.force_resistance;
         entity_template.stagger_threshold = authored_template.stagger.threshold;
         entity_template.stagger_per_damage = authored_template.stagger.per_damage;
         entity_template.stagger_decay_per_tick =

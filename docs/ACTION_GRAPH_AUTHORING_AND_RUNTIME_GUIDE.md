@@ -351,7 +351,7 @@ Runtime 效果：
   `on_collision` binding 的 prop：因此要被推動的 prop 應同時 author `on_collision`
   trigger，否則會一路直線滑行到 lifetime 結束。
 
-`impulse_resistance` 由 actor 或 prop entity template authoring（預設 0），語意是
+`force_resistance` 由 actor 或 prop entity template authoring（預設 0），語意是
 **門檻而非減量**：未超過門檻時整個 impulse 被忽略，不做任何衰減。比較用的量值：
 純量形式就是 `strength` 本身（位元不變，既有 template 的判定結果不可能移動）；
 list 形式取 `max(水平, |垂直|)`，所以一個推不動重型目標的水平力道，仍可能靠夠大的
@@ -360,7 +360,7 @@ list 形式取 `max(水平, |垂直|)`，所以一個推不動重型目標的水
 ```yaml
 # actor 或 prop entity template
 entity_type: prop
-impulse_resistance: 15.0   # 有效強度 <= 15.0 的 impulse 完全推不動
+force_resistance: 15.0   # 有效強度 <= 15.0 的 impulse 完全推不動
 ```
 
 目前只有 `204_prop_ice_block.yaml` author 了這個欄位（`15.0`），其餘 template 一律使用預設
@@ -457,7 +457,7 @@ Runtime 在 command commit 當下，依目標**當時**的位置算出目的地�
   中間，落地 tick 就固定是 N，不受浮點誤差影響。`apply_pull_test` 以實際的
   movement solver 驗證：9 種起點與滯空組合都在第 N tick 落地，誤差 2 cm 內。
 - 水平速度 = 水平位移 ÷ (N × dt)，超過 `max_speed` 時等比縮小，沿同一條線落得比較近。
-- `impulse_resistance` 比較的是算出來的 `max(水平速率, 垂直速率)`。遠處目標需要的
+- `force_resistance` 比較的是算出來的 `max(水平速率, 垂直速率)`。遠處目標需要的
   速度較大，所以重型目標可能在遠處拉不動、近處拉得動。
 - 同步沿用 `ActorImpulseBatch`（送的是實際速度），不需要新的封包。本地玩家被拉時
   **沒有 client 預測**，等 authoritative snapshot 修正。
@@ -848,7 +848,7 @@ Catalog load/compile 會拒絕：
 - `apply_impulse` 的 `direction` 既不是 `event.direction`，該 parameter 也沒有 vec3
   default。
 - 非 `direction` parameter 使用 vec3 default，或 vec3 default 是零向量／非有限值。
-- Entity template 的 `impulse_resistance` 非有限或為負。
+- Entity template 的 `force_resistance` 非有限或為負。
 - Projectile impact/expired graph reference cycle。
 
 Runtime protection 包含：
@@ -859,7 +859,7 @@ Runtime protection 包含：
 - 非正整數或超過 `uint16` 的 damage amount。
 - 未通過形式檢查的 impulse strength、非有限或零長度的 impulse direction（整批拒絕）。
 - Impulse target 不是 actor，也不是非攜帶中的 prop，或有效強度未超過
-  `impulse_resistance`（略過該 command，不影響同批其他 commands）。
+  `force_resistance`（略過該 command，不影響同批其他 commands）。
 - 非 authoritative execution 不會產生 gameplay commands。
 
 ---

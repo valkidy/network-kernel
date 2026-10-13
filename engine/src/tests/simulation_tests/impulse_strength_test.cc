@@ -91,8 +91,8 @@ Fired fire(
     const NetId target = world.spawn_enemy(glm::vec3{5.0f, 0.0f, 0.0f});
     const entt::entity target_entity = *world.find_entity(target);
     if (resistance > 0.0f) {
-        world.registry().emplace<ImpulseResistance>(
-            target_entity, ImpulseResistance{resistance});
+        world.registry().emplace<ForceResistance>(
+            target_entity, ForceResistance{resistance});
     }
 
     const TriggerEvent event{
@@ -194,7 +194,7 @@ void split_strength_allows_a_pure_vertical_launch() {
     require(!nothing.ok);
 }
 
-// impulse_resistance weighs the larger of the two authored axes, so a heavy
+// force_resistance weighs the larger of the two authored axes, so a heavy
 // target can still be launched by something that cannot shove it sideways.
 void split_strength_is_weighed_on_its_larger_axis() {
     const Fired shrugged = fire(

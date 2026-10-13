@@ -2571,7 +2571,7 @@ int main() {
         config.entity_templates.end(),
         [](const auto& entity) { return entity.name == "player"; });
     require(player_entity_template != config.entity_templates.end());
-    require(player_entity_template->impulse_resistance == 0.0f);
+    require(player_entity_template->force_resistance == 0.0f);
 
     const std::string impulse_graph =
         "id: action_apply_impulse_test\n"
@@ -2588,7 +2588,7 @@ int main() {
         "id: 302\n"
         "name: impulse_prop\n"
         "entity_type: prop\n"
-        "impulse_resistance: 9.0\n"
+        "force_resistance: 9.0\n"
         "health:\n"
         "  hp: 3\n"
         "  max_hp: 3\n"
@@ -2617,7 +2617,7 @@ int main() {
         impulse_catalog.entity_templates.end(),
         [](const auto& entity) { return entity.entity_template_id == 302u; });
     require(impulse_entity != impulse_catalog.entity_templates.end());
-    require(impulse_entity->impulse_resistance == 9.0f);
+    require(impulse_entity->force_resistance == 9.0f);
     require(impulse_entity->collision_trigger.actions[0].action_type ==
             KernelEntityTriggerActionType_ApplyImpulse);
     require(impulse_entity->collision_trigger.actions[0].impulse_collision_mask ==
@@ -2849,7 +2849,7 @@ int main() {
         "    max_speed: 10.0\n"
         "    strength: 10.0\n",
         "non-zero one with direction"));
-    // No strength: nothing to weigh impulse_resistance against.
+    // No strength: nothing to weigh force_resistance against.
     require(pull_graph_rejected(
         "  - type: apply_pull\n"
         "    target: params.target\n"

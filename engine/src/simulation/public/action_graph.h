@@ -71,7 +71,7 @@ inline bool spawn_repeat_is_authorable(const KernelActionDefinition& action) {
 }
 
 // The magnitude an impulse is weighed at against a target's
-// impulse_resistance. Radial mode returns the strength unchanged -- bit for
+// force_resistance. Radial mode returns the strength unchanged -- bit for
 // bit -- so no existing template's resistance outcome can move.
 inline float impulse_effective_strength(
     std::uint32_t strength_mode,
@@ -275,7 +275,7 @@ struct ActionApplyStatusCommand {
     ActionExecutionProvenance provenance;
     // Resolved when the graph ran; zero when the action names none.
     glm::vec3 direction{0.0f};
-    // Weighed against the target's impulse_resistance at commit; zero is
+    // Weighed against the target's force_resistance at commit; zero is
     // no weighing.
     float strength = 0.0f;
 };
@@ -319,7 +319,7 @@ struct ActionApplyPullCommand {
     float distance = 0.0f;
     std::uint32_t airtime_ticks = 0;
     float max_speed = 0.0f;
-    // Weighed against impulse_resistance; never scales the launch.
+    // Weighed against force_resistance; never scales the launch.
     float strength = 0.0f;
     ActionExecutionProvenance provenance;
 };
