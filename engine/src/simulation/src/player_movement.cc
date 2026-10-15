@@ -7,6 +7,7 @@
 #include <vector>
 
 #include <glm/geometric.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include "physics/public/physics_world.h"
 #include "simulation/public/movement_solver.h"
@@ -375,6 +376,60 @@ FreeFallStep step_free_fall(
     return step;
 }
 
+enum class ChargeStop : std::uint8_t {
+    kNone,
+    // Stopped short with the static world ahead: the charger staggers.
+    kWorld,
+    // Stopped short by another actor's body, or by nothing found: it stops.
+    kOther,
+};
+
+// A charge step that covered under half its distance ran into something. The
+// first non-floor contact along the run says what: the static world, or an
+// actor's body. Floors are skipped, since a grounded capsule cast sideways
+// touches the ground it stands on.
+ChargeStop classify_charge_block(
+    physics::PhysicsWorld& physics_world,
+    const ColliderInstance& collider,
+    const glm::vec3& position,
+    const glm::quat& rotation,
+    const glm::vec3& charge_velocity,
+    float max_slope_degrees,
+    std::uint32_t collision_mask,
+    float fixed_delta_seconds) {
+    const float speed = glm::length(charge_velocity);
+    if (!(speed > 0.0f)) {
+        return ChargeStop::kOther;
+    }
+    physics::ShapeCastRequest request{};
+    request.shape = movement_shape(collider);
+    request.start = position;
+    request.rotation = rotation;
+    request.displacement = (charge_velocity / speed) *
+        std::max(0.1f, speed * fixed_delta_seconds);
+    request.filter = movement_filter(
+        collider.entity_net_id, collider.collider_id, collision_mask);
+    const float walkable_normal_y = std::cos(glm::radians(max_slope_degrees));
+    const physics::CollisionHit* first = nullptr;
+    const std::vector<physics::CollisionHit> hits =
+        physics_world.shape_cast_all(request);
+    for (const physics::CollisionHit& hit : hits) {
+        if (hit.normal.y >= walkable_normal_y) {
+            continue;
+        }
+        if (first == nullptr || hit.fraction < first->fraction) {
+            first = &hit;
+        }
+    }
+    if (first == nullptr) {
+        return ChargeStop::kOther;
+    }
+    return first->identity.kind == physics::CollisionObjectKind::kTerrain ||
+            first->identity.kind == physics::CollisionObjectKind::kStaticObstacle
+        ? ChargeStop::kWorld
+        : ChargeStop::kOther;
+}
+
 struct BufferedMovementResult {
     entt::entity entity = entt::null;
     NetId net_id = 0;
@@ -383,6 +438,8 @@ struct BufferedMovementResult {
     glm::vec3 velocity{0.0f};
     MovementState movement{};
     bool physics_finalized = false;
+    // What stopped a charge this step, if anything did.
+    ChargeStop charge_stop = ChargeStop::kNone;
 };
 
 }  // namespace
@@ -583,6 +640,16 @@ void simulate_actor_movement(
             world.registry().try_get<ImpulseLockout>(entity);
         const bool impulse_locked = impulse_lockout != nullptr &&
             current_tick < impulse_lockout->until_tick;
+        // A leap is held the same way, for the same reason: the controller
+        // keeps steering at its target the whole flight.
+        const LeapLockout* leap_lockout =
+            world.registry().try_get<LeapLockout>(entity);
+        const bool leap_locked = leap_lockout != nullptr &&
+            current_tick < leap_lockout->until_tick;
+        // A charge is held like a knockback, but on the ground and at one
+        // speed: the authority runs it, whatever the controller asks for.
+        const ChargeLockout* charge =
+            world.registry().try_get<ChargeLockout>(entity);
         const Health* health = world.registry().try_get<Health>(entity);
         const bool dead =
             health != nullptr && health->max_hp > 0u && health->hp == 0u;
@@ -600,14 +667,23 @@ void simulate_actor_movement(
             // Down after a knockback that landed: rooted until it is up again,
             // however the controller is steering.
             desired_horizontal = glm::vec3{0.0f};
-        } else if (impulse_locked) {
-            // nothing: the seeded current-velocity horizontal stands
+        } else if (impulse_locked || leap_locked) {
+            // nothing: the seeded current-velocity horizontal stands. Ahead
+            // of the stagger, so a hit that staggers a leaping actor does not
+            // stop it dead in the air.
         } else if (is_staggered(world, entity, current_tick)) {
             // A stagger roots the actor. After the lockout test on purpose: a
             // hit that both knocks back and staggers keeps its knockback.
             // Unconditional on input, because an AI agent that submits none
             // would otherwise coast on whatever its controller last wrote.
             desired_horizontal = glm::vec3{0.0f};
+            // And it stops a charge dead: a stagger is the counter to one.
+            if (charge != nullptr) {
+                world.registry().remove<ChargeLockout>(entity);
+                charge = nullptr;
+            }
+        } else if (charge != nullptr) {
+            desired_horizontal = charge->velocity;
         } else if (movement_input != nullptr) {
             desired_horizontal =
                 movement_solver::input_move_to_world(movement_input->input) *
@@ -632,6 +708,11 @@ void simulate_actor_movement(
         // are not held; they fall as the dead do.
         const ActiveStatusEffect* suspension =
             dead ? nullptr : active_suspension(world, entity);
+        // A suspension takes the actor out of its charge for good.
+        if (suspension != nullptr && charge != nullptr) {
+            world.registry().remove<ChargeLockout>(entity);
+            charge = nullptr;
+        }
         const glm::vec3 suspended = suspension == nullptr
             ? glm::vec3{0.0f}
             : movement_solver::suspended_velocity(
@@ -779,6 +860,25 @@ void simulate_actor_movement(
                                   physics::CharacterGroundState::kSteepGround
                             ? MovementState::GroundState::kSteepGround
                             : MovementState::GroundState::kAirborne;
+                if (charge != nullptr) {
+                    const glm::vec3 moved{
+                        state.position.x - transform.position.x,
+                        0.0f,
+                        state.position.z - transform.position.z};
+                    const float expected =
+                        glm::length(charge->velocity) * fixed_delta_seconds;
+                    if (glm::length(moved) < 0.5f * expected) {
+                        result.charge_stop = classify_charge_block(
+                            *physics_world,
+                            *collider,
+                            state.position,
+                            transform.rotation,
+                            charge->velocity,
+                            next_movement.max_slope_degrees,
+                            config.filter.collision_mask,
+                            fixed_delta_seconds);
+                    }
+                }
             }
             if (stats != nullptr) {
                 ++stats->character_move_count;
@@ -976,6 +1076,40 @@ void simulate_actor_movement(
                 world.registry().remove<ImpulseLockout>(result.entity);
             }
         }
+        // A leap hands the actor back the tick it lands, with no recovery:
+        // landing is where the move it chose ends. The ceiling covers a
+        // flight a collision kept from coming down where it was solved to.
+        if (const LeapLockout* leap =
+                world.registry().try_get<LeapLockout>(result.entity);
+            leap != nullptr &&
+            ((result.movement.landed_this_tick && current_tick > leap->armed_tick) ||
+             current_tick >= leap->until_tick)) {
+            world.registry().remove<LeapLockout>(result.entity);
+        }
+        // A charge ends where it was stopped, or on its last step. Run into
+        // the static world, the charger staggers itself, as if its meter had
+        // filled: inside its post-stagger immunity it only stops.
+        if (const ChargeLockout* charge =
+                world.registry().try_get<ChargeLockout>(result.entity);
+            charge != nullptr &&
+            (result.charge_stop != ChargeStop::kNone ||
+             current_tick >= charge->until_tick)) {
+            world.registry().remove<ChargeLockout>(result.entity);
+            if (result.charge_stop == ChargeStop::kWorld) {
+                if (const StaggerProfile* profile =
+                        world.registry().try_get<StaggerProfile>(result.entity);
+                    profile != nullptr) {
+                    (void)apply_stagger(
+                        world,
+                        result.net_id,
+                        0u,
+                        profile->threshold,
+                        0u,
+                        current_tick,
+                        events);
+                }
+            }
+        }
         if (result.physics_finalized &&
             physics_finalized_actor_net_ids != nullptr) {
             physics_finalized_actor_net_ids->push_back(result.net_id);
@@ -1014,7 +1148,8 @@ std::optional<float> ground_height_below(
     NetId net_id,
     const glm::vec3& position,
     const glm::quat& rotation,
-    float max_distance) {
+    float max_distance,
+    bool static_world_only) {
     physics::PhysicsWorld* physics_world = world.collision_world();
     const ColliderInstance* collider = physics_world == nullptr
         ? nullptr
@@ -1028,7 +1163,8 @@ std::optional<float> ground_height_below(
     }
     const GroundProbe ground = probe_ground(
         *physics_world, *collider, position, rotation, max_distance,
-        movement->max_slope_degrees, movement->movement_collision_mask);
+        movement->max_slope_degrees, movement->movement_collision_mask,
+        static_world_only);
     if (!ground.hit) {
         return std::nullopt;
     }
@@ -1133,6 +1269,48 @@ float available_lift(
     return std::max(0.0f, clear);
 }
 
+namespace {
+
+// The world box around a box collider placed at `position` under `rotation`.
+ColliderWorldBounds placed_box_bounds(
+    const glm::vec3& position,
+    const glm::quat& rotation,
+    const glm::vec3& local_center,
+    const glm::vec3& half_extents) {
+    const glm::mat3 axes = glm::mat3_cast(rotation);
+    glm::vec3 extent{0.0f};
+    for (int column = 0; column < 3; ++column) {
+        extent += glm::abs(axes[column]) * half_extents[column];
+    }
+    return ColliderWorldBounds{position + rotation * local_center, extent};
+}
+
+// Whether a box so placed would cover some other entity's trigger volume.
+// Trigger volumes are no bodies, so the physics queries that keep a placed
+// prop clear of walls never see them: a portal set down over another
+// portal's gate, or an exit on another exit, would go unnoticed.
+bool covers_trigger_volume(
+    const World& world,
+    NetId self,
+    NetId spawner,
+    const ColliderWorldBounds& bounds) {
+    for (const ColliderInstance& other : world.collider_registry().instances()) {
+        if (other.entity_net_id == self || other.entity_net_id == spawner ||
+            !other.enabled ||
+            other.purpose_flags != KernelColliderPurpose_Trigger) {
+            continue;
+        }
+        const glm::vec3 apart = glm::abs(bounds.center - other.world_bounds.center);
+        const glm::vec3 reach = bounds.half_extents + other.world_bounds.half_extents;
+        if (apart.x < reach.x && apart.y < reach.y && apart.z < reach.z) {
+            return true;
+        }
+    }
+    return false;
+}
+
+}  // namespace
+
 std::optional<glm::vec3> find_clear_spawn_spot(
     World& world,
     NetId net_id,
@@ -1236,10 +1414,96 @@ std::optional<glm::vec3> find_clear_spawn_spot(
             trigger_clear =
                 std::none_of(reached.begin(), reached.end(), not_spawner);
         }
+        // Nor over another prop's trigger volume -- another portal's gate.
+        if (trigger_clear &&
+            (covers_trigger_volume(
+                 world, net_id, spawner,
+                 placed_box_bounds(stand, rotation, volume->local_center,
+                                   volume->half_extents)) ||
+             (trigger != nullptr &&
+              covers_trigger_volume(
+                  world, net_id, spawner,
+                  placed_box_bounds(stand, rotation, trigger->local_center,
+                                    trigger->half_extents))))) {
+            trigger_clear = false;
+        }
         if (trigger_clear &&
             std::none_of(touching.begin(), touching.end(), not_spawner)) {
             return stand - glm::vec3{0.0f, kStandSkinMeters, 0.0f};
         }
+    }
+    return std::nullopt;
+}
+
+std::optional<glm::vec3> find_clear_exit_spot(
+    World& world,
+    NetId net_id,
+    const glm::vec3& destination,
+    const glm::vec3& forward) {
+    constexpr int kSideSteps = 8;
+    constexpr float kGapMeters = 0.5f;
+    constexpr float kSkinMeters = 0.05f;
+    const std::optional<entt::entity> entity = world.find_entity(net_id);
+    if (!entity.has_value() || !world.registry().all_of<Transform>(*entity)) {
+        return std::nullopt;
+    }
+    const ColliderInstance* footprint = nullptr;
+    for (const ColliderInstance& candidate : world.collider_registry().instances()) {
+        if (candidate.entity_net_id == net_id &&
+            candidate.purpose_flags == KernelColliderPurpose_Trigger &&
+            (candidate.shape_type == ColliderShapeType::kAabb ||
+             candidate.shape_type == ColliderShapeType::kOrientedBox)) {
+            footprint = &candidate;
+            break;
+        }
+    }
+    if (footprint == nullptr) {
+        return std::nullopt;
+    }
+    const glm::quat rotation = world.registry().get<Transform>(*entity).rotation;
+    // Sideways from the way arrivals face, so exits stand in a row across
+    // it rather than in each other's way.
+    glm::vec3 level{forward.x, 0.0f, forward.z};
+    glm::vec3 side{1.0f, 0.0f, 0.0f};
+    if (glm::dot(level, level) > 0.000001f) {
+        level = glm::normalize(level);
+        side = glm::vec3{level.z, 0.0f, -level.x};
+    }
+    const ColliderWorldBounds at_destination = placed_box_bounds(
+        destination, rotation, footprint->local_center, footprint->half_extents);
+    const float step =
+        2.0f * std::max(at_destination.half_extents.x, at_destination.half_extents.z) +
+        kGapMeters;
+    physics::PhysicsWorld* physics_world = world.collision_world();
+    physics::CollisionQueryFilter filter{};
+    filter.collision_mask =
+        physics::collision_layer_bit(physics::CollisionLayer::kTerrain) |
+        physics::collision_layer_bit(physics::CollisionLayer::kStaticObstacle);
+    filter.ignored_entity_net_id = net_id;
+    for (int index = 0; index <= 2 * kSideSteps; ++index) {
+        // 0, +1, -1, +2, -2, ...: nearest the destination first.
+        const int slot = (index + 1) / 2 * (index % 2 == 1 ? 1 : -1);
+        const glm::vec3 spot = destination + side * (step * static_cast<float>(slot));
+        const glm::vec3 lifted = spot + glm::vec3{0.0f, kSkinMeters, 0.0f};
+        if (covers_trigger_volume(
+                world, net_id, 0u,
+                placed_box_bounds(lifted, rotation, footprint->local_center,
+                                  footprint->half_extents))) {
+            continue;
+        }
+        if (physics_world != nullptr) {
+            physics::OverlapRequest clear{};
+            clear.shape.type = physics::CollisionShapeType::kBox;
+            clear.shape.half_extents = footprint->half_extents;
+            clear.shape.local_center = footprint->local_center;
+            clear.position = lifted;
+            clear.rotation = rotation;
+            clear.filter = filter;
+            if (!physics_world->overlap_all(clear).empty()) {
+                continue;
+            }
+        }
+        return spot;
     }
     return std::nullopt;
 }
@@ -1422,6 +1686,42 @@ std::uint32_t knockback_flight_ticks(
         }
     }
     return lockout_ticks - 1u;
+}
+
+glm::vec3 leap_launch_velocity(
+    const glm::vec3& from,
+    const glm::vec3& to,
+    std::uint32_t airtime_ticks,
+    float gravity_y,
+    float fixed_delta_seconds) {
+    const float steps = static_cast<float>(airtime_ticks);
+    const float flight_seconds = steps * fixed_delta_seconds;
+    return glm::vec3{
+        (to.x - from.x) / flight_seconds,
+        (to.y - from.y) / (fixed_delta_seconds * (steps - 0.5f)) -
+            gravity_y * fixed_delta_seconds * (steps + 0.5f) * 0.5f,
+        (to.z - from.z) / flight_seconds};
+}
+
+std::uint32_t leap_airtime_ticks(
+    float horizontal_distance,
+    float height_difference,
+    float apex_meters,
+    float max_horizontal_speed,
+    float gravity_y,
+    float fixed_delta_seconds) {
+    float seconds = 0.0f;
+    if (apex_meters > 0.0f && gravity_y < 0.0f) {
+        const float rise = apex_meters + std::max(0.0f, height_difference);
+        const float fall = apex_meters + std::max(0.0f, -height_difference);
+        seconds = std::sqrt(2.0f * rise / -gravity_y) +
+            std::sqrt(2.0f * fall / -gravity_y);
+    }
+    if (max_horizontal_speed > 0.0f) {
+        seconds = std::max(seconds, horizontal_distance / max_horizontal_speed);
+    }
+    const float ticks = std::ceil(seconds / fixed_delta_seconds);
+    return ticks < 1.0f ? 1u : static_cast<std::uint32_t>(ticks);
 }
 
 glm::vec3 knockback_flight_velocity_at(

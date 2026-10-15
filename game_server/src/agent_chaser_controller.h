@@ -10,6 +10,56 @@
 
 namespace network_example::game_server {
 
+// A leap at the target before the swing: when the target is within reach of a
+// leap but not of the weapon, the agent jumps to land `landing_distance_meters`
+// short of it, on a flight the kernel solves to land there on a known tick.
+// Inert while max_distance_meters is zero, which is every chaser authored
+// before leaps existed.
+struct AgentLeapTuning {
+    // The band, measured between origins like attack_range_meters. Below
+    // min_distance_meters it just walks the rest.
+    float min_distance_meters = 0.0f;
+    float max_distance_meters = 0.0f;
+    // Where it lands, short of the target, measured the same way. Inside the
+    // attack range, or it lands and still has to walk.
+    float landing_distance_meters = 0.0f;
+    // How high a level leap peaks; this is what sets its airtime.
+    float apex_meters = 0.6f;
+    // A long leap is stretched to stay under this. Zero: no cap.
+    float max_horizontal_speed_meters_per_second = 0.0f;
+    // Ticks after one leap lands before the next may start.
+    std::uint32_t cooldown_ticks = 90;
+    // Start the swing this many ticks before the landing, so a wind-up of the
+    // same length puts the hit on touchdown. Zero swings once it is down.
+    std::uint32_t attack_lead_ticks = 0;
+};
+
+// A charge at the target: when it stands inside the band, the agent stops and
+// winds up for windup_ticks, still turning to face it, then runs straight at
+// where it stood at release (Kernel_ServerEnqueueEntityCharge), overshooting
+// by overshoot_meters. The run carries the melee weapon `weapon_id`'s contact;
+// it stops on the first hit, on a wall (staggering the agent), on a body, on a
+// stagger, or when the distance is covered. Inert while max_distance_meters is
+// zero, which is every chaser authored before charges existed.
+struct AgentChargeTuning {
+    // The band, origin to origin like attack_range_meters.
+    float min_distance_meters = 0.0f;
+    float max_distance_meters = 0.0f;
+    // Standing still and facing the target before the run: the telegraph.
+    std::uint32_t windup_ticks = 0;
+    float speed_meters_per_second = 0.0f;
+    // Run this far past where the target stood, so a target that holds still
+    // is reached rather than stopped short of.
+    float overshoot_meters = 1.0f;
+    // Ticks after one charge ends before the next may wind up.
+    std::uint32_t cooldown_ticks = 90;
+    // A melee weapon in the loadout. Not the one the chaser swings.
+    std::uint8_t weapon_id = 0;
+    // Shown while winding up. Defaults to the sentry's idle.
+    std::uint16_t windup_animation = 0;
+    bool has_windup_animation = false;
+};
+
 // Movement tuning layered on top of the sentry's perception and attack tuning.
 struct AgentChaseTuning {
     // Closer than this and the agent holds still instead of walking into the
@@ -31,6 +81,8 @@ struct AgentChaseTuning {
     // edge, so a value equal to the weapon's reach is deliberately on the
     // conservative side of it.
     float attack_range_meters = 0.0f;
+    AgentLeapTuning leap;
+    AgentChargeTuning charge;
 };
 
 // What walking to a squad slot costs and what it tolerates. Inert unless the
@@ -61,6 +113,9 @@ struct AgentChaserConfig {
     AgentSentryConfig sentry;
     AgentChaseTuning chase;
     AgentPatrolTuning patrol;
+    // The template's movement gravity, which a leap's airtime is worked out
+    // against. Not authored here.
+    float gravity_y = -9.81f;
 };
 
 // A sentry that closes on what it sees. It pursues only while the target is

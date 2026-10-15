@@ -158,6 +158,21 @@ Client:
     after the flight, hold where it came down until a later sample arrives.
 ```
 
+An agent's own leap (`Kernel_ServerEnqueueEntityLeap`, packet schema 33) rides
+the same record with `kActorImpulseFlagLeap`. The authority solved it to land on
+one spot on one tick, so the record says that tick outright (`lockout_ticks` is
+the ticks to the landing) and `floor_y` is the ground it lands on. The client
+ends the flight there instead of searching for it, and floors it only on the way
+down, since a leap up onto a ledge starts below that ground. Nothing else
+differs: same channel, same replay, same re-basing.
+
+An agent's charge (`Kernel_ServerEnqueueEntityCharge`) sends no record. It is a
+straight run on the ground at one speed, which snapshot extrapolation already
+carries; the only thing a record would add is its end, and the end is decided by
+what the run hits, which no record sent at its start could know. Remote clients
+see it in snapshots, with `KERNEL_VISUAL_FLAG_CHARGING` while it lasts. No packet
+or snapshot schema change.
+
 The owner predicts its own knockback from the lockout block in its own
 snapshot record instead.
 

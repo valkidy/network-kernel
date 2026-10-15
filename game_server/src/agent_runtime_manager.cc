@@ -147,6 +147,7 @@ void AgentRuntimeManager::build_controllers() {
                 agent_sentry_config(config_, actor_template.actor_template_id);
             chaser.chase = actor_template.chaser;
             chaser.patrol = actor_template.patrol;
+            chaser.gravity_y = actor_template.movement_gravity.y;
             binding.chaser = AgentChaserController(chaser);
         }
         controllers_.push_back(std::move(binding));

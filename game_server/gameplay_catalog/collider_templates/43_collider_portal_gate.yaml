@@ -1,14 +1,21 @@
 # A portal's gate: the trigger volume in front of the frame. Never a body --
-# nothing is stopped by it or hits it. It reaches 0.4 m out from the frame
+# nothing is stopped by it or hits it. It reaches 0.1 m out from the frame
 # toward the thrower and 0.1 m into it, so there is no gap to stand in, its
 # top is 5 cm under the frame's so nobody standing on the frame is taken, and
 # it is no wider than the frame, so the gate is entered from the front only.
+#
+# Only 0.1 m out so the teleport fires as a player's capsule (radius 0.35)
+# all but touches the frame, where the Unity client draws the portal's
+# screen: the player is gone as they step into the picture, not 0.4 m short
+# of it. A player pressing against the frame stays in the gate every tick,
+# so on_enter cannot be missed. The client derives where an arrival appears
+# behind the exit's screen from this depth (gate front + capsule radius).
 #
 # docs/PORTAL_PLAN.md D13, D15.
 id: 43
 name: portal_gate
 shape: oriented_box
-center: {x: 0.0, y: 1.275, z: -0.15}
-half_extents: {x: 0.9, y: 1.275, z: 0.25}
+center: {x: 0.0, y: 1.275, z: 0.0}
+half_extents: {x: 0.9, y: 1.275, z: 0.1}
 purpose: trigger
 layer: neutral

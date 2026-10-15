@@ -17,8 +17,9 @@ force_resistance: 1000.0
 lifecycle:
   # Three minutes at 30 Hz, from the moment it exists.
   lifetime_ticks: 5400
-  # With tents and field camps: a new building may evict the oldest (D21).
-  population_group: building
+  # Portals have their own two places: a third evicts the oldest, and its exit
+  # goes with it.
+  population_group: portal
 # Shots and blasts break it, as they break a tent (D17).
 health:
   hp: 600

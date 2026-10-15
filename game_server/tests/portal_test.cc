@@ -11,6 +11,10 @@
 //     destination, runs on arrival and hurts nothing; the same volume later
 //     does (the control);
 //   - the exit goes when its entrance goes, for the same despawn reason;
+//   - a second portal of the same template sets its exit beside the first,
+//     not on it, and sends its arrivals to its own exit;
+//   - portals have their own group of two: a third evicts the oldest, and
+//     that one's exit goes with it;
 //   - thrown, the kit's portal faces the way it was thrown, its gate toward
 //     the thrower.
 
@@ -293,10 +297,26 @@ int main() {
                 exits.front().position.x, exits.front().position.y,
                 exits.front().position.z);
 
-    // Waiting at the destination: a second portal, whose gate the arrival
-    // stands in (its frame starts 0.6 m on), and a volume that hurts on entry.
-    world.create("portal_entrance",
-                 KernelVec3{kDestination.x, 0.0f, kDestination.z + 0.6f});
+    // Waiting at the destination: a second portal, whose gate starts 0.35 m
+    // on (its frame 0.45 m on), and a volume that hurts on entry.
+    const std::uint32_t waiting = world.create(
+        "portal_entrance", KernelVec3{kDestination.x, 0.0f, kDestination.z + 0.45f});
+    world.step(1);
+    // Its exit is not on the first: beside it, across the forward (+x first).
+    std::uint32_t waiting_exit = 0;
+    KernelVec3 waiting_exit_at{};
+    for (const KernelServerEntityState& found :
+         world.props_near(kDestination, 10.0f, 0u)) {
+        if (found.net_id != exit) {
+            waiting_exit = found.net_id;
+            waiting_exit_at = found.position;
+        }
+    }
+    require(waiting_exit != 0u);
+    std::printf("second exit at (%.2f, %.2f, %.2f)\n", waiting_exit_at.x,
+                waiting_exit_at.y, waiting_exit_at.z);
+    require(horizontal_distance(waiting_exit_at, kDestination) > 2.0f);
+    require(horizontal_distance(waiting_exit_at, kDestination) < 3.0f);
     world.create("test_hurt_gate", kDestination);
 
     // Walk into the gate: it faces -z, the frame behind it at +z.
@@ -324,15 +344,18 @@ int main() {
     std::printf("two ticks after arriving: hp %u\n", world.state(player).hp);
     require(world.state(player).hp == full_hp);
 
-    // Grace: still in the waiting portal's gate, a step to one side; it does
-    // not take the player back until the grace is over.
-    const KernelVec3 aside{kDestination.x, 0.0f, kDestination.z + 0.1f};
+    // Grace: a short step into the waiting portal's gate (the capsule reaches
+    // 0.40 m on, the gate starts at 0.35 m, the frame at 0.45 m); it does not
+    // take the player until the grace is over, and then sends it to its own
+    // exit.
+    const KernelVec3 aside{kDestination.x, 0.0f, kDestination.z + 0.05f};
     world.move(player, aside);
     world.step(5);
     require(horizontal_distance(world.state(player).position, aside) < 0.02f);
     world.step(static_cast<int>(kGraceTicks));
-    std::printf("after the grace: z %.3f\n", world.state(player).position.z);
-    require(horizontal_distance(world.state(player).position, kDestination) < 0.02f);
+    std::printf("after the grace: (%.3f, %.3f)\n", world.state(player).position.x,
+                world.state(player).position.z);
+    require(horizontal_distance(world.state(player).position, waiting_exit_at) < 0.05f);
 
     // The control for immunity: once it is over, walking into the hurt volume
     // hurts.
@@ -406,6 +429,22 @@ int main() {
                 thrown.front().position.z, thrown_facing.x, thrown_facing.z);
     require(thrown.front().position.x > thrower_at.x + 1.0f);
     require(thrown_facing.x > 0.99f);
+
+    // Two at a time: a third portal evicts the oldest (the waiting one), and
+    // its exit goes with it, for the same reason.
+    world.destroyed.clear();
+    const std::uint32_t third = world.create("portal_entrance", KernelVec3{-40.0f, 0.0f, 40.0f});
+    world.step(1);
+    require(world.exists(third));
+    require(!world.exists(waiting));
+    require(!world.exists(waiting_exit));
+    for (const auto& [net_id, reason] : world.destroyed) {
+        if (net_id == waiting || net_id == waiting_exit) {
+            std::printf("evicted %u, reason %u\n", net_id, reason);
+            require(reason == KernelDespawnReason_CapacityEvicted);
+        }
+    }
+    require(world.props_near(KernelVec3{}, 200.0f, kEntranceMaxHp).size() == 2u);
 
     std::printf("portal_test: PASS\n");
     return 0;

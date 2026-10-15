@@ -1,6 +1,9 @@
-# Where a portal comes out: only something to see. No collider, no health, no
+# Where a portal comes out: only something to see. No body, no health, no
 # lifetime of its own -- the kernel spawns it with its portal_entrance and
 # removes it, for the same reason, when the portal goes (docs/PORTAL_PLAN.md D7).
 id: 227
 name: portal_exit
 entity_type: prop
+# Its footprint: no body, but no other exit or portal is set down on it.
+physics:
+  trigger_collider_template: portal_exit_footprint

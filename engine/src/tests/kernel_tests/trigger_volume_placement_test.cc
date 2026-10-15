@@ -107,6 +107,43 @@ std::optional<glm::vec3> place(bool with_gate) {
         world, portal, glm::vec3{0.0f}, glm::vec3{0.0f, 0.0f, 1.0f}, 0);
 }
 
+// A portal landing where another's gate stands, clear of everything physical:
+// no wall, only the other gate -- which is no body, so only the trigger-volume
+// check sees it. Its gate reaches z 0.1 to 0.3, into the new frame (0 to 0.3).
+std::optional<glm::vec3> place_by_another_gate(bool other_gate) {
+    ne::physics::PhysicsWorld physics;
+    require(physics.valid());
+    add_box(physics, 1, ne::physics::CollisionObjectKind::kTerrain,
+            ne::physics::CollisionLayer::kTerrain,
+            glm::vec3{0.0f, -0.5f, 0.0f}, glm::vec3{20.0f, 0.5f, 20.0f});
+    physics.optimize_broad_phase();
+
+    ne::World world;
+    world.set_collision_world(&physics);
+    if (other_gate) {
+        const ne::NetId other = world.spawn_entity(
+            ne::EntityType::kProp, ne::ActorType::kUnknown, 0, glm::vec3{0.0f});
+        ne::ColliderInstance gate = box_collider(
+            other, 901, KernelColliderPurpose_Trigger,
+            glm::vec3{0.0f, 1.275f, 0.2f}, glm::vec3{0.9f, 1.275f, 0.1f});
+        gate.world_bounds = ne::ColliderWorldBounds{gate.world_center, gate.half_extents};
+        world.collider_registry().upsert_entity_collider(other, 901, gate);
+    }
+    const ne::NetId portal = world.spawn_entity(
+        ne::EntityType::kProp, ne::ActorType::kUnknown, 0, glm::vec3{0.0f});
+    world.collider_registry().upsert_entity_collider(
+        portal, 900,
+        box_collider(portal, 900, KernelColliderPurpose_Hit,
+                     glm::vec3{0.0f, 1.3f, 0.15f}, glm::vec3{1.0f, 1.3f, 0.15f}));
+    world.collider_registry().upsert_entity_collider(
+        portal, 901,
+        box_collider(portal, 901, KernelColliderPurpose_Trigger,
+                     glm::vec3{0.0f, 1.275f, -0.15f},
+                     glm::vec3{0.9f, 1.275f, 0.25f}));
+    return ne::find_clear_spawn_spot(
+        world, portal, glm::vec3{0.0f}, glm::vec3{0.0f, 0.0f, 1.0f}, 0);
+}
+
 }  // namespace
 
 int main() {
@@ -123,6 +160,16 @@ int main() {
     std::printf("frame and gate: set down at z %.2f\n", with_gate->z);
     require(std::abs(with_gate->z + 1.0f) < 0.01f);
     require(std::abs(with_gate->y) < 0.01f);
+
+    // Control: alone, it lands where it struck.
+    const std::optional<glm::vec3> alone = place_by_another_gate(false);
+    require(alone.has_value());
+    require(std::abs(alone->z) < 0.01f);
+    // Another portal's gate there: it backs off one step, clear of that gate.
+    const std::optional<glm::vec3> by_gate = place_by_another_gate(true);
+    require(by_gate.has_value());
+    std::printf("by another portal's gate: set down at z %.2f\n", by_gate->z);
+    require(std::abs(by_gate->z + 0.5f) < 0.01f);
 
     std::printf("trigger_volume_placement_test: PASS\n");
     return 0;

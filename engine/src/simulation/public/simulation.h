@@ -236,6 +236,42 @@ std::uint32_t knockback_flight_ticks(
     float fixed_delta_seconds,
     std::uint32_t lockout_ticks);
 
+// The launch velocity that puts a leap down on `to` on its airtime_ticks-th
+// movement step. pull_launch_velocity with the height difference put back in,
+// so the destination may stand above or below the launch: the height after n
+// steps is dt*(vy*n + g*dt*n(n+1)/2), and vy aims the crossing of the
+// destination's height half a step into step N -- still above it after N-1,
+// clearly below after N -- so the step that lands it does not depend on
+// rounding. Horizontally nothing acts in the flight, so N steps at v cover
+// v*N*dt. airtime_ticks must be at least 1 and gravity_y below zero.
+//
+// Both ends run it: the authority to launch, and nothing else is needed for a
+// client to replay it, since the anchor carries the launch it produced.
+glm::vec3 leap_launch_velocity(
+    const glm::vec3& from,
+    const glm::vec3& to,
+    std::uint32_t airtime_ticks,
+    float gravity_y,
+    float fixed_delta_seconds);
+
+// Airtime for a leap that peaks apex_meters above the higher of its two ends:
+// the rise to the peak plus the fall from it, sqrt(2h1/g) + sqrt(2h2/g), with
+// height_difference the destination's height over the launch's. On the level
+// that is sqrt(8h/g). Stretched as far as it takes to keep the horizontal
+// speed under max_horizontal_speed; a zero apex or cap puts no bound from that
+// side. In whole ticks, at least 1.
+//
+// The peak is what keeps a leap down off a ledge from starting flat: a launch
+// that does not rise on its first step is caught by the ground it stands on,
+// and start_leap refuses one.
+std::uint32_t leap_airtime_ticks(
+    float horizontal_distance,
+    float height_difference,
+    float apex_meters,
+    float max_horizontal_speed,
+    float gravity_y,
+    float fixed_delta_seconds);
+
 // Where a launch rule starts a projectile, and how fast.
 struct ProjectileLaunch {
     glm::vec3 origin{0.0f};
@@ -422,12 +458,16 @@ void simulate_velocity_movement(World& world, float fixed_delta_seconds);
 // The height of whatever the entity's movement capsule would come to rest on
 // straight below `position`, looking at most `max_distance` down, or nothing
 // when it finds nothing (or there is no physics world or capsule to ask).
+// static_world_only narrows the probe to terrain and static obstacles within
+// the actor's own mask, the way initial placement does -- for a spot the actor
+// is not standing on yet, where whoever stands there now is no floor.
 std::optional<float> ground_height_below(
     World& world,
     NetId net_id,
     const glm::vec3& position,
     const glm::quat& rotation,
-    float max_distance);
+    float max_distance,
+    bool static_world_only = false);
 
 // Arms the drop for every actor whose last status suspension has ended since
 // the last call: velocity zeroed, straight down, out of its own control, until
@@ -468,6 +508,17 @@ std::optional<glm::vec3> find_clear_spawn_spot(
     const glm::vec3& position,
     const glm::vec3& direction,
     NetId spawner);
+
+// Where a portal's exit stands (ABI 103): at `destination` if its footprint --
+// its trigger-purpose box, which is no body -- is clear of every other trigger
+// volume and of terrain and static obstacles, otherwise the nearest clear slot
+// in a row across `forward`. nullopt when it has no footprint or nothing in
+// reach is clear: the caller keeps the destination.
+std::optional<glm::vec3> find_clear_exit_spot(
+    World& world,
+    NetId net_id,
+    const glm::vec3& destination,
+    const glm::vec3& forward);
 
 std::optional<glm::vec3> find_clear_standing_spot(
     World& world,
@@ -601,6 +652,17 @@ void simulate_weapons(
     const std::vector<QueuedInput>& inputs,
     std::uint32_t current_tick,
     std::vector<KernelEvent>* events);
+
+// Every charging actor's melee contact (ChargeLockout), once per tick, after
+// movement: the weapon's cone from where it now stands, facing the way it
+// runs, striking each actor once per charge. A charge that strikes anyone
+// ends here. See Kernel_ServerEnqueueEntityCharge.
+void simulate_charge_contacts(
+    World& world,
+    std::uint32_t current_tick,
+    std::uint64_t hit_time_us,
+    DamagePipeline* damage_pipeline,
+    std::vector<ActionGraphCommandBatch>* action_graph_batches);
 void simulate_weapons(
     World& world,
     const std::vector<QueuedInput>& inputs,

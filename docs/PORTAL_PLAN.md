@@ -44,13 +44,15 @@
 | D12 | 走過去就傳送；client 用銜接動畫蓋住 RTT 的等待 | 動畫要有逾時取消（client 預測碰到門，但伺服器沒有觸發）；動畫期間送零輸入 |
 | D13 | 觸發區是 collider template，`purpose: trigger`，由 `physics.trigger_collider_template` 引用 | 不新增 template 類別。kernel 把 trigger 用途的碰撞盒註冊到新的**內部** physics layer `kTrigger`，不再當成 static obstacle，不用掉 `KERNEL_COLLISION_LAYER_*` bit |
 | D14 | 觸發篩選分三層：陣營用 `collision_mask: player_side`；身分用 trigger 欄位 `instigators: players`；狀態用 kernel 規則（D10） | 不擴充 collision mask：mask 是固定分類，放不進「在帳篷裡」這種狀態；另外加一個 `player` bit 會和 `player_side` 混淆，所有讀 mask 的系統都受影響 |
-| D15 | 碰撞盒幾何（側視圖）：紅色 hitbox 涵蓋底座、門框和門；綠色觸發區只在開口那一面（local −z，朝向丟的人）；底部都貼地；綠色頂部比紅色低 5 cm；綠色伸進紅色 0.1 m；綠色凸出門面 0.3–0.5 m | 只能從開口那一面進入。生成的 rotation 是 `yaw = atan2(x, z)`，local +z 朝丟擲方向（`systems.cc:190`） |
+| D15 | 碰撞盒幾何（側視圖）：紅色 hitbox 涵蓋底座、門框和門；綠色觸發區只在開口那一面（local −z，朝向丟的人）；底部都貼地；綠色頂部比紅色低 5 cm；綠色伸進紅色 0.1 m；綠色凸出門面 0.1 m（2026-10-14 由 0.4 m 縮短：Unity 把傳送門的畫面畫在門面上，傳送要在玩家幾乎碰到門面時才發生） | 只能從開口那一面進入。生成的 rotation 是 `yaw = atan2(x, z)`，local +z 朝丟擲方向（`systems.cc:190`） |
 | D16 | 落點校正把紅色加綠色一起拿去跟 terrain 和 static obstacle 檢查 | 避免開口那一面埋在牆裡。校正是往丟擲的反方向退，也就是往開口那一側退 |
 | D17 | 入口有 HP；門被子彈或爆炸打壞，完全沿用現有機制，不做特殊處理。入口和出口消失時都播建築物被破壞的演出 | 紅色是 `layer: damageable`，跟 `tent_hitbox` 一樣 |
 | D18 | 第一版不讓丟出去的 prop 穿過傳送門 | 正式版的終點在另一張地圖，飛行中的 prop 要整包搬到另一個 world；在同一張地圖裡還要處理軌跡同步、碰撞檢查掃過整張地圖、client 預測、玩法上的濫用。見 §8 |
 | D19 | 地圖原點放在中央（±4 km）；地圖做大時由 Unity 端加 floating origin | float32 在 4–8 km 的最小間距是 0.49 mm，傳送目的地不是瓶頸。kernel 不用改 |
 | D20 | 幾乎垂直往下丟：水平分量是 0，rotation 是單位旋轉，門朝世界座標 +z | 視為玩家操作失誤 |
-| D21 | 傳送門與帳篷共用 population group；group 從 `tent` 改名為 `building` | 沿用帳篷 D 決策「所有建築共用一個 group」。lifetime 是各 template 的 lifecycle 欄位，不是 group 的屬性，所以名稱不加 timed。共用的後果見 §4 的 K6 |
+| D21 | ~~傳送門與帳篷共用 population group~~ **2026-10-15 改為獨立的 `portal` group，上限 2 個**（實測後使用者決定）；`tent` 已改名為 `building` | 第三個傳送門會擠掉最舊的那個，出口一起以 CapacityEvicted 刪除 |
+| D23 | 同一個 template 的傳送門共用目的地，所以出口不能疊在一起：出口有一個 trigger 用途的 footprint（collider 50，不是 physics body），放在目的地；被占用時，沿著與 forward 垂直的方向找最近的空位（間距為 footprint 寬度 + 0.5 m，左右各最多 8 格）。每個傳送門把玩家送到**自己出口的實際位置** | 2026-10-15 實測後使用者回報 |
+| D24 | `placement: clear` 也會避開其他 prop 的 trigger volume（例如另一個傳送門的門口）。trigger volume 不是 physics body，原本的落點校正看不到它 | 同上 |
 | D22 | 觸發區比照物理引擎分成三個 trigger：`on_enter`（進入時一次）、`on_overlap`（重疊期間每個 tick）、`on_exit`（離開時一次）。傳送門用 `on_enter` | 語意見 §4 的 K2 |
 
 ---
@@ -73,12 +75,12 @@ layer: damageable
 
 ```yaml
 # collider_templates/<id>_collider_portal_gate.yaml     綠色：只在開口那一面
-# z 範圍 [−0.4, 0.1]：凸出門面 0.4 m，伸進紅色 0.1 m；頂部比紅色低 5 cm。
+# z 範圍 [−0.1, 0.1]：凸出門面 0.1 m，伸進紅色 0.1 m；頂部比紅色低 5 cm。
 id: <id>
 name: portal_gate
 shape: oriented_box
-center: {x: 0.0, y: 1.275, z: -0.15}
-half_extents: {x: 0.9, y: 1.275, z: 0.25}
+center: {x: 0.0, y: 1.275, z: 0.0}
+half_extents: {x: 0.9, y: 1.275, z: 0.1}
 purpose: trigger
 ```
 
@@ -269,6 +271,21 @@ triggers:
   - **mutation check**：拿掉內插的切斷，觀察者會在中途（約 13 m 處）畫出 1 個中間幀，測試失敗。
   - 一開始用 30 fps 取樣時這個檢查是空的：render 時間剛好落在 snapshot 的邊界上，看不出混合。所以改成 60 fps，也比較接近 Unity。
 - `dynamic_abi_smoke_test` 和 `kernel_api_test` 裡寫死的 packet schema 已改成 32。
+
+### 6.4 實測後調整（2026-10-15，分支 `claude/portal-spacing`，從 `main` 開出）
+
+- **D21 改變**：傳送門改用自己的 population group `portal`（id 3，`max_alive: 2`），不再和帳篷共用 `building`。
+- **D23 出口不重疊**：
+  - 新增 `50_collider_portal_exit_footprint`（trigger 用途、2 m 的方塊）作為 `portal_exit` 的 footprint。
+  - kernel 的 `find_clear_exit_spot` 負責找出口位置。
+  - 傳送門入口建立時，**先執行 population 上限**（擠掉最舊的那個），**再生成並放置出口**，避免新出口為了一個即將被刪除的舊出口而讓位。
+  - 傳送目的地改成出口的實際位置（`PortalLink.destination`）。
+- **D24 落點避開門口**：`find_clear_spawn_spot` 增加一項檢查：新 prop 的 hit volume 和 trigger volume 不能覆蓋其他 entity 的 trigger volume（用 AABB 判斷，略過自己和生成者）。
+- **沒有 trigger 的 trigger volume**（出口的 footprint）不會進行每 tick 的重疊查詢。
+- **沒有 ABI 或 schema 變動**：只改了 kernel 的行為和 catalog，`bundle.bytes` 要更新。
+- **測試**：
+  - `portal_test`：第二個出口在 (52.5, 0, 50)；等在目的地的那個傳送門會把玩家送到它自己的出口；第三個傳送門擠掉最舊的，入口和出口都以 reason 4（CapacityEvicted）刪除，最後只剩 2 個入口。
+  - `trigger_volume_placement_test`：旁邊有另一個傳送門的門口時，落點從 z 0（對照組）退到 z −0.5。
 
 ---
 

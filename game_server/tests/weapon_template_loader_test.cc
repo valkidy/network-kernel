@@ -2063,15 +2063,16 @@ void weapons_name_their_own_reload_action() {
                reload_of(network_example::game_server::kWeaponHomingMissile)) == 60);
 
     // Distinct templates, and none of them the catalog's shared fallback --
-    // except the grunts' claw (10) and slam (11), which name `shared_reload`
-    // themselves: a bottomless AI weapon has no reload of its own to author.
+    // except the grunts' claw (10) and slam (11) and the warrior's charge horns
+    // (20), which name `shared_reload` themselves: a bottomless AI weapon has
+    // no reload of its own to author.
     require(reload_of(network_example::game_server::kWeaponRifle) !=
            reload_of(network_example::game_server::kWeaponShotgun));
     for (std::size_t id = 0; id < config.weapons.definitions.size(); ++id) {
         if (!config.weapons.configured[id]) {
             continue;
         }
-        const bool names_shared_reload = id == 10u || id == 11u;
+        const bool names_shared_reload = id == 10u || id == 11u || id == 20u;
         require(
             (config.weapons.definitions[id].reload_action_template_id == 4199u) ==
             names_shared_reload);

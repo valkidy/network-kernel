@@ -3,9 +3,9 @@ prop_population_rules:
   - id: 1
     name: temporary_deployable
     max_alive: 256
-  # Buildings: tents, field camps and portals share these places. Kept apart
-  # from temporary_deployable so a pile of ice blocks can never evict a tent
-  # someone is resting in; a new building may (docs/PORTAL_PLAN.md D21).
+  # Buildings: tents and field camps share these places. Kept apart from
+  # temporary_deployable so a pile of ice blocks can never evict a tent
+  # someone is resting in; a new building may.
   - id: 2
     name: building
     max_alive: 4
@@ -13,6 +13,11 @@ prop_population_rules:
     # on_destroy_entity runs on expiry and eviction too. A building with no
     # on_destroy_entity has nothing to run.
     cleanup_runs_on_destroy: true
+  # Portals, apart from buildings: two at a time, a third evicting the oldest
+  # (and its exit with it).
+  - id: 3
+    name: portal
+    max_alive: 2
 action_template_dir: action_templates
 action_graph_template_dir: action_graph_templates
 status_effect_template_dir: status_effect_templates

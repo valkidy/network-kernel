@@ -77,6 +77,9 @@ struct RemoteKnockbackAnchor {
     glm::vec3 velocity{0.0f};
     float gravity_y = 0.0f;
     float floor_y = 0.0f;
+    // A leap: floor_y is where it lands, floored only on the way down, and
+    // end_tick is its landing exactly.
+    bool leap = false;
 };
 
 class KernelEngine {
@@ -403,6 +406,18 @@ public:
         std::uint32_t command_source,
         NetId net_id,
         NetId shelter_net_id);
+    bool server_enqueue_entity_charge(
+        std::uint32_t command_source,
+        NetId net_id,
+        const KernelVec3& direction,
+        float speed_meters_per_second,
+        std::uint32_t duration_ticks,
+        std::uint8_t weapon_id);
+    bool server_enqueue_entity_leap(
+        std::uint32_t command_source,
+        NetId net_id,
+        const KernelVec3& destination,
+        std::uint32_t airtime_ticks);
     bool server_set_entity_combat_state(
         NetId net_id,
         const KernelCombatStateDefinition& combat_state);

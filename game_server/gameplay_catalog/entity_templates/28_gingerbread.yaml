@@ -64,6 +64,24 @@ ai:
     # swing reaches to a target's near edge, so this is conservative: whatever
     # this lets the gingerbread attack, it can actually hit.
     attack_range_meters: 2.2
+    # Closing the last few metres in one jump, swinging on the way down. The
+    # band is origin to origin like the range above; it lands
+    # landing_distance short of the target, inside stop_distance so it holds
+    # there, and inside attack_range so the swing reaches.
+    leap:
+      min_distance_meters: 3.5
+      max_distance_meters: 8.0
+      landing_distance_meters: 1.6
+      # About 20 ticks in the air on the level. The airtime, not the height,
+      # is what a player has to react in.
+      apex_meters: 0.5
+      max_horizontal_speed_meters_per_second: 12.0
+      cooldown_ticks: 90
+      # grunt_claw_swing's commit_offset_ticks plus one, because the swing
+      # starts on the tick after the controller asks for it: the claw then
+      # commits on the landing tick (gingerbread_leap_test). Change one,
+      # change the other.
+      attack_lead_ticks: 9
   # Only read when this one is in a squad; a lone chaser has no slot.
   #
   # input_magnitude is a fraction of this template's own move speed, and the

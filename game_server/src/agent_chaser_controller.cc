@@ -82,6 +82,153 @@ KernelVec2 patrol_move(
     return KernelVec2{velocity_x / scale, velocity_z / scale};
 }
 
+// Mirrors leap_airtime_ticks in simulation/public/simulation.h, which
+// game_server does not link: the airtime of a leap that peaks apex_meters over
+// the higher of its two ends, stretched to keep under the horizontal speed
+// cap. The kernel takes the result as given, so the two only have to agree to
+// keep tuning meaningful.
+std::uint32_t leap_airtime_ticks(
+    const AgentLeapTuning& leap,
+    float horizontal_distance,
+    float height_difference,
+    float gravity_y,
+    float fixed_delta_seconds) {
+    float seconds = 0.0f;
+    if (leap.apex_meters > 0.0f && gravity_y < 0.0f) {
+        const float rise =
+            leap.apex_meters + std::max(0.0f, height_difference);
+        const float fall =
+            leap.apex_meters + std::max(0.0f, -height_difference);
+        seconds = std::sqrt(2.0f * rise / -gravity_y) +
+            std::sqrt(2.0f * fall / -gravity_y);
+    }
+    if (leap.max_horizontal_speed_meters_per_second > 0.0f) {
+        seconds = std::max(
+            seconds,
+            horizontal_distance / leap.max_horizontal_speed_meters_per_second);
+    }
+    const float ticks = std::ceil(seconds / fixed_delta_seconds);
+    // The kernel refuses a one-step leap.
+    return ticks < 2.0f ? 2u : static_cast<std::uint32_t>(ticks);
+}
+
+// Starts a leap at the target if it is in the band and the agent is free to.
+// The landing spot is fixed here, at lift-off: a target that moves after the
+// agent commits is where the leap misses. Returns whether one was enqueued;
+// the kernel may still refuse it, which the next tick's flags show.
+//
+// target_feet is the target's own position, not perception's target_position:
+// that is an aim point at the body's centre, and read as the ground it put a
+// level leap 0.9 m uphill and stretched its airtime to match.
+bool try_start_leap(
+    KernelHandle* kernel,
+    const AgentChaserConfig& config,
+    AgentRuntimeState* agent,
+    const KernelServerEntityState& self,
+    const KernelVec3& target_feet) {
+    const AgentLeapTuning& leap = config.chase.leap;
+    if (leap.max_distance_meters <= 0.0f || agent->leap_ticks_to_landing > 0u ||
+        agent->leap_cooldown_ticks > 0u ||
+        (self.visual_flags & KERNEL_VISUAL_FLAG_GROUNDED) == 0u ||
+        (self.visual_flags & KERNEL_VISUAL_FLAG_KNOCKED_BACK) != 0u) {
+        return false;
+    }
+    const float dx = target_feet.x - agent->position.x;
+    const float dz = target_feet.z - agent->position.z;
+    const float distance = std::hypot(dx, dz);
+    if (distance < leap.min_distance_meters ||
+        distance > leap.max_distance_meters || distance <= 0.0001f) {
+        return false;
+    }
+    const float travel = distance - leap.landing_distance_meters;
+    const KernelVec3 destination{
+        agent->position.x + dx * (travel / distance),
+        target_feet.y,
+        agent->position.z + dz * (travel / distance)};
+    // The target's feet stand in for the ground under the landing spot,
+    // which only the kernel probes.
+    const std::uint32_t airtime = leap_airtime_ticks(
+        leap,
+        travel,
+        target_feet.y - agent->position.y,
+        config.gravity_y,
+        Kernel_GetFixedDeltaSeconds(kernel));
+    if (!Kernel_ServerEnqueueEntityLeap(
+            kernel, KernelCommandSource_AI, agent->net_id, &destination, airtime)) {
+        return false;
+    }
+    agent->leap_ticks_to_landing = airtime;
+    agent->leap_cooldown_ticks = airtime + leap.cooldown_ticks;
+    return true;
+}
+
+// Starts winding up a charge if the target is in the band and the agent is
+// free to: on the ground, not knocked back or staggered, not leaping, and off
+// cooldown. The run itself is released by release_charge once the wind-up is
+// spent.
+bool try_start_charge(
+    const AgentChaserConfig& config,
+    AgentRuntimeState* agent,
+    const KernelServerEntityState& self,
+    const KernelVec3& target_feet) {
+    const AgentChargeTuning& charge = config.chase.charge;
+    if (charge.max_distance_meters <= 0.0f || agent->charge_cooldown_ticks > 0u ||
+        agent->charge_windup_ticks > 0u || agent->charge_ticks_left > 0u ||
+        agent->leap_ticks_to_landing > 0u ||
+        (self.visual_flags & KERNEL_VISUAL_FLAG_GROUNDED) == 0u ||
+        (self.visual_flags & (KERNEL_VISUAL_FLAG_KNOCKED_BACK |
+                              KERNEL_VISUAL_FLAG_STAGGERED)) != 0u) {
+        return false;
+    }
+    const float distance = std::hypot(
+        target_feet.x - agent->position.x, target_feet.z - agent->position.z);
+    if (distance < charge.min_distance_meters ||
+        distance > charge.max_distance_meters) {
+        return false;
+    }
+    // Plus one: release_charge spends a tick of it before it looks.
+    agent->charge_windup_ticks = charge.windup_ticks + 1u;
+    return true;
+}
+
+// Releases the run at where the target stands now: the line is fixed here, so
+// a target that moves after this is where the charge misses. Long enough to
+// pass overshoot_meters beyond that spot. Whatever the kernel says, the agent
+// goes on cooldown, so a refused charge is not retried every tick.
+void release_charge(
+    KernelHandle* kernel,
+    const AgentChaserConfig& config,
+    AgentRuntimeState* agent,
+    const KernelVec3& target_feet) {
+    const AgentChargeTuning& charge = config.chase.charge;
+    agent->charge_cooldown_ticks = charge.cooldown_ticks;
+    const float dx = target_feet.x - agent->position.x;
+    const float dz = target_feet.z - agent->position.z;
+    const float distance = std::hypot(dx, dz);
+    if (distance <= 0.0001f) {
+        return;
+    }
+    const float seconds =
+        (distance + charge.overshoot_meters) / charge.speed_meters_per_second;
+    const float ticks = std::ceil(seconds / Kernel_GetFixedDeltaSeconds(kernel));
+    const std::uint32_t duration = static_cast<std::uint32_t>(std::clamp(
+        ticks, 1.0f, static_cast<float>(KERNEL_MAX_IMPULSE_LOCKOUT_TICKS)));
+    const KernelVec3 direction{dx / distance, 0.0f, dz / distance};
+    if (!Kernel_ServerEnqueueEntityCharge(
+            kernel,
+            KernelCommandSource_AI,
+            agent->net_id,
+            &direction,
+            charge.speed_meters_per_second,
+            duration,
+            charge.weapon_id)) {
+        return;
+    }
+    agent->charge_ticks_left = duration;
+    agent->charge_direction = direction;
+    agent->charge_cooldown_ticks = duration + charge.cooldown_ticks;
+}
+
 // Hysteresis around the stop distance. Without the separate resume threshold an
 // agent parked exactly on the boundary would start and stop every tick.
 KernelVec2 chase_move(
@@ -143,6 +290,30 @@ void AgentChaserController::tick(
         agent.velocity = agent_steering::zero_vec3();
         agent.animation_state = sentry_config.animation_idle;
         agent.sentry.self_id = agent.net_id;
+        // A leap counts down to its landing. The kernel arms it on the tick
+        // after it is asked, so from then on the flag says it is in the air;
+        // without the flag it was refused or something ended it, and there is
+        // no landing left to time a swing against.
+        if (agent.leap_ticks_to_landing > 0u) {
+            --agent.leap_ticks_to_landing;
+            if ((entity_state.visual_flags & KERNEL_VISUAL_FLAG_LEAPING) == 0u) {
+                agent.leap_ticks_to_landing = 0u;
+            }
+        }
+        if (agent.leap_cooldown_ticks > 0u) {
+            --agent.leap_cooldown_ticks;
+        }
+        // A charge counts down the same way: armed the tick after it is
+        // asked, and over -- a hit, a wall, a stagger -- once the flag is gone.
+        if (agent.charge_ticks_left > 0u) {
+            --agent.charge_ticks_left;
+            if ((entity_state.visual_flags & KERNEL_VISUAL_FLAG_CHARGING) == 0u) {
+                agent.charge_ticks_left = 0u;
+            }
+        }
+        if (agent.charge_cooldown_ticks > 0u) {
+            --agent.charge_cooldown_ticks;
+        }
 
         KernelQuat desired_rotation = entity_state.rotation;
         bool should_update_rotation = false;
@@ -272,7 +443,39 @@ void AgentChaserController::tick(
             }
         }
 
-        if (agent.sentry.state == AgentSentryState::kAttack) {
+        // A wind-up is for this target in this pursuit: losing either drops it.
+        // So does being knocked back or staggered out of it.
+        if (agent.charge_windup_ticks > 0u &&
+            (agent.sentry.state != AgentSentryState::kAttack ||
+             !has_visible_target ||
+             (entity_state.visual_flags & (KERNEL_VISUAL_FLAG_KNOCKED_BACK |
+                                           KERNEL_VISUAL_FLAG_STAGGERED)) != 0u)) {
+            agent.charge_windup_ticks = 0u;
+        }
+
+        const KernelServerEntityState* target_state =
+            frame.actor_state(agent.sentry.target);
+        if (agent.sentry.state == AgentSentryState::kAttack &&
+            has_visible_target && agent.charge_ticks_left > 0u) {
+            // The kernel runs the charge: no steering, no turning, no swing.
+            // The tail still sends the one input, with no move in it.
+            agent.sentry.lost_target_ticks = 0;
+        } else if (agent.sentry.state == AgentSentryState::kAttack &&
+                   has_visible_target && agent.charge_windup_ticks > 0u) {
+            // Winding up: rooted, turning to keep the target in front.
+            agent.sentry.lost_target_ticks = 0;
+            should_update_rotation =
+                agent_steering::facing_rotation_from_vision_toward(
+                    agent.position,
+                    perception.target_position,
+                    perception.vision_forward,
+                    entity_state.rotation,
+                    &desired_rotation) ||
+                should_update_rotation;
+            if (--agent.charge_windup_ticks == 0u && target_state != nullptr) {
+                release_charge(kernel, config_, &agent, target_state->position);
+            }
+        } else if (agent.sentry.state == AgentSentryState::kAttack) {
             if (has_visible_target) {
                 agent.sentry.lost_target_ticks = 0;
                 should_update_rotation =
@@ -285,17 +488,36 @@ void AgentChaserController::tick(
                     should_update_rotation;
                 move = chase_move(
                     config_.chase, &agent, perception.target_position);
+                // A charge is tried ahead of a leap: winding one up roots the
+                // agent from this tick, and a leap must not carry it off.
+                if (target_state != nullptr &&
+                    try_start_charge(
+                        config_, &agent, entity_state, target_state->position)) {
+                    move = KernelVec2{0.0f, 0.0f};
+                } else if (target_state != nullptr) {
+                    (void)try_start_leap(
+                        kernel, config_, &agent, entity_state,
+                        target_state->position);
+                }
                 // Seeing a target is not the same as being able to hit one.
                 // Not attacking leaves submitted_input false, so the tail of
                 // the loop still sends exactly one input carrying `move` --
                 // the agent keeps closing, it just does not swing yet.
+                //
+                // In a leap, range is the landing's business: it comes down
+                // inside it, so the swing goes by how soon that is instead.
                 const bool target_within_attack_range =
-                    config_.chase.attack_range_meters <= 0.0f ||
-                    agent_steering::horizontal_distance(
-                        agent.position, perception.target_position) <=
-                        config_.chase.attack_range_meters;
+                    agent.leap_ticks_to_landing > 0u
+                    ? agent.leap_ticks_to_landing <=
+                        config_.chase.leap.attack_lead_ticks
+                    : config_.chase.attack_range_meters <= 0.0f ||
+                        agent_steering::horizontal_distance(
+                            agent.position, perception.target_position) <=
+                            config_.chase.attack_range_meters;
                 if (agent.sentry.ballistic_retry_ticks > 0) {
                     --agent.sentry.ballistic_retry_ticks;
+                } else if (agent.charge_windup_ticks > 0u) {
+                    // Wound up this tick: no swing on top of it.
                 } else if (target_within_attack_range) {
                     ai::ScopedIntent intent;
                     intent.scope = ai::IntentScope::kActor;
@@ -331,6 +553,13 @@ void AgentChaserController::tick(
                 entity_state.velocity.y,
                 move.y * sentry_config.move_speed_meters_per_second,
             };
+        }
+        if (agent.charge_windup_ticks > 0u) {
+            agent.animation_state = config_.chase.charge.has_windup_animation
+                ? config_.chase.charge.windup_animation
+                : sentry_config.animation_idle;
+        } else if (agent.charge_ticks_left > 0u) {
+            agent.animation_state = sentry_config.animation_attack;
         }
 
         // Exactly one input per tick, always. An agent that submits none keeps

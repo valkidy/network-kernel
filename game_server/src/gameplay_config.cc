@@ -415,6 +415,23 @@ void hash_actor_template(
     hash_float(hash, actor_template.chaser.resume_distance_meters);
     hash_float(hash, actor_template.chaser.input_magnitude);
     hash_float(hash, actor_template.chaser.attack_range_meters);
+    hash_float(hash, actor_template.chaser.leap.min_distance_meters);
+    hash_float(hash, actor_template.chaser.leap.max_distance_meters);
+    hash_float(hash, actor_template.chaser.leap.landing_distance_meters);
+    hash_float(hash, actor_template.chaser.leap.apex_meters);
+    hash_float(
+        hash, actor_template.chaser.leap.max_horizontal_speed_meters_per_second);
+    hash_scalar(hash, actor_template.chaser.leap.cooldown_ticks);
+    hash_scalar(hash, actor_template.chaser.leap.attack_lead_ticks);
+    hash_float(hash, actor_template.chaser.charge.min_distance_meters);
+    hash_float(hash, actor_template.chaser.charge.max_distance_meters);
+    hash_scalar(hash, actor_template.chaser.charge.windup_ticks);
+    hash_float(hash, actor_template.chaser.charge.speed_meters_per_second);
+    hash_float(hash, actor_template.chaser.charge.overshoot_meters);
+    hash_scalar(hash, actor_template.chaser.charge.cooldown_ticks);
+    hash_scalar(hash, actor_template.chaser.charge.weapon_id);
+    hash_scalar(hash, actor_template.chaser.charge.windup_animation);
+    hash_scalar(hash, actor_template.chaser.charge.has_windup_animation);
     hash_float(hash, actor_template.patrol.slot_radius_meters);
     hash_float(hash, actor_template.patrol.input_magnitude);
     hash_float(hash, actor_template.patrol.leash_meters);
@@ -3729,6 +3746,8 @@ AgentChaseTuning chaser_config_from_yaml(
             "resume_distance_meters",
             "input_magnitude",
             "attack_range_meters",
+            "leap",
+            "charge",
         },
         path,
         source_kind,
@@ -3748,6 +3767,105 @@ AgentChaseTuning chaser_config_from_yaml(
     if (chaser_node["attack_range_meters"]) {
         chaser.attack_range_meters =
             chaser_node["attack_range_meters"].as<float>();
+    }
+    if (const YAML::Node leap_node = chaser_node["leap"]) {
+        reject_unknown_keys(
+            leap_node,
+            {
+                "min_distance_meters",
+                "max_distance_meters",
+                "landing_distance_meters",
+                "apex_meters",
+                "max_horizontal_speed_meters_per_second",
+                "cooldown_ticks",
+                "attack_lead_ticks",
+            },
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+            actor_template.actor_template_id);
+        AgentLeapTuning& leap = chaser.leap;
+        if (leap_node["min_distance_meters"]) {
+            leap.min_distance_meters =
+                leap_node["min_distance_meters"].as<float>();
+        }
+        if (leap_node["max_distance_meters"]) {
+            leap.max_distance_meters =
+                leap_node["max_distance_meters"].as<float>();
+        }
+        if (leap_node["landing_distance_meters"]) {
+            leap.landing_distance_meters =
+                leap_node["landing_distance_meters"].as<float>();
+        }
+        if (leap_node["apex_meters"]) {
+            leap.apex_meters = leap_node["apex_meters"].as<float>();
+        }
+        if (leap_node["max_horizontal_speed_meters_per_second"]) {
+            leap.max_horizontal_speed_meters_per_second =
+                leap_node["max_horizontal_speed_meters_per_second"].as<float>();
+        }
+        if (leap_node["cooldown_ticks"]) {
+            leap.cooldown_ticks = leap_node["cooldown_ticks"].as<std::uint32_t>();
+        }
+        if (leap_node["attack_lead_ticks"]) {
+            leap.attack_lead_ticks =
+                leap_node["attack_lead_ticks"].as<std::uint32_t>();
+        }
+    }
+    if (const YAML::Node charge_node = chaser_node["charge"]) {
+        reject_unknown_keys(
+            charge_node,
+            {
+                "min_distance_meters",
+                "max_distance_meters",
+                "windup_ticks",
+                "speed_meters_per_second",
+                "overshoot_meters",
+                "cooldown_ticks",
+                "weapon_id",
+                "windup_animation",
+            },
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+            actor_template.actor_template_id);
+        AgentChargeTuning& charge = chaser.charge;
+        if (charge_node["min_distance_meters"]) {
+            charge.min_distance_meters =
+                charge_node["min_distance_meters"].as<float>();
+        }
+        if (charge_node["max_distance_meters"]) {
+            charge.max_distance_meters =
+                charge_node["max_distance_meters"].as<float>();
+        }
+        if (charge_node["windup_ticks"]) {
+            charge.windup_ticks = charge_node["windup_ticks"].as<std::uint32_t>();
+        }
+        if (charge_node["speed_meters_per_second"]) {
+            charge.speed_meters_per_second =
+                charge_node["speed_meters_per_second"].as<float>();
+        }
+        if (charge_node["overshoot_meters"]) {
+            charge.overshoot_meters = charge_node["overshoot_meters"].as<float>();
+        }
+        if (charge_node["cooldown_ticks"]) {
+            charge.cooldown_ticks = charge_node["cooldown_ticks"].as<std::uint32_t>();
+        }
+        if (charge_node["weapon_id"]) {
+            const std::uint32_t weapon_id =
+                charge_node["weapon_id"].as<std::uint32_t>();
+            if (weapon_id > 255u) {
+                throw std::runtime_error("chaser charge weapon_id must be 0-255");
+            }
+            charge.weapon_id = static_cast<std::uint8_t>(weapon_id);
+        }
+        if (charge_node["windup_animation"]) {
+            charge.windup_animation = sentry_animation_from_yaml(
+                charge_node["windup_animation"],
+                actor_template,
+                "charge windup_animation");
+            charge.has_windup_animation = true;
+        }
     }
     return chaser;
 }
@@ -11237,6 +11355,52 @@ std::vector<std::string> validate_gameplay_config(
              !std::isfinite(actor_template.sentry.move_speed_meters_per_second) ||
              actor_template.sentry.move_speed_meters_per_second <= 0.0f)) {
             errors.push_back("agent chaser actor template must be valid");
+        }
+        // A leap is opt-in: max_distance_meters zero leaves the rest unread.
+        if (const AgentLeapTuning& leap = actor_template.chaser.leap;
+            actor_template.actor_type == kActorTypeAgent &&
+            actor_template.ai_controller_type == KernelAiControllerType_Chaser &&
+            leap.max_distance_meters != 0.0f &&
+            (!std::isfinite(leap.min_distance_meters) ||
+             !std::isfinite(leap.max_distance_meters) ||
+             !std::isfinite(leap.landing_distance_meters) ||
+             !std::isfinite(leap.apex_meters) ||
+             !std::isfinite(leap.max_horizontal_speed_meters_per_second) ||
+             leap.landing_distance_meters < 0.0f ||
+             // It has to cover ground: a band that starts at or inside the
+             // landing distance leaps backwards, or not at all.
+             leap.min_distance_meters <= leap.landing_distance_meters ||
+             leap.max_distance_meters <= leap.min_distance_meters ||
+             // Landing outside the attack range means walking after all.
+             (actor_template.chaser.attack_range_meters > 0.0f &&
+              leap.landing_distance_meters >
+                  actor_template.chaser.attack_range_meters) ||
+             leap.apex_meters < 0.0f ||
+             leap.max_horizontal_speed_meters_per_second < 0.0f ||
+             // Nothing to work its airtime out from.
+             (leap.apex_meters == 0.0f &&
+              leap.max_horizontal_speed_meters_per_second == 0.0f) ||
+             leap.attack_lead_ticks > KERNEL_MAX_IMPULSE_LOCKOUT_TICKS)) {
+            errors.push_back("agent chaser leap must be valid");
+        }
+        // A charge is opt-in the same way. Its weapon has to be one the agent
+        // carries: the kernel strikes with the loadout's own definition, and
+        // refuses a charge with any other.
+        if (const AgentChargeTuning& charge = actor_template.chaser.charge;
+            actor_template.actor_type == kActorTypeAgent &&
+            actor_template.ai_controller_type == KernelAiControllerType_Chaser &&
+            charge.max_distance_meters != 0.0f &&
+            (!std::isfinite(charge.min_distance_meters) ||
+             !std::isfinite(charge.max_distance_meters) ||
+             !std::isfinite(charge.speed_meters_per_second) ||
+             !std::isfinite(charge.overshoot_meters) ||
+             charge.min_distance_meters < 0.0f ||
+             charge.max_distance_meters <= charge.min_distance_meters ||
+             !(charge.speed_meters_per_second > 0.0f) ||
+             charge.overshoot_meters < 0.0f ||
+             charge.windup_ticks > KERNEL_MAX_IMPULSE_LOCKOUT_TICKS ||
+             !actor_template_has_weapon(actor_template, charge.weapon_id))) {
+            errors.push_back("agent chaser charge must be valid");
         }
         if (actor_template.vision.struct_size < sizeof(KernelAgentVisionConfig) ||
             actor_template.vision.camp > KernelAgentCamp_Neutral) {

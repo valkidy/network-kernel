@@ -27,6 +27,8 @@ enum class CommandId : std::uint8_t {
     kCreateWorldItem,
     kSubmitGameplayRequest,
     kSetEntityShelter,
+    kStartEntityLeap,
+    kStartEntityCharge,
 };
 
 enum class CommandSource : std::uint8_t {
@@ -107,6 +109,22 @@ struct SetEntityShelter {
     NetId shelter_net_id = 0;
 };
 
+// See Kernel_ServerEnqueueEntityLeap.
+struct StartEntityLeap {
+    NetId net_id = 0;
+    KernelVec3 destination{};
+    std::uint32_t airtime_ticks = 0;
+};
+
+// See Kernel_ServerEnqueueEntityCharge.
+struct StartEntityCharge {
+    NetId net_id = 0;
+    KernelVec3 direction{};
+    float speed_meters_per_second = 0.0f;
+    std::uint32_t duration_ticks = 0;
+    std::uint8_t weapon_id = 0;
+};
+
 struct Command {
     CommandId id = CommandId::kUnknown;
     CommandSource source = CommandSource::kInternal;
@@ -124,6 +142,8 @@ struct Command {
     CreateWorldItem create_world_item{};
     SubmitGameplayRequest submit_gameplay_request{};
     SetEntityShelter set_entity_shelter{};
+    StartEntityLeap start_entity_leap{};
+    StartEntityCharge start_entity_charge{};
 };
 
 struct CommandResult {
