@@ -1,0 +1,11 @@
+id: 52
+name: gingerbread_warrior_vision_cone
+# The warrior's own eyes, longer than sentry_grunt_vision_cone's 12 m: it
+# charges from up to 18 m, and a charge can only start at what it can see.
+# Separate so the reach does not grow on every grunt that shares the 12 m cone.
+shape: cone
+center: {x: 0.0, y: 0.0, z: 0.0}
+range: 20.0
+fov_degrees: 90.0
+purpose: vision
+layer: agent_vision

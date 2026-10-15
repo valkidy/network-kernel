@@ -2063,7 +2063,7 @@ void weapons_name_their_own_reload_action() {
                reload_of(network_example::game_server::kWeaponHomingMissile)) == 60);
 
     // Distinct templates, and none of them the catalog's shared fallback --
-    // except the grunts' claw (10) and slam (11) and the akaoni's charge horns
+    // except the grunts' claw (10) and slam (11) and the warrior's charge horns
     // (20), which name `shared_reload` themselves: a bottomless AI weapon has
     // no reload of its own to author.
     require(reload_of(network_example::game_server::kWeaponRifle) !=

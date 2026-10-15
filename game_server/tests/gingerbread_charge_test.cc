@@ -1,4 +1,4 @@
-// A gingerbread akaoni charges a player who stands in its charge band: it
+// A gingerbread warrior charges a player who stands far out in its charge band: it
 // stops and winds up, then runs at where the player stood, and the run itself
 // is the hit.
 //
@@ -68,9 +68,9 @@ float horizontal(const KernelVec3& a, const KernelVec3& b) {
 
 int main() {
     const auto config = network_example::game_server::default_game_server_gameplay_config();
-    const auto* akaoni = template_named(config, "gingerbread_akaoni");
-    require(akaoni != nullptr);
-    const network_example::game_server::AgentChargeTuning& charge = akaoni->chaser.charge;
+    const auto* warrior = template_named(config, "gingerbread_warrior");
+    require(warrior != nullptr);
+    const network_example::game_server::AgentChargeTuning& charge = warrior->chaser.charge;
     require(charge.max_distance_meters > 0.0f);
     const std::vector<std::uint8_t> scene = read_ground_scene();
 
@@ -115,17 +115,17 @@ int main() {
     create.struct_size = sizeof(create);
     create.entity_type = KernelEntityType_Actor;
     create.actor_type = KernelActorType_Agent;
-    create.entity_template_id = akaoni->actor_template_id;
-    create.actor_template_id = akaoni->actor_template_id;
+    create.entity_template_id = warrior->actor_template_id;
+    create.actor_template_id = warrior->actor_template_id;
     create.position = KernelVec3{-70.0f, 0.0f, -70.0f};
     create.rotation = identity;
     std::uint32_t unit = 0;
     require(Kernel_ServerCreateEntity(kernel, &create, &unit));
-    require(Kernel_ServerSetEntityActorTemplate(kernel, unit, akaoni->actor_template_id));
+    require(Kernel_ServerSetEntityActorTemplate(kernel, unit, warrior->actor_template_id));
     for (int tick = 0; tick < 10; ++tick) step();
     // Backing off 10 m ahead of it, out on -x where it looks, through most of
     // the alert: inside the band, but a charge only starts once it attacks.
-    const std::uint32_t backing_ticks = akaoni->sentry.alert_ticks - 10u;
+    const std::uint32_t backing_ticks = warrior->sentry.alert_ticks - 10u;
     KernelVec3 player_at{};
     for (std::uint32_t tick = 0; tick < backing_ticks; ++tick) {
         KernelServerEntityState state{};
@@ -135,11 +135,12 @@ int main() {
         require(Kernel_ServerSetEntityTransform(kernel, player, &player_at, &identity));
         step();
     }
-    // Then stands still, 8 m out.
+    // Then stands still, 15 m out: past the 12 m the grunts' shared vision
+    // cone reaches, so only the warrior's own 20 m cone keeps it in sight.
     KernelServerEntityState before{};
     before.struct_size = sizeof(before);
     require(Kernel_ServerGetEntityState(kernel, unit, &before));
-    const float distance = 8.0f;
+    const float distance = 15.0f;
     require(distance > charge.min_distance_meters && distance < charge.max_distance_meters);
     player_at = KernelVec3{before.position.x - distance, before.position.y, before.position.z};
     require(Kernel_ServerSetEntityTransform(kernel, player, &player_at, &identity));

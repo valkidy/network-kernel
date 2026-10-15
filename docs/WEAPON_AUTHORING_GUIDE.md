@@ -626,7 +626,9 @@ ai:
 
 The charge's stagger on a wall uses the charger's own `stagger:` profile, as if
 its meter had filled; an actor without one only stops. Example:
-`33_gingerbread_akaoni.yaml`.
+`29_gingerbread_warrior.yaml`, whose band (18 m) is only reachable because it
+also got a longer vision cone (`gingerbread_warrior_vision_cone`, 20 m): a
+charge starts only at a target the agent can see.
 
 ## Action templates
 

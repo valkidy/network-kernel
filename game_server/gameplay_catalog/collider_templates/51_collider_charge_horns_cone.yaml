@@ -5,7 +5,7 @@ name: charge_horns_cone
 # arriving, not a swing reaching out, and it only has to touch whoever the run
 # is about to collide with. Wide, so a target clipped by the shoulder counts.
 shape: cone
-range: 1.4
+range: 1.0
 fov_degrees: 120.0
 purpose: damage
 layer: projectile

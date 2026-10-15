@@ -36,8 +36,6 @@ movement:
 # damage plus knockback rather than damage alone.
 weapon_slots:
   - 11
-  # Not swung: the charge below strikes with it.
-  - 20
 active_weapon_slot: 0
 animations:
   idle: 0
@@ -63,18 +61,6 @@ ai:
     # Matches grunt_slam_cone's range, which currently equals the claw's. If
     # you widen or shorten the slam's cone, this has to move with it.
     attack_range_meters: 2.2
-    # Stops, winds up, and runs at where the target stood, carrying
-    # charge_horns' contact. Stops on the first hit, staggers itself on a
-    # wall, and is stopped dead by a stagger.
-    charge:
-      min_distance_meters: 4.0
-      max_distance_meters: 12.0
-      # 0.6 s of standing still, facing the target: the tell.
-      windup_ticks: 18
-      speed_meters_per_second: 9.0
-      overshoot_meters: 2.0
-      cooldown_ticks: 150
-      weapon_id: 20
   # Only read when this one is in a squad; a lone chaser has no slot.
   #
   # input_magnitude is a fraction of this template's own move speed, and the
