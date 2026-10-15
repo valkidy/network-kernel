@@ -1,0 +1,12 @@
+id: 53
+name: gingerbread_vision_cone
+# The gingerbread's own eyes, longer than sentry_grunt_vision_cone's 12 m: it
+# leaps from up to 24 m, and a leap can only start at what it can see.
+# Separate so the reach does not grow on every grunt that shares the 12 m cone.
+# 53, not the next free id on this branch: main already holds 51 and 52.
+shape: cone
+center: {x: 0.0, y: 0.0, z: 0.0}
+range: 26.0
+fov_degrees: 90.0
+purpose: vision
+layer: agent_vision

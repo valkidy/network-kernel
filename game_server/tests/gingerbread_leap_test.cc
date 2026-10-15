@@ -119,7 +119,9 @@ int main() {
     create.actor_type = KernelActorType_Agent;
     create.entity_template_id = gingerbread->actor_template_id;
     create.actor_template_id = gingerbread->actor_template_id;
-    create.position = KernelVec3{-70.0f, 0.0f, -70.0f};
+    // Far enough in from the -x edge that it can chase out that way for the
+    // whole alert with the player 25 m ahead of it and still on the plane.
+    create.position = KernelVec3{40.0f, 0.0f, -70.0f};
     create.rotation = identity;
     std::uint32_t unit = 0;
     require(Kernel_ServerCreateEntity(kernel, &create, &unit));
@@ -128,14 +130,15 @@ int main() {
     for (int tick = 0; tick < 10; ++tick) step();
     // Out on -x, where a unit created facing identity looks.
     const float distance = 0.5f * (leap.min_distance_meters + leap.max_distance_meters);
-    // Backing off: kept 10 m ahead of it -- inside its 12 m vision cone, out of the band --, through the alert.
+    // Backing off: kept 25 m ahead of it -- inside its 26 m vision cone, past
+    // the far end of the band -- through the alert.
     const std::uint32_t backing_ticks = gingerbread->sentry.alert_ticks + 20u;
-    KernelVec3 player_at{unit_at.x - 10.0f, unit_at.y, unit_at.z};
+    KernelVec3 player_at{unit_at.x - 25.0f, unit_at.y, unit_at.z};
     for (std::uint32_t tick = 0; tick < backing_ticks; ++tick) {
         KernelServerEntityState state{};
         state.struct_size = sizeof(state);
         require(Kernel_ServerGetEntityState(kernel, unit, &state));
-        player_at = KernelVec3{state.position.x - 10.0f, state.position.y, state.position.z};
+        player_at = KernelVec3{state.position.x - 25.0f, state.position.y, state.position.z};
         require(Kernel_ServerSetEntityTransform(kernel, player, &player_at, &identity));
         step();
     }
