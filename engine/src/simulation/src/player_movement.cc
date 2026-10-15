@@ -7,6 +7,7 @@
 #include <vector>
 
 #include <glm/geometric.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include "physics/public/physics_world.h"
 #include "simulation/public/movement_solver.h"
@@ -1133,6 +1134,48 @@ float available_lift(
     return std::max(0.0f, clear);
 }
 
+namespace {
+
+// The world box around a box collider placed at `position` under `rotation`.
+ColliderWorldBounds placed_box_bounds(
+    const glm::vec3& position,
+    const glm::quat& rotation,
+    const glm::vec3& local_center,
+    const glm::vec3& half_extents) {
+    const glm::mat3 axes = glm::mat3_cast(rotation);
+    glm::vec3 extent{0.0f};
+    for (int column = 0; column < 3; ++column) {
+        extent += glm::abs(axes[column]) * half_extents[column];
+    }
+    return ColliderWorldBounds{position + rotation * local_center, extent};
+}
+
+// Whether a box so placed would cover some other entity's trigger volume.
+// Trigger volumes are no bodies, so the physics queries that keep a placed
+// prop clear of walls never see them: a portal set down over another
+// portal's gate, or an exit on another exit, would go unnoticed.
+bool covers_trigger_volume(
+    const World& world,
+    NetId self,
+    NetId spawner,
+    const ColliderWorldBounds& bounds) {
+    for (const ColliderInstance& other : world.collider_registry().instances()) {
+        if (other.entity_net_id == self || other.entity_net_id == spawner ||
+            !other.enabled ||
+            other.purpose_flags != KernelColliderPurpose_Trigger) {
+            continue;
+        }
+        const glm::vec3 apart = glm::abs(bounds.center - other.world_bounds.center);
+        const glm::vec3 reach = bounds.half_extents + other.world_bounds.half_extents;
+        if (apart.x < reach.x && apart.y < reach.y && apart.z < reach.z) {
+            return true;
+        }
+    }
+    return false;
+}
+
+}  // namespace
+
 std::optional<glm::vec3> find_clear_spawn_spot(
     World& world,
     NetId net_id,
@@ -1236,10 +1279,96 @@ std::optional<glm::vec3> find_clear_spawn_spot(
             trigger_clear =
                 std::none_of(reached.begin(), reached.end(), not_spawner);
         }
+        // Nor over another prop's trigger volume -- another portal's gate.
+        if (trigger_clear &&
+            (covers_trigger_volume(
+                 world, net_id, spawner,
+                 placed_box_bounds(stand, rotation, volume->local_center,
+                                   volume->half_extents)) ||
+             (trigger != nullptr &&
+              covers_trigger_volume(
+                  world, net_id, spawner,
+                  placed_box_bounds(stand, rotation, trigger->local_center,
+                                    trigger->half_extents))))) {
+            trigger_clear = false;
+        }
         if (trigger_clear &&
             std::none_of(touching.begin(), touching.end(), not_spawner)) {
             return stand - glm::vec3{0.0f, kStandSkinMeters, 0.0f};
         }
+    }
+    return std::nullopt;
+}
+
+std::optional<glm::vec3> find_clear_exit_spot(
+    World& world,
+    NetId net_id,
+    const glm::vec3& destination,
+    const glm::vec3& forward) {
+    constexpr int kSideSteps = 8;
+    constexpr float kGapMeters = 0.5f;
+    constexpr float kSkinMeters = 0.05f;
+    const std::optional<entt::entity> entity = world.find_entity(net_id);
+    if (!entity.has_value() || !world.registry().all_of<Transform>(*entity)) {
+        return std::nullopt;
+    }
+    const ColliderInstance* footprint = nullptr;
+    for (const ColliderInstance& candidate : world.collider_registry().instances()) {
+        if (candidate.entity_net_id == net_id &&
+            candidate.purpose_flags == KernelColliderPurpose_Trigger &&
+            (candidate.shape_type == ColliderShapeType::kAabb ||
+             candidate.shape_type == ColliderShapeType::kOrientedBox)) {
+            footprint = &candidate;
+            break;
+        }
+    }
+    if (footprint == nullptr) {
+        return std::nullopt;
+    }
+    const glm::quat rotation = world.registry().get<Transform>(*entity).rotation;
+    // Sideways from the way arrivals face, so exits stand in a row across
+    // it rather than in each other's way.
+    glm::vec3 level{forward.x, 0.0f, forward.z};
+    glm::vec3 side{1.0f, 0.0f, 0.0f};
+    if (glm::dot(level, level) > 0.000001f) {
+        level = glm::normalize(level);
+        side = glm::vec3{level.z, 0.0f, -level.x};
+    }
+    const ColliderWorldBounds at_destination = placed_box_bounds(
+        destination, rotation, footprint->local_center, footprint->half_extents);
+    const float step =
+        2.0f * std::max(at_destination.half_extents.x, at_destination.half_extents.z) +
+        kGapMeters;
+    physics::PhysicsWorld* physics_world = world.collision_world();
+    physics::CollisionQueryFilter filter{};
+    filter.collision_mask =
+        physics::collision_layer_bit(physics::CollisionLayer::kTerrain) |
+        physics::collision_layer_bit(physics::CollisionLayer::kStaticObstacle);
+    filter.ignored_entity_net_id = net_id;
+    for (int index = 0; index <= 2 * kSideSteps; ++index) {
+        // 0, +1, -1, +2, -2, ...: nearest the destination first.
+        const int slot = (index + 1) / 2 * (index % 2 == 1 ? 1 : -1);
+        const glm::vec3 spot = destination + side * (step * static_cast<float>(slot));
+        const glm::vec3 lifted = spot + glm::vec3{0.0f, kSkinMeters, 0.0f};
+        if (covers_trigger_volume(
+                world, net_id, 0u,
+                placed_box_bounds(lifted, rotation, footprint->local_center,
+                                  footprint->half_extents))) {
+            continue;
+        }
+        if (physics_world != nullptr) {
+            physics::OverlapRequest clear{};
+            clear.shape.type = physics::CollisionShapeType::kBox;
+            clear.shape.half_extents = footprint->half_extents;
+            clear.shape.local_center = footprint->local_center;
+            clear.position = lifted;
+            clear.rotation = rotation;
+            clear.filter = filter;
+            if (!physics_world->overlap_all(clear).empty()) {
+                continue;
+            }
+        }
+        return spot;
     }
     return std::nullopt;
 }
