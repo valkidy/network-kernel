@@ -1,0 +1,11 @@
+id: 51
+name: charge_horns_cone
+# The charge's contact volume, tested every tick of the run from where the
+# charger stands, facing the way it runs. Short on purpose: it is the body
+# arriving, not a swing reaching out, and it only has to touch whoever the run
+# is about to collide with. Wide, so a target clipped by the shoulder counts.
+shape: cone
+range: 1.4
+fov_degrees: 120.0
+purpose: damage
+layer: projectile

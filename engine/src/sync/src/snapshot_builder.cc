@@ -36,6 +36,9 @@ std::uint32_t derived_visual_flags(const World& world, entt::entity entity) {
         if (world.registry().all_of<LeapLockout>(entity)) {
             flags |= kVisualFlagLeaping;
         }
+        if (world.registry().all_of<ChargeLockout>(entity)) {
+            flags |= kVisualFlagCharging;
+        }
     }
     return flags;
 }

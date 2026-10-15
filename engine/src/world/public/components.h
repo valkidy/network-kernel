@@ -195,6 +195,28 @@ struct LeapLockout {
     float landing_y = 0.0f;
 };
 
+// Server-only, for the same reason as ImpulseLockout. A charge the actor's own
+// controller started (Kernel_ServerEnqueueEntityCharge): a run along one
+// horizontal line at a fixed speed, steered by the authority instead of the
+// controller, that carries a melee weapon's contact with it. Ends on the first
+// actor it hits (the charge stops there), on running into the static world
+// (the charger staggers itself), on a stagger, or on its tick count -- and on
+// anything that moves the actor itself, the way a leap does.
+struct ChargeLockout {
+    // Horizontal velocity the movement step holds every tick (y is zero).
+    glm::vec3 velocity{0.0f};
+    // The last tick the charge runs; it ends after that tick's step.
+    std::uint32_t until_tick = 0;
+    std::uint32_t armed_tick = 0;
+    // The loadout weapon whose melee contact the charge carries.
+    std::uint8_t weapon_id = 0;
+    // A per-charge id for the contact's provenance, so two charges are two
+    // instances.
+    std::uint32_t instance_id = 0;
+    // Everyone the charge has already struck. One charge, one wound each.
+    std::vector<NetId> struck;
+};
+
 // Server-only. On an actor a status suspension has held, from the commit that
 // started it until the tick after the last suspension on it ended, when the
 // drop is armed (settle_status_suspensions).
@@ -1391,6 +1413,8 @@ inline constexpr std::uint32_t kVisualFlagSuspended = 0x00000400u;
 inline constexpr std::uint32_t kVisualFlagKnockedBack = 0x00000800u;
 // A leap (LeapLockout), from the arming tick until it lands.
 inline constexpr std::uint32_t kVisualFlagLeaping = 0x00001000u;
+// A charge (ChargeLockout), from the arming tick until it ends.
+inline constexpr std::uint32_t kVisualFlagCharging = 0x00002000u;
 
 struct ReplicationState {
     std::uint16_t animation_state = 0;

@@ -221,3 +221,9 @@ cc_test(
     srcs = ["action_tap_stall_test.cc"],
     deps = ["//engine/src/simulation:simulation"],
 )
+
+cc_test(
+    name = "entity_charge_test",
+    srcs = ["entity_charge_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)

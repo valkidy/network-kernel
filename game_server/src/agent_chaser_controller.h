@@ -34,6 +34,32 @@ struct AgentLeapTuning {
     std::uint32_t attack_lead_ticks = 0;
 };
 
+// A charge at the target: when it stands inside the band, the agent stops and
+// winds up for windup_ticks, still turning to face it, then runs straight at
+// where it stood at release (Kernel_ServerEnqueueEntityCharge), overshooting
+// by overshoot_meters. The run carries the melee weapon `weapon_id`'s contact;
+// it stops on the first hit, on a wall (staggering the agent), on a body, on a
+// stagger, or when the distance is covered. Inert while max_distance_meters is
+// zero, which is every chaser authored before charges existed.
+struct AgentChargeTuning {
+    // The band, origin to origin like attack_range_meters.
+    float min_distance_meters = 0.0f;
+    float max_distance_meters = 0.0f;
+    // Standing still and facing the target before the run: the telegraph.
+    std::uint32_t windup_ticks = 0;
+    float speed_meters_per_second = 0.0f;
+    // Run this far past where the target stood, so a target that holds still
+    // is reached rather than stopped short of.
+    float overshoot_meters = 1.0f;
+    // Ticks after one charge ends before the next may wind up.
+    std::uint32_t cooldown_ticks = 90;
+    // A melee weapon in the loadout. Not the one the chaser swings.
+    std::uint8_t weapon_id = 0;
+    // Shown while winding up. Defaults to the sentry's idle.
+    std::uint16_t windup_animation = 0;
+    bool has_windup_animation = false;
+};
+
 // Movement tuning layered on top of the sentry's perception and attack tuning.
 struct AgentChaseTuning {
     // Closer than this and the agent holds still instead of walking into the
@@ -56,6 +82,7 @@ struct AgentChaseTuning {
     // conservative side of it.
     float attack_range_meters = 0.0f;
     AgentLeapTuning leap;
+    AgentChargeTuning charge;
 };
 
 // What walking to a squad slot costs and what it tolerates. Inert unless the

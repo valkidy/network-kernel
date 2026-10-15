@@ -1,0 +1,36 @@
+id: 34
+name: charge_horns_hit
+# The charge's contact. Nothing spawns from this: a charge strikes by overlap,
+# once per target per charge, and stops on its first hit. Every target takes
+# `damage` and `stagger` below, and the impact graph throws it along the run.
+type: standard
+movement_model: linear
+sync_mode: server_snapshot_only
+hit_response: destroy
+damage_shape: direct_hit
+damage: 35
+# Authored, not derived: being run over should stagger on its own. 120 is the
+# player's threshold.
+stagger: 120
+collision_mask: player_side
+max_hit_count: 3
+speed: 0.1
+lifetime_ticks: 3
+gravity:
+  x: 0.0
+  y: 0.0
+  z: 0.0
+triggers:
+  on_projectile_impact:
+    action_graph: action_apply_impulse
+    parameters:
+      target: event.target
+      # The way the charge was running, shared by everyone it hits -- not
+      # event.direction, which is charger-to-contact and would fan a crowd
+      # sideways off the line.
+      direction: event.subject_direction
+      # [horizontal, vertical] m/s: thrown ahead of the charger and off the
+      # ground, so the stopped charger is not standing on top of it.
+      strength: [9.0, 4.0]
+      # A ceiling: landing releases it first.
+      lockout: 30

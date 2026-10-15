@@ -593,6 +593,41 @@ the larger of `x` and `y`, so the collider must be an `oriented_box` (or an
 `aabb`). `beam.length` and `beam.radius` are refused. The beam block carries no
 damage or mask of its own either — both come from the top-level keys.
 
+### A charge: a melee weapon the run carries
+
+A chaser can charge: stop, wind up, then run straight at where its target stood,
+striking whoever it runs into. The strike is an ordinary melee weapon -- a cone
+collider, and a shot template carrying `damage`, `stagger` and an impact graph
+-- tested on every tick of the run instead of on an action's commit. The run
+strikes each target once and stops on its first hit; a wall stops it and
+staggers the charger; another body stops it; a stagger stops it dead.
+
+1. A melee weapon for the contact (`20_weapon_charge_horns.yaml`). Its fire
+   action is never used by the charge, but every weapon needs one.
+2. Its shot template. For the throw, bind `direction: event.subject_direction`
+   -- the way the charge ran, shared by everyone it hits -- rather than
+   `event.direction`, which is charger-to-contact and fans a crowd sideways.
+3. Put the weapon in the actor's `weapon_slots` beside the one it swings, and
+   name it in `ai.chaser.charge`:
+
+```yaml
+ai:
+  chaser:
+    charge:
+      min_distance_meters: 4.0      # the band, origin to origin
+      max_distance_meters: 12.0
+      windup_ticks: 18              # standing still, facing the target
+      speed_meters_per_second: 9.0
+      overshoot_meters: 2.0         # run this far past where it stood
+      cooldown_ticks: 150
+      weapon_id: 20                 # must be in weapon_slots
+      windup_animation: idle        # optional; idle, chasing or a number
+```
+
+The charge's stagger on a wall uses the charger's own `stagger:` profile, as if
+its meter had filled; an actor without one only stops. Example:
+`33_gingerbread_akaoni.yaml`.
+
 ## Action templates
 
 Fire and reload are both action templates; they differ only in their values.
