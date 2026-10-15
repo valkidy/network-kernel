@@ -52,6 +52,8 @@ inventory_slots:
   #  quantity: 10
   - item_template: fungible_tornado_bottle
     quantity: 3
+  - item_template: fungible_portal_kit
+    quantity: 1
   - item_template: fungible_shockwave_bottle
     quantity: 3
   - item_template: fungible_frag_grenade_bottle
