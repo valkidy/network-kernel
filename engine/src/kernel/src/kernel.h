@@ -406,6 +406,13 @@ public:
         std::uint32_t command_source,
         NetId net_id,
         NetId shelter_net_id);
+    bool server_enqueue_entity_charge(
+        std::uint32_t command_source,
+        NetId net_id,
+        const KernelVec3& direction,
+        float speed_meters_per_second,
+        std::uint32_t duration_ticks,
+        std::uint8_t weapon_id);
     bool server_enqueue_entity_leap(
         std::uint32_t command_source,
         NetId net_id,

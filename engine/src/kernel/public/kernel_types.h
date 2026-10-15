@@ -613,6 +613,11 @@ typedef enum KernelFootholdQueryType {
  * tick, under the authority's control until it lands. Never set together
  * with KNOCKED_BACK -- a knockback ends the leap. */
 #define KERNEL_VISUAL_FLAG_LEAPING UINT32_C(0x00001000)
+/* A charge the actor's own AI started: a run in a straight line at a fixed
+ * speed, under the authority's control, that hits whoever it runs into. Ends
+ * on the first hit, on a wall (the charger staggers), on a stagger, or on its
+ * tick count. */
+#define KERNEL_VISUAL_FLAG_CHARGING UINT32_C(0x00002000)
 
 #define KERNEL_MAX_VISIBLE_HOSTILES 16u
 #define KERNEL_MAX_VISIBLE_ALLIES 16u

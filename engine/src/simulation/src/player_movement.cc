@@ -376,6 +376,60 @@ FreeFallStep step_free_fall(
     return step;
 }
 
+enum class ChargeStop : std::uint8_t {
+    kNone,
+    // Stopped short with the static world ahead: the charger staggers.
+    kWorld,
+    // Stopped short by another actor's body, or by nothing found: it stops.
+    kOther,
+};
+
+// A charge step that covered under half its distance ran into something. The
+// first non-floor contact along the run says what: the static world, or an
+// actor's body. Floors are skipped, since a grounded capsule cast sideways
+// touches the ground it stands on.
+ChargeStop classify_charge_block(
+    physics::PhysicsWorld& physics_world,
+    const ColliderInstance& collider,
+    const glm::vec3& position,
+    const glm::quat& rotation,
+    const glm::vec3& charge_velocity,
+    float max_slope_degrees,
+    std::uint32_t collision_mask,
+    float fixed_delta_seconds) {
+    const float speed = glm::length(charge_velocity);
+    if (!(speed > 0.0f)) {
+        return ChargeStop::kOther;
+    }
+    physics::ShapeCastRequest request{};
+    request.shape = movement_shape(collider);
+    request.start = position;
+    request.rotation = rotation;
+    request.displacement = (charge_velocity / speed) *
+        std::max(0.1f, speed * fixed_delta_seconds);
+    request.filter = movement_filter(
+        collider.entity_net_id, collider.collider_id, collision_mask);
+    const float walkable_normal_y = std::cos(glm::radians(max_slope_degrees));
+    const physics::CollisionHit* first = nullptr;
+    const std::vector<physics::CollisionHit> hits =
+        physics_world.shape_cast_all(request);
+    for (const physics::CollisionHit& hit : hits) {
+        if (hit.normal.y >= walkable_normal_y) {
+            continue;
+        }
+        if (first == nullptr || hit.fraction < first->fraction) {
+            first = &hit;
+        }
+    }
+    if (first == nullptr) {
+        return ChargeStop::kOther;
+    }
+    return first->identity.kind == physics::CollisionObjectKind::kTerrain ||
+            first->identity.kind == physics::CollisionObjectKind::kStaticObstacle
+        ? ChargeStop::kWorld
+        : ChargeStop::kOther;
+}
+
 struct BufferedMovementResult {
     entt::entity entity = entt::null;
     NetId net_id = 0;
@@ -384,6 +438,8 @@ struct BufferedMovementResult {
     glm::vec3 velocity{0.0f};
     MovementState movement{};
     bool physics_finalized = false;
+    // What stopped a charge this step, if anything did.
+    ChargeStop charge_stop = ChargeStop::kNone;
 };
 
 }  // namespace
@@ -590,6 +646,10 @@ void simulate_actor_movement(
             world.registry().try_get<LeapLockout>(entity);
         const bool leap_locked = leap_lockout != nullptr &&
             current_tick < leap_lockout->until_tick;
+        // A charge is held like a knockback, but on the ground and at one
+        // speed: the authority runs it, whatever the controller asks for.
+        const ChargeLockout* charge =
+            world.registry().try_get<ChargeLockout>(entity);
         const Health* health = world.registry().try_get<Health>(entity);
         const bool dead =
             health != nullptr && health->max_hp > 0u && health->hp == 0u;
@@ -617,6 +677,13 @@ void simulate_actor_movement(
             // Unconditional on input, because an AI agent that submits none
             // would otherwise coast on whatever its controller last wrote.
             desired_horizontal = glm::vec3{0.0f};
+            // And it stops a charge dead: a stagger is the counter to one.
+            if (charge != nullptr) {
+                world.registry().remove<ChargeLockout>(entity);
+                charge = nullptr;
+            }
+        } else if (charge != nullptr) {
+            desired_horizontal = charge->velocity;
         } else if (movement_input != nullptr) {
             desired_horizontal =
                 movement_solver::input_move_to_world(movement_input->input) *
@@ -641,6 +708,11 @@ void simulate_actor_movement(
         // are not held; they fall as the dead do.
         const ActiveStatusEffect* suspension =
             dead ? nullptr : active_suspension(world, entity);
+        // A suspension takes the actor out of its charge for good.
+        if (suspension != nullptr && charge != nullptr) {
+            world.registry().remove<ChargeLockout>(entity);
+            charge = nullptr;
+        }
         const glm::vec3 suspended = suspension == nullptr
             ? glm::vec3{0.0f}
             : movement_solver::suspended_velocity(
@@ -788,6 +860,25 @@ void simulate_actor_movement(
                                   physics::CharacterGroundState::kSteepGround
                             ? MovementState::GroundState::kSteepGround
                             : MovementState::GroundState::kAirborne;
+                if (charge != nullptr) {
+                    const glm::vec3 moved{
+                        state.position.x - transform.position.x,
+                        0.0f,
+                        state.position.z - transform.position.z};
+                    const float expected =
+                        glm::length(charge->velocity) * fixed_delta_seconds;
+                    if (glm::length(moved) < 0.5f * expected) {
+                        result.charge_stop = classify_charge_block(
+                            *physics_world,
+                            *collider,
+                            state.position,
+                            transform.rotation,
+                            charge->velocity,
+                            next_movement.max_slope_degrees,
+                            config.filter.collision_mask,
+                            fixed_delta_seconds);
+                    }
+                }
             }
             if (stats != nullptr) {
                 ++stats->character_move_count;
@@ -994,6 +1085,30 @@ void simulate_actor_movement(
             ((result.movement.landed_this_tick && current_tick > leap->armed_tick) ||
              current_tick >= leap->until_tick)) {
             world.registry().remove<LeapLockout>(result.entity);
+        }
+        // A charge ends where it was stopped, or on its last step. Run into
+        // the static world, the charger staggers itself, as if its meter had
+        // filled: inside its post-stagger immunity it only stops.
+        if (const ChargeLockout* charge =
+                world.registry().try_get<ChargeLockout>(result.entity);
+            charge != nullptr &&
+            (result.charge_stop != ChargeStop::kNone ||
+             current_tick >= charge->until_tick)) {
+            world.registry().remove<ChargeLockout>(result.entity);
+            if (result.charge_stop == ChargeStop::kWorld) {
+                if (const StaggerProfile* profile =
+                        world.registry().try_get<StaggerProfile>(result.entity);
+                    profile != nullptr) {
+                    (void)apply_stagger(
+                        world,
+                        result.net_id,
+                        0u,
+                        profile->threshold,
+                        0u,
+                        current_tick,
+                        events);
+                }
+            }
         }
         if (result.physics_finalized &&
             physics_finalized_actor_net_ids != nullptr) {

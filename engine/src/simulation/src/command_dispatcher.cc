@@ -124,6 +124,16 @@ CommandResult Dispatcher::dispatch(
                     command.start_entity_leap.destination,
                     command.start_entity_leap.airtime_ticks),
                 command.start_entity_leap.net_id};
+        case CommandId::kStartEntityCharge:
+            return CommandResult{
+                EntityStateSystem{}.start_charge(
+                    engine,
+                    command.start_entity_charge.net_id,
+                    command.start_entity_charge.direction,
+                    command.start_entity_charge.speed_meters_per_second,
+                    command.start_entity_charge.duration_ticks,
+                    command.start_entity_charge.weapon_id),
+                command.start_entity_charge.net_id};
         case CommandId::kUnknown:
             break;
     }

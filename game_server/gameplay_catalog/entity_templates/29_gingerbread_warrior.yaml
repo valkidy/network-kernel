@@ -36,12 +36,15 @@ movement:
 # damage plus knockback rather than damage alone.
 weapon_slots:
   - 11
+  # Not swung: the charge below strikes with it.
+  - 20
 active_weapon_slot: 0
 animations:
   idle: 0
   chasing: 1
 vision:
-  collider_template: sentry_grunt_vision_cone
+  # 20 m, not the grunts' 12: it has to see a target to charge it.
+  collider_template: gingerbread_warrior_vision_cone
 ai:
   controller: chaser
   profile: default
@@ -61,6 +64,23 @@ ai:
     # Matches grunt_slam_cone's range, which currently equals the claw's. If
     # you widen or shorten the slam's cone, this has to move with it.
     attack_range_meters: 2.2
+    # Stops, winds up, and runs at where the target stood, carrying
+    # charge_horns' contact. Stops on the first hit, staggers itself on a
+    # wall, and is stopped dead by a stagger. The band reaches nearly as far
+    # as it sees, so a target it locks onto at range is charged, not walked to.
+    charge:
+      min_distance_meters: 4.0
+      max_distance_meters: 18.0
+      # 0.6 s of standing still, facing the target: the tell.
+      windup_ticks: 18
+      speed_meters_per_second: 9.0
+      overshoot_meters: 2.0
+      cooldown_ticks: 150
+      weapon_id: 20
+      # animation_state while winding up, so the client can play the tell
+      # instead of idle. A raw number: the animations block above names only
+      # idle and chasing.
+      windup_animation: 2
   # Only read when this one is in a squad; a lone chaser has no slot.
   #
   # input_magnitude is a fraction of this template's own move speed, and the
@@ -73,6 +93,6 @@ ai:
     input_magnitude: 0.6
     # About the vision cone's own reach, so it gives up at roughly the distance
     # it would have lost sight anyway. resume sits well inside it, or it yo-yos
-    # on the boundary.
-    leash_meters: 18.0
+    # on the boundary. Follows gingerbread_warrior_vision_cone's 20 m.
+    leash_meters: 20.0
     leash_resume_meters: 6.0

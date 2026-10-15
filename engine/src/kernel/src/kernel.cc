@@ -6707,6 +6707,31 @@ bool KernelEngine::server_enqueue_entity_leap(
     return enqueue_simulation_command(command);
 }
 
+bool KernelEngine::server_enqueue_entity_charge(
+    std::uint32_t command_source,
+    NetId net_id,
+    const KernelVec3& direction,
+    float speed_meters_per_second,
+    std::uint32_t duration_ticks,
+    std::uint8_t weapon_id) {
+    if (!running_ || !is_server_mode(config_.mode) || net_id == 0u) {
+        return false;
+    }
+    simulation::CommandSource source{};
+    if (!to_simulation_command_source(command_source, &source)) {
+        return false;
+    }
+    simulation::Command command{};
+    command.id = simulation::CommandId::kStartEntityCharge;
+    command.source = source;
+    command.start_entity_charge.net_id = net_id;
+    command.start_entity_charge.direction = direction;
+    command.start_entity_charge.speed_meters_per_second = speed_meters_per_second;
+    command.start_entity_charge.duration_ticks = duration_ticks;
+    command.start_entity_charge.weapon_id = weapon_id;
+    return enqueue_simulation_command(command);
+}
+
 bool KernelEngine::server_enqueue_entity_state(
     std::uint32_t command_source,
     NetId net_id,
@@ -13882,6 +13907,12 @@ void KernelEngine::simulate_tick() {
             &action_graph_batches,
             &pending_lock_missiles_},
         &events_);
+    simulate_charge_contacts(
+        world_,
+        tick_loop_.current_tick(),
+        server_time_us,
+        &damage_pipeline_,
+        &action_graph_batches);
     const std::size_t first_projectile_simulation_event = events_.size();
     simulate_projectiles(
         world_,

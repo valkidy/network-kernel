@@ -1231,6 +1231,26 @@ bool Kernel_ServerEnqueueEntityLeap(
     });
 }
 
+bool Kernel_ServerEnqueueEntityCharge(
+    KernelHandle* kernel,
+    uint32_t command_source,
+    uint32_t net_id,
+    const KernelVec3* direction,
+    float speed_meters_per_second,
+    uint32_t duration_ticks,
+    uint8_t weapon_id) {
+    return abi_call("Kernel_ServerEnqueueEntityCharge", false, [&]() {
+        return kernel != nullptr && direction != nullptr &&
+               kernel->engine->server_enqueue_entity_charge(
+                   command_source,
+                   net_id,
+                   *direction,
+                   speed_meters_per_second,
+                   duration_ticks,
+                   weapon_id);
+    });
+}
+
 bool Kernel_ServerEnqueueEntityShelter(
     KernelHandle* kernel,
     uint32_t command_source,

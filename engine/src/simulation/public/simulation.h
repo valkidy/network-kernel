@@ -652,6 +652,17 @@ void simulate_weapons(
     const std::vector<QueuedInput>& inputs,
     std::uint32_t current_tick,
     std::vector<KernelEvent>* events);
+
+// Every charging actor's melee contact (ChargeLockout), once per tick, after
+// movement: the weapon's cone from where it now stands, facing the way it
+// runs, striking each actor once per charge. A charge that strikes anyone
+// ends here. See Kernel_ServerEnqueueEntityCharge.
+void simulate_charge_contacts(
+    World& world,
+    std::uint32_t current_tick,
+    std::uint64_t hit_time_us,
+    DamagePipeline* damage_pipeline,
+    std::vector<ActionGraphCommandBatch>* action_graph_batches);
 void simulate_weapons(
     World& world,
     const std::vector<QueuedInput>& inputs,

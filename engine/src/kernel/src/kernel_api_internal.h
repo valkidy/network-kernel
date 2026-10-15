@@ -209,6 +209,44 @@ bool Kernel_ServerEnqueueEntityLeap(
     uint32_t airtime_ticks);
 
 /*
+ * Starts an agent on a charge on the next simulation tick: a run along
+ * `direction` (flattened to the ground plane) at speed_meters_per_second, for
+ * at most duration_ticks movement steps, the arming tick's own step first.
+ * Every tick of it, after movement, the loadout weapon `weapon_id` -- a melee
+ * weapon -- tests its cone from where the charger now stands, facing the way
+ * it runs, and strikes each actor in it once per charge: the shot template's
+ * damage and stagger, and its impact graph (a knockback) on top.
+ *
+ * Until it ends the authority steers it, not its controller: movement input
+ * and velocity writes do not change the run. It ends
+ *   - after the step of the tick it struck someone: a charge stops on a hit;
+ *   - when the static world stops it (it covers under half of a step's
+ *     distance with no actor in the way): the charger is staggered, on its
+ *     own template's stagger profile, as if its meter had filled;
+ *   - when another actor's body stops it without a hit: it just stops;
+ *   - when it is staggered: it stops dead, as a stagger roots anyone;
+ *   - after duration_ticks steps;
+ * and, like a leap, on anything that moves the actor itself: an impulse, a
+ * pull, a suspension, a teleport, death or revive. Clients see it only in
+ * snapshots, with KERNEL_VISUAL_FLAG_CHARGING while it lasts.
+ *
+ * Refused, and nothing changes, unless the actor is a live agent (not a player)
+ * on the ground under a character controller, in no building, no knockback, no
+ * stagger, no suspension, no leap and no charge already; `direction` has a
+ * horizontal part; speed is finite and above zero; duration_ticks is 1 ..
+ * KERNEL_MAX_IMPULSE_LOCKOUT_TICKS; and weapon_id is a melee weapon in its
+ * loadout.
+ */
+bool Kernel_ServerEnqueueEntityCharge(
+    KernelHandle* kernel,
+    uint32_t command_source,
+    uint32_t net_id,
+    const KernelVec3* direction,
+    float speed_meters_per_second,
+    uint32_t duration_ticks,
+    uint8_t weapon_id);
+
+/*
  * Internal/experimental game_server migration bridge. Enqueues authoritative
  * entity input for the next simulation tick.
  */

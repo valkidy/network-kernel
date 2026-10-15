@@ -654,7 +654,13 @@ void apply_melee_damage(
     std::uint64_t hit_time_us,
     std::uint32_t action_instance_id,
     DamagePipeline* damage_pipeline,
-    std::vector<ActionGraphCommandBatch>* action_graph_batches) {
+    std::vector<ActionGraphCommandBatch>* action_graph_batches,
+    // A charge's contact runs every tick of the charge: it skips whoever it
+    // has already struck, adds whoever it strikes now, and numbers its hits
+    // from a base of its own so they never share a key with a swing of the
+    // same actor on the same tick. A swing passes neither.
+    std::vector<NetId>* already_struck = nullptr,
+    std::uint32_t first_sequence = 0u) {
     if (definition.melee_range <= 0.0f || damage_pipeline == nullptr) {
         return;
     }
@@ -735,10 +741,17 @@ void apply_melee_damage(
     };
 
     std::vector<NetId> damaged;
-    std::uint32_t sequence_id = 0;
+    std::uint32_t sequence_id = first_sequence;
     for (const physics::CollisionHit& hit : hits) {
         if (damaged.size() >= max_targets) {
             break;
+        }
+        if (already_struck != nullptr &&
+            std::find(
+                already_struck->begin(),
+                already_struck->end(),
+                hit.identity.entity_net_id) != already_struck->end()) {
+            continue;
         }
         if (!is_actor_hit(hit.identity.kind)) {
             continue;
@@ -833,6 +846,11 @@ void apply_melee_damage(
         if (landed) {
             damaged.push_back(target_net_id);
         }
+    }
+
+    if (already_struck != nullptr) {
+        already_struck->insert(
+            already_struck->end(), damaged.begin(), damaged.end());
     }
 
     if (!queued_triggers.empty()) {
@@ -1584,6 +1602,53 @@ void simulate_weapons(
     std::uint32_t current_tick,
     std::vector<KernelEvent>* events) {
     simulate_weapons(world, inputs, current_tick, events, nullptr);
+}
+
+void simulate_charge_contacts(
+    World& world,
+    std::uint32_t current_tick,
+    std::uint64_t hit_time_us,
+    DamagePipeline* damage_pipeline,
+    std::vector<ActionGraphCommandBatch>* action_graph_batches) {
+    // Clear of any swing's numbering (a swing's hits count up from zero, and
+    // max_hit_count is small).
+    constexpr std::uint32_t kChargeContactSequenceBase = 0x8000u;
+    std::vector<entt::entity> stopped;
+    const auto view = world.registry()
+        .view<ChargeLockout, NetworkIdentity, Transform>();
+    for (const entt::entity entity : view) {
+        ChargeLockout& charge = view.get<ChargeLockout>(entity);
+        const WeaponMechanicsDefinition* definition =
+            weapon_definition_for_entity(world, entity, charge.weapon_id);
+        if (definition == nullptr || definition->mode != WeaponFireMode::kMelee) {
+            stopped.push_back(entity);
+            continue;
+        }
+        const NetworkIdentity& identity = view.get<NetworkIdentity>(entity);
+        const std::size_t struck_before = charge.struck.size();
+        apply_melee_damage(
+            world,
+            *definition,
+            current_tick,
+            identity.net_id,
+            identity.owner_peer,
+            projectile_launch_position(view.get<Transform>(entity)),
+            charge.velocity,
+            hit_time_us,
+            charge.instance_id,
+            damage_pipeline,
+            action_graph_batches,
+            &charge.struck,
+            kChargeContactSequenceBase);
+        // A charge stops on its first hit. Its velocity is left for the next
+        // movement step to replace: by then no lockout holds it.
+        if (charge.struck.size() > struck_before) {
+            stopped.push_back(entity);
+        }
+    }
+    for (const entt::entity entity : stopped) {
+        world.registry().remove<ChargeLockout>(entity);
+    }
 }
 
 void simulate_hitscan_weapons(

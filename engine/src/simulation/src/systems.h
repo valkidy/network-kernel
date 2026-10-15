@@ -146,6 +146,15 @@ public:
         NetId net_id,
         const KernelVec3& destination,
         std::uint32_t airtime_ticks) const;
+    // Starts an agent on a charge. See Kernel_ServerEnqueueEntityCharge for
+    // every rule. False, and nothing touched, when the charge is refused.
+    bool start_charge(
+        KernelEngine& engine,
+        NetId net_id,
+        const KernelVec3& direction,
+        float speed_meters_per_second,
+        std::uint32_t duration_ticks,
+        std::uint8_t weapon_id) const;
 };
 
 class MovementSystem {
