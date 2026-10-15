@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- adds leap and charge visual flags and updates AI attacks and portal spacing
+
+
+0.7.0 release notes:
+
 - aligns Unity bindings with ABI 106 for the action graph refactor, projectile stagger, bone hit bounds and firing-event weapon provenance
 
 

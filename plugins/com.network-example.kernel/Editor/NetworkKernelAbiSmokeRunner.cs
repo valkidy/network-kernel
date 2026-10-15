@@ -253,6 +253,8 @@ namespace NetworkExample.Kernel.Editor
             Require(
                 KernelColliderPurpose.Bounds == (KernelColliderPurpose)(1U << 6) &&
                 KernelConstants.VisualFlagKnockedBack == 0x00000800U &&
+                KernelConstants.VisualFlagLeaping == 0x00001000U &&
+                KernelConstants.VisualFlagCharging == 0x00002000U &&
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelProjectileMechanicsDefinition>("stagger_authored") ==
                     (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelProjectileMechanicsDefinition>("launch") +
                     (int)KernelProjectileLaunchDefinition.StructSize &&

@@ -220,6 +220,9 @@ namespace NetworkExample.Kernel
         // bubble. Draw the bubble from this.
         public const uint VisualFlagSuspended = 0x00000400U;
         public const uint VisualFlagKnockedBack = 0x00000800U;
+        // Authority-controlled AI leap and charge; additive within ABI 106.
+        public const uint VisualFlagLeaping = 0x00001000U;
+        public const uint VisualFlagCharging = 0x00002000U;
         public const uint MaxVisibleHostiles = 16;
         public const uint MaxVisibleAllies = 16;
         public const uint MaxVisibleNeutrals = 16;
