@@ -150,6 +150,7 @@ int main() {
     struct Sample {
         KernelVec3 position;
         std::uint32_t flags;
+        std::uint16_t animation_state;
         std::uint16_t player_hp;
         std::uint32_t player_flags;
         KernelVec3 player_position;
@@ -173,7 +174,8 @@ int main() {
             require(Kernel_ServerSetEntityTransform(kernel, player, &player_at, &identity));
         }
         samples.push_back(Sample{
-            state.position, state.visual_flags, target.hp, target.visual_flags,
+            state.position, state.visual_flags, state.animation_state, target.hp,
+            target.visual_flags,
             target.position});
     }
     Kernel_Destroy(kernel);
@@ -200,6 +202,17 @@ int main() {
     std::printf("stood still %zu ticks before the run (wind-up %u)\n",
                 still, charge.windup_ticks);
     require(still + 1u >= charge.windup_ticks);
+    // Shown as the wind-up animation the template names, so the client can
+    // play the tell: every tick of the wind-up but the first, which the state
+    // read here shows a tick late.
+    require(charge.has_windup_animation);
+    for (std::size_t i = run - charge.windup_ticks + 1u; i < run; ++i) {
+        require(samples[i].animation_state == charge.windup_animation);
+    }
+    // And not before it, nor during the run.
+    require(samples[run - still - 1u].animation_state != charge.windup_animation);
+    require(samples[run].animation_state != charge.windup_animation);
+    std::printf("wind-up shown as animation_state %u\n", charge.windup_animation);
 
     // At the authored speed, along the line to the player.
     const float first_step = horizontal(samples[run].position, samples[run - 1u].position);

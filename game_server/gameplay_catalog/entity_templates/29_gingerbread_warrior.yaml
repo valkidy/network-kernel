@@ -77,6 +77,10 @@ ai:
       overshoot_meters: 2.0
       cooldown_ticks: 150
       weapon_id: 20
+      # animation_state while winding up, so the client can play the tell
+      # instead of idle. A raw number: the animations block above names only
+      # idle and chasing.
+      windup_animation: 2
   # Only read when this one is in a squad; a lone chaser has no slot.
   #
   # input_magnitude is a fraction of this template's own move speed, and the
