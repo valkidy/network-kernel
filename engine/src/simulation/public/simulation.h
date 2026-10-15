@@ -469,6 +469,17 @@ std::optional<glm::vec3> find_clear_spawn_spot(
     const glm::vec3& direction,
     NetId spawner);
 
+// Where a portal's exit stands (ABI 103): at `destination` if its footprint --
+// its trigger-purpose box, which is no body -- is clear of every other trigger
+// volume and of terrain and static obstacles, otherwise the nearest clear slot
+// in a row across `forward`. nullopt when it has no footprint or nothing in
+// reach is clear: the caller keeps the destination.
+std::optional<glm::vec3> find_clear_exit_spot(
+    World& world,
+    NetId net_id,
+    const glm::vec3& destination,
+    const glm::vec3& forward);
+
 std::optional<glm::vec3> find_clear_standing_spot(
     World& world,
     NetId net_id,

@@ -1,0 +1,11 @@
+# Where a portal's exit stands, and the room an arrival needs: a trigger-only
+# box, so it is no body -- nothing is stopped by it -- yet placement sees it.
+# A second portal of the same template sets its exit beside this one rather
+# than on it, and sends its arrivals there.
+id: 50
+name: portal_exit_footprint
+shape: oriented_box
+center: {x: 0.0, y: 1.0, z: 0.0}
+half_extents: {x: 1.0, y: 1.0, z: 1.0}
+purpose: trigger
+layer: neutral

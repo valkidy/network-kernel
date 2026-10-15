@@ -2264,9 +2264,15 @@ bool EntityLifecycleSystem::create_entity(
         net_id,
         create_info.owner_peer,
         static_cast<std::uint32_t>(type));
+    if (entity_template != nullptr &&
+        entity_template->prop.population_group_id != 0u) {
+        enforce_prop_population_limit(
+            engine, entity_template->prop.population_group_id, net_id);
+    }
     // A portal comes with its exit, standing at the destination from the
     // portal's first tick (ABI 103). The exit is the portal's: nothing but
-    // the portal going takes it away.
+    // the portal going takes it away. After the population limit, so a portal
+    // that evicts the oldest does not set its exit aside for one about to go.
     if (entity_template != nullptr && type == EntityType::kProp &&
         entity_template->portal.struct_size != 0u) {
         const KernelPortalDefinition& portal = entity_template->portal;
@@ -2287,6 +2293,18 @@ bool EntityLifecycleSystem::create_entity(
             NetId exit_net_id = 0;
             if (create_entity(engine, exit_info, &exit_net_id, false)) {
                 link.exit_net_id = exit_net_id;
+                // Two portals of one template share a destination; their
+                // exits stand side by side, and each sends its arrivals to
+                // its own.
+                if (const std::optional<glm::vec3> clear = find_clear_exit_spot(
+                        engine.world_, exit_net_id, link.destination, link.forward)) {
+                    if (*clear != link.destination) {
+                        (void)EntityStateSystem{}.set_transform(
+                            engine, exit_net_id, to_kernel_vec3(*clear),
+                            exit_info.rotation);
+                    }
+                    link.destination = *clear;
+                }
             }
         }
         if (const std::optional<entt::entity> portal_entity =
@@ -2294,11 +2312,6 @@ bool EntityLifecycleSystem::create_entity(
             engine.world_.registry().emplace_or_replace<PortalLink>(
                 *portal_entity, link);
         }
-    }
-    if (entity_template != nullptr &&
-        entity_template->prop.population_group_id != 0u) {
-        enforce_prop_population_limit(
-            engine, entity_template->prop.population_group_id, net_id);
     }
     if (publish_snapshot) {
         engine.publish_snapshot();
@@ -2768,6 +2781,11 @@ void OverlapTriggerSystem::update(
     for (const entt::entity entity : view) {
         const NetworkIdentity& identity = view.get<NetworkIdentity>(entity);
         OverlapTriggerVolume& volume = view.get<OverlapTriggerVolume>(entity);
+        // A footprint only (a portal exit's): nothing to run, nothing to ask.
+        if (!volume.on_enter.has_value() && !volume.on_overlap.has_value() &&
+            !volume.on_exit.has_value()) {
+            continue;
+        }
         std::vector<NetId> now;
         for (const std::uint32_t index :
              world.collider_registry().entity_collider_indices(identity.net_id)) {
