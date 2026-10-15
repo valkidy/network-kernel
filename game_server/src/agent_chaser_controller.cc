@@ -82,6 +82,86 @@ KernelVec2 patrol_move(
     return KernelVec2{velocity_x / scale, velocity_z / scale};
 }
 
+// Mirrors leap_airtime_ticks in simulation/public/simulation.h, which
+// game_server does not link: the airtime of a leap that peaks apex_meters over
+// the higher of its two ends, stretched to keep under the horizontal speed
+// cap. The kernel takes the result as given, so the two only have to agree to
+// keep tuning meaningful.
+std::uint32_t leap_airtime_ticks(
+    const AgentLeapTuning& leap,
+    float horizontal_distance,
+    float height_difference,
+    float gravity_y,
+    float fixed_delta_seconds) {
+    float seconds = 0.0f;
+    if (leap.apex_meters > 0.0f && gravity_y < 0.0f) {
+        const float rise =
+            leap.apex_meters + std::max(0.0f, height_difference);
+        const float fall =
+            leap.apex_meters + std::max(0.0f, -height_difference);
+        seconds = std::sqrt(2.0f * rise / -gravity_y) +
+            std::sqrt(2.0f * fall / -gravity_y);
+    }
+    if (leap.max_horizontal_speed_meters_per_second > 0.0f) {
+        seconds = std::max(
+            seconds,
+            horizontal_distance / leap.max_horizontal_speed_meters_per_second);
+    }
+    const float ticks = std::ceil(seconds / fixed_delta_seconds);
+    // The kernel refuses a one-step leap.
+    return ticks < 2.0f ? 2u : static_cast<std::uint32_t>(ticks);
+}
+
+// Starts a leap at the target if it is in the band and the agent is free to.
+// The landing spot is fixed here, at lift-off: a target that moves after the
+// agent commits is where the leap misses. Returns whether one was enqueued;
+// the kernel may still refuse it, which the next tick's flags show.
+//
+// target_feet is the target's own position, not perception's target_position:
+// that is an aim point at the body's centre, and read as the ground it put a
+// level leap 0.9 m uphill and stretched its airtime to match.
+bool try_start_leap(
+    KernelHandle* kernel,
+    const AgentChaserConfig& config,
+    AgentRuntimeState* agent,
+    const KernelServerEntityState& self,
+    const KernelVec3& target_feet) {
+    const AgentLeapTuning& leap = config.chase.leap;
+    if (leap.max_distance_meters <= 0.0f || agent->leap_ticks_to_landing > 0u ||
+        agent->leap_cooldown_ticks > 0u ||
+        (self.visual_flags & KERNEL_VISUAL_FLAG_GROUNDED) == 0u ||
+        (self.visual_flags & KERNEL_VISUAL_FLAG_KNOCKED_BACK) != 0u) {
+        return false;
+    }
+    const float dx = target_feet.x - agent->position.x;
+    const float dz = target_feet.z - agent->position.z;
+    const float distance = std::hypot(dx, dz);
+    if (distance < leap.min_distance_meters ||
+        distance > leap.max_distance_meters || distance <= 0.0001f) {
+        return false;
+    }
+    const float travel = distance - leap.landing_distance_meters;
+    const KernelVec3 destination{
+        agent->position.x + dx * (travel / distance),
+        target_feet.y,
+        agent->position.z + dz * (travel / distance)};
+    // The target's feet stand in for the ground under the landing spot,
+    // which only the kernel probes.
+    const std::uint32_t airtime = leap_airtime_ticks(
+        leap,
+        travel,
+        target_feet.y - agent->position.y,
+        config.gravity_y,
+        Kernel_GetFixedDeltaSeconds(kernel));
+    if (!Kernel_ServerEnqueueEntityLeap(
+            kernel, KernelCommandSource_AI, agent->net_id, &destination, airtime)) {
+        return false;
+    }
+    agent->leap_ticks_to_landing = airtime;
+    agent->leap_cooldown_ticks = airtime + leap.cooldown_ticks;
+    return true;
+}
+
 // Hysteresis around the stop distance. Without the separate resume threshold an
 // agent parked exactly on the boundary would start and stop every tick.
 KernelVec2 chase_move(
@@ -143,6 +223,19 @@ void AgentChaserController::tick(
         agent.velocity = agent_steering::zero_vec3();
         agent.animation_state = sentry_config.animation_idle;
         agent.sentry.self_id = agent.net_id;
+        // A leap counts down to its landing. The kernel arms it on the tick
+        // after it is asked, so from then on the flag says it is in the air;
+        // without the flag it was refused or something ended it, and there is
+        // no landing left to time a swing against.
+        if (agent.leap_ticks_to_landing > 0u) {
+            --agent.leap_ticks_to_landing;
+            if ((entity_state.visual_flags & KERNEL_VISUAL_FLAG_LEAPING) == 0u) {
+                agent.leap_ticks_to_landing = 0u;
+            }
+        }
+        if (agent.leap_cooldown_ticks > 0u) {
+            --agent.leap_cooldown_ticks;
+        }
 
         KernelQuat desired_rotation = entity_state.rotation;
         bool should_update_rotation = false;
@@ -285,15 +378,28 @@ void AgentChaserController::tick(
                     should_update_rotation;
                 move = chase_move(
                     config_.chase, &agent, perception.target_position);
+                if (const KernelServerEntityState* target_state =
+                        frame.actor_state(agent.sentry.target);
+                    target_state != nullptr) {
+                    (void)try_start_leap(
+                        kernel, config_, &agent, entity_state,
+                        target_state->position);
+                }
                 // Seeing a target is not the same as being able to hit one.
                 // Not attacking leaves submitted_input false, so the tail of
                 // the loop still sends exactly one input carrying `move` --
                 // the agent keeps closing, it just does not swing yet.
+                //
+                // In a leap, range is the landing's business: it comes down
+                // inside it, so the swing goes by how soon that is instead.
                 const bool target_within_attack_range =
-                    config_.chase.attack_range_meters <= 0.0f ||
-                    agent_steering::horizontal_distance(
-                        agent.position, perception.target_position) <=
-                        config_.chase.attack_range_meters;
+                    agent.leap_ticks_to_landing > 0u
+                    ? agent.leap_ticks_to_landing <=
+                        config_.chase.leap.attack_lead_ticks
+                    : config_.chase.attack_range_meters <= 0.0f ||
+                        agent_steering::horizontal_distance(
+                            agent.position, perception.target_position) <=
+                            config_.chase.attack_range_meters;
                 if (agent.sentry.ballistic_retry_ticks > 0) {
                     --agent.sentry.ballistic_retry_ticks;
                 } else if (target_within_attack_range) {

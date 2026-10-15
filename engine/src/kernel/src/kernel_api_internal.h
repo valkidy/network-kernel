@@ -177,6 +177,38 @@ bool Kernel_ServerEnqueueEntityShelter(
     uint32_t shelter_net_id);
 
 /*
+ * Launches an agent on a leap on the next simulation tick: a flight solved by
+ * leap_launch_velocity to put it down on `destination` on its airtime_ticks-th
+ * movement step. The arming tick's own step is the first, so an agent armed on
+ * tick T lands on tick T + airtime_ticks - 1. Its destination height is the
+ * ground found under `destination`, not destination.y, which only says where
+ * to look -- within 4 m above and below it, terrain and static obstacles
+ * only, so whoever stands there now is not taken for the floor.
+ *
+ * Until it lands the authority steers it, not its controller: movement input
+ * and velocity writes do not change the flight. Landing hands it straight
+ * back -- no knockdown recovery -- and nothing is refused meanwhile: it takes
+ * damage, dies, and may start or carry on an action in the air. Anything that
+ * moves the actor itself ends the leap where it stands: an impulse, a pull, a
+ * suspension, a teleport, death or revive. Remote clients replay it from an
+ * ActorImpulseRecord flagged as a leap, and see KERNEL_VISUAL_FLAG_LEAPING
+ * while it lasts.
+ *
+ * Refused, and nothing changes, unless the actor is a live agent (not a player)
+ * on the ground under a character controller with gravity, in no building, no
+ * knockback, no suspension and no leap already; airtime_ticks is 2 ..
+ * KERNEL_MAX_IMPULSE_LOCKOUT_TICKS; there is ground under the destination; and
+ * the flight rises on its first step -- a drop off a ledge given too little
+ * airtime would be caught by the ground it stands on.
+ */
+bool Kernel_ServerEnqueueEntityLeap(
+    KernelHandle* kernel,
+    uint32_t command_source,
+    uint32_t net_id,
+    const KernelVec3* destination,
+    uint32_t airtime_ticks);
+
+/*
  * Internal/experimental game_server migration bridge. Enqueues authoritative
  * entity input for the next simulation tick.
  */

@@ -116,6 +116,14 @@ CommandResult Dispatcher::dispatch(
                     command.set_entity_shelter.net_id,
                     command.set_entity_shelter.shelter_net_id),
                 command.set_entity_shelter.net_id};
+        case CommandId::kStartEntityLeap:
+            return CommandResult{
+                EntityStateSystem{}.start_leap(
+                    engine,
+                    command.start_entity_leap.net_id,
+                    command.start_entity_leap.destination,
+                    command.start_entity_leap.airtime_ticks),
+                command.start_entity_leap.net_id};
         case CommandId::kUnknown:
             break;
     }

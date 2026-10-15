@@ -10,6 +10,30 @@
 
 namespace network_example::game_server {
 
+// A leap at the target before the swing: when the target is within reach of a
+// leap but not of the weapon, the agent jumps to land `landing_distance_meters`
+// short of it, on a flight the kernel solves to land there on a known tick.
+// Inert while max_distance_meters is zero, which is every chaser authored
+// before leaps existed.
+struct AgentLeapTuning {
+    // The band, measured between origins like attack_range_meters. Below
+    // min_distance_meters it just walks the rest.
+    float min_distance_meters = 0.0f;
+    float max_distance_meters = 0.0f;
+    // Where it lands, short of the target, measured the same way. Inside the
+    // attack range, or it lands and still has to walk.
+    float landing_distance_meters = 0.0f;
+    // How high a level leap peaks; this is what sets its airtime.
+    float apex_meters = 0.6f;
+    // A long leap is stretched to stay under this. Zero: no cap.
+    float max_horizontal_speed_meters_per_second = 0.0f;
+    // Ticks after one leap lands before the next may start.
+    std::uint32_t cooldown_ticks = 90;
+    // Start the swing this many ticks before the landing, so a wind-up of the
+    // same length puts the hit on touchdown. Zero swings once it is down.
+    std::uint32_t attack_lead_ticks = 0;
+};
+
 // Movement tuning layered on top of the sentry's perception and attack tuning.
 struct AgentChaseTuning {
     // Closer than this and the agent holds still instead of walking into the
@@ -31,6 +55,7 @@ struct AgentChaseTuning {
     // edge, so a value equal to the weapon's reach is deliberately on the
     // conservative side of it.
     float attack_range_meters = 0.0f;
+    AgentLeapTuning leap;
 };
 
 // What walking to a squad slot costs and what it tolerates. Inert unless the
@@ -61,6 +86,9 @@ struct AgentChaserConfig {
     AgentSentryConfig sentry;
     AgentChaseTuning chase;
     AgentPatrolTuning patrol;
+    // The template's movement gravity, which a leap's airtime is worked out
+    // against. Not authored here.
+    float gravity_y = -9.81f;
 };
 
 // A sentry that closes on what it sees. It pursues only while the target is

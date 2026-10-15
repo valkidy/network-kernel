@@ -609,6 +609,10 @@ typedef enum KernelFootholdQueryType {
 /* Impulse flight. Predicted locally when the client resolves its own impulse;
  * ordinary movement, suspension drops and knockdown recovery do not set it. */
 #define KERNEL_VISUAL_FLAG_KNOCKED_BACK UINT32_C(0x00000800)
+/* A leap the actor's own AI started: a flight to a solved landing spot and
+ * tick, under the authority's control until it lands. Never set together
+ * with KNOCKED_BACK -- a knockback ends the leap. */
+#define KERNEL_VISUAL_FLAG_LEAPING UINT32_C(0x00001000)
 
 #define KERNEL_MAX_VISIBLE_HOSTILES 16u
 #define KERNEL_MAX_VISIBLE_ALLIES 16u

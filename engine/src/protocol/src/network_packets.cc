@@ -2510,7 +2510,8 @@ bool finite_vec3(const glm::vec3& value) {
 bool valid_actor_impulse_record(const ActorImpulseRecord& record) {
     return record.net_id != 0u && record.lockout_ticks != 0u &&
         finite_vec3(record.position) && finite_vec3(record.velocity) &&
-        std::isfinite(record.gravity_y) && std::isfinite(record.floor_y);
+        std::isfinite(record.gravity_y) && std::isfinite(record.floor_y) &&
+        (record.flags & ~kActorImpulseFlagLeap) == 0u;
 }
 
 }  // namespace
@@ -2530,6 +2531,7 @@ std::vector<std::uint8_t> encode_actor_impulse_batch_packet(
         payload.write_float(record.gravity_y);
         payload.write_float(record.floor_y);
         payload.write_u16(record.lockout_ticks);
+        payload.write_u8(record.flags);
     }
     return protocol_internal::wrap_packet(
         MessageType::kActorImpulseBatch, payload.bytes(), sequence);
@@ -2563,6 +2565,7 @@ bool decode_actor_impulse_batch_packet(
             !reader.read_float(&record.gravity_y) ||
             !reader.read_float(&record.floor_y) ||
             !reader.read_u16(&record.lockout_ticks) ||
+            !reader.read_u8(&record.flags) ||
             !valid_actor_impulse_record(record)) {
             return false;
         }
