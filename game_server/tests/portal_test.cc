@@ -16,7 +16,13 @@
 //   - portals have their own group of two: a third evicts the oldest, and
 //     that one's exit goes with it;
 //   - thrown, the kit's portal faces the way it was thrown, its gate toward
-//     the thrower.
+//     the thrower;
+//   - every portal's exit has the entrance's net id plus one -- created
+//     straight after it -- however the portal came to be: created directly,
+//     beside another exit, thrown and moved by placement, or evicting the
+//     oldest. The Unity client pairs an entrance with its exit by this
+//     (NetworkPortalDirector.PairEntrance); positions no longer tell them
+//     apart once two exits stand side by side.
 
 #include <array>
 #include <cmath>
@@ -285,6 +291,19 @@ private:
 int main() {
     const GameServerGameplayConfig config = load_catalog();
     World world(config);
+    // The exit is the entity with the entrance's net id plus one: a prop with
+    // no health (max_hp 0), in the row of exits at the destination.
+    const auto require_exit_follows = [&world](std::uint32_t entrance_id,
+                                               const char* how) {
+        const std::uint32_t exit_id = entrance_id + 1u;
+        require(world.exists(exit_id));
+        const KernelServerEntityState exit_state = world.state(exit_id);
+        std::printf("%s: entrance %u, exit %u at (%.2f, %.2f)\n", how, entrance_id,
+                    exit_id, exit_state.position.x, exit_state.position.z);
+        require(exit_state.entity_type == KernelEntityType_Prop);
+        require(exit_state.max_hp == 0u);
+        require(horizontal_distance(exit_state.position, kDestination) < 21.0f);
+    };
 
     // An entrance brings its exit (max_hp 0: no health) to the destination.
     const std::uint32_t entrance = world.create("portal_entrance", KernelVec3{});
@@ -293,6 +312,8 @@ int main() {
         world.props_near(kDestination, 0.1f, 0u);
     require(exits.size() == 1u);
     const std::uint32_t exit = exits.front().net_id;
+    require_exit_follows(entrance, "created");
+    require(exit == entrance + 1u);
     std::printf("exit %u at (%.1f, %.1f, %.1f)\n", exit,
                 exits.front().position.x, exits.front().position.y,
                 exits.front().position.z);
@@ -313,6 +334,8 @@ int main() {
         }
     }
     require(waiting_exit != 0u);
+    require_exit_follows(waiting, "beside another exit");
+    require(waiting_exit == waiting + 1u);
     std::printf("second exit at (%.2f, %.2f, %.2f)\n", waiting_exit_at.x,
                 waiting_exit_at.y, waiting_exit_at.z);
     require(horizontal_distance(waiting_exit_at, kDestination) > 2.0f);
@@ -423,6 +446,7 @@ int main() {
         thrown = world.props_near(thrower_at, 60.0f, kEntranceMaxHp);
     }
     require(thrown.size() == 1u);
+    require_exit_follows(thrown.front().net_id, "thrown and placed");
     const KernelVec3 thrown_facing = forward_of(thrown.front().rotation);
     std::printf("thrown portal at (%.2f, %.2f, %.2f), facing (%.2f, %.2f)\n",
                 thrown.front().position.x, thrown.front().position.y,
@@ -436,6 +460,7 @@ int main() {
     const std::uint32_t third = world.create("portal_entrance", KernelVec3{-40.0f, 0.0f, 40.0f});
     world.step(1);
     require(world.exists(third));
+    require_exit_follows(third, "evicting the oldest");
     require(!world.exists(waiting));
     require(!world.exists(waiting_exit));
     for (const auto& [net_id, reason] : world.destroyed) {
