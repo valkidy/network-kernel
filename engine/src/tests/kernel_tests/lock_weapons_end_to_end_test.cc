@@ -77,7 +77,6 @@ ne::LoopbackTransport* attach_loopback(
 ne::RuntimeProjectileTemplate shot() {
     ne::RuntimeProjectileTemplate projectile{};
     projectile.projectile_template_id = kShotTemplateId;
-    projectile.weapon_id = kWeaponId;
     projectile.max_hit_count = kLockSize;
     projectile.lifetime_ticks = kLongestFlight;
     return projectile;

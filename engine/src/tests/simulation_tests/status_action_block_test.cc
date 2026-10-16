@@ -379,7 +379,6 @@ struct BeamFixture {
         }});
         RuntimeProjectileTemplate beam;
         beam.projectile_template_id = kBeamProjectileId;
-        beam.weapon_id = kWeaponId5;
         beam.projectile_type = ProjectileType::kBeam;
         beam.damage = 1;
         beam.lifetime_ticks = 30;

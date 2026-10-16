@@ -16,8 +16,32 @@ static void require_impl(int condition, const char* expression, int line) {
 #define require(condition) require_impl((condition) ? 1 : 0, #condition, __LINE__)
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 106u,
-    "lock-on weapons: catalog weapon definitions");
+    KERNEL_ABI_VERSION == 107u,
+    "lock_strike: an action graph's lock");
+_Static_assert(
+    KernelEntityTriggerActionType_LockStrike == 16 &&
+        KernelLockStrikeMode_Instant == 0 && KernelLockStrikeMode_Missile == 1,
+    "lock_strike: the action type is appended");
+_Static_assert(
+    offsetof(KernelActionDefinition, lock_collider_template_id) ==
+            offsetof(KernelActionDefinition, status_strength) + 4u &&
+        offsetof(KernelActionDefinition, lock_mode) ==
+            offsetof(KernelActionDefinition, lock_collider_template_id) + 4u &&
+        offsetof(KernelActionDefinition, lock_repeat_count) ==
+            offsetof(KernelActionDefinition, lock_mode) + 2u &&
+        offsetof(KernelActionDefinition, lock_repeat_interval_ticks) ==
+            offsetof(KernelActionDefinition, lock_repeat_count) + 2u &&
+        offsetof(KernelActionDefinition, lock_origin_lift) ==
+            offsetof(KernelActionDefinition, lock_repeat_interval_ticks) + 4u,
+    "the ABI 107 lock_strike fields are appended after status_strength");
+_Static_assert(
+    sizeof(KernelLockMissileView) == 36u &&
+        offsetof(KernelLockMissileView, flags) == 14u &&
+        offsetof(KernelLockMissileView, origin) == 24u &&
+        offsetof(KernelLockStrikeEvent, flags) == 14u &&
+        KERNEL_LOCK_STRIKE_FLAG_GRAPH == 1u &&
+        KERNEL_LOCK_MISSILE_FLAG_FROM_ORIGIN == 1u,
+    "ABI 107: lock records name a graph's strike, and a missile its origin");
 _Static_assert(
     KernelWeaponFireMode_LockInstant == 5 &&
         KernelWeaponFireMode_LockMissile == 6,
@@ -199,15 +223,17 @@ _Static_assert(
         offsetof(KernelSkeletonBindingDefinition, processing_order),
     "stance crouch is appended to the skeleton binding ABI");
 _Static_assert(
-    sizeof(KernelActionDefinition) == 84u + 16u + 16u + 8u + 4u + 4u + 16u,
+    sizeof(KernelActionDefinition) == 84u + 16u + 16u + 8u + 4u + 4u + 16u + 16u,
     "KernelActionDefinition ABI size: 84 bytes before ABI 94, plus the "
     "16-byte spawn lifetime and repeat block, plus ABI 95's 16-byte pull "
     "block, plus ABI 96's ui_id and spawn_placement, plus ABI 100's "
     "pull_strength, plus ABI 101's two reserve refill fields, plus ABI 102's "
-    "status direction flag, two suspend speeds and status strength");
+    "status direction flag, two suspend speeds and status strength, plus "
+    "ABI 107's 16-byte lock_strike block");
 _Static_assert(
     sizeof(KernelActionTriggerDefinition) ==
-        764u + 8u * 16u + 8u * 16u + 8u * 8u + 8u * 4u + 8u * 4u + 8u * 16u,
+        764u + 8u * 16u + 8u * 16u + 8u * 8u + 8u * 4u + 8u * 4u + 8u * 16u +
+            8u * 16u,
     "KernelActionTriggerDefinition ABI size: its eight actions each grew by "
     "the ABI 94 repeat block, the ABI 95 pull block, ABI 96's ui_id and "
     "spawn_placement, ABI 100's pull_strength, ABI 101's reserve refill and "

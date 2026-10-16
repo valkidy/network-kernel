@@ -1,6 +1,6 @@
 # Locks the nearest six enemies inside an 18 m, 50-degree cone and strikes
 # each at once, twice a second while held. A wall hides a target and the next
-# nearest takes its place. Not in any loadout.
+# nearest takes its place. Offered at the initial camp (item 3028).
 id: 18
 name: Chain Lightning
 # Weapon container slot 0-3 (wand, scepter, staff, tome / their gun twins).

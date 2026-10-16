@@ -964,6 +964,22 @@ struct ActionTeleportDefinition {
     ActionConditionType condition = ActionConditionType::kAlways;
 };
 
+// A lock taken from the event and struck at once or by missiles; see
+// KernelEntityTriggerActionType_LockStrike. The volume and the shot are
+// catalog ids, fixed when the binding is compiled; the position and the
+// direction are the event's. A sphere has no direction parameter.
+struct ActionLockStrikeDefinition {
+    std::string position_parameter;
+    std::string direction_parameter;
+    ActionConditionType condition = ActionConditionType::kAlways;
+    std::uint32_t collider_template_id = 0;
+    std::uint32_t projectile_template_id = 0;
+    std::uint8_t mode = 0;  // KernelLockStrikeMode
+    std::uint16_t repeat_count = 0;
+    std::uint32_t repeat_interval_ticks = 0;
+    float origin_lift = 0.0f;
+};
+
 // An item refilling its user's active weapon; see
 // KernelEntityTriggerActionType_RefillWeaponReserve. Exactly one of count and
 // percent is non-zero.
@@ -1049,7 +1065,8 @@ using ActionGraphAction = std::variant<
     ActionRefillWeaponReserveDefinition,
     ActionApplyBlockActionsDefinition,
     ActionApplySuspendMovementDefinition,
-    ActionApplyUntargetableDefinition>;
+    ActionApplyUntargetableDefinition,
+    ActionLockStrikeDefinition>;
 
 struct ActionGraphTemplate {
     std::string id;

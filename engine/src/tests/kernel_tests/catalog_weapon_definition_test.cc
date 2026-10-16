@@ -59,7 +59,6 @@ KernelProjectileTemplateDefinition shot() {
     KernelProjectileTemplateDefinition shot{};
     shot.struct_size = sizeof(shot);
     shot.projectile_template_id = kShotTemplate;
-    shot.weapon_id = kLockWeapon;
     shot.mechanics.struct_size = sizeof(KernelProjectileMechanicsDefinition);
     shot.mechanics.projectile_type = KernelProjectileType_Standard;
     shot.mechanics.motion_model = KernelProjectileMotionModel_Linear;

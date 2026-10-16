@@ -571,6 +571,49 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
             });
             continue;
         }
+        if (action.action_type == KernelEntityTriggerActionType_LockStrike) {
+            if (action.lock_collider_template_id == 0u ||
+                action.spawn_projectile_template_id == 0u ||
+                action.lock_mode > KernelLockStrikeMode_Missile) {
+                return std::nullopt;
+            }
+            const std::string position_name = "position" + suffix;
+            // A sphere needs no heading; a cone's is the event's.
+            const std::string direction_name =
+                action.direction_source == KernelEventVec3Source_Direction
+                ? "direction" + suffix
+                : "";
+            binding.graph.parameters.push_back({position_name, std::monostate{}});
+            if (!direction_name.empty()) {
+                binding.graph.parameters.push_back(
+                    {direction_name, std::monostate{}});
+            }
+            ActionLockStrikeDefinition strike{
+                position_name,
+                direction_name,
+                *condition,
+            };
+            strike.collider_template_id = action.lock_collider_template_id;
+            strike.projectile_template_id = action.spawn_projectile_template_id;
+            strike.mode = action.lock_mode;
+            strike.repeat_count = action.lock_repeat_count;
+            strike.repeat_interval_ticks = action.lock_repeat_interval_ticks;
+            strike.origin_lift = action.lock_origin_lift;
+            binding.graph.actions.push_back(std::move(strike));
+            binding.parameters.push_back({
+                position_name,
+                EventVec3Expression{event_vec3_source_from_kernel(
+                    action.position_source)},
+            });
+            if (!direction_name.empty()) {
+                binding.parameters.push_back({
+                    direction_name,
+                    EventVec3Expression{event_vec3_source_from_kernel(
+                        action.direction_source)},
+                });
+            }
+            continue;
+        }
         if (action.action_type == KernelEntityTriggerActionType_Teleport) {
             // Only a portal's volume knows who walked in.
             if ((event_type != TriggerEventType::kEnter &&
@@ -1043,6 +1086,18 @@ bool validate_action_graph_binding(
             }
             continue;
         }
+        if (const auto* strike = std::get_if<ActionLockStrikeDefinition>(&action)) {
+            if (!validate_action_parameter(
+                    binding, strike->position_parameter, ParameterType::kVec3,
+                    error) ||
+                (!strike->direction_parameter.empty() &&
+                 !validate_action_parameter(
+                     binding, strike->direction_parameter, ParameterType::kVec3,
+                     error))) {
+                return false;
+            }
+            continue;
+        }
         if (const auto* open_ui = std::get_if<ActionOpenUiDefinition>(&action)) {
             if (open_ui->ui_id == 0u) {
                 return fail(error, "open_ui requires a non-zero ui_id");
@@ -1387,6 +1442,35 @@ bool evaluate_action_graph(
                 return fail(error, "teleport target must not be null");
             }
             commands->push_back(ActionTeleportCommand{self, target, provenance});
+            continue;
+        }
+        if (const auto* strike = std::get_if<ActionLockStrikeDefinition>(&action)) {
+            const ActionGraphParameterValue* position_value =
+                find_resolved_parameter(parameters, strike->position_parameter);
+            const ActionGraphParameterValue* direction_value =
+                strike->direction_parameter.empty()
+                ? nullptr
+                : find_resolved_parameter(parameters, strike->direction_parameter);
+            if (position_value == nullptr ||
+                !std::holds_alternative<glm::vec3>(*position_value) ||
+                (!strike->direction_parameter.empty() &&
+                 (direction_value == nullptr ||
+                  !std::holds_alternative<glm::vec3>(*direction_value)))) {
+                return fail(error, "lock_strike action input type mismatch");
+            }
+            ActionLockStrikeCommand command;
+            command.collider_template_id = strike->collider_template_id;
+            command.projectile_template_id = strike->projectile_template_id;
+            command.mode = strike->mode;
+            command.repeat_count = strike->repeat_count;
+            command.repeat_interval_ticks = strike->repeat_interval_ticks;
+            command.origin_lift = strike->origin_lift;
+            command.position = std::get<glm::vec3>(*position_value);
+            if (direction_value != nullptr) {
+                command.direction = std::get<glm::vec3>(*direction_value);
+            }
+            command.provenance = provenance;
+            commands->push_back(command);
             continue;
         }
         if (const auto* open_ui = std::get_if<ActionOpenUiDefinition>(&action)) {

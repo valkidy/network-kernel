@@ -1,0 +1,30 @@
+# World half of fungible_magic_missile_bottle: breaks on whatever it hits and, from
+# where it broke, sends a certain missile at each of the nearest three hostile actors within 10 m -- five times, ten ticks apart, each time locking
+# afresh (lock_strike; docs/LOCK_STRIKE_ACTION_PLAN.md). The thrower and its
+# own are never locked, and a wall hides a target.
+#
+# The bottle is gone after the first strike (the self-damage keeps it from
+# striking again on every tick it rests); the other four come from where it
+# broke all the same.
+id: 229
+name: magic_missile_bottle
+entity_type: prop
+health:
+  hp: 1
+  max_hp: 1
+physics:
+  collider_template: collision_damage_prop_hitbox
+triggers:
+  on_collision:
+    collision_mask: terrain | static_obstacle | actor
+    action_graph: action_lock_strike_and_damage_self
+    parameters:
+      collider: magic_missile_bottle_sphere
+      template: magic_missile_bottle_bolt
+      mode: missile
+      position: event.position
+      direction: event.direction
+      repeat_count: 5
+      repeat_interval: 10
+      source: self
+      self_damage: 1

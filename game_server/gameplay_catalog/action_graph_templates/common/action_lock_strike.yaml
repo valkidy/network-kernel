@@ -1,0 +1,33 @@
+# A lock taken where the event happened and struck: up to the shot's
+# max_hit_count actors in `collider` -- a damage sphere around the event, or a
+# damage cone along its direction -- nearest first, any a static wall hides
+# skipped, the thrower's own never. `mode: instant` damages them all at once;
+# `mode: missile` sends each a certain missile that lands when it arrives, the
+# shot's lifetime_ticks being the flight across the whole reach.
+#
+# The lock is taken origin_lift metres above the event (stopping under a
+# ceiling), so a bottle broken on the ground still sees over a bump in it.
+# Entity triggers only. docs/LOCK_STRIKE_ACTION_PLAN.md.
+id: action_lock_strike
+parameters:
+  collider: null
+  template: null
+  position: null
+  direction: null
+  mode: instant
+  origin_lift: 1.0
+  # Taken repeat_count times, repeat_interval ticks apart, from the same
+  # spot, each locking afresh. 1 and 0: once.
+  repeat_count: 1
+  repeat_interval: 0
+actions:
+  - type: lock_strike
+    collider: params.collider
+    projectile_template: params.template
+    mode: params.mode
+    position: params.position
+    direction: params.direction
+    origin_lift: params.origin_lift
+    repeat:
+      interval_ticks: params.repeat_interval
+      count: params.repeat_count

@@ -28,6 +28,7 @@
 #include "simulation/public/action_graph.h"
 #include "simulation/public/collision_filter.h"
 #include "simulation/public/ground_follow.h"
+#include "simulation/public/lock_strike.h"
 #include "simulation/public/lock_target_selection.h"
 #include "simulation/public/movement_solver.h"
 #include "simulation/src/command_dispatcher.h"
@@ -2109,6 +2110,37 @@ bool validate_weapon_mechanics(const KernelWeaponMechanicsDefinition& definition
 // missing, is not a cone, or carries no damage purpose at configuration time
 // is what keeps the swing and the lock from having to decide what a malformed
 // cone means. Every other mode has nothing to resolve.
+// The volume a lock reaches, from a damage collider template: a cone's range
+// and fov, or a sphere's radius as the range of an omnidirectional lock.
+// Fills only range, fov_degrees and omnidirectional; where it starts, where it
+// aims and how many it locks are the caller's.
+bool resolve_lock_volume(
+    const std::vector<KernelColliderTemplateDefinition>& collider_templates,
+    std::uint32_t collider_template_id,
+    bool sphere_allowed,
+    lock_targets::Cone* out_volume) {
+    const KernelColliderTemplateDefinition* volume =
+        find_collider_template(collider_templates, collider_template_id);
+    if (volume == nullptr ||
+        (volume->purpose_flags & KernelColliderPurpose_Damage) == 0u) {
+        return false;
+    }
+    if (volume->shape_type == KernelColliderShapeType_Cone) {
+        out_volume->range = collider_template_cone_range(*volume);
+        out_volume->fov_degrees = collider_template_cone_fov_degrees(*volume);
+        out_volume->omnidirectional = false;
+        return out_volume->range > 0.0f && out_volume->fov_degrees > 0.0f;
+    }
+    if (sphere_allowed &&
+        volume->shape_type == KernelColliderShapeType_Sphere) {
+        out_volume->range = volume->shape_params.x;
+        out_volume->fov_degrees = 0.0f;
+        out_volume->omnidirectional = true;
+        return out_volume->range > 0.0f;
+    }
+    return false;
+}
+
 bool resolve_weapon_cone(
     const std::vector<KernelColliderTemplateDefinition>& collider_templates,
     WeaponMechanicsDefinition* mechanics) {
@@ -2117,17 +2149,107 @@ bool resolve_weapon_cone(
         mechanics->mode != WeaponFireMode::kLockMissile) {
         return true;
     }
-    const KernelColliderTemplateDefinition* cone = find_collider_template(
-        collider_templates,
-        mechanics->melee_collider_template_id);
-    if (cone == nullptr ||
-        cone->shape_type != KernelColliderShapeType_Cone ||
-        (cone->purpose_flags & KernelColliderPurpose_Damage) == 0u) {
+    // A weapon's reach is a cone: a melee swing and a lock-on weapon both
+    // aim. Only an action graph's lock_strike may lock a sphere.
+    lock_targets::Cone cone;
+    if (!resolve_lock_volume(
+            collider_templates,
+            mechanics->melee_collider_template_id,
+            false,
+            &cone)) {
         return false;
     }
-    mechanics->melee_range = collider_template_cone_range(*cone);
-    mechanics->melee_fov_degrees = collider_template_cone_fov_degrees(*cone);
-    return mechanics->melee_range > 0.0f && mechanics->melee_fov_degrees > 0.0f;
+    mechanics->melee_range = cone.range;
+    mechanics->melee_fov_degrees = cone.fov_degrees;
+    return true;
+}
+
+// Once (count 0 or 1, no interval), or up to KERNEL_MAX_LOCK_STRIKE_REPEAT
+// times a positive interval apart, the whole run inside
+// KERNEL_MAX_LOCK_STRIKE_SPAN_TICKS.
+bool lock_strike_repeat_is_authorable(
+    std::uint32_t count,
+    std::uint32_t interval_ticks) {
+    if (count <= 1u) {
+        return interval_ticks == 0u;
+    }
+    return count <= KERNEL_MAX_LOCK_STRIKE_REPEAT && interval_ticks >= 1u &&
+           interval_ticks * (count - 1u) <= KERNEL_MAX_LOCK_STRIKE_SPAN_TICKS;
+}
+
+// How many lock_strike repeats the whole server keeps waiting at once (D10).
+constexpr std::size_t kMaxPendingLockStrikes = 256u;
+
+// A lock_strike's own fields, before anything they name is known to exist.
+bool lock_strike_action_is_authorable(const KernelActionDefinition& action) {
+    return action.lock_collider_template_id != 0u &&
+           action.spawn_projectile_template_id != 0u &&
+           action.lock_mode <= KernelLockStrikeMode_Missile &&
+           action.position_source == KernelEventVec3Source_Position &&
+           (action.direction_source == KernelEventVec3Source_Position ||
+            action.direction_source == KernelEventVec3Source_Direction) &&
+           std::isfinite(action.lock_origin_lift) &&
+           action.lock_origin_lift >= 0.0f &&
+           action.lock_origin_lift <= KERNEL_MAX_LOCK_ORIGIN_LIFT &&
+           lock_strike_repeat_is_authorable(
+               action.lock_repeat_count, action.lock_repeat_interval_ticks);
+}
+
+// Every lock_strike an entity template's triggers hold names a volume a lock
+// can reach -- a cone, which then aims along the event's direction, or a
+// sphere -- and a shot that locks at most KERNEL_MAX_LOCK_ARCS, with a flight
+// a missile can report when it is one.
+bool lock_strikes_reach_their_templates(
+    const KernelEntityTemplateDefinition& entity_template,
+    const std::vector<KernelColliderTemplateDefinition>& collider_templates,
+    const std::vector<KernelProjectileTemplateDefinition>& projectile_templates) {
+    for (const KernelActionTriggerDefinition* trigger : {
+             &entity_template.activated_trigger,
+             &entity_template.collision_trigger,
+             &entity_template.health_depleted_trigger,
+             &entity_template.destroy_entity_trigger,
+             &entity_template.enter_trigger,
+             &entity_template.overlap_trigger,
+             &entity_template.exit_trigger,
+         }) {
+        if (trigger->struct_size == 0u) {
+            continue;
+        }
+        for (std::uint32_t index = 0;
+             index < trigger->action_count &&
+             index < KERNEL_MAX_ACTION_GRAPH_ACTIONS;
+             ++index) {
+            const KernelActionDefinition& action = trigger->actions[index];
+            if (action.action_type != KernelEntityTriggerActionType_LockStrike) {
+                continue;
+            }
+            lock_targets::Cone volume;
+            if (!resolve_lock_volume(
+                    collider_templates,
+                    action.lock_collider_template_id,
+                    true,
+                    &volume) ||
+                (!volume.omnidirectional &&
+                 action.direction_source != KernelEventVec3Source_Direction)) {
+                return false;
+            }
+            const auto shot = std::find_if(
+                projectile_templates.begin(),
+                projectile_templates.end(),
+                [&action](const KernelProjectileTemplateDefinition& candidate) {
+                    return candidate.projectile_template_id ==
+                           action.spawn_projectile_template_id;
+                });
+            if (shot == projectile_templates.end() ||
+                shot->mechanics.max_hit_count > KERNEL_MAX_LOCK_ARCS ||
+                (action.lock_mode == KernelLockStrikeMode_Missile &&
+                 (shot->mechanics.lifetime_ticks < 1u ||
+                  shot->mechanics.lifetime_ticks > UINT8_MAX))) {
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
 const WeaponMechanicsDefinition* entity_weapon_mechanics(
@@ -3649,6 +3771,15 @@ bool KernelEngine::load_gameplay_catalog(
                     }
                     continue;
                 }
+                // Its volume and shot are checked once the collider and
+                // projectile templates are in (lock_strike_reaches_its_templates).
+                if (action.action_type ==
+                    KernelEntityTriggerActionType_LockStrike) {
+                    if (!lock_strike_action_is_authorable(action)) {
+                        return false;
+                    }
+                    continue;
+                }
                 return false;
             }
         }
@@ -3867,6 +3998,15 @@ bool KernelEngine::load_gameplay_catalog(
                 validated_projectile_templates) ||
             !projectile_trigger_is_valid(
                 mechanics.expired_trigger,
+                validated_projectile_templates)) {
+            return false;
+        }
+    }
+    for (const KernelEntityTemplateDefinition& entity_template :
+         validated_entity_templates) {
+        if (!lock_strikes_reach_their_templates(
+                entity_template,
+                validated_collider_templates,
                 validated_projectile_templates)) {
             return false;
         }
@@ -7198,6 +7338,7 @@ std::uint32_t KernelEngine::poll_lock_strike_events(
         return 0u;
     }
     release_remote_action_presentation_events();
+    release_graph_lock_strikes();
     const std::uint32_t count = std::min(
         max_events,
         static_cast<std::uint32_t>(client_lock_strike_events_.size()));
@@ -7235,6 +7376,10 @@ std::uint32_t KernelEngine::get_lock_missiles(
         view.commit_index = missile.commit_index;
         view.launch_tick = missile.launch_tick;
         view.arrival_tick = missile.arrival_tick;
+        if (missile.from_origin) {
+            view.flags = KERNEL_LOCK_MISSILE_FLAG_FROM_ORIGIN;
+            view.origin = to_kernel_vec3(missile.origin);
+        }
         out_missiles[count++] = view;
     }
     return count;
@@ -7382,6 +7527,206 @@ void KernelEngine::push_event(
     events_.push_back(event);
 }
 
+namespace {
+
+bool finite_vec3(const glm::vec3& value) {
+    return std::isfinite(value.x) && std::isfinite(value.y) &&
+           std::isfinite(value.z);
+}
+
+// Where a lock_strike's lock is taken from: `lift` metres above `position`,
+// or just under whatever terrain or static obstacle is overhead before that.
+glm::vec3 lifted_lock_origin(
+    const physics::PhysicsWorld* collision_world,
+    const glm::vec3& position,
+    float lift) {
+    if (lift <= 0.0f) {
+        return position;
+    }
+    float reach = lift;
+    if (collision_world != nullptr) {
+        physics::RayCastRequest ray{};
+        ray.origin = position;
+        ray.direction = glm::vec3{0.0f, 1.0f, 0.0f};
+        ray.max_distance = lift;
+        ray.filter = collision_filter_from_mask(
+            KERNEL_COLLISION_LAYER_TERRAIN |
+            KERNEL_COLLISION_LAYER_STATIC_OBSTACLE);
+        physics::CollisionHit hit{};
+        if (collision_world->ray_cast_closest(ray, &hit) &&
+            hit.distance < lift) {
+            constexpr float kUnderCeiling = 0.1f;
+            reach = std::max(0.0f, hit.distance - kUnderCeiling);
+        }
+    }
+    return position + glm::vec3{0.0f, reach, 0.0f};
+}
+
+}  // namespace
+
+bool KernelEngine::lock_strike_is_runnable(
+    const ActionLockStrikeCommand& command) const {
+    lock_targets::Cone volume;
+    const RuntimeProjectileTemplate* shot =
+        world_.find_projectile_template(command.projectile_template_id);
+    if (shot == nullptr ||
+        !resolve_lock_volume(
+            collider_templates_, command.collider_template_id, true, &volume) ||
+        command.mode > KernelLockStrikeMode_Missile ||
+        !finite_vec3(command.position) ||
+        !std::isfinite(command.origin_lift) || command.origin_lift < 0.0f ||
+        command.origin_lift > KERNEL_MAX_LOCK_ORIGIN_LIFT ||
+        !lock_strike_repeat_is_authorable(
+            command.repeat_count, command.repeat_interval_ticks)) {
+        return false;
+    }
+    // A full queue refuses the whole batch, a bottle's self-damage with it,
+    // so the bottle stays and strikes when there is room again.
+    if (command.repeat_count > 1u &&
+        pending_lock_strikes_.size() >= kMaxPendingLockStrikes) {
+        spdlog::warn(
+            "lock_strike refused: {} repeated strikes already waiting",
+            pending_lock_strikes_.size());
+        return false;
+    }
+    if (!volume.omnidirectional &&
+        (!finite_vec3(command.direction) ||
+         glm::dot(command.direction, command.direction) <= 0.0f)) {
+        return false;
+    }
+    return command.mode != KernelLockStrikeMode_Missile ||
+           (shot->lifetime_ticks >= 1u && shot->lifetime_ticks <= UINT8_MAX);
+}
+
+void KernelEngine::execute_lock_strike(
+    World& world,
+    DamagePipeline* damage_pipeline,
+    const ActionLockStrikeCommand& command,
+    std::uint64_t server_time_us) {
+    strike_lock_once(world, damage_pipeline, command, 0u, server_time_us);
+    if (command.repeat_count > 1u) {
+        pending_lock_strikes_.push_back(PendingLockStrike{
+            command,
+            tick_loop_.current_tick() + command.repeat_interval_ticks,
+            static_cast<std::uint16_t>(command.repeat_count - 1u),
+            1u,
+        });
+    }
+}
+
+void KernelEngine::run_due_lock_strikes(std::uint64_t server_time_us) {
+    if (!is_server_mode(config_.mode) || pending_lock_strikes_.empty()) {
+        return;
+    }
+    const std::uint32_t current_tick = tick_loop_.current_tick();
+    // In the order they were scheduled: a strike that ran first keeps
+    // running first, so two bottles' strikes on one tick resolve the same
+    // way every run.
+    std::size_t kept = 0;
+    for (std::size_t index = 0; index < pending_lock_strikes_.size(); ++index) {
+        PendingLockStrike pending = pending_lock_strikes_[index];
+        if (static_cast<std::int32_t>(current_tick - pending.next_tick) >= 0) {
+            strike_lock_once(
+                world_,
+                &damage_pipeline_,
+                pending.command,
+                pending.strike_index,
+                server_time_us);
+            --pending.remaining;
+            ++pending.strike_index;
+            pending.next_tick += pending.command.repeat_interval_ticks;
+        }
+        if (pending.remaining > 0u) {
+            pending_lock_strikes_[kept++] = pending;
+        }
+    }
+    pending_lock_strikes_.resize(kept);
+}
+
+void KernelEngine::strike_lock_once(
+    World& world,
+    DamagePipeline* damage_pipeline,
+    const ActionLockStrikeCommand& command,
+    std::uint16_t strike_index,
+    std::uint64_t server_time_us) {
+    const RuntimeProjectileTemplate* shot =
+        world.find_projectile_template(command.projectile_template_id);
+    LockStrikeSpec spec;
+    if (shot == nullptr ||
+        !resolve_lock_volume(
+            collider_templates_,
+            command.collider_template_id,
+            true,
+            &spec.volume)) {
+        return;
+    }
+    spec.volume.origin = lifted_lock_origin(
+        world.collision_world(), command.position, command.origin_lift);
+    spec.volume.aim = command.direction;
+    spec.volume.max_targets = std::clamp<std::uint32_t>(
+        shot->max_hit_count, 1u, KERNEL_MAX_LOCK_ARCS);
+    spec.projectile_template_id = command.projectile_template_id;
+    spec.collision_mask = shot->collision_mask;
+    spec.weapon_id = command.provenance.source_weapon_id;
+    spec.damage = shot->damage;
+
+    // A bottle's graph runs as nobody (instigator 0) for its thrower's peer:
+    // the thrower and what it controls are never locked, and nobody else is
+    // left out by id.
+    const NetId shooter = command.provenance.instigator;
+    const PeerId shooter_peer = command.provenance.owner_peer;
+    const LockSelection selection =
+        select_lock_targets(world, spec, nullptr, shooter, shooter_peer);
+    const std::uint32_t current_tick = tick_loop_.current_tick();
+    if (command.mode == KernelLockStrikeMode_Instant) {
+        apply_lock_instant_damage(
+            world,
+            spec,
+            selection,
+            current_tick,
+            shooter,
+            shooter_peer,
+            server_time_us,
+            damage_pipeline);
+        // What clients draw: the arcs to what it struck, and the rest of a
+        // full lock's into the volume (SnapshotLockStrike).
+        PendingLockStrikeRecord record;
+        record.instigator_net_id = shooter;
+        record.collider_template_id = command.collider_template_id;
+        record.strike_index = strike_index;
+        record.launch_tick = current_tick;
+        record.origin = spec.volume.origin;
+        if (!spec.volume.omnidirectional) {
+            record.direction = glm::normalize(spec.volume.aim);
+        }
+        record.arc_count = static_cast<std::uint8_t>(spec.volume.max_targets);
+        for (const lock_targets::Candidate& target : selection.locked) {
+            record.target_net_ids.push_back(target.net_id);
+        }
+        pending_lock_strike_records_.push_back(std::move(record));
+        return;
+    }
+    // A missile at every one it locked, all launched now (D7), each carrying
+    // which strike of the run it belongs to.
+    for (const lock_targets::Candidate& target : selection.locked) {
+        (void)launch_lock_missile(
+            world,
+            spec,
+            target,
+            selection.hit_zone_of(target.net_id),
+            strike_index,
+            current_tick,
+            tick_loop_.fixed_delta_seconds(),
+            server_time_us,
+            shooter,
+            shooter_peer,
+            command.provenance.action_instance_id,
+            damage_pipeline,
+            &pending_lock_missiles_,
+            true);
+    }
+}
+
 void KernelEngine::queue_ui_opened(
     NetId building_net_id,
     PeerId actor_peer,
@@ -7471,7 +7816,12 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     pending_prop_state_changes_.clear();
     pending_actor_impulses_.clear();
     pending_lock_missiles_.clear();
+    pending_lock_strikes_.clear();
+    pending_lock_strike_records_.clear();
+    sending_lock_missiles_.clear();
+    sending_lock_strike_records_.clear();
     client_lock_missiles_.clear();
+    client_lock_strikes_.clear();
     client_lock_strike_events_.clear();
     claimed_item_instances_.clear();
     claimed_prop_entities_.clear();
@@ -9732,6 +10082,10 @@ void KernelEngine::handle_client_snapshot(WorldSnapshot snapshot) {
     if (!snapshot.lock_missiles.empty()) {
         handle_client_lock_missiles(snapshot);
         snapshot.lock_missiles.clear();
+    }
+    if (!snapshot.lock_strikes.empty()) {
+        handle_client_lock_strikes(snapshot);
+        snapshot.lock_strikes.clear();
     }
     // Before anything reads or stores it: beams arrive as a bare reach and are
     // not renderable until they have been hung off their shooter. Both the
@@ -13936,6 +14290,10 @@ void KernelEngine::simulate_tick() {
     for (const ActionGraphCommandBatch& batch : action_graph_batches) {
         (void)execute_action_graph_command_batch(*this, batch, server_time_us);
     }
+    // After every graph of this tick, so a strike that comes due now sees the
+    // same world as one a graph took now -- and before the drain, so an
+    // instant one lands this tick.
+    run_due_lock_strikes(server_time_us);
     simulate_beams(
         world_,
         tick_loop_.current_tick(),
@@ -15290,32 +15648,129 @@ void KernelEngine::flush_locomotion_steps() {
     outgoing_locomotion_steps_.clear();
 }
 
-std::vector<SnapshotLockMissile> KernelEngine::lock_missiles_for(
-    const PeerSession& session) const {
-    std::vector<SnapshotLockMissile> missiles;
+void KernelEngine::choose_lock_records_to_send() {
+    sending_lock_missiles_.clear();
+    sending_lock_strike_records_.clear();
     const std::uint32_t current_tick = tick_loop_.current_tick();
-    for (const LockMissileLaunch& launch : pending_lock_missiles_) {
-        // Everyone who sees the shooter draws its missiles, the shooter
-        // included: it does not predict them, the target being the server's
-        // to choose.
-        if (launch.shooter_net_id != session.player &&
-            !session.relevant_entities.contains(launch.shooter_net_id)) {
+    const auto age_of = [current_tick](std::uint32_t launch_tick) {
+        return static_cast<std::int32_t>(current_tick - launch_tick);
+    };
+    // Two section headers' worth is the budget's, whether or not both sections
+    // turn out to be written.
+    constexpr std::size_t kSectionHeaders = 2u * 4u;
+    std::size_t used = kSectionHeaders;
+    std::vector<LockMissileLaunch> waiting_missiles;
+    std::vector<PendingLockStrikeRecord> waiting_strikes;
+    // Oldest first across both lists, a missile first on a tie.
+    std::size_t missile = 0;
+    std::size_t strike = 0;
+    while (missile < pending_lock_missiles_.size() ||
+           strike < pending_lock_strike_records_.size()) {
+        const bool take_missile =
+            strike >= pending_lock_strike_records_.size() ||
+            (missile < pending_lock_missiles_.size() &&
+             age_of(pending_lock_missiles_[missile].launch_tick) >=
+                 age_of(pending_lock_strike_records_[strike].launch_tick));
+        if (take_missile) {
+            const LockMissileLaunch& launch = pending_lock_missiles_[missile++];
+            const std::int32_t age = age_of(launch.launch_tick);
+            if (age < 0 || age > static_cast<std::int32_t>(UINT8_MAX)) {
+                continue;
+            }
+            SnapshotLockMissile record;
+            record.flags = launch.from_origin ? kSnapshotLockRecordHasOrigin : 0u;
+            const std::size_t size = snapshot_lock_missile_bytes(record);
+            if (used + size <= kSnapshotLockRecordBudgetBytes) {
+                used += size;
+                sending_lock_missiles_.push_back(launch);
+            } else {
+                waiting_missiles.push_back(launch);
+            }
             continue;
         }
-        const std::int32_t age = static_cast<std::int32_t>(
-            current_tick - launch.launch_tick);
+        PendingLockStrikeRecord& record = pending_lock_strike_records_[strike++];
+        const std::int32_t age = age_of(record.launch_tick);
         if (age < 0 || age > static_cast<std::int32_t>(UINT8_MAX)) {
             continue;
         }
-        missiles.push_back(SnapshotLockMissile{
+        SnapshotLockStrike sized;
+        sized.target_net_ids = record.target_net_ids;
+        const std::size_t size = snapshot_lock_strike_bytes(sized);
+        if (used + size <= kSnapshotLockRecordBudgetBytes) {
+            used += size;
+            sending_lock_strike_records_.push_back(std::move(record));
+        } else {
+            waiting_strikes.push_back(std::move(record));
+        }
+    }
+    pending_lock_missiles_ = std::move(waiting_missiles);
+    pending_lock_strike_records_ = std::move(waiting_strikes);
+}
+
+void KernelEngine::lock_records_for(
+    const PeerSession& session,
+    WorldSnapshot* out) const {
+    const std::uint32_t current_tick = tick_loop_.current_tick();
+    const auto sees = [&session](NetId net_id) {
+        return net_id != 0u &&
+               (net_id == session.player ||
+                session.relevant_entities.contains(net_id));
+    };
+    std::optional<glm::vec3> player_position;
+    if (const std::optional<entt::entity> player = world_.find_entity(session.player);
+        player.has_value() && world_.registry().all_of<Transform>(*player)) {
+        player_position = world_.registry().get<Transform>(*player).position;
+    }
+    // Near where a graph's lock was taken. Also what keeps a record whose
+    // targets died before its turn on the wire (D14) from going to nobody.
+    const auto near_origin = [&player_position](const glm::vec3& origin) {
+        return player_position.has_value() &&
+               glm::length(*player_position - origin) <=
+                   kDefaultEntityRelevanceDistanceMeters;
+    };
+    for (const LockMissileLaunch& launch : sending_lock_missiles_) {
+        // Everyone who sees the shooter draws a weapon's missiles, the
+        // shooter included: it does not predict them, the target being the
+        // server's to choose. A graph's has no shooter to see; whoever sees
+        // where it lands, or where it left from, draws it.
+        if (launch.from_origin
+                ? !sees(launch.target_net_id) && !near_origin(launch.origin)
+                : !sees(launch.shooter_net_id)) {
+            continue;
+        }
+        SnapshotLockMissile missile{
             launch.shooter_net_id,
             launch.target_net_id,
             launch.commit_index,
-            static_cast<std::uint8_t>(age),
+            static_cast<std::uint8_t>(current_tick - launch.launch_tick),
             launch.flight_ticks,
-        });
+        };
+        if (launch.from_origin) {
+            missile.flags = kSnapshotLockRecordHasOrigin;
+            missile.origin = launch.origin;
+        }
+        out->lock_missiles.push_back(missile);
     }
-    return missiles;
+    for (const PendingLockStrikeRecord& record : sending_lock_strike_records_) {
+        if (!near_origin(record.origin) &&
+            std::none_of(
+                record.target_net_ids.begin(),
+                record.target_net_ids.end(),
+                sees)) {
+            continue;
+        }
+        SnapshotLockStrike strike;
+        strike.origin = record.origin;
+        strike.direction = record.direction;
+        strike.collider_template_id = record.collider_template_id;
+        strike.instigator_net_id = record.instigator_net_id;
+        strike.strike_index = record.strike_index;
+        strike.launch_tick_delta =
+            static_cast<std::uint8_t>(current_tick - record.launch_tick);
+        strike.arc_count = record.arc_count;
+        strike.target_net_ids = record.target_net_ids;
+        out->lock_strikes.push_back(std::move(strike));
+    }
 }
 
 void KernelEngine::handle_client_lock_missiles(const WorldSnapshot& snapshot) {
@@ -15336,20 +15791,166 @@ void KernelEngine::handle_client_lock_missiles(const WorldSnapshot& snapshot) {
         missile.launch_tick =
             server_tick - static_cast<std::uint32_t>(record.launch_tick_delta);
         missile.arrival_tick = missile.launch_tick + record.flight_ticks;
+        missile.from_origin =
+            (record.flags & kSnapshotLockRecordHasOrigin) != 0u;
+        missile.origin = record.origin;
         // Each is sent once, so the same one twice is a duplicated packet.
-        // Shooter, launch tick and commit tell them apart: a new hold starts
-        // its commits from zero again, but never on the same tick.
+        // Shooter, launch tick, commit and target tell them apart: a new hold
+        // starts its commits from zero again, but never on the same tick, and
+        // a graph's strike sends one per target at once. Its origin tells
+        // apart two bottles of nobody's striking one target on one tick.
         const bool seen = std::any_of(
             client_lock_missiles_.begin(),
             client_lock_missiles_.end(),
             [&](const ClientLockMissile& existing) {
                 return existing.shooter_net_id == missile.shooter_net_id &&
                        existing.launch_tick == missile.launch_tick &&
-                       existing.commit_index == missile.commit_index;
+                       existing.commit_index == missile.commit_index &&
+                       existing.target_net_id == missile.target_net_id &&
+                       existing.from_origin == missile.from_origin &&
+                       existing.origin == missile.origin;
             });
         if (!seen) {
             client_lock_missiles_.push_back(missile);
         }
+    }
+}
+
+void KernelEngine::handle_client_lock_strikes(const WorldSnapshot& snapshot) {
+    // Kept a while after release, so a duplicated packet is not drawn twice;
+    // 300 ticks outlasts any record's 255-tick launch delta.
+    constexpr std::uint32_t kKeepTicks = 300u;
+    const std::uint32_t server_tick = snapshot.header.server_tick;
+    std::erase_if(client_lock_strikes_, [&](const ClientLockStrike& strike) {
+        return strike.released &&
+               static_cast<std::int32_t>(
+                   server_tick - (strike.launch_tick + kKeepTicks)) > 0;
+    });
+    for (const SnapshotLockStrike& record : snapshot.lock_strikes) {
+        const std::uint32_t launch_tick =
+            server_tick - static_cast<std::uint32_t>(record.launch_tick_delta);
+        const bool seen = std::any_of(
+            client_lock_strikes_.begin(),
+            client_lock_strikes_.end(),
+            [&](const ClientLockStrike& existing) {
+                return existing.launch_tick == launch_tick &&
+                       existing.record.strike_index == record.strike_index &&
+                       existing.record.instigator_net_id ==
+                           record.instigator_net_id &&
+                       existing.record.collider_template_id ==
+                           record.collider_template_id &&
+                       existing.record.origin == record.origin;
+            });
+        if (!seen) {
+            client_lock_strikes_.push_back(
+                ClientLockStrike{record, launch_tick, false});
+        }
+    }
+}
+
+void KernelEngine::release_graph_lock_strikes() {
+    if (client_lock_strikes_.empty()) {
+        return;
+    }
+    const std::uint64_t tick_us = std::max<std::uint64_t>(
+        1u, tick_time_us(1u, tick_loop_.fixed_delta_seconds()));
+    const std::uint32_t render_tick =
+        static_cast<std::uint32_t>(current_render_time_us_ / tick_us);
+    const physics::PhysicsWorld* statics = prediction_physics_world_ != nullptr
+        ? prediction_physics_world_.get()
+        : world_.collision_world();
+    constexpr std::size_t kMaxPendingStrikes = 256;
+    for (ClientLockStrike& pending : client_lock_strikes_) {
+        if (pending.released ||
+            static_cast<std::int32_t>(render_tick - pending.launch_tick) < 0) {
+            continue;
+        }
+        pending.released = true;
+        const SnapshotLockStrike& record = pending.record;
+        KernelLockStrikeEvent strike{};
+        strike.struct_size = sizeof(KernelLockStrikeEvent);
+        strike.shooter_net_id = record.instigator_net_id;
+        strike.commit_index = record.strike_index;
+        strike.flags = KERNEL_LOCK_STRIKE_FLAG_GRAPH;
+        strike.server_tick = pending.launch_tick;
+        KernelLockSelection& selection = strike.selection;
+        selection.struct_size = sizeof(KernelLockSelection);
+        selection.origin = to_kernel_vec3(record.origin);
+        selection.arc_count = record.arc_count;
+        selection.target_count =
+            static_cast<std::uint8_t>(record.target_net_ids.size());
+        lock_targets::Cone volume;
+        const bool known_volume = resolve_lock_volume(
+            collider_templates_, record.collider_template_id, true, &volume);
+        volume.origin = record.origin;
+        volume.aim = record.direction;
+        volume.max_targets = record.arc_count;
+        // Where an arc that locked nothing ends: in the volume, the same on
+        // every client for the same strike, stopped by a wall.
+        const auto unfilled = [&](std::uint32_t arc_index) {
+            glm::vec3 end = known_volume
+                ? lock_targets::unfilled_arc_end(
+                      volume,
+                      record.instigator_net_id,
+                      pending.launch_tick,
+                      record.strike_index,
+                      arc_index)
+                : record.origin;
+            if (statics != nullptr) {
+                const glm::vec3 offset = end - record.origin;
+                const float distance = glm::length(offset);
+                if (distance > 0.0001f) {
+                    physics::RayCastRequest ray{};
+                    ray.origin = record.origin;
+                    ray.direction = offset / distance;
+                    ray.max_distance = distance;
+                    ray.filter = collision_filter_from_mask(
+                        KERNEL_COLLISION_LAYER_TERRAIN |
+                        KERNEL_COLLISION_LAYER_STATIC_OBSTACLE);
+                    physics::CollisionHit hit{};
+                    if (statics->ray_cast_closest(ray, &hit) &&
+                        hit.distance < distance) {
+                        end = hit.position;
+                    }
+                }
+            }
+            return to_kernel_vec3(end);
+        };
+        for (std::size_t index = 0; index < record.target_net_ids.size(); ++index) {
+            const NetId target = record.target_net_ids[index];
+            selection.target_net_ids[index] = target;
+            const auto drawn = std::find_if(
+                render_states_.begin(),
+                render_states_.end(),
+                [target](const RenderEntityState& state) {
+                    return state.net_id == target;
+                });
+            if (drawn == render_states_.end()) {
+                // Struck, but not drawn here: the arc goes where one that
+                // locked nothing would.
+                selection.arc_ends[index] =
+                    unfilled(static_cast<std::uint32_t>(index));
+                continue;
+            }
+            glm::vec3 center = from_kernel_vec3(drawn->position);
+            if (const KernelColliderTemplateDefinition* hit =
+                    find_collider_template(
+                        collider_templates_, drawn->collider_template_id);
+                hit != nullptr) {
+                center += from_kernel_vec3(hit->center);
+            }
+            selection.arc_ends[index] = to_kernel_vec3(center);
+        }
+        for (std::uint32_t index =
+                 static_cast<std::uint32_t>(record.target_net_ids.size());
+             index < record.arc_count;
+             ++index) {
+            selection.arc_ends[index] = unfilled(index);
+        }
+        if (client_lock_strike_events_.size() >= kMaxPendingStrikes) {
+            client_lock_strike_events_.erase(client_lock_strike_events_.begin());
+        }
+        client_lock_strike_events_.push_back(strike);
     }
 }
 
@@ -16456,6 +17057,7 @@ void KernelEngine::publish_snapshot() {
             latest_snapshot_.header.server_tick,
             latest_snapshot_.entities.size()));
 
+    choose_lock_records_to_send();
     if (config_.mode == KernelMode_ListenServer &&
         listen_server_transport_ != nullptr) {
         local_listen_session_.peer = kLocalListenPeerId;
@@ -16466,14 +17068,20 @@ void KernelEngine::publish_snapshot() {
             build_relevant_snapshot(local_listen_session_, world_snapshot);
         sync_session_relevance(&local_listen_session_, peer_snapshot);
         drop_unannounced_entities(local_listen_session_, &peer_snapshot);
+        // The lock records ride the first packet, so it leaves room for them.
+        WorldSnapshot records;
+        lock_records_for(local_listen_session_, &records);
+        const std::size_t record_bytes = snapshot_lock_record_bytes(records);
         const WorldSnapshot send_snapshot = build_snapshot_send_set(
             local_listen_session_,
             peer_snapshot,
-            snapshot_send_set_budget(kSnapshotMaxPacketsPerInterval));
-        std::vector<WorldSnapshot> parts =
-            split_snapshot_for_packets(send_snapshot, kSnapshotSendBudgetBytes);
+            snapshot_send_set_budget(kSnapshotMaxPacketsPerInterval) -
+                record_bytes);
+        std::vector<WorldSnapshot> parts = split_snapshot_for_packets(
+            send_snapshot, kSnapshotSendBudgetBytes - record_bytes);
         if (!parts.empty()) {
-            parts.front().lock_missiles = lock_missiles_for(local_listen_session_);
+            parts.front().lock_missiles = std::move(records.lock_missiles);
+            parts.front().lock_strikes = std::move(records.lock_strikes);
         }
         for (const WorldSnapshot& part : parts) {
             const std::vector<std::uint8_t> packet =
@@ -16505,15 +17113,21 @@ void KernelEngine::publish_snapshot() {
             drop_unannounced_entities(session, &peer_snapshot);
             // One send set for the interval, over as many independent
             // packets as it fills (kSnapshotMaxPacketsPerInterval).
+            // The lock records ride the first packet of the interval, once,
+            // and it leaves room for them (D14).
+            WorldSnapshot records;
+            lock_records_for(session, &records);
+            const std::size_t record_bytes = snapshot_lock_record_bytes(records);
             const WorldSnapshot send_snapshot = build_snapshot_send_set(
                 session,
                 peer_snapshot,
-                snapshot_send_set_budget(kSnapshotMaxPacketsPerInterval));
-            // The missiles ride the first packet of the interval, once.
-            std::vector<WorldSnapshot> parts =
-                split_snapshot_for_packets(send_snapshot, kSnapshotSendBudgetBytes);
+                snapshot_send_set_budget(kSnapshotMaxPacketsPerInterval) -
+                    record_bytes);
+            std::vector<WorldSnapshot> parts = split_snapshot_for_packets(
+                send_snapshot, kSnapshotSendBudgetBytes - record_bytes);
             if (!parts.empty()) {
-                parts.front().lock_missiles = lock_missiles_for(session);
+                parts.front().lock_missiles = std::move(records.lock_missiles);
+                parts.front().lock_strikes = std::move(records.lock_strikes);
             }
             for (const WorldSnapshot& part : parts) {
                 const std::vector<std::uint8_t> packet =
@@ -16534,7 +17148,10 @@ void KernelEngine::publish_snapshot() {
             }
         }
     }
-    pending_lock_missiles_.clear();
+    // What was chosen has gone to everyone who sees it; what was not waits in
+    // the pending lists for the next snapshot.
+    sending_lock_missiles_.clear();
+    sending_lock_strike_records_.clear();
 }
 
 void KernelEngine::send_gameplay_catalog_manifest_request() {
