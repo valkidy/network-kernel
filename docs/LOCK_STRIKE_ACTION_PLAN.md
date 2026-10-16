@@ -370,7 +370,7 @@
 - graph 飛彈的紀錄現在不會送給 client：`lock_missiles_for` 依射手可見度過濾，來源為 0 就送不出去（D13，P4 處理）。所以 P2 不會產生 shooter 為 0 的 snapshot 紀錄，也不會觸發解碼失敗。
 
 **回歸**
-- 相關的 49 個 kernel、simulation、game_server 測試裡，37 個通過。沒通過的都是 `main` 上就有的：
+- 相關的 45 個 kernel、simulation、game_server 測試裡，37 個通過。沒通過的都是 `main` 上就有的：
   - 已知紅燈：`gameplay_config`、`hitscan`、`damage_pipeline`、`kernel_api`、`kernel_c_header`。`kernel_c_header` 是 `RenderEntityState` 大小的斷言，`main` 上也有這行。
   - `main` 上就編不過：
     - `targeted_strike_test`、`status_action_block_test`：還在用 projectile 的 `weapon_id`。
