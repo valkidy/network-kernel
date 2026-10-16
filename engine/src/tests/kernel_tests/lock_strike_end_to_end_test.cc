@@ -372,6 +372,9 @@ void a_repeated_strike_reaches_every_client_that_sees_its_targets() {
             const KernelLockStrikeEvent& strike = client.strikes[index];
             require(strike.flags == KERNEL_LOCK_STRIKE_FLAG_GRAPH);
             require(strike.shooter_net_id == 0u);
+            // No weapon to draw it as: the shot it struck with instead.
+            require(strike.selection.weapon_id == 0u);
+            require(strike.action_instance_id == kShotTemplateId);
             require(strike.commit_index == index);
             require(strike.server_tick ==
                     client.strikes[0].server_tick + 6u * index);
@@ -413,6 +416,7 @@ void graph_missiles_leave_from_their_origin() {
         for (const KernelLockMissileView& view : views) {
             require(view.flags == KERNEL_LOCK_MISSILE_FLAG_FROM_ORIGIN);
             require(view.shooter_net_id == 0u);
+            require(view.projectile_template_id == kShotTemplateId);
             require(view.commit_index == 0u);
             require(view.launch_tick == launch);
             require(near(view.origin, {0.0f, 1.0f, 0.0f}, 0.001f));
@@ -484,7 +488,7 @@ void records_past_the_budget_wait_for_the_next_snapshot() {
         arena.enemy({radius * std::cos(angle), 0.0f, radius * std::sin(angle)});
     }
     arena.settle();
-    // Twenty strikes on one tick, 39 B each: 780 B, about two snapshots' worth.
+    // Twenty strikes on one tick, 43 B each: 860 B, over two snapshots' worth.
     constexpr std::size_t kStrikes = 20;
     for (std::size_t index = 0; index < kStrikes; ++index) {
         break_bottle(
@@ -493,7 +497,7 @@ void records_past_the_budget_wait_for_the_next_snapshot() {
     }
     arena.server.choose_lock_records_to_send();
     const std::size_t first_share = arena.server.sending_lock_strike_records_.size();
-    require(first_share == (ne::kSnapshotLockRecordBudgetBytes - 8u) / 39u);
+    require(first_share == (ne::kSnapshotLockRecordBudgetBytes - 8u) / 43u);
     require(arena.server.pending_lock_strike_records_.size() == kStrikes - first_share);
     // Put back as it was, and let the server's own snapshots do it.
     for (auto& record : arena.server.sending_lock_strike_records_) {

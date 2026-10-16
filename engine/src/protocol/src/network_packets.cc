@@ -252,10 +252,11 @@ enum class SnapshotSectionType : std::uint16_t {
     kLockStrike = 8,
 };
 
-// A missile without an origin; one with adds a vec3.
+// A missile without an origin; one with adds a vec3 and its shot's id.
 constexpr std::size_t kSnapshotLockMissilePayloadSize = 13;
+constexpr std::size_t kSnapshotLockMissileOriginPayloadSize = 16;
 // A strike before its targets, which are 4 B each.
-constexpr std::size_t kSnapshotLockStrikePayloadSize = 31;
+constexpr std::size_t kSnapshotLockStrikePayloadSize = 35;
 
 std::uint16_t quantize_unit(float value) {
     const float clamped = std::clamp(value, -1.0f, 1.0f);
@@ -812,6 +813,7 @@ std::vector<std::uint8_t> encode_snapshot_packet(
             payload.write_u8(missile.flags);
             if ((missile.flags & kSnapshotLockRecordHasOrigin) != 0u) {
                 payload.write_vec3(missile.origin);
+                payload.write_u32(missile.projectile_template_id);
             }
         }
     }
@@ -824,6 +826,7 @@ std::vector<std::uint8_t> encode_snapshot_packet(
             payload.write_u16(quantize_unit(strike.direction.y));
             payload.write_u16(quantize_unit(strike.direction.z));
             payload.write_u32(strike.collider_template_id);
+            payload.write_u32(strike.projectile_template_id);
             payload.write_u32(strike.instigator_net_id);
             payload.write_u16(strike.strike_index);
             payload.write_u8(strike.launch_tick_delta);
@@ -906,7 +909,9 @@ bool decode_snapshot_packet(
                     !reader.read_u8(&missile.flags) ||
                     (missile.flags & ~kSnapshotLockRecordHasOrigin) != 0u ||
                     ((missile.flags & kSnapshotLockRecordHasOrigin) != 0u &&
-                     !reader.read_vec3(&missile.origin)) ||
+                     (!reader.read_vec3(&missile.origin) ||
+                      !reader.read_u32(&missile.projectile_template_id) ||
+                      missile.projectile_template_id == 0u)) ||
                     // A shooter is what a missile without an origin is drawn
                     // from; one with an origin needs none.
                     (missile.shooter_net_id == 0u &&
@@ -932,12 +937,14 @@ bool decode_snapshot_packet(
                     !reader.read_u16(&axis[0]) || !reader.read_u16(&axis[1]) ||
                     !reader.read_u16(&axis[2]) ||
                     !reader.read_u32(&strike.collider_template_id) ||
+                    !reader.read_u32(&strike.projectile_template_id) ||
                     !reader.read_u32(&strike.instigator_net_id) ||
                     !reader.read_u16(&strike.strike_index) ||
                     !reader.read_u8(&strike.launch_tick_delta) ||
                     !reader.read_u8(&strike.arc_count) ||
                     !reader.read_u8(&target_count) ||
                     strike.collider_template_id == 0u ||
+                    strike.projectile_template_id == 0u ||
                     strike.arc_count == 0u || strike.arc_count > 16u ||
                     target_count > strike.arc_count ||
                     !std::isfinite(strike.origin.x) ||
@@ -1394,7 +1401,9 @@ std::size_t estimate_snapshot_packet_size(const WorldSnapshot& snapshot) {
 
 std::size_t snapshot_lock_missile_bytes(const SnapshotLockMissile& missile) {
     return kSnapshotLockMissilePayloadSize +
-        ((missile.flags & kSnapshotLockRecordHasOrigin) != 0u ? 12u : 0u);
+        ((missile.flags & kSnapshotLockRecordHasOrigin) != 0u
+             ? kSnapshotLockMissileOriginPayloadSize
+             : 0u);
 }
 
 std::size_t snapshot_lock_strike_bytes(const SnapshotLockStrike& strike) {

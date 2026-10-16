@@ -548,6 +548,25 @@
     - `limb_collider`、`listen_host_pose_parity`：`unknown prop population_group: portal`
 - 把 P5 stash 掉再跑一次，`game_server_api`、`weapon_template_loader` 會通過，`gameplay_config` 的失敗訊息也會不同。就是上面那個 shot collider 的問題，已修正。
 
+### 交付後補充：紀錄帶 shot id（Option B，2026-10-16）
+
+**為什麼要補**：Unity 的 VFX 是用「武器 → projectile template」去找 prefab。graph 打擊和飛彈沒有武器（`weapon_id` 0），所以 Unity 不知道該畫成哪種瓶子。
+
+**改了什麼**
+- 打擊紀錄和 graph 飛彈紀錄都加上 shot 的 `projectile_template_id`：
+  - 打擊紀錄：31 → 35 B
+  - graph 飛彈：25 → 29 B
+  - 解碼時 shot id 不得為 0
+- client 交出事件時：
+  - graph 打擊事件的 `action_instance_id` 放 shot id。這個欄位對 graph 打擊本來一定是 0。
+  - `KernelLockMissileView` 尾端加 `projectile_template_id`，大小從 36 B 變成 40 B。武器飛彈填 0。
+- ABI 和 snapshot schema 都還沒發佈，所以維持 107 和 31。
+- 每次 snapshot 能送的打擊從 10 筆變成 9 筆，紀錄總量上限仍是 400 B。
+
+**測試**
+- roundtrip、e2e、C header 都已更新。
+- Mutation 3 個都讓測試變紅：事件沒帶 shot、view 沒帶 shot、解碼器接受 shot 0。
+
 ---
 
 ## 10. Token / 成本限制

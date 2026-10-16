@@ -7379,6 +7379,7 @@ std::uint32_t KernelEngine::get_lock_missiles(
         if (missile.from_origin) {
             view.flags = KERNEL_LOCK_MISSILE_FLAG_FROM_ORIGIN;
             view.origin = to_kernel_vec3(missile.origin);
+            view.projectile_template_id = missile.projectile_template_id;
         }
         out_missiles[count++] = view;
     }
@@ -7693,6 +7694,7 @@ void KernelEngine::strike_lock_once(
         PendingLockStrikeRecord record;
         record.instigator_net_id = shooter;
         record.collider_template_id = command.collider_template_id;
+        record.projectile_template_id = command.projectile_template_id;
         record.strike_index = strike_index;
         record.launch_tick = current_tick;
         record.origin = spec.volume.origin;
@@ -15748,6 +15750,7 @@ void KernelEngine::lock_records_for(
         if (launch.from_origin) {
             missile.flags = kSnapshotLockRecordHasOrigin;
             missile.origin = launch.origin;
+            missile.projectile_template_id = launch.projectile_template_id;
         }
         out->lock_missiles.push_back(missile);
     }
@@ -15763,6 +15766,7 @@ void KernelEngine::lock_records_for(
         strike.origin = record.origin;
         strike.direction = record.direction;
         strike.collider_template_id = record.collider_template_id;
+        strike.projectile_template_id = record.projectile_template_id;
         strike.instigator_net_id = record.instigator_net_id;
         strike.strike_index = record.strike_index;
         strike.launch_tick_delta =
@@ -15794,6 +15798,7 @@ void KernelEngine::handle_client_lock_missiles(const WorldSnapshot& snapshot) {
         missile.from_origin =
             (record.flags & kSnapshotLockRecordHasOrigin) != 0u;
         missile.origin = record.origin;
+        missile.projectile_template_id = record.projectile_template_id;
         // Each is sent once, so the same one twice is a duplicated packet.
         // Shooter, launch tick, commit and target tell them apart: a new hold
         // starts its commits from zero again, but never on the same tick, and
@@ -15870,6 +15875,9 @@ void KernelEngine::release_graph_lock_strikes() {
         KernelLockStrikeEvent strike{};
         strike.struct_size = sizeof(KernelLockStrikeEvent);
         strike.shooter_net_id = record.instigator_net_id;
+        // No action instance to name: the shot the strike was, which is what
+        // a client draws it as (KERNEL_LOCK_STRIKE_FLAG_GRAPH).
+        strike.action_instance_id = record.projectile_template_id;
         strike.commit_index = record.strike_index;
         strike.flags = KERNEL_LOCK_STRIKE_FLAG_GRAPH;
         strike.server_tick = pending.launch_tick;
