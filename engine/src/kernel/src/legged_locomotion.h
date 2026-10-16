@@ -51,6 +51,12 @@ struct LegLocomotionState {
     // the IK target each tick.
     glm::vec3 foot_target_world{0.0f};
     bool foot_initialized = false;
+    // foot_target_world without the swing arc's lift: the planted foot for a
+    // support leg, the point between lift-off and landing for a swinging one.
+    // Body follow rides this, never the arc -- a raised foot is not ground, and
+    // on a rig whose step height is half its leg, averaging the arc in lifts
+    // the body far enough to strand the supporting leg past its reach.
+    glm::vec3 foot_ground_world{0.0f};
 
     // Swing interpolation endpoints (world space). Both are frozen when the
     // swing begins and held for the whole step, so a step is fully described by

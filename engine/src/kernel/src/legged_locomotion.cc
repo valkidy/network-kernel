@@ -838,19 +838,24 @@ bool solve_locomotion_pose(
         }
     }
     if (!follower && state->locomotion_active) {
+        // Every leg that wants to step, most displaced first. The swing slots
+        // (max_swinging_legs, and one gait group at a time) are scarcer than
+        // the legs asking for them, and handing them out in fixed processing
+        // order starves whichever leg comes last: the leg ahead of it keeps
+        // re-qualifying -- as stranded, once its own reach clamps -- and takes
+        // the only slot every time it frees up. Measured on the giant (a
+        // biped with one slot), the trailing leg went 757 ticks without a
+        // step while the body walked 27 m away from its planted foot. Ranking
+        // by displacement gives the slot to the leg furthest from home, which
+        // is the one a starved leg always becomes.
+        std::array<std::uint32_t, KERNEL_MAX_SKELETON_LEGS> candidates{};
+        std::array<float, KERNEL_MAX_SKELETON_LEGS> errors{};
+        std::uint32_t candidate_count = 0u;
         for (const std::uint32_t leg_index : state->last_processing_order) {
-            LegLocomotionState& leg = state->legs[leg_index];
+            const LegLocomotionState& leg = state->legs[leg_index];
             if (!leg.foot_initialized ||
                 leg.gait_state != LegGaitState::kSupport ||
-                !home_grounded[leg_index] ||
-                swinging_leg_count >= definition.max_swinging_legs) {
-                continue;
-            }
-            // Blocked if another group is mid-swing.
-            const bool other_group_swinging = swinging_group_count > 0u &&
-                !(swinging_group_count == 1u &&
-                  group_swinging[leg.gait_group]);
-            if (other_group_swinging) {
+                !home_grounded[leg_index]) {
                 continue;
             }
             // Normally a leg steps once its planted foot has drifted too far
@@ -863,6 +868,31 @@ bool solve_locomotion_pose(
             const bool stranded =
                 leg.ik_reach_clamped && home_within_reach[leg_index];
             if (error <= definition.step_threshold_meters && !stranded) {
+                continue;
+            }
+            errors[leg_index] = error;
+            candidates[candidate_count++] = leg_index;
+        }
+        // Stable, so equally displaced legs keep the processing order's say.
+        std::stable_sort(
+            candidates.begin(),
+            candidates.begin() + candidate_count,
+            [&errors](std::uint32_t a, std::uint32_t b) {
+                return errors[a] > errors[b];
+            });
+        for (std::uint32_t candidate = 0u;
+             candidate < candidate_count;
+             ++candidate) {
+            const std::uint32_t leg_index = candidates[candidate];
+            LegLocomotionState& leg = state->legs[leg_index];
+            if (swinging_leg_count >= definition.max_swinging_legs) {
+                break;
+            }
+            // Blocked if another group is mid-swing.
+            const bool other_group_swinging = swinging_group_count > 0u &&
+                !(swinging_group_count == 1u &&
+                  group_swinging[leg.gait_group]);
+            if (other_group_swinging) {
                 continue;
             }
             leg.gait_state = LegGaitState::kSwing;
@@ -940,16 +970,20 @@ bool solve_locomotion_pose(
             const float lift = definition_leg.step_height_meters *
                 std::sin(swing_phase * std::numbers::pi_v<float>);
             leg.foot_target_world = flat + glm::vec3{0.0f, lift, 0.0f};
+            leg.foot_ground_world = flat;
             if (swing_phase >= 1.0f) {
                 leg.gait_state = LegGaitState::kSupport;
                 leg.entered_support = true;
                 leg.swing_tick = 0u;
                 leg.foot_target_world = leg.landing_target_world;
+                leg.foot_ground_world = leg.landing_target_world;
             } else {
                 ++leg.swing_tick;
             }
+        } else {
+            // Support legs simply hold foot_target_world in place.
+            leg.foot_ground_world = leg.foot_target_world;
         }
-        // Support legs simply hold foot_target_world in place.
 
         glm::vec3 target_model = inverse_root_rotation *
             (leg.foot_target_world - pose_root_position);
@@ -1042,7 +1076,7 @@ bool solve_locomotion_pose(
             if (!leg.foot_initialized) {
                 continue;
             }
-            foot_y_sum += leg.foot_target_world.y;
+            foot_y_sum += leg.foot_ground_world.y;
             bind_foot_y_sum += bind_foot_models[leg_index].y;
             normal_sum += home_grounded[leg_index]
                 ? leg.ground_hit_normal

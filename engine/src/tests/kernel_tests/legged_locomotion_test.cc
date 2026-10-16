@@ -1488,6 +1488,88 @@ int main() {
         require(crouched_reach < upright_reach - 0.1f);
     }
 
+    // Body follow rides the ground under the feet, not the swing arc. On flat
+    // ground that ground never moves, so the target height must hold still
+    // through every swing -- even with a step height far beyond anything the
+    // limb could absorb, which is what stranded the giant's supporting leg
+    // when a raised foot was averaged in.
+    {
+        KernelSkeletonBindingDefinition high_step = rig;
+        high_step.body_follow_speed = 10.0f;
+        high_step.slope_alignment = 0.0f;
+        for (std::uint32_t index = 0u; index < high_step.leg_count; ++index) {
+            high_step.legs[index].step_height_meters = 2.0f;
+        }
+        network_example::LocomotionState body;
+        require(network_example::initialize_locomotion_state(
+            high_step, 0.0f, &body));
+        glm::vec3 root{0.0f};
+        bool has_settled_height = false;
+        float settled_height = 0.0f;
+        std::uint32_t lifted_ticks = 0u;
+        for (std::uint32_t step = 0u; step < 240u; ++step) {
+            require(network_example::advance_locomotion_state(
+                high_step, forward_input, 90.0f, tick, &body));
+            root.z += 1.5f * tick;
+            require(network_example::solve_legged_locomotion_pose(
+                *skeleton, bind_pose, high_step, root, 50.0f, tick,
+                ground_plane, &body));
+            if (!body.body_follow_valid) {
+                continue;
+            }
+            if (!has_settled_height) {
+                settled_height = body.body_follow_target_height;
+                has_settled_height = true;
+            }
+            require(std::abs(body.body_follow_target_height - settled_height) <
+                    0.0001f);
+            for (const network_example::LegLocomotionState& leg : body.legs) {
+                if (leg.foot_target_world.y > 1.0f) {
+                    ++lifted_ticks;
+                }
+            }
+        }
+        // Not vacuous: feet really were high in the air while it held.
+        require(has_settled_height);
+        require(lifted_ticks > 20u);
+    }
+
+    // With fewer swing slots than legs asking for one, the slot goes to the
+    // leg furthest from home, not to whichever comes first in processing
+    // order. First-come let the leading leg of a one-slot biped re-qualify and
+    // win every time, so the trailing leg went hundreds of ticks without a
+    // step while the body walked away from its planted foot.
+    {
+        KernelSkeletonBindingDefinition one_slot = rig;
+        one_slot.max_swinging_legs = 1u;
+        network_example::LocomotionState fair;
+        require(network_example::initialize_locomotion_state(
+            one_slot, 0.0f, &fair));
+        require(network_example::solve_legged_locomotion_pose(
+            *skeleton, bind_pose, one_slot, glm::vec3{0.0f}, 50.0f, tick,
+            ground_plane, &fair));
+        // Leg 0 leads the processing order and is just past the threshold;
+        // the last leg is displaced twice as far.
+        const std::uint32_t last = one_slot.leg_count - 1u;
+        require(one_slot.processing_order[0] == 0u);
+        require(one_slot.processing_order[last] == last);
+        const glm::vec3 leading_home = fair.legs[0].foot_target_world;
+        const glm::vec3 trailing_home = fair.legs[last].foot_target_world;
+        require(network_example::set_locomotion_foot_anchor(
+            one_slot, 0u,
+            leading_home + glm::vec3{0.0f, 0.0f, -0.6f}, &fair));
+        require(network_example::set_locomotion_foot_anchor(
+            one_slot, last,
+            trailing_home + glm::vec3{0.0f, 0.0f, -1.2f}, &fair));
+        require(network_example::advance_locomotion_state(
+            one_slot, forward_input, 90.0f, tick, &fair));
+        require(network_example::solve_legged_locomotion_pose(
+            *skeleton, bind_pose, one_slot, glm::vec3{0.0f}, 50.0f, tick,
+            ground_plane, &fair));
+        require(fair.legs[last].entered_swing);
+        require(!fair.legs[0].entered_swing);
+    }
+
     {
         // Limb colliders take their size from the bone's rest scale, which is
         // the only place the rigs record it. Everything here is about that one
