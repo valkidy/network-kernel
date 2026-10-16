@@ -5,6 +5,28 @@
 #include <stdint.h>
 
 /*
+ * 107: lock_strike, an action graph's lock (docs/LOCK_STRIKE_ACTION_PLAN.md).
+ *     KernelEntityTriggerActionType gained _LockStrike: up to max_hit_count
+ *     actors in a volume -- a damage collider template that is a cone aimed
+ *     along the action's direction, or a sphere -- are locked nearest first,
+ *     any a static wall hides skipped, the same rule a lock-on weapon locks
+ *     by, and each is struck by the shot spawn_projectile_template_id names:
+ *     at once (KernelLockStrikeMode_Instant) or by a certain missile that
+ *     lands on its arrival (_Missile, one per locked actor). Entity triggers
+ *     only. KernelActionDefinition gained lock_collider_template_id,
+ *     lock_mode, lock_repeat_count, lock_repeat_interval_ticks and
+ *     lock_origin_lift, appended after status_strength (limits
+ *     KERNEL_MAX_LOCK_ORIGIN_LIFT, KERNEL_MAX_LOCK_STRIKE_REPEAT and
+ *     KERNEL_MAX_LOCK_STRIKE_SPAN_TICKS); a repeated strike is taken again
+ *     every lock_repeat_interval_ticks, locking afresh. Clients draw them
+ *     through the lock-on exports: KernelLockStrikeEvent's reserved u16
+ *     became flags (KERNEL_LOCK_STRIKE_FLAG_GRAPH), and KernelLockMissileView's
+ *     became flags (KERNEL_LOCK_MISSILE_FLAG_FROM_ORIGIN) with origin and
+ *     projectile_template_id appended -- its size grows from 24 to 40 bytes;
+ *     a graph's strike event carries its shot's projectile_template_id in
+ *     action_instance_id. Snapshot schema 31
+ *     carries them. KernelActionDefinition is embedded in
+ *     every trigger definition, so every managed mirror of those shifts.
  * 106: two-layer hits on rigged actors. KernelColliderPurpose gained _Bounds:
  *     an actor whose skeleton colliders are hit volumes names a bounds box as
  *     its collider_template, and that box is never hit itself -- it only says
@@ -353,7 +375,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 106u
+#define KERNEL_ABI_VERSION 107u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -1030,7 +1052,31 @@ typedef enum KernelEntityTriggerActionType {
      * for its arrival_immunity_ticks nothing hurts it. A portal's on_enter
      * and on_overlap graphs only; target_source is the only field read. */
     KernelEntityTriggerActionType_Teleport = 15,
+    /* A lock taken from position (lifted by lock_origin_lift) and struck at
+     * once or by missiles (ABI 107); see KernelActionDefinition's lock_*
+     * fields. Entity triggers only. Reads spawn_projectile_template_id,
+     * position_source and, for a cone, direction_source. */
+    KernelEntityTriggerActionType_LockStrike = 16,
 } KernelEntityTriggerActionType;
+
+/* How a lock_strike strikes what it locks (ABI 107). */
+typedef enum KernelLockStrikeMode {
+    /* Every locked actor is damaged on the tick the lock is taken. */
+    KernelLockStrikeMode_Instant = 0,
+    /* A missile per locked actor, its hit decided now and landing on its
+     * arrival: the shot's lifetime_ticks is the flight across the volume's
+     * full reach, a nearer target proportionally sooner. */
+    KernelLockStrikeMode_Missile = 1,
+} KernelLockStrikeMode;
+
+/* The highest a lock_strike may lift its origin above position, in metres. */
+#define KERNEL_MAX_LOCK_ORIGIN_LIFT 5.0f
+/* The most times one lock_strike is taken, and the most ticks from its first
+ * to its last: lock_repeat_count <= KERNEL_MAX_LOCK_STRIKE_REPEAT and
+ * lock_repeat_interval_ticks * (lock_repeat_count - 1) <=
+ * KERNEL_MAX_LOCK_STRIKE_SPAN_TICKS. */
+#define KERNEL_MAX_LOCK_STRIKE_REPEAT 16u
+#define KERNEL_MAX_LOCK_STRIKE_SPAN_TICKS 255u
 
 typedef enum KernelStatModifierOperation {
     KernelStatModifierOperation_Additive = 0,
@@ -1234,6 +1280,27 @@ typedef struct KernelActionDefinition {
      * non-zero the status is applied only to a target whose
      * force_resistance is strictly below it; zero applies it to anyone. */
     float status_strength;
+    /* lock_strike only (ABI 107); zero on every other action. The lock's
+     * volume: a collider template with the damage purpose, a cone or a
+     * sphere. A cone needs direction_source; a sphere ignores it. */
+    uint32_t lock_collider_template_id;
+    /* KernelLockStrikeMode. */
+    uint8_t lock_mode;
+    uint8_t lock_reserved0;
+    /* How many times the lock is taken: 0 or 1 is once, at most
+     * KERNEL_MAX_LOCK_STRIKE_REPEAT. The first is taken when the graph runs,
+     * each other lock_repeat_interval_ticks after the one before, from the
+     * same position and direction, each locking afresh; it goes on after the
+     * entity whose graph ran is gone. */
+    uint16_t lock_repeat_count;
+    /* Ticks between repeats, 1..255; zero with no repeat. The whole run is at
+     * most KERNEL_MAX_LOCK_STRIKE_SPAN_TICKS long. */
+    uint32_t lock_repeat_interval_ticks;
+    /* Metres above position the lock is taken from, finite and in
+     * 0 .. KERNEL_MAX_LOCK_ORIGIN_LIFT, so a bottle that broke on the ground
+     * does not have every line of sight cut by a bump in it. Stops short of a
+     * ceiling. */
+    float lock_origin_lift;
 } KernelActionDefinition;
 
 typedef struct KernelActionTriggerDefinition {
@@ -2811,12 +2878,22 @@ typedef struct KernelLockSelection {
  * render clock reaches it -- from the shooter's drawn position and aim, against
  * the actors as drawn at that moment. Polled once.
  */
+/* KernelLockStrikeEvent.flags (ABI 107): an action graph's lock_strike, not a
+ * weapon's commit. shooter_net_id is the graph's instigator (zero for a
+ * bottle), commit_index which strike of a repeated run it is, and
+ * action_instance_id the projectile_template_id of the shot it struck with --
+ * there is no action instance, and no weapon (selection.weapon_id is zero), so
+ * that is what to draw it as. The selection's targets are what the server
+ * struck, not what this client would lock. */
+#define KERNEL_LOCK_STRIKE_FLAG_GRAPH 1u
+
 typedef struct KernelLockStrikeEvent {
     uint32_t struct_size;
     uint32_t shooter_net_id;
     uint32_t action_instance_id;
     uint16_t commit_index;
-    uint16_t reserved;
+    /* KERNEL_LOCK_STRIKE_FLAG_*; reserved before ABI 107. */
+    uint16_t flags;
     uint32_t server_tick;
     KernelLockSelection selection;
 } KernelLockStrikeEvent;
@@ -2831,13 +2908,27 @@ typedef struct KernelLockMissileView {
     uint32_t struct_size;
     uint32_t shooter_net_id;
     uint32_t target_net_id;
-    /* The commit it was fired on, counted from zero. Restarts with each hold:
-     * shooter, launch_tick and commit_index together name a missile. */
+    /* The commit it was fired on, counted from zero; for an action graph's,
+     * which strike of a repeated run. Restarts with each hold: shooter,
+     * launch_tick, commit_index and target together name a missile. */
     uint16_t commit_index;
-    uint16_t reserved;
+    /* KERNEL_LOCK_MISSILE_FLAG_*; reserved before ABI 107. */
+    uint16_t flags;
     uint32_t launch_tick;
     uint32_t arrival_tick;
+    /* With KERNEL_LOCK_MISSILE_FLAG_FROM_ORIGIN, where it leaves from (ABI
+     * 107, appended). */
+    KernelVec3 origin;
+    /* With KERNEL_LOCK_MISSILE_FLAG_FROM_ORIGIN, the shot it is -- what to draw
+     * it as, a graph's missile having no weapon; zero for a weapon's (ABI 107,
+     * appended). */
+    uint32_t projectile_template_id;
 } KernelLockMissileView;
+
+/* KernelLockMissileView.flags (ABI 107): an action graph's lock_strike
+ * missile, drawn from origin rather than its shooter, which may be zero (a
+ * bottle). */
+#define KERNEL_LOCK_MISSILE_FLAG_FROM_ORIGIN 1u
 
 typedef struct KernelHomingState {
     uint32_t struct_size;

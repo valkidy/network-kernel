@@ -2137,6 +2137,9 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 "percent",
                 "rise_speed",
                 "drift_speed",
+                "collider",
+                "mode",
+                "origin_lift",
             },
             path,
             source_kind,
@@ -2182,11 +2185,14 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
             throw std::runtime_error(
                 "ui_id is only supported on open_ui: " + path);
         }
-        if ((action["repeat"] || action["lifetime_ticks"]) &&
-            compiled_action.action_type != "spawn_projectile") {
+        if ((action["lifetime_ticks"] &&
+             compiled_action.action_type != "spawn_projectile") ||
+            (action["repeat"] &&
+             compiled_action.action_type != "spawn_projectile" &&
+             compiled_action.action_type != "lock_strike")) {
             throw std::runtime_error(
-                "repeat and lifetime_ticks are only supported on "
-                "spawn_projectile: " + path);
+                "repeat is only supported on spawn_projectile and lock_strike, "
+                "lifetime_ticks only on spawn_projectile: " + path);
         }
         if (action["when"]) {
             const std::string condition = action["when"].as<std::string>();
@@ -2218,6 +2224,89 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 &compiled_action.position_parameter,
                 &compiled_action.direction_parameter,
             };
+        } else if (compiled_action.action_type == "lock_strike") {
+            for (const auto& field : action) {
+                const std::string key = field.first.as<std::string>();
+                if (key != "type" && key != "when" && key != "collider" &&
+                    key != "projectile_template" && key != "mode" &&
+                    key != "position" && key != "direction" &&
+                    key != "origin_lift" && key != "repeat") {
+                    throw std::runtime_error(
+                        "lock_strike takes collider, projectile_template, mode, "
+                        "position, direction, origin_lift and repeat: " + path);
+                }
+            }
+            if (const YAML::Node repeat = action["repeat"]) {
+                reject_unknown_keys(
+                    repeat,
+                    {"interval_ticks", "count"},
+                    path,
+                    source_kind,
+                    KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_UNKNOWN);
+                if (!repeat["interval_ticks"] || !repeat["count"]) {
+                    throw std::runtime_error(
+                        "lock_strike repeat needs interval_ticks and count: " +
+                        path);
+                }
+                compiled_action.lock_repeat_count_parameter =
+                    optional_parameter_reference(repeat["count"]);
+                compiled_action.lock_repeat_interval_ticks_parameter =
+                    optional_parameter_reference(repeat["interval_ticks"]);
+                if (compiled_action.lock_repeat_count_parameter.empty()) {
+                    compiled_action.lock_repeat_count =
+                        repeat["count"].as<std::uint32_t>();
+                }
+                if (compiled_action.lock_repeat_interval_ticks_parameter.empty()) {
+                    compiled_action.lock_repeat_interval_ticks =
+                        repeat["interval_ticks"].as<std::uint32_t>();
+                }
+            }
+            if (!action["mode"]) {
+                throw std::runtime_error("lock_strike requires mode: " + path);
+            }
+            compiled_action.collider_parameter =
+                parameter_reference_from_yaml(action["collider"], "collider");
+            compiled_action.projectile_template_parameter =
+                parameter_reference_from_yaml(
+                    action["projectile_template"], "projectile_template");
+            compiled_action.position_parameter =
+                parameter_reference_from_yaml(action["position"], "position");
+            if (action["direction"]) {
+                compiled_action.direction_parameter =
+                    parameter_reference_from_yaml(
+                        action["direction"], "direction");
+            }
+            compiled_action.lock_mode_parameter =
+                optional_parameter_reference(action["mode"]);
+            if (compiled_action.lock_mode_parameter.empty()) {
+                compiled_action.lock_mode = action["mode"].as<std::string>();
+                if (compiled_action.lock_mode != "instant" &&
+                    compiled_action.lock_mode != "missile") {
+                    throw std::runtime_error(
+                        "lock_strike mode must be instant or missile: " + path);
+                }
+            }
+            compiled_action.lock_origin_lift_parameter =
+                optional_parameter_reference(action["origin_lift"]);
+            if (action["origin_lift"] &&
+                compiled_action.lock_origin_lift_parameter.empty()) {
+                compiled_action.lock_origin_lift =
+                    action["origin_lift"].as<float>();
+                if (!std::isfinite(compiled_action.lock_origin_lift) ||
+                    compiled_action.lock_origin_lift < 0.0f ||
+                    compiled_action.lock_origin_lift > KERNEL_MAX_LOCK_ORIGIN_LIFT) {
+                    throw std::runtime_error(
+                        "lock_strike origin_lift must be 0 to 5 m: " + path);
+                }
+            }
+            action_parameters = {
+                &compiled_action.collider_parameter,
+                &compiled_action.projectile_template_parameter,
+                &compiled_action.position_parameter,
+            };
+            if (!compiled_action.direction_parameter.empty()) {
+                action_parameters.push_back(&compiled_action.direction_parameter);
+            }
         } else if (compiled_action.action_type == "spawn_entity") {
             if (action["projectile_template"] || action["target"] ||
                 action["amount"]) {
@@ -2606,7 +2695,11 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                  &compiled_action.spawn_lifetime_ticks_parameter,
                  &compiled_action.repeat_count_parameter,
                  &compiled_action.repeat_scatter_radius_parameter,
-                 &compiled_action.repeat_stagger_lifetime_ticks_parameter}) {
+                 &compiled_action.repeat_stagger_lifetime_ticks_parameter,
+                 &compiled_action.lock_mode_parameter,
+                 &compiled_action.lock_origin_lift_parameter,
+                 &compiled_action.lock_repeat_count_parameter,
+                 &compiled_action.lock_repeat_interval_ticks_parameter}) {
             if (!bound->empty()) {
                 action_parameters.push_back(bound);
             }
@@ -3395,10 +3488,11 @@ void apply_catalog_director_preload_config(
     const YAML::Node& document,
     GameServerGameplayConfig* config);
 void apply_catalog_patrol_config(
+    const GameplayConfigSource& source,
+    const std::string& base_path,
     const YAML::Node& document,
     GameServerGameplayConfig* config,
-    const std::string& path,
-    std::uint32_t source_kind);
+    const std::string& path);
 void apply_catalog_world_rule_config(GameServerGameplayConfig* config);
 void apply_catalog_population_budget_config(
     const YAML::Node& document,
@@ -8252,7 +8346,8 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
     const std::vector<EntityTemplateConfig>& entity_templates,
     const std::vector<ProjectileTemplateConfig>* projectile_templates = nullptr,
     const std::vector<ItemTemplateConfig>* item_templates = nullptr,
-    const std::vector<StatusEffectTemplateConfig>* status_effect_templates = nullptr) {
+    const std::vector<StatusEffectTemplateConfig>* status_effect_templates = nullptr,
+    const ColliderCatalogConfig* colliders = nullptr) {
     KernelActionTriggerDefinition compiled{};
     if (binding.action_graph_ref.empty()) {
         return compiled;
@@ -8485,6 +8580,138 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
                 trigger_parameter_value(
                     binding, graph_parameter(action.target_parameter)));
             compile_reserve_refill(binding, *graph, action, &compiled_action);
+            continue;
+        }
+        if (action.action_type == "lock_strike") {
+            // Mirrors the kernel: an entity's own triggers only. Its volume
+            // and its shot are checked here as the kernel will, so a bad one
+            // names its graph rather than failing the whole catalog there.
+            if (colliders == nullptr || projectile_templates == nullptr) {
+                throw std::runtime_error(
+                    "lock_strike is only supported in an entity's triggers: " +
+                    binding.action_graph_ref);
+            }
+            const std::string position = trigger_parameter_value(
+                binding, graph_parameter(action.position_parameter));
+            const std::string direction = action.direction_parameter.empty()
+                ? ""
+                : trigger_parameter_value(
+                      binding, graph_parameter(action.direction_parameter));
+            if (position != "event.position" ||
+                (!action.direction_parameter.empty() &&
+                 direction != "event.direction")) {
+                throw std::runtime_error(
+                    "lock_strike position/direction must bind to "
+                    "event.position/event.direction: " + binding.action_graph_ref);
+            }
+            const std::uint32_t collider_id = collider_template_id_from_ref(
+                YAML::Node(trigger_parameter_value(
+                    binding, graph_parameter(action.collider_parameter))),
+                *colliders);
+            const auto volume = std::find_if(
+                colliders->templates.begin(),
+                colliders->templates.end(),
+                [collider_id](const ColliderTemplateConfig& candidate) {
+                    return candidate.definition.template_id == collider_id;
+                });
+            const bool cone = volume != colliders->templates.end() &&
+                volume->definition.shape_type == KernelColliderShapeType_Cone;
+            const bool sphere = volume != colliders->templates.end() &&
+                volume->definition.shape_type == KernelColliderShapeType_Sphere;
+            if ((!cone && !sphere) ||
+                (volume->definition.purpose_flags & KernelColliderPurpose_Damage) ==
+                    0u) {
+                throw std::runtime_error(
+                    "lock_strike collider must be a damage cone or sphere: " +
+                    binding.action_graph_ref);
+            }
+            if (cone && action.direction_parameter.empty()) {
+                throw std::runtime_error(
+                    "lock_strike with a cone needs a direction: " +
+                    binding.action_graph_ref);
+            }
+            const std::string projectile_ref = trigger_parameter_value(
+                binding, graph_parameter(action.projectile_template_parameter));
+            const auto shot = std::find_if(
+                projectile_templates->begin(),
+                projectile_templates->end(),
+                [&](const ProjectileTemplateConfig& candidate) {
+                    return candidate.name == projectile_ref ||
+                        std::to_string(
+                            candidate.definition.projectile_template_id) ==
+                            projectile_ref;
+                });
+            if (shot == projectile_templates->end()) {
+                throw std::runtime_error(
+                    "unknown projectile template: " + projectile_ref);
+            }
+            const std::string mode = action.lock_mode_parameter.empty()
+                ? action.lock_mode
+                : trigger_parameter_value(
+                      binding, graph_parameter(action.lock_mode_parameter));
+            if (mode != "instant" && mode != "missile") {
+                throw std::runtime_error(
+                    "lock_strike mode must be instant or missile, got " + mode +
+                    ": " + binding.action_graph_ref);
+            }
+            const KernelProjectileMechanicsDefinition& mechanics =
+                shot->definition.mechanics;
+            if (mechanics.max_hit_count > KERNEL_MAX_LOCK_ARCS ||
+                (mode == "missile" &&
+                 (mechanics.lifetime_ticks < 1u ||
+                  mechanics.lifetime_ticks > UINT8_MAX))) {
+                throw std::runtime_error(
+                    "lock_strike shot " + projectile_ref +
+                    " must lock at most 16 (max_hit_count), and a missile's "
+                    "lifetime_ticks must be 1..255: " + binding.action_graph_ref);
+            }
+            const float lift = action.lock_origin_lift_parameter.empty()
+                ? action.lock_origin_lift
+                : bound_float(binding, *graph, action.lock_origin_lift_parameter);
+            if (lift < 0.0f || lift > KERNEL_MAX_LOCK_ORIGIN_LIFT) {
+                throw std::runtime_error(
+                    "lock_strike origin_lift must be 0 to 5 m: " +
+                    binding.action_graph_ref);
+            }
+            compiled_action.action_type = KernelEntityTriggerActionType_LockStrike;
+            compiled_action.lock_collider_template_id = collider_id;
+            compiled_action.spawn_projectile_template_id =
+                shot->definition.projectile_template_id;
+            compiled_action.lock_mode = mode == "missile"
+                ? KernelLockStrikeMode_Missile
+                : KernelLockStrikeMode_Instant;
+            compiled_action.lock_origin_lift = lift;
+            const std::uint32_t repeat_count =
+                action.lock_repeat_count_parameter.empty()
+                ? action.lock_repeat_count
+                : bound_uint32(binding, *graph, action.lock_repeat_count_parameter);
+            const std::uint32_t repeat_interval =
+                action.lock_repeat_interval_ticks_parameter.empty()
+                ? action.lock_repeat_interval_ticks
+                : bound_uint32(
+                      binding, *graph, action.lock_repeat_interval_ticks_parameter);
+            // Mirrors the kernel's lock_strike_repeat_is_authorable.
+            const bool repeat_ok = repeat_count <= 1u
+                ? repeat_interval == 0u
+                : repeat_count <= KERNEL_MAX_LOCK_STRIKE_REPEAT &&
+                      repeat_interval >= 1u &&
+                      repeat_interval * (repeat_count - 1u) <=
+                          KERNEL_MAX_LOCK_STRIKE_SPAN_TICKS;
+            if (!repeat_ok) {
+                throw std::runtime_error(
+                    "lock_strike repeat must be once (count 0 or 1, interval 0) "
+                    "or count 2.." + std::to_string(KERNEL_MAX_LOCK_STRIKE_REPEAT) +
+                    " at least 1 tick apart, all within " +
+                    std::to_string(KERNEL_MAX_LOCK_STRIKE_SPAN_TICKS) +
+                    " ticks: " + binding.action_graph_ref);
+            }
+            compiled_action.lock_repeat_count =
+                static_cast<std::uint16_t>(repeat_count);
+            compiled_action.lock_repeat_interval_ticks = repeat_interval;
+            compiled_action.position_source = KernelEventVec3Source_Position;
+            compiled_action.direction_source = action.direction_parameter.empty()
+                ? KernelEventVec3Source_Position
+                : KernelEventVec3Source_Direction;
             continue;
         }
         if (action.action_type == "teleport") {
@@ -9197,6 +9424,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             "entity_template_dir",
             "item_template_dir",
             "collider_template_dir",
+            "patrol_template_dir",
             "prop_population_rules",
             "static_collision_scene",
             "skeleton_manifests",
@@ -9465,8 +9693,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     apply_catalog_scene_props_config(
         document, &config, path, source.source_kind());
     apply_catalog_director_preload_config(document, &config);
-    apply_catalog_patrol_config(
-        document, &config, path, source.source_kind());
+    apply_catalog_patrol_config(source, base_path, document, &config, path);
     apply_catalog_world_rule_config(&config);
     apply_catalog_population_budget_config(
         document, &config, path, source.source_kind());
@@ -10076,11 +10303,136 @@ void apply_catalog_world_rule_config(GameServerGameplayConfig* config) {
     }
 }
 
-void apply_catalog_patrol_config(
-    const YAML::Node& document,
-    GameServerGameplayConfig* config,
+// One patrol definition, from one file under patrol_template_dir.
+PatrolDefinitionConfig patrol_definition_from_yaml(
+    const YAML::Node& node,
+    const GameServerGameplayConfig& config,
     const std::string& path,
     std::uint32_t source_kind) {
+    reject_unknown_keys(
+        node,
+        {
+            "id",
+            "name",
+            "area",
+            "seed",
+            "interval_ticks",
+            "max_live_groups",
+            "count",
+            "composition",
+            "formation_spacing_meters",
+            "advance_speed_meters_per_second",
+            "waypoint_radius_meters",
+            "despawn_linger_ticks",
+            "despawn_distance_meters",
+            "max_detour_ratio",
+            "route_attempts",
+        },
+        path,
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+    PatrolDefinitionConfig patrol;
+    if (!node["id"] || !node["name"]) {
+        throw std::runtime_error("patrol requires id and name");
+    }
+    patrol.id = node["id"].as<std::uint32_t>();
+    patrol.name = node["name"].as<std::string>();
+    if (patrol.id == 0) {
+        throw std::runtime_error("patrol id must not be zero: " + path);
+    }
+    patrol.area = patrol_area_from_yaml(node["area"], path, source_kind);
+    if (node["seed"]) {
+        patrol.seed = node["seed"].as<std::uint32_t>();
+    }
+    if (node["interval_ticks"]) {
+        patrol.interval_ticks = node["interval_ticks"].as<std::uint32_t>();
+    }
+    if (node["max_live_groups"]) {
+        patrol.max_live_groups = node["max_live_groups"].as<std::uint32_t>();
+    }
+    if (node["formation_spacing_meters"]) {
+        patrol.formation_spacing_meters =
+            node["formation_spacing_meters"].as<float>();
+    }
+    if (node["advance_speed_meters_per_second"]) {
+        patrol.group.advance_speed_meters_per_second =
+            node["advance_speed_meters_per_second"].as<float>();
+    }
+    if (node["waypoint_radius_meters"]) {
+        patrol.group.waypoint_radius_meters =
+            node["waypoint_radius_meters"].as<float>();
+    }
+    if (node["despawn_linger_ticks"]) {
+        patrol.despawn_linger_ticks =
+            node["despawn_linger_ticks"].as<std::uint32_t>();
+    }
+    if (node["despawn_distance_meters"]) {
+        patrol.despawn_distance_meters =
+            node["despawn_distance_meters"].as<float>();
+    }
+    if (node["max_detour_ratio"]) {
+        patrol.max_detour_ratio = node["max_detour_ratio"].as<float>();
+    }
+    if (node["route_attempts"]) {
+        patrol.route_attempts = node["route_attempts"].as<std::uint32_t>();
+    }
+    const YAML::Node count = node["count"];
+    if (!count) {
+        throw std::runtime_error("patrol requires count");
+    }
+    reject_unknown_keys(
+        count,
+        {"min", "max"},
+        path,
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+    if (!count["min"] || !count["max"]) {
+        throw std::runtime_error("patrol count requires min and max");
+    }
+    patrol.count_min = count["min"].as<std::uint32_t>();
+    patrol.count_max = count["max"].as<std::uint32_t>();
+    const YAML::Node composition = node["composition"];
+    if (!composition || !composition.IsSequence()) {
+        throw std::runtime_error("patrol composition must be a sequence");
+    }
+    for (const YAML::Node& entry_node : composition) {
+        reject_unknown_keys(
+            entry_node,
+            {"entity_template", "min", "max"},
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+        if (!entry_node["entity_template"] || !entry_node["min"] ||
+            !entry_node["max"]) {
+            throw std::runtime_error(
+                "patrol composition entry requires entity_template, min "
+                "and max");
+        }
+        SpawnCompositionEntry entry;
+        entry.entity_template_ref =
+            entry_node["entity_template"].as<std::string>();
+        entry.entity_template_id = entity_template_ref_from_yaml(
+            entry_node["entity_template"], config.entity_templates);
+        entry.min_count = entry_node["min"].as<std::uint32_t>();
+        entry.max_count = entry_node["max"].as<std::uint32_t>();
+        patrol.composition.push_back(std::move(entry));
+    }
+    // Unsatisfiable here means a catalog that does not load, rather than a
+    // squad that quietly comes out the wrong size at run time.
+    const std::string error = validate_patrol_definition(patrol);
+    if (!error.empty()) {
+        throw std::runtime_error(error + ": " + patrol.name);
+    }
+    return patrol;
+}
+
+void apply_catalog_patrol_config(
+    const GameplayConfigSource& source,
+    const std::string& base_path,
+    const YAML::Node& document,
+    GameServerGameplayConfig* config,
+    const std::string& path) {
+    const std::uint32_t source_kind = source.source_kind();
     const YAML::Node budget = document["patrol_budget"];
     if (budget) {
         reject_unknown_keys(
@@ -10094,134 +10446,85 @@ void apply_catalog_patrol_config(
                 budget["max_live_agents"].as<std::uint32_t>();
         }
     }
+    // Every definition is parsed and validated, listed or not: switching one
+    // off in `patrols:` must not hide that it no longer loads.
+    std::vector<PatrolDefinitionConfig> definitions;
+    if (document["patrol_template_dir"]) {
+        const std::string directory =
+            source.resolve_path(base_path, document["patrol_template_dir"]);
+        for (const std::string& file : source.list_yaml_files(directory)) {
+            PatrolDefinitionConfig patrol = patrol_definition_from_yaml(
+                source.load_yaml(file), *config, file, source_kind);
+            // The file names the definition it holds, so a copied file whose
+            // id was never changed is caught here rather than as a duplicate
+            // somewhere else.
+            const std::string stem =
+                std::filesystem::path(file).stem().string();
+            const std::string expected =
+                std::to_string(patrol.id) + "_patrol_" + patrol.name;
+            if (stem != expected) {
+                throw std::runtime_error(
+                    "patrol file must be named " + expected + ".yaml: " + file);
+            }
+            for (const PatrolDefinitionConfig& existing : definitions) {
+                if (existing.id == patrol.id) {
+                    throw std::runtime_error(
+                        "duplicate patrol id " + std::to_string(patrol.id) +
+                        ": " + file);
+                }
+            }
+            definitions.push_back(std::move(patrol));
+        }
+    }
     const YAML::Node patrols = document["patrols"];
     if (!patrols) {
         return;
     }
     if (!patrols.IsSequence()) {
-        throw std::runtime_error("patrols must be a sequence");
+        throw std::runtime_error("patrols must be a sequence: " + path);
     }
-    std::unordered_set<std::uint32_t> configured_ids;
-    for (const YAML::Node& node : patrols) {
-        reject_unknown_keys(
-            node,
-            {
-                "id",
-                "name",
-                "area",
-                "seed",
-                "interval_ticks",
-                "max_live_groups",
-                "count",
-                "composition",
-                "formation_spacing_meters",
-                "advance_speed_meters_per_second",
-                "waypoint_radius_meters",
-                "despawn_linger_ticks",
-                "despawn_distance_meters",
-                "max_detour_ratio",
-                "route_attempts",
-            },
-            path,
-            source_kind,
-            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
-        PatrolDefinitionConfig patrol;
-        if (!node["id"] || !node["name"]) {
-            throw std::runtime_error("patrol requires id and name");
-        }
-        patrol.id = node["id"].as<std::uint32_t>();
-        patrol.name = node["name"].as<std::string>();
-        if (patrol.id == 0) {
-            throw std::runtime_error("patrol id must not be zero");
-        }
-        if (!configured_ids.insert(patrol.id).second) {
+    std::unordered_set<std::uint32_t> listed_ids;
+    for (const YAML::Node& entry : patrols) {
+        if (entry["id"] || entry["name"]) {
             throw std::runtime_error(
-                "duplicate patrol id: " + std::to_string(patrol.id));
-        }
-        patrol.area = patrol_area_from_yaml(node["area"], path, source_kind);
-        if (node["seed"]) {
-            patrol.seed = node["seed"].as<std::uint32_t>();
-        }
-        if (node["interval_ticks"]) {
-            patrol.interval_ticks = node["interval_ticks"].as<std::uint32_t>();
-        }
-        if (node["max_live_groups"]) {
-            patrol.max_live_groups = node["max_live_groups"].as<std::uint32_t>();
-        }
-        if (node["formation_spacing_meters"]) {
-            patrol.formation_spacing_meters =
-                node["formation_spacing_meters"].as<float>();
-        }
-        if (node["advance_speed_meters_per_second"]) {
-            patrol.group.advance_speed_meters_per_second =
-                node["advance_speed_meters_per_second"].as<float>();
-        }
-        if (node["waypoint_radius_meters"]) {
-            patrol.group.waypoint_radius_meters =
-                node["waypoint_radius_meters"].as<float>();
-        }
-        if (node["despawn_linger_ticks"]) {
-            patrol.despawn_linger_ticks =
-                node["despawn_linger_ticks"].as<std::uint32_t>();
-        }
-        if (node["despawn_distance_meters"]) {
-            patrol.despawn_distance_meters =
-                node["despawn_distance_meters"].as<float>();
-        }
-        if (node["max_detour_ratio"]) {
-            patrol.max_detour_ratio = node["max_detour_ratio"].as<float>();
-        }
-        if (node["route_attempts"]) {
-            patrol.route_attempts = node["route_attempts"].as<std::uint32_t>();
-        }
-        const YAML::Node count = node["count"];
-        if (!count) {
-            throw std::runtime_error("patrol requires count");
+                "patrols lists ids now; each definition is a file under "
+                "patrol_template_dir: " +
+                path);
         }
         reject_unknown_keys(
-            count,
-            {"min", "max"},
+            entry,
+            {"ids"},
             path,
             source_kind,
             KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
-        if (!count["min"] || !count["max"]) {
-            throw std::runtime_error("patrol count requires min and max");
+        const YAML::Node ids = entry["ids"];
+        if (!ids || !ids.IsSequence()) {
+            throw std::runtime_error(
+                "patrols entry requires an ids sequence: " + path);
         }
-        patrol.count_min = count["min"].as<std::uint32_t>();
-        patrol.count_max = count["max"].as<std::uint32_t>();
-        const YAML::Node composition = node["composition"];
-        if (!composition || !composition.IsSequence()) {
-            throw std::runtime_error("patrol composition must be a sequence");
-        }
-        for (const YAML::Node& entry_node : composition) {
-            reject_unknown_keys(
-                entry_node,
-                {"entity_template", "min", "max"},
-                path,
-                source_kind,
-                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
-            if (!entry_node["entity_template"] || !entry_node["min"] ||
-                !entry_node["max"]) {
+        // Listed order is run order.
+        for (const YAML::Node& id_node : ids) {
+            const std::uint32_t id = id_node.as<std::uint32_t>();
+            if (!listed_ids.insert(id).second) {
                 throw std::runtime_error(
-                    "patrol composition entry requires entity_template, min "
-                    "and max");
+                    "patrol id " + std::to_string(id) +
+                    " is listed twice: " + path);
             }
-            SpawnCompositionEntry entry;
-            entry.entity_template_ref =
-                entry_node["entity_template"].as<std::string>();
-            entry.entity_template_id = entity_template_ref_from_yaml(
-                entry_node["entity_template"], config->entity_templates);
-            entry.min_count = entry_node["min"].as<std::uint32_t>();
-            entry.max_count = entry_node["max"].as<std::uint32_t>();
-            patrol.composition.push_back(std::move(entry));
+            const auto found = std::find_if(
+                definitions.begin(),
+                definitions.end(),
+                [id](const PatrolDefinitionConfig& definition) {
+                    return definition.id == id;
+                });
+            if (found == definitions.end()) {
+                throw std::runtime_error(
+                    "patrol id " + std::to_string(id) +
+                    " is listed but no file under patrol_template_dir "
+                    "defines it: " +
+                    path);
+            }
+            config->patrols.push_back(*found);
         }
-        // Unsatisfiable here means a catalog that does not load, rather than a
-        // squad that quietly comes out the wrong size at run time.
-        const std::string error = validate_patrol_definition(patrol);
-        if (!error.empty()) {
-            throw std::runtime_error(error + ": " + patrol.name);
-        }
-        config->patrols.push_back(std::move(patrol));
     }
 }
 
@@ -10342,6 +10645,15 @@ std::uint64_t compute_gameplay_catalog_hash(
             hash_string(&hash, action.repeat_stagger_lifetime_ticks_parameter);
             hash_scalar(&hash, action.reserve_refill_count);
             hash_scalar(&hash, action.reserve_refill_percent);
+            hash_string(&hash, action.collider_parameter);
+            hash_string(&hash, action.lock_mode);
+            hash_string(&hash, action.lock_mode_parameter);
+            hash_float(&hash, action.lock_origin_lift);
+            hash_string(&hash, action.lock_origin_lift_parameter);
+            hash_scalar(&hash, action.lock_repeat_count);
+            hash_scalar(&hash, action.lock_repeat_interval_ticks);
+            hash_string(&hash, action.lock_repeat_count_parameter);
+            hash_string(&hash, action.lock_repeat_interval_ticks_parameter);
         }
     }
     std::vector<StatusEffectTemplateConfig> status_effect_templates =
@@ -11542,6 +11854,52 @@ std::vector<std::string> validate_gameplay_config(
             unspawned_shot_ids.push_back(weapon.projectile_template_id);
         }
     }
+    // And the shots an entity's lock_strike strikes with: nothing spawns them
+    // either. Named by the binding, not the graph, so found binding by binding.
+    for (const EntityTemplateConfig& entity_template : config.entity_templates) {
+        for (const TriggerBindingConfig* binding : {
+                 &entity_template.activated_trigger,
+                 &entity_template.collision_trigger,
+                 &entity_template.health_depleted_trigger,
+                 &entity_template.destroy_entity_trigger,
+                 &entity_template.enter_trigger,
+                 &entity_template.overlap_trigger,
+                 &entity_template.exit_trigger,
+             }) {
+            const auto graph = std::find_if(
+                config.action_graph_templates.begin(),
+                config.action_graph_templates.end(),
+                [binding](const ActionGraphTemplateConfig& candidate) {
+                    return !binding->action_graph_ref.empty() &&
+                           candidate.id == binding->action_graph_ref;
+                });
+            if (graph == config.action_graph_templates.end()) {
+                continue;
+            }
+            for (const ActionGraphActionConfig& action : graph->actions) {
+                if (action.action_type != "lock_strike") {
+                    continue;
+                }
+                std::string shot_ref;
+                for (const auto& [name, value] : binding->parameters) {
+                    if (name == action.projectile_template_parameter) {
+                        shot_ref = value;
+                    }
+                }
+                for (const ProjectileTemplateConfig& candidate :
+                     config.projectile_templates) {
+                    if (!shot_ref.empty() &&
+                        (candidate.name == shot_ref ||
+                         std::to_string(
+                             candidate.definition.projectile_template_id) ==
+                             shot_ref)) {
+                        unspawned_shot_ids.push_back(
+                            candidate.definition.projectile_template_id);
+                    }
+                }
+            }
+        }
+    }
     for (const ProjectileTemplateConfig& projectile_template :
          config.projectile_templates) {
         const KernelProjectileTemplateDefinition& definition =
@@ -11766,7 +12124,8 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
             config.entity_templates,
             &config.projectile_templates,
             nullptr,
-            &config.status_effect_templates);
+            &config.status_effect_templates,
+            &config.colliders);
         entity_template.collision_trigger = compile_action_trigger_binding(
             authored_template.collision_trigger,
             "on_collision",
@@ -11775,7 +12134,8 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
             config.entity_templates,
             &config.projectile_templates,
             nullptr,
-            &config.status_effect_templates);
+            &config.status_effect_templates,
+            &config.colliders);
         entity_template.collision_trigger_mask =
             authored_template.collision_trigger_mask;
         entity_template.trigger_collider_template_id =
@@ -11820,7 +12180,8 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
                 config.entity_templates,
                 &config.projectile_templates,
                 nullptr,
-                &config.status_effect_templates);
+                &config.status_effect_templates,
+                &config.colliders);
             // Mirrors the kernel: only a portal has somewhere to send it.
             for (std::uint32_t index = 0; index < compiled->action_count; ++index) {
                 if (compiled->actions[index].action_type ==
@@ -11840,7 +12201,8 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
             config.entity_templates,
             &config.projectile_templates,
             nullptr,
-            &config.status_effect_templates);
+            &config.status_effect_templates,
+            &config.colliders);
         entity_template.destroy_entity_trigger = compile_action_trigger_binding(
             authored_template.destroy_entity_trigger,
             "on_destroy_entity",
@@ -11849,7 +12211,8 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
             config.entity_templates,
             &config.projectile_templates,
             nullptr,
-            &config.status_effect_templates);
+            &config.status_effect_templates,
+            &config.colliders);
         // Mirrors the kernel's refusal, with a name: a group whose cleanup runs
         // on_destroy must not spawn into any population group from it, or one
         // eviction could spawn the next without end.

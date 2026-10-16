@@ -318,7 +318,6 @@ KernelProjectileTemplateDefinition projectile_template() {
     KernelProjectileTemplateDefinition projectile{};
     projectile.struct_size = sizeof(projectile);
     projectile.projectile_template_id = 3;
-    projectile.weapon_id = kSpammerWeaponId;
     projectile.mechanics.struct_size = sizeof(KernelProjectileMechanicsDefinition);
     projectile.mechanics.projectile_type = KernelProjectileType_Standard;
     projectile.mechanics.motion_model = KernelProjectileMotionModel_Linear;

@@ -42,6 +42,13 @@ struct LockMissileLaunch {
     // 1..255: the flight is never longer than the shot template's
     // lifetime_ticks, which the loader holds to 255.
     std::uint8_t flight_ticks = 1;
+    // An action graph's lock_strike: drawn from `origin`, not the shooter,
+    // which it may not have (a bottle). Replicated with the origin, and to
+    // whoever sees the target rather than the shooter.
+    bool from_origin = false;
+    glm::vec3 origin{0.0f};
+    // The shot it is: what a client draws a graph's missile as.
+    std::uint32_t projectile_template_id = 0;
 };
 
 struct WeaponSimulationContext {

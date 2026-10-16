@@ -1,0 +1,10 @@
+# The reach of fungible_magic_missile_bottle's lock: every direction from
+# where it broke (lifted a metre), 10 m out. A lock_strike volume, never a
+# body.
+id: 55
+name: magic_missile_bottle_sphere
+shape: sphere
+center: {x: 0.0, y: 0.0, z: 0.0}
+radius: 10.0
+purpose: damage
+layer: area_effect

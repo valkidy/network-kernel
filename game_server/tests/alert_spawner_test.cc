@@ -54,6 +54,9 @@ constexpr std::array<const char*, 3> kShippedCallerFiles{
     "entity_templates/38_gingerbread_courier.yaml",
 };
 
+constexpr const char* kAirforcePatrolFile =
+    "patrol_templates/2_patrol_gingerbread_airforce.yaml";
+
 constexpr const char* kBudgets =
     "\nreinforce_budget:\n"
     "  max_live_agents: 64\n"
@@ -112,8 +115,13 @@ public:
             "# Every unit an on_alert spawner",
             "agent_budget:\n  max_live_agents: 256\n");
         // The airforce patrol fields hive_airship, one of the callers taken
-        // out, so it goes too. It is the last thing in the file.
-        catalog_ = cut(catalog_, "  - id: 2\n    name: gingerbread_airforce\n", "");
+        // out, so it goes too -- its file as well as its listing, since every
+        // patrol file is validated whether it is listed or not.
+        // The shipping case puts it back with the callers.
+        catalog_ = replace(catalog_, "  - ids: [1, 2]\n", "  - ids: [1]\n");
+        shipped_callers_.emplace_back(
+            kAirforcePatrolFile, read_file(root_ / kAirforcePatrolFile));
+        fs::remove(root_ / kAirforcePatrolFile);
         for (const char* file : kShippedCallerFiles) {
             fs::remove(root_ / file);
         }
@@ -187,6 +195,14 @@ public:
     }
 
 private:
+    // `from` replaced by `to`; it has to be there, for the same reason as cut.
+    static std::string replace(
+        const std::string& text, const std::string& from, const std::string& to) {
+        const std::size_t start = text.find(from);
+        require(start != std::string::npos);
+        return text.substr(0, start) + to + text.substr(start + from.size());
+    }
+
     // Removes from `from` up to and including `through`, or to the end when
     // `through` is empty. Both have to be there: a fixture whose needle has
     // gone would otherwise quietly test the shipping file instead.

@@ -107,13 +107,19 @@ struct EntitySnapshot {
     NetId carrier_entity_id = 0;
 };
 
-// One lock-on missile (snapshot schema 30). The server has already scheduled
-// its hit; this is only what a client needs to draw a flight from the shooter
-// that reaches the target on its arrival tick. 12 B on the wire, in an
-// optional section of the first snapshot packet of an interval -- unreliable,
-// like the snapshot: a lost one is a missile not drawn, and the damage lands
-// anyway. Each is sent once, so a client tells them apart by shooter, launch
-// tick and commit.
+// A lock record that carries where it was taken from (snapshot schema 31): an
+// action graph's lock_strike, whose source -- a bottle -- is gone, or was never
+// a shooter at all. Its shooter may then be zero.
+constexpr std::uint8_t kSnapshotLockRecordHasOrigin = 1u << 0;
+
+// One lock-on missile (snapshot schema 30, 31). The server has already
+// scheduled its hit; this is only what a client needs to draw a flight from
+// the shooter -- or from `origin`, with kSnapshotLockRecordHasOrigin -- that
+// reaches the target on its arrival tick. 13 B on the wire, 29 B with an
+// origin and the shot it carries, in an optional section of the first snapshot packet of an interval
+// -- unreliable, like the snapshot: a lost one is a missile not drawn, and the
+// damage lands anyway. Each is sent once, so a client tells them apart by
+// shooter, launch tick, commit and target.
 struct SnapshotLockMissile {
     NetId shooter_net_id = 0;
     NetId target_net_id = 0;
@@ -124,12 +130,45 @@ struct SnapshotLockMissile {
     std::uint8_t launch_tick_delta = 0;
     // Ticks from launch to arrival, 1..255.
     std::uint8_t flight_ticks = 1;
+    // kSnapshotLockRecord*.
+    std::uint8_t flags = 0;
+    // With kSnapshotLockRecordHasOrigin: where the missile leaves from, and
+    // the graph's shot -- what a client draws it as, there being no weapon.
+    glm::vec3 origin{0.0f};
+    std::uint32_t projectile_template_id = 0;
+};
+
+// One instant lock_strike of an action graph (snapshot schema 31): what it
+// locked -- the targets it struck at once, nearest first -- and enough of the
+// lock to draw the rest of its arcs: where it was taken, along which
+// direction, in which volume, and how many arcs a full lock has. The unfilled
+// arcs' ends a client works out itself (lock_targets::unfilled_arc_end), as for
+// a weapon's. 35 B and 4 B a target, in its own optional section, sent once
+// like a missile.
+struct SnapshotLockStrike {
+    glm::vec3 origin{0.0f};
+    // Unit length, or zero for a sphere; 16 bits an axis on the wire.
+    glm::vec3 direction{0.0f};
+    std::uint32_t collider_template_id = 0;
+    // The shot it struck with: what a client draws its arcs as, there being
+    // no weapon.
+    std::uint32_t projectile_template_id = 0;
+    // The graph's instigator; zero for a bottle.
+    NetId instigator_net_id = 0;
+    // Which strike of a repeated lock_strike's run, from zero.
+    std::uint16_t strike_index = 0;
+    std::uint8_t launch_tick_delta = 0;
+    // A full lock's arcs, 1..KERNEL_MAX_LOCK_ARCS (16).
+    std::uint8_t arc_count = 1;
+    // At most arc_count.
+    std::vector<NetId> target_net_ids;
 };
 
 struct WorldSnapshot {
     SnapshotHeader header;
     std::vector<EntitySnapshot> entities;
     std::vector<SnapshotLockMissile> lock_missiles;
+    std::vector<SnapshotLockStrike> lock_strikes;
 };
 
 // The visual flags a world entity's own components imply: moving, reloading,

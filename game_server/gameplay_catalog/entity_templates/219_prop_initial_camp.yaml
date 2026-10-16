@@ -44,6 +44,10 @@ loadout:
       quantity: 2
     - item_template: fungible_tornado_bottle
       quantity: 3
+    - item_template: fungible_chain_lightning_bottle
+      quantity: 3
+    - item_template: fungible_magic_missile_bottle
+      quantity: 3
     - item_template: fungible_pull_bottle
       quantity: 3
     - item_template: fungible_water_balloon

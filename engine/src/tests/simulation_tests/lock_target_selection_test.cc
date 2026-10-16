@@ -1,6 +1,7 @@
 // lock_targets::select picks what a lock-on weapon locks: candidates inside a
-// 3D cone, nearest first, ties by net id, at most max_targets, and a blocked
-// target gives its place to the next nearest.
+// 3D cone -- or a sphere, for an action graph's lock_strike -- nearest first,
+// ties by net id, at most max_targets, and a blocked target gives its place to
+// the next nearest.
 //
 // Every check uses require(), never assert(): -c opt compiles assert out along
 // with the call inside it.
@@ -172,6 +173,90 @@ void unfilled_arcs_spray_inside_the_cone_and_repeat_per_shot() {
             unfilled_arc_end(cone, 41, 9001, 0, 1));
 }
 
+// A sphere: every direction is in, so a target behind, above or beside the
+// origin locks as readily as one ahead, and neither aim nor fov is read -- a
+// zero aim and a zero fov lock the same as any other. Range, nearest first and
+// the wall rule are the cone's.
+void a_sphere_locks_every_direction_within_its_radius() {
+    const std::vector<Candidate> candidates{
+        {1, {0.0f, 0.0f, -6.0f}},   // behind
+        {2, {0.0f, 4.0f, 0.0f}},    // overhead
+        {3, {-9.0f, 0.0f, 0.0f}},   // beside
+        {4, {0.0f, 0.0f, 12.0f}},   // ahead, but furthest
+        {5, {0.0f, -21.0f, 0.0f}},  // beyond the radius
+    };
+    Cone sphere;
+    sphere.origin = glm::vec3{0.0f};
+    sphere.aim = glm::vec3{0.0f};
+    sphere.range = 20.0f;
+    sphere.fov_degrees = 0.0f;
+    sphere.max_targets = 3;
+    sphere.omnidirectional = true;
+    require((ids(select(candidates, sphere, {})) ==
+             std::vector<std::uint32_t>{2, 1, 3}));
+    // The same volume with an aim and a fov set: ignored.
+    Cone aimed = sphere;
+    aimed.aim = glm::vec3{0.0f, 0.0f, 1.0f};
+    aimed.fov_degrees = 10.0f;
+    require((ids(select(candidates, aimed, {})) ==
+             std::vector<std::uint32_t>{2, 1, 3}));
+    // A wall hides the overhead one; the next nearest takes its place.
+    const auto ceiling = [](const glm::vec3&, const glm::vec3& to) {
+        return to.y > 0.0f;
+    };
+    require((ids(select(candidates, sphere, ceiling)) ==
+             std::vector<std::uint32_t>{1, 3, 4}));
+    // The same candidates in a cone of that aim lock only the one ahead.
+    Cone cone = aimed;
+    cone.omnidirectional = false;
+    require((ids(select(candidates, cone, {})) == std::vector<std::uint32_t>{4}));
+    // A sphere still needs a radius and a target count.
+    Cone no_radius = sphere;
+    no_radius.range = 0.0f;
+    require(select(candidates, no_radius, {}).empty());
+    Cone no_targets = sphere;
+    no_targets.max_targets = 0;
+    require(select(candidates, no_targets, {}).empty());
+}
+
+// A sphere's unfilled arcs end anywhere around it -- above and below, ahead and
+// behind -- at 40% to 100% of its radius, the same point for the same shot,
+// and whatever aim it was handed.
+void unfilled_arcs_of_a_sphere_spray_all_around() {
+    Cone sphere;
+    sphere.origin = glm::vec3{3.0f, 1.0f, -2.0f};
+    sphere.aim = glm::vec3{0.0f};
+    sphere.range = 10.0f;
+    sphere.max_targets = 4;
+    sphere.omnidirectional = true;
+    Cone aimed = sphere;
+    aimed.aim = glm::vec3{0.0f, 0.0f, 1.0f};
+    aimed.fov_degrees = 30.0f;
+    bool above = false;
+    bool below = false;
+    bool ahead = false;
+    bool behind = false;
+    for (std::uint32_t commit = 0; commit < 20; ++commit) {
+        for (std::uint32_t arc = 0; arc < 4; ++arc) {
+            const glm::vec3 end = unfilled_arc_end(
+                sphere, 0, 77, static_cast<std::uint16_t>(commit), arc);
+            const glm::vec3 offset = end - sphere.origin;
+            const float distance = glm::length(offset);
+            require(distance >= sphere.range * 0.4f - 0.001f);
+            require(distance <= sphere.range + 0.001f);
+            require(unfilled_arc_end(
+                        sphere, 0, 77, static_cast<std::uint16_t>(commit), arc) == end);
+            require(unfilled_arc_end(
+                        aimed, 0, 77, static_cast<std::uint16_t>(commit), arc) == end);
+            above = above || offset.y > 0.0f;
+            below = below || offset.y < 0.0f;
+            ahead = ahead || offset.z > 0.0f;
+            behind = behind || offset.z < 0.0f;
+        }
+    }
+    require(above && below && ahead && behind);
+}
+
 }  // namespace
 
 int main() {
@@ -181,6 +266,8 @@ int main() {
     a_blocked_target_is_replaced_by_the_next_nearest();
     nothing_is_locked_by_a_degenerate_cone();
     unfilled_arcs_spray_inside_the_cone_and_repeat_per_shot();
+    a_sphere_locks_every_direction_within_its_radius();
+    unfilled_arcs_of_a_sphere_spray_all_around();
     std::puts("lock_target_selection_test passed");
     return 0;
 }

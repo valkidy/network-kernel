@@ -85,7 +85,6 @@ void shuttle(ne::LoopbackTransport* from, ne::LoopbackTransport* to) {
 ne::RuntimeProjectileTemplate bullet(ne::ProjectileSyncMode sync_mode) {
     ne::RuntimeProjectileTemplate projectile{};
     projectile.projectile_template_id = kProjectileTemplateId;
-    projectile.weapon_id = kWeaponId;
     projectile.projectile_type = ne::ProjectileType::kStandard;
     projectile.motion_model = ne::ProjectileMotionModel::kLinear;
     projectile.sync_mode = sync_mode;
