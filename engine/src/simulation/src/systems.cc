@@ -2305,6 +2305,9 @@ bool EntityLifecycleSystem::create_entity(
             exit_info.owner_peer = create_info.owner_peer;
             exit_info.position = portal.destination;
             exit_info.rotation = yaw_rotation_from_direction(link.forward);
+            // Nothing may be created between the portal and its exit: the
+            // exit's net id is the portal's plus one, and clients pair them
+            // by it (portal_test pins it).
             NetId exit_net_id = 0;
             if (create_entity(engine, exit_info, &exit_net_id, false)) {
                 link.exit_net_id = exit_net_id;
