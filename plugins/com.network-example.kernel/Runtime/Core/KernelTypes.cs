@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 106;
+        public const uint AbiVersion = 107;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int LogMessageTextSize = 512;
@@ -137,6 +137,22 @@ namespace NetworkExample.Kernel
         // Largest KernelGameMessage body (ABI 101).
         public const int MaxGameMessageBytes = 512;
         public const int MaxLockArcs = 16;
+        // lock_strike (ABI 107): the highest its origin is lifted above where
+        // the event happened, in metres; the most times one is taken; and the
+        // most ticks from its first strike to its last.
+        public const float MaxLockOriginLift = 5.0f;
+        public const uint MaxLockStrikeRepeat = 16U;
+        public const uint MaxLockStrikeSpanTicks = 255U;
+        // KernelLockStrikeEvent.flags (ABI 107): an action graph's lock_strike,
+        // not a weapon's commit. shooter_net_id is the graph's instigator (zero
+        // for a bottle), commit_index which strike of a repeated run it is,
+        // action_instance_id the shot's projectile_template_id -- what to draw
+        // it as, selection.weapon_id being zero.
+        public const ushort LockStrikeFlagGraph = 1;
+        // KernelLockMissileView.flags (ABI 107): an action graph's missile,
+        // drawn from origin rather than its shooter (which may be zero), as the
+        // shot projectile_template_id names.
+        public const ushort LockMissileFlagFromOrigin = 1;
         // A weapon container's slot count; a weapon's category is its slot.
         public const int WeaponCategoryCount = 4;
         // KernelItemInstanceView.drop_tag (ABI 101): what drops at a death or
@@ -502,6 +518,17 @@ namespace NetworkExample.Kernel
         ApplySuspendMovement = 13,
         ApplyUntargetable = 14,
         Teleport = 15,
+        // ABI 107: an entity trigger's lock -- up to its shot's max_hit_count
+        // actors in a damage sphere or cone, struck at once or by a certain
+        // missile each; see KernelActionDefinition's lock_* fields.
+        LockStrike = 16,
+    }
+
+    // How a lock_strike strikes what it locks (ABI 107).
+    public enum KernelLockStrikeMode : byte
+    {
+        Instant = 0,
+        Missile = 1,
     }
 
     public enum KernelEntityRefSource
@@ -1193,6 +1220,19 @@ namespace NetworkExample.Kernel
         // apply_status only (ABI 102): when > 0 the status lands only on a
         // target whose force_resistance is strictly below it; 0 is anyone.
         public float status_strength;
+        // lock_strike only (ABI 107); zero on every other action. The volume:
+        // a damage collider template, a sphere or a cone (which needs
+        // direction_source). The shot is spawn_projectile_template_id.
+        public uint lock_collider_template_id;
+        // KernelLockStrikeMode.
+        public byte lock_mode;
+        public byte lock_reserved0;
+        // 0 or 1 is once; up to MaxLockStrikeRepeat, lock_repeat_interval_ticks
+        // apart, the whole run within MaxLockStrikeSpanTicks.
+        public ushort lock_repeat_count;
+        public uint lock_repeat_interval_ticks;
+        // Metres above position the lock is taken from, 0 .. MaxLockOriginLift.
+        public float lock_origin_lift;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelActionDefinition>();
     }
@@ -2694,9 +2734,12 @@ namespace NetworkExample.Kernel
     {
         public uint struct_size;
         public uint shooter_net_id;
+        // For a graph's strike (LockStrikeFlagGraph), the shot's
+        // projectile_template_id.
         public uint action_instance_id;
         public ushort commit_index;
-        public ushort reserved;
+        // KernelConstants.LockStrikeFlag*; reserved before ABI 107.
+        public ushort flags;
         public uint server_tick;
         public KernelLockSelection selection;
 
@@ -2710,9 +2753,14 @@ namespace NetworkExample.Kernel
         public uint shooter_net_id;
         public uint target_net_id;
         public ushort commit_index;
-        public ushort reserved;
+        // KernelConstants.LockMissileFlag*; reserved before ABI 107.
+        public ushort flags;
         public uint launch_tick;
         public uint arrival_tick;
+        // With LockMissileFlagFromOrigin (ABI 107, appended): where it leaves
+        // from, and the shot it is; zero for a weapon's missile.
+        public KernelVec3 origin;
+        public uint projectile_template_id;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelLockMissileView>();
     }

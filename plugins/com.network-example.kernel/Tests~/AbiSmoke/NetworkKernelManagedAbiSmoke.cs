@@ -34,7 +34,7 @@ public static class NetworkKernelManagedAbiSmoke
         KernelBuildInfo buildInfo = KernelAbi.GetBuildInfo();
         GameServerAbiInfo gameServerInfo = GameServerAbi.GetInfo();
         RequireSkeletonBindingContract();
-        Require(KernelConstants.AbiVersion == 106, "Managed kernel ABI version was not v106.");
+        Require(KernelConstants.AbiVersion == 107, "Managed kernel ABI version was not v107.");
         Require(
             KernelLocalWeaponState.StructSize == 20 &&
             info.local_weapon_state_size == KernelLocalWeaponState.StructSize,
@@ -168,7 +168,7 @@ public static class NetworkKernelManagedAbiSmoke
             KernelConstants.MaxStaggerTicks == 300U,
             "Kernel hit stagger ABI mismatch.");
         Require(
-            System.Runtime.InteropServices.Marshal.SizeOf<KernelActionTriggerDefinition>() == 1276 &&
+            System.Runtime.InteropServices.Marshal.SizeOf<KernelActionTriggerDefinition>() == 1404 &&
             (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("damage_stagger") >
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("impulse_strength_vertical") &&
             (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelEntityTemplateDefinition>("stagger_immunity_ticks") >
@@ -216,7 +216,7 @@ public static class NetworkKernelManagedAbiSmoke
             KernelProjectileReplication.Derived == (KernelProjectileReplication)1 &&
             KernelProjectileLaunchType.Descent == (KernelProjectileLaunchType)1 &&
             KernelProjectileLaunchDefinition.StructSize == 24 &&
-            KernelActionDefinition.StructSize == 148 &&
+            KernelActionDefinition.StructSize == 164 &&
             (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("spawn_lifetime_ticks") == 84 &&
             (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelProjectileLaunchDefinition>("fall_ticks") == 20 &&
             (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelProjectileMechanicsDefinition>("launch") ==
@@ -233,7 +233,7 @@ public static class NetworkKernelManagedAbiSmoke
             KernelEventType.ShelterChanged == (KernelEventType)17 &&
             KernelGameplayRequestRejectionReason.InstigatorSheltered == (KernelGameplayRequestRejectionReason)18 &&
             KernelLocalActionResultReason.Sheltered == (KernelLocalActionResultReason)15 &&
-            KernelActionDefinition.StructSize == 148 &&
+            KernelActionDefinition.StructSize == 164 &&
             (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("ui_id") == 116 &&
             (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("spawn_placement") == 120 &&
             System.Runtime.InteropServices.Marshal.SizeOf<KernelEvent>() == 48 &&
@@ -262,7 +262,7 @@ public static class NetworkKernelManagedAbiSmoke
             (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelMovementDefinition>("hover_vertical_speed_meters_per_second") == 52,
             "Kernel ground-follow area effect and hover ABI mismatch.");
         Require(
-            KernelActionDefinition.StructSize == 148 &&
+            KernelActionDefinition.StructSize == 164 &&
             (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("pull_strength") == 124,
             "Kernel pull strength ABI mismatch.");
         Require(
@@ -273,8 +273,8 @@ public static class NetworkKernelManagedAbiSmoke
             KernelLocalActionResultReason.ItemAction == (KernelLocalActionResultReason)16 &&
             KernelInventoryChangeFlag.DropTag == (KernelInventoryChangeFlag)(1U << 3) &&
             KernelInventoryContainerKind.Stock == (KernelInventoryContainerKind)2 &&
-            KernelItemTemplateDefinition.StructSize == 1508 &&
-            (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelItemTemplateDefinition>("is_weapon") == 1504 &&
+            KernelItemTemplateDefinition.StructSize == 1636 &&
+            (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelItemTemplateDefinition>("is_weapon") == 1632 &&
             KernelPropDefinition.StructSize == 52 &&
             (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelPropDefinition>("importance") == 48 &&
             (int)System.Runtime.InteropServices.Marshal.OffsetOf<RenderEntityState>("held_weapon_id") == 161 &&
@@ -315,7 +315,20 @@ public static class NetworkKernelManagedAbiSmoke
             KernelPortalDefinition.StructSize == 40 &&
             KernelLockSelection.StructSize == 276 &&
             KernelLockStrikeEvent.StructSize == 296 &&
-            KernelLockMissileView.StructSize == 24 &&
+            KernelLockMissileView.StructSize == 40 &&
+            (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelLockMissileView>("flags") == 14 &&
+            (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelLockMissileView>("origin") == 24 &&
+            (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelLockMissileView>("projectile_template_id") == 36 &&
+            (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelLockStrikeEvent>("flags") == 14 &&
+            (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("lock_collider_template_id") == 148 &&
+            (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("lock_mode") == 152 &&
+            (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("lock_repeat_count") == 154 &&
+            (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("lock_repeat_interval_ticks") == 156 &&
+            (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("lock_origin_lift") == 160 &&
+            KernelEntityTriggerActionType.LockStrike == (KernelEntityTriggerActionType)16 &&
+            KernelLockStrikeMode.Missile == (KernelLockStrikeMode)1 &&
+            KernelConstants.LockStrikeFlagGraph == 1 &&
+            KernelConstants.LockMissileFlagFromOrigin == 1 &&
             KernelEventType.ActorTeleported == (KernelEventType)18 &&
             KernelEntityTriggerActionType.Teleport == (KernelEntityTriggerActionType)15 &&
             KernelWeaponFireMode.LockInstant == (KernelWeaponFireMode)5 &&
