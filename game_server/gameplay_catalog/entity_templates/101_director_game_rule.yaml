@@ -58,11 +58,7 @@ director:
       #   forest flank    x 14..74   at z 78     the north forest path, >= 6.8 m
       #                                          from the nearest trunk
       #   swamp shortcut  x 20..80   at z -50    swamp bed, -1.8 to -1.1 m
-      #   narrow pass     x -85..-25 at z -50.2  the pass's east-west leg, a
-      #                                          ~6.5 m floor between walls; its
-      #                                          north-south corridor runs along
-      #                                          z, which an x-only patrol cannot
-      #                                          walk
+      #   narrow pass     a patrol_route instead: see that node
       # Each stays well clear of the nests' 30 m ring: its GEO_ boxes span 16 m
       # across, and it should not land on top of one.
       - id: giant_open_combat
@@ -102,6 +98,23 @@ director:
             count: 1
             entity_template: gingerbread_giant
             position: {x: -55.0, y: 0.8, z: -50.2}
+            # Through the pass rather than across it: in from the open ground
+            # to its north, down the middle of the 8 m north-south corridor,
+            # west round the dogleg where it narrows, then out along the
+            # east-west leg. Walked end to end and back. Each leg is pathed
+            # over the navmesh, but the navmesh is baked for a 0.6 m agent and
+            # would cut the dogleg 0.8 m off the wall, so these points -- the
+            # floor's centre line, measured off the OBJ -- are what keep a
+            # 5.6 m stance clear of it. The giant joins at the corner nearest
+            # its spawn point.
+            patrol_route:
+              - {x: -80.0, y: 0.0, z: 10.0}
+              - {x: -80.0, y: 0.0, z: -32.0}
+              - {x: -82.0, y: 0.0, z: -38.0}
+              - {x: -84.5, y: 0.0, z: -43.0}
+              - {x: -84.0, y: 0.0, z: -49.0}
+              - {x: -70.0, y: 0.0, z: -50.5}
+              - {x: -25.0, y: 0.0, z: -50.2}
         condition:
           type: group_eliminated
           group: giant_narrow_pass

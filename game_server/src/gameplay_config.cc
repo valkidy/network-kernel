@@ -492,6 +492,10 @@ void hash_actor_template(
         hash_vec3(hash, node.spawn_position);
         hash_float(hash, node.spawn_radius);
         hash_scalar(hash, node.spawn_seed);
+        hash_scalar(hash, node.spawn_patrol_route.size());
+        for (const KernelVec3& waypoint : node.spawn_patrol_route) {
+            hash_vec3(hash, waypoint);
+        }
         for (const std::uint32_t next_node_id : node.next_node_ids) {
             hash_scalar(hash, next_node_id);
         }
@@ -6086,7 +6090,8 @@ EntityTemplateConfig entity_template_from_yaml(
                 const YAML::Node effect = authored["on_activate"][0];
                 reject_unknown_keys(
                     effect,
-                    {"type", "group", "count", "entity_template", "position", "radius", "seed"},
+                    {"type", "group", "count", "entity_template", "position", "radius", "seed",
+                     "patrol_route"},
                     path,
                     source_kind,
                     KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_GAME_RULE,
@@ -6110,6 +6115,22 @@ EntityTemplateConfig entity_template_from_yaml(
                     effect["radius"] ? effect["radius"].as<float>() : 0.0f;
                 node_config.spawn_seed =
                     effect["seed"] ? effect["seed"].as<std::uint32_t>() : 1u;
+                if (effect["patrol_route"]) {
+                    const YAML::Node route = effect["patrol_route"];
+                    if (!route.IsSequence() || route.size() < 2u) {
+                        throw std::runtime_error(
+                            "game_rule spawn_group patrol_route needs at least two waypoints");
+                    }
+                    for (const YAML::Node& waypoint : route) {
+                        const KernelVec3 point = vec3_from_yaml(waypoint);
+                        if (!std::isfinite(point.x) || !std::isfinite(point.y) ||
+                            !std::isfinite(point.z)) {
+                            throw std::runtime_error(
+                                "invalid game_rule spawn_group patrol_route waypoint");
+                        }
+                        node_config.spawn_patrol_route.push_back(point);
+                    }
+                }
                 if (node_config.spawn_count == 0u ||
                     node_config.spawn_entity_template_ref.empty() ||
                     !std::isfinite(node_config.spawn_position.x) ||
@@ -10281,6 +10302,7 @@ void apply_catalog_world_rule_config(GameServerGameplayConfig* config) {
                 node.spawn.position = authored_node.spawn_position;
                 node.spawn.radius = authored_node.spawn_radius;
                 node.spawn.seed = authored_node.spawn_seed;
+                node.spawn.patrol_route = authored_node.spawn_patrol_route;
                 game_rule.nodes.push_back(std::move(node));
             }
             config->game_rules.push_back(std::move(game_rule));

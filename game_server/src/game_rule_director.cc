@@ -114,12 +114,20 @@ void GameRuleDirector::activate_node(
             return;
         }
         group->member_net_ids.push_back(net_id);
+        if (!node.spawn.patrol_route.empty()) {
+            spawned_patrol_routes_.push_back(
+                SpawnedPatrolRoute{net_id, node.spawn.patrol_route});
+        }
     }
     spdlog::info(
         "game rule spawned rule={} group={} count={}",
         rule.name,
         node.spawn.group_id,
         node.spawn.count);
+}
+
+std::vector<SpawnedPatrolRoute> GameRuleDirector::take_spawned_patrol_routes() {
+    return std::exchange(spawned_patrol_routes_, {});
 }
 
 void GameRuleDirector::tick(KernelHandle* kernel) {

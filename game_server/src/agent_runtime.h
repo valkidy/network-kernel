@@ -127,6 +127,15 @@ struct AgentEntryRuntimeState {
     std::uint32_t restore_movement_collision_mask = 0;
 };
 
+// An authored route a passive_patrol sentry walks instead of its x-axis sweep:
+// the waypoints joined by navmesh corners, walked to the end and back.
+struct AgentRoutePatrolState {
+    std::vector<KernelVec3> path;
+    std::size_t next = 0;
+    // +1 walking towards the last point, -1 back towards the first.
+    int step = 1;
+};
+
 struct AgentRuntimeState {
     std::uint32_t net_id = 0;
     // Selects which controller and which tuning this agent runs under; agents
@@ -151,6 +160,8 @@ struct AgentRuntimeState {
     // discovers it; see AgentRuntimeManager::sync_agents_from_kernel.
     AgentSentryConfig sentry_config{};
     int patrol_direction = 1;
+    // Sentry passive_patrol only; empty for the x-axis sweep.
+    AgentRoutePatrolState route_patrol{};
     // Chaser only: true once the agent has closed inside its stop distance and
     // is holding position, until the target opens the gap back up.
     bool chase_holding = false;
