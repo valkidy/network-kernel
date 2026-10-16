@@ -88,6 +88,9 @@ private:
     // agent it names. Runs after the resync, because the agent was created by
     // that same director moments ago and is not in the list until then.
     void attach_pending_entries();
+    // Binds the routes game_rule spawns handed over to their agents, expanded
+    // over the navmesh. Same timing as attach_pending_entries.
+    void attach_pending_patrol_routes();
     // Drives everyone still walking out of whatever spawned them: one input per
     // tick towards the door, and the template's own movement mask back the
     // moment they are through it or out of time.
@@ -116,6 +119,7 @@ private:
     PatrolNavigation patrol_navigation_;
     WorldRuleDirector world_rule_director_;
     GameRuleDirector game_rule_director_;
+    std::vector<SpawnedPatrolRoute> pending_patrol_routes_;
     SpawnerDirector spawner_director_;
     // Templates whose spawner calls on alert. A handful at most, so a scan
     // beats a set; empty means the signal pass never walks the agents at all.

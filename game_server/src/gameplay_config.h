@@ -298,6 +298,10 @@ struct ActorTemplateConfig {
         KernelVec3 spawn_position{};
         float spawn_radius = 0.0f;
         std::uint32_t spawn_seed = 1;
+        // Optional: waypoints a passive_patrol sentry spawned by this node
+        // walks, pathed over the navmesh and ping-ponged. Empty keeps the
+        // template's own x-axis patrol.
+        std::vector<KernelVec3> spawn_patrol_route;
         std::vector<std::string> next_refs;
         std::vector<std::uint32_t> next_node_ids;
     };

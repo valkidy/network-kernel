@@ -10,6 +10,7 @@
 // Counts, intervals and radii are tuning and will move; "a nest appears and
 // then emits" is the design.
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -68,6 +69,33 @@ std::uint32_t count_of_template(
         }
     }
     return matches;
+}
+
+// Zone index (0 open combat -x+z, 1 forest flank +x+z, 2 swamp shortcut +x-z,
+// 3 narrow pass -x-z) of every live entity of one template.
+std::vector<std::uint32_t> zones_of_template(
+    KernelHandle* kernel,
+    std::uint16_t entity_type,
+    std::uint32_t entity_template_id) {
+    std::vector<KernelServerEntityState> states(256);
+    for (KernelServerEntityState& state : states) {
+        state.struct_size = sizeof(KernelServerEntityState);
+    }
+    const std::uint32_t count = Kernel_ServerQueryEntities(
+        kernel,
+        entity_type,
+        states.data(),
+        static_cast<std::uint32_t>(states.size()));
+    std::vector<std::uint32_t> zones;
+    for (std::uint32_t index = 0; index < count; ++index) {
+        if (states[index].entity_template_id != entity_template_id) {
+            continue;
+        }
+        const bool east = states[index].position.x > 0.0f;
+        const bool north = states[index].position.z > 0.0f;
+        zones.push_back(north ? (east ? 1u : 0u) : (east ? 2u : 3u));
+    }
+    return zones;
 }
 
 std::uint32_t create_player(KernelHandle* kernel) {
@@ -141,6 +169,15 @@ int main() {
     const std::uint32_t nests =
         count_of_template(kernel, KernelEntityType_Prop, nest_template);
     require(nests > 0u);
+
+    // And one giant in each of the map's four zones, each its own objective.
+    const std::uint32_t giant_template =
+        template_id_of(config, "gingerbread_giant");
+    require(giant_template != 0);
+    std::vector<std::uint32_t> giant_zones =
+        zones_of_template(kernel, KernelEntityType_Actor, giant_template);
+    std::sort(giant_zones.begin(), giant_zones.end());
+    require(giant_zones == (std::vector<std::uint32_t>{0u, 1u, 2u, 3u}));
 
     // Each nest gets a rule of its own -- that is what putting the rule on the
     // carrier means -- and they start putting gingerbread out.
