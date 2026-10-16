@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- updates native plugins to ABI 107 for graph lock strikes and refreshes patrol templates and Magic Missile tuning
+
+
+0.7.0 release notes:
+
 - adds leap and charge visual flags and updates AI attacks and portal spacing
 
 
