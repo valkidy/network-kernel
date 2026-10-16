@@ -1572,6 +1572,74 @@ int main() {
         require(lifted_ticks > 20u);
     }
 
+    // A stance that falls on a wall still gets a foothold: the nearest point
+    // the leg can stand on. The wall here starts just inside the left feet
+    // (+x), steep enough that every authored candidate is refused, and the
+    // rig walks along it. Without the fallback those legs have no home, so
+    // they never step and the body walks away from them.
+    {
+        network_example::LocomotionState probe_state;
+        require(network_example::initialize_locomotion_state(
+            rig, 0.0f, &probe_state));
+        require(network_example::solve_legged_locomotion_pose(
+            *skeleton, bind_pose, rig, glm::vec3{0.0f}, 50.0f, tick,
+            ground_plane, &probe_state));
+        float outer_foot_x = -1e9f;
+        for (const network_example::LegLocomotionState& leg :
+             probe_state.legs) {
+            outer_foot_x = std::max(outer_foot_x, leg.foot_target_world.x);
+        }
+        const float wall_x = outer_foot_x - 0.05f;
+        const network_example::LocomotionGroundingQuery walled =
+            [wall_x](const glm::vec3& origin,
+                     float,
+                     network_example::LocomotionGroundingHit* hit) {
+                hit->position = glm::vec3{origin.x, 0.0f, origin.z};
+                hit->normal = origin.x > wall_x
+                    ? glm::normalize(glm::vec3{-1.0f, 0.2f, 0.0f})
+                    : glm::vec3{0.0f, 1.0f, 0.0f};
+                return true;
+            };
+
+        network_example::LocomotionState hugging;
+        require(network_example::initialize_locomotion_state(
+            rig, 0.0f, &hugging));
+        glm::vec3 root{0.0f};
+        std::array<std::uint32_t, 4> swings{};
+        std::uint32_t fallback_homes = 0u;
+        for (std::uint32_t step = 0u; step < 240u; ++step) {
+            require(network_example::advance_locomotion_state(
+                rig, forward_input, 90.0f, tick, &hugging));
+            root.z += 1.5f * tick;
+            require(network_example::solve_legged_locomotion_pose(
+                *skeleton, bind_pose, rig, root, 50.0f, tick, walled,
+                &hugging));
+            for (std::uint32_t index = 0u; index < rig.leg_count; ++index) {
+                const network_example::LegLocomotionState& leg =
+                    hugging.legs[index];
+                require(leg.foot_initialized);
+                require(leg.ground_hit_valid);
+                if (leg.grounding_candidate_index ==
+                    rig.foothold_candidate_count) {
+                    ++fallback_homes;
+                }
+                if (leg.entered_swing) {
+                    ++swings[index];
+                }
+                // Never planted on the wall itself.
+                if (leg.gait_state == network_example::LegGaitState::kSupport) {
+                    require(leg.foot_target_world.x <= wall_x + 0.0001f);
+                }
+            }
+        }
+        // The wall really did refuse the authored candidates...
+        require(fallback_homes > 100u);
+        // ...and every leg kept walking regardless.
+        for (std::uint32_t index = 0u; index < rig.leg_count; ++index) {
+            require(swings[index] > 5u);
+        }
+    }
+
     // With fewer swing slots than legs asking for one, the slot goes to the
     // leg furthest from home, not to whichever comes first in processing
     // order. First-come let the leading leg of a one-slot biped re-qualify and

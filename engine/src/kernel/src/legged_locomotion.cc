@@ -270,7 +270,88 @@ bool query_foothold(
         }
         have_fallback = true;
     }
-    return sample->valid;
+    if (sample->valid) {
+        return true;
+    }
+
+    // Every authored candidate missed or hit ground too steep to stand on --
+    // typically a foot whose stance falls on the wall of a corridor barely
+    // wider than the rig. Without a foothold the leg cannot step at all, so it
+    // stays planted while the body walks away from it: measured in an 8 m pass
+    // with the giant 2 m off its centre line, hundreds of ticks and 20-30 m.
+    // So search outward for the nearest point it CAN stand on, ring by ring,
+    // out to half the leg's reach. Within the first ring that has any, prefer
+    // one within reach, then the one nearest the hip -- the body is standing
+    // somewhere, so inward is where standable ground usually is.
+    //
+    // Authority only (a follower never queries), and only on a tick where the
+    // authored candidates all failed, so ordinary footing pays nothing.
+    constexpr std::uint32_t kFallbackRings = 4u;
+    constexpr std::uint32_t kFallbackDirections = 8u;
+    const float ring_spacing =
+        maximum_reach * 0.5f / static_cast<float>(kFallbackRings);
+    if (!(ring_spacing > 0.000001f)) {
+        return false;
+    }
+    const glm::vec2 hip_flat{hip_world.x, hip_world.z};
+    for (std::uint32_t ring = 1u; ring <= kFallbackRings; ++ring) {
+        const float radius = ring_spacing * static_cast<float>(ring);
+        float best_hip_distance = 0.0f;
+        for (std::uint32_t direction = 0u;
+             direction < kFallbackDirections;
+             ++direction) {
+            const float angle = 2.0f * std::numbers::pi_v<float> *
+                static_cast<float>(direction) /
+                static_cast<float>(kFallbackDirections);
+            const glm::vec3 offset = root_rotation *
+                glm::vec3{std::sin(angle) * radius, 0.0f,
+                          std::cos(angle) * radius};
+            const glm::vec3 origin = nominal_world + offset +
+                glm::vec3{0.0f,
+                          definition.foothold_query_start_height_meters,
+                          0.0f};
+            LocomotionGroundingHit hit;
+            if (!grounding_query(
+                    origin,
+                    definition.foothold_query_distance_meters,
+                    &hit) ||
+                !finite_vec3(hit.position) || !finite_vec3(hit.normal)) {
+                continue;
+            }
+            const float normal_length = glm::length(hit.normal);
+            if (normal_length <= 0.000001f) {
+                continue;
+            }
+            hit.normal /= normal_length;
+            if (hit.normal.y < minimum_ground_normal_y) {
+                continue;
+            }
+            const bool within_reach =
+                glm::length(hit.position - hip_world) <= maximum_reach;
+            const float hip_distance = glm::length(
+                glm::vec2{hit.position.x, hit.position.z} - hip_flat);
+            const bool better = !sample->valid ||
+                (within_reach && !sample->within_reach) ||
+                (within_reach == sample->within_reach &&
+                 hip_distance < best_hip_distance);
+            if (!better) {
+                continue;
+            }
+            sample->valid = true;
+            // One past the authored candidates: the fallback search.
+            sample->candidate_index = definition.foothold_candidate_count;
+            sample->position = hit.position;
+            sample->normal = hit.normal;
+            sample->supporting_entity_net_id = hit.supporting_entity_net_id;
+            sample->supporting_collider_id = hit.supporting_collider_id;
+            sample->within_reach = within_reach;
+            best_hip_distance = hip_distance;
+        }
+        if (sample->valid) {
+            return true;
+        }
+    }
+    return false;
 }
 
 }  // namespace

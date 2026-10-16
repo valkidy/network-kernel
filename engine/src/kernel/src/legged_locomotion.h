@@ -87,6 +87,9 @@ struct LegLocomotionState {
     glm::vec3 ground_hit_position{0.0f};
     glm::vec3 ground_hit_normal{0.0f, 1.0f, 0.0f};
     bool ground_hit_valid = false;
+    // Which authored candidate the home foothold came from;
+    // foothold_candidate_count when none could be stood on and the nearest
+    // standable point was searched for instead.
     std::uint32_t grounding_candidate_index = UINT32_MAX;
     std::uint32_t supporting_entity_net_id = 0;
     std::uint32_t supporting_collider_id = 0;
