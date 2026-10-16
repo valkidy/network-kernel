@@ -17,7 +17,9 @@
 #include <memory>
 #include <numeric>
 #include <optional>
+#include <set>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include <entt/entt.hpp>
@@ -43,11 +45,16 @@ void require_impl(bool condition, const char* expression, int line) {
 
 #define require(condition) require_impl((condition), #condition, __LINE__)
 
+// records counts each step once. The kernel re-sends every leg's newest step on
+// the next few flushes, and those copies are counted apart, in resent: they are
+// the price of surviving loss, not part of the cadence measured here.
 struct Delivered {
     std::size_t packets = 0;
     std::size_t records = 0;
+    std::size_t resent = 0;
     std::size_t bytes = 0;
     std::size_t largest_start_tick_delta = 0;
+    std::set<std::tuple<std::uint32_t, std::uint32_t, std::uint32_t>> seen;
 };
 
 void drain(network_example::LoopbackTransport* link, Delivered* out) {
@@ -60,9 +67,16 @@ void drain(network_example::LoopbackTransport* link, Delivered* out) {
             continue;
         }
         ++out->packets;
-        out->records += batch.records.size();
         out->bytes += event.payload.size();
         for (const network_example::LocomotionStepRecord& record : batch.records) {
+            const std::uint32_t start_tick =
+                batch.server_tick - record.start_tick_delta;
+            if (!out->seen.emplace(
+                    record.net_id, record.leg_index, start_tick).second) {
+                ++out->resent;
+                continue;
+            }
+            ++out->records;
             out->largest_start_tick_delta = std::max<std::size_t>(
                 out->largest_start_tick_delta, record.start_tick_delta);
         }
@@ -238,7 +252,14 @@ int main() {
     // Same payload in them. What a tick-cadence flush would have cost is
     // kTicks packets of a header plus one record each; this is strictly less
     // while carrying every one of those records.
-    require(delivered.bytes < kTicks * (34u + 18u));
+    // Re-sends fill the space a tick-cadence flush never had, so they are
+    // taken out before comparing; that they happen at all is checked too.
+    const std::size_t record_bytes =
+        network_example::estimate_locomotion_step_batch_size(2u) -
+        network_example::estimate_locomotion_step_batch_size(1u);
+    require(delivered.resent > 0u);
+    require(delivered.bytes - delivered.resent * record_bytes <
+            kTicks * (34u + 18u));
     // Nothing is lost by waiting -- a step is either on the wire or still held
     // for the next snapshot.
     require(

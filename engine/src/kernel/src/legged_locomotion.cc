@@ -270,7 +270,88 @@ bool query_foothold(
         }
         have_fallback = true;
     }
-    return sample->valid;
+    if (sample->valid) {
+        return true;
+    }
+
+    // Every authored candidate missed or hit ground too steep to stand on --
+    // typically a foot whose stance falls on the wall of a corridor barely
+    // wider than the rig. Without a foothold the leg cannot step at all, so it
+    // stays planted while the body walks away from it: measured in an 8 m pass
+    // with the giant 2 m off its centre line, hundreds of ticks and 20-30 m.
+    // So search outward for the nearest point it CAN stand on, ring by ring,
+    // out to half the leg's reach. Within the first ring that has any, prefer
+    // one within reach, then the one nearest the hip -- the body is standing
+    // somewhere, so inward is where standable ground usually is.
+    //
+    // Authority only (a follower never queries), and only on a tick where the
+    // authored candidates all failed, so ordinary footing pays nothing.
+    constexpr std::uint32_t kFallbackRings = 4u;
+    constexpr std::uint32_t kFallbackDirections = 8u;
+    const float ring_spacing =
+        maximum_reach * 0.5f / static_cast<float>(kFallbackRings);
+    if (!(ring_spacing > 0.000001f)) {
+        return false;
+    }
+    const glm::vec2 hip_flat{hip_world.x, hip_world.z};
+    for (std::uint32_t ring = 1u; ring <= kFallbackRings; ++ring) {
+        const float radius = ring_spacing * static_cast<float>(ring);
+        float best_hip_distance = 0.0f;
+        for (std::uint32_t direction = 0u;
+             direction < kFallbackDirections;
+             ++direction) {
+            const float angle = 2.0f * std::numbers::pi_v<float> *
+                static_cast<float>(direction) /
+                static_cast<float>(kFallbackDirections);
+            const glm::vec3 offset = root_rotation *
+                glm::vec3{std::sin(angle) * radius, 0.0f,
+                          std::cos(angle) * radius};
+            const glm::vec3 origin = nominal_world + offset +
+                glm::vec3{0.0f,
+                          definition.foothold_query_start_height_meters,
+                          0.0f};
+            LocomotionGroundingHit hit;
+            if (!grounding_query(
+                    origin,
+                    definition.foothold_query_distance_meters,
+                    &hit) ||
+                !finite_vec3(hit.position) || !finite_vec3(hit.normal)) {
+                continue;
+            }
+            const float normal_length = glm::length(hit.normal);
+            if (normal_length <= 0.000001f) {
+                continue;
+            }
+            hit.normal /= normal_length;
+            if (hit.normal.y < minimum_ground_normal_y) {
+                continue;
+            }
+            const bool within_reach =
+                glm::length(hit.position - hip_world) <= maximum_reach;
+            const float hip_distance = glm::length(
+                glm::vec2{hit.position.x, hit.position.z} - hip_flat);
+            const bool better = !sample->valid ||
+                (within_reach && !sample->within_reach) ||
+                (within_reach == sample->within_reach &&
+                 hip_distance < best_hip_distance);
+            if (!better) {
+                continue;
+            }
+            sample->valid = true;
+            // One past the authored candidates: the fallback search.
+            sample->candidate_index = definition.foothold_candidate_count;
+            sample->position = hit.position;
+            sample->normal = hit.normal;
+            sample->supporting_entity_net_id = hit.supporting_entity_net_id;
+            sample->supporting_collider_id = hit.supporting_collider_id;
+            sample->within_reach = within_reach;
+            best_hip_distance = hip_distance;
+        }
+        if (sample->valid) {
+            return true;
+        }
+    }
+    return false;
 }
 
 }  // namespace
@@ -838,19 +919,24 @@ bool solve_locomotion_pose(
         }
     }
     if (!follower && state->locomotion_active) {
+        // Every leg that wants to step, most displaced first. The swing slots
+        // (max_swinging_legs, and one gait group at a time) are scarcer than
+        // the legs asking for them, and handing them out in fixed processing
+        // order starves whichever leg comes last: the leg ahead of it keeps
+        // re-qualifying -- as stranded, once its own reach clamps -- and takes
+        // the only slot every time it frees up. Measured on the giant (a
+        // biped with one slot), the trailing leg went 757 ticks without a
+        // step while the body walked 27 m away from its planted foot. Ranking
+        // by displacement gives the slot to the leg furthest from home, which
+        // is the one a starved leg always becomes.
+        std::array<std::uint32_t, KERNEL_MAX_SKELETON_LEGS> candidates{};
+        std::array<float, KERNEL_MAX_SKELETON_LEGS> errors{};
+        std::uint32_t candidate_count = 0u;
         for (const std::uint32_t leg_index : state->last_processing_order) {
-            LegLocomotionState& leg = state->legs[leg_index];
+            const LegLocomotionState& leg = state->legs[leg_index];
             if (!leg.foot_initialized ||
                 leg.gait_state != LegGaitState::kSupport ||
-                !home_grounded[leg_index] ||
-                swinging_leg_count >= definition.max_swinging_legs) {
-                continue;
-            }
-            // Blocked if another group is mid-swing.
-            const bool other_group_swinging = swinging_group_count > 0u &&
-                !(swinging_group_count == 1u &&
-                  group_swinging[leg.gait_group]);
-            if (other_group_swinging) {
+                !home_grounded[leg_index]) {
                 continue;
             }
             // Normally a leg steps once its planted foot has drifted too far
@@ -863,6 +949,31 @@ bool solve_locomotion_pose(
             const bool stranded =
                 leg.ik_reach_clamped && home_within_reach[leg_index];
             if (error <= definition.step_threshold_meters && !stranded) {
+                continue;
+            }
+            errors[leg_index] = error;
+            candidates[candidate_count++] = leg_index;
+        }
+        // Stable, so equally displaced legs keep the processing order's say.
+        std::stable_sort(
+            candidates.begin(),
+            candidates.begin() + candidate_count,
+            [&errors](std::uint32_t a, std::uint32_t b) {
+                return errors[a] > errors[b];
+            });
+        for (std::uint32_t candidate = 0u;
+             candidate < candidate_count;
+             ++candidate) {
+            const std::uint32_t leg_index = candidates[candidate];
+            LegLocomotionState& leg = state->legs[leg_index];
+            if (swinging_leg_count >= definition.max_swinging_legs) {
+                break;
+            }
+            // Blocked if another group is mid-swing.
+            const bool other_group_swinging = swinging_group_count > 0u &&
+                !(swinging_group_count == 1u &&
+                  group_swinging[leg.gait_group]);
+            if (other_group_swinging) {
                 continue;
             }
             leg.gait_state = LegGaitState::kSwing;
@@ -940,16 +1051,20 @@ bool solve_locomotion_pose(
             const float lift = definition_leg.step_height_meters *
                 std::sin(swing_phase * std::numbers::pi_v<float>);
             leg.foot_target_world = flat + glm::vec3{0.0f, lift, 0.0f};
+            leg.foot_ground_world = flat;
             if (swing_phase >= 1.0f) {
                 leg.gait_state = LegGaitState::kSupport;
                 leg.entered_support = true;
                 leg.swing_tick = 0u;
                 leg.foot_target_world = leg.landing_target_world;
+                leg.foot_ground_world = leg.landing_target_world;
             } else {
                 ++leg.swing_tick;
             }
+        } else {
+            // Support legs simply hold foot_target_world in place.
+            leg.foot_ground_world = leg.foot_target_world;
         }
-        // Support legs simply hold foot_target_world in place.
 
         glm::vec3 target_model = inverse_root_rotation *
             (leg.foot_target_world - pose_root_position);
@@ -1042,7 +1157,7 @@ bool solve_locomotion_pose(
             if (!leg.foot_initialized) {
                 continue;
             }
-            foot_y_sum += leg.foot_target_world.y;
+            foot_y_sum += leg.foot_ground_world.y;
             bind_foot_y_sum += bind_foot_models[leg_index].y;
             normal_sum += home_grounded[leg_index]
                 ? leg.ground_hit_normal
@@ -1206,6 +1321,15 @@ bool apply_locomotion_step_event(
         return false;
     }
     LegLocomotionState& leg = state->legs[event.leg_index];
+    // A re-send of a step already applied, or an older step overtaken by a
+    // newer one. Signed, for the same wrap reason as above.
+    if (leg.has_applied_step &&
+        static_cast<std::int32_t>(
+            event.start_tick - leg.applied_step_start_tick) <= 0) {
+        return true;
+    }
+    leg.applied_step_start_tick = event.start_tick;
+    leg.has_applied_step = true;
     leg.landing_target_world = event.landing_target_world;
 
     const std::uint32_t elapsed = static_cast<std::uint32_t>(elapsed_ticks);
