@@ -2109,6 +2109,37 @@ bool validate_weapon_mechanics(const KernelWeaponMechanicsDefinition& definition
 // missing, is not a cone, or carries no damage purpose at configuration time
 // is what keeps the swing and the lock from having to decide what a malformed
 // cone means. Every other mode has nothing to resolve.
+// The volume a lock reaches, from a damage collider template: a cone's range
+// and fov, or a sphere's radius as the range of an omnidirectional lock.
+// Fills only range, fov_degrees and omnidirectional; where it starts, where it
+// aims and how many it locks are the caller's.
+bool resolve_lock_volume(
+    const std::vector<KernelColliderTemplateDefinition>& collider_templates,
+    std::uint32_t collider_template_id,
+    bool sphere_allowed,
+    lock_targets::Cone* out_volume) {
+    const KernelColliderTemplateDefinition* volume =
+        find_collider_template(collider_templates, collider_template_id);
+    if (volume == nullptr ||
+        (volume->purpose_flags & KernelColliderPurpose_Damage) == 0u) {
+        return false;
+    }
+    if (volume->shape_type == KernelColliderShapeType_Cone) {
+        out_volume->range = collider_template_cone_range(*volume);
+        out_volume->fov_degrees = collider_template_cone_fov_degrees(*volume);
+        out_volume->omnidirectional = false;
+        return out_volume->range > 0.0f && out_volume->fov_degrees > 0.0f;
+    }
+    if (sphere_allowed &&
+        volume->shape_type == KernelColliderShapeType_Sphere) {
+        out_volume->range = volume->shape_params.x;
+        out_volume->fov_degrees = 0.0f;
+        out_volume->omnidirectional = true;
+        return out_volume->range > 0.0f;
+    }
+    return false;
+}
+
 bool resolve_weapon_cone(
     const std::vector<KernelColliderTemplateDefinition>& collider_templates,
     WeaponMechanicsDefinition* mechanics) {
@@ -2117,17 +2148,19 @@ bool resolve_weapon_cone(
         mechanics->mode != WeaponFireMode::kLockMissile) {
         return true;
     }
-    const KernelColliderTemplateDefinition* cone = find_collider_template(
-        collider_templates,
-        mechanics->melee_collider_template_id);
-    if (cone == nullptr ||
-        cone->shape_type != KernelColliderShapeType_Cone ||
-        (cone->purpose_flags & KernelColliderPurpose_Damage) == 0u) {
+    // A weapon's reach is a cone: a melee swing and a lock-on weapon both
+    // aim. Only an action graph's lock_strike may lock a sphere.
+    lock_targets::Cone cone;
+    if (!resolve_lock_volume(
+            collider_templates,
+            mechanics->melee_collider_template_id,
+            false,
+            &cone)) {
         return false;
     }
-    mechanics->melee_range = collider_template_cone_range(*cone);
-    mechanics->melee_fov_degrees = collider_template_cone_fov_degrees(*cone);
-    return mechanics->melee_range > 0.0f && mechanics->melee_fov_degrees > 0.0f;
+    mechanics->melee_range = cone.range;
+    mechanics->melee_fov_degrees = cone.fov_degrees;
+    return true;
 }
 
 const WeaponMechanicsDefinition* entity_weapon_mechanics(

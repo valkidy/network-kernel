@@ -35,6 +35,11 @@ struct Cone {
     // flattened onto the ground plane.
     float fov_degrees = 0.0f;
     std::uint32_t max_targets = 1;
+    // A sphere of radius `range` instead of a cone: every direction is in, so
+    // neither aim nor fov_degrees is read. An action graph's lock_strike may
+    // lock so where it has no heading worth aiming along -- a bottle that
+    // broke on the ground.
+    bool omnidirectional = false;
 };
 
 // True when something static stands between `from` and `to`. Asked only of
@@ -45,7 +50,8 @@ using LineBlocked =
 
 // At most cone.max_targets candidates, nearest first, ties broken by net id.
 // A candidate is in the cone when its centre is within range and within half
-// the fov of the aim. `line_blocked` may be empty, meaning nothing blocks.
+// the fov of the aim; in an omnidirectional one, within range alone.
+// `line_blocked` may be empty, meaning nothing blocks.
 std::vector<Candidate> select(
     std::vector<Candidate> candidates,
     const Cone& cone,
@@ -53,7 +59,7 @@ std::vector<Candidate> select(
 
 // Where the index-th unfilled arc of a lock ends, when fewer than
 // cone.max_targets were locked: a point inside the cone, at 40% to 100% of its
-// range. Purely presentation -- the server never asks -- but a function of
+// range -- in any direction when the cone is omnidirectional. Purely presentation -- the server never asks -- but a function of
 // the shot alone (shooter, action instance, commit, arc index), not of any
 // clock or random state, so every client draws the same spray for the same
 // shot from the same aim.

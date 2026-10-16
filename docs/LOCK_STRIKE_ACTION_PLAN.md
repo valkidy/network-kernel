@@ -1,6 +1,6 @@
 # Action graph 鎖定打擊（`lock_strike`）實作計劃書
 
-狀態：P0 完成（2026-10-16）。D1–D12 已定，D13–D14 等待確認。
+狀態：P0、P1 完成（2026-10-16）。D1–D14 全部已定。
 前置：`main`（`8fa5250f`，ABI 106、packet schema 33、snapshot schema 30）。
 關聯：`docs/LOCK_ON_WEAPONS_PLAN.md`（鎖定武器 18/19，本計劃沿用它的選目標、立即傷害、飛彈發射與 client 演出）。
 
@@ -41,8 +41,8 @@
 | D10 | 上限：`interval_ticks` 1..255、`count` 1..16、`interval_ticks × (count − 1)` ≤ 255；整台 server 同時存在的排程上限 256 筆，超過就拒絕新的觸發並記 warning | 已定（2026-10-16） |
 | D11 | 飛彈紀錄必須改格式（P0 前評估已確認，見 §3.5）：<br>• 帶發射點座標<br>• 允許來源為 0<br>• client 去重的 key 加上目標 | 已定 |
 | D12 | 同一次打擊不足 M 個目標時，instant 模式照武器規則補假電弧，終點由 client 用同一個 hash 算出，不傳 | 已定 |
-| D13 | 紀錄送給誰（P0-4 新增）：現在飛彈紀錄只送給「看得到射手」的 client，來源為 0 時沒有人收得到。graph 紀錄改用：<br>• 飛彈：看得到目標的 client<br>• 打擊：看得到任一目標的 client；一個目標都沒鎖到時，送給玩家距起點在 snapshot 相關半徑內的 client<br>武器紀錄維持原規則 | 建議，待確認 |
-| D14 | snapshot 大小（P0-5 新增）：可選區段現在是在切包**之後**才附加到第一包，會超過 1200 B 的預算。改成先算區段大小，切包時第一包預留這段空間；單一 snapshot 的區段上限 400 B，超過的紀錄留到下一個 snapshot（`launch_tick_delta` 最多 255 ticks，足夠） | 建議，待確認 |
+| D13 | 紀錄送給誰（P0-4 新增）：現在飛彈紀錄只送給「看得到射手」的 client，來源為 0 時沒有人收得到。graph 紀錄改用：<br>• 飛彈：看得到目標的 client<br>• 打擊：看得到任一目標的 client；一個目標都沒鎖到時，送給玩家距起點在 snapshot 相關半徑內的 client<br>武器紀錄維持原規則 | 已定（2026-10-16） |
+| D14 | snapshot 大小（P0-5 新增）：可選區段現在是在切包**之後**才附加到第一包，會超過 1200 B 的預算。改成先算區段大小，切包時第一包預留這段空間；單一 snapshot 的區段上限 400 B，超過的紀錄留到下一個 snapshot（`launch_tick_delta` 最多 255 ticks，足夠） | 已定（2026-10-16） |
 
 ---
 
@@ -284,6 +284,22 @@
 | P0-6 | 平行分支撞號 | 沒有撞到。未 merge 的分支 ABI 最高 106（`feat-unity-plugin`），snapshot schema 最高 30。計劃用的 id（item 3033/3034、entity 228/229、projectile 35/36、collider 54/55）在任何分支都沒有被用到 | merge 前再查一次 |
 
 **其他確認**：damage pipeline 不檢查 `sequence_id` 重複，只拿它排序，所以同一 tick 多個瓶子各自從 0 編號不會互相吃掉。
+
+---
+
+## 9b. 實作紀錄
+
+### P1：選目標支援 sphere（2026-10-16）
+
+- `lock_targets::Cone` 加 `omnidirectional`。為 true 時，`select` 不看 aim 和 fov，只看半徑；排序、上限、擋牆規則不變。`unfilled_arc_end` 的 sphere 版本在整個球面上均勻取方向，距離仍是半徑的 40–100%，同一發的結果固定、和 aim 無關。cone 版本的計算順序和數值都沒有變。
+- `kernel.cc` 新增 `resolve_lock_volume(templates, id, sphere_allowed, out)`：cone 讀 range/fov，sphere 讀 `shape_params.x` 當半徑，兩者都要有 damage purpose。`resolve_weapon_cone` 改成呼叫它並傳 `sphere_allowed = false`，武器仍然只接受 cone。graph 的 `lock_strike`（P2）會傳 true。
+- 測試：`lock_target_selection_test` 新增兩個案例（sphere 各方向都鎖得到、aim/fov 被忽略、擋牆；sphere 假電弧四周都有、距離範圍、與 aim 無關）。
+- Mutation：
+  - 拿掉 sphere 假電弧分支：測試變紅。
+  - 武器允許 sphere：`catalog_weapon_definition_test` 變紅。
+  - 拿掉 `select` 裡 sphere 跳過角度檢查的條件：**測試仍綠，這是等價變異**。sphere 的 aim 設為 0、門檻設為 0，`0 < 0` 永遠不成立，角度檢查本來就不會擋任何目標。保留這個條件，是為了讓意圖一眼看得出來。
+- 順手修好兩個在 `main` 上就編不過的測試：`catalog_weapon_definition_test`、`lock_weapons_end_to_end_test` 還在設定 projectile 的 `weapon_id`，這個欄位在 ABI 106 改名為 `reserved_weapon_id` 且必須為 0。刪掉那一行即可，兩個測試都恢復通過。
+- 通過：`lock_target_selection_test`、`lock_instant_test`、`lock_missile_test`、`catalog_weapon_definition_test`、`lock_weapons_end_to_end_test`、`//game_server:lock_weapon_catalog_test`。`kernel_api_test` 失敗，屬於既有紅燈名單。
 
 ---
 

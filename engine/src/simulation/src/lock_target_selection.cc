@@ -12,12 +12,15 @@ std::vector<Candidate> select(
     std::vector<Candidate> locked;
     const float aim_length = glm::length(cone.aim);
     if (cone.max_targets == 0u || cone.range <= 0.0f ||
-        cone.fov_degrees <= 0.0f || aim_length <= 0.000001f) {
+        (!cone.omnidirectional &&
+         (cone.fov_degrees <= 0.0f || aim_length <= 0.000001f))) {
         return locked;
     }
-    const glm::vec3 aim = cone.aim / aim_length;
-    const float half_fov_cos = std::cos(
-        cone.fov_degrees * 0.5f * (std::acos(-1.0f) / 180.0f));
+    const glm::vec3 aim =
+        cone.omnidirectional ? glm::vec3{0.0f} : cone.aim / aim_length;
+    const float half_fov_cos = cone.omnidirectional
+        ? 0.0f
+        : std::cos(cone.fov_degrees * 0.5f * (std::acos(-1.0f) / 180.0f));
 
     struct InCone {
         Candidate candidate;
@@ -32,7 +35,8 @@ std::vector<Candidate> select(
         if (distance <= 0.0001f || distance > cone.range) {
             continue;
         }
-        if (glm::dot(aim, offset / distance) < half_fov_cos) {
+        if (!cone.omnidirectional &&
+            glm::dot(aim, offset / distance) < half_fov_cos) {
             continue;
         }
         in_cone.push_back(InCone{candidate, distance});
@@ -82,15 +86,10 @@ glm::vec3 unfilled_arc_end(
     std::uint16_t commit_index,
     std::uint32_t arc_index) {
     const float aim_length = glm::length(cone.aim);
-    if (aim_length <= 0.000001f || cone.range <= 0.0f) {
+    if (cone.range <= 0.0f ||
+        (!cone.omnidirectional && aim_length <= 0.000001f)) {
         return cone.origin;
     }
-    const glm::vec3 forward = cone.aim / aim_length;
-    const glm::vec3 helper = std::fabs(forward.y) < 0.99f
-        ? glm::vec3{0.0f, 1.0f, 0.0f}
-        : glm::vec3{1.0f, 0.0f, 0.0f};
-    const glm::vec3 right = glm::normalize(glm::cross(forward, helper));
-    const glm::vec3 up = glm::cross(right, forward);
 
     std::uint64_t seed = mix(
         (static_cast<std::uint64_t>(shooter_net_id) << 32) | action_instance_id);
@@ -98,8 +97,27 @@ glm::vec3 unfilled_arc_end(
     const float spread = unit(seed);
     const float around = unit(mix(seed + 1u));
     const float reach = unit(mix(seed + 2u));
-
     const float pi = std::acos(-1.0f);
+    const float distance = cone.range * (0.4f + 0.6f * reach);
+
+    if (cone.omnidirectional) {
+        // Uniform over the sphere's surface, so the spray has no favourite
+        // side: height uniform in [-1, 1], then a turn around the vertical.
+        const float height = 1.0f - 2.0f * spread;
+        const float ring = std::sqrt(std::max(0.0f, 1.0f - height * height));
+        const float turn = 2.0f * pi * around;
+        const glm::vec3 direction{
+            ring * std::cos(turn), height, ring * std::sin(turn)};
+        return cone.origin + direction * distance;
+    }
+
+    const glm::vec3 forward = cone.aim / aim_length;
+    const glm::vec3 helper = std::fabs(forward.y) < 0.99f
+        ? glm::vec3{0.0f, 1.0f, 0.0f}
+        : glm::vec3{1.0f, 0.0f, 0.0f};
+    const glm::vec3 right = glm::normalize(glm::cross(forward, helper));
+    const glm::vec3 up = glm::cross(right, forward);
+
     // Uniform over the cone's cross-section, not bunched at its axis.
     const float half_fov = cone.fov_degrees * 0.5f * (pi / 180.0f);
     const float tilt = half_fov * std::sqrt(spread);
@@ -107,7 +125,7 @@ glm::vec3 unfilled_arc_end(
     const glm::vec3 direction = glm::normalize(
         forward * std::cos(tilt) +
         (right * std::cos(turn) + up * std::sin(turn)) * std::sin(tilt));
-    return cone.origin + direction * (cone.range * (0.4f + 0.6f * reach));
+    return cone.origin + direction * distance;
 }
 
 }  // namespace network_example::lock_targets
