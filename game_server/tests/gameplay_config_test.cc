@@ -394,6 +394,7 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip(
     append_directory_files(&files, "status_effect_templates");
     append_directory_files(&files, "item_templates");
     append_directory_files(&files, "projectile_templates");
+    append_directory_files(&files, "patrol_templates");
     files.insert(files.end(), extra_files.begin(), extra_files.end());
     return make_store_zip(files);
 }
