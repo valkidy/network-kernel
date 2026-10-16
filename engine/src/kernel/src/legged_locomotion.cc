@@ -1240,6 +1240,15 @@ bool apply_locomotion_step_event(
         return false;
     }
     LegLocomotionState& leg = state->legs[event.leg_index];
+    // A re-send of a step already applied, or an older step overtaken by a
+    // newer one. Signed, for the same wrap reason as above.
+    if (leg.has_applied_step &&
+        static_cast<std::int32_t>(
+            event.start_tick - leg.applied_step_start_tick) <= 0) {
+        return true;
+    }
+    leg.applied_step_start_tick = event.start_tick;
+    leg.has_applied_step = true;
     leg.landing_target_world = event.landing_target_world;
 
     const std::uint32_t elapsed = static_cast<std::uint32_t>(elapsed_ticks);

@@ -75,6 +75,14 @@ struct LegLocomotionState {
     glm::vec3 swing_start_world{0.0f};
     glm::vec3 landing_target_world{0.0f};
 
+    // Follower only: start tick of the newest step applied to this leg. The
+    // authority re-sends each leg's newest step to survive packet loss, so
+    // the same step can arrive several times, and applying it again mid-swing
+    // would restart the arc from wherever the foot is in the air. A step no
+    // newer than this one is therefore ignored.
+    std::uint32_t applied_step_start_tick = 0;
+    bool has_applied_step = false;
+
     // Home foothold sampled this tick under the current body pose.
     glm::vec3 ground_hit_position{0.0f};
     glm::vec3 ground_hit_normal{0.0f, 1.0f, 0.0f};

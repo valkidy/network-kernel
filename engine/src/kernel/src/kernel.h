@@ -1324,6 +1324,17 @@ private:
     // event channel will carry; nothing drains it over the wire yet.
     std::vector<PendingLocomotionStep> pending_follower_steps_;
     std::vector<PendingLocomotionStep> outgoing_locomotion_steps_;
+    // The newest step of every leg, re-sent on the next few step flushes after
+    // its own. The channel stays unreliable; this only stretches the loss a
+    // step can survive from one packet to several, which matters because a
+    // lost step leaves its leg planted behind the body until that leg steps
+    // again. One entry per (entity, leg): a newer step replaces the older one,
+    // which is then not worth sending at all.
+    struct RecentLocomotionStep {
+        PendingLocomotionStep step;
+        std::uint32_t resends_left = 0;
+    };
+    std::vector<RecentLocomotionStep> recent_locomotion_steps_;
     // Lock-on missiles the weapon passes fired since the last snapshot. Their
     // hits are already scheduled; these are only reported, in the snapshot.
     std::vector<LockMissileLaunch> pending_lock_missiles_;

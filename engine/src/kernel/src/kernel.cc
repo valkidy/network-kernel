@@ -441,6 +441,12 @@ constexpr std::uint64_t kMaxSnapshotsWithoutSend = 15;
 // peaks. Re-derive it from the locomotion table in agent_cpu_bench rather than
 // adjusting it by feel.
 constexpr std::size_t kLocomotionStepBudgetBytes = kSnapshotSendBudgetBytes / 3;
+// Step flushes after its own on which a leg's newest step goes out again. A
+// step is then lost only when all 1 + N packets are, so for N = 3 a random 5%
+// loss drops about one step in 160 000 rather than one in 20. Re-sends only
+// fill what the budget leaves after this flush's new steps, so they can never
+// cost a fresh footfall its place.
+constexpr std::uint32_t kLocomotionStepResends = 3u;
 // Reorders a distance band from flush to flush. Without it a budget that cuts
 // into a band cuts the same rigs every time, and their legs hold the pose the
 // baseline planted while their bodies keep moving -- skating, which is worse
@@ -7861,6 +7867,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     follower_locomotion_states_.clear();
     pending_follower_steps_.clear();
     outgoing_locomotion_steps_.clear();
+    recent_locomotion_steps_.clear();
     follower_locomotion_tick_ = 0u;
     has_follower_locomotion_tick_ = false;
     latest_snapshot_ = WorldSnapshot{};
@@ -15532,7 +15539,8 @@ void KernelEngine::send_locomotion_baseline(PeerSession* session, NetId net_id) 
 
 void KernelEngine::flush_locomotion_steps() {
     const std::uint32_t current_tick = tick_loop_.current_tick();
-    if (outgoing_locomotion_steps_.empty()) {
+    if (outgoing_locomotion_steps_.empty() &&
+        recent_locomotion_steps_.empty()) {
         return;
     }
     // Dropped rather than deferred, unlike a snapshot record. A step's landing
@@ -15546,6 +15554,7 @@ void KernelEngine::flush_locomotion_steps() {
     // send_locomotion_baseline writes every planted leg when an entity becomes
     // relevant, so nothing here can leave a leg at its bind pose.
     struct StepCandidate {
+        bool resend = false;
         std::uint32_t band = 0;
         std::uint32_t rotation = 0;
         LocomotionStepRecord record;
@@ -15562,15 +15571,17 @@ void KernelEngine::flush_locomotion_steps() {
         }
 
         std::vector<StepCandidate> candidates;
-        candidates.reserve(outgoing_locomotion_steps_.size());
-        for (const PendingLocomotionStep& step : outgoing_locomotion_steps_) {
+        candidates.reserve(
+            outgoing_locomotion_steps_.size() +
+            recent_locomotion_steps_.size());
+        const auto consider = [&](const PendingLocomotionStep& step, bool resend) {
             if (!session->relevant_entities.contains(step.net_id)) {
-                continue;
+                return;
             }
             const std::int32_t age = static_cast<std::int32_t>(
                 current_tick - step.event.start_tick);
             if (age < 0 || age >= static_cast<std::int32_t>(UINT8_MAX)) {
-                continue;
+                return;
             }
             LocomotionStepRecord record{};
             record.net_id = step.net_id;
@@ -15601,9 +15612,16 @@ void KernelEngine::flush_locomotion_steps() {
                     : (distance <= kSnapshotPriorityMidMeters ? 1u : 2u);
             }
             candidates.push_back(StepCandidate{
+                resend,
                 band,
                 locomotion_step_rotation(record.net_id, current_tick),
                 record});
+        };
+        for (const PendingLocomotionStep& step : outgoing_locomotion_steps_) {
+            consider(step, /*resend=*/false);
+        }
+        for (const RecentLocomotionStep& recent : recent_locomotion_steps_) {
+            consider(recent.step, /*resend=*/true);
         }
         if (candidates.empty()) {
             return;
@@ -15612,6 +15630,11 @@ void KernelEngine::flush_locomotion_steps() {
             candidates.begin(),
             candidates.end(),
             [](const StepCandidate& lhs, const StepCandidate& rhs) {
+                // Every new step outranks every re-send, whatever its band: a
+                // re-send insures a step the client probably already has.
+                if (lhs.resend != rhs.resend) {
+                    return !lhs.resend;
+                }
                 if (lhs.band != rhs.band) {
                     return lhs.band < rhs.band;
                 }
@@ -15645,6 +15668,32 @@ void KernelEngine::flush_locomotion_steps() {
     for (PeerSession& session : peer_sessions_) {
         if (session.welcomed) {
             send(&session);
+        }
+    }
+
+    // This flush spent one re-send of every step already in the window; then
+    // the steps it sent new join it, displacing their own leg's older step.
+    for (RecentLocomotionStep& recent : recent_locomotion_steps_) {
+        --recent.resends_left;
+    }
+    std::erase_if(
+        recent_locomotion_steps_,
+        [](const RecentLocomotionStep& recent) {
+            return recent.resends_left == 0u;
+        });
+    for (const PendingLocomotionStep& step : outgoing_locomotion_steps_) {
+        const auto same_leg = std::find_if(
+            recent_locomotion_steps_.begin(),
+            recent_locomotion_steps_.end(),
+            [&step](const RecentLocomotionStep& recent) {
+                return recent.step.net_id == step.net_id &&
+                    recent.step.event.leg_index == step.event.leg_index;
+            });
+        if (same_leg != recent_locomotion_steps_.end()) {
+            *same_leg = RecentLocomotionStep{step, kLocomotionStepResends};
+        } else {
+            recent_locomotion_steps_.push_back(
+                RecentLocomotionStep{step, kLocomotionStepResends});
         }
     }
     outgoing_locomotion_steps_.clear();

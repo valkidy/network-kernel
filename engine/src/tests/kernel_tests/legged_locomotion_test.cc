@@ -831,6 +831,8 @@ int main() {
             std::uint32_t compared_ticks = 0u;
             std::uint32_t planted_comparisons = 0u;
             float worst_planted_error = 0.0f;
+            // Like worst_planted_error, but never excused by a drop.
+            float worst_planted_error_all = 0.0f;
             float worst_any_error = 0.0f;
             float worst_pose_error = 0.0f;
             std::uint32_t drop_tick = 0u;
@@ -839,8 +841,12 @@ int main() {
             bool healed = false;
         };
 
+        // resend_every > 0 delivers every step three more times, that many
+        // ticks apart, the way the kernel re-sends each leg's newest step; a
+        // dropped step then loses only its first copy.
         const auto run = [&](std::uint32_t delay_ticks,
-                             std::uint32_t drop_step_index) {
+                             std::uint32_t drop_step_index,
+                             std::uint32_t resend_every = 0u) {
             Trace trace;
             network_example::LocomotionState authority;
             network_example::LocomotionState follower;
@@ -877,6 +883,13 @@ int main() {
                 for (std::uint32_t index = 0u; index < emitted_count; ++index) {
                     const bool dropped = trace.steps == drop_step_index;
                     ++trace.steps;
+                    for (std::uint32_t copy = 1u;
+                         resend_every > 0u && copy <= 3u;
+                         ++copy) {
+                        pending.push_back(
+                            {emitted[index],
+                             t + delay_ticks + copy * resend_every});
+                    }
                     if (dropped) {
                         trace.drop_tick = t;
                         trace.dropped = true;
@@ -947,6 +960,8 @@ int main() {
                         theirs.gait_state ==
                             network_example::LegGaitState::kSupport) {
                         ++trace.planted_comparisons;
+                        trace.worst_planted_error_all =
+                            std::max(trace.worst_planted_error_all, error);
                         // For the dropped-step run the whole point is that the
                         // follower is briefly wrong, so only the recovered
                         // stretch is held to exact agreement.
@@ -1006,6 +1021,29 @@ int main() {
             require(trace.heal_tick - trace.drop_tick < 40u);
             // And it stays converged for the rest of the run.
             require(trace.worst_planted_error < kEpsilon);
+            // Not vacuous: without a re-send the dropped step is visible.
+            require(trace.worst_planted_error_all > 0.01f);
+        }
+
+        // Every step arrives four times. Copies of a step already applied
+        // must change nothing -- applied again mid-swing, one would restart
+        // the arc from the foot's position in the air -- so the follower
+        // stays bit-for-bit with the authority, airborne feet included.
+        {
+            const Trace trace = run(0u, kNoDrop, 2u);
+            require(trace.steps > 20u);
+            require(trace.worst_any_error < kEpsilon);
+            require(trace.worst_pose_error < kEpsilon);
+        }
+
+        // The same drop as above, but with re-sends: only the first copy is
+        // lost, the next lands two ticks later, and the leg never plants
+        // anywhere the authority's did not.
+        {
+            const Trace trace = run(0u, 8u, 2u);
+            require(trace.dropped);
+            require(trace.worst_any_error > 0.01f);
+            require(trace.worst_planted_error_all < kEpsilon);
         }
     }
 
