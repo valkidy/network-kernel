@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- ships the four-zone map with patrolling gingerbread giants and improves legged gait, footholds and portal grounding
+
+
+0.7.0 release notes:
+
 - updates native plugins to ABI 107 for graph lock strikes and refreshes patrol templates and Magic Missile tuning
 
 
