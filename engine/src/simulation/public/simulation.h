@@ -47,6 +47,8 @@ struct LockMissileLaunch {
     // whoever sees the target rather than the shooter.
     bool from_origin = false;
     glm::vec3 origin{0.0f};
+    // The shot it is: what a client draws a graph's missile as.
+    std::uint32_t projectile_template_id = 0;
 };
 
 struct WeaponSimulationContext {

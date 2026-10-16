@@ -252,6 +252,7 @@ bool launch_lock_missile(
             static_cast<std::uint8_t>(flight_ticks),
             report_origin,
             spec.volume.origin,
+            spec.projectile_template_id,
         });
     }
     return true;

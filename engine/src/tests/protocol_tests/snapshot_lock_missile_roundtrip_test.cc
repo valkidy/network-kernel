@@ -6,8 +6,9 @@
 // traffic review after P4.
 //
 // Schema 31 (docs/LOCK_STRIKE_ACTION_PLAN.md P4): an action graph's missile
-// carries the origin it leaves from (25 bytes) and may name no shooter; an
-// action graph's instant strike rides a section of its own.
+// carries the origin it leaves from and the shot it is (29 bytes) and may
+// name no shooter; an action graph's instant strike rides a section of its
+// own, naming its shot too.
 
 #include <cstdint>
 #include <cstdio>
@@ -45,7 +46,8 @@ bool same(const ne::SnapshotLockMissile& lhs, const ne::SnapshotLockMissile& rhs
            lhs.commit_index == rhs.commit_index &&
            lhs.launch_tick_delta == rhs.launch_tick_delta &&
            lhs.flight_ticks == rhs.flight_ticks &&
-           lhs.flags == rhs.flags && lhs.origin == rhs.origin;
+           lhs.flags == rhs.flags && lhs.origin == rhs.origin &&
+           lhs.projectile_template_id == rhs.projectile_template_id;
 }
 
 ne::SnapshotLockMissile from_origin(
@@ -56,6 +58,7 @@ ne::SnapshotLockMissile from_origin(
         missile(shooter, target, commit_index, 2, 9);
     record.flags = ne::kSnapshotLockRecordHasOrigin;
     record.origin = glm::vec3{3.5f, 1.0f, -7.25f};
+    record.projectile_template_id = 36;
     return record;
 }
 
@@ -64,6 +67,7 @@ ne::SnapshotLockStrike strike(std::vector<std::uint32_t> targets) {
     record.origin = glm::vec3{-2.0f, 1.0f, 4.5f};
     record.direction = glm::normalize(glm::vec3{0.3f, 0.0f, 1.0f});
     record.collider_template_id = 54;
+    record.projectile_template_id = 35;
     record.instigator_net_id = 0;
     record.strike_index = 3;
     record.launch_tick_delta = 1;
@@ -77,6 +81,7 @@ bool same(const ne::SnapshotLockStrike& lhs, const ne::SnapshotLockStrike& rhs) 
     return lhs.origin == rhs.origin &&
            glm::length(lhs.direction - rhs.direction) < 0.0002f &&
            lhs.collider_template_id == rhs.collider_template_id &&
+           lhs.projectile_template_id == rhs.projectile_template_id &&
            lhs.instigator_net_id == rhs.instigator_net_id &&
            lhs.strike_index == rhs.strike_index &&
            lhs.launch_tick_delta == rhs.launch_tick_delta &&
@@ -160,7 +165,7 @@ void a_graph_missile_and_strike_survive_the_wire() {
     snapshot.lock_strikes[1].direction = glm::vec3{0.0f};
     snapshot.lock_strikes[1].strike_index = 4;
     const std::vector<std::uint8_t> encoded = ne::encode_snapshot_packet(snapshot);
-    const std::size_t records = (4u + 13u + 25u) + (4u + (31u + 8u) + 31u);
+    const std::size_t records = (4u + 13u + 29u) + (4u + (35u + 8u) + 35u);
     require(ne::snapshot_lock_record_bytes(snapshot) == records);
     require(encoded.size() == without + records);
     require(ne::estimate_snapshot_packet_size(snapshot) >= encoded.size());
@@ -194,6 +199,7 @@ void a_broken_strike_section_is_refused() {
              +[](ne::SnapshotLockStrike* record) { record->arc_count = 17; },
              +[](ne::SnapshotLockStrike* record) { record->arc_count = 1; },
              +[](ne::SnapshotLockStrike* record) { record->collider_template_id = 0; },
+             +[](ne::SnapshotLockStrike* record) { record->projectile_template_id = 0; },
              +[](ne::SnapshotLockStrike* record) { record->target_net_ids[0] = 0; },
          }) {
         ne::WorldSnapshot snapshot = snapshot_with_an_actor();
@@ -213,12 +219,16 @@ void a_broken_strike_section_is_refused() {
 void a_broken_missile_section_is_refused() {
     ne::SnapshotLockMissile unknown_flag = missile(5, 40, 0, 0, 10);
     unknown_flag.flags = 0x80u;
+    // A graph's missile must say what it is.
+    ne::SnapshotLockMissile no_shot = from_origin(0, 40, 0);
+    no_shot.projectile_template_id = 0;
     for (const ne::SnapshotLockMissile& bad : {
              // No shooter and no origin: nothing to draw it from.
              missile(0, 40, 0, 0, 10),
              missile(5, 0, 0, 0, 10),
              missile(5, 40, 0, 0, 0),
              unknown_flag,
+             no_shot,
          }) {
         ne::WorldSnapshot snapshot = snapshot_with_an_actor();
         snapshot.lock_missiles = {bad};

@@ -21,8 +21,10 @@
  *     every lock_repeat_interval_ticks, locking afresh. Clients draw them
  *     through the lock-on exports: KernelLockStrikeEvent's reserved u16
  *     became flags (KERNEL_LOCK_STRIKE_FLAG_GRAPH), and KernelLockMissileView's
- *     became flags (KERNEL_LOCK_MISSILE_FLAG_FROM_ORIGIN) with origin
- *     appended -- its size grows from 24 to 36 bytes. Snapshot schema 31
+ *     became flags (KERNEL_LOCK_MISSILE_FLAG_FROM_ORIGIN) with origin and
+ *     projectile_template_id appended -- its size grows from 24 to 40 bytes;
+ *     a graph's strike event carries its shot's projectile_template_id in
+ *     action_instance_id. Snapshot schema 31
  *     carries them. KernelActionDefinition is embedded in
  *     every trigger definition, so every managed mirror of those shifts.
  * 106: two-layer hits on rigged actors. KernelColliderPurpose gained _Bounds:
@@ -2879,7 +2881,9 @@ typedef struct KernelLockSelection {
 /* KernelLockStrikeEvent.flags (ABI 107): an action graph's lock_strike, not a
  * weapon's commit. shooter_net_id is the graph's instigator (zero for a
  * bottle), commit_index which strike of a repeated run it is, and
- * action_instance_id zero; the selection's targets are what the server
+ * action_instance_id the projectile_template_id of the shot it struck with --
+ * there is no action instance, and no weapon (selection.weapon_id is zero), so
+ * that is what to draw it as. The selection's targets are what the server
  * struck, not what this client would lock. */
 #define KERNEL_LOCK_STRIKE_FLAG_GRAPH 1u
 
@@ -2915,6 +2919,10 @@ typedef struct KernelLockMissileView {
     /* With KERNEL_LOCK_MISSILE_FLAG_FROM_ORIGIN, where it leaves from (ABI
      * 107, appended). */
     KernelVec3 origin;
+    /* With KERNEL_LOCK_MISSILE_FLAG_FROM_ORIGIN, the shot it is -- what to draw
+     * it as, a graph's missile having no weapon; zero for a weapon's (ABI 107,
+     * appended). */
+    uint32_t projectile_template_id;
 } KernelLockMissileView;
 
 /* KernelLockMissileView.flags (ABI 107): an action graph's lock_strike

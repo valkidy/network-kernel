@@ -1346,6 +1346,7 @@ private:
     struct PendingLockStrikeRecord {
         NetId instigator_net_id = 0;
         std::uint32_t collider_template_id = 0;
+        std::uint32_t projectile_template_id = 0;
         std::uint16_t strike_index = 0;
         std::uint32_t launch_tick = 0;
         glm::vec3 origin{0.0f};
@@ -1377,6 +1378,7 @@ private:
         std::uint32_t arrival_tick = 0;
         bool from_origin = false;
         glm::vec3 origin{0.0f};
+        std::uint32_t projectile_template_id = 0;
     };
     std::vector<ClientLockMissile> client_lock_missiles_;
     // A graph's strikes as received, until the render clock reaches their

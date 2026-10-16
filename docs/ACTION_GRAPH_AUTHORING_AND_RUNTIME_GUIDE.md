@@ -619,10 +619,12 @@ Runtime 在 command commit 當下，依目標**當時**的位置算出目的地�
 - instant 打擊會變成 `Kernel_PollLockStrikeEvents` 的事件，帶
   `KERNEL_LOCK_STRIKE_FLAG_GRAPH`：
   - `commit_index` 是第幾次打擊
+  - `action_instance_id` 是 shot 的 `projectile_template_id`。沒有武器可查
+    （`selection.weapon_id` 為 0），VFX 就用它找 prefab
   - 弧畫到被打中的目標
   - 鎖不滿 M 個時，其餘的弧由 client 在範圍內補上
 - missile 會出現在 `Kernel_GetLockMissiles`，帶 `KERNEL_LOCK_MISSILE_FLAG_FROM_ORIGIN`，
-  從 `origin` 發射，shooter 可能是 0。
+  從 `origin` 發射，shooter 可能是 0，`projectile_template_id` 是 shot 的 id。
 - 紀錄只送給看得到任一目標，或玩家離起點 40 m 以內的 client。
 
 範例：
