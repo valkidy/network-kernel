@@ -1,6 +1,6 @@
 # Action graph 鎖定打擊（`lock_strike`）實作計劃書
 
-狀態：P0、P1、P2 完成（2026-10-16）。D1–D14 全部已定。
+狀態：P0–P3 完成（2026-10-16）。D1–D14 全部已定。
 前置：`main`（`8fa5250f`，ABI 106、packet schema 33、snapshot schema 30）。
 關聯：`docs/LOCK_ON_WEAPONS_PLAN.md`（鎖定武器 18/19，本計劃沿用它的選目標、立即傷害、飛彈發射與 client 演出）。
 
@@ -376,6 +376,52 @@
     - `targeted_strike_test`、`status_action_block_test`：還在用 projectile 的 `weapon_id`。
     - `combat_test`：呼叫兩參數版的 `drain_ready_damage`。
   - game_server 另外 4 個測試也在用 `weapon_id`，同樣編不過：`actor_intent_executor`、`agent_chaser_controller`、`agent_sentry_controller`、`patrol_director`。
+
+### P3：repeat 排程（2026-10-16）
+
+**Kernel**
+- 新增 `pending_lock_strikes_`，每筆存放：
+  - 第一次觸發時的完整指令，位置和方向固定（D4）
+  - `next_tick`
+  - `remaining`
+  - `strike_index`
+- `execute_lock_strike` 立即打第一次。如果 count > 1，就排入佇列，`next_tick = 現在 + interval`。
+- `run_due_lock_strikes` 只在 server 模式下執行：
+  - 依排入的順序，執行到期的打擊，每次都重新鎖定。
+  - 打完就把 `next_tick` 加上 interval，次數用完就移除。
+  - 呼叫位置在 `simulate_tick` 裡：本 tick 所有 action graph batch 執行完之後、傷害 drain 之前。所以到期的 instant 打擊在當 tick 就會生效。
+- 佇列和觸發它的實體無關（D8），server 重設時清空。
+- 佇列上限 256（D10）：
+  - 滿了的時候，帶 repeat 的打擊在 batch 事前檢查就被拒絕，並記 warning。整個 batch 不執行，包括瓶子的自我傷害，所以瓶子會留著，等有空位時再觸發。
+  - 不帶 repeat 的打擊不受影響。
+- 飛彈的 `commit_index` 改為 `strike_index`，從 0 起算，P4 用它區分同一輪的各次發射。
+- 合法的 repeat：
+  - 一次：count 0 或 1，且 interval 為 0。
+  - 多次：count 2..16、interval ≥ 1、`interval × (count − 1)` ≤ 255。
+  - 新增巨集 `KERNEL_MAX_LOCK_STRIKE_REPEAT`、`KERNEL_MAX_LOCK_STRIKE_SPAN_TICKS`，ABI 仍是 107。
+  - kernel 載入、執行前檢查、game_server 編譯三處用同一套規則。
+
+**game_server**
+- `lock_strike` 支援 `repeat: {interval_ticks, count}`，兩者都可以是字面值或 params。
+- 共用 graph 新增參數 `repeat_count`（預設 1）、`repeat_interval`（預設 0）。
+
+**測試**
+- `lock_strike_test` 新增：
+  - 10 × 5 剛好在 t、t+10、…、t+40 各打一次，之後不再打，佇列清空。
+  - 第一次打擊後殺掉一個目標，第二次改鎖下一個最近的。
+  - repeat 飛彈的 `commit_index` 依序為 0、1、2，發射 tick 相差 interval。
+  - 佇列滿時，repeat 打擊整批被拒，單次打擊照常執行。
+  - catalog 的 repeat 合法與不合法案例。
+- `lock_strike_catalog_test` 新增：
+  - repeat 經由 binding 綁定後能編譯，kernel 能載入。
+  - 三種不合法的 repeat。
+- Mutation 7 個（kernel 5、game_server 2），全部讓測試變紅。
+
+**尚未覆蓋**
+- `simulate_tick` 裡呼叫 `run_due_lock_strikes` 的那一行和 server 模式的 guard。單元測試是直接呼叫函式，P5 的端到端測試會補上。
+
+**回歸**
+- 和 P2 同一組 45 個測試：37 通過。8 個沒通過的和 P2 完全相同，都是 `main` 上本來就有的。
 
 ---
 

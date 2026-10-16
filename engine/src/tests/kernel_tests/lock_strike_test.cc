@@ -1,8 +1,11 @@
-// lock_strike: an action graph's lock (docs/LOCK_STRIKE_ACTION_PLAN.md, P2).
+// lock_strike: an action graph's lock (docs/LOCK_STRIKE_ACTION_PLAN.md, P2,
+// and its repeat, P3).
 // A bottle breaks, and up to its shot's max_hit_count actors in a sphere or a
 // cone around the break are struck -- at once, or by a certain missile each
 // that lands on its arrival. The lock is a lock-on weapon's: nearest first,
-// the thrower's own never. The catalog refuses one it could not run.
+// the thrower's own never. A repeated one is taken again every interval from
+// the same spot, locking afresh each time, whatever became of the bottle. The
+// catalog refuses one it could not run.
 //
 // Every check uses require(), never assert(): -c opt compiles assert out along
 // with the call inside it.
@@ -17,9 +20,15 @@
 #include <utility>
 #include <vector>
 
+#include <entt/entt.hpp>
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
+// The repeat is stepped by hand -- tick by tick, without the rest of a
+// server tick -- so the test reaches the engine's tick loop and queue.
+#define private public
 #include "kernel/src/kernel.h"
+#undef private
 #include "simulation/public/action_graph.h"
 #include "simulation/src/systems.h"
 
@@ -168,8 +177,14 @@ bool loads(const KernelActionDefinition& action) {
     return load(engine, trigger_of(action));
 }
 
+KernelConfig server_config() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    return config;
+}
+
 struct Scene {
-    KernelEngine engine{KernelConfig{}};
+    KernelEngine engine{server_config()};
     World& world = engine.simulation_world();
     NetId thrower = 0;
 
@@ -229,6 +244,15 @@ struct Scene {
             engine,
             ActionGraphCommandBatch{event, provenance, 1u, std::move(commands)},
             0u);
+    }
+
+    // One tick on: the repeats due on it struck, then its damage drained.
+    void step() {
+        engine.tick_loop_.advance_tick();
+        const std::uint32_t tick = engine.current_tick();
+        engine.run_due_lock_strikes(static_cast<std::uint64_t>(
+            tick * engine.fixed_delta_seconds() * 1000000.0f));
+        drain(tick);
     }
 
     void drain(std::uint32_t tick) {
@@ -355,11 +379,113 @@ void the_catalog_refuses_what_it_could_not_run() {
         strike_action(kSphere, KernelLockStrikeMode_Instant, false);
     mode.lock_mode = 2u;
     require(!loads(mode));
-    KernelActionDefinition repeated =
-        strike_action(kSphere, KernelLockStrikeMode_Instant, false);
-    repeated.lock_repeat_count = 5u;
-    repeated.lock_repeat_interval_ticks = 10u;
-    require(!loads(repeated));
+    // Repeats: 5 x 10 ticks loads; a count past the ceiling, a repeat with no
+    // interval, an interval with no repeat and a run longer than
+    // KERNEL_MAX_LOCK_STRIKE_SPAN_TICKS do not.
+    const auto repeated = [](std::uint16_t count, std::uint32_t interval) {
+        KernelActionDefinition action =
+            strike_action(kSphere, KernelLockStrikeMode_Instant, false);
+        action.lock_repeat_count = count;
+        action.lock_repeat_interval_ticks = interval;
+        return action;
+    };
+    require(loads(repeated(5u, 10u)));
+    require(loads(repeated(1u, 0u)));
+    require(loads(repeated(16u, 17u)));  // 15 x 17 = 255
+    require(!loads(repeated(17u, 1u)));
+    require(!loads(repeated(5u, 0u)));
+    require(!loads(repeated(1u, 10u)));
+    require(!loads(repeated(16u, 18u)));  // 270
+}
+
+KernelActionDefinition repeated_strike(
+    std::uint8_t mode,
+    std::uint16_t count,
+    std::uint32_t interval) {
+    KernelActionDefinition action = strike_action(kSphere, mode, false);
+    action.lock_repeat_count = count;
+    action.lock_repeat_interval_ticks = interval;
+    return action;
+}
+
+// Every 10 ticks, five times: struck on the tick the graph ran and on each
+// tenth after it, never in between and never a sixth time.
+void a_repeat_strikes_on_its_schedule_and_stops() {
+    Scene scene;
+    const NetId target = scene.enemy(glm::vec3{0.0f, 0.0f, -3.0f});
+    require(scene.strike(
+        repeated_strike(KernelLockStrikeMode_Instant, 5u, 10u)));
+    scene.drain(scene.engine.current_tick());
+    std::uint32_t struck = 1u;
+    require(scene.hp(target) == 100 - kDamage);
+    for (std::uint32_t elapsed = 1u; elapsed <= 60u; ++elapsed) {
+        scene.step();
+        if (elapsed % 10u == 0u && elapsed <= 40u) {
+            ++struck;
+        }
+        require(scene.hp(target) == 100 - struck * kDamage);
+    }
+    require(struck == 5u);
+    require(scene.engine.pending_lock_strikes_.empty());
+}
+
+// Each strike locks afresh: one of the first two dies between strikes, and
+// the next strike takes the next nearest in its place.
+void each_repeat_locks_afresh() {
+    Scene scene;
+    const NetId first = scene.enemy(glm::vec3{0.0f, 0.0f, -3.0f});
+    const NetId second = scene.enemy(glm::vec3{-5.0f, 0.0f, 0.0f});
+    const NetId third = scene.enemy(glm::vec3{0.0f, 0.0f, 8.0f});
+    require(scene.strike(
+        repeated_strike(KernelLockStrikeMode_Instant, 2u, 10u)));
+    scene.drain(scene.engine.current_tick());
+    require(scene.hp(third) == 100);
+    scene.world.registry().get<Health>(*scene.world.find_entity(first)).hp = 0;
+    for (std::uint32_t elapsed = 1u; elapsed <= 10u; ++elapsed) {
+        scene.step();
+    }
+    require(scene.hp(second) == 100 - 2 * kDamage);
+    require(scene.hp(third) == 100 - kDamage);
+}
+
+// A repeated missile strike's missiles carry which strike of the run they
+// belong to, so a client can tell the run's volleys apart.
+void repeated_missiles_carry_their_strike() {
+    Scene scene;
+    scene.enemy(glm::vec3{0.0f, 0.0f, -3.0f});
+    require(scene.strike(
+        repeated_strike(KernelLockStrikeMode_Missile, 3u, 4u)));
+    for (std::uint32_t elapsed = 1u; elapsed <= 8u; ++elapsed) {
+        scene.step();
+    }
+    const std::vector<LockMissileLaunch>& launches =
+        scene.engine.pending_lock_missiles_;
+    require(launches.size() == 3u);
+    for (std::uint16_t index = 0; index < 3u; ++index) {
+        require(launches[index].commit_index == index);
+        require(launches[index].launch_tick ==
+                launches[0].launch_tick + index * 4u);
+    }
+}
+
+// The queue holds 256 runs. A repeated strike past that is refused whole --
+// its batch, a bottle's self-damage included -- and strikes nothing; one that
+// is taken once still runs.
+void a_full_queue_refuses_a_repeat_but_not_a_single_strike() {
+    Scene scene;
+    const NetId target = scene.enemy(glm::vec3{0.0f, 0.0f, -3.0f});
+    KernelEngine::PendingLockStrike idle;
+    idle.next_tick = scene.engine.current_tick() + 200u;
+    idle.remaining = 1u;
+    scene.engine.pending_lock_strikes_.assign(256u, idle);
+    require(!scene.strike(
+        repeated_strike(KernelLockStrikeMode_Instant, 5u, 10u)));
+    scene.drain(scene.engine.current_tick());
+    require(scene.hp(target) == 100);
+    require(scene.engine.pending_lock_strikes_.size() == 256u);
+    require(scene.strike(strike_action(kSphere, KernelLockStrikeMode_Instant, false)));
+    scene.drain(scene.engine.current_tick());
+    require(scene.hp(target) == 100 - kDamage);
 }
 
 }  // namespace
@@ -370,6 +496,10 @@ int main() {
     missiles_land_on_each_ones_arrival();
     the_lift_moves_the_origin_up();
     the_catalog_refuses_what_it_could_not_run();
+    a_repeat_strikes_on_its_schedule_and_stops();
+    each_repeat_locks_afresh();
+    repeated_missiles_carry_their_strike();
+    a_full_queue_refuses_a_repeat_but_not_a_single_strike();
     std::puts("lock_strike_test passed");
     return 0;
 }

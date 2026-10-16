@@ -15,7 +15,10 @@
  *     lands on its arrival (_Missile, one per locked actor). Entity triggers
  *     only. KernelActionDefinition gained lock_collider_template_id,
  *     lock_mode, lock_repeat_count, lock_repeat_interval_ticks and
- *     lock_origin_lift, appended after status_strength; it is embedded in
+ *     lock_origin_lift, appended after status_strength (limits
+ *     KERNEL_MAX_LOCK_ORIGIN_LIFT, KERNEL_MAX_LOCK_STRIKE_REPEAT and
+ *     KERNEL_MAX_LOCK_STRIKE_SPAN_TICKS); a repeated strike is taken again
+ *     every lock_repeat_interval_ticks, locking afresh. It is embedded in
  *     every trigger definition, so every managed mirror of those shifts.
  * 106: two-layer hits on rigged actors. KernelColliderPurpose gained _Bounds:
  *     an actor whose skeleton colliders are hit volumes names a bounds box as
@@ -1061,6 +1064,12 @@ typedef enum KernelLockStrikeMode {
 
 /* The highest a lock_strike may lift its origin above position, in metres. */
 #define KERNEL_MAX_LOCK_ORIGIN_LIFT 5.0f
+/* The most times one lock_strike is taken, and the most ticks from its first
+ * to its last: lock_repeat_count <= KERNEL_MAX_LOCK_STRIKE_REPEAT and
+ * lock_repeat_interval_ticks * (lock_repeat_count - 1) <=
+ * KERNEL_MAX_LOCK_STRIKE_SPAN_TICKS. */
+#define KERNEL_MAX_LOCK_STRIKE_REPEAT 16u
+#define KERNEL_MAX_LOCK_STRIKE_SPAN_TICKS 255u
 
 typedef enum KernelStatModifierOperation {
     KernelStatModifierOperation_Additive = 0,
@@ -1271,10 +1280,14 @@ typedef struct KernelActionDefinition {
     /* KernelLockStrikeMode. */
     uint8_t lock_mode;
     uint8_t lock_reserved0;
-    /* How many times the lock is taken: 0 or 1 is once. More is not yet
-     * accepted (the repeat is the plan's P3). */
+    /* How many times the lock is taken: 0 or 1 is once, at most
+     * KERNEL_MAX_LOCK_STRIKE_REPEAT. The first is taken when the graph runs,
+     * each other lock_repeat_interval_ticks after the one before, from the
+     * same position and direction, each locking afresh; it goes on after the
+     * entity whose graph ran is gone. */
     uint16_t lock_repeat_count;
-    /* Ticks between repeats; zero with no repeat. */
+    /* Ticks between repeats, 1..255; zero with no repeat. The whole run is at
+     * most KERNEL_MAX_LOCK_STRIKE_SPAN_TICKS long. */
     uint32_t lock_repeat_interval_ticks;
     /* Metres above position the lock is taken from, finite and in
      * 0 .. KERNEL_MAX_LOCK_ORIGIN_LIFT, so a bottle that broke on the ground

@@ -2185,11 +2185,14 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
             throw std::runtime_error(
                 "ui_id is only supported on open_ui: " + path);
         }
-        if ((action["repeat"] || action["lifetime_ticks"]) &&
-            compiled_action.action_type != "spawn_projectile") {
+        if ((action["lifetime_ticks"] &&
+             compiled_action.action_type != "spawn_projectile") ||
+            (action["repeat"] &&
+             compiled_action.action_type != "spawn_projectile" &&
+             compiled_action.action_type != "lock_strike")) {
             throw std::runtime_error(
-                "repeat and lifetime_ticks are only supported on "
-                "spawn_projectile: " + path);
+                "repeat is only supported on spawn_projectile and lock_strike, "
+                "lifetime_ticks only on spawn_projectile: " + path);
         }
         if (action["when"]) {
             const std::string condition = action["when"].as<std::string>();
@@ -2227,10 +2230,35 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 if (key != "type" && key != "when" && key != "collider" &&
                     key != "projectile_template" && key != "mode" &&
                     key != "position" && key != "direction" &&
-                    key != "origin_lift") {
+                    key != "origin_lift" && key != "repeat") {
                     throw std::runtime_error(
                         "lock_strike takes collider, projectile_template, mode, "
-                        "position, direction and origin_lift: " + path);
+                        "position, direction, origin_lift and repeat: " + path);
+                }
+            }
+            if (const YAML::Node repeat = action["repeat"]) {
+                reject_unknown_keys(
+                    repeat,
+                    {"interval_ticks", "count"},
+                    path,
+                    source_kind,
+                    KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_UNKNOWN);
+                if (!repeat["interval_ticks"] || !repeat["count"]) {
+                    throw std::runtime_error(
+                        "lock_strike repeat needs interval_ticks and count: " +
+                        path);
+                }
+                compiled_action.lock_repeat_count_parameter =
+                    optional_parameter_reference(repeat["count"]);
+                compiled_action.lock_repeat_interval_ticks_parameter =
+                    optional_parameter_reference(repeat["interval_ticks"]);
+                if (compiled_action.lock_repeat_count_parameter.empty()) {
+                    compiled_action.lock_repeat_count =
+                        repeat["count"].as<std::uint32_t>();
+                }
+                if (compiled_action.lock_repeat_interval_ticks_parameter.empty()) {
+                    compiled_action.lock_repeat_interval_ticks =
+                        repeat["interval_ticks"].as<std::uint32_t>();
                 }
             }
             if (!action["mode"]) {
@@ -2669,7 +2697,9 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                  &compiled_action.repeat_scatter_radius_parameter,
                  &compiled_action.repeat_stagger_lifetime_ticks_parameter,
                  &compiled_action.lock_mode_parameter,
-                 &compiled_action.lock_origin_lift_parameter}) {
+                 &compiled_action.lock_origin_lift_parameter,
+                 &compiled_action.lock_repeat_count_parameter,
+                 &compiled_action.lock_repeat_interval_ticks_parameter}) {
             if (!bound->empty()) {
                 action_parameters.push_back(bound);
             }
@@ -8650,6 +8680,33 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
                 ? KernelLockStrikeMode_Missile
                 : KernelLockStrikeMode_Instant;
             compiled_action.lock_origin_lift = lift;
+            const std::uint32_t repeat_count =
+                action.lock_repeat_count_parameter.empty()
+                ? action.lock_repeat_count
+                : bound_uint32(binding, *graph, action.lock_repeat_count_parameter);
+            const std::uint32_t repeat_interval =
+                action.lock_repeat_interval_ticks_parameter.empty()
+                ? action.lock_repeat_interval_ticks
+                : bound_uint32(
+                      binding, *graph, action.lock_repeat_interval_ticks_parameter);
+            // Mirrors the kernel's lock_strike_repeat_is_authorable.
+            const bool repeat_ok = repeat_count <= 1u
+                ? repeat_interval == 0u
+                : repeat_count <= KERNEL_MAX_LOCK_STRIKE_REPEAT &&
+                      repeat_interval >= 1u &&
+                      repeat_interval * (repeat_count - 1u) <=
+                          KERNEL_MAX_LOCK_STRIKE_SPAN_TICKS;
+            if (!repeat_ok) {
+                throw std::runtime_error(
+                    "lock_strike repeat must be once (count 0 or 1, interval 0) "
+                    "or count 2.." + std::to_string(KERNEL_MAX_LOCK_STRIKE_REPEAT) +
+                    " at least 1 tick apart, all within " +
+                    std::to_string(KERNEL_MAX_LOCK_STRIKE_SPAN_TICKS) +
+                    " ticks: " + binding.action_graph_ref);
+            }
+            compiled_action.lock_repeat_count =
+                static_cast<std::uint16_t>(repeat_count);
+            compiled_action.lock_repeat_interval_ticks = repeat_interval;
             compiled_action.position_source = KernelEventVec3Source_Position;
             compiled_action.direction_source = action.direction_parameter.empty()
                 ? KernelEventVec3Source_Position
@@ -10516,6 +10573,10 @@ std::uint64_t compute_gameplay_catalog_hash(
             hash_string(&hash, action.lock_mode_parameter);
             hash_float(&hash, action.lock_origin_lift);
             hash_string(&hash, action.lock_origin_lift_parameter);
+            hash_scalar(&hash, action.lock_repeat_count);
+            hash_scalar(&hash, action.lock_repeat_interval_ticks);
+            hash_string(&hash, action.lock_repeat_count_parameter);
+            hash_string(&hash, action.lock_repeat_interval_ticks_parameter);
         }
     }
     std::vector<StatusEffectTemplateConfig> status_effect_templates =

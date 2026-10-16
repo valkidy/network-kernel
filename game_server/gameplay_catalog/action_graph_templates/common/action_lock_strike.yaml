@@ -16,6 +16,10 @@ parameters:
   direction: null
   mode: instant
   origin_lift: 1.0
+  # Taken repeat_count times, repeat_interval ticks apart, from the same
+  # spot, each locking afresh. 1 and 0: once.
+  repeat_count: 1
+  repeat_interval: 0
 actions:
   - type: lock_strike
     collider: params.collider
@@ -24,3 +28,6 @@ actions:
     position: params.position
     direction: params.direction
     origin_lift: params.origin_lift
+    repeat:
+      interval_ticks: params.repeat_interval
+      count: params.repeat_count

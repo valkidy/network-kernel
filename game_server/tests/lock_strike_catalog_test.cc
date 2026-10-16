@@ -200,7 +200,8 @@ void a_bottle_compiles_to_a_lock_strike_the_kernel_accepts() {
     require(strike.spawn_projectile_template_id == kShot);
     require(strike.lock_mode == KernelLockStrikeMode_Missile);
     require(strike.lock_origin_lift == 1.0f);
-    require(strike.lock_repeat_count == 0u);
+    require(strike.lock_repeat_count == 1u);  // the graph's default: once
+    require(strike.lock_repeat_interval_ticks == 0u);
     require(strike.position_source == KernelEventVec3Source_Position);
     require(strike.direction_source == KernelEventVec3Source_Direction);
     require(trigger.actions[1].action_type ==
@@ -237,7 +238,53 @@ void a_cone_and_a_lift_compile() {
     require(strike.lock_origin_lift == 2.5f);
 }
 
+// A repeat bound through the shared graph's parameters (P3): every 10 ticks,
+// five times.
+void a_repeat_compiles() {
+    const fs::path catalog = catalog_with(
+        "repeat",
+        files(
+            bottle(
+                "action_lock_strike_and_damage_self",
+                "test_lock_sphere",
+                "      repeat_count: 5\n"
+                "      repeat_interval: 10\n"),
+            shot(4u, 20u)));
+    const gs::KernelGameplayCatalogStorage storage =
+        gs::build_kernel_gameplay_catalog(
+            gs::load_gameplay_config_from_catalog_file(catalog.string()));
+    const KernelActionDefinition& strike =
+        find_bottle(storage)->collision_trigger.actions[0];
+    require(strike.lock_repeat_count == 5u);
+    require(strike.lock_repeat_interval_ticks == 10u);
+
+    KernelConfig kernel_config{};
+    kernel_config.mode = KernelMode_DedicatedServer;
+    kernel_config.tick.server_tick_rate = 30;
+    kernel_config.tick.snapshot_rate = 15;
+    KernelHandle* kernel = Kernel_Create(&kernel_config);
+    require(kernel != nullptr);
+    require(Kernel_LoadGameplayCatalog(kernel, &storage.definition, nullptr));
+    Kernel_Destroy(kernel);
+}
+
 void what_the_kernel_would_refuse_is_refused_here() {
+    for (const auto& [name, extra] : std::vector<std::pair<std::string, std::string>>{
+             {"too_many", "      repeat_count: 17\n      repeat_interval: 1\n"},
+             {"no_interval", "      repeat_count: 5\n      repeat_interval: 0\n"},
+             {"too_long", "      repeat_count: 16\n      repeat_interval: 18\n"},
+         }) {
+        require(refused_for(
+            catalog_with(
+                name,
+                files(
+                    bottle(
+                        "action_lock_strike_and_damage_self",
+                        "test_lock_sphere",
+                        extra),
+                    shot(4u, 20u))),
+            "lock_strike repeat must be once"));
+    }
     require(refused_for(
         catalog_with(
             "mode",
@@ -318,6 +365,7 @@ void what_the_kernel_would_refuse_is_refused_here() {
 int main() {
     a_bottle_compiles_to_a_lock_strike_the_kernel_accepts();
     a_cone_and_a_lift_compile();
+    a_repeat_compiles();
     what_the_kernel_would_refuse_is_refused_here();
     std::puts("lock_strike_catalog_test passed");
     return 0;

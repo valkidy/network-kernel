@@ -2164,6 +2164,22 @@ bool resolve_weapon_cone(
     return true;
 }
 
+// Once (count 0 or 1, no interval), or up to KERNEL_MAX_LOCK_STRIKE_REPEAT
+// times a positive interval apart, the whole run inside
+// KERNEL_MAX_LOCK_STRIKE_SPAN_TICKS.
+bool lock_strike_repeat_is_authorable(
+    std::uint32_t count,
+    std::uint32_t interval_ticks) {
+    if (count <= 1u) {
+        return interval_ticks == 0u;
+    }
+    return count <= KERNEL_MAX_LOCK_STRIKE_REPEAT && interval_ticks >= 1u &&
+           interval_ticks * (count - 1u) <= KERNEL_MAX_LOCK_STRIKE_SPAN_TICKS;
+}
+
+// How many lock_strike repeats the whole server keeps waiting at once (D10).
+constexpr std::size_t kMaxPendingLockStrikes = 256u;
+
 // A lock_strike's own fields, before anything they name is known to exist.
 bool lock_strike_action_is_authorable(const KernelActionDefinition& action) {
     return action.lock_collider_template_id != 0u &&
@@ -2175,9 +2191,8 @@ bool lock_strike_action_is_authorable(const KernelActionDefinition& action) {
            std::isfinite(action.lock_origin_lift) &&
            action.lock_origin_lift >= 0.0f &&
            action.lock_origin_lift <= KERNEL_MAX_LOCK_ORIGIN_LIFT &&
-           // The repeat is the plan's P3; until then a strike is taken once.
-           action.lock_repeat_count <= 1u &&
-           action.lock_repeat_interval_ticks == 0u;
+           lock_strike_repeat_is_authorable(
+               action.lock_repeat_count, action.lock_repeat_interval_ticks);
 }
 
 // Every lock_strike an entity template's triggers hold names a volume a lock
@@ -7556,8 +7571,17 @@ bool KernelEngine::lock_strike_is_runnable(
         !finite_vec3(command.position) ||
         !std::isfinite(command.origin_lift) || command.origin_lift < 0.0f ||
         command.origin_lift > KERNEL_MAX_LOCK_ORIGIN_LIFT ||
-        // The repeat is P3's; until then a strike is taken once.
-        command.repeat_count > 1u || command.repeat_interval_ticks != 0u) {
+        !lock_strike_repeat_is_authorable(
+            command.repeat_count, command.repeat_interval_ticks)) {
+        return false;
+    }
+    // A full queue refuses the whole batch, a bottle's self-damage with it,
+    // so the bottle stays and strikes when there is room again.
+    if (command.repeat_count > 1u &&
+        pending_lock_strikes_.size() >= kMaxPendingLockStrikes) {
+        spdlog::warn(
+            "lock_strike refused: {} repeated strikes already waiting",
+            pending_lock_strikes_.size());
         return false;
     }
     if (!volume.omnidirectional &&
@@ -7573,6 +7597,52 @@ void KernelEngine::execute_lock_strike(
     World& world,
     DamagePipeline* damage_pipeline,
     const ActionLockStrikeCommand& command,
+    std::uint64_t server_time_us) {
+    strike_lock_once(world, damage_pipeline, command, 0u, server_time_us);
+    if (command.repeat_count > 1u) {
+        pending_lock_strikes_.push_back(PendingLockStrike{
+            command,
+            tick_loop_.current_tick() + command.repeat_interval_ticks,
+            static_cast<std::uint16_t>(command.repeat_count - 1u),
+            1u,
+        });
+    }
+}
+
+void KernelEngine::run_due_lock_strikes(std::uint64_t server_time_us) {
+    if (!is_server_mode(config_.mode) || pending_lock_strikes_.empty()) {
+        return;
+    }
+    const std::uint32_t current_tick = tick_loop_.current_tick();
+    // In the order they were scheduled: a strike that ran first keeps
+    // running first, so two bottles' strikes on one tick resolve the same
+    // way every run.
+    std::size_t kept = 0;
+    for (std::size_t index = 0; index < pending_lock_strikes_.size(); ++index) {
+        PendingLockStrike pending = pending_lock_strikes_[index];
+        if (static_cast<std::int32_t>(current_tick - pending.next_tick) >= 0) {
+            strike_lock_once(
+                world_,
+                &damage_pipeline_,
+                pending.command,
+                pending.strike_index,
+                server_time_us);
+            --pending.remaining;
+            ++pending.strike_index;
+            pending.next_tick += pending.command.repeat_interval_ticks;
+        }
+        if (pending.remaining > 0u) {
+            pending_lock_strikes_[kept++] = pending;
+        }
+    }
+    pending_lock_strikes_.resize(kept);
+}
+
+void KernelEngine::strike_lock_once(
+    World& world,
+    DamagePipeline* damage_pipeline,
+    const ActionLockStrikeCommand& command,
+    std::uint16_t strike_index,
     std::uint64_t server_time_us) {
     const RuntimeProjectileTemplate* shot =
         world.find_projectile_template(command.projectile_template_id);
@@ -7615,14 +7685,15 @@ void KernelEngine::execute_lock_strike(
             damage_pipeline);
         return;
     }
-    // A missile at every one it locked, all launched now (D7).
+    // A missile at every one it locked, all launched now (D7), each carrying
+    // which strike of the run it belongs to.
     for (const lock_targets::Candidate& target : selection.locked) {
         (void)launch_lock_missile(
             world,
             spec,
             target,
             selection.hit_zone_of(target.net_id),
-            0u,
+            strike_index,
             current_tick,
             tick_loop_.fixed_delta_seconds(),
             server_time_us,
@@ -7723,6 +7794,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     pending_prop_state_changes_.clear();
     pending_actor_impulses_.clear();
     pending_lock_missiles_.clear();
+    pending_lock_strikes_.clear();
     client_lock_missiles_.clear();
     client_lock_strike_events_.clear();
     claimed_item_instances_.clear();
@@ -14188,6 +14260,10 @@ void KernelEngine::simulate_tick() {
     for (const ActionGraphCommandBatch& batch : action_graph_batches) {
         (void)execute_action_graph_command_batch(*this, batch, server_time_us);
     }
+    // After every graph of this tick, so a strike that comes due now sees the
+    // same world as one a graph took now -- and before the drain, so an
+    // instant one lands this tick.
+    run_due_lock_strikes(server_time_us);
     simulate_beams(
         world_,
         tick_loop_.current_tick(),

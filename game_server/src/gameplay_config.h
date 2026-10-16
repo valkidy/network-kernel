@@ -421,6 +421,12 @@ struct ActionGraphActionConfig {
     std::string lock_mode_parameter;
     float lock_origin_lift = 1.0f;
     std::string lock_origin_lift_parameter;
+    // `repeat: {interval_ticks, count}`: taken count times, interval_ticks
+    // apart. Count 0 or 1 is once. Each a literal or params.<name>.
+    std::uint32_t lock_repeat_count = 0;
+    std::uint32_t lock_repeat_interval_ticks = 0;
+    std::string lock_repeat_count_parameter;
+    std::string lock_repeat_interval_ticks_parameter;
     // apply_pull only. The anchor is a graph parameter for TO_POINT, and
     // direction_parameter is reused for ALONG. Each number is a literal, or
     // params.<name> (its *_parameter set) for the binding to supply. See

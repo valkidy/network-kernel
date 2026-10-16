@@ -23,6 +23,7 @@
 #include "kernel/src/legged_locomotion.h"
 #include "kernel/src/tick_loop.h"
 #include "physics/public/physics_world.h"
+#include "simulation/public/action_graph.h"
 #include "simulation/public/command.h"
 #include "simulation/public/item_system.h"
 #include "simulation/public/movement_solver.h"
@@ -43,7 +44,6 @@ class CollisionTriggerSystem;
 class OverlapTriggerSystem;
 class ListenServerTransport;
 class MovementSystem;
-struct ActionLockStrikeCommand;
 struct EntityDespawnPacket;
 struct EntitySpawnPacket;
 struct PropStateChangeBatchPacket;
@@ -1316,6 +1316,30 @@ private:
     // Lock-on missiles the weapon passes fired since the last snapshot. Their
     // hits are already scheduled; these are only reported, in the snapshot.
     std::vector<LockMissileLaunch> pending_lock_missiles_;
+    // lock_strike repeats still to come (docs/LOCK_STRIKE_ACTION_PLAN.md D3,
+    // D8): each keeps the command as first struck -- its position and
+    // direction fixed -- and is taken again every repeat_interval_ticks,
+    // locking afresh each time. Nothing ties one to the entity whose graph ran:
+    // a bottle is gone after the first.
+    struct PendingLockStrike {
+        ActionLockStrikeCommand command;
+        std::uint32_t next_tick = 0;
+        std::uint16_t remaining = 0;
+        // Which of the run's strikes is next, counting the first as zero;
+        // its missiles carry it as their commit index.
+        std::uint16_t strike_index = 0;
+    };
+    std::vector<PendingLockStrike> pending_lock_strikes_;
+    // One strike of a lock_strike, the `strike_index`-th of its run.
+    void strike_lock_once(
+        World& world,
+        DamagePipeline* damage_pipeline,
+        const ActionLockStrikeCommand& command,
+        std::uint16_t strike_index,
+        std::uint64_t server_time_us);
+    // The pending repeats due on this tick, each struck and rescheduled or
+    // retired. The authority's alone.
+    void run_due_lock_strikes(std::uint64_t server_time_us);
     // A client's lock-on missiles, from the server's records: what to draw and
     // when it lands. Kept until a little after arrival.
     struct ClientLockMissile {
