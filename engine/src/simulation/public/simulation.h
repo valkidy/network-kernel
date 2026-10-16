@@ -519,8 +519,12 @@ std::optional<glm::vec3> find_clear_spawn_spot(
 // Where a portal's exit stands (ABI 103): at `destination` if its footprint --
 // its trigger-purpose box, which is no body -- is clear of every other trigger
 // volume and of terrain and static obstacles, otherwise the nearest clear slot
-// in a row across `forward`. nullopt when it has no footprint or nothing in
-// reach is clear: the caller keeps the destination.
+// in a row across `forward`. Unless `forward` points steeply down (a drop),
+// every slot is set on the ground: the footprint is cast down from 5 m above
+// the destination's height to 10 m below it and rests on the highest ground
+// under it. With no slot clear, the ground under the destination. nullopt when
+// it has no footprint, or (grounded) no ground in reach: the caller keeps the
+// destination.
 std::optional<glm::vec3> find_clear_exit_spot(
     World& world,
     NetId net_id,

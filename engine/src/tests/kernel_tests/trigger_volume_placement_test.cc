@@ -17,6 +17,7 @@
 #include <string>
 
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include "physics/public/physics_world.h"
 #include "simulation/public/simulation.h"
@@ -144,6 +145,110 @@ std::optional<glm::vec3> place_by_another_gate(bool other_gate) {
         world, portal, glm::vec3{0.0f}, glm::vec3{0.0f, 0.0f, 1.0f}, 0);
 }
 
+// Exits on a slope (docs/PORTAL_PLAN.md, 2026-10-16): the ground under the
+// destination is 0.5 m up and rises 10 degrees toward +x, while the template's
+// destination says y = 0. Exits used to keep that y -- half buried, every slot
+// "blocked" by the terrain, both exits and their arrivals stacked under the
+// ground. Now each is set on the ground.
+constexpr float kSlopeDegrees = 10.0f;
+constexpr float kGroundAtDestination = 0.5f;
+
+float slope_height(float x) {
+    return kGroundAtDestination + std::tan(glm::radians(kSlopeDegrees)) * (x - 50.0f);
+}
+
+struct Slope {
+    ne::physics::PhysicsWorld physics;
+    ne::World world;
+
+    Slope() {
+        require(physics.valid());
+        // A thin slab tilted about z, its top through (50, 0.5) at 10 degrees.
+        const glm::quat tilt = glm::angleAxis(glm::radians(kSlopeDegrees), glm::vec3{0.0f, 0.0f, 1.0f});
+        ne::physics::CollisionObjectDescriptor slab;
+        slab.identity = ne::physics::CollisionObjectIdentity{
+            0, 1, ne::physics::kHitZoneUnscaled,
+            ne::physics::CollisionObjectKind::kTerrain,
+            ne::physics::CollisionLayer::kTerrain};
+        slab.shape.type = ne::physics::CollisionShapeType::kBox;
+        slab.shape.half_extents = glm::vec3{40.0f, 0.5f, 20.0f};
+        slab.position = glm::vec3{50.0f, kGroundAtDestination, 50.0f} - tilt * glm::vec3{0.0f, 0.5f, 0.0f};
+        slab.rotation = tilt;
+        std::string error;
+        require(physics.upsert_object(slab, &error));
+        physics.optimize_broad_phase();
+        world.set_collision_world(&physics);
+    }
+
+    // An exit: a 2 m trigger-only footprint standing on its origin.
+    ne::NetId exit() {
+        const ne::NetId id = world.spawn_entity(
+            ne::EntityType::kProp, ne::ActorType::kUnknown, 0, glm::vec3{50.0f, 0.0f, 50.0f});
+        world.collider_registry().upsert_entity_collider(
+            id, 950,
+            box_collider(id, 950, KernelColliderPurpose_Trigger,
+                         glm::vec3{0.0f, 1.0f, 0.0f}, glm::vec3{1.0f, 1.0f, 1.0f}));
+        return id;
+    }
+
+    // Where the kernel moves an exit once placed: its footprint follows.
+    void stand(ne::NetId id, const glm::vec3& at) {
+        for (ne::ColliderInstance& collider : world.collider_registry().mutable_instances()) {
+            if (collider.entity_net_id == id) {
+                collider.world_center = at + collider.local_center;
+                collider.world_bounds = ne::ColliderWorldBounds{collider.world_center, collider.half_extents};
+            }
+        }
+    }
+};
+
+void exits_stand_on_a_slope() {
+    const glm::vec3 destination{50.0f, 0.0f, 50.0f};
+    const glm::vec3 forward{0.0f, 0.0f, 1.0f};
+    Slope slope;
+
+    // The first rests on the highest ground under its footprint: its uphill
+    // edge, x = 51.
+    const ne::NetId first = slope.exit();
+    const std::optional<glm::vec3> a = ne::find_clear_exit_spot(slope.world, first, destination, forward);
+    require(a.has_value());
+    std::printf("first exit at (%.2f, %.3f, %.2f), ground under its middle %.3f\n",
+                a->x, a->y, a->z, slope_height(a->x));
+    require(std::abs(a->x - 50.0f) < 0.01f && std::abs(a->z - 50.0f) < 0.01f);
+    require(std::abs(a->y - slope_height(51.0f)) < 0.05f);
+    slope.stand(first, *a);
+
+    // The second takes the next slot across the forward, x = 52.5, also on
+    // the ground there.
+    const ne::NetId second = slope.exit();
+    const std::optional<glm::vec3> b = ne::find_clear_exit_spot(slope.world, second, destination, forward);
+    require(b.has_value());
+    std::printf("second exit at (%.2f, %.3f, %.2f)\n", b->x, b->y, b->z);
+    require(std::abs(b->x - 52.5f) < 0.01f);
+    require(std::abs(b->y - slope_height(53.5f)) < 0.05f);
+
+    // Every slot covered: still on the ground under the destination.
+    const ne::NetId blocker = slope.world.spawn_entity(
+        ne::EntityType::kProp, ne::ActorType::kUnknown, 0, destination);
+    ne::ColliderInstance wide = box_collider(blocker, 951, KernelColliderPurpose_Trigger,
+                                             glm::vec3{0.0f}, glm::vec3{40.0f, 10.0f, 3.0f});
+    wide.world_bounds = ne::ColliderWorldBounds{destination, wide.half_extents};
+    slope.world.collider_registry().upsert_entity_collider(blocker, 951, wide);
+    const ne::NetId third = slope.exit();
+    const std::optional<glm::vec3> c = ne::find_clear_exit_spot(slope.world, third, destination, forward);
+    require(c.has_value());
+    std::printf("no slot clear: (%.2f, %.3f, %.2f)\n", c->x, c->y, c->z);
+    require(std::abs(c->x - 50.0f) < 0.01f && std::abs(c->y - a->y) < 0.01f);
+
+    // A drop portal keeps its authored height: not set on the ground.
+    Slope drop;
+    const ne::NetId dropping = drop.exit();
+    const std::optional<glm::vec3> d = ne::find_clear_exit_spot(
+        drop.world, dropping, glm::vec3{50.0f, 20.0f, 50.0f}, glm::vec3{0.0f, -1.0f, 0.0f});
+    require(d.has_value());
+    require(std::abs(d->y - 20.0f) < 0.01f);
+}
+
 }  // namespace
 
 int main() {
@@ -170,6 +275,8 @@ int main() {
     require(by_gate.has_value());
     std::printf("by another portal's gate: set down at z %.2f\n", by_gate->z);
     require(std::abs(by_gate->z + 0.5f) < 0.01f);
+
+    exits_stand_on_a_slope();
 
     std::printf("trigger_volume_placement_test: PASS\n");
     return 0;

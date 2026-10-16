@@ -287,6 +287,25 @@ triggers:
   - `portal_test`：第二個出口在 (52.5, 0, 50)；等在目的地的那個傳送門會把玩家送到它自己的出口；第三個傳送門擠掉最舊的，入口和出口都以 reason 4（CapacityEvicted）刪除，最後只剩 2 個入口。
   - `trigger_volume_placement_test`：旁邊有另一個傳送門的門口時，落點從 z 0（對照組）退到 z −0.5。
 
+### 6.5 出口 grounding（2026-10-16，分支 `claude/portal-exit-grounding`，從 `main` 開出）
+
+- **問題**：在有起伏的地形（`plane_200x200_4zones.obj`，目的地的地表約 0.5 m 高、往 +x 上升）實測時，出口有一部分埋在地下，第 2 個出口甚至讓玩家出現在地表下、無限墜落。
+- **原因**：`find_clear_exit_spot` 直接沿用 template `destination` 的 y（0），只檢查 footprint 有沒有碰到 terrain，不會往下找地面。在斜坡上，17 個候選位置都被地形判定擋住，於是回傳「找不到」。兩個出口都退回 `(50, 0, 50)`，玩家也被放到那裡，膠囊埋進地面，深的時候穿過單面的 terrain mesh。
+- **修法**：
+  - 每個候選位置，從 `destination.y + 5 m` 往下用 footprint 做 cast，範圍 15 m（往下到 `destination.y − 10 m`），找第一個夠平的地面（法線 y ≥ 0.7）。footprint 停在它底下**最高的地面**上，所以在斜坡上不會陷進上坡那一側。
+  - 落地後，再檢查有沒有蓋到其他觸發區，以及有沒有碰到 terrain 或 static obstacle。
+  - 全部候選位置都失敗時，退回「目的地正下方的地面」：出口可能疊在一起，但玩家一定站在地面上。
+  - 抵達點就是出口的實際位置，所以玩家也會站在地面上。
+- **例外**：forward 很陡地朝下（|forward.y| ≥ 0.7）的傳送門，用途是讓玩家從空中落下，保留 template 的 y，不做 grounding。
+- **限制**：往上只找 5 m。目的地附近如果有高過 5 m 以內的平台或屋頂，出口會被放到上面去；如果地表比 `destination.y` 高出 5 m 以上，會找不到地面，維持 template 的高度。`destination.y` 應該寫在接近地表的高度。
+- **沒有 ABI 或 schema 變動**，只改了 kernel 的行為；`bundle.bytes` 不用更新。
+- **測試**：在 `trigger_volume_placement_test` 加了一個斜坡（10°、目的地地表 0.5 m）：
+  - 第一個出口落在 y 0.676，也就是 footprint 底下最高的地面。
+  - 第二個出口落在 (52.5, 1.117)。
+  - 所有位置都被占用時，退回目的地正下方的地面。
+  - 朝下的傳送門保留 y 20。
+  - mutation check：關掉 grounding，測試失敗（舊行為會把出口放到 5 m 外的下坡處）。
+
 ---
 
 ## 7. 尚未量測的風險

@@ -296,6 +296,74 @@ void AgentRuntimeManager::attach_pending_entries() {
     }
 }
 
+void AgentRuntimeManager::attach_pending_patrol_routes() {
+    for (const SpawnedPatrolRoute& route :
+         std::exchange(pending_patrol_routes_, {})) {
+        const std::size_t index = agent_index_.find(route.net_id);
+        if (index == AgentIndex::kNotFound || route.waypoints.empty()) {
+            spdlog::warn("patrol route has no agent net_id={}", route.net_id);
+            continue;
+        }
+        AgentRuntimeState& agent = agents_[index];
+        if (!agent.sentry_config.passive_patrol) {
+            // Only the passive sweep walks a route; anything else decides its
+            // own movement and would silently ignore one.
+            spdlog::warn(
+                "patrol route on an agent without passive_patrol net_id={} template_id={}",
+                route.net_id,
+                agent.actor_template_id);
+            continue;
+        }
+        // Each leg pathed on its own, so the authored waypoints are kept as
+        // corners: they are what keeps a wide body off the walls, which the
+        // navmesh, baked for a much narrower agent, does not know about. A leg
+        // the navmesh cannot connect is walked straight rather than dropped --
+        // the waypoints are authored, and a straight leg is visibly wrong
+        // where a missing one would be invisibly wrong.
+        std::vector<KernelVec3> path{route.waypoints.front()};
+        const bool navigable = patrol_navigation_.valid();
+        for (std::size_t leg = 1; leg < route.waypoints.size(); ++leg) {
+            std::vector<KernelVec3> corners;
+            PatrolRouteRequest request;
+            request.start = path.back();
+            request.end = route.waypoints[leg];
+            request.snap_half_extent_meters = 2.0f;
+            if (navigable && patrol_navigation_.find_route(request, &corners) &&
+                !corners.empty()) {
+                path.insert(path.end(), corners.begin(), corners.end());
+            } else {
+                if (navigable) {
+                    spdlog::warn(
+                        "patrol route leg not on the navmesh net_id={} leg={}; walking it straight",
+                        route.net_id,
+                        leg);
+                }
+                path.push_back(route.waypoints[leg]);
+            }
+        }
+        // Joined at the corner nearest where it stands, not at the first one:
+        // a spawn point off the route's start would otherwise walk a straight
+        // line to it, through whatever is in between.
+        std::size_t nearest = 0u;
+        float nearest_distance = 0.0f;
+        for (std::size_t corner = 0; corner < path.size(); ++corner) {
+            const float dx = path[corner].x - agent.position.x;
+            const float dz = path[corner].z - agent.position.z;
+            const float distance = dx * dx + dz * dz;
+            if (corner == 0u || distance < nearest_distance) {
+                nearest = corner;
+                nearest_distance = distance;
+            }
+        }
+        agent.route_patrol = AgentRoutePatrolState{std::move(path), nearest, 1};
+        spdlog::info(
+            "patrol route attached net_id={} waypoints={} corners={}",
+            route.net_id,
+            route.waypoints.size(),
+            agent.route_patrol.path.size());
+    }
+}
+
 void AgentRuntimeManager::tick_entries() {
     for (AgentRuntimeState& agent : agents_) {
         if (!agent.entry.active) {
@@ -412,6 +480,10 @@ void AgentRuntimeManager::tick(float delta_seconds) {
         world_rule_director_.spawned_agent_count() - world_rule_spawned_before);
 
     game_rule_director_.tick(kernel_);
+    for (SpawnedPatrolRoute& route :
+         game_rule_director_.take_spawned_patrol_routes()) {
+        pending_patrol_routes_.push_back(std::move(route));
+    }
     // Last tick's engagement: the controllers that produced it have all run,
     // and nothing has been created since.
     spawner_director_.tick(kernel_, alert_signals_, &agent_budget);
@@ -423,6 +495,7 @@ void AgentRuntimeManager::tick(float delta_seconds) {
     // After the resync, because the agent a walk names was created by one of
     // the directors above and is not in the list until now.
     attach_pending_entries();
+    attach_pending_patrol_routes();
     // Before the controllers, which skip anyone still walking: this is what
     // submits their input for the tick, and only one input per agent survives.
     tick_entries();

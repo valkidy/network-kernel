@@ -21,7 +21,12 @@ director:
         condition:
           type: player_count_at_least
           count: 1
-        next: [clear_the_nests, defeat_the_giant]
+        next:
+          - clear_the_nests
+          - giant_open_combat
+          - giant_forest_flank
+          - giant_swamp_shortcut
+          - giant_narrow_pass
       # The objective is the nests themselves. Placing them here and waiting on
       # the same group being eliminated is the whole mission: three things in
       # the world, each putting gingerbread out until it is destroyed.
@@ -43,16 +48,73 @@ director:
         condition:
           type: group_eliminated
           group: nests
-      # A second objective alongside the nests, opened by the same player
-      # arrival. One giant, placed outside the nests' 30 m ring: its GEO_ boxes
-      # span 16 m across, and it should not land on top of one.
-      - id: defeat_the_giant
+      # One giant in each of the 4-zone map's zones, each its own objective,
+      # all opened by the same player arrival as the nests. A giant's
+      # passive_patrol walks +/-30 m along world x from where it spawns, in a
+      # straight line with no navmesh, so every spawn point sits on a 60 m
+      # east-west strip with no wall or trunk across it (checked against the
+      # source OBJ, y is the floor plus 0.5 m):
+      #   open combat     x -80..-20 at z 60     flat
+      #   forest flank    x 14..74   at z 78     the north forest path, >= 6.8 m
+      #                                          from the nearest trunk
+      #   swamp shortcut  x 20..80   at z -50    swamp bed, -1.8 to -1.1 m
+      #   narrow pass     a patrol_route instead: see that node
+      # Each stays well clear of the nests' 30 m ring: its GEO_ boxes span 16 m
+      # across, and it should not land on top of one.
+      - id: giant_open_combat
         on_activate:
           - type: spawn_group
-            group: giant
+            group: giant_open_combat
             count: 1
             entity_template: gingerbread_giant
-            position: {x: 0.0, y: 0.0, z: 60.0}
+            position: {x: -50.0, y: 0.5, z: 60.0}
         condition:
           type: group_eliminated
-          group: giant
+          group: giant_open_combat
+      - id: giant_forest_flank
+        on_activate:
+          - type: spawn_group
+            group: giant_forest_flank
+            count: 1
+            entity_template: gingerbread_giant
+            position: {x: 44.0, y: 0.7, z: 78.0}
+        condition:
+          type: group_eliminated
+          group: giant_forest_flank
+      - id: giant_swamp_shortcut
+        on_activate:
+          - type: spawn_group
+            group: giant_swamp_shortcut
+            count: 1
+            entity_template: gingerbread_giant
+            position: {x: 50.0, y: -1.1, z: -50.0}
+        condition:
+          type: group_eliminated
+          group: giant_swamp_shortcut
+      - id: giant_narrow_pass
+        on_activate:
+          - type: spawn_group
+            group: giant_narrow_pass
+            count: 1
+            entity_template: gingerbread_giant
+            position: {x: -55.0, y: 0.8, z: -50.2}
+            # Through the pass rather than across it: in from the open ground
+            # to its north, down the middle of the 8 m north-south corridor,
+            # west round the dogleg where it narrows, then out along the
+            # east-west leg. Walked end to end and back. Each leg is pathed
+            # over the navmesh, but the navmesh is baked for a 0.6 m agent and
+            # would cut the dogleg 0.8 m off the wall, so these points -- the
+            # floor's centre line, measured off the OBJ -- are what keep a
+            # 5.6 m stance clear of it. The giant joins at the corner nearest
+            # its spawn point.
+            patrol_route:
+              - {x: -80.0, y: 0.0, z: 10.0}
+              - {x: -80.0, y: 0.0, z: -32.0}
+              - {x: -82.0, y: 0.0, z: -38.0}
+              - {x: -84.5, y: 0.0, z: -43.0}
+              - {x: -84.0, y: 0.0, z: -49.0}
+              - {x: -70.0, y: 0.0, z: -50.5}
+              - {x: -25.0, y: 0.0, z: -50.2}
+        condition:
+          type: group_eliminated
+          group: giant_narrow_pass

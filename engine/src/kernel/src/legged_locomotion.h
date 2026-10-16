@@ -51,6 +51,12 @@ struct LegLocomotionState {
     // the IK target each tick.
     glm::vec3 foot_target_world{0.0f};
     bool foot_initialized = false;
+    // foot_target_world without the swing arc's lift: the planted foot for a
+    // support leg, the point between lift-off and landing for a swinging one.
+    // Body follow rides this, never the arc -- a raised foot is not ground, and
+    // on a rig whose step height is half its leg, averaging the arc in lifts
+    // the body far enough to strand the supporting leg past its reach.
+    glm::vec3 foot_ground_world{0.0f};
 
     // Swing interpolation endpoints (world space). Both are frozen when the
     // swing begins and held for the whole step, so a step is fully described by
@@ -69,10 +75,21 @@ struct LegLocomotionState {
     glm::vec3 swing_start_world{0.0f};
     glm::vec3 landing_target_world{0.0f};
 
+    // Follower only: start tick of the newest step applied to this leg. The
+    // authority re-sends each leg's newest step to survive packet loss, so
+    // the same step can arrive several times, and applying it again mid-swing
+    // would restart the arc from wherever the foot is in the air. A step no
+    // newer than this one is therefore ignored.
+    std::uint32_t applied_step_start_tick = 0;
+    bool has_applied_step = false;
+
     // Home foothold sampled this tick under the current body pose.
     glm::vec3 ground_hit_position{0.0f};
     glm::vec3 ground_hit_normal{0.0f, 1.0f, 0.0f};
     bool ground_hit_valid = false;
+    // Which authored candidate the home foothold came from;
+    // foothold_candidate_count when none could be stood on and the nearest
+    // standable point was searched for instead.
     std::uint32_t grounding_candidate_index = UINT32_MAX;
     std::uint32_t supporting_entity_net_id = 0;
     std::uint32_t supporting_collider_id = 0;

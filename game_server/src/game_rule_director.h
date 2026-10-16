@@ -36,6 +36,16 @@ struct GameRuleSpawnEffectConfig {
     KernelVec3 position{0.0f, 0.0f, 0.0f};
     float radius = 0.0f;
     std::uint32_t seed = 1;
+    // Handed to every member it spawns; see SpawnedPatrolRoute.
+    std::vector<KernelVec3> patrol_route;
+};
+
+// A route a node's spawn_group gave one of its members. The director only
+// reports it: following a route is the agent runtime's business, and turning
+// waypoints into a walkable path needs the navmesh, which the runtime owns.
+struct SpawnedPatrolRoute {
+    std::uint32_t net_id = 0;
+    std::vector<KernelVec3> waypoints;
 };
 
 struct GameRuleNodeConfig {
@@ -101,6 +111,9 @@ public:
     const std::vector<GameRuleConfig>& rules() const;
     const std::vector<RuleRuntime>& runtimes() const;
 
+    // Routes for members spawned since the last call, handed over once.
+    std::vector<SpawnedPatrolRoute> take_spawned_patrol_routes();
+
 private:
     void activate_node(
         KernelHandle* kernel,
@@ -110,6 +123,7 @@ private:
 
     std::vector<GameRuleConfig> rules_;
     std::vector<RuleRuntime> runtimes_;
+    std::vector<SpawnedPatrolRoute> spawned_patrol_routes_;
 };
 
 }  // namespace network_example::game_server

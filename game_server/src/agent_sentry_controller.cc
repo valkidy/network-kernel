@@ -12,6 +12,16 @@
 
 namespace network_example::game_server {
 
+namespace {
+
+// How close a route patroller comes to a corner before taking the next one.
+// Movement follows input direction at once (only the body's facing slews), so
+// this needs no allowance for a turning circle -- just enough that a body
+// which stops short of a point, against a wall or on a slope, still counts.
+constexpr float kRoutePatrolArrivalMeters = 1.0f;
+
+}  // namespace
+
 void AgentSentryController::tick(
     KernelHandle* kernel,
     const PerceptionFrame& frame,
@@ -54,21 +64,62 @@ void AgentSentryController::tick(
         agent.sentry.self_id = agent.net_id;
 
         if (config.passive_patrol) {
-            if (entity_state.position.x >=
-                agent.patrol_anchor.x + config.patrol_extent_x_meters) {
-                agent.patrol_direction = -1;
-            } else if (entity_state.position.x <=
-                       agent.patrol_anchor.x - config.patrol_extent_x_meters) {
-                agent.patrol_direction = 1;
+            KernelVec2 move{0.0f, 0.0f};
+            AgentRoutePatrolState& route = agent.route_patrol;
+            if (!route.path.empty()) {
+                // An authored route: head for the next corner, and on reaching
+                // it take the one after, turning back at either end.
+                const auto offset_to = [&entity_state](const KernelVec3& point) {
+                    return KernelVec2{
+                        point.x - entity_state.position.x,
+                        point.z - entity_state.position.z,
+                    };
+                };
+                KernelVec2 offset = offset_to(route.path[route.next]);
+                // Bounded by the path length, so a degenerate route of
+                // coincident points cannot spin here.
+                for (std::size_t visited = 0;
+                     visited < route.path.size() &&
+                     offset.x * offset.x + offset.y * offset.y <=
+                         kRoutePatrolArrivalMeters * kRoutePatrolArrivalMeters;
+                     ++visited) {
+                    if (route.path.size() == 1u) {
+                        break;
+                    }
+                    if (route.step > 0 && route.next + 1u >= route.path.size()) {
+                        route.step = -1;
+                    } else if (route.step < 0 && route.next == 0u) {
+                        route.step = 1;
+                    }
+                    route.next = route.step > 0 ? route.next + 1u : route.next - 1u;
+                    offset = offset_to(route.path[route.next]);
+                }
+                const float length =
+                    std::sqrt(offset.x * offset.x + offset.y * offset.y);
+                if (length > kRoutePatrolArrivalMeters) {
+                    move = KernelVec2{
+                        offset.x / length * config.patrol_input_magnitude,
+                        offset.y / length * config.patrol_input_magnitude,
+                    };
+                }
+            } else {
+                if (entity_state.position.x >=
+                    agent.patrol_anchor.x + config.patrol_extent_x_meters) {
+                    agent.patrol_direction = -1;
+                } else if (entity_state.position.x <=
+                           agent.patrol_anchor.x - config.patrol_extent_x_meters) {
+                    agent.patrol_direction = 1;
+                }
+                move = KernelVec2{
+                    static_cast<float>(agent.patrol_direction) *
+                        config.patrol_input_magnitude,
+                    0.0f,
+                };
             }
 
             KernelPlayerInput input{};
             input.input_seq = agent.next_input_seq;
-            input.move = KernelVec2{
-                static_cast<float>(agent.patrol_direction) *
-                    config.patrol_input_magnitude,
-                0.0f,
-            };
+            input.move = move;
             // A passive patroller never aims at anything, but its input still
             // carries an aim: the kernel reads a zero aim_dir as world +X and
             // replicates it, which would point the sentry east however its cone
@@ -80,7 +131,7 @@ void AgentSentryController::tick(
             agent.velocity = KernelVec3{
                 input.move.x * config.move_speed_meters_per_second,
                 entity_state.velocity.y,
-                0.0f,
+                input.move.y * config.move_speed_meters_per_second,
             };
             agent.sentry.target = 0;
             agent.target_player_net_id = 0;

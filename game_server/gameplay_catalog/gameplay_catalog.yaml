@@ -49,10 +49,15 @@ skeleton_manifests_dir: skeleton_assets/generated
 # It has to name the same source mesh as static_collision_scene, or squads will
 # path over one shape and walk into another.
 navigation_mesh:
-  entry_path: mesh_assets/recast/plane_200x200.navmesh
+  entry_path: mesh_assets/recast/plane_200x200_4zones.navmesh
+# Four 100 m zones around the origin: open combat (-x,+z), forest flank
+# (+x,+z), swamp shortcut (+x,-z) and narrow pass (-x,-z). The pass is
+# cliff-walled -- its north-south corridor has an 8 m floor -- and the
+# forest is studded with trunks, both of which are static collision here.
 static_collision_scene:
   # entry_path: mesh_assets/jolt/undulating.joltmesh
-  entry_path: mesh_assets/jolt/plane_200x200.joltmesh
+  # entry_path: mesh_assets/jolt/plane_200x200.joltmesh
+  entry_path: mesh_assets/jolt/plane_200x200_4zones.joltmesh
   scene_id: 1
   collider_id: 2147483649
   collision_layer: 1
@@ -84,9 +89,13 @@ player:
 # walks its route, the same way it owns every other AI decision. Each definition
 # is a file under patrol_template_dir; `patrols:` below picks which ones run.
 #
-# The route is a straight chord between two points in the area, which is exactly
-# a pathed route on this map -- plane_200x200 is flat -- and wrong the day the
-# map is not. See //game_server:patrol_nav_bench.
+# The route is pathed over navigation_mesh when one is loaded, and a straight
+# chord between two points in the area otherwise -- wrong on this map, which is
+# not flat: it would walk squads into cliffs and trunks. Most of
+# plane_200x200_4zones' 04_Narrow_Pass (x<0, z<0) is a plateau ~11 m up, ringed
+# by cliffs no agent can climb, so a point drawn on it finds no route from the
+# low ground. The pass's corridor floor is not on the plateau and is connected;
+# pass_giant_route_test walks it. See //game_server:patrol_nav_bench.
 #
 # A ceiling across every definition, which is the one thing the per-definition
 # ceilings cannot express.
