@@ -248,9 +248,24 @@ enum class SnapshotSectionType : std::uint16_t {
     // Snapshot schema 30. Lock-on missiles, not entities: written only when
     // there is one, like the beam section.
     kLockMissile = 7,
+    // Snapshot schema 31. An action graph's instant lock_strikes, likewise.
+    kLockStrike = 8,
 };
 
-constexpr std::size_t kSnapshotLockMissilePayloadSize = 12;
+// A missile without an origin; one with adds a vec3.
+constexpr std::size_t kSnapshotLockMissilePayloadSize = 13;
+// A strike before its targets, which are 4 B each.
+constexpr std::size_t kSnapshotLockStrikePayloadSize = 31;
+
+std::uint16_t quantize_unit(float value) {
+    const float clamped = std::clamp(value, -1.0f, 1.0f);
+    return static_cast<std::uint16_t>(
+        static_cast<std::int16_t>(std::lround(clamped * 32767.0f)));
+}
+
+float dequantize_unit(std::uint16_t bits) {
+    return static_cast<float>(static_cast<std::int16_t>(bits)) / 32767.0f;
+}
 
 enum AgentSnapshotRecordFlag : std::uint8_t {
     kAgentSnapshotHasActionTimeline = 1u << 0,
@@ -603,9 +618,11 @@ std::vector<std::uint8_t> encode_snapshot_packet(
         !section_entities(snapshot, SnapshotSectionType::kProjectileBeam).empty();
     const bool has_missile_section = !snapshot.lock_missiles.empty() &&
         snapshot.lock_missiles.size() <= UINT16_MAX;
+    const bool has_strike_section = !snapshot.lock_strikes.empty() &&
+        snapshot.lock_strikes.size() <= UINT16_MAX;
     payload.write_u16(static_cast<std::uint16_t>(
         kSnapshotSectionCount + (has_beam_section ? 1u : 0u) +
-        (has_missile_section ? 1u : 0u)));
+        (has_missile_section ? 1u : 0u) + (has_strike_section ? 1u : 0u)));
     payload.write_u16(0);
 
     for (const SnapshotSectionType section_type : {
@@ -792,6 +809,29 @@ std::vector<std::uint8_t> encode_snapshot_packet(
             payload.write_u16(missile.commit_index);
             payload.write_u8(missile.launch_tick_delta);
             payload.write_u8(missile.flight_ticks);
+            payload.write_u8(missile.flags);
+            if ((missile.flags & kSnapshotLockRecordHasOrigin) != 0u) {
+                payload.write_vec3(missile.origin);
+            }
+        }
+    }
+    if (has_strike_section) {
+        payload.write_u16(static_cast<std::uint16_t>(SnapshotSectionType::kLockStrike));
+        payload.write_u16(static_cast<std::uint16_t>(snapshot.lock_strikes.size()));
+        for (const SnapshotLockStrike& strike : snapshot.lock_strikes) {
+            payload.write_vec3(strike.origin);
+            payload.write_u16(quantize_unit(strike.direction.x));
+            payload.write_u16(quantize_unit(strike.direction.y));
+            payload.write_u16(quantize_unit(strike.direction.z));
+            payload.write_u32(strike.collider_template_id);
+            payload.write_u32(strike.instigator_net_id);
+            payload.write_u16(strike.strike_index);
+            payload.write_u8(strike.launch_tick_delta);
+            payload.write_u8(strike.arc_count);
+            payload.write_u8(static_cast<std::uint8_t>(strike.target_net_ids.size()));
+            for (const NetId target : strike.target_net_ids) {
+                payload.write_u32(target);
+            }
         }
     }
 
@@ -834,10 +874,10 @@ bool decode_snapshot_packet(
     // either the four sections every packet always has or those plus the beam
     // one. Requiring exactly four here rejected the entire packet the moment
     // anything fired a beam, which drops every entity in it, not just the beam.
-    // Plus the beam section, the missile section, or both, each written only
-    // when it has something in it.
+    // Plus the beam, missile and strike sections, each written only when it
+    // has something in it.
     if (section_count < kSnapshotSectionCount ||
-        section_count > kSnapshotSectionCount + 2 ||
+        section_count > kSnapshotSectionCount + 3 ||
         reserved != 0) {
         return false;
     }
@@ -863,12 +903,59 @@ bool decode_snapshot_packet(
                     !reader.read_u16(&missile.commit_index) ||
                     !reader.read_u8(&missile.launch_tick_delta) ||
                     !reader.read_u8(&missile.flight_ticks) ||
-                    missile.shooter_net_id == 0u ||
+                    !reader.read_u8(&missile.flags) ||
+                    (missile.flags & ~kSnapshotLockRecordHasOrigin) != 0u ||
+                    ((missile.flags & kSnapshotLockRecordHasOrigin) != 0u &&
+                     !reader.read_vec3(&missile.origin)) ||
+                    // A shooter is what a missile without an origin is drawn
+                    // from; one with an origin needs none.
+                    (missile.shooter_net_id == 0u &&
+                     (missile.flags & kSnapshotLockRecordHasOrigin) == 0u) ||
                     missile.target_net_id == 0u ||
                     missile.flight_ticks == 0u) {
                     return false;
                 }
                 snapshot.lock_missiles.push_back(missile);
+            }
+            continue;
+        }
+        if (section_type == SnapshotSectionType::kLockStrike) {
+            if (entity_count == 0u || !snapshot.lock_strikes.empty()) {
+                return false;
+            }
+            snapshot.lock_strikes.reserve(entity_count);
+            for (std::uint16_t index = 0; index < entity_count; ++index) {
+                SnapshotLockStrike strike;
+                std::uint16_t axis[3] = {};
+                std::uint8_t target_count = 0;
+                if (!reader.read_vec3(&strike.origin) ||
+                    !reader.read_u16(&axis[0]) || !reader.read_u16(&axis[1]) ||
+                    !reader.read_u16(&axis[2]) ||
+                    !reader.read_u32(&strike.collider_template_id) ||
+                    !reader.read_u32(&strike.instigator_net_id) ||
+                    !reader.read_u16(&strike.strike_index) ||
+                    !reader.read_u8(&strike.launch_tick_delta) ||
+                    !reader.read_u8(&strike.arc_count) ||
+                    !reader.read_u8(&target_count) ||
+                    strike.collider_template_id == 0u ||
+                    strike.arc_count == 0u || strike.arc_count > 16u ||
+                    target_count > strike.arc_count ||
+                    !std::isfinite(strike.origin.x) ||
+                    !std::isfinite(strike.origin.y) ||
+                    !std::isfinite(strike.origin.z)) {
+                    return false;
+                }
+                strike.direction = glm::vec3{
+                    dequantize_unit(axis[0]),
+                    dequantize_unit(axis[1]),
+                    dequantize_unit(axis[2])};
+                strike.target_net_ids.resize(target_count);
+                for (NetId& target : strike.target_net_ids) {
+                    if (!reader.read_u32(&target) || target == 0u) {
+                        return false;
+                    }
+                }
+                snapshot.lock_strikes.push_back(std::move(strike));
             }
             continue;
         }
@@ -1302,9 +1389,31 @@ std::size_t estimate_snapshot_packet_size(const WorldSnapshot& snapshot) {
     for (const EntitySnapshot& entity : snapshot.entities) {
         size += estimate_snapshot_entity_size(entity);
     }
+    return size + snapshot_lock_record_bytes(snapshot);
+}
+
+std::size_t snapshot_lock_missile_bytes(const SnapshotLockMissile& missile) {
+    return kSnapshotLockMissilePayloadSize +
+        ((missile.flags & kSnapshotLockRecordHasOrigin) != 0u ? 12u : 0u);
+}
+
+std::size_t snapshot_lock_strike_bytes(const SnapshotLockStrike& strike) {
+    return kSnapshotLockStrikePayloadSize + 4u * strike.target_net_ids.size();
+}
+
+std::size_t snapshot_lock_record_bytes(const WorldSnapshot& snapshot) {
+    std::size_t size = 0;
     if (!snapshot.lock_missiles.empty()) {
-        size += kSnapshotSectionHeaderPayloadSize +
-            snapshot.lock_missiles.size() * kSnapshotLockMissilePayloadSize;
+        size += kSnapshotSectionHeaderPayloadSize;
+        for (const SnapshotLockMissile& missile : snapshot.lock_missiles) {
+            size += snapshot_lock_missile_bytes(missile);
+        }
+    }
+    if (!snapshot.lock_strikes.empty()) {
+        size += kSnapshotSectionHeaderPayloadSize;
+        for (const SnapshotLockStrike& strike : snapshot.lock_strikes) {
+            size += snapshot_lock_strike_bytes(strike);
+        }
     }
     return size;
 }

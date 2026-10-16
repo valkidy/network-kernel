@@ -18,7 +18,12 @@
  *     lock_origin_lift, appended after status_strength (limits
  *     KERNEL_MAX_LOCK_ORIGIN_LIFT, KERNEL_MAX_LOCK_STRIKE_REPEAT and
  *     KERNEL_MAX_LOCK_STRIKE_SPAN_TICKS); a repeated strike is taken again
- *     every lock_repeat_interval_ticks, locking afresh. It is embedded in
+ *     every lock_repeat_interval_ticks, locking afresh. Clients draw them
+ *     through the lock-on exports: KernelLockStrikeEvent's reserved u16
+ *     became flags (KERNEL_LOCK_STRIKE_FLAG_GRAPH), and KernelLockMissileView's
+ *     became flags (KERNEL_LOCK_MISSILE_FLAG_FROM_ORIGIN) with origin
+ *     appended -- its size grows from 24 to 36 bytes. Snapshot schema 31
+ *     carries them. KernelActionDefinition is embedded in
  *     every trigger definition, so every managed mirror of those shifts.
  * 106: two-layer hits on rigged actors. KernelColliderPurpose gained _Bounds:
  *     an actor whose skeleton colliders are hit volumes names a bounds box as
@@ -2871,12 +2876,20 @@ typedef struct KernelLockSelection {
  * render clock reaches it -- from the shooter's drawn position and aim, against
  * the actors as drawn at that moment. Polled once.
  */
+/* KernelLockStrikeEvent.flags (ABI 107): an action graph's lock_strike, not a
+ * weapon's commit. shooter_net_id is the graph's instigator (zero for a
+ * bottle), commit_index which strike of a repeated run it is, and
+ * action_instance_id zero; the selection's targets are what the server
+ * struck, not what this client would lock. */
+#define KERNEL_LOCK_STRIKE_FLAG_GRAPH 1u
+
 typedef struct KernelLockStrikeEvent {
     uint32_t struct_size;
     uint32_t shooter_net_id;
     uint32_t action_instance_id;
     uint16_t commit_index;
-    uint16_t reserved;
+    /* KERNEL_LOCK_STRIKE_FLAG_*; reserved before ABI 107. */
+    uint16_t flags;
     uint32_t server_tick;
     KernelLockSelection selection;
 } KernelLockStrikeEvent;
@@ -2891,13 +2904,23 @@ typedef struct KernelLockMissileView {
     uint32_t struct_size;
     uint32_t shooter_net_id;
     uint32_t target_net_id;
-    /* The commit it was fired on, counted from zero. Restarts with each hold:
-     * shooter, launch_tick and commit_index together name a missile. */
+    /* The commit it was fired on, counted from zero; for an action graph's,
+     * which strike of a repeated run. Restarts with each hold: shooter,
+     * launch_tick, commit_index and target together name a missile. */
     uint16_t commit_index;
-    uint16_t reserved;
+    /* KERNEL_LOCK_MISSILE_FLAG_*; reserved before ABI 107. */
+    uint16_t flags;
     uint32_t launch_tick;
     uint32_t arrival_tick;
+    /* With KERNEL_LOCK_MISSILE_FLAG_FROM_ORIGIN, where it leaves from (ABI
+     * 107, appended). */
+    KernelVec3 origin;
 } KernelLockMissileView;
+
+/* KernelLockMissileView.flags (ABI 107): an action graph's lock_strike
+ * missile, drawn from origin rather than its shooter, which may be zero (a
+ * bottle). */
+#define KERNEL_LOCK_MISSILE_FLAG_FROM_ORIGIN 1u
 
 typedef struct KernelHomingState {
     uint32_t struct_size;

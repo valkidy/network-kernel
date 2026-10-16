@@ -35,6 +35,14 @@ _Static_assert(
             offsetof(KernelActionDefinition, lock_repeat_interval_ticks) + 4u,
     "the ABI 107 lock_strike fields are appended after status_strength");
 _Static_assert(
+    sizeof(KernelLockMissileView) == 36u &&
+        offsetof(KernelLockMissileView, flags) == 14u &&
+        offsetof(KernelLockMissileView, origin) == 24u &&
+        offsetof(KernelLockStrikeEvent, flags) == 14u &&
+        KERNEL_LOCK_STRIKE_FLAG_GRAPH == 1u &&
+        KERNEL_LOCK_MISSILE_FLAG_FROM_ORIGIN == 1u,
+    "ABI 107: lock records name a graph's strike, and a missile its origin");
+_Static_assert(
     KernelWeaponFireMode_LockInstant == 5 &&
         KernelWeaponFireMode_LockMissile == 6,
     "lock-on weapons: the lock_instant fire mode");

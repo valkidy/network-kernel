@@ -1182,11 +1182,22 @@ private:
     // stepping entity is relevant to, and seeds a session that has just started
     // seeing an entity with where its feet currently are.
     void flush_locomotion_steps();
-    // This session's share of the missiles fired since the last snapshot:
-    // those whose shooter it sees, its own included.
-    std::vector<SnapshotLockMissile> lock_missiles_for(
-        const PeerSession& session) const;
+    // Which of the waiting lock records this snapshot carries: oldest first,
+    // within kSnapshotLockRecordBudgetBytes, into the sending_* lists; the
+    // rest wait for the next snapshot, and one past 255 ticks is dropped
+    // (docs/LOCK_STRIKE_ACTION_PLAN.md D14).
+    void choose_lock_records_to_send();
+    // This session's share of the records being sent (D13): a weapon's
+    // missiles whose shooter it sees, its own included; a graph's missiles
+    // and strikes any of whose targets it sees, or whose origin is within its
+    // player's relevance distance -- which also covers a strike that locked
+    // nobody, and one whose targets died before its record's turn (D14).
+    void lock_records_for(const PeerSession& session, WorldSnapshot* out) const;
     void handle_client_lock_missiles(const WorldSnapshot& snapshot);
+    void handle_client_lock_strikes(const WorldSnapshot& snapshot);
+    // A graph's strikes whose launch the render clock has reached, as lock
+    // strike events for Unity to poll, alongside a weapon's.
+    void release_graph_lock_strikes();
     void send_locomotion_steps(
         PeerSession* session,
         const LocomotionStepBatchPacket& packet);
@@ -1330,6 +1341,22 @@ private:
         std::uint16_t strike_index = 0;
     };
     std::vector<PendingLockStrike> pending_lock_strikes_;
+    // An instant lock_strike, as struck, waiting to be replicated
+    // (SnapshotLockStrike).
+    struct PendingLockStrikeRecord {
+        NetId instigator_net_id = 0;
+        std::uint32_t collider_template_id = 0;
+        std::uint16_t strike_index = 0;
+        std::uint32_t launch_tick = 0;
+        glm::vec3 origin{0.0f};
+        glm::vec3 direction{0.0f};
+        std::uint8_t arc_count = 1;
+        std::vector<NetId> target_net_ids;
+    };
+    std::vector<PendingLockStrikeRecord> pending_lock_strike_records_;
+    // This snapshot's share of the two pending lists (choose_lock_records_to_send).
+    std::vector<LockMissileLaunch> sending_lock_missiles_;
+    std::vector<PendingLockStrikeRecord> sending_lock_strike_records_;
     // One strike of a lock_strike, the `strike_index`-th of its run.
     void strike_lock_once(
         World& world,
@@ -1348,8 +1375,18 @@ private:
         NetId target_net_id = 0;
         std::uint32_t launch_tick = 0;
         std::uint32_t arrival_tick = 0;
+        bool from_origin = false;
+        glm::vec3 origin{0.0f};
     };
     std::vector<ClientLockMissile> client_lock_missiles_;
+    // A graph's strikes as received, until the render clock reaches their
+    // launch; kept a while after, so a duplicated packet is not drawn twice.
+    struct ClientLockStrike {
+        SnapshotLockStrike record;
+        std::uint32_t launch_tick = 0;
+        bool released = false;
+    };
+    std::vector<ClientLockStrike> client_lock_strikes_;
     // Remote lock_instant commits resolved as they were drawn, for Unity to
     // poll. Bounded: the oldest go first if nobody polls.
     std::vector<KernelLockStrikeEvent> client_lock_strike_events_;

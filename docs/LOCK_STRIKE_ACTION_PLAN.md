@@ -1,6 +1,6 @@
 # Action graph 鎖定打擊（`lock_strike`）實作計劃書
 
-狀態：P0–P3 完成（2026-10-16）。D1–D14 全部已定。
+狀態：P0–P4 完成（2026-10-16）。D1–D14 全部已定（D13 在 P4 補充，見下）。
 前置：`main`（`8fa5250f`，ABI 106、packet schema 33、snapshot schema 30）。
 關聯：`docs/LOCK_ON_WEAPONS_PLAN.md`（鎖定武器 18/19，本計劃沿用它的選目標、立即傷害、飛彈發射與 client 演出）。
 
@@ -41,7 +41,7 @@
 | D10 | 上限：`interval_ticks` 1..255、`count` 1..16、`interval_ticks × (count − 1)` ≤ 255；整台 server 同時存在的排程上限 256 筆，超過就拒絕新的觸發並記 warning | 已定（2026-10-16） |
 | D11 | 飛彈紀錄必須改格式（P0 前評估已確認，見 §3.5）：<br>• 帶發射點座標<br>• 允許來源為 0<br>• client 去重的 key 加上目標 | 已定 |
 | D12 | 同一次打擊不足 M 個目標時，instant 模式照武器規則補假電弧，終點由 client 用同一個 hash 算出，不傳 | 已定 |
-| D13 | 紀錄送給誰（P0-4 新增）：現在飛彈紀錄只送給「看得到射手」的 client，來源為 0 時沒有人收得到。graph 紀錄改用：<br>• 飛彈：看得到目標的 client<br>• 打擊：看得到任一目標的 client；一個目標都沒鎖到時，送給玩家距起點在 snapshot 相關半徑內的 client<br>武器紀錄維持原規則 | 已定（2026-10-16） |
+| D13 | 紀錄送給誰（P0-4 新增）：現在飛彈紀錄只送給「看得到射手」的 client，來源為 0 時沒有人收得到。graph 紀錄（飛彈和打擊）改為：看得到任一目標，**或**玩家距起點在 relevance 距離（40 m）內，就送。武器紀錄維持原規則。（P4 修訂：原本只有沒鎖到目標的打擊才看起點，見 §9b P4。） | 已定（2026-10-16） |
 | D14 | snapshot 大小（P0-5 新增）：可選區段現在是在切包**之後**才附加到第一包，會超過 1200 B 的預算。改成先算區段大小，切包時第一包預留這段空間；單一 snapshot 的區段上限 400 B，超過的紀錄留到下一個 snapshot（`launch_tick_delta` 最多 255 ticks，足夠） | 已定（2026-10-16） |
 
 ---
@@ -422,6 +422,90 @@
 
 **回歸**
 - 和 P2 同一組 45 個測試：37 通過。8 個沒通過的和 P2 完全相同，都是 `main` 上本來就有的。
+
+### P4：同步給 client，snapshot schema 31（2026-10-16）
+
+**Wire（snapshot schema 30 → 31）**
+- 飛彈紀錄（區段 7）：
+  - 多 1 B `flags`。
+  - 帶 `kSnapshotLockRecordHasOrigin` 時再多 12 B 的發射點。武器飛彈 13 B，graph 飛彈 25 B。
+  - 只有帶發射點的紀錄允許 shooter 為 0，未知的 flag 一律拒絕。
+- 新區段 8 `kLockStrike`（instant 打擊）：
+  - 欄位：起點、方向（每軸 16 bit）、collider id、instigator、strike index、launch tick delta、arc_count（1..16）、目標 id。
+  - 大小 31 B + 每個目標 4 B。
+  - 解碼時檢查 arc_count 範圍、目標數 ≤ arc_count、目標 id 非 0、collider 非 0。
+- 新增 `snapshot_lock_record_bytes` 等大小函式，和編碼器逐位元組一致。
+- packet schema 不變（33）。
+
+**Server**
+- `LockMissileLaunch` 加入 `from_origin`、`origin`。graph 飛彈從抬高後的起點發射。
+- instant 打擊另外記一筆 `PendingLockStrikeRecord`。
+- **D14**：`choose_lock_records_to_send` 在每次 snapshot 依舊到新，挑出不超過 400 B 的紀錄，其餘留到下一次。超過 255 tick 的紀錄直接丟掉。
+  - 每個 session 都會：
+    - 在第一包的切包預算和 send set 預算裡，扣掉自己這份紀錄的大小。
+    - 把紀錄放進第一包。
+- **D13（補充）**：
+  - 武器飛彈：看得到射手才送，規則不變。
+  - graph 的飛彈和打擊：看得到任一目標，**或**玩家在起點的 relevance 距離內，就送。
+  - 原本的 D13 只對一個目標都沒鎖到的打擊看起點。P4 實測發現一個問題：紀錄被 D14 延到下一次 snapshot 時，目標可能已經被同一批打擊打死、從 relevance 裡消失，紀錄就送不到任何人。所以起點規則改為一律適用。
+
+**Client**
+- 飛彈去重的 key 加入目標和發射點。同一次打擊的 M 顆都會保留，兩個瓶子同 tick 打同一目標也不會互吞。
+- `KernelLockMissileView`：
+  - 原本的 `reserved` 改為 `flags`（`KERNEL_LOCK_MISSILE_FLAG_FROM_ORIGIN`）。
+  - 尾端加 `origin`，大小從 24 B 變成 36 B。
+- 打擊紀錄會先暫存。等 render 時鐘到達 launch tick，才轉成 `KernelLockStrikeEvent` 交給 `Kernel_PollLockStrikeEvents`：
+  - `flags = KERNEL_LOCK_STRIKE_FLAG_GRAPH`
+  - shooter 是 instigator，可能為 0
+  - `commit_index` 是 strike index
+  - 鎖到的目標，弧畫到畫面上的 hitbox 中心；畫面上沒有的目標，當成假弧處理。
+  - 假弧由 client 用 collider 模板和 hash 算出：seed 是 instigator、launch tick、strike index，所以每個 client 結果相同。弧碰到牆會截斷。
+- 不新增 export。
+
+**測試**
+- `snapshot_lock_missile_roundtrip_test`：
+  - 13 B 的武器飛彈。
+  - graph 飛彈（shooter 0、帶發射點）。
+  - 有目標和沒目標的打擊。
+  - 四個可選區段同時出現。
+  - 大小函式和編碼一致。
+  - 5 種壞掉的打擊紀錄和 4 種壞掉的飛彈紀錄都會被拒絕。
+- 新增 `lock_strike_end_to_end_test`（dedicated server + 2 個 pure client，loopback）：
+  - repeat 3 × 6 由 server 自己的 tick 執行。這也補上 P3 沒覆蓋的 `simulate_tick` 呼叫。
+    - 兩個 client 各收到 3 個打擊事件，編號 0、1、2。
+    - 弧畫到兩個目標的中心。
+    - 交出事件的時間點，render tick 在 launch tick 和 launch tick + 2 之間。
+  - graph 飛彈：
+    - 兩個 client 都列出 2 顆，shooter 0，從抬高後的起點發射。
+    - server 在各自的到達 tick 扣血。
+  - D13：
+    - 遠處的打擊不送給任何人。
+    - 沒鎖到目標、在附近的打擊兩人都收到，假弧在球內，且兩個 client 完全一致。
+    - 沒鎖到目標、在遠處的打擊不送。
+  - D14：
+    - 場上 120 個實體把第一包塞滿，同一 tick 有 20 筆打擊。
+    - 第一次 snapshot 只送 10 筆，其餘之後陸續送完。
+    - 所有 snapshot 封包都不超過 1200 + 28 B。
+    - 目標在中途被打死，其餘紀錄仍然送到。
+  - listen host 送給自己的 snapshot 裡有這筆打擊。
+- `kernel_c_header_test`：新 struct 的 layout 和 flag 數值。`dynamic_abi_smoke_test`、`kernel_api_test` 的 snapshot schema 改為 31。
+- Mutation 8 個，全部讓測試變紅：
+  - 解碼器接受沒有 shooter 也沒有發射點的飛彈
+  - 去重 key 沒有目標
+  - graph 飛彈改用射手判斷可見
+  - 不看 400 B 預算
+  - 切包不預留空間
+  - 不等 render 時鐘就交出打擊
+  - 拿掉起點規則
+  - 不記錄打擊
+
+  其中「不等 render 時鐘」第一次跑時沒抓到，補了 render tick 的檢查才抓到。
+
+**回歸**
+- 62 個相關測試，51 個通過。11 個沒通過的都是 `main` 上就有的：
+  - P3 那 8 個。
+  - `relevance`、`network_packets`、`session_packets`：已知紅燈。把 P4 的改動 stash 掉再跑一次，失敗的行號和訊息完全相同。
+  - `listen_server_test`：同樣卡在 projectile 的 `weapon_id`，`main` 上就編不過。
 
 ---
 

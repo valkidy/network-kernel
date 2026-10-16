@@ -64,7 +64,8 @@ void apply_lock_instant_damage(
 // draw. It flies at the speed that covers the volume's full reach in the shot
 // template's lifetime_ticks, so a target at the edge is hit at the end of
 // that lifetime and a nearer one proportionally sooner, never in fewer than
-// one tick. False when nothing was scheduled.
+// one tick. False when nothing was scheduled. `report_origin` records the
+// volume's origin as where it leaves from (a graph's lock_strike).
 bool launch_lock_missile(
     World& world,
     const LockStrikeSpec& spec,
@@ -78,7 +79,8 @@ bool launch_lock_missile(
     PeerId shooter_peer_id,
     std::uint32_t action_instance_id,
     DamagePipeline* damage_pipeline,
-    std::vector<LockMissileLaunch>* launches);
+    std::vector<LockMissileLaunch>* launches,
+    bool report_origin = false);
 
 }  // namespace network_example
 

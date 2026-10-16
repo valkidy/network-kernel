@@ -342,6 +342,18 @@ std::size_t estimate_snapshot_entity_size(EntityType type);
 std::size_t estimate_snapshot_entity_size(const EntitySnapshot& entity);
 std::size_t estimate_snapshot_packet_size(const WorldSnapshot& snapshot);
 
+// What a snapshot's lock records -- the missile and strike sections, headers
+// included -- add to it on the wire: exact, not an estimate. Zero with none.
+std::size_t snapshot_lock_record_bytes(const WorldSnapshot& snapshot);
+// One record's share of that, without its section's header.
+std::size_t snapshot_lock_missile_bytes(const SnapshotLockMissile& missile);
+std::size_t snapshot_lock_strike_bytes(const SnapshotLockStrike& strike);
+
+// The most a snapshot's lock records may add (docs/LOCK_STRIKE_ACTION_PLAN.md
+// D14). The first packet of an interval leaves this much of its budget for
+// them; what does not fit waits for the next snapshot.
+constexpr std::size_t kSnapshotLockRecordBudgetBytes = 400;
+
 std::vector<std::uint8_t> encode_reliable_event_packet(
     const KernelEvent& event,
     std::uint32_t sequence = 0);

@@ -198,7 +198,8 @@ bool launch_lock_missile(
     PeerId shooter_peer_id,
     std::uint32_t action_instance_id,
     DamagePipeline* damage_pipeline,
-    std::vector<LockMissileLaunch>* launches) {
+    std::vector<LockMissileLaunch>* launches,
+    bool report_origin) {
     if (damage_pipeline == nullptr || spec.volume.range <= 0.0f) {
         return false;
     }
@@ -249,6 +250,8 @@ bool launch_lock_missile(
             target.net_id,
             current_tick,
             static_cast<std::uint8_t>(flight_ticks),
+            report_origin,
+            spec.volume.origin,
         });
     }
     return true;
