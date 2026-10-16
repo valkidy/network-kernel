@@ -1443,6 +1443,15 @@ std::optional<glm::vec3> find_clear_exit_spot(
     constexpr int kSideSteps = 8;
     constexpr float kGapMeters = 0.5f;
     constexpr float kSkinMeters = 0.05f;
+    // The destination's height is a hint: the ground is looked for from this
+    // far above it down to this far below. Not further up, or a platform or
+    // roof over the spot would take the exit.
+    constexpr float kProbeAboveMeters = 5.0f;
+    constexpr float kProbeBelowMeters = 10.0f;
+    constexpr float kMinGroundNormalY = 0.7f;
+    // An exit facing this steeply down drops its arrivals from where it was
+    // authored; it is not set on the ground.
+    constexpr float kDropForwardY = 0.7f;
     const std::optional<entt::entity> entity = world.find_entity(net_id);
     if (!entity.has_value() || !world.registry().all_of<Transform>(*entity)) {
         return std::nullopt;
@@ -1469,6 +1478,7 @@ std::optional<glm::vec3> find_clear_exit_spot(
         level = glm::normalize(level);
         side = glm::vec3{level.z, 0.0f, -level.x};
     }
+    const bool grounded = std::abs(forward.y) < kDropForwardY;
     const ColliderWorldBounds at_destination = placed_box_bounds(
         destination, rotation, footprint->local_center, footprint->half_extents);
     const float step =
@@ -1480,10 +1490,43 @@ std::optional<glm::vec3> find_clear_exit_spot(
         physics::collision_layer_bit(physics::CollisionLayer::kTerrain) |
         physics::collision_layer_bit(physics::CollisionLayer::kStaticObstacle);
     filter.ignored_entity_net_id = net_id;
+    physics::CollisionShapeDescriptor shape{};
+    shape.type = physics::CollisionShapeType::kBox;
+    shape.half_extents = footprint->half_extents;
+    shape.local_center = footprint->local_center;
+
+    // Where the footprint comes to rest on the ground below `spot`: on the
+    // highest ground under it, so on a slope it never sinks into the uphill
+    // side. nullopt when it starts inside something or finds no ground.
+    const auto ground_under = [&](const glm::vec3& spot) -> std::optional<glm::vec3> {
+        if (physics_world == nullptr) {
+            return std::nullopt;
+        }
+        physics::ShapeCastRequest down{};
+        down.shape = shape;
+        down.start = spot + glm::vec3{0.0f, kProbeAboveMeters, 0.0f};
+        down.rotation = rotation;
+        down.displacement = glm::vec3{0.0f, -(kProbeAboveMeters + kProbeBelowMeters), 0.0f};
+        down.filter = filter;
+        const std::vector<physics::CollisionHit> hits = physics_world->shape_cast_all(down);
+        if (hits.empty() || !(hits.front().fraction > 0.0f) ||
+            hits.front().normal.y < kMinGroundNormalY) {
+            return std::nullopt;
+        }
+        return down.start + down.displacement * hits.front().fraction;
+    };
+
     for (int index = 0; index <= 2 * kSideSteps; ++index) {
         // 0, +1, -1, +2, -2, ...: nearest the destination first.
         const int slot = (index + 1) / 2 * (index % 2 == 1 ? 1 : -1);
-        const glm::vec3 spot = destination + side * (step * static_cast<float>(slot));
+        glm::vec3 spot = destination + side * (step * static_cast<float>(slot));
+        if (grounded) {
+            const std::optional<glm::vec3> ground = ground_under(spot);
+            if (!ground.has_value()) {
+                continue;
+            }
+            spot = *ground;
+        }
         const glm::vec3 lifted = spot + glm::vec3{0.0f, kSkinMeters, 0.0f};
         if (covers_trigger_volume(
                 world, net_id, 0u,
@@ -1493,9 +1536,7 @@ std::optional<glm::vec3> find_clear_exit_spot(
         }
         if (physics_world != nullptr) {
             physics::OverlapRequest clear{};
-            clear.shape.type = physics::CollisionShapeType::kBox;
-            clear.shape.half_extents = footprint->half_extents;
-            clear.shape.local_center = footprint->local_center;
+            clear.shape = shape;
             clear.position = lifted;
             clear.rotation = rotation;
             clear.filter = filter;
@@ -1505,7 +1546,10 @@ std::optional<glm::vec3> find_clear_exit_spot(
         }
         return spot;
     }
-    return std::nullopt;
+    // Nowhere clear: on the ground under the destination all the same, beside
+    // another exit if it must be. An arrival may share a spot; it must never
+    // be put inside the terrain.
+    return grounded ? ground_under(destination) : std::nullopt;
 }
 
 std::optional<glm::vec3> find_clear_standing_spot(
