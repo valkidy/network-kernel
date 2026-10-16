@@ -87,7 +87,6 @@ struct Scene {
 
         network_example::RuntimeProjectileTemplate marker;
         marker.projectile_template_id = kMarkerTemplate;
-        marker.weapon_id = kStrikeWeapon;
         marker.projectile_type = network_example::ProjectileType::kStandard;
         marker.sync_mode =
             network_example::ProjectileSyncMode::kServerSnapshotOnly;

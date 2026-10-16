@@ -86,7 +86,6 @@ void load_catalog(KernelHandle* kernel) {
     KernelProjectileTemplateDefinition beam{};
     beam.struct_size = sizeof(beam);
     beam.projectile_template_id = kBeamProjectileTemplateId;
-    beam.weapon_id = kBeamWeaponId;
     beam.mechanics.struct_size = sizeof(KernelProjectileMechanicsDefinition);
     beam.mechanics.projectile_type = KernelProjectileType_Beam;
     beam.mechanics.motion_model = KernelProjectileMotionModel_Linear;

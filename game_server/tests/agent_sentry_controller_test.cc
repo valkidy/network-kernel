@@ -72,7 +72,6 @@ KernelProjectileTemplateDefinition projectile_template() {
     KernelProjectileTemplateDefinition projectile{};
     projectile.struct_size = sizeof(projectile);
     projectile.projectile_template_id = 3;
-    projectile.weapon_id = network_example::game_server::kAgentSpammerWeaponId;
     projectile.mechanics.struct_size = sizeof(KernelProjectileMechanicsDefinition);
     projectile.mechanics.projectile_type = KernelProjectileType_Standard;
     projectile.mechanics.motion_model = KernelProjectileMotionModel_Parabolic;
