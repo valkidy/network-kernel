@@ -3488,10 +3488,11 @@ void apply_catalog_director_preload_config(
     const YAML::Node& document,
     GameServerGameplayConfig* config);
 void apply_catalog_patrol_config(
+    const GameplayConfigSource& source,
+    const std::string& base_path,
     const YAML::Node& document,
     GameServerGameplayConfig* config,
-    const std::string& path,
-    std::uint32_t source_kind);
+    const std::string& path);
 void apply_catalog_world_rule_config(GameServerGameplayConfig* config);
 void apply_catalog_population_budget_config(
     const YAML::Node& document,
@@ -9423,6 +9424,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             "entity_template_dir",
             "item_template_dir",
             "collider_template_dir",
+            "patrol_template_dir",
             "prop_population_rules",
             "static_collision_scene",
             "skeleton_manifests",
@@ -9691,8 +9693,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     apply_catalog_scene_props_config(
         document, &config, path, source.source_kind());
     apply_catalog_director_preload_config(document, &config);
-    apply_catalog_patrol_config(
-        document, &config, path, source.source_kind());
+    apply_catalog_patrol_config(source, base_path, document, &config, path);
     apply_catalog_world_rule_config(&config);
     apply_catalog_population_budget_config(
         document, &config, path, source.source_kind());
@@ -10302,11 +10303,136 @@ void apply_catalog_world_rule_config(GameServerGameplayConfig* config) {
     }
 }
 
-void apply_catalog_patrol_config(
-    const YAML::Node& document,
-    GameServerGameplayConfig* config,
+// One patrol definition, from one file under patrol_template_dir.
+PatrolDefinitionConfig patrol_definition_from_yaml(
+    const YAML::Node& node,
+    const GameServerGameplayConfig& config,
     const std::string& path,
     std::uint32_t source_kind) {
+    reject_unknown_keys(
+        node,
+        {
+            "id",
+            "name",
+            "area",
+            "seed",
+            "interval_ticks",
+            "max_live_groups",
+            "count",
+            "composition",
+            "formation_spacing_meters",
+            "advance_speed_meters_per_second",
+            "waypoint_radius_meters",
+            "despawn_linger_ticks",
+            "despawn_distance_meters",
+            "max_detour_ratio",
+            "route_attempts",
+        },
+        path,
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+    PatrolDefinitionConfig patrol;
+    if (!node["id"] || !node["name"]) {
+        throw std::runtime_error("patrol requires id and name");
+    }
+    patrol.id = node["id"].as<std::uint32_t>();
+    patrol.name = node["name"].as<std::string>();
+    if (patrol.id == 0) {
+        throw std::runtime_error("patrol id must not be zero: " + path);
+    }
+    patrol.area = patrol_area_from_yaml(node["area"], path, source_kind);
+    if (node["seed"]) {
+        patrol.seed = node["seed"].as<std::uint32_t>();
+    }
+    if (node["interval_ticks"]) {
+        patrol.interval_ticks = node["interval_ticks"].as<std::uint32_t>();
+    }
+    if (node["max_live_groups"]) {
+        patrol.max_live_groups = node["max_live_groups"].as<std::uint32_t>();
+    }
+    if (node["formation_spacing_meters"]) {
+        patrol.formation_spacing_meters =
+            node["formation_spacing_meters"].as<float>();
+    }
+    if (node["advance_speed_meters_per_second"]) {
+        patrol.group.advance_speed_meters_per_second =
+            node["advance_speed_meters_per_second"].as<float>();
+    }
+    if (node["waypoint_radius_meters"]) {
+        patrol.group.waypoint_radius_meters =
+            node["waypoint_radius_meters"].as<float>();
+    }
+    if (node["despawn_linger_ticks"]) {
+        patrol.despawn_linger_ticks =
+            node["despawn_linger_ticks"].as<std::uint32_t>();
+    }
+    if (node["despawn_distance_meters"]) {
+        patrol.despawn_distance_meters =
+            node["despawn_distance_meters"].as<float>();
+    }
+    if (node["max_detour_ratio"]) {
+        patrol.max_detour_ratio = node["max_detour_ratio"].as<float>();
+    }
+    if (node["route_attempts"]) {
+        patrol.route_attempts = node["route_attempts"].as<std::uint32_t>();
+    }
+    const YAML::Node count = node["count"];
+    if (!count) {
+        throw std::runtime_error("patrol requires count");
+    }
+    reject_unknown_keys(
+        count,
+        {"min", "max"},
+        path,
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+    if (!count["min"] || !count["max"]) {
+        throw std::runtime_error("patrol count requires min and max");
+    }
+    patrol.count_min = count["min"].as<std::uint32_t>();
+    patrol.count_max = count["max"].as<std::uint32_t>();
+    const YAML::Node composition = node["composition"];
+    if (!composition || !composition.IsSequence()) {
+        throw std::runtime_error("patrol composition must be a sequence");
+    }
+    for (const YAML::Node& entry_node : composition) {
+        reject_unknown_keys(
+            entry_node,
+            {"entity_template", "min", "max"},
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+        if (!entry_node["entity_template"] || !entry_node["min"] ||
+            !entry_node["max"]) {
+            throw std::runtime_error(
+                "patrol composition entry requires entity_template, min "
+                "and max");
+        }
+        SpawnCompositionEntry entry;
+        entry.entity_template_ref =
+            entry_node["entity_template"].as<std::string>();
+        entry.entity_template_id = entity_template_ref_from_yaml(
+            entry_node["entity_template"], config.entity_templates);
+        entry.min_count = entry_node["min"].as<std::uint32_t>();
+        entry.max_count = entry_node["max"].as<std::uint32_t>();
+        patrol.composition.push_back(std::move(entry));
+    }
+    // Unsatisfiable here means a catalog that does not load, rather than a
+    // squad that quietly comes out the wrong size at run time.
+    const std::string error = validate_patrol_definition(patrol);
+    if (!error.empty()) {
+        throw std::runtime_error(error + ": " + patrol.name);
+    }
+    return patrol;
+}
+
+void apply_catalog_patrol_config(
+    const GameplayConfigSource& source,
+    const std::string& base_path,
+    const YAML::Node& document,
+    GameServerGameplayConfig* config,
+    const std::string& path) {
+    const std::uint32_t source_kind = source.source_kind();
     const YAML::Node budget = document["patrol_budget"];
     if (budget) {
         reject_unknown_keys(
@@ -10320,134 +10446,85 @@ void apply_catalog_patrol_config(
                 budget["max_live_agents"].as<std::uint32_t>();
         }
     }
+    // Every definition is parsed and validated, listed or not: switching one
+    // off in `patrols:` must not hide that it no longer loads.
+    std::vector<PatrolDefinitionConfig> definitions;
+    if (document["patrol_template_dir"]) {
+        const std::string directory =
+            source.resolve_path(base_path, document["patrol_template_dir"]);
+        for (const std::string& file : source.list_yaml_files(directory)) {
+            PatrolDefinitionConfig patrol = patrol_definition_from_yaml(
+                source.load_yaml(file), *config, file, source_kind);
+            // The file names the definition it holds, so a copied file whose
+            // id was never changed is caught here rather than as a duplicate
+            // somewhere else.
+            const std::string stem =
+                std::filesystem::path(file).stem().string();
+            const std::string expected =
+                std::to_string(patrol.id) + "_patrol_" + patrol.name;
+            if (stem != expected) {
+                throw std::runtime_error(
+                    "patrol file must be named " + expected + ".yaml: " + file);
+            }
+            for (const PatrolDefinitionConfig& existing : definitions) {
+                if (existing.id == patrol.id) {
+                    throw std::runtime_error(
+                        "duplicate patrol id " + std::to_string(patrol.id) +
+                        ": " + file);
+                }
+            }
+            definitions.push_back(std::move(patrol));
+        }
+    }
     const YAML::Node patrols = document["patrols"];
     if (!patrols) {
         return;
     }
     if (!patrols.IsSequence()) {
-        throw std::runtime_error("patrols must be a sequence");
+        throw std::runtime_error("patrols must be a sequence: " + path);
     }
-    std::unordered_set<std::uint32_t> configured_ids;
-    for (const YAML::Node& node : patrols) {
-        reject_unknown_keys(
-            node,
-            {
-                "id",
-                "name",
-                "area",
-                "seed",
-                "interval_ticks",
-                "max_live_groups",
-                "count",
-                "composition",
-                "formation_spacing_meters",
-                "advance_speed_meters_per_second",
-                "waypoint_radius_meters",
-                "despawn_linger_ticks",
-                "despawn_distance_meters",
-                "max_detour_ratio",
-                "route_attempts",
-            },
-            path,
-            source_kind,
-            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
-        PatrolDefinitionConfig patrol;
-        if (!node["id"] || !node["name"]) {
-            throw std::runtime_error("patrol requires id and name");
-        }
-        patrol.id = node["id"].as<std::uint32_t>();
-        patrol.name = node["name"].as<std::string>();
-        if (patrol.id == 0) {
-            throw std::runtime_error("patrol id must not be zero");
-        }
-        if (!configured_ids.insert(patrol.id).second) {
+    std::unordered_set<std::uint32_t> listed_ids;
+    for (const YAML::Node& entry : patrols) {
+        if (entry["id"] || entry["name"]) {
             throw std::runtime_error(
-                "duplicate patrol id: " + std::to_string(patrol.id));
-        }
-        patrol.area = patrol_area_from_yaml(node["area"], path, source_kind);
-        if (node["seed"]) {
-            patrol.seed = node["seed"].as<std::uint32_t>();
-        }
-        if (node["interval_ticks"]) {
-            patrol.interval_ticks = node["interval_ticks"].as<std::uint32_t>();
-        }
-        if (node["max_live_groups"]) {
-            patrol.max_live_groups = node["max_live_groups"].as<std::uint32_t>();
-        }
-        if (node["formation_spacing_meters"]) {
-            patrol.formation_spacing_meters =
-                node["formation_spacing_meters"].as<float>();
-        }
-        if (node["advance_speed_meters_per_second"]) {
-            patrol.group.advance_speed_meters_per_second =
-                node["advance_speed_meters_per_second"].as<float>();
-        }
-        if (node["waypoint_radius_meters"]) {
-            patrol.group.waypoint_radius_meters =
-                node["waypoint_radius_meters"].as<float>();
-        }
-        if (node["despawn_linger_ticks"]) {
-            patrol.despawn_linger_ticks =
-                node["despawn_linger_ticks"].as<std::uint32_t>();
-        }
-        if (node["despawn_distance_meters"]) {
-            patrol.despawn_distance_meters =
-                node["despawn_distance_meters"].as<float>();
-        }
-        if (node["max_detour_ratio"]) {
-            patrol.max_detour_ratio = node["max_detour_ratio"].as<float>();
-        }
-        if (node["route_attempts"]) {
-            patrol.route_attempts = node["route_attempts"].as<std::uint32_t>();
-        }
-        const YAML::Node count = node["count"];
-        if (!count) {
-            throw std::runtime_error("patrol requires count");
+                "patrols lists ids now; each definition is a file under "
+                "patrol_template_dir: " +
+                path);
         }
         reject_unknown_keys(
-            count,
-            {"min", "max"},
+            entry,
+            {"ids"},
             path,
             source_kind,
             KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
-        if (!count["min"] || !count["max"]) {
-            throw std::runtime_error("patrol count requires min and max");
+        const YAML::Node ids = entry["ids"];
+        if (!ids || !ids.IsSequence()) {
+            throw std::runtime_error(
+                "patrols entry requires an ids sequence: " + path);
         }
-        patrol.count_min = count["min"].as<std::uint32_t>();
-        patrol.count_max = count["max"].as<std::uint32_t>();
-        const YAML::Node composition = node["composition"];
-        if (!composition || !composition.IsSequence()) {
-            throw std::runtime_error("patrol composition must be a sequence");
-        }
-        for (const YAML::Node& entry_node : composition) {
-            reject_unknown_keys(
-                entry_node,
-                {"entity_template", "min", "max"},
-                path,
-                source_kind,
-                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
-            if (!entry_node["entity_template"] || !entry_node["min"] ||
-                !entry_node["max"]) {
+        // Listed order is run order.
+        for (const YAML::Node& id_node : ids) {
+            const std::uint32_t id = id_node.as<std::uint32_t>();
+            if (!listed_ids.insert(id).second) {
                 throw std::runtime_error(
-                    "patrol composition entry requires entity_template, min "
-                    "and max");
+                    "patrol id " + std::to_string(id) +
+                    " is listed twice: " + path);
             }
-            SpawnCompositionEntry entry;
-            entry.entity_template_ref =
-                entry_node["entity_template"].as<std::string>();
-            entry.entity_template_id = entity_template_ref_from_yaml(
-                entry_node["entity_template"], config->entity_templates);
-            entry.min_count = entry_node["min"].as<std::uint32_t>();
-            entry.max_count = entry_node["max"].as<std::uint32_t>();
-            patrol.composition.push_back(std::move(entry));
+            const auto found = std::find_if(
+                definitions.begin(),
+                definitions.end(),
+                [id](const PatrolDefinitionConfig& definition) {
+                    return definition.id == id;
+                });
+            if (found == definitions.end()) {
+                throw std::runtime_error(
+                    "patrol id " + std::to_string(id) +
+                    " is listed but no file under patrol_template_dir "
+                    "defines it: " +
+                    path);
+            }
+            config->patrols.push_back(*found);
         }
-        // Unsatisfiable here means a catalog that does not load, rather than a
-        // squad that quietly comes out the wrong size at run time.
-        const std::string error = validate_patrol_definition(patrol);
-        if (!error.empty()) {
-            throw std::runtime_error(error + ": " + patrol.name);
-        }
-        config->patrols.push_back(std::move(patrol));
     }
 }
 

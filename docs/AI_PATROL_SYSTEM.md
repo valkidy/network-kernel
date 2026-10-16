@@ -107,8 +107,19 @@ another start/end pair is drawn. See the measurements below for why.
 
 ## Authoring
 
-Catalog top level, beside `player:` and `enemy:`. There is no template for a
-patrol to hang off, because a patrol never reaches the kernel as a director.
+Each definition is its own file under `patrol_template_dir`, named
+`<id>_patrol_<name>.yaml` (`1_patrol_gingerbread_warband.yaml`). The catalog's
+`patrols:` only picks which ids run, so trying a different mix is a one-line
+edit. A patrol is still not an entity template: it never reaches the kernel as a
+director.
+
+- **Every file is loaded and validated, listed or not.** A definition that stops
+  loading fails the catalog even while it is switched off.
+- **The file name must match** the `id` and `name` inside it, so a copied file
+  whose id was never changed is refused by name, and two files with one id are
+  refused as a duplicate.
+- **Listed order is run order.** An id listed twice, or listed with no file
+  behind it, fails to load. `ids: []` or no `patrols:` at all runs none.
 
 ```yaml
 navigation_mesh:
@@ -121,28 +132,36 @@ patrol_budget:
   # 0 is unbounded.
   max_live_agents: 48
 
+patrol_template_dir: patrol_templates
+
 patrols:
-  - id: 1
-    name: grunt_sweep
-    area:
-      shape: rect                 # rect | circle
-      center: {x: 0.0, y: 0.0, z: 0.0}
-      half_extents: {x: 40.0, y: 0.0, z: 40.0}   # circle takes `radius` instead
-    seed: 7717
-    interval_ticks: 900
-    max_live_groups: 2
-    count: {min: 4, max: 6}
-    composition:
-      - entity_template: chaser_grunt
-        min: 4
-        max: 6
-    formation_spacing_meters: 1.5
-    advance_speed_meters_per_second: 1.25
-    waypoint_radius_meters: 0.5
-    despawn_linger_ticks: 300
-    despawn_distance_meters: 120.0
-    max_detour_ratio: 4.0
-    route_attempts: 8
+  - ids: [1, 2]               # several entries add up
+```
+
+One definition, `patrol_templates/1_patrol_grunt_sweep.yaml`:
+
+```yaml
+id: 1
+name: grunt_sweep
+area:
+  shape: rect                 # rect | circle
+  center: {x: 0.0, y: 0.0, z: 0.0}
+  half_extents: {x: 40.0, y: 0.0, z: 40.0}   # circle takes `radius` instead
+seed: 7717
+interval_ticks: 900
+max_live_groups: 2
+count: {min: 4, max: 6}
+composition:
+  - entity_template: chaser_grunt
+    min: 4
+    max: 6
+formation_spacing_meters: 1.5
+advance_speed_meters_per_second: 1.25
+waypoint_radius_meters: 0.5
+despawn_linger_ticks: 300
+despawn_distance_meters: 120.0
+max_detour_ratio: 4.0
+route_attempts: 8
 ```
 
 And on an agent's entity template, read only when that agent is in a squad:
@@ -402,6 +421,7 @@ drove the old mechanism are gone.
 
 | Target | Covers |
 |---|---|
+| `//game_server:patrol_catalog_test` | template files, `ids` selection and order, naming and duplicate checks, unlisted files still validated |
 | `//game_server:patrol_navigation_test` | loading, snapping, partial-path rejection, detour rejection |
 | `//game_server:patrol_group_runtime_test` | cursor advance, formation rotation, hold-while-engaged, casualties |
 | `//game_server:patrol_director_test` | composition draws, validation, spawning, determinism, retirement, budget, navigable routing |
