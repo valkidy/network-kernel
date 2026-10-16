@@ -1,0 +1,10 @@
+# The reach of fungible_chain_lightning_bottle's lock: every direction from
+# where it broke (lifted a metre), 8 m out. A lock_strike volume, never a body:
+# `purpose: damage` is required, and nothing collides with it.
+id: 54
+name: chain_lightning_bottle_sphere
+shape: sphere
+center: {x: 0.0, y: 0.0, z: 0.0}
+radius: 8.0
+purpose: damage
+layer: area_effect

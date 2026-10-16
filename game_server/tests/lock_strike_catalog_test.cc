@@ -360,12 +360,96 @@ void what_the_kernel_would_refuse_is_refused_here() {
         "lock_strike with a cone needs a direction"));
 }
 
+const KernelEntityTemplateDefinition* find_entity(
+    const gs::KernelGameplayCatalogStorage& storage,
+    std::uint32_t entity_template_id) {
+    for (std::uint32_t index = 0;
+         index < storage.definition.entity_template_count;
+         ++index) {
+        if (storage.definition.entity_templates[index].entity_template_id ==
+            entity_template_id) {
+            return &storage.definition.entity_templates[index];
+        }
+    }
+    return nullptr;
+}
+
+// The shipped bottles (P5): each breaks into a sphere lock_strike taken five
+// times ten ticks apart, a metre up -- chain lightning at once, magic missile by
+// missile -- then spends itself. Their items throw them, and the initial camp
+// offers both. The kernel takes the whole shipped catalog with them in it.
+void the_shipped_bottles_strike_as_authored() {
+    const gs::GameServerGameplayConfig config =
+        gs::load_gameplay_config_from_catalog_file(
+            (shipped_catalog() / "gameplay_catalog.yaml").string());
+    const gs::KernelGameplayCatalogStorage storage =
+        gs::build_kernel_gameplay_catalog(config);
+    struct Bottle {
+        std::uint32_t prop;
+        std::uint32_t item;
+        std::uint32_t sphere;
+        std::uint32_t shot;
+        std::uint8_t mode;
+        const char* item_name;
+    };
+    for (const Bottle& bottle : {
+             Bottle{228u, 3033u, 54u, 35u, KernelLockStrikeMode_Instant,
+                    "fungible_chain_lightning_bottle"},
+             Bottle{229u, 3034u, 55u, 36u, KernelLockStrikeMode_Missile,
+                    "fungible_magic_missile_bottle"},
+         }) {
+        const KernelEntityTemplateDefinition* prop = find_entity(storage, bottle.prop);
+        require(prop != nullptr);
+        const KernelActionTriggerDefinition& trigger = prop->collision_trigger;
+        require(trigger.action_count == 2u);
+        const KernelActionDefinition& strike = trigger.actions[0];
+        require(strike.action_type == KernelEntityTriggerActionType_LockStrike);
+        require(strike.lock_collider_template_id == bottle.sphere);
+        require(strike.spawn_projectile_template_id == bottle.shot);
+        require(strike.lock_mode == bottle.mode);
+        require(strike.lock_repeat_count == 5u);
+        require(strike.lock_repeat_interval_ticks == 10u);
+        require(strike.lock_origin_lift == 1.0f);
+        require(trigger.actions[1].action_type ==
+                KernelEntityTriggerActionType_ApplyDamage);
+
+        bool item_found = false;
+        for (std::uint32_t index = 0;
+             index < storage.definition.item_template_count;
+             ++index) {
+            const KernelItemTemplateDefinition& item =
+                storage.definition.item_templates[index];
+            if (item.item_template_id == bottle.item) {
+                item_found = item.entity_template_id == bottle.prop;
+            }
+        }
+        require(item_found);
+        bool offered = false;
+        for (const gs::EntityTemplateConfig& entity : config.entity_templates) {
+            for (const gs::InventorySlotConfig& option : entity.loadout_options) {
+                offered = offered || option.item_template_ref == bottle.item_name;
+            }
+        }
+        require(offered);
+    }
+
+    KernelConfig kernel_config{};
+    kernel_config.mode = KernelMode_DedicatedServer;
+    kernel_config.tick.server_tick_rate = 30;
+    kernel_config.tick.snapshot_rate = 15;
+    KernelHandle* kernel = Kernel_Create(&kernel_config);
+    require(kernel != nullptr);
+    require(Kernel_LoadGameplayCatalog(kernel, &storage.definition, nullptr));
+    Kernel_Destroy(kernel);
+}
+
 }  // namespace
 
 int main() {
     a_bottle_compiles_to_a_lock_strike_the_kernel_accepts();
     a_cone_and_a_lift_compile();
     a_repeat_compiles();
+    the_shipped_bottles_strike_as_authored();
     what_the_kernel_would_refuse_is_refused_here();
     std::puts("lock_strike_catalog_test passed");
     return 0;

@@ -1,0 +1,26 @@
+id: 36
+name: magic_missile_bottle_bolt
+# One missile of a magic missile bottle. Nothing spawns from this either: each
+# of the bottle's five strikes sends one certain missile at each of the
+# nearest three it locks, its hit decided then and landing on its arrival.
+type: standard
+movement_model: linear
+sync_mode: server_snapshot_only
+hit_response: destroy
+damage_shape: direct_hit
+# Never spawned, so never collides. A collider anyway: a shot without one is
+# valid only where something names it as unspawned, and a loader that reads
+# the projectile templates without the props (the weapon-template directory
+# loader) would not see the bottle that does.
+collider_template: projectile_sphere
+damage: 6
+collision_mask: hostile_side
+max_hit_count: 3
+speed: 0.1
+# The longest flight, to the edge of the sphere (10 m): 20 ticks, two thirds
+# of a second. 1 to 255.
+lifetime_ticks: 20
+gravity:
+  x: 0.0
+  y: 0.0
+  z: 0.0

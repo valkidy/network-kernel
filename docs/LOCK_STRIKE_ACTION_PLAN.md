@@ -1,6 +1,6 @@
 # Action graph 鎖定打擊（`lock_strike`）實作計劃書
 
-狀態：P0–P4 完成（2026-10-16）。D1–D14 全部已定（D13 在 P4 補充，見下）。
+狀態：P0–P5 全部完成（2026-10-16），在 `claude/lock-strike-action-plan`，尚未 merge。D1–D14 全部已定（D13 在 P4 補充，見下）。
 前置：`main`（`8fa5250f`，ABI 106、packet schema 33、snapshot schema 30）。
 關聯：`docs/LOCK_ON_WEAPONS_PLAN.md`（鎖定武器 18/19，本計劃沿用它的選目標、立即傷害、飛彈發射與 client 演出）。
 
@@ -506,6 +506,47 @@
   - P3 那 8 個。
   - `relevance`、`network_packets`、`session_packets`：已知紅燈。把 P4 的改動 stash 掉再跑一次，失敗的行號和訊息完全相同。
   - `listen_server_test`：同樣卡在 projectile 的 `weapon_id`，`main` 上就編不過。
+
+### P5：Content（2026-10-16）
+
+**兩個瓶子**
+
+都用共用 graph `action_lock_strike_and_damage_self`，repeat 都是 10 tick × 5 次，起點都抬高 1 m。
+
+| | 連鎖閃電瓶 | 魔法飛彈瓶 |
+|---|---|---|
+| item | 3033 `fungible_chain_lightning_bottle`，最多疊 3 個 | 3034 `fungible_magic_missile_bottle`，最多疊 3 個 |
+| prop | 228 `chain_lightning_bottle` | 229 `magic_missile_bottle` |
+| 範圍 | 54，sphere，8 m | 55，sphere，10 m |
+| shot | 35，dmg 10，M 4，`hostile_side` | 36，dmg 6，M 3，lifetime 20 |
+| mode | instant | missile |
+
+- 初始營地的 loadout `options` 加入兩種瓶子，各 3 個。
+- **和 §3.7 不同的地方**：兩個 shot 都掛了 collider `projectile_sphere`。原因是 `GameServer_CreateWithWeaponTemplateDirectory` 這類 loader 只讀 projectile、不讀 prop，看不出 shot 被 lock_strike 使用；沒有 collider 的 shot 會驗證失敗。實際觸發的是 `game_server_api_test`、`weapon_template_loader_test`、`gameplay_config_test` 三個測試的回歸。shot 從來不會生成，所以多一個 collider 對行為沒有影響。P2 加的 unspawned 掃描仍然保留，給沒有 collider 的作者使用。
+- 撰寫文件：`ACTION_GRAPH_AUTHORING_AND_RUNTIME_GUIDE.md` 新增 §4.7 `lock_strike`，並在 binding 數值表加一列。
+
+**真實碰撞（補 P2 未覆蓋的部分）**
+- `lock_strike_test` 新增一個案例：建一個實際的 `PhysicsWorld`，放一面靜態牆和一塊屋頂。
+  - 牆後最近的目標不會被鎖，換成下一個最近的。
+  - 抬高 1 m 會碰到 0.6 m 高的屋頂，起點停在 0.5 m。
+- Mutation 2 個（忽略牆、忽略屋頂）都讓測試變紅。
+
+**載入正式 catalog**
+- `lock_strike_catalog_test` 新增案例，確認：
+  - 兩個 prop 都編譯成預期的 lock_strike：collider、shot、mode、5 × 10、lift 1.0，後面接自我傷害。
+  - item 指向對應的 prop。
+  - 營地有提供這兩種瓶子。
+  - kernel 能載入整份正式 catalog。
+
+**回歸**
+- game_server 全部 59 個測試：44 通過。
+- 15 個沒通過的都是 `main` 上就有的，可分三組：
+  - 已知紅燈：`activation_gameplay_config`、`agent_runtime_manager`、`drop_tag`、`gameplay_config`、`gingerbread_door_stack`、`loadout`。
+  - 編不過，原因是 projectile 的 `weapon_id`：`actor_intent_executor`、`agent_chaser_controller`、`agent_sentry_controller`、`patrol_director`。
+  - 在乾淨的 `main` worktree 上跑，失敗訊息完全相同：
+    - `stagger_config`
+    - `limb_collider`、`listen_host_pose_parity`：`unknown prop population_group: portal`
+- 把 P5 stash 掉再跑一次，`game_server_api`、`weapon_template_loader` 會通過，`gameplay_config` 的失敗訊息也會不同。就是上面那個 shot collider 的問題，已修正。
 
 ---
 

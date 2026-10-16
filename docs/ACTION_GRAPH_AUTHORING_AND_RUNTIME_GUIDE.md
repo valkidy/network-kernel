@@ -91,6 +91,7 @@ binding 提供數值（graph default 是持有者沒寫時的值）：
 | `apply_status` | `strength`（binding 提供時 `0` = 不比較 resistance） |
 | `refill_weapon_reserve` | `count`、`percent` |
 | `spawn_projectile` | `lifetime_ticks`、`repeat` 的 `count`、`scatter_radius`、`stagger_lifetime_ticks` |
+| `lock_strike` | `mode`、`origin_lift`、`repeat` 的 `interval_ticks`、`count` |
 
 Binding 提供的值會整段解析（`12abc` 不是 12）並做與字面值相同的範圍檢查，錯誤訊息
 會指出 graph。只有數值不同的持有者應共用同一份 graph，各自在 binding 寫數值，不要
@@ -556,6 +557,78 @@ Runtime 在 command commit 當下，依目標**當時**的位置算出目的地�
 - 事件只存在伺服器端，不會同步給 client。
 
 範例：`common/action_open_ui`，帳篷 binding 寫 `ui_id: 1`、初始營地 `2`、野營 `3`。
+
+### 4.7 `lock_strike`
+
+在事件發生的位置做一次「鎖定打擊」，規則和鎖定武器（Chain Lightning、Magic Missile）
+相同：在範圍內挑最近的 M 個目標、被靜態牆擋住的跳過、丟出者自己和他控制的單位永遠
+不會被鎖定。設計與決策見 `docs/LOCK_STRIKE_ACTION_PLAN.md`。
+
+```yaml
+- type: lock_strike
+  collider: params.collider           # 鎖定範圍：damage purpose 的 sphere 或 cone
+  projectile_template: params.template # shot：傷害、collision_mask、M、飛行時間
+  mode: params.mode                   # instant | missile
+  position: params.position           # 綁定 event.position
+  direction: params.direction         # 綁定 event.direction；cone 必填，sphere 忽略
+  origin_lift: params.origin_lift     # 起點往上抬幾公尺，0..5，預設 1.0
+  repeat:
+    interval_ticks: params.repeat_interval
+    count: params.repeat_count
+```
+
+**範圍和 shot**
+- `collider` 必須是帶 `purpose: damage` 的 sphere（各方向都算）或 cone（沿
+  `direction`，用 3D 角度判斷）。
+- shot 提供：
+  - `damage`：每個目標的傷害
+  - `collision_mask`：打哪一邊，通常是 `hostile_side`
+  - `max_hit_count`：M，上限 16
+  - `lifetime_ticks`：missile 模式下，飛完整個範圍要幾 tick，1..255
+- shot 從來不會生成。但仍然要給它一個 collider：只載入 projectile、不載入 prop 的
+  loader 看不出它是誰在用，沒有 collider 的 shot 會驗證失敗。
+
+**模式**
+- `instant`：鎖到的目標在當 tick 一起扣血。
+- `missile`：對每個鎖到的目標各射一顆必中飛彈。傷害在發射時就決定，到達時才扣血；
+  目標在途中死掉就取消。
+
+**起點**：`position` 往上 `origin_lift` 公尺。頭上有地形或靜態障礙時，停在它下方
+0.1 m。貼地破掉的瓶子，視線才不會被地面起伏擋住。
+
+**repeat**
+- `count` 0 或 1（`interval_ticks` 0）表示只打一次。
+- 多次時：
+  - `count` 2..16
+  - `interval_ticks` ≥ 1
+  - `interval_ticks × (count − 1)` ≤ 255
+- 第一次在 graph 執行當下打，之後每隔 `interval_ticks` 從同一位置、同一方向再打一次，
+  每次都重新鎖定（死掉的目標不會再被選）。
+- 觸發的實體不見了也會打完，瓶子在第一次就碎了。
+- 整台 server 同時最多 256 組 repeat 排程。滿了的時候，帶 repeat 的打擊會讓整個
+  batch 被拒絕，包括瓶子的自我傷害，所以瓶子會留著，有空位時再觸發。
+
+**限制**
+- 只能用在 entity 自己的 trigger（`on_collision`、`on_activated`、
+  `on_health_depleted`、`on_destroy_entity`、`on_enter`、`on_overlap`、`on_exit`）。
+- projectile、item、status 的 trigger 都不接受。
+- 瓶子的 graph 由「沒有人」（instigator 0）以丟出者的 peer 執行，所以擊殺不算在丟出者
+  身上，和其他瓶子相同。
+
+**Client 看到什麼**
+- instant 打擊會變成 `Kernel_PollLockStrikeEvents` 的事件，帶
+  `KERNEL_LOCK_STRIKE_FLAG_GRAPH`：
+  - `commit_index` 是第幾次打擊
+  - 弧畫到被打中的目標
+  - 鎖不滿 M 個時，其餘的弧由 client 在範圍內補上
+- missile 會出現在 `Kernel_GetLockMissiles`，帶 `KERNEL_LOCK_MISSILE_FLAG_FROM_ORIGIN`，
+  從 `origin` 發射，shooter 可能是 0。
+- 紀錄只送給看得到任一目標，或玩家離起點 40 m 以內的 client。
+
+範例：
+- `common/action_lock_strike`
+- `common/action_lock_strike_and_damage_self`，加上瓶子 `chain_lightning_bottle`（228）
+  和 `magic_missile_bottle`（229）。
 
 Status lifecycle 目前支援的 actions 為 `apply_damage`、health change、status
 apply/remove 與 speed modifier。Lifecycle safety contract 僅允許 `on_apply` 使用

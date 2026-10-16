@@ -1,0 +1,29 @@
+id: 35
+name: chain_lightning_bottle_bolt
+# One arc of a chain lightning bottle. Nothing spawns from this: the bottle's
+# lock_strike damages what it locks at once, five times, ten ticks apart.
+#
+# max_hit_count is the lock size: each strike locks the nearest four hostile
+# actors in chain_lightning_bottle_sphere, and draws four arcs whether or not
+# it found that many.
+type: standard
+movement_model: linear
+sync_mode: server_snapshot_only
+hit_response: destroy
+damage_shape: direct_hit
+# Never spawned, so never collides. A collider anyway: a shot without one is
+# valid only where something names it as unspawned, and a loader that reads
+# the projectile templates without the props (the weapon-template directory
+# loader) would not see the bottle that does.
+collider_template: projectile_sphere
+damage: 10
+collision_mask: hostile_side
+max_hit_count: 4
+# Unsimulated, and present only because a standard template is validated for
+# them.
+speed: 0.1
+lifetime_ticks: 3
+gravity:
+  x: 0.0
+  y: 0.0
+  z: 0.0

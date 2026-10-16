@@ -1,0 +1,22 @@
+# Magic missiles in a bottle: where it breaks, a certain missile flies at
+# each of the nearest three hostile actors within 10 m, five volleys over a
+# second and a third.
+#
+# Fungible and identity-preserving, like fungible_tornado_bottle: a throw
+# splits one bottle off the stack and the prop that lands is that bottle.
+id: 3034
+name: fungible_magic_missile_bottle
+mode: fungible
+max_stack: 3
+capabilities: [pickupable, throwable]
+entity_template: magic_missile_bottle
+world_interaction:
+  range: 3.0
+  line_of_sight_required: false
+throw:
+  mode: identity_preserving
+  trajectory_projectile: grenade_shell
+use:
+  quantity_cost: 0
+  cooldown_ticks: 0
+  destroy_when_empty: false

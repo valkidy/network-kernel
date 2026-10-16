@@ -29,6 +29,7 @@
 #define private public
 #include "kernel/src/kernel.h"
 #undef private
+#include "physics/public/physics_world.h"
 #include "simulation/public/action_graph.h"
 #include "simulation/src/systems.h"
 
@@ -488,6 +489,60 @@ void a_full_queue_refuses_a_repeat_but_not_a_single_strike() {
     require(scene.hp(target) == 100 - kDamage);
 }
 
+// A static box, as a map's walls and roofs reach the authority's queries.
+physics::CollisionObjectDescriptor static_box(
+    std::uint32_t collider_id,
+    const glm::vec3& center,
+    const glm::vec3& half_extents) {
+    physics::CollisionObjectDescriptor object{};
+    object.identity.collider_id = collider_id;
+    object.identity.kind = physics::CollisionObjectKind::kStaticObstacle;
+    object.identity.layer = physics::CollisionLayer::kStaticObstacle;
+    object.shape.type = physics::CollisionShapeType::kBox;
+    object.shape.half_extents = half_extents;
+    object.position = center;
+    return object;
+}
+
+// Against real geometry (P5): a wall between where the bottle broke and the
+// nearest actor hides it, and the next nearest is struck in its place; a roof
+// lower than the lift stops the origin just under it.
+void walls_hide_targets_and_a_roof_stops_the_lift() {
+    Scene scene;
+    physics::PhysicsWorld physics;
+    require(physics.valid());
+    std::string error;
+    // A wall across +x at 2 m, a metre and a half high either side of y 0.5.
+    require(physics.upsert_object(
+        static_box(9001u, {2.0f, 0.75f, 0.0f}, {0.1f, 1.5f, 2.0f}), &error));
+    // A roof 0.6 m over the break, small enough to stand clear of every line
+    // of sight below it.
+    require(physics.upsert_object(
+        static_box(9002u, {0.0f, 0.7f, 0.0f}, {0.4f, 0.1f, 0.4f}), &error));
+    physics.optimize_broad_phase();
+    scene.world.set_collision_world(&physics);
+
+    const NetId behind_wall = scene.enemy(glm::vec3{3.0f, 0.0f, 0.0f});
+    const NetId open = scene.enemy(glm::vec3{0.0f, 0.0f, -5.0f});
+    const NetId further = scene.enemy(glm::vec3{-6.0f, 0.0f, 0.0f});
+    KernelActionDefinition action =
+        strike_action(kSphere, KernelLockStrikeMode_Instant, false);
+    action.lock_origin_lift = 1.0f;
+    require(scene.strike(action));
+    scene.drain(scene.engine.current_tick());
+    require(scene.hp(behind_wall) == 100);
+    require(scene.hp(open) == 100 - kDamage);
+    require(scene.hp(further) == 100 - kDamage);
+
+    // Lifted a metre, it would have been taken at y 1; the roof's underside
+    // is at 0.6, and it stops a tenth short of it.
+    const auto& records = scene.engine.pending_lock_strike_records_;
+    require(records.size() == 1u);
+    require(std::fabs(records[0].origin.y - 0.5f) < 0.001f);
+    require(records[0].origin.x == 0.0f && records[0].origin.z == 0.0f);
+    scene.world.set_collision_world(nullptr);
+}
+
 }  // namespace
 
 int main() {
@@ -500,6 +555,7 @@ int main() {
     each_repeat_locks_afresh();
     repeated_missiles_carry_their_strike();
     a_full_queue_refuses_a_repeat_but_not_a_single_strike();
+    walls_hide_targets_and_a_roof_stops_the_lift();
     std::puts("lock_strike_test passed");
     return 0;
 }
