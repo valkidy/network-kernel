@@ -1515,7 +1515,7 @@ void rewind_projectile_honours_collision_mask() {
 
         const std::vector<network_example::ConfirmedDamage> damage =
             pipeline.drain_ready_damage(
-                world, std::numeric_limits<std::uint64_t>::max());
+                world, std::numeric_limits<std::uint64_t>::max(), UINT32_MAX);
         const network_example::NetId expected = hostile_only ? enemy : ally;
         if (damage.size() != 1 || damage[0].target_net_id != expected) {
             std::fprintf(

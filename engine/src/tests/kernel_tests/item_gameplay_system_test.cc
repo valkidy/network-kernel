@@ -963,7 +963,6 @@ void impulse_on_uncarried_prop_does_not_touch_absent_carrier() {
     impulse.target = prop;
     impulse.strength = 12.0f;
     impulse.direction = glm::vec3{1.0f, 0.0f, 0.0f};
-    impulse.collision_mask = KERNEL_COLLISION_MASK_PROP;
     impulse.provenance = batch.provenance;
     batch.commands.emplace_back(impulse);
 
