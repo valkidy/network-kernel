@@ -1,6 +1,6 @@
 # Action graph 鎖定打擊（`lock_strike`）實作計劃書
 
-狀態：P0、P1 完成（2026-10-16）。D1–D14 全部已定。
+狀態：P0、P1、P2 完成（2026-10-16）。D1–D14 全部已定。
 前置：`main`（`8fa5250f`，ABI 106、packet schema 33、snapshot schema 30）。
 關聯：`docs/LOCK_ON_WEAPONS_PLAN.md`（鎖定武器 18/19，本計劃沿用它的選目標、立即傷害、飛彈發射與 client 演出）。
 
@@ -300,6 +300,82 @@
   - 拿掉 `select` 裡 sphere 跳過角度檢查的條件：**測試仍綠，這是等價變異**。sphere 的 aim 設為 0、門檻設為 0，`0 < 0` 永遠不成立，角度檢查本來就不會擋任何目標。保留這個條件，是為了讓意圖一眼看得出來。
 - 順手修好兩個在 `main` 上就編不過的測試：`catalog_weapon_definition_test`、`lock_weapons_end_to_end_test` 還在設定 projectile 的 `weapon_id`，這個欄位在 ABI 106 改名為 `reserved_weapon_id` 且必須為 0。刪掉那一行即可，兩個測試都恢復通過。
 - 通過：`lock_target_selection_test`、`lock_instant_test`、`lock_missile_test`、`catalog_weapon_definition_test`、`lock_weapons_end_to_end_test`、`//game_server:lock_weapon_catalog_test`。`kernel_api_test` 失敗，屬於既有紅燈名單。
+
+### P2：單次 `lock_strike`，ABI 107（2026-10-16）
+
+**重構（`39c8d7b0`，行為不變）**
+- 選目標、立即傷害、發射飛彈從 `weapon_system.cc` 搬到 `simulation/{public,src}/lock_strike.{h,cc}`。
+- 參數改成 `LockStrikeSpec`，內容是範圍、shot、mask、weapon id、傷害，不再讀 `WeaponMechanicsDefinition`。
+- `launch_lock_missile` 改成「對指定的一個目標發射」。「第 commit % N 近」的挑法留在武器端。
+- 武器的四個 lock 測試都維持通過。
+
+**ABI 107**
+- `KernelEntityTriggerActionType_LockStrike = 16`。
+- `KernelLockStrikeMode`（Instant 0、Missile 1）。
+- `KERNEL_MAX_LOCK_ORIGIN_LIFT`（5 m）。
+- `KernelActionDefinition` 尾端加 16 B：
+  - `lock_collider_template_id`
+  - `lock_mode`、保留位
+  - `lock_repeat_count`
+  - `lock_repeat_interval_ticks`
+  - `lock_origin_lift`
+
+  shot 沿用 `spawn_projectile_template_id`。`kernel_c_header_test` 已更新 offset 與 size。
+
+**Kernel**
+- `KernelEngine::lock_strike_is_runnable`：batch 的事前檢查。
+- `KernelEngine::execute_lock_strike`：執行。
+  - 起點抬高後，若頭上有地形或靜態障礙，停在其下方 0.1 m（R5）。
+  - M、傷害、mask 從 shot 讀。
+  - 用 provenance 的 `instigator` 和 `owner_peer` 排除丟瓶子者。
+  - instant 立即傷害；missile 對每個鎖到的目標各發一顆（D7），`commit_index` 暫時都是 0（P3 改成打擊序號）。
+- 載入 catalog 時分兩段檢查：
+  1. 欄位本身：在 entity trigger 迴圈裡檢查。
+  2. 引用的 collider 和 shot：在 collider、projectile 都驗證完之後才檢查。
+     - collider 必須是有 damage purpose 的 cone 或 sphere。
+     - cone 必須有 direction。
+     - shot 的 `max_hit_count` ≤ 16。
+     - missile 模式下，shot 的 lifetime 在 1..255。
+- 只允許出現在 entity trigger。projectile、item、status trigger 都會拒絕。
+- repeat 欄位已經在 ABI 裡，但 P3 之前，非 0 的 repeat 會被拒絕。
+
+**game_server**
+- graph 動作 `type: lock_strike`，欄位：
+  - `collider`、`projectile_template`、`position`：params 參照
+  - `direction`：params 參照，可省略
+  - `mode`：字面值或 params
+  - `origin_lift`：字面值或 params，預設 1.0
+- 編譯時檢查的規則和 kernel 一樣，錯誤訊息會指出是哪個 graph。
+- `compile_action_trigger_binding` 多一個參數 `colliders`，五個 entity trigger 的呼叫處都有傳入。
+- lock_strike 用的 shot 沒有任何東西生成它，所以加進 unspawned shot 清單，逐個 binding 找出來。
+- graph 動作的 key 白名單加入 `collider`、`mode`、`origin_lift`。
+- catalog hash 加入新欄位。
+- 新增共用 graph：`action_lock_strike`、`action_lock_strike_and_damage_self`。
+
+**測試**
+- `lock_strike_test`（kernel）：
+  - sphere 鎖四周最近的 2 個、不鎖丟瓶子者、半徑外不鎖。
+  - cone 只鎖前方。
+  - 每顆飛彈在各自的到達 tick 扣血，不會提早。
+  - 抬高 4 m 後飛行時間變長。
+  - catalog 會拒絕的 10 種情況。
+- `lock_strike_catalog_test`（game_server）：
+  - yaml 編譯出正確的 `KernelActionDefinition`，kernel 能載入。
+  - cone 加 lift。
+  - 6 種錯誤都在 game_server 被擋下，而且錯誤原因正確。
+- Mutation：kernel 6 個、game_server 3 個，全部讓測試變紅。
+
+**尚未覆蓋**
+- 物理世界裡的擋牆和天花板截斷。測試的 engine 沒有碰撞世界，留到 P5 的端到端測試。
+- graph 飛彈的紀錄現在不會送給 client：`lock_missiles_for` 依射手可見度過濾，來源為 0 就送不出去（D13，P4 處理）。所以 P2 不會產生 shooter 為 0 的 snapshot 紀錄，也不會觸發解碼失敗。
+
+**回歸**
+- 相關的 49 個 kernel、simulation、game_server 測試裡，37 個通過。沒通過的都是 `main` 上就有的：
+  - 已知紅燈：`gameplay_config`、`hitscan`、`damage_pipeline`、`kernel_api`、`kernel_c_header`。`kernel_c_header` 是 `RenderEntityState` 大小的斷言，`main` 上也有這行。
+  - `main` 上就編不過：
+    - `targeted_strike_test`、`status_action_block_test`：還在用 projectile 的 `weapon_id`。
+    - `combat_test`：呼叫兩參數版的 `drain_ready_damage`。
+  - game_server 另外 4 個測試也在用 `weapon_id`，同樣編不過：`actor_intent_executor`、`agent_chaser_controller`、`agent_sentry_controller`、`patrol_director`。
 
 ---
 

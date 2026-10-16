@@ -28,6 +28,7 @@
 #include "simulation/public/action_graph.h"
 #include "simulation/public/collision_filter.h"
 #include "simulation/public/ground_follow.h"
+#include "simulation/public/lock_strike.h"
 #include "simulation/public/lock_target_selection.h"
 #include "simulation/public/movement_solver.h"
 #include "simulation/src/command_dispatcher.h"
@@ -2163,6 +2164,79 @@ bool resolve_weapon_cone(
     return true;
 }
 
+// A lock_strike's own fields, before anything they name is known to exist.
+bool lock_strike_action_is_authorable(const KernelActionDefinition& action) {
+    return action.lock_collider_template_id != 0u &&
+           action.spawn_projectile_template_id != 0u &&
+           action.lock_mode <= KernelLockStrikeMode_Missile &&
+           action.position_source == KernelEventVec3Source_Position &&
+           (action.direction_source == KernelEventVec3Source_Position ||
+            action.direction_source == KernelEventVec3Source_Direction) &&
+           std::isfinite(action.lock_origin_lift) &&
+           action.lock_origin_lift >= 0.0f &&
+           action.lock_origin_lift <= KERNEL_MAX_LOCK_ORIGIN_LIFT &&
+           // The repeat is the plan's P3; until then a strike is taken once.
+           action.lock_repeat_count <= 1u &&
+           action.lock_repeat_interval_ticks == 0u;
+}
+
+// Every lock_strike an entity template's triggers hold names a volume a lock
+// can reach -- a cone, which then aims along the event's direction, or a
+// sphere -- and a shot that locks at most KERNEL_MAX_LOCK_ARCS, with a flight
+// a missile can report when it is one.
+bool lock_strikes_reach_their_templates(
+    const KernelEntityTemplateDefinition& entity_template,
+    const std::vector<KernelColliderTemplateDefinition>& collider_templates,
+    const std::vector<KernelProjectileTemplateDefinition>& projectile_templates) {
+    for (const KernelActionTriggerDefinition* trigger : {
+             &entity_template.activated_trigger,
+             &entity_template.collision_trigger,
+             &entity_template.health_depleted_trigger,
+             &entity_template.destroy_entity_trigger,
+             &entity_template.enter_trigger,
+             &entity_template.overlap_trigger,
+             &entity_template.exit_trigger,
+         }) {
+        if (trigger->struct_size == 0u) {
+            continue;
+        }
+        for (std::uint32_t index = 0;
+             index < trigger->action_count &&
+             index < KERNEL_MAX_ACTION_GRAPH_ACTIONS;
+             ++index) {
+            const KernelActionDefinition& action = trigger->actions[index];
+            if (action.action_type != KernelEntityTriggerActionType_LockStrike) {
+                continue;
+            }
+            lock_targets::Cone volume;
+            if (!resolve_lock_volume(
+                    collider_templates,
+                    action.lock_collider_template_id,
+                    true,
+                    &volume) ||
+                (!volume.omnidirectional &&
+                 action.direction_source != KernelEventVec3Source_Direction)) {
+                return false;
+            }
+            const auto shot = std::find_if(
+                projectile_templates.begin(),
+                projectile_templates.end(),
+                [&action](const KernelProjectileTemplateDefinition& candidate) {
+                    return candidate.projectile_template_id ==
+                           action.spawn_projectile_template_id;
+                });
+            if (shot == projectile_templates.end() ||
+                shot->mechanics.max_hit_count > KERNEL_MAX_LOCK_ARCS ||
+                (action.lock_mode == KernelLockStrikeMode_Missile &&
+                 (shot->mechanics.lifetime_ticks < 1u ||
+                  shot->mechanics.lifetime_ticks > UINT8_MAX))) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 const WeaponMechanicsDefinition* entity_weapon_mechanics(
     const World& world,
     NetId net_id,
@@ -3682,6 +3756,15 @@ bool KernelEngine::load_gameplay_catalog(
                     }
                     continue;
                 }
+                // Its volume and shot are checked once the collider and
+                // projectile templates are in (lock_strike_reaches_its_templates).
+                if (action.action_type ==
+                    KernelEntityTriggerActionType_LockStrike) {
+                    if (!lock_strike_action_is_authorable(action)) {
+                        return false;
+                    }
+                    continue;
+                }
                 return false;
             }
         }
@@ -3900,6 +3983,15 @@ bool KernelEngine::load_gameplay_catalog(
                 validated_projectile_templates) ||
             !projectile_trigger_is_valid(
                 mechanics.expired_trigger,
+                validated_projectile_templates)) {
+            return false;
+        }
+    }
+    for (const KernelEntityTemplateDefinition& entity_template :
+         validated_entity_templates) {
+        if (!lock_strikes_reach_their_templates(
+                entity_template,
+                validated_collider_templates,
                 validated_projectile_templates)) {
             return false;
         }
@@ -7413,6 +7505,133 @@ void KernelEngine::push_event(
     KernelEvent event{type, tick_loop_.current_tick(), net_id, peer_id, code};
     event.related_net_id = related_net_id;
     events_.push_back(event);
+}
+
+namespace {
+
+bool finite_vec3(const glm::vec3& value) {
+    return std::isfinite(value.x) && std::isfinite(value.y) &&
+           std::isfinite(value.z);
+}
+
+// Where a lock_strike's lock is taken from: `lift` metres above `position`,
+// or just under whatever terrain or static obstacle is overhead before that.
+glm::vec3 lifted_lock_origin(
+    const physics::PhysicsWorld* collision_world,
+    const glm::vec3& position,
+    float lift) {
+    if (lift <= 0.0f) {
+        return position;
+    }
+    float reach = lift;
+    if (collision_world != nullptr) {
+        physics::RayCastRequest ray{};
+        ray.origin = position;
+        ray.direction = glm::vec3{0.0f, 1.0f, 0.0f};
+        ray.max_distance = lift;
+        ray.filter = collision_filter_from_mask(
+            KERNEL_COLLISION_LAYER_TERRAIN |
+            KERNEL_COLLISION_LAYER_STATIC_OBSTACLE);
+        physics::CollisionHit hit{};
+        if (collision_world->ray_cast_closest(ray, &hit) &&
+            hit.distance < lift) {
+            constexpr float kUnderCeiling = 0.1f;
+            reach = std::max(0.0f, hit.distance - kUnderCeiling);
+        }
+    }
+    return position + glm::vec3{0.0f, reach, 0.0f};
+}
+
+}  // namespace
+
+bool KernelEngine::lock_strike_is_runnable(
+    const ActionLockStrikeCommand& command) const {
+    lock_targets::Cone volume;
+    const RuntimeProjectileTemplate* shot =
+        world_.find_projectile_template(command.projectile_template_id);
+    if (shot == nullptr ||
+        !resolve_lock_volume(
+            collider_templates_, command.collider_template_id, true, &volume) ||
+        command.mode > KernelLockStrikeMode_Missile ||
+        !finite_vec3(command.position) ||
+        !std::isfinite(command.origin_lift) || command.origin_lift < 0.0f ||
+        command.origin_lift > KERNEL_MAX_LOCK_ORIGIN_LIFT ||
+        // The repeat is P3's; until then a strike is taken once.
+        command.repeat_count > 1u || command.repeat_interval_ticks != 0u) {
+        return false;
+    }
+    if (!volume.omnidirectional &&
+        (!finite_vec3(command.direction) ||
+         glm::dot(command.direction, command.direction) <= 0.0f)) {
+        return false;
+    }
+    return command.mode != KernelLockStrikeMode_Missile ||
+           (shot->lifetime_ticks >= 1u && shot->lifetime_ticks <= UINT8_MAX);
+}
+
+void KernelEngine::execute_lock_strike(
+    World& world,
+    DamagePipeline* damage_pipeline,
+    const ActionLockStrikeCommand& command,
+    std::uint64_t server_time_us) {
+    const RuntimeProjectileTemplate* shot =
+        world.find_projectile_template(command.projectile_template_id);
+    LockStrikeSpec spec;
+    if (shot == nullptr ||
+        !resolve_lock_volume(
+            collider_templates_,
+            command.collider_template_id,
+            true,
+            &spec.volume)) {
+        return;
+    }
+    spec.volume.origin = lifted_lock_origin(
+        world.collision_world(), command.position, command.origin_lift);
+    spec.volume.aim = command.direction;
+    spec.volume.max_targets = std::clamp<std::uint32_t>(
+        shot->max_hit_count, 1u, KERNEL_MAX_LOCK_ARCS);
+    spec.projectile_template_id = command.projectile_template_id;
+    spec.collision_mask = shot->collision_mask;
+    spec.weapon_id = command.provenance.source_weapon_id;
+    spec.damage = shot->damage;
+
+    // A bottle's graph runs as nobody (instigator 0) for its thrower's peer:
+    // the thrower and what it controls are never locked, and nobody else is
+    // left out by id.
+    const NetId shooter = command.provenance.instigator;
+    const PeerId shooter_peer = command.provenance.owner_peer;
+    const LockSelection selection =
+        select_lock_targets(world, spec, nullptr, shooter, shooter_peer);
+    const std::uint32_t current_tick = tick_loop_.current_tick();
+    if (command.mode == KernelLockStrikeMode_Instant) {
+        apply_lock_instant_damage(
+            world,
+            spec,
+            selection,
+            current_tick,
+            shooter,
+            shooter_peer,
+            server_time_us,
+            damage_pipeline);
+        return;
+    }
+    // A missile at every one it locked, all launched now (D7).
+    for (const lock_targets::Candidate& target : selection.locked) {
+        (void)launch_lock_missile(
+            world,
+            spec,
+            target,
+            selection.hit_zone_of(target.net_id),
+            0u,
+            current_tick,
+            tick_loop_.fixed_delta_seconds(),
+            server_time_us,
+            shooter,
+            shooter_peer,
+            command.provenance.action_instance_id,
+            damage_pipeline,
+            &pending_lock_missiles_);
+    }
 }
 
 void KernelEngine::queue_ui_opened(

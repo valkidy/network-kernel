@@ -43,6 +43,7 @@ class CollisionTriggerSystem;
 class OverlapTriggerSystem;
 class ListenServerTransport;
 class MovementSystem;
+struct ActionLockStrikeCommand;
 struct EntityDespawnPacket;
 struct EntitySpawnPacket;
 struct PropStateChangeBatchPacket;
@@ -103,6 +104,15 @@ public:
         NetId net_id,
         std::uint32_t portal_entity_template_id,
         NetId portal_net_id);
+    // An action graph's lock_strike (docs/LOCK_STRIKE_ACTION_PLAN.md): whether
+    // its ids and numbers can run here -- the batch preflight's question --
+    // and running it on `world`, striking through `damage_pipeline`.
+    bool lock_strike_is_runnable(const ActionLockStrikeCommand& command) const;
+    void execute_lock_strike(
+        World& world,
+        DamagePipeline* damage_pipeline,
+        const ActionLockStrikeCommand& command,
+        std::uint64_t server_time_us);
     // A building's graph asked for its interface: KernelEventType_UiOpened.
     void queue_ui_opened(
         NetId building_net_id,

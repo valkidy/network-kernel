@@ -359,6 +359,21 @@ struct ActionApplySuspendMovementCommand {
     ActionExecutionProvenance provenance;
 };
 
+// A lock taken from `position` (before the lift) along `direction` and struck
+// (ActionLockStrikeDefinition). The batch preflight checks the ids and the
+// numbers; what it locks is decided when it runs.
+struct ActionLockStrikeCommand {
+    std::uint32_t collider_template_id = 0;
+    std::uint32_t projectile_template_id = 0;
+    std::uint8_t mode = 0;  // KernelLockStrikeMode
+    std::uint16_t repeat_count = 0;
+    std::uint32_t repeat_interval_ticks = 0;
+    float origin_lift = 0.0f;
+    glm::vec3 position{0.0f};
+    glm::vec3 direction{0.0f};
+    ActionExecutionProvenance provenance;
+};
+
 // Nothing can strike the target while status instance status_instance_id
 // stands.
 struct ActionApplyUntargetableCommand {
@@ -392,7 +407,8 @@ using ActionGraphCommand = std::variant<
     ActionRefillWeaponReserveCommand,
     ActionApplyBlockActionsCommand,
     ActionApplySuspendMovementCommand,
-    ActionApplyUntargetableCommand>;
+    ActionApplyUntargetableCommand,
+    ActionLockStrikeCommand>;
 
 struct ActionGraphQueuedTrigger {
     CompiledActionGraphBinding binding;

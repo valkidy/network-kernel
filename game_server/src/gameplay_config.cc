@@ -2137,6 +2137,9 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 "percent",
                 "rise_speed",
                 "drift_speed",
+                "collider",
+                "mode",
+                "origin_lift",
             },
             path,
             source_kind,
@@ -2218,6 +2221,64 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 &compiled_action.position_parameter,
                 &compiled_action.direction_parameter,
             };
+        } else if (compiled_action.action_type == "lock_strike") {
+            for (const auto& field : action) {
+                const std::string key = field.first.as<std::string>();
+                if (key != "type" && key != "when" && key != "collider" &&
+                    key != "projectile_template" && key != "mode" &&
+                    key != "position" && key != "direction" &&
+                    key != "origin_lift") {
+                    throw std::runtime_error(
+                        "lock_strike takes collider, projectile_template, mode, "
+                        "position, direction and origin_lift: " + path);
+                }
+            }
+            if (!action["mode"]) {
+                throw std::runtime_error("lock_strike requires mode: " + path);
+            }
+            compiled_action.collider_parameter =
+                parameter_reference_from_yaml(action["collider"], "collider");
+            compiled_action.projectile_template_parameter =
+                parameter_reference_from_yaml(
+                    action["projectile_template"], "projectile_template");
+            compiled_action.position_parameter =
+                parameter_reference_from_yaml(action["position"], "position");
+            if (action["direction"]) {
+                compiled_action.direction_parameter =
+                    parameter_reference_from_yaml(
+                        action["direction"], "direction");
+            }
+            compiled_action.lock_mode_parameter =
+                optional_parameter_reference(action["mode"]);
+            if (compiled_action.lock_mode_parameter.empty()) {
+                compiled_action.lock_mode = action["mode"].as<std::string>();
+                if (compiled_action.lock_mode != "instant" &&
+                    compiled_action.lock_mode != "missile") {
+                    throw std::runtime_error(
+                        "lock_strike mode must be instant or missile: " + path);
+                }
+            }
+            compiled_action.lock_origin_lift_parameter =
+                optional_parameter_reference(action["origin_lift"]);
+            if (action["origin_lift"] &&
+                compiled_action.lock_origin_lift_parameter.empty()) {
+                compiled_action.lock_origin_lift =
+                    action["origin_lift"].as<float>();
+                if (!std::isfinite(compiled_action.lock_origin_lift) ||
+                    compiled_action.lock_origin_lift < 0.0f ||
+                    compiled_action.lock_origin_lift > KERNEL_MAX_LOCK_ORIGIN_LIFT) {
+                    throw std::runtime_error(
+                        "lock_strike origin_lift must be 0 to 5 m: " + path);
+                }
+            }
+            action_parameters = {
+                &compiled_action.collider_parameter,
+                &compiled_action.projectile_template_parameter,
+                &compiled_action.position_parameter,
+            };
+            if (!compiled_action.direction_parameter.empty()) {
+                action_parameters.push_back(&compiled_action.direction_parameter);
+            }
         } else if (compiled_action.action_type == "spawn_entity") {
             if (action["projectile_template"] || action["target"] ||
                 action["amount"]) {
@@ -2606,7 +2667,9 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                  &compiled_action.spawn_lifetime_ticks_parameter,
                  &compiled_action.repeat_count_parameter,
                  &compiled_action.repeat_scatter_radius_parameter,
-                 &compiled_action.repeat_stagger_lifetime_ticks_parameter}) {
+                 &compiled_action.repeat_stagger_lifetime_ticks_parameter,
+                 &compiled_action.lock_mode_parameter,
+                 &compiled_action.lock_origin_lift_parameter}) {
             if (!bound->empty()) {
                 action_parameters.push_back(bound);
             }
@@ -8252,7 +8315,8 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
     const std::vector<EntityTemplateConfig>& entity_templates,
     const std::vector<ProjectileTemplateConfig>* projectile_templates = nullptr,
     const std::vector<ItemTemplateConfig>* item_templates = nullptr,
-    const std::vector<StatusEffectTemplateConfig>* status_effect_templates = nullptr) {
+    const std::vector<StatusEffectTemplateConfig>* status_effect_templates = nullptr,
+    const ColliderCatalogConfig* colliders = nullptr) {
     KernelActionTriggerDefinition compiled{};
     if (binding.action_graph_ref.empty()) {
         return compiled;
@@ -8485,6 +8549,111 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
                 trigger_parameter_value(
                     binding, graph_parameter(action.target_parameter)));
             compile_reserve_refill(binding, *graph, action, &compiled_action);
+            continue;
+        }
+        if (action.action_type == "lock_strike") {
+            // Mirrors the kernel: an entity's own triggers only. Its volume
+            // and its shot are checked here as the kernel will, so a bad one
+            // names its graph rather than failing the whole catalog there.
+            if (colliders == nullptr || projectile_templates == nullptr) {
+                throw std::runtime_error(
+                    "lock_strike is only supported in an entity's triggers: " +
+                    binding.action_graph_ref);
+            }
+            const std::string position = trigger_parameter_value(
+                binding, graph_parameter(action.position_parameter));
+            const std::string direction = action.direction_parameter.empty()
+                ? ""
+                : trigger_parameter_value(
+                      binding, graph_parameter(action.direction_parameter));
+            if (position != "event.position" ||
+                (!action.direction_parameter.empty() &&
+                 direction != "event.direction")) {
+                throw std::runtime_error(
+                    "lock_strike position/direction must bind to "
+                    "event.position/event.direction: " + binding.action_graph_ref);
+            }
+            const std::uint32_t collider_id = collider_template_id_from_ref(
+                YAML::Node(trigger_parameter_value(
+                    binding, graph_parameter(action.collider_parameter))),
+                *colliders);
+            const auto volume = std::find_if(
+                colliders->templates.begin(),
+                colliders->templates.end(),
+                [collider_id](const ColliderTemplateConfig& candidate) {
+                    return candidate.definition.template_id == collider_id;
+                });
+            const bool cone = volume != colliders->templates.end() &&
+                volume->definition.shape_type == KernelColliderShapeType_Cone;
+            const bool sphere = volume != colliders->templates.end() &&
+                volume->definition.shape_type == KernelColliderShapeType_Sphere;
+            if ((!cone && !sphere) ||
+                (volume->definition.purpose_flags & KernelColliderPurpose_Damage) ==
+                    0u) {
+                throw std::runtime_error(
+                    "lock_strike collider must be a damage cone or sphere: " +
+                    binding.action_graph_ref);
+            }
+            if (cone && action.direction_parameter.empty()) {
+                throw std::runtime_error(
+                    "lock_strike with a cone needs a direction: " +
+                    binding.action_graph_ref);
+            }
+            const std::string projectile_ref = trigger_parameter_value(
+                binding, graph_parameter(action.projectile_template_parameter));
+            const auto shot = std::find_if(
+                projectile_templates->begin(),
+                projectile_templates->end(),
+                [&](const ProjectileTemplateConfig& candidate) {
+                    return candidate.name == projectile_ref ||
+                        std::to_string(
+                            candidate.definition.projectile_template_id) ==
+                            projectile_ref;
+                });
+            if (shot == projectile_templates->end()) {
+                throw std::runtime_error(
+                    "unknown projectile template: " + projectile_ref);
+            }
+            const std::string mode = action.lock_mode_parameter.empty()
+                ? action.lock_mode
+                : trigger_parameter_value(
+                      binding, graph_parameter(action.lock_mode_parameter));
+            if (mode != "instant" && mode != "missile") {
+                throw std::runtime_error(
+                    "lock_strike mode must be instant or missile, got " + mode +
+                    ": " + binding.action_graph_ref);
+            }
+            const KernelProjectileMechanicsDefinition& mechanics =
+                shot->definition.mechanics;
+            if (mechanics.max_hit_count > KERNEL_MAX_LOCK_ARCS ||
+                (mode == "missile" &&
+                 (mechanics.lifetime_ticks < 1u ||
+                  mechanics.lifetime_ticks > UINT8_MAX))) {
+                throw std::runtime_error(
+                    "lock_strike shot " + projectile_ref +
+                    " must lock at most 16 (max_hit_count), and a missile's "
+                    "lifetime_ticks must be 1..255: " + binding.action_graph_ref);
+            }
+            const float lift = action.lock_origin_lift_parameter.empty()
+                ? action.lock_origin_lift
+                : bound_float(binding, *graph, action.lock_origin_lift_parameter);
+            if (lift < 0.0f || lift > KERNEL_MAX_LOCK_ORIGIN_LIFT) {
+                throw std::runtime_error(
+                    "lock_strike origin_lift must be 0 to 5 m: " +
+                    binding.action_graph_ref);
+            }
+            compiled_action.action_type = KernelEntityTriggerActionType_LockStrike;
+            compiled_action.lock_collider_template_id = collider_id;
+            compiled_action.spawn_projectile_template_id =
+                shot->definition.projectile_template_id;
+            compiled_action.lock_mode = mode == "missile"
+                ? KernelLockStrikeMode_Missile
+                : KernelLockStrikeMode_Instant;
+            compiled_action.lock_origin_lift = lift;
+            compiled_action.position_source = KernelEventVec3Source_Position;
+            compiled_action.direction_source = action.direction_parameter.empty()
+                ? KernelEventVec3Source_Position
+                : KernelEventVec3Source_Direction;
             continue;
         }
         if (action.action_type == "teleport") {
@@ -10342,6 +10511,11 @@ std::uint64_t compute_gameplay_catalog_hash(
             hash_string(&hash, action.repeat_stagger_lifetime_ticks_parameter);
             hash_scalar(&hash, action.reserve_refill_count);
             hash_scalar(&hash, action.reserve_refill_percent);
+            hash_string(&hash, action.collider_parameter);
+            hash_string(&hash, action.lock_mode);
+            hash_string(&hash, action.lock_mode_parameter);
+            hash_float(&hash, action.lock_origin_lift);
+            hash_string(&hash, action.lock_origin_lift_parameter);
         }
     }
     std::vector<StatusEffectTemplateConfig> status_effect_templates =
@@ -11542,6 +11716,52 @@ std::vector<std::string> validate_gameplay_config(
             unspawned_shot_ids.push_back(weapon.projectile_template_id);
         }
     }
+    // And the shots an entity's lock_strike strikes with: nothing spawns them
+    // either. Named by the binding, not the graph, so found binding by binding.
+    for (const EntityTemplateConfig& entity_template : config.entity_templates) {
+        for (const TriggerBindingConfig* binding : {
+                 &entity_template.activated_trigger,
+                 &entity_template.collision_trigger,
+                 &entity_template.health_depleted_trigger,
+                 &entity_template.destroy_entity_trigger,
+                 &entity_template.enter_trigger,
+                 &entity_template.overlap_trigger,
+                 &entity_template.exit_trigger,
+             }) {
+            const auto graph = std::find_if(
+                config.action_graph_templates.begin(),
+                config.action_graph_templates.end(),
+                [binding](const ActionGraphTemplateConfig& candidate) {
+                    return !binding->action_graph_ref.empty() &&
+                           candidate.id == binding->action_graph_ref;
+                });
+            if (graph == config.action_graph_templates.end()) {
+                continue;
+            }
+            for (const ActionGraphActionConfig& action : graph->actions) {
+                if (action.action_type != "lock_strike") {
+                    continue;
+                }
+                std::string shot_ref;
+                for (const auto& [name, value] : binding->parameters) {
+                    if (name == action.projectile_template_parameter) {
+                        shot_ref = value;
+                    }
+                }
+                for (const ProjectileTemplateConfig& candidate :
+                     config.projectile_templates) {
+                    if (!shot_ref.empty() &&
+                        (candidate.name == shot_ref ||
+                         std::to_string(
+                             candidate.definition.projectile_template_id) ==
+                             shot_ref)) {
+                        unspawned_shot_ids.push_back(
+                            candidate.definition.projectile_template_id);
+                    }
+                }
+            }
+        }
+    }
     for (const ProjectileTemplateConfig& projectile_template :
          config.projectile_templates) {
         const KernelProjectileTemplateDefinition& definition =
@@ -11766,7 +11986,8 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
             config.entity_templates,
             &config.projectile_templates,
             nullptr,
-            &config.status_effect_templates);
+            &config.status_effect_templates,
+            &config.colliders);
         entity_template.collision_trigger = compile_action_trigger_binding(
             authored_template.collision_trigger,
             "on_collision",
@@ -11775,7 +11996,8 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
             config.entity_templates,
             &config.projectile_templates,
             nullptr,
-            &config.status_effect_templates);
+            &config.status_effect_templates,
+            &config.colliders);
         entity_template.collision_trigger_mask =
             authored_template.collision_trigger_mask;
         entity_template.trigger_collider_template_id =
@@ -11820,7 +12042,8 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
                 config.entity_templates,
                 &config.projectile_templates,
                 nullptr,
-                &config.status_effect_templates);
+                &config.status_effect_templates,
+                &config.colliders);
             // Mirrors the kernel: only a portal has somewhere to send it.
             for (std::uint32_t index = 0; index < compiled->action_count; ++index) {
                 if (compiled->actions[index].action_type ==
@@ -11840,7 +12063,8 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
             config.entity_templates,
             &config.projectile_templates,
             nullptr,
-            &config.status_effect_templates);
+            &config.status_effect_templates,
+            &config.colliders);
         entity_template.destroy_entity_trigger = compile_action_trigger_binding(
             authored_template.destroy_entity_trigger,
             "on_destroy_entity",
@@ -11849,7 +12073,8 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
             config.entity_templates,
             &config.projectile_templates,
             nullptr,
-            &config.status_effect_templates);
+            &config.status_effect_templates,
+            &config.colliders);
         // Mirrors the kernel's refusal, with a name: a group whose cleanup runs
         // on_destroy must not spawn into any population group from it, or one
         // eviction could spawn the next without end.

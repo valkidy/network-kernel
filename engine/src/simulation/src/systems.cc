@@ -659,6 +659,12 @@ bool execute_action_graph_commands(
             }
             continue;
         }
+        if (const auto* strike = std::get_if<ActionLockStrikeCommand>(&command)) {
+            if (!engine.lock_strike_is_runnable(*strike)) {
+                return false;
+            }
+            continue;
+        }
         if (const auto* teleport = std::get_if<ActionTeleportCommand>(&command)) {
             const std::optional<entt::entity> source =
                 world.find_entity(teleport->source);
@@ -1475,6 +1481,10 @@ bool execute_action_graph_commands(
         if (const auto* teleport = std::get_if<ActionTeleportCommand>(&command)) {
             EntityStateSystem{}.teleport_through_portal(
                 engine, teleport->source, teleport->target);
+            continue;
+        }
+        if (const auto* strike = std::get_if<ActionLockStrikeCommand>(&command)) {
+            engine.execute_lock_strike(world, damage_pipeline, *strike, server_time_us);
             continue;
         }
         if (const auto* open_ui = std::get_if<ActionOpenUiCommand>(&command)) {

@@ -411,6 +411,16 @@ struct ActionGraphActionConfig {
     std::string repeat_count_parameter;
     std::string repeat_scatter_radius_parameter;
     std::string repeat_stagger_lifetime_ticks_parameter;
+    // lock_strike only (docs/LOCK_STRIKE_ACTION_PLAN.md). The volume is a
+    // graph parameter naming a collider template, as projectile_template_parameter
+    // names its shot; mode ("instant" or "missile") and origin_lift are
+    // literals, or params.<name> (their *_parameter set) for the binding to
+    // supply.
+    std::string collider_parameter;
+    std::string lock_mode;
+    std::string lock_mode_parameter;
+    float lock_origin_lift = 1.0f;
+    std::string lock_origin_lift_parameter;
     // apply_pull only. The anchor is a graph parameter for TO_POINT, and
     // direction_parameter is reused for ALONG. Each number is a literal, or
     // params.<name> (its *_parameter set) for the binding to supply. See

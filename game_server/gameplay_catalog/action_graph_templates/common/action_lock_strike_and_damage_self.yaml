@@ -1,0 +1,24 @@
+# action_lock_strike, then spend the thing that carried it there: the
+# lock_strike twin of action_spawn_projectile_and_damage_self. A bottle that
+# survived its own collision would strike again on every tick it rested.
+id: action_lock_strike_and_damage_self
+parameters:
+  collider: null
+  template: null
+  position: null
+  direction: null
+  mode: instant
+  origin_lift: 1.0
+  source: null
+  self_damage: 1
+actions:
+  - type: lock_strike
+    collider: params.collider
+    projectile_template: params.template
+    mode: params.mode
+    position: params.position
+    direction: params.direction
+    origin_lift: params.origin_lift
+  - type: apply_damage
+    target: params.source
+    amount: params.self_damage
