@@ -1,6 +1,6 @@
 # Action graph 鎖定打擊（`lock_strike`）實作計劃書
 
-狀態：計劃，尚未開工。D4–D10 等待確認。
+狀態：P0 完成（2026-10-16）。D1–D12 已定，D13–D14 等待確認。
 前置：`main`（`8fa5250f`，ABI 106、packet schema 33、snapshot schema 30）。
 關聯：`docs/LOCK_ON_WEAPONS_PLAN.md`（鎖定武器 18/19，本計劃沿用它的選目標、立即傷害、飛彈發射與 client 演出）。
 
@@ -32,15 +32,17 @@
 | D1 | 新增一個 graph 動作 `lock_strike`（`KernelEntityTriggerActionType_LockStrike = 16`），用 `mode: instant \| missile` 區分兩種行為，不拆成兩個動作 | 已定 |
 | D2 | 鎖定範圍 collider 支援 **sphere 和 cone**。sphere 只看半徑、不看角度，也不需要方向。cone 沿用武器的 3D 角度規則（lock-on D1）。排序（距離、net id）、擋牆規則、M 的來源（projectile `max_hit_count`）、傷害的來源（projectile `damage`）都和武器相同 | 已定 |
 | D3 | repeat 用**做法 A**：`lock_strike` 自帶 `repeat: {interval_ticks, count}`，server 保留一筆排程（剩餘次數、下次 tick）。第一次在觸發當下執行，之後每 `interval_ticks` 一次，例如 10 × 5 = 第 0、10、20、30、40 tick。不用 status 當計時器（做法 B） | 已定 |
-| D4 | 每次 repeat **獨立重新鎖定**：位置和方向固定在第一次觸發的值；同一個目標可以連續被選中；已死亡的目標不再被選 | 建議，待確認 |
-| D5 | 起點抬高：鎖定和擋牆射線的起點 = `position` + `origin_lift`（向上，可在 yaml 設定，預設 1.0 m），避免貼地的射線被地形起伏擋住 | 建議，待確認 |
-| D6 | 打擊紀錄走 **snapshot 新區段**（`kLockStrike = 8`），和飛彈紀錄一樣只在有紀錄時才寫。不另開 reliable 事件 | 建議，待確認 |
-| D7 | missile 模式一次打擊對**每個**鎖到的目標各射一顆，最多 M 顆同時發射；不採用武器那種「一個 commit 一顆、輪流打」的做法（graph 沒有 commit） | 建議，待確認 |
-| D8 | 排程**不依附**觸發它的實體：瓶子撞擊後自毀，剩下的次數照常執行。排程只在 server 重啟或關閉時清掉 | 建議，待確認 |
-| D9 | 來源與歸屬：紀錄的來源是 graph provenance 的 `instigator`，沒有就是 0。kill credit 維持現狀，瓶子沒有射手，不算給丟瓶子的人 | 建議，待確認 |
-| D10 | 上限：`interval_ticks` 1..255、`count` 1..16、`interval_ticks × (count − 1)` ≤ 255；整台 server 同時存在的排程上限 256 筆，超過就拒絕新的觸發並記 warning | 建議，待確認 |
+| D4 | 每次 repeat **獨立重新鎖定**：位置和方向固定在第一次觸發的值；同一個目標可以連續被選中；已死亡的目標不再被選 | 已定（2026-10-16） |
+| D5 | 起點抬高：鎖定和擋牆射線的起點 = `position` + `origin_lift`（向上，可在 yaml 設定，預設 1.0 m），避免貼地的射線被地形起伏擋住 | 已定（2026-10-16） |
+| D6 | 打擊紀錄走 **snapshot 新區段**（`kLockStrike = 8`），和飛彈紀錄一樣只在有紀錄時才寫。不另開 reliable 事件 | 已定（2026-10-16） |
+| D7 | missile 模式一次打擊對**每個**鎖到的目標各射一顆，最多 M 顆同時發射；不採用武器那種「一個 commit 一顆、輪流打」的做法（graph 沒有 commit） | 已定（2026-10-16） |
+| D8 | 排程**不依附**觸發它的實體：瓶子撞擊後自毀，剩下的次數照常執行。排程只在 server 重啟或關閉時清掉 | 已定（2026-10-16） |
+| D9 | 來源與歸屬：紀錄的來源是 graph provenance 的 `instigator`，沒有就是 0。kill credit 維持現狀，瓶子沒有射手，不算給丟瓶子的人 | 已定（2026-10-16） |
+| D10 | 上限：`interval_ticks` 1..255、`count` 1..16、`interval_ticks × (count − 1)` ≤ 255；整台 server 同時存在的排程上限 256 筆，超過就拒絕新的觸發並記 warning | 已定（2026-10-16） |
 | D11 | 飛彈紀錄必須改格式（P0 前評估已確認，見 §3.5）：<br>• 帶發射點座標<br>• 允許來源為 0<br>• client 去重的 key 加上目標 | 已定 |
 | D12 | 同一次打擊不足 M 個目標時，instant 模式照武器規則補假電弧，終點由 client 用同一個 hash 算出，不傳 | 已定 |
+| D13 | 紀錄送給誰（P0-4 新增）：現在飛彈紀錄只送給「看得到射手」的 client，來源為 0 時沒有人收得到。graph 紀錄改用：<br>• 飛彈：看得到目標的 client<br>• 打擊：看得到任一目標的 client；一個目標都沒鎖到時，送給玩家距起點在 snapshot 相關半徑內的 client<br>武器紀錄維持原規則 | 建議，待確認 |
+| D14 | snapshot 大小（P0-5 新增）：可選區段現在是在切包**之後**才附加到第一包，會超過 1200 B 的預算。改成先算區段大小，切包時第一包預留這段空間；單一 snapshot 的區段上限 400 B，超過的紀錄留到下一個 snapshot（`launch_tick_delta` 最多 255 ticks，足夠） | 建議，待確認 |
 
 ---
 
@@ -259,7 +261,7 @@
 
 | # | 風險 | 處理 |
 |---|---|---|
-| R1 | snapshot 新區段不在 split 預算內：飛彈區段已有同樣問題（lock-on 的已知待辦） | P4 一起把兩個區段算進大小估計；超過時延到下一個 snapshot，不丟 |
+| R1 | snapshot 新區段不在 split 預算內：飛彈區段已有同樣問題（lock-on 的已知待辦，P0-5 確認） | D14 |
 | R2 | 排程佇列無上限會被大量投擲撐爆 | D10 的上限加 warning |
 | R3 | 平行分支撞號：ABI 107、snapshot 31、catalog id（3033/3034、228/229、35/36、54/55）。`claude/combat-event-batching-plan` 也會動 packet schema | 開工時和 merge 時都檢查一次（參考 lock-on 與 portal 的 ABI 重編號經驗） |
 | R4 | client 用 hash 補假電弧時，collider 模板若在 client 和 server 不同步會畫錯 | 和武器相同：catalog bundle 一致就一致，不另做處理 |
@@ -268,16 +270,20 @@
 
 ---
 
-## 9. P0 驗證項目（開工時填結果）
+## 9. P0 驗證結果
 
-| # | 問題 | 結果 |
-|---|---|---|
-| P0-1 | 瓶子 `on_collision` 的 graph provenance：`instigator`、`owner_peer` 是丟瓶子的玩家，還是 0？ | |
-| P0-2 | `apply_lock_instant_damage` / `launch_lock_missile` 對射手實體的依賴有哪些（位置、陣營、peer），搬成共用介面需要哪些參數？ | |
-| P0-3 | 飛彈的排定傷害、取消、kill credit 在 instigator 為 0 時是否都正常？ | |
-| P0-4 | listen host 的 client 端從哪裡拿 snapshot 區段（lock-on 時未驗證） | |
-| P0-5 | 目前 snapshot 的大小估計和 split 怎麼處理可選區段（R1） | |
-| P0-6 | 新 catalog id 和 ABI/schema 版本號在其他未 merge 分支上是否已被使用（R3） | |
+2026-10-16，在 `main`（`8fa5250f`）上只讀，沒有改程式。
+
+| # | 問題 | 結果 | 對計劃的影響 |
+|---|---|---|---|
+| P0-1 | 瓶子 `on_collision` 的 graph provenance | `instigator` 固定為 0；`owner_peer` 是丟瓶子玩家的 peer（[systems.cc:2473](../engine/src/simulation/src/systems.cc)，從 `ThrownPropMotion.thrower_net_id` 反查）。丟瓶子者的 net id 沒有放進 provenance | 候選排除用 `owner_peer`：丟瓶子的玩家和他控制的單位不會被鎖定。紀錄來源為 0（D9 不變） |
+| P0-2 | 鎖定函式對射手的依賴 | `select_lock_targets`、`apply_lock_instant_damage`、`launch_lock_missile`（[weapon_system.cc:466–640](../engine/src/simulation/src/weapon_system.cc)）從 `WeaponMechanicsDefinition` 讀 `melee_range`、`melee_fov_degrees`、`projectile_template_id`、`collision_mask`、`id`、`damage`；射手只用到 net id（排除自己、射線忽略自己）和 peer。來源為 0 都能正常運作。`launch_lock_missile` 每次只射 `commit_index % locked` 那一個目標 | P2：抽出一個不依賴武器的參數 struct（範圍、角度或全方向、projectile、mask、weapon id、傷害），武器從 definition 組出它。飛彈拆成「對單一目標發射」，武器和 graph（D7，每個目標各一顆）共用 |
+| P0-3 | 來源為 0 時的排定傷害、取消、擊殺 | 都正常。`submit_damage_request` 不看來源；`damage_source_may_damage` 只看目標陣營；取消只依目標（`cancel_pending_for_target`）。`owner_peer` 是丟瓶子的玩家，所以對玩家沒有防禦寬限延遲。擊殺者為 0，和現有瓶子相同 | 無 |
+| P0-4 | listen host 收不收得到 | **收得到**：listen host 的 `publish_snapshot` 也替本機 session 附上飛彈（[kernel.cc:16475](../engine/src/kernel/src/kernel.cc)），經本機 transport 回到 `handle_client_snapshot`。目前沒有測試。<br>**新問題**：`lock_missiles_for` 只把紀錄送給「看得到射手」的 session（[kernel.cc:15301](../engine/src/kernel/src/kernel.cc)），來源為 0 的紀錄**不會送給任何人** | 新增 D13。P4 加 listen host 測試 |
+| P0-5 | snapshot 大小 | 切包上限是 `kSnapshotSendBudgetBytes = 1200`。飛彈區段在 `split_snapshot_for_packets` **之後**才放進第一包，所以第一包可能超過上限，lock-on 的已知待辦（R1）就是這個 | 新增 D14，P4 一起修，武器的飛彈也受益 |
+| P0-6 | 平行分支撞號 | 沒有撞到。未 merge 的分支 ABI 最高 106（`feat-unity-plugin`），snapshot schema 最高 30。計劃用的 id（item 3033/3034、entity 228/229、projectile 35/36、collider 54/55）在任何分支都沒有被用到 | merge 前再查一次 |
+
+**其他確認**：damage pipeline 不檢查 `sequence_id` 重複，只拿它排序，所以同一 tick 多個瓶子各自從 0 編號不會互相吃掉。
 
 ---
 
