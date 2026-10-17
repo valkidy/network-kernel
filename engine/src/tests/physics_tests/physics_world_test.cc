@@ -287,6 +287,176 @@ void ray_normal_on_a_rotated_box_is_the_face_it_hit() {
     }
 }
 
+float normal_angle_degrees(const glm::vec3& a, const glm::vec3& b) {
+    const float cosine = std::clamp(
+        glm::dot(glm::normalize(a), glm::normalize(b)), -1.0f, 1.0f);
+    return std::acos(cosine) * 57.2957795f;
+}
+
+ShapeCastRequest sphere_cast(
+    const glm::vec3& start,
+    const glm::vec3& displacement,
+    std::uint32_t collision_mask) {
+    ShapeCastRequest request{};
+    request.shape.type = CollisionShapeType::kSphere;
+    request.shape.radius = 0.1f;
+    request.start = start;
+    request.displacement = displacement;
+    request.filter.collision_mask = collision_mask;
+    return request;
+}
+
+// The water jet turns where its projectile struck into the direction it
+// pushes, so it leans on CollisionHit::normal being the face that was hit for
+// both of the queries a projectile can run: a segment's ray and a sphere's
+// shape cast. The ray's normal is the shape's own surface normal; the sphere's
+// is the contact normal, which on a flat face is the same vector and on an
+// edge is whatever the contact resolves to.
+void hit_normal_is_the_struck_face_for_ray_and_sphere_cast() {
+    PhysicsWorld world(PhysicsWorldConfig{0});
+    std::string error;
+    const std::uint32_t mask =
+        network_example::physics::collision_layer_bit(
+            CollisionLayer::kStaticObstacle);
+
+    CollisionObjectDescriptor floor = plain(
+        0, 1, glm::vec3(0.0f, -0.5f, 0.0f),
+        CollisionObjectKind::kStaticObstacle, CollisionLayer::kStaticObstacle);
+    floor.shape.half_extents = glm::vec3(20.0f, 0.5f, 20.0f);
+    require(world.upsert_object(floor, &error));
+
+    // A wall facing -X, and one turned 30 degrees about Y.
+    CollisionObjectDescriptor wall = plain(
+        0, 2, glm::vec3(5.5f, 3.0f, 0.0f),
+        CollisionObjectKind::kStaticObstacle, CollisionLayer::kStaticObstacle);
+    wall.shape.half_extents = glm::vec3(0.5f, 3.0f, 3.0f);
+    require(world.upsert_object(wall, &error));
+    constexpr float kTurn = 0.5235987756f;
+    CollisionObjectDescriptor turned = plain(
+        0, 3, glm::vec3(-5.5f, 3.0f, 10.0f),
+        CollisionObjectKind::kStaticObstacle, CollisionLayer::kStaticObstacle);
+    turned.shape.half_extents = glm::vec3(0.5f, 3.0f, 3.0f);
+    turned.rotation = glm::angleAxis(kTurn, glm::vec3(0.0f, 1.0f, 0.0f));
+    require(world.upsert_object(turned, &error));
+    const glm::vec3 turned_face =
+        turned.rotation * glm::vec3(1.0f, 0.0f, 0.0f);
+
+    struct Case {
+        const char* name;
+        glm::vec3 start;
+        glm::vec3 displacement;
+        glm::vec3 expected;
+    };
+    const Case cases[] = {
+        {"floor, straight down", {1.0f, 5.0f, 1.0f}, {0.0f, -10.0f, 0.0f},
+         {0.0f, 1.0f, 0.0f}},
+        {"floor, 60 deg incidence", {-4.0f, 5.0f, 0.0f}, {8.66f, -5.0f, 0.0f},
+         {0.0f, 1.0f, 0.0f}},
+        {"wall, head on", {0.0f, 2.0f, 0.0f}, {10.0f, 0.0f, 0.0f},
+         {-1.0f, 0.0f, 0.0f}},
+        {"wall, 45 deg incidence", {0.0f, 2.0f, -3.0f}, {6.0f, 0.0f, 6.0f},
+         {-1.0f, 0.0f, 0.0f}},
+        {"turned wall, head on", glm::vec3(-5.5f, 3.0f, 10.0f) + turned_face * 6.0f,
+         -turned_face * 10.0f, turned_face},
+    };
+    for (const Case& c : cases) {
+        RayCastRequest ray{};
+        ray.origin = c.start;
+        ray.direction = glm::normalize(c.displacement);
+        ray.max_distance = glm::length(c.displacement);
+        ray.filter.collision_mask = mask;
+        CollisionHit ray_hit{};
+        require(world.ray_cast_closest(ray, &ray_hit));
+        CollisionHit sphere_hit{};
+        require(world.shape_cast_closest(
+            sphere_cast(c.start, c.displacement, mask), &sphere_hit));
+        const float ray_error = normal_angle_degrees(ray_hit.normal, c.expected);
+        const float sphere_error =
+            normal_angle_degrees(sphere_hit.normal, c.expected);
+        std::printf(
+            "[P0 normal] %-24s ray (%.3f %.3f %.3f) %.2f deg | sphere (%.3f %.3f %.3f) %.2f deg\n",
+            c.name,
+            ray_hit.normal.x, ray_hit.normal.y, ray_hit.normal.z, ray_error,
+            sphere_hit.normal.x, sphere_hit.normal.y, sphere_hit.normal.z,
+            sphere_error);
+        require(ray_error < 0.5f);
+        require(sphere_error < 0.5f);
+    }
+
+    // The top edge of the head-on wall, struck by a sphere coming down at 45
+    // degrees: neither face is "the" answer. Reported, held only to being a
+    // unit vector between the two faces.
+    CollisionHit edge_hit{};
+    require(world.shape_cast_closest(
+        sphere_cast({3.0f, 8.0f, 0.0f}, {4.0f, -4.0f, 0.0f}, mask), &edge_hit));
+    std::printf(
+        "[P0 normal] wall top edge (sphere)    (%.3f %.3f %.3f) at (%.2f %.2f %.2f)\n",
+        edge_hit.normal.x, edge_hit.normal.y, edge_hit.normal.z,
+        edge_hit.position.x, edge_hit.position.y, edge_hit.position.z);
+    require(std::abs(glm::length(edge_hit.normal) - 1.0f) < 0.001f);
+    require(edge_hit.normal.x <= 0.001f && edge_hit.normal.y >= -0.001f);
+}
+
+// The same comparison on the shipped undulating terrain mesh: the sphere's
+// contact normal against the ray's face normal at the same spot, straight down
+// and at 45 degrees. Reports the worst disagreement.
+void sphere_cast_normal_matches_ray_normal_on_terrain_mesh(
+    const std::vector<std::uint8_t>& terrain) {
+    PhysicsWorld world(PhysicsWorldConfig{0});
+    std::string error;
+    require(world.load_static_scene(
+        terrain,
+        CollisionObjectIdentity{
+            0, 1, 0, CollisionObjectKind::kTerrain, CollisionLayer::kTerrain},
+        &error));
+    const std::uint32_t mask =
+        network_example::physics::collision_layer_bit(CollisionLayer::kTerrain);
+    int samples = 0;
+    int over_2 = 0;
+    int over_10 = 0;
+    glm::vec3 worst_at{0.0f};
+    float worst = 0.0f;
+    float worst_tilt = 0.0f;
+    for (float x = -40.0f; x <= 40.0f; x += 2.5f) {
+        for (float z = -40.0f; z <= 40.0f; z += 2.5f) {
+            for (const glm::vec3 displacement :
+                 {glm::vec3(0.0f, -60.0f, 0.0f), glm::vec3(30.0f, -30.0f, 0.0f)}) {
+                const glm::vec3 start =
+                    glm::vec3(x, 30.0f, z) - displacement * 0.5f;
+                RayCastRequest ray{};
+                ray.origin = start;
+                ray.direction = glm::normalize(displacement);
+                ray.max_distance = glm::length(displacement);
+                ray.filter.collision_mask = mask;
+                CollisionHit ray_hit{};
+                CollisionHit sphere_hit{};
+                if (!world.ray_cast_closest(ray, &ray_hit) ||
+                    !world.shape_cast_closest(
+                        sphere_cast(start, displacement, mask), &sphere_hit)) {
+                    continue;
+                }
+                ++samples;
+                const float angle =
+                    normal_angle_degrees(ray_hit.normal, sphere_hit.normal);
+                if (angle > worst) {
+                    worst = angle;
+                    worst_at = ray_hit.position;
+                }
+                over_2 += angle > 2.0f ? 1 : 0;
+                over_10 += angle > 10.0f ? 1 : 0;
+                worst_tilt = std::max(
+                    worst_tilt,
+                    normal_angle_degrees(ray_hit.normal, glm::vec3(0.0f, 1.0f, 0.0f)));
+            }
+        }
+    }
+    std::printf(
+        "[P0 normal] terrain mesh: %d samples, ray-vs-sphere worst %.2f deg at (%.1f %.1f %.1f), >2 deg %d, >10 deg %d, steepest face %.2f deg\n",
+        samples, worst, worst_at.x, worst_at.y, worst_at.z, over_2, over_10,
+        worst_tilt);
+    require(samples > 0);
+}
+
 // A cylinder overlap answers "what is inside this upright column": a box above
 // the column but within the same radius of its centre is out, where a sphere of
 // that radius takes it in. And it is a query shape only -- no body may be one.
@@ -408,6 +578,8 @@ int main(int argc, char** argv) {
 
     ray_normal_on_a_rotated_box_is_the_face_it_hit();
     cylinder_overlap_is_bounded_by_its_height_and_is_never_a_body();
+    hit_normal_is_the_struck_face_for_ray_and_sphere_cast();
+    sphere_cast_normal_matches_ray_normal_on_terrain_mesh(terrain);
 
     const CollisionObjectIdentity terrain_identity{
         0,
