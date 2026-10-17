@@ -1,6 +1,6 @@
 # 水柱衝擊魔法實作計劃書
 
-狀態：**Q1–Q5、Q6 採預設值定案；P0 驗證完成（§5.2）；P1 kernel 完成（§5.3），ABI 108；P2 game_server 完成（§5.4）；P3 catalog 內容完成（§5.5，id 為暫定）；P4 端到端測試尚未開始。**
+狀態：**Q1–Q5、Q6 採預設值定案；P0 驗證完成（§5.2）；P1 kernel 完成（§5.3），ABI 108；P2 game_server 完成（§5.4）；P3 catalog 內容完成（§5.5，id 為暫定）；P4 端到端測試完成（§5.6）。kernel 端全部完成，等使用者 merge 與處理 Unity 端。**
 分支：`claude/water-jet`，從 `main`（dcc805da，ABI 107）開；計畫最早寫在
 `claude/water-jet-plan`。
 最後更新：2026-10-17。
@@ -275,6 +275,36 @@ schema」。實際上 client 只在「會飛的 area effect 撞上 static world�
 - 既有失敗（沒有 P3 檔案時一樣失敗，與本分支無關）：`loadout_test`、`drop_tag_test`
   （`{0, 13, 15, 14}` 的預設武器）、`gameplay_config_test`（`prop_population_rules.size() == 2`）。
 - Unity 端需要這把新武器的外觀和 UI，由使用者處理。
+
+### 5.6 P4 實作紀錄（2026-10-17）
+
+`game_server/tests/water_jet_staff_test.cc`：玩家拿著 shipped 的 Water Jet Staff（透過 weapon
+container，跟 loadout 選武器的路徑一樣），走真正的 input 路徑開火，打在 shipped 的
+`plane_200x200_4zones` 場景上。
+
+- 不假設法線：測試把同一份場景載入自己的 `PhysicsWorld`，從場上那發水柱彈的實際位置和速度
+  做 raycast，拿到的面法線就是期望值。
+- 每個情境開兩槍：第一槍確認落點，然後在落點前 0.8 m 的地面放一隻 gingerbread，第二槍推它。
+  水柱彈不撞 actor，所以第二槍會穿過 gingerbread 打在同一點。
+- 結果（推力方向和面法線的夾角都是 0.00°）：
+
+| 情境 | 擊中的面 | 面法線 | gingerbread 的速度 |
+|---|---|---|---|
+| floor（open combat 區的平地） | 地面 | (0, 1, 0) | (0.03, 11.67, -0.03)，11.7 m/s |
+| slope（narrow pass 東側崖壁的坡腳） | 約 20° 的坡 | (0.33, 0.94, 0) | (4.01, 11.31, 0.01)，12.0 m/s |
+| wall（forest flank 的樹幹） | 垂直面 | (-1.00, 0.03, 0.02) | (-11.99, 0.33, 0.26)，12.0 m/s |
+
+- Mutation 確認不是空測：把水柱彈的 spawn 方向改回 `event.direction`，floor 情境的推力變成
+  水平的 (10.29, -0.03, 0)，偏 90°，測試失敗。
+
+P4 過程中發現的兩件事（都不是 bug，是目前設計的結果）：
+1. **打在高處的崖壁，地面的人推不到**。cylinder 是直立的，半高只有 2 m，水柱彈打在離地 5 m
+   的崖壁上時，水柱涵蓋 3–7 m，站在地上的人不在範圍內。這是 Q6（直立 cylinder）的延伸。
+   要改的話可以加大半高，或做會沿法線轉向的 cylinder。
+2. **水柱彈會穿過 prop**（冰塊、glyph、帳篷）。`terrain | static_obstacle` 這種不指定陣營的
+   mask，`gameplay_category_mask` 是空的，所以 prop 的 collider 擋不住它（`13_collider_ice_block_hitbox.yaml`
+   的說明有寫這個已知的缺口）。能當「牆」的只有 static scene 裡的幾何（崖壁、樹幹）。這跟 Q2 的
+   預設（不包含 prop）一致。
 
 ---
 
