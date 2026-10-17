@@ -224,6 +224,34 @@ std::size_t poll_client_spawn_count(
     return spawns;
 }
 
+// Refuses every server send while blocked, the way GNS does once a
+// connection's send queue is full (k_EResultLimitExceeded): the client is
+// still connected, it has only stopped reading.
+class RefusingTransport final : public network_example::ITransport {
+public:
+    bool StartClient(const char* address) override {
+        return loopback.StartClient(address);
+    }
+    bool StartServer(std::uint16_t port) override {
+        return loopback.StartServer(port);
+    }
+    void Stop() override { loopback.Stop(); }
+    bool Send(
+        network_example::PeerId peer,
+        const void* data,
+        std::uint32_t size,
+        network_example::SendMode mode,
+        network_example::ChannelId channel) override {
+        return !blocked && loopback.Send(peer, data, size, mode, channel);
+    }
+    bool PollEvent(network_example::TransportEvent& out_event) override {
+        return loopback.PollEvent(out_event);
+    }
+
+    network_example::LoopbackTransport loopback;
+    bool blocked = false;
+};
+
 // A crowd is introduced over several snapshots rather than all at once.
 //
 // Every introduction is a reliable entity spawn plus a locomotion baseline, and
@@ -280,6 +308,56 @@ void a_crowd_is_introduced_over_several_snapshots() {
     require(snapshots >= 4);
     require(
         engine.peer_sessions_[0].relevant_entities.size() == expected_total);
+}
+
+// A spawn the transport refuses is offered again.
+//
+// A client that stops reading -- its process stalled or asleep while the
+// connection stays up -- fills its GNS queue, and from then on every send to it
+// is refused. The spawns refused in that window used to count as announced:
+// the entity went into the relevant set, so it was never offered again, while
+// every later snapshot named it. Once the client caught up it held actors it
+// had never been told about, and ended its prediction session over them
+// ("remote actor movement metadata never arrived").
+void a_refused_spawn_is_offered_again() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+
+    auto transport = std::make_unique<RefusingTransport>();
+    RefusingTransport* refusing = transport.get();
+    engine.transport_ = std::move(transport);
+    engine.reset_runtime_state(KernelMode_DedicatedServer);
+    require(refusing->StartServer(7785));
+
+    const network_example::NetId player =
+        engine.world_.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
+    network_example::KernelEngine::PeerSession session{1, player, 0, true, {}};
+    engine.peer_sessions_.push_back(std::move(session));
+
+    // The session is up and has its player before the client stalls.
+    engine.simulate_tick();
+    engine.simulate_tick();
+    require(poll_client_spawn_count(&refusing->loopback) == 1u);
+    require(engine.peer_sessions_[0].relevant_entities.contains(player));
+
+    refusing->blocked = true;
+    const network_example::NetId enemy =
+        engine.world_.spawn_enemy(glm::vec3{5.0f, 0.0f, 0.0f});
+    for (int snapshot = 0; snapshot < 4; ++snapshot) {
+        engine.simulate_tick();
+        engine.simulate_tick();
+        // Never announced, so no snapshot may name it either.
+        require(!engine.peer_sessions_[0].relevant_entities.contains(enemy));
+    }
+
+    refusing->blocked = false;
+    engine.simulate_tick();
+    engine.simulate_tick();
+    require(poll_client_spawn_count(&refusing->loopback) == 1u);
+    require(engine.peer_sessions_[0].relevant_entities.contains(enemy));
 }
 
 // The relevance band, on its own engine so that it actually runs: everything in
@@ -1007,6 +1085,7 @@ int main() {
     // Ahead of everything else: main() carries a long-standing abort part way
     // down, and anything below it never runs in a build where assert() is live.
     a_departure_does_not_cost_the_next_entity_its_turn();
+    a_refused_spawn_is_offered_again();
     relevance_holds_until_a_wider_radius_than_it_entered();
     a_crowd_is_introduced_over_several_snapshots();
     a_nearer_agent_is_served_more_often_than_a_distant_one();

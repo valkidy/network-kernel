@@ -15165,7 +15165,16 @@ void KernelEngine::sync_session_relevance(
             continue;
         }
         ++spawns_sent;
-        send_entity_spawn(session->peer, *entity);
+        if (!send_entity_spawn(session->peer, *entity)) {
+            // Refused, not lost in flight: GNS turns a send away once the
+            // connection's queue is full, which is what a client that has
+            // stopped reading (a stalled or sleeping process) looks like for
+            // as long as it lasts. Left out of next_relevant like a deferred
+            // entity, so it is offered again; announcing it anyway would put
+            // it in every later snapshot for a client that never heard of it.
+            // What normally follows the spawn waits for it.
+            continue;
+        }
         // Steps alone cannot tell a session where feet already are, so a
         // session that has just started seeing an entity is handed them.
         // Without this its legs would appear one at a time, each only once
@@ -15331,7 +15340,7 @@ bool KernelEngine::is_anchored_in_flight_prop(NetId net_id) const {
         trajectory->gravity == motion.gravity;
 }
 
-void KernelEngine::send_entity_spawn(PeerId peer, const EntitySnapshot& entity) {
+bool KernelEngine::send_entity_spawn(PeerId peer, const EntitySnapshot& entity) {
     PeerId owner_peer = 0;
     std::uint32_t actor_template_id = 0;
     std::uint32_t entity_template_id = 0;
@@ -15417,15 +15426,16 @@ void KernelEngine::send_entity_spawn(PeerId peer, const EntitySnapshot& entity) 
             SendMode::kReliable,
             ChannelId::kReliableEvent)) {
         push_event(KernelEventType_Error, entity.net_id, peer, 16);
-    } else {
-        record_sent_packet(
-            static_cast<std::uint32_t>(packet.size()),
-            SendMode::kReliable,
-            ChannelId::kReliableEvent);
+        return false;
     }
+    record_sent_packet(
+        static_cast<std::uint32_t>(packet.size()),
+        SendMode::kReliable,
+        ChannelId::kReliableEvent);
     if (entity.type == EntityType::kProjectile) {
         send_projectile_spawn_batch(peer, entity);
     }
+    return true;
 }
 
 void KernelEngine::queue_prop_state_change(NetId net_id) {
