@@ -1,0 +1,11 @@
+# The reach of the water jet's column: an upright cylinder 1.5 m in radius,
+# 2 m above and below the point the bolt struck. Upright always -- a cylinder
+# stands along world Y -- so on a wall it is a column half inside the wall,
+# reaching whoever stands in front of it (docs/WATER_JET_PLAN.md, Q6).
+id: 57
+name: water_jet_column
+shape: cylinder
+radius: 1.5
+half_height: 2.0
+purpose: damage
+layer: area_effect

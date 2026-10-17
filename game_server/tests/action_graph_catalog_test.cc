@@ -774,6 +774,88 @@ void spawn_repeat_comes_from_the_binding() {
         {"spawn_projectile lifetime_ticks must be at least 1"}));
 }
 
+// event.surface_normal (ABI 108): the face a standard projectile struck, as a
+// spawn_projectile's direction on its impact. An expiry strikes nothing, and an
+// area effect's impacts are actors, which report no face.
+void surface_normal_spawn_direction_is_impact_and_standard_only() {
+    const fs::path projectiles = shipped_catalog() / "projectile_templates";
+    const fs::path rocket = projectiles / "3_projectile_rocket.yaml";
+    const std::string rocket_on_normal =
+        with_replaced(rocket, "direction: event.direction", "direction: event.surface_normal");
+    const fs::path accepted = catalog_with(
+        "surface_normal_on_impact",
+        {{"projectile_templates/3_projectile_rocket.yaml", rocket_on_normal}});
+    const gs::KernelGameplayCatalogStorage storage = built(accepted);
+    const KernelActionDefinition& spawn =
+        compiled_projectile(storage, 3u).projectile_impact_trigger.actions[0];
+    require(spawn.action_type == KernelEntityTriggerActionType_SpawnProjectile);
+    require(spawn.direction_source == KernelEventVec3Source_SurfaceNormal);
+    require(kernel_accepts(storage));
+
+    require(refused_for(
+        catalog_with(
+            "surface_normal_on_expired",
+            {{"projectile_templates/3_projectile_rocket.yaml",
+              with_replaced(
+                  rocket,
+                  "  on_projectile_impact:\n    action_graph: action_spawn_projectile\n"
+                  "    parameters:\n      template: rocket_explosion\n"
+                  "      position: event.position\n      direction: event.direction",
+                  "  on_expired:\n    action_graph: action_spawn_projectile\n"
+                  "    parameters:\n      template: rocket_explosion\n"
+                  "      position: event.position\n      direction: event.surface_normal")}}),
+        {"on_expired does not provide event.surface_normal"}));
+
+    const fs::path shockwave = projectiles / "16_projectile_shockwave_blast.yaml";
+    std::string area_on_normal = read_file(shockwave);
+    area_on_normal.resize(area_on_normal.find("triggers:"));
+    area_on_normal +=
+        "triggers:\n"
+        "  on_projectile_impact:\n"
+        "    action_graph: action_spawn_projectile\n"
+        "    parameters:\n"
+        "      template: rocket_explosion\n"
+        "      position: event.position\n"
+        "      direction: event.surface_normal\n";
+    require(refused_for(
+        catalog_with(
+            "surface_normal_on_area_effect",
+            {{"projectile_templates/16_projectile_shockwave_blast.yaml",
+              area_on_normal}}),
+        {"event.surface_normal needs a standard projectile", "shockwave_blast"}));
+}
+
+// The shipped water jet (provisional ids 37/38) holds the invariants its push
+// depends on (docs/WATER_JET_PLAN.md D9, D10): the bolt strikes only the world
+// and spawns along the struck face; the column carries that face in a nonzero
+// heading the world never parks, is built on clients, and pushes along it
+// with a lift.
+void the_water_jet_holds_its_push_invariants() {
+    const gs::KernelGameplayCatalogStorage storage =
+        built(shipped_catalog() / "gameplay_catalog.yaml");
+    const KernelProjectileMechanicsDefinition& bolt = compiled_projectile(storage, 37u);
+    require(bolt.projectile_type == KernelProjectileType_Standard);
+    require(bolt.collision_mask ==
+            (KERNEL_COLLISION_LAYER_TERRAIN | KERNEL_COLLISION_LAYER_STATIC_OBSTACLE));
+    const KernelActionDefinition& spawn = bolt.projectile_impact_trigger.actions[0];
+    require(spawn.action_type == KernelEntityTriggerActionType_SpawnProjectile);
+    require(spawn.spawn_projectile_template_id == 38u);
+    require(spawn.direction_source == KernelEventVec3Source_SurfaceNormal);
+
+    const KernelProjectileMechanicsDefinition& column = compiled_projectile(storage, 38u);
+    require(column.projectile_type == KernelProjectileType_AreaEffect);
+    require(column.speed > 0.0f);
+    require(column.area_effect.motion_collision_mask == 0u);
+    require(column.sync_mode != KernelProjectileSyncMode_ServerSnapshotOnly);
+    const KernelActionDefinition& push = column.projectile_impact_trigger.actions[0];
+    require(push.action_type == KernelEntityTriggerActionType_ApplyImpulse);
+    require(push.direction_source == KernelEventVec3Source_SubjectDirection);
+    // Split with a lift: off a wall the normal is flat, and a flat push on a
+    // grounded actor dies the next tick.
+    require(push.impulse_strength_mode == KERNEL_IMPULSE_STRENGTH_MODE_SPLIT);
+    require(push.impulse_strength_vertical > 0.0f);
+}
+
 // The archive the client loads must hold every graph the source tree does,
 // subdirectories included: the bundle rule copies files by path.
 void the_bundle_carries_the_same_graphs() {
@@ -818,6 +900,8 @@ int main() {
     status_strength_and_refill_percent_come_from_the_binding();
     bound_status_strength_and_refill_percent_are_range_checked();
     spawn_repeat_comes_from_the_binding();
+    surface_normal_spawn_direction_is_impact_and_standard_only();
+    the_water_jet_holds_its_push_invariants();
     the_bundle_carries_the_same_graphs();
     return 0;
 }

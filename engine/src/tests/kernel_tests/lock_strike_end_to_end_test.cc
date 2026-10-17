@@ -167,11 +167,12 @@ KernelActionTriggerDefinition strike_trigger(
 }
 
 // A bottle breaking at `where`, as its collision trigger runs it: nobody
-// instigates, the thrower's peer owns it.
+// instigates, the thrower's peer owns it, and the graph runs as `bottle`.
 void break_bottle(
     ne::KernelEngine& server,
     const KernelActionTriggerDefinition& trigger,
-    const glm::vec3& where) {
+    const glm::vec3& where,
+    ne::NetId bottle = 0u) {
     static std::uint64_t request_id = 1000u;
     const std::optional<ne::CompiledActionGraphBinding> binding =
         ne::compile_action_trigger_definition(
@@ -179,7 +180,7 @@ void break_bottle(
     require(binding.has_value());
     const ne::TriggerEvent event{
         ne::TriggerEventType::kCollision,
-        0u,
+        bottle,
         0u,
         0u,
         where,
@@ -193,7 +194,7 @@ void break_bottle(
     std::vector<ne::ActionGraphCommand> commands;
     std::string error;
     require(ne::evaluate_action_graph(
-        *binding, 0u, event, provenance, &commands, &error));
+        *binding, bottle, event, provenance, &commands, &error));
     require(ne::execute_action_graph_command_batch(
         server,
         ne::ActionGraphCommandBatch{event, provenance, 1u, std::move(commands)},
@@ -432,6 +433,50 @@ void graph_missiles_leave_from_their_origin() {
     require(hp(arena.server, second) == 100 - kDamage);
 }
 
+// A bottle breaks with its own hit box still in the world: a prop's collider
+// is a static obstacle, and a bottle's one-metre box sits on the very spot it
+// broke. Its first strike runs inside its collision trigger, before the
+// self-damage that spends it takes effect; the rest run after the bottle has
+// left. Every strike is lifted the same metre and locks the same two.
+void the_breaking_bottle_hides_nothing_from_its_first_strike() {
+    Arena arena(7971);
+    const ne::NetId first = arena.enemy({3.0f, 0.0f, 0.0f});
+    const ne::NetId second = arena.enemy({0.0f, 0.0f, 5.0f});
+    arena.settle();
+    arena.server.physics_world_ = std::make_unique<ne::physics::PhysicsWorld>();
+    arena.server.world_.set_collision_world(arena.server.physics_world_.get());
+    constexpr ne::NetId kBottle = 9000u;
+    constexpr std::uint32_t kBottleCollider = 9001u;
+    ne::physics::CollisionObjectDescriptor bottle;
+    bottle.identity = ne::physics::CollisionObjectIdentity{
+        kBottle, kBottleCollider, ne::physics::kHitZoneUnscaled,
+        ne::physics::CollisionObjectKind::kStaticObstacle,
+        ne::physics::CollisionLayer::kStaticObstacle};
+    bottle.shape.type = ne::physics::CollisionShapeType::kBox;
+    bottle.shape.half_extents = glm::vec3{0.5f};
+    // collision_damage_prop_hitbox: centre 0.5 m up, resting on the ground.
+    bottle.position = glm::vec3{0.0f, 0.5f, 0.0f};
+    bottle.rotation = glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
+    std::string error;
+    require(arena.server.physics_world_->upsert_object(bottle, &error));
+    break_bottle(
+        arena.server, strike_trigger(KernelLockStrikeMode_Instant, 3u, 6u),
+        glm::vec3{0.0f},
+        kBottle);
+    require(arena.server.physics_world_->remove_object(kBottleCollider));
+    for (int index = 0; index < 40; ++index) {
+        arena.tick();
+    }
+    const Arena::Client& client = arena.clients[0];
+    require(client.strikes.size() == 3u);
+    for (const KernelLockStrikeEvent& strike : client.strikes) {
+        require(near(strike.selection.origin, {0.0f, 1.0f, 0.0f}, 0.001f));
+        require(strike.selection.target_count == 2u);
+    }
+    require(hp(arena.server, first) == 100 - 3 * kDamage);
+    require(hp(arena.server, second) == 100 - 3 * kDamage);
+}
+
 // Who is sent what (D13). A strike far from both players strikes its target
 // and is sent to nobody; one that locked nobody goes to whoever is within
 // relevance of where it was taken -- here both -- and one far off to nobody.
@@ -572,6 +617,7 @@ void the_listen_host_sends_itself_the_strike() {
 int main() {
     a_repeated_strike_reaches_every_client_that_sees_its_targets();
     graph_missiles_leave_from_their_origin();
+    the_breaking_bottle_hides_nothing_from_its_first_strike();
     a_strike_goes_to_whoever_sees_it();
     records_past_the_budget_wait_for_the_next_snapshot();
     the_listen_host_sends_itself_the_strike();

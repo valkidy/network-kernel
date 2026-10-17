@@ -206,6 +206,10 @@ bool expression_available_for_event(
         return event_type == TriggerEventType::kProjectileImpact ||
             event_type == TriggerEventType::kExpired;
     }
+    if (event_vec3->source == EventVec3Source::kSurfaceNormal) {
+        // Only an impact strikes a face. An expiry ends in mid-air.
+        return event_type == TriggerEventType::kProjectileImpact;
+    }
     // A destroy reports away from whoever did it, or straight up when nobody
     // did, so it always has a direction to give.
     return event_type == TriggerEventType::kActivated ||
@@ -231,6 +235,8 @@ EventVec3Source event_vec3_source_from_kernel(std::uint8_t source) {
             return EventVec3Source::kSubjectDirection;
         case KernelEventVec3Source_SubjectPosition:
             return EventVec3Source::kSubjectPosition;
+        case KernelEventVec3Source_SurfaceNormal:
+            return EventVec3Source::kSurfaceNormal;
         case KernelEventVec3Source_Position:
         default:
             return EventVec3Source::kPosition;
@@ -314,6 +320,8 @@ std::optional<ActionGraphParameterValue> resolve_expression(
             return ActionGraphParameterValue{event.subject_direction};
         case EventVec3Source::kSubjectPosition:
             return ActionGraphParameterValue{event.subject_position};
+        case EventVec3Source::kSurfaceNormal:
+            return ActionGraphParameterValue{event.surface_normal};
         case EventVec3Source::kDirection:
             break;
     }
@@ -426,6 +434,8 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
             spawn.repeat_stagger_lifetime_ticks =
                 action.repeat_stagger_lifetime_ticks;
             spawn.action_index = static_cast<std::uint32_t>(index);
+            spawn.drop_on_zero_direction =
+                action.direction_source == KernelEventVec3Source_SurfaceNormal;
             binding.graph.actions.push_back(std::move(spawn));
             binding.parameters.push_back({
                 template_name,
@@ -1271,6 +1281,10 @@ bool evaluate_action_graph(
                 std::get<ProjectileTemplateIdValue>(*template_value).value;
             const glm::vec3 position = std::get<glm::vec3>(*position_value);
             const glm::vec3 direction = std::get<glm::vec3>(*direction_value);
+            if (spawn->drop_on_zero_direction &&
+                glm::dot(direction, direction) <= 1e-12f) {
+                continue;
+            }
             if (spawn->repeat_count_max == 0u) {
                 ActionSpawnProjectileCommand command{
                     projectile_template_id, position, direction, provenance};
@@ -1465,6 +1479,7 @@ bool evaluate_action_graph(
             command.repeat_count = strike->repeat_count;
             command.repeat_interval_ticks = strike->repeat_interval_ticks;
             command.origin_lift = strike->origin_lift;
+            command.carrier = self;
             command.position = std::get<glm::vec3>(*position_value);
             if (direction_value != nullptr) {
                 command.direction = std::get<glm::vec3>(*direction_value);

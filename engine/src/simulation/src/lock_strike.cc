@@ -119,7 +119,9 @@ LockSelection select_lock_targets(
 
     const physics::PhysicsWorld* collision_world = world.collision_world();
     const lock_targets::LineBlocked behind_a_wall =
-        [collision_world, shooter_net_id](
+        [collision_world,
+         ignored = spec.carrier_net_id != 0u ? spec.carrier_net_id
+                                             : shooter_net_id](
             const glm::vec3& from, const glm::vec3& to) {
             if (collision_world == nullptr) {
                 return false;
@@ -136,7 +138,7 @@ LockSelection select_lock_targets(
             ray.filter = collision_filter_from_mask(
                 KERNEL_COLLISION_LAYER_TERRAIN |
                 KERNEL_COLLISION_LAYER_STATIC_OBSTACLE);
-            ray.filter.ignored_entity_net_id = shooter_net_id;
+            ray.filter.ignored_entity_net_id = ignored;
             physics::CollisionHit hit{};
             return collision_world->ray_cast_closest(ray, &hit) &&
                    hit.distance < distance;

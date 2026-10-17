@@ -1,3 +1,4 @@
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <optional>
@@ -893,6 +894,160 @@ void stationary_marker_expires_in_place_facing_its_spawn_direction() {
 
 }  // namespace
 
+// The water jet's spawn: a column launched along the face its projectile
+// struck. Speed 0.05 m/s is only there to carry the normal in
+// initial_velocity, which is what an area effect reports as its subject
+// direction.
+KernelActionTriggerDefinition surface_normal_spawn_trigger(
+    std::uint32_t projectile_template_id) {
+    KernelActionTriggerDefinition trigger{};
+    trigger.struct_size = sizeof(KernelActionTriggerDefinition);
+    trigger.action_type = KernelEntityTriggerActionType_SpawnProjectile;
+    trigger.spawn_projectile_template_id = projectile_template_id;
+    trigger.position_source = KernelEventVec3Source_Position;
+    trigger.direction_source = KernelEventVec3Source_SurfaceNormal;
+    return trigger;
+}
+
+// Fires one projectile from `origin` along `velocity` at whatever the world
+// holds, and returns the initial velocities of every projectile it spawned.
+std::vector<glm::vec3> fire_surface_normal_spawner(
+    network_example::World& world,
+    const glm::vec3& origin,
+    const glm::vec3& velocity,
+    std::uint32_t collision_mask) {
+    network_example::RuntimeProjectileTemplate jet_template;
+    jet_template.projectile_template_id = 3;
+    jet_template.projectile_type = network_example::ProjectileType::kStandard;
+    const std::optional<network_example::CompiledActionGraphBinding> binding =
+        network_example::compile_action_trigger_definition(
+            network_example::TriggerEventType::kProjectileImpact,
+            surface_normal_spawn_trigger(8));
+    require(binding.has_value());
+    jet_template.projectile_impact_binding = *binding;
+    network_example::RuntimeProjectileTemplate column = area_effect_template(
+        8, 1.5f, 0, 1, 30, network_example::kCollisionLayerHostileSide);
+    column.speed = 0.05f;
+    world.set_projectile_templates({jet_template, column});
+
+    const network_example::NetId jet = spawn_test_projectile(
+        world, 1, origin, velocity, 3, collision_mask);
+    const auto jet_entity = world.find_entity(jet);
+    require(jet_entity.has_value());
+    network_example::ProjectileState& projectile =
+        world.registry().get<network_example::ProjectileState>(*jet_entity);
+    projectile.projectile_template_id = 3;
+    projectile.shooter_net_id = jet;
+    projectile.damage = 0;
+    projectile.damage_shape = network_example::ProjectileDamageShape::kNone;
+    world.registry().emplace<network_example::OnProjectileImpactTriggerTag>(
+        *jet_entity);
+
+    std::vector<KernelEvent> events;
+    network_example::simulate_projectiles(world, 0.1f, 1, &events);
+    require(!world.find_entity(jet).has_value());
+
+    std::vector<glm::vec3> spawned;
+    for (const KernelEvent& event : events) {
+        if (event.type != KernelEventType_EntitySpawned ||
+            event.code !=
+                static_cast<std::uint32_t>(network_example::EntityType::kProjectile)) {
+            continue;
+        }
+        const auto entity = world.find_entity(event.net_id);
+        require(entity.has_value());
+        spawned.push_back(
+            world.registry()
+                .get<network_example::ProjectileState>(*entity)
+                .initial_velocity);
+    }
+    return spawned;
+}
+
+void add_static_box(
+    network_example::physics::PhysicsWorld& physics,
+    std::uint32_t collider_id,
+    const glm::vec3& position,
+    const glm::vec3& half_extents) {
+    network_example::physics::CollisionObjectDescriptor box;
+    box.identity = network_example::physics::CollisionObjectIdentity{
+        0,
+        collider_id,
+        0,
+        network_example::physics::CollisionObjectKind::kStaticObstacle,
+        network_example::physics::CollisionLayer::kStaticObstacle,
+    };
+    box.shape.type = network_example::physics::CollisionShapeType::kBox;
+    box.shape.half_extents = half_extents;
+    box.position = position;
+    std::string error;
+    require(physics.upsert_object(box, &error));
+}
+
+bool points_along(const glm::vec3& value, const glm::vec3& expected) {
+    return glm::length(value) > 0.0f &&
+        glm::dot(glm::normalize(value), expected) > 0.9999f;
+}
+
+void surface_normal_spawn_launches_along_the_struck_face() {
+    {
+        network_example::World world;
+        network_example::physics::PhysicsWorld physics;
+        world.set_collision_world(&physics);
+        add_static_box(
+            physics, 100, glm::vec3{0.0f, -0.5f, 0.0f}, glm::vec3{5.0f, 0.5f, 5.0f});
+        const std::vector<glm::vec3> spawned = fire_surface_normal_spawner(
+            world,
+            glm::vec3{0.0f, 1.0f, 0.0f},
+            glm::vec3{4.0f, -20.0f, 0.0f},
+            network_example::kCollisionLayerStaticObstacle);
+        require(spawned.size() == 1);
+        // The floor's normal, not the shot's slanted heading.
+        require(points_along(spawned[0], glm::vec3{0.0f, 1.0f, 0.0f}));
+        require(std::abs(glm::length(spawned[0]) - 0.05f) < 1e-5f);
+    }
+    {
+        network_example::World world;
+        network_example::physics::PhysicsWorld physics;
+        world.set_collision_world(&physics);
+        add_static_box(
+            physics, 100, glm::vec3{1.0f, 0.5f, 0.0f}, glm::vec3{0.1f, 1.0f, 1.0f});
+        const std::vector<glm::vec3> spawned = fire_surface_normal_spawner(
+            world,
+            glm::vec3{0.0f, 0.5f, -0.5f},
+            glm::vec3{20.0f, 0.0f, 10.0f},
+            network_example::kCollisionLayerStaticObstacle);
+        require(spawned.size() == 1);
+        require(points_along(spawned[0], glm::vec3{-1.0f, 0.0f, 0.0f}));
+    }
+}
+
+// An actor has no face to report: the spawn is dropped, not launched along
+// spawn_projectile's +X fallback.
+void surface_normal_spawn_is_dropped_on_an_actor_hit() {
+    network_example::World world;
+    const network_example::NetId enemy =
+        world.spawn_enemy(glm::vec3{1.0f, 0.2f, 0.0f});
+    const auto enemy_entity = world.find_entity(enemy);
+    require(enemy_entity.has_value());
+    // A dead actor is not in the collision world at all.
+    world.registry().get<network_example::Health>(*enemy_entity).hp = 100;
+    const std::vector<glm::vec3> spawned = fire_surface_normal_spawner(
+        world,
+        glm::vec3{0.0f, 0.2f, 0.0f},
+        glm::vec3{20.0f, 0.0f, 0.0f},
+        network_example::kCollisionLayerHostileSide);
+    require(spawned.empty());
+}
+
+// An expiry ends in mid-air with no face to report, so a graph cannot bind it.
+void surface_normal_is_refused_outside_an_impact() {
+    require(!network_example::compile_action_trigger_definition(
+                 network_example::TriggerEventType::kExpired,
+                 surface_normal_spawn_trigger(8))
+                 .has_value());
+}
+
 int main() {
     matching_projectiles_destroy_without_damage();
     matching_interaction_spawns_area_effect();
@@ -908,5 +1063,8 @@ int main() {
     historical_hit_emits_projectile_trigger_once();
     expired_trigger_does_not_reuse_impact_trigger();
     stationary_marker_expires_in_place_facing_its_spawn_direction();
+    surface_normal_spawn_launches_along_the_struck_face();
+    surface_normal_spawn_is_dropped_on_an_actor_hit();
+    surface_normal_is_refused_outside_an_impact();
     return 0;
 }

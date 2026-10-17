@@ -1890,7 +1890,13 @@ bool validate_beam_mechanics(const KernelBeamMechanicsDefinition& beam) {
 
 bool validate_projectile_mechanics(
     const KernelProjectileMechanicsDefinition& mechanics) {
-    const auto valid_trigger = [](const KernelActionTriggerDefinition& trigger) {
+    // A surface normal exists only where a standard projectile struck the
+    // world: an area effect's impacts are actors, and an expiry strikes
+    // nothing.
+    const bool impact_has_surface =
+        mechanics.projectile_type == KernelProjectileType_Standard;
+    const auto valid_trigger = [](const KernelActionTriggerDefinition& trigger,
+                                  bool surface_normal_available) {
         if (trigger.struct_size == 0u) return true;
         if (trigger.struct_size < sizeof(KernelActionTriggerDefinition)) return false;
         const std::uint32_t count = trigger.action_count == 0u ? 1u : trigger.action_count;
@@ -1927,7 +1933,10 @@ bool validate_projectile_mechanics(
             if (action.action_type == KernelEntityTriggerActionType_SpawnProjectile) {
                 if (action.spawn_projectile_template_id == 0u ||
                     action.position_source != KernelEventVec3Source_Position ||
-                    action.direction_source != KernelEventVec3Source_Direction) {
+                    (action.direction_source != KernelEventVec3Source_Direction &&
+                     !(surface_normal_available &&
+                       action.direction_source ==
+                           KernelEventVec3Source_SurfaceNormal))) {
                     return false;
                 }
             } else if (action.action_type == KernelEntityTriggerActionType_ApplyDamage) {
@@ -1990,8 +1999,8 @@ bool validate_projectile_mechanics(
              ? mechanics.damage != 0
              : mechanics.damage == 0) ||
         mechanics.max_hit_count == 0 ||
-        !valid_trigger(mechanics.projectile_impact_trigger) ||
-        !valid_trigger(mechanics.expired_trigger)) {
+        !valid_trigger(mechanics.projectile_impact_trigger, impact_has_surface) ||
+        !valid_trigger(mechanics.expired_trigger, false)) {
         return false;
     }
     // Kept in step with the same sets in gameplay_config.cc, which is where
@@ -7542,11 +7551,13 @@ bool finite_vec3(const glm::vec3& value) {
 }
 
 // Where a lock_strike's lock is taken from: `lift` metres above `position`,
-// or just under whatever terrain or static obstacle is overhead before that.
+// or just under whatever terrain or static obstacle is overhead before that --
+// other than `carrier`'s own, which stands on `position` itself.
 glm::vec3 lifted_lock_origin(
     const physics::PhysicsWorld* collision_world,
     const glm::vec3& position,
-    float lift) {
+    float lift,
+    NetId carrier) {
     if (lift <= 0.0f) {
         return position;
     }
@@ -7559,6 +7570,7 @@ glm::vec3 lifted_lock_origin(
         ray.filter = collision_filter_from_mask(
             KERNEL_COLLISION_LAYER_TERRAIN |
             KERNEL_COLLISION_LAYER_STATIC_OBSTACLE);
+        ray.filter.ignored_entity_net_id = carrier;
         physics::CollisionHit hit{};
         if (collision_world->ray_cast_closest(ray, &hit) &&
             hit.distance < lift) {
@@ -7668,7 +7680,10 @@ void KernelEngine::strike_lock_once(
         return;
     }
     spec.volume.origin = lifted_lock_origin(
-        world.collision_world(), command.position, command.origin_lift);
+        world.collision_world(),
+        command.position,
+        command.origin_lift,
+        command.carrier);
     spec.volume.aim = command.direction;
     spec.volume.max_targets = std::clamp<std::uint32_t>(
         shot->max_hit_count, 1u, KERNEL_MAX_LOCK_ARCS);
@@ -7676,6 +7691,7 @@ void KernelEngine::strike_lock_once(
     spec.collision_mask = shot->collision_mask;
     spec.weapon_id = command.provenance.source_weapon_id;
     spec.damage = shot->damage;
+    spec.carrier_net_id = command.carrier;
 
     // A bottle's graph runs as nobody (instigator 0) for its thrower's peer:
     // the thrower and what it controls are never locked, and nobody else is
