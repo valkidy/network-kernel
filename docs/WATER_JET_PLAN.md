@@ -1,6 +1,6 @@
 # 水柱衝擊魔法實作計劃書
 
-狀態：**Q1–Q5 採預設值定案；P0 驗證完成（§5.2）；P1 尚未開始。**
+狀態：**Q1–Q5、Q6 採預設值定案；P0 驗證完成（§5.2）；P1 kernel 完成（§5.3），ABI 108；P2 尚未開始。**
 分支：`claude/water-jet`，從 `main`（dcc805da，ABI 107）開；計畫最早寫在
 `claude/water-jet-plan`。
 最後更新：2026-10-17。
@@ -102,14 +102,17 @@ schema」。實際上 client 只在「會飛的 area effect 撞上 static world�
 
 ### 3.3 K3：`spawn_projectile` 接受 `SurfaceNormal`
 
-- `kernel.cc` 有**兩張表**都把 `spawn_projectile` 的 direction 限定成 `Direction`
-  （大約在 1929 行和 3769 行）。兩張都要改成也接受 `SurfaceNormal`。
-  `entity_trigger_action_parity_test` 會抓這兩張表有沒有對齊。
-- 只有 projectile 的撞擊觸發才可以用 `SurfaceNormal`。其他事件（例如 item 使用、
-  `on_expired`）沒有表面，loader 要拒絕。
-- runtime：`spawn_projectile` 拿到的 direction 是零向量、而 source 是 `SurfaceNormal` 時，
-  不產生這個 command（D5）。要確認這樣放棄不會拖垮同一個 graph 裡的其他 action：
-  只丟掉這一個 spawn，不要讓整個 batch 失敗。
+- `kernel.cc` 的 `validate_projectile_mechanics`（projectile 觸發的檢查）：只有 **standard
+  projectile 的 impact 觸發**可以把 `spawn_projectile` 的 direction 設成 `SurfaceNormal`。
+  area effect 的 impact 打到的都是 actor，`on_expired` 在半空中結束，兩者都沒有表面可回報，
+  所以都拒絕。
+- 計畫原本寫「兩張表都要改」，P1 實作時修正：另一張是 **entity 觸發**的表（約 3769 行），
+  entity 觸發沒有任何 producer 會填表面法線，維持只接受 `Direction`，不改。
+- action graph 端：`expression_available_for_event` 讓 `kSurfaceNormal` 只在
+  `kProjectileImpact` 可用，`compile_action_trigger_definition` 會用它擋掉其他事件。
+- runtime：`ActionSpawnProjectileDefinition` 新增 `drop_on_zero_direction`，direction source
+  是 `SurfaceNormal` 時才設。拿到零向量就只跳過這一個 spawn，同一個 graph 的其他 action 照常
+  執行。其他 source 的行為完全不變。
 
 ### 3.4 不需要改的部分
 
@@ -215,6 +218,22 @@ schema」。實際上 client 只在「會飛的 area effect 撞上 static world�
   如果要水平的命中範圍，牆上可以改用 sphere area effect，或另外做會旋轉的 cylinder。
   這屬於新的設計問題，列為 Q6。
 
+### 5.3 P1 實作紀錄（2026-10-17）
+
+- K1：`TriggerEvent::surface_normal`；`process_projectile_hit_records` 的兩條路徑（一般、piercing）
+  在撞到非 actor 時填入 `hit.normal`。
+- K2：`KernelEventVec3Source_SurfaceNormal = 5`、`EventVec3Source::kSurfaceNormal`，ABI 107 → 108。
+  `kernel_c_header_test.c` 的 ABI 版本與新 enum 值的 static assert 已更新。
+- K3：見 §3.3。
+- 測試（`projectile_interaction_test.cc`）：
+  - `surface_normal_spawn_launches_along_the_struck_face`：斜射地板，spawn 方向是 (0,1,0) 而不是
+    飛行方向；斜射牆面，spawn 方向是 (-1,0,0)；spawn 速度大小等於水柱的 0.05 m/s。
+  - `surface_normal_spawn_is_dropped_on_an_actor_hit`：撞到 actor 時不 spawn。已用 mutation 確認
+    不是空測：把零向量丟棄拿掉，這個測試會失敗。
+  - `surface_normal_is_refused_outside_an_impact`：`on_expired` 不能綁這個 source。
+- `kernel_c_header_test` 在 `sizeof(RenderEntityState) == 160u`（第 562 行）失敗，是 `main` 原本就有的：
+  這次對 `kernel_types.h` 的改動只有註解、ABI 數字和一個 enum 值，沒有動到這個 struct。
+
 ---
 
 ## 6. 待定問題
@@ -228,7 +247,7 @@ schema」。實際上 client 只在「會飛的 area effect 撞上 static world�
 | Q3 | impulse 要不要改成**取代**目標原本的速度，像 `apply_pull` 那樣？ | 不改，維持「加上去」（D7） |
 | Q4 | 撞牆得到的法線沒有往上的分量，目標貼地滑行可能被摩擦或移動輸入吃掉。要不要補一點往上的分量，還是靠 `impulse_lockout_ticks` 解決？ | 先靠 lockout，P4 量測後再決定 |
 | Q5 | 水柱的 speed、lifetime、半徑、strength 的數值 | P3 調整 |
-| Q6 | 打在牆上時，直立的 cylinder 命中範圍可以接受嗎？（§5.2 P0-3） | **未決**。預設接受，P3 實際看過再說 |
+| Q6 | 打在牆上時，直立的 cylinder 命中範圍可以接受嗎？（§5.2 P0-3） | 2026-10-17 使用者決定先接受，P3 實際看過再說 |
 
 ---
 

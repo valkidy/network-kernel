@@ -16,8 +16,11 @@ static void require_impl(int condition, const char* expression, int line) {
 #define require(condition) require_impl((condition) ? 1 : 0, #condition, __LINE__)
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 107u,
-    "lock_strike: an action graph's lock");
+    KERNEL_ABI_VERSION == 108u,
+    "water jet: the surface normal source");
+_Static_assert(
+    KernelEventVec3Source_SurfaceNormal == 5,
+    "ABI 108: the surface normal source is an appended enum value");
 _Static_assert(
     KernelEntityTriggerActionType_LockStrike == 16 &&
         KernelLockStrikeMode_Instant == 0 && KernelLockStrikeMode_Missile == 1,

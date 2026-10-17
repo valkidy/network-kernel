@@ -785,6 +785,12 @@ struct TriggerEvent {
     // area effect `position` is where each target was hit; this is the one
     // point the whole blast shares, which is what apply_pull gathers onto.
     glm::vec3 subject_position{0.0f};
+    // The face a projectile struck, when what it struck was the world --
+    // terrain or a static obstacle -- rather than an actor. Zero for an actor
+    // hit, for every other producer, and for a rewound hit, which only ever
+    // meets actors. A spawn that takes its direction from this drops itself
+    // on zero rather than flying off along the spawner's fallback axis.
+    glm::vec3 surface_normal{0.0f};
 };
 
 enum class ActionAuthoritySource : std::uint8_t {
@@ -855,6 +861,7 @@ enum class EventVec3Source : std::uint8_t {
     kDirection,
     kSubjectDirection,
     kSubjectPosition,
+    kSurfaceNormal,
 };
 
 enum class ActionConditionType : std::uint8_t {
@@ -899,6 +906,10 @@ struct ActionSpawnProjectileDefinition {
     // Where the action sits in its graph, so two repeated actions in one
     // graph draw different spreads.
     std::uint32_t action_index = 0;
+    // Set when the direction is the struck surface's normal: an impact that
+    // met an actor has none, and the spawn is skipped rather than launched
+    // along the spawner's fallback axis.
+    bool drop_on_zero_direction = false;
 };
 
 struct ActionApplyDamageDefinition {

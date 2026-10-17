@@ -5,6 +5,12 @@
 #include <stdint.h>
 
 /*
+ * 108: water jet (docs/WATER_JET_PLAN.md). KernelEventVec3Source gained
+ *     _SurfaceNormal: the face a projectile struck when it struck terrain or
+ *     a static obstacle, zero when it struck an actor. Accepted only as a
+ *     spawn_projectile's direction on a standard projectile's impact
+ *     trigger; a spawn whose normal comes out zero is dropped rather than
+ *     launched along a fallback axis. Layout unchanged.
  * 107: lock_strike, an action graph's lock (docs/LOCK_STRIKE_ACTION_PLAN.md).
  *     KernelEntityTriggerActionType gained _LockStrike: up to max_hit_count
  *     actors in a volume -- a damage collider template that is a cone aimed
@@ -375,7 +381,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 107u
+#define KERNEL_ABI_VERSION 108u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -1108,6 +1114,10 @@ typedef enum KernelEventVec3Source {
      * is its centre, the one point every target of a blast shares; Position is
      * where each target was hit. */
     KernelEventVec3Source_SubjectPosition = 4,
+    /* The face a projectile struck, when it struck terrain or a static
+     * obstacle; zero when it struck an actor. Only a standard projectile's
+     * impact trigger may ask for it, as a spawn_projectile's direction. */
+    KernelEventVec3Source_SurfaceNormal = 5,
 } KernelEventVec3Source;
 
 KERNEL_RPC_STRUCT(R"json({"type":"KernelVec3"})json")

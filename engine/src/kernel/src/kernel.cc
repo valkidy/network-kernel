@@ -1890,7 +1890,13 @@ bool validate_beam_mechanics(const KernelBeamMechanicsDefinition& beam) {
 
 bool validate_projectile_mechanics(
     const KernelProjectileMechanicsDefinition& mechanics) {
-    const auto valid_trigger = [](const KernelActionTriggerDefinition& trigger) {
+    // A surface normal exists only where a standard projectile struck the
+    // world: an area effect's impacts are actors, and an expiry strikes
+    // nothing.
+    const bool impact_has_surface =
+        mechanics.projectile_type == KernelProjectileType_Standard;
+    const auto valid_trigger = [](const KernelActionTriggerDefinition& trigger,
+                                  bool surface_normal_available) {
         if (trigger.struct_size == 0u) return true;
         if (trigger.struct_size < sizeof(KernelActionTriggerDefinition)) return false;
         const std::uint32_t count = trigger.action_count == 0u ? 1u : trigger.action_count;
@@ -1927,7 +1933,10 @@ bool validate_projectile_mechanics(
             if (action.action_type == KernelEntityTriggerActionType_SpawnProjectile) {
                 if (action.spawn_projectile_template_id == 0u ||
                     action.position_source != KernelEventVec3Source_Position ||
-                    action.direction_source != KernelEventVec3Source_Direction) {
+                    (action.direction_source != KernelEventVec3Source_Direction &&
+                     !(surface_normal_available &&
+                       action.direction_source ==
+                           KernelEventVec3Source_SurfaceNormal))) {
                     return false;
                 }
             } else if (action.action_type == KernelEntityTriggerActionType_ApplyDamage) {
@@ -1990,8 +1999,8 @@ bool validate_projectile_mechanics(
              ? mechanics.damage != 0
              : mechanics.damage == 0) ||
         mechanics.max_hit_count == 0 ||
-        !valid_trigger(mechanics.projectile_impact_trigger) ||
-        !valid_trigger(mechanics.expired_trigger)) {
+        !valid_trigger(mechanics.projectile_impact_trigger, impact_has_surface) ||
+        !valid_trigger(mechanics.expired_trigger, false)) {
         return false;
     }
     // Kept in step with the same sets in gameplay_config.cc, which is where
