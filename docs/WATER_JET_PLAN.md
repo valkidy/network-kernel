@@ -359,6 +359,11 @@ SPLIT 加上抬升，否則一樣只推得動一個 tick。
 
 ---
 
+## 6.1 延伸討論
+
+空中爆炸的 fallback、側掃（左右）、以及一般化的「以參考框架六軸推算位移」，整理在
+`docs/DISPLACEMENT_DIRECTION_DISCUSSION.md`。延後實作，等有明確的 gameplay 設計目標。
+
 ## 7. 交付時要回報的事
 
 - ABI：107 → 108（新增 `KernelEventVec3Source_SurfaceNormal`）。client 和 server 要用同一版。
