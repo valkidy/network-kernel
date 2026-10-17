@@ -1,0 +1,44 @@
+# The water jet's column: one push, along the face the bolt struck, for
+# everyone it reaches. No damage.
+#
+# It carries that face's normal in its own heading: speed 0.05 m/s along the
+# normal it was spawned with, so event.subject_direction -- the one vector
+# every target of a field shares -- is that normal. Over its half second it
+# drifts 2.5 cm off the surface. It must not be stopped by the world
+# (motion_collision_mask stays 0): a parked field's heading is zeroed, and the
+# push would go with it.
+#
+# One hit per target: lifetime equals the interval, as in rocket_explosion.
+id: 38
+name: water_jet_column
+type: area_effect
+collider_template: water_jet_column
+damage: 0
+speed: 0.05
+lifetime_ticks: 15
+sync_mode: local_predicted_deterministic
+damage_behavior:
+  type: area_interval
+  damage_interval_ticks: 15
+  falloff: none
+collision_mask: damageable
+triggers:
+  on_projectile_impact:
+    action_graph: action_apply_impulse
+    parameters:
+      target: event.target
+      direction: event.subject_direction
+      # Split [horizontal, vertical]: the normal's horizontal part times 6,
+      # plus an outright 8 m/s up. Not radial: a radial push off a wall is
+      # flat, and a flat push on a grounded actor moved it 0.40 m and died the
+      # next tick -- only an actor off the ground keeps its momentum
+      # (docs/WATER_JET_PLAN.md, P4 follow-up). So every face lifts by 8:
+      #   floor (0,1,0)  -> (0, 8, 0): ~3.3 m up, 1.63 s in the air;
+      #   wall  (-1,0,0) -> (-6, 8, 0): carried ~9.8 m out over that airtime;
+      #   a slope keeps the share of 6 its horizontal part has.
+      # Weighed against force_resistance at max(6, 8) = 8: below the hive
+      # airship's 10, so the airship is spared.
+      strength: [6.0, 8.0]
+      # A ceiling, released on landing; above the 49 ticks the lift keeps an
+      # actor up, so it is the landing that ends it.
+      lockout: 60

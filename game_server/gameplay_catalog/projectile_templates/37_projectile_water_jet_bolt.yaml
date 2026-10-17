@@ -1,0 +1,30 @@
+# The water jet's bolt: straight, fast, and it strikes only the world --
+# terrain and static obstacles -- passing through actors. Where it strikes it
+# raises a column (water_jet_column) launched along the struck face's normal,
+# which is the way the column pushes: up off a floor, out from a wall.
+#
+# A segment, not a sphere, so the normal is the face's own (collider 56).
+id: 37
+name: water_jet_bolt
+damage: 0
+sync_mode: local_predicted_deterministic
+collider_template: water_jet_segment
+movement_model: linear
+hit_response: destroy
+damage_shape: none
+speed: 30.0
+lifetime_ticks: 30
+collision_mask: terrain | static_obstacle
+max_hit_count: 1
+gravity:
+  x: 0.0
+  y: 0.0
+  z: 0.0
+triggers:
+  on_projectile_impact:
+    action_graph: action_spawn_projectile
+    parameters:
+      template: water_jet_column
+      position: event.position
+      # The face the bolt struck, not the way it flew (ABI 108).
+      direction: event.surface_normal

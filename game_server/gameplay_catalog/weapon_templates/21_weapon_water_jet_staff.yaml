@@ -1,0 +1,13 @@
+# Fires a water jet bolt that strikes only the world. Where it lands a column
+# shoves everyone it reaches along the struck face's normal: up off a floor,
+# out from a wall (docs/WATER_JET_PLAN.md). Deals no damage of its own.
+id: 21
+name: Water Jet Staff
+# Weapon container slot 0-3 (wand, scepter, staff, tome / their gun twins).
+category: 3
+weapon_type: projectile
+magazine_size: 6
+reserve_magazines: 4
+fire_action_template: water_jet_staff_fire
+reload_action_template: water_jet_staff_reload
+projectile_template: water_jet_bolt

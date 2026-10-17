@@ -7891,6 +7891,12 @@ bool event_expression_available(
         return trigger_name == "on_projectile_impact" ||
             trigger_name == "on_expired";
     }
+    if (expression == "event.surface_normal") {
+        // Only an impact strikes a face; an expiry ends in mid-air. Which
+        // projectiles may ask is narrower still -- see the spawn_projectile
+        // compile in compile_projectile_trigger_binding.
+        return trigger_name == "on_projectile_impact";
+    }
     return false;
 }
 
@@ -8340,10 +8346,22 @@ void compile_projectile_trigger_binding(
             binding, graph_parameter(action.position_parameter));
         const std::string direction = trigger_parameter_value(
             binding, graph_parameter(action.direction_parameter));
-        if (position != "event.position" || direction != "event.direction") {
+        if (position != "event.position" ||
+            (direction != "event.direction" &&
+             direction != "event.surface_normal")) {
             throw std::runtime_error(
-                "spawn_projectile trigger must bind position and direction to "
-                "event.position and event.direction");
+                "spawn_projectile trigger must bind position to event.position "
+                "and direction to event.direction or event.surface_normal");
+        }
+        // A face is only ever struck by a standard projectile: an area
+        // effect's impacts are all actors, which report no normal, so every
+        // spawn it asked for would be dropped.
+        if (direction == "event.surface_normal" &&
+            projectile_template->definition.mechanics.projectile_type !=
+                KernelProjectileType_Standard) {
+            throw std::runtime_error(
+                "event.surface_normal needs a standard projectile: " +
+                projectile_template->name);
         }
         ProjectileTemplateConfig* spawned_projectile =
             projectile_template_from_ref(
@@ -8353,7 +8371,9 @@ void compile_projectile_trigger_binding(
         compiled_action.spawn_projectile_template_id =
             spawned_projectile->definition.projectile_template_id;
         compiled_action.position_source = KernelEventVec3Source_Position;
-        compiled_action.direction_source = KernelEventVec3Source_Direction;
+        compiled_action.direction_source = direction == "event.surface_normal"
+            ? KernelEventVec3Source_SurfaceNormal
+            : KernelEventVec3Source_Direction;
         compile_spawn_repeat(binding, *graph, action, &compiled_action);
     }
     mirror_first_action(&compiled);

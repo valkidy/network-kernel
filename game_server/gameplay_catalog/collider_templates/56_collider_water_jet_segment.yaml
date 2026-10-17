@@ -1,0 +1,9 @@
+# The water jet's bolt as a segment: its query each tick is the path it flew
+# that tick, a ray. A ray's hit normal is the struck face's own normal, which
+# the jet turns into its push; a sphere's contact normal drifted up to 37.5
+# degrees on the terrain mesh (docs/WATER_JET_PLAN.md, P0-2).
+id: 56
+name: water_jet_segment
+shape: segment
+purpose: damage
+layer: projectile

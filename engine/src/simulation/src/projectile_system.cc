@@ -720,7 +720,8 @@ void queue_projectile_trigger(
     std::uint32_t current_tick,
     std::uint32_t sequence,
     bool historical,
-    std::vector<ActionGraphQueuedTrigger>* trigger_events) {
+    std::vector<ActionGraphQueuedTrigger>* trigger_events,
+    const glm::vec3& surface_normal = glm::vec3{0.0f}) {
     if (trigger_events == nullptr) {
         return;
     }
@@ -765,6 +766,7 @@ void queue_projectile_trigger(
         // the event's. An area effect reports its centre separately, from
         // area_effect_system, since there the two differ per target.
         position,
+        surface_normal,
     };
     ActionExecutionProvenance provenance{
         trigger_request_id(current_tick, identity.net_id, event_type, sequence),
@@ -941,7 +943,8 @@ ProjectileHitOutcome process_projectile_hit_records(
                     current_tick,
                     record.sequence_id,
                     false,
-                    trigger_events);
+                    trigger_events,
+                    record.hit.normal);
                 outcome.destroy_projectile = true;
                 return outcome;
             }
@@ -986,7 +989,10 @@ ProjectileHitOutcome process_projectile_hit_records(
         current_tick,
         records.front().sequence_id,
         false,
-        trigger_events);
+        trigger_events,
+        is_actor_hit(records.front().hit.identity.kind)
+            ? glm::vec3{0.0f}
+            : records.front().hit.normal);
 
     // No-op while only actors are reachable here -- they carry no GameplaySide,
     // so the rule admits every one of them. It is in place so that widening what
