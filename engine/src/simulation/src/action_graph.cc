@@ -1479,6 +1479,7 @@ bool evaluate_action_graph(
             command.repeat_count = strike->repeat_count;
             command.repeat_interval_ticks = strike->repeat_interval_ticks;
             command.origin_lift = strike->origin_lift;
+            command.carrier = self;
             command.position = std::get<glm::vec3>(*position_value);
             if (direction_value != nullptr) {
                 command.direction = std::get<glm::vec3>(*direction_value);
