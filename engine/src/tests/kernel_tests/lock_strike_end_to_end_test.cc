@@ -432,6 +432,55 @@ void graph_missiles_leave_from_their_origin() {
     require(hp(arena.server, second) == 100 - kDamage);
 }
 
+// A bottle breaks with its own hit box still in the world: a prop's collider
+// is a static obstacle, and a bottle's one-metre box sits on the very spot it
+// broke. Its first strike runs inside its collision trigger, before the
+// self-damage that spends it takes effect; the rest run after the bottle has
+// left. Every strike is lifted the same metre and locks the same two.
+void the_breaking_bottle_hides_nothing_from_its_first_strike() {
+    Arena arena(7971);
+    const ne::NetId first = arena.enemy({3.0f, 0.0f, 0.0f});
+    const ne::NetId second = arena.enemy({0.0f, 0.0f, 5.0f});
+    arena.settle();
+    arena.server.physics_world_ = std::make_unique<ne::physics::PhysicsWorld>();
+    arena.server.world_.set_collision_world(arena.server.physics_world_.get());
+    constexpr std::uint32_t kBottleCollider = 9001u;
+    ne::physics::CollisionObjectDescriptor bottle;
+    bottle.identity = ne::physics::CollisionObjectIdentity{
+        9000u, kBottleCollider, ne::physics::kHitZoneUnscaled,
+        ne::physics::CollisionObjectKind::kStaticObstacle,
+        ne::physics::CollisionLayer::kStaticObstacle};
+    bottle.shape.type = ne::physics::CollisionShapeType::kBox;
+    bottle.shape.half_extents = glm::vec3{0.5f};
+    // collision_damage_prop_hitbox: centre 0.5 m up, resting on the ground.
+    bottle.position = glm::vec3{0.0f, 0.5f, 0.0f};
+    bottle.rotation = glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
+    std::string error;
+    require(arena.server.physics_world_->upsert_object(bottle, &error));
+    break_bottle(
+        arena.server, strike_trigger(KernelLockStrikeMode_Instant, 3u, 6u),
+        glm::vec3{0.0f});
+    require(arena.server.physics_world_->remove_object(kBottleCollider));
+    for (int index = 0; index < 40; ++index) {
+        arena.tick();
+    }
+    const Arena::Client& client = arena.clients[0];
+    require(client.strikes.size() == 3u);
+    for (const KernelLockStrikeEvent& strike : client.strikes) {
+        std::printf(
+            "strike %u: origin y %.3f, targets %u\n",
+            strike.commit_index,
+            strike.selection.origin.y,
+            strike.selection.target_count);
+    }
+    for (const KernelLockStrikeEvent& strike : client.strikes) {
+        require(near(strike.selection.origin, {0.0f, 1.0f, 0.0f}, 0.001f));
+        require(strike.selection.target_count == 2u);
+    }
+    require(hp(arena.server, first) == 100 - 3 * kDamage);
+    require(hp(arena.server, second) == 100 - 3 * kDamage);
+}
+
 // Who is sent what (D13). A strike far from both players strikes its target
 // and is sent to nobody; one that locked nobody goes to whoever is within
 // relevance of where it was taken -- here both -- and one far off to nobody.
@@ -572,6 +621,7 @@ void the_listen_host_sends_itself_the_strike() {
 int main() {
     a_repeated_strike_reaches_every_client_that_sees_its_targets();
     graph_missiles_leave_from_their_origin();
+    the_breaking_bottle_hides_nothing_from_its_first_strike();
     a_strike_goes_to_whoever_sees_it();
     records_past_the_budget_wait_for_the_next_snapshot();
     the_listen_host_sends_itself_the_strike();
