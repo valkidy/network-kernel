@@ -1,6 +1,6 @@
 # 水柱衝擊魔法實作計劃書
 
-狀態：**Q1–Q5、Q6 採預設值定案；P0 驗證完成（§5.2）；P1 kernel 完成（§5.3），ABI 108；P2 game_server 完成（§5.4）；P3 catalog 內容尚未開始。**
+狀態：**Q1–Q5、Q6 採預設值定案；P0 驗證完成（§5.2）；P1 kernel 完成（§5.3），ABI 108；P2 game_server 完成（§5.4）；P3 catalog 內容完成（§5.5，id 為暫定）；P4 端到端測試尚未開始。**
 分支：`claude/water-jet`，從 `main`（dcc805da，ABI 107）開；計畫最早寫在
 `claude/water-jet-plan`。
 最後更新：2026-10-17。
@@ -247,6 +247,34 @@ schema」。實際上 client 只在「會飛的 area effect 撞上 static world�
     kernel 的 `Kernel_LoadGameplayCatalog` 也接受。
   - 改綁在 `on_expired` 上：被拒絕。
   - 綁在 area effect（shockwave_blast）上：被拒絕。
+
+### 5.5 P3 實作紀錄（2026-10-17）
+
+**id 全部是暫定的，merge 時要重新編號**（平行分支的 id 在 git 上 merge 得乾淨，但會在 runtime 撞號）：
+
+| 種類 | id | 檔案 |
+|---|---|---|
+| weapon | 21 | `weapon_templates/21_weapon_water_jet_staff.yaml`（Water Jet Staff，category 3） |
+| action template | 4131、4132 | `action_templates/water_jet_staff_fire.yaml`、`water_jet_staff_reload.yaml` |
+| projectile | 37 | `projectile_templates/37_projectile_water_jet_bolt.yaml`（水柱彈） |
+| projectile | 38 | `projectile_templates/38_projectile_water_jet_column.yaml`（水柱） |
+| collider | 56 | `collider_templates/56_collider_water_jet_segment.yaml`（segment） |
+| collider | 57 | `collider_templates/57_collider_water_jet_column.yaml`（cylinder，半徑 1.5 m，半高 2 m） |
+| item | 3035 | `item_templates/3035_stateful_weapon_water_jet_staff.yaml`，加進 `219_prop_initial_camp` 的 weapons |
+
+- 兩個 graph 沿用現有的 common graph：水柱彈綁 `action_spawn_projectile`，水柱綁 `action_apply_impulse`。
+  `action_graph_catalog_test` 不允許內容相同的 graph 重複出現，所以不另外新增。
+- 數值（Q5 的第一版）：
+  - 水柱彈：30 m/s、30 ticks（射程 30 m）、mask `terrain | static_obstacle`、不造成傷害。
+  - 水柱：speed 0.05、15 ticks、間隔 15（每個目標只推一次）、mask `damageable`、不造成傷害、
+    impulse `RADIAL` 12 m/s、lockout 40。
+  - 12 大於 hive airship 的 force_resistance 10，所以飛船也會被推。
+- `the_water_jet_holds_its_push_invariants` 檢查 D9、D10 的不變條件：水柱彈是 standard、mask 只有
+  terrain 和 static_obstacle、spawn 方向用 `SurfaceNormal`；水柱的 speed > 0、`motion_collision_mask`
+  是 0、不是 server-snapshot-only、推力方向用 `SubjectDirection`。
+- 既有失敗（沒有 P3 檔案時一樣失敗，與本分支無關）：`loadout_test`、`drop_tag_test`
+  （`{0, 13, 15, 14}` 的預設武器）、`gameplay_config_test`（`prop_population_rules.size() == 2`）。
+- Unity 端需要這把新武器的外觀和 UI，由使用者處理。
 
 ---
 

@@ -1,0 +1,37 @@
+# The water jet's column: one push, along the face the bolt struck, for
+# everyone it reaches. No damage.
+#
+# It carries that face's normal in its own heading: speed 0.05 m/s along the
+# normal it was spawned with, so event.subject_direction -- the one vector
+# every target of a field shares -- is that normal. Over its half second it
+# drifts 2.5 cm off the surface. It must not be stopped by the world
+# (motion_collision_mask stays 0): a parked field's heading is zeroed, and the
+# push would go with it.
+#
+# One hit per target: lifetime equals the interval, as in rocket_explosion.
+id: 38
+name: water_jet_column
+type: area_effect
+collider_template: water_jet_column
+damage: 0
+speed: 0.05
+lifetime_ticks: 15
+sync_mode: local_predicted_deterministic
+damage_behavior:
+  type: area_interval
+  damage_interval_ticks: 15
+  falloff: none
+collision_mask: damageable
+triggers:
+  on_projectile_impact:
+    action_graph: action_apply_impulse
+    parameters:
+      target: event.target
+      direction: event.subject_direction
+      # Radial: the whole normal scaled. Straight up off a floor, 12 m/s is
+      # ~2.4 s of airtime; off a wall it is a flat shove the lockout carries.
+      # Weighed against force_resistance: above the hive airship's 10, so it
+      # is pushed too.
+      strength: 12.0
+      # A ceiling, released on landing.
+      lockout: 40
