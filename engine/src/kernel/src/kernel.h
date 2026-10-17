@@ -549,6 +549,12 @@ private:
         bool has_received_input = false;
         bool has_movement_input = false;
         std::unordered_set<NetId> out_of_range_projectiles;
+        // State the transport refused to take for this session. Each of these
+        // is sent only when it changes, so a refusal left the client on the
+        // old value until the next change; they are offered again instead.
+        // A prop is rebuilt from its current state when it is retried.
+        std::unordered_set<NetId> prop_state_retries;
+        bool status_effect_state_retry = false;
     };
 
     // A step, addressed to the entity whose leg took it. The event itself is
@@ -1098,8 +1104,8 @@ private:
     // False when the transport refused the spawn, which then has to be offered
     // again: nothing else will ever tell the session the entity exists.
     bool send_entity_spawn(PeerId peer, const EntitySnapshot& entity);
-    void send_projectile_spawn_batch(PeerId peer, const EntitySnapshot& entity);
-    void send_entity_despawn(
+    bool send_projectile_spawn_batch(PeerId peer, const EntitySnapshot& entity);
+    bool send_entity_despawn(
         PeerId peer,
         NetId net_id,
         std::uint32_t reason);
@@ -1175,6 +1181,7 @@ private:
         std::uint64_t client_revision);
     void broadcast_reliable_event(const KernelEvent& event);
     void flush_prop_state_changes();
+    void retry_status_effect_states();
     void flush_actor_impulses();
     void flush_actor_teleports();
     bool make_prop_state_change_record(
