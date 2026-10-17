@@ -34,7 +34,7 @@ public static class NetworkKernelManagedAbiSmoke
         KernelBuildInfo buildInfo = KernelAbi.GetBuildInfo();
         GameServerAbiInfo gameServerInfo = GameServerAbi.GetInfo();
         RequireSkeletonBindingContract();
-        Require(KernelConstants.AbiVersion == 107, "Managed kernel ABI version was not v107.");
+        Require(KernelConstants.AbiVersion == 108, "Managed kernel ABI version was not v108.");
         Require(
             KernelLocalWeaponState.StructSize == 20 &&
             info.local_weapon_state_size == KernelLocalWeaponState.StructSize,
@@ -225,6 +225,7 @@ public static class NetworkKernelManagedAbiSmoke
         Require(
             KernelEntityTriggerActionType.ApplyPull == (KernelEntityTriggerActionType)9 &&
             KernelEventVec3Source.SubjectPosition == (KernelEventVec3Source)4 &&
+            KernelEventVec3Source.SurfaceNormal == (KernelEventVec3Source)5 &&
             (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("pull_mode") == 100,
             "Kernel apply_pull ABI mismatch.");
         Require(

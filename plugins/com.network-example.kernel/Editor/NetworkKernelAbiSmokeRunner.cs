@@ -24,7 +24,7 @@ namespace NetworkExample.Kernel.Editor
             KernelAbi.ValidateNativeAbi();
             GameServerAbi.ValidateNativeAbi();
             KernelAbiInfo info = KernelAbi.GetInfo();
-            Require(KernelConstants.AbiVersion == 107, "Managed kernel ABI version was not v107.");
+            Require(KernelConstants.AbiVersion == 108, "Managed kernel ABI version was not v108.");
             Require(
                 KernelLocalWeaponState.StructSize == 20 &&
                 info.local_weapon_state_size == KernelLocalWeaponState.StructSize,
@@ -176,6 +176,7 @@ namespace NetworkExample.Kernel.Editor
             Require(
                 KernelEntityTriggerActionType.ApplyPull == (KernelEntityTriggerActionType)9 &&
                 KernelEventVec3Source.SubjectPosition == (KernelEventVec3Source)4 &&
+                KernelEventVec3Source.SurfaceNormal == (KernelEventVec3Source)5 &&
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("pull_mode") == 100,
                 "Kernel apply_pull ABI mismatch.");
             Require(

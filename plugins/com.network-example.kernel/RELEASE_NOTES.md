@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- aligns Unity bindings with ABI 108 for surface-normal Water Jet Staff spawns, fixes first lock strikes and bundles the Windows GCC runtime
+
+
+0.7.0 release notes:
+
 - ships the four-zone map with patrolling gingerbread giants and improves legged gait, footholds and portal grounding
 
 

@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 107;
+        public const uint AbiVersion = 108;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int LogMessageTextSize = 512;
@@ -547,6 +547,8 @@ namespace NetworkExample.Kernel
         SubjectDirection = 3,
         // ABI 95: where the event's subject was (an area effect's centre).
         SubjectPosition = 4,
+        // ABI 108: struck terrain/static face; impact spawn direction only.
+        SurfaceNormal = 5,
     }
 
     public enum KernelActionConditionType
