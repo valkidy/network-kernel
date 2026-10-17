@@ -371,6 +371,10 @@ struct ActionLockStrikeCommand {
     float origin_lift = 0.0f;
     glm::vec3 position{0.0f};
     glm::vec3 direction{0.0f};
+    // The entity whose graph ran it -- a bottle's own prop. Its colliders hide
+    // nothing from the lock: it is still standing on the spot when the first
+    // strike runs. Zero for none.
+    NetId carrier = 0;
     ActionExecutionProvenance provenance;
 };
 

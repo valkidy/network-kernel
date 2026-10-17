@@ -25,6 +25,9 @@ struct LockStrikeSpec {
     // weapon fired.
     std::uint8_t weapon_id = 0;
     std::uint16_t damage = 0;
+    // What carried a graph's strike there (ActionLockStrikeCommand::carrier):
+    // never a wall between the origin and a target. Zero for none.
+    NetId carrier_net_id = 0;
 };
 
 // What a lock locked, nearest first, with each target's hit zone beside it.

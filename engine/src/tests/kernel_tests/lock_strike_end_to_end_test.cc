@@ -167,11 +167,12 @@ KernelActionTriggerDefinition strike_trigger(
 }
 
 // A bottle breaking at `where`, as its collision trigger runs it: nobody
-// instigates, the thrower's peer owns it.
+// instigates, the thrower's peer owns it, and the graph runs as `bottle`.
 void break_bottle(
     ne::KernelEngine& server,
     const KernelActionTriggerDefinition& trigger,
-    const glm::vec3& where) {
+    const glm::vec3& where,
+    ne::NetId bottle = 0u) {
     static std::uint64_t request_id = 1000u;
     const std::optional<ne::CompiledActionGraphBinding> binding =
         ne::compile_action_trigger_definition(
@@ -179,7 +180,7 @@ void break_bottle(
     require(binding.has_value());
     const ne::TriggerEvent event{
         ne::TriggerEventType::kCollision,
-        0u,
+        bottle,
         0u,
         0u,
         where,
@@ -193,7 +194,7 @@ void break_bottle(
     std::vector<ne::ActionGraphCommand> commands;
     std::string error;
     require(ne::evaluate_action_graph(
-        *binding, 0u, event, provenance, &commands, &error));
+        *binding, bottle, event, provenance, &commands, &error));
     require(ne::execute_action_graph_command_batch(
         server,
         ne::ActionGraphCommandBatch{event, provenance, 1u, std::move(commands)},
@@ -444,10 +445,11 @@ void the_breaking_bottle_hides_nothing_from_its_first_strike() {
     arena.settle();
     arena.server.physics_world_ = std::make_unique<ne::physics::PhysicsWorld>();
     arena.server.world_.set_collision_world(arena.server.physics_world_.get());
+    constexpr ne::NetId kBottle = 9000u;
     constexpr std::uint32_t kBottleCollider = 9001u;
     ne::physics::CollisionObjectDescriptor bottle;
     bottle.identity = ne::physics::CollisionObjectIdentity{
-        9000u, kBottleCollider, ne::physics::kHitZoneUnscaled,
+        kBottle, kBottleCollider, ne::physics::kHitZoneUnscaled,
         ne::physics::CollisionObjectKind::kStaticObstacle,
         ne::physics::CollisionLayer::kStaticObstacle};
     bottle.shape.type = ne::physics::CollisionShapeType::kBox;
@@ -459,20 +461,14 @@ void the_breaking_bottle_hides_nothing_from_its_first_strike() {
     require(arena.server.physics_world_->upsert_object(bottle, &error));
     break_bottle(
         arena.server, strike_trigger(KernelLockStrikeMode_Instant, 3u, 6u),
-        glm::vec3{0.0f});
+        glm::vec3{0.0f},
+        kBottle);
     require(arena.server.physics_world_->remove_object(kBottleCollider));
     for (int index = 0; index < 40; ++index) {
         arena.tick();
     }
     const Arena::Client& client = arena.clients[0];
     require(client.strikes.size() == 3u);
-    for (const KernelLockStrikeEvent& strike : client.strikes) {
-        std::printf(
-            "strike %u: origin y %.3f, targets %u\n",
-            strike.commit_index,
-            strike.selection.origin.y,
-            strike.selection.target_count);
-    }
     for (const KernelLockStrikeEvent& strike : client.strikes) {
         require(near(strike.selection.origin, {0.0f, 1.0f, 0.0f}, 0.001f));
         require(strike.selection.target_count == 2u);
