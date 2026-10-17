@@ -1,10 +1,16 @@
 // The Water Jet Staff end to end (docs/WATER_JET_PLAN.md, P4): a player armed
 // with the shipped staff through a weapon container fires its bolt through the
 // real input path at the shipped static scene, and a gingerbread standing
-// where the bolt lands is shoved along the face the bolt struck.
+// where the bolt lands is shoved off the face the bolt struck -- and actually
+// travels, rather than only getting a velocity for a tick.
 //
-//   - at the open ground: shoved straight up;
-//   - at the narrow pass's cliff: shoved out from the cliff face.
+//   - at the open ground: thrown straight up;
+//   - at a slope, and at a tree trunk: lifted and carried out from the face.
+//
+// The push is the column's split impulse, (n.x * h, v, n.z * h) for the face
+// normal n, with h and v read from the catalog. A flat push on a grounded
+// actor moved it 0.40 m and died the next tick; the lift is what makes it
+// carry, which is why the travel is checked and not only the direction.
 //
 // The face is not assumed. This test loads the same scene into a physics
 // world of its own, casts the bolt's own path -- read off the live bolt -- and
@@ -51,6 +57,17 @@ void require_impl(bool condition, int line, const char* text) {
 #define require(expr) require_impl(static_cast<bool>(expr), __LINE__, #expr)
 
 constexpr float kTickSeconds = 1.0f / 30.0f;
+constexpr float kGravity = 9.81f;
+
+// The column's push, as the catalog compiles it.
+struct Push {
+    float horizontal = 0.0f;
+    float vertical = 0.0f;
+
+    glm::vec3 delta(const glm::vec3& normal) const {
+        return {normal.x * horizontal, vertical, normal.z * horizontal};
+    }
+};
 
 fs::path runfiles_catalog() {
     const char* test_srcdir = std::getenv("TEST_SRCDIR");
@@ -186,12 +203,17 @@ struct Case {
     // 1, a slope between, a wall near 0.
     float min_normal_y;
     float max_normal_y;
+    // How far out it must at least be carried, whatever the tuning: the
+    // expected carry follows the catalog, so a lift tuned near zero would
+    // shrink the expectation with it and still pass.
+    float min_carry;
 };
 
 // Fires the case's two shots and holds the push the gingerbread got to the
 // face the bolt struck.
 void run_case(Arena& arena, const Scene& scene, const Case& c,
-              std::uint32_t gingerbread, int commit_offset, float bolt_range) {
+              std::uint32_t gingerbread, int commit_offset, float bolt_range,
+              const Push& column_push) {
     const KernelServerEntityState player = entity_state(arena.kernel, arena.player);
     const KernelVec3 at = to_kernel(c.shooter);
     require(Kernel_ServerSetEntityTransform(
@@ -243,15 +265,51 @@ void run_case(Arena& arena, const Scene& scene, const Case& c,
         arena.idle(c.aim, 1);
         push = to_glm(entity_state(arena.kernel, target).velocity);
     }
-    const float error = angle_degrees(push, face.normal);
+    const glm::vec3 expected = column_push.delta(face.normal);
+    const float error = angle_degrees(push, expected);
     std::fprintf(stderr,
                  "water_jet[%s]: gingerbread at (%.2f %.2f %.2f) pushed (%.2f %.2f %.2f), "
-                 "%.1f m/s, %.2f deg off the face normal\n",
+                 "expected (%.2f %.2f %.2f), %.2f deg off\n",
                  c.name, rest.x, rest.y, rest.z, push.x, push.y, push.z,
-                 glm::length(push), error);
+                 expected.x, expected.y, expected.z, error);
     require(glm::length(push) >= 5.0f);
-    // One tick of gravity against a 12 m/s push bends it under 2 degrees.
+    // One tick of gravity bends it under 2 degrees.
     require(error < 5.0f);
+
+    // Then where it goes: up, out, and down again. On flat ground the lift
+    // keeps it up 2v/g, and the horizontal part carries it that long.
+    const float airtime = 2.0f * column_push.vertical / kGravity;
+    const float expected_peak =
+        column_push.vertical * column_push.vertical / (2.0f * kGravity);
+    const float expected_carry =
+        glm::length(glm::vec2{expected.x, expected.z}) * airtime;
+    float peak = 0.0f;
+    glm::vec3 last = to_glm(entity_state(arena.kernel, target).position);
+    int still_ticks = 0;
+    for (int tick = 0; tick < 150 && still_ticks < 5; ++tick) {
+        arena.idle(c.aim, 1);
+        const KernelServerEntityState state = entity_state(arena.kernel, target);
+        last = to_glm(state.position);
+        peak = std::max(peak, last.y - rest.y);
+        still_ticks = glm::length(to_glm(state.velocity)) < 0.05f ? still_ticks + 1 : 0;
+    }
+    const float carry = glm::length(glm::vec2{last.x - rest.x, last.z - rest.z});
+    std::fprintf(stderr,
+                 "water_jet[%s]: rose %.2f m (expected %.2f), carried %.2f m "
+                 "(expected %.2f), came to rest %s\n",
+                 c.name, peak, expected_peak, carry, expected_carry,
+                 still_ticks >= 5 ? "yes" : "no");
+    require(still_ticks >= 5);
+    require(peak > 0.7f * expected_peak);
+    require(carry >= c.min_carry);
+    if (expected_carry > 1.0f) {
+        // Out from the face, not just anywhere: most of the way it should go.
+        require(carry > 0.6f * expected_carry);
+        require(glm::dot(glm::vec2{last.x - rest.x, last.z - rest.z},
+                         glm::vec2{expected.x, expected.z}) > 0.0f);
+    } else {
+        require(carry < 0.5f);
+    }
     require(Kernel_ServerDestroyEntity(arena.kernel, target, 0u));
     arena.wait_for_no_projectiles(c.aim);
 }
@@ -279,6 +337,17 @@ int main() {
         if (entity.name == "gingerbread") gingerbread = entity.actor_template_id;
     }
     require(bolt != nullptr && staff_item != 0u && gingerbread != 0u);
+    Push column_push;
+    for (const auto& projectile : config.projectile_templates) {
+        if (projectile.name != "water_jet_column") continue;
+        const KernelActionDefinition& action =
+            projectile.definition.mechanics.projectile_impact_trigger.actions[0];
+        require(action.action_type == KernelEntityTriggerActionType_ApplyImpulse);
+        require(action.impulse_strength_mode == KERNEL_IMPULSE_STRENGTH_MODE_SPLIT);
+        column_push.horizontal = action.impulse_strength;
+        column_push.vertical = action.impulse_strength_vertical;
+    }
+    require(column_push.vertical > 0.0f);
     std::uint8_t weapon = 0;
     bool found_weapon = false;
     for (std::size_t id = 0; id < config.weapons.configured.size(); ++id) {
@@ -362,8 +431,8 @@ int main() {
 
     // The floor: down and ahead, landing a few metres out.
     run_case(arena, scene,
-             Case{"floor", open, glm::vec3{1.0f, -0.6f, 0.0f}, 0.99f, 1.0f},
-             gingerbread, commit_offset, bolt_range);
+             Case{"floor", open, glm::vec3{1.0f, -0.6f, 0.0f}, 0.99f, 1.0f, 0.0f},
+             gingerbread, commit_offset, bolt_range, column_push);
 
     // A slope: the foot of the narrow pass's east wall, which faces +x near
     // x = -5 and rises at about 33 degrees before it steepens. Found by
@@ -377,8 +446,8 @@ int main() {
         const float x = foot.position.x + 7.0f;
         run_case(arena, scene,
                  Case{"slope", {x, scene.ground(x, z) + 1.0f, z}, {-1.0f, 0.0f, 0.0f},
-                      0.3f, 0.98f},
-                 gingerbread, commit_offset, bolt_range);
+                      0.3f, 0.98f, 1.0f},
+                 gingerbread, commit_offset, bolt_range, column_push);
     }
 
     // A wall: a tree trunk in the forest flank (+x, +z), vertical from the
@@ -391,8 +460,8 @@ int main() {
         const float x = trunk.position.x - 7.0f;
         run_case(arena, scene,
                  Case{"wall", {x, scene.ground(x, z) + 1.0f, z}, {1.0f, 0.0f, 0.0f},
-                      -0.2f, 0.2f},
-                 gingerbread, commit_offset, bolt_range);
+                      -0.2f, 0.2f, 3.0f},
+                 gingerbread, commit_offset, bolt_range, column_push);
     }
 
     std::puts("water_jet_staff_test passed");

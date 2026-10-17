@@ -1,6 +1,6 @@
 # 水柱衝擊魔法實作計劃書
 
-狀態：**Q1–Q5、Q6 採預設值定案；P0 驗證完成（§5.2）；P1 kernel 完成（§5.3），ABI 108；P2 game_server 完成（§5.4）；P3 catalog 內容完成（§5.5，id 為暫定）；P4 端到端測試完成（§5.6）。kernel 端全部完成，等使用者 merge 與處理 Unity 端。**
+狀態：**Q1–Q5、Q6 採預設值定案；P0 驗證完成（§5.2）；P1 kernel 完成（§5.3），ABI 108；P2 game_server 完成（§5.4）；P3 catalog 內容完成（§5.5，id 為暫定）；P4 端到端測試完成（§5.6），推力已改成 SPLIT（§5.7）。kernel 端全部完成，等使用者 merge 與處理 Unity 端。**
 分支：`claude/water-jet`，從 `main`（dcc805da，ABI 107）開；計畫最早寫在
 `claude/water-jet-plan`。
 最後更新：2026-10-17。
@@ -56,6 +56,7 @@ P0 驗證結果，第 6 節是待定問題（已全部採預設值）。
 | D8 | 法線**不吸附**到主軸，直接用物理算出來的值 | 牆是什麼角度就推往什麼方向。是否要吸附見 Q1 |
 | D9 | 水柱彈的 collider 用 **segment** | P0-2：sphere 在地形 mesh 上的法線最多偏 37.5° |
 | D10 | 水柱 template：`motion_collision_mask = 0`，`sync_mode` 不是 server-snapshot-only，不做成 derived chain | P0-1、P0-3 |
+| D11 | 水柱的推力用 **SPLIT** `[6, 8]`，不用 RADIAL | §5.7：純水平的推力只推得動 0.40 m。取代 D1 裡的 RADIAL |
 
 ### 2.1 為什麼不在 `ProjectileState` 另存方向
 
@@ -305,6 +306,41 @@ P4 過程中發現的兩件事（都不是 bug，是目前設計的結果）：
    mask，`gameplay_category_mask` 是空的，所以 prop 的 collider 擋不住它（`13_collider_ice_block_hitbox.yaml`
    的說明有寫這個已知的缺口）。能當「牆」的只有 static scene 裡的幾何（崖壁、樹幹）。這跟 Q2 的
    預設（不包含 prop）一致。
+
+### 5.7 推力改成 SPLIT（2026-10-17，P4 後續）
+
+**問題**：P3 的水柱用 RADIAL 12，打在牆上時推力是純水平的。實測 wall 情境的目標拿到 12 m/s 的
+水平速度，只移動 0.40 m，下一個 tick 速度就歸零。只有離地的 actor 會保留動量，在地上的
+actor 下一個 tick 就被 movement 接手。原本的 P4 測試只檢查第一個 tick 的速度方向，所以沒抓到
+（又一個「綠燈但什麼都沒證明」的例子）。
+
+**修正**：
+- 水柱改成 SPLIT `[6.0, 8.0]`：推力 = (n.x · 6, 8, n.z · 6)，每一種面都往上抬 8 m/s。
+  - 地板：(0, 8, 0)，升高約 3.3 m，滯空 1.63 s（49 ticks）。
+  - 牆：(−6, 8, 0)，滯空期間被帶出約 9.8 m。
+  - 坡：保留法線水平分量對應的比例。
+- lockout 40 → 60，要大於 49 ticks 的滯空時間，這樣才是落地解除 lockout，而不是在半空中到期。
+- force_resistance 依 max(6, 8) = 8 計算，低於 hive airship 的 10，所以**飛船現在不會被推**
+  （RADIAL 12 時會）。
+
+**測試**：
+- `water_jet_staff_test` 從 catalog 讀出 h、v，期望第一個 tick 的速度是 SPLIT 公式算出的方向，
+  接著追蹤目標直到落地靜止，檢查上升高度和水平位移。每個情境另有一個跟數值無關的最低位移：
+  slope 1 m、wall 3 m。
+
+| 情境 | 推力 | 上升（期望值） | 水平位移（期望值） |
+|---|---|---|---|
+| floor | (0.01, 7.67, −0.01)，偏 0.00° | 3.13 m（3.26） | 0.03 m（0.03） |
+| slope | (2.00, 8.00, 0.00)，偏 0.00° | 3.13 m（3.26） | 3.41 m（3.27） |
+| wall | (−6.00, 8.00, 0.13)，偏 0.02° | 3.13 m（3.26） | 9.39 m（9.78） |
+
+- `the_water_jet_holds_its_push_invariants` 另外要求 SPLIT 模式而且 vertical > 0，防止改回平推。
+- Mutation：把 vertical 改成 0.3，測試失敗。但先失敗的是 floor 情境的第一個 tick 速度下限
+  （0.3 < 5），wall 的最低位移檢查沒有被單獨驗證到：任何弱到讓牆面推不動的抬升值，都會先在
+  floor 情境失敗。
+
+**側掃版本**（§6 之後討論的 `event.direction_left/right`）也一樣：推力方向是純水平的，所以必須用
+SPLIT 加上抬升，否則一樣只推得動一個 tick。
 
 ---
 

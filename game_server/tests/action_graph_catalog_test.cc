@@ -828,7 +828,8 @@ void surface_normal_spawn_direction_is_impact_and_standard_only() {
 // The shipped water jet (provisional ids 37/38) holds the invariants its push
 // depends on (docs/WATER_JET_PLAN.md D9, D10): the bolt strikes only the world
 // and spawns along the struck face; the column carries that face in a nonzero
-// heading the world never parks, is built on clients, and pushes along it.
+// heading the world never parks, is built on clients, and pushes along it
+// with a lift.
 void the_water_jet_holds_its_push_invariants() {
     const gs::KernelGameplayCatalogStorage storage =
         built(shipped_catalog() / "gameplay_catalog.yaml");
@@ -849,6 +850,10 @@ void the_water_jet_holds_its_push_invariants() {
     const KernelActionDefinition& push = column.projectile_impact_trigger.actions[0];
     require(push.action_type == KernelEntityTriggerActionType_ApplyImpulse);
     require(push.direction_source == KernelEventVec3Source_SubjectDirection);
+    // Split with a lift: off a wall the normal is flat, and a flat push on a
+    // grounded actor dies the next tick.
+    require(push.impulse_strength_mode == KERNEL_IMPULSE_STRENGTH_MODE_SPLIT);
+    require(push.impulse_strength_vertical > 0.0f);
 }
 
 // The archive the client loads must hold every graph the source tree does,

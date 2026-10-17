@@ -28,10 +28,17 @@ triggers:
     parameters:
       target: event.target
       direction: event.subject_direction
-      # Radial: the whole normal scaled. Straight up off a floor, 12 m/s is
-      # ~2.4 s of airtime; off a wall it is a flat shove the lockout carries.
-      # Weighed against force_resistance: above the hive airship's 10, so it
-      # is pushed too.
-      strength: 12.0
-      # A ceiling, released on landing.
-      lockout: 40
+      # Split [horizontal, vertical]: the normal's horizontal part times 6,
+      # plus an outright 8 m/s up. Not radial: a radial push off a wall is
+      # flat, and a flat push on a grounded actor moved it 0.40 m and died the
+      # next tick -- only an actor off the ground keeps its momentum
+      # (docs/WATER_JET_PLAN.md, P4 follow-up). So every face lifts by 8:
+      #   floor (0,1,0)  -> (0, 8, 0): ~3.3 m up, 1.63 s in the air;
+      #   wall  (-1,0,0) -> (-6, 8, 0): carried ~9.8 m out over that airtime;
+      #   a slope keeps the share of 6 its horizontal part has.
+      # Weighed against force_resistance at max(6, 8) = 8: below the hive
+      # airship's 10, so the airship is spared.
+      strength: [6.0, 8.0]
+      # A ceiling, released on landing; above the 49 ticks the lift keeps an
+      # actor up, so it is the landing that ends it.
+      lockout: 60
