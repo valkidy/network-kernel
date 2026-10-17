@@ -260,6 +260,23 @@ cat <<'SYMBOLS'
 	[  57] GameServer_DespawnAll
 Import Table:
 SYMBOLS
+case "$(basename "$2")" in
+  network_kernel.dll)
+    printf '\tDLL Name: KERNEL32.dll\n\tDLL Name: libstdc++-6.dll\n'
+    ;;
+  libstdc++-6.dll)
+    printf '\tDLL Name: libgcc_s_seh-1.dll\n'
+    if [[ "${FAKE_MISSING_TRANSITIVE_DLL:-}" == "1" ]]; then
+      printf '\tDLL Name: missing-runtime.dll\n'
+    fi
+    if [[ "${FAKE_MIXED_CASE_DLL:-}" == "1" ]]; then
+      printf '\tDLL Name: LIBWINPTHREAD-1.DLL\n'
+    fi
+    ;;
+  *)
+    printf '\tDLL Name: KERNEL32.dll\n\tDLL Name: api-ms-win-crt-runtime-l1-1-0.dll\n'
+    ;;
+esac
 SH
 
   write_file "$bin_dir/file" <<'SH'
@@ -383,7 +400,7 @@ TextScriptImporter:
   assetBundleName:
   assetBundleVariant:
 YAML
-  for dll_name in libcrypto-4-x64.dll libssl-4-x64.dll libstdc++-6.dll libwinpthread-1.dll; do
+  for dll_name in libcrypto-4-x64.dll libssl-4-x64.dll libstdc++-6.dll libwinpthread-1.dll libgcc_s_seh-1.dll; do
     echo "fake support dll" > "$repo_dir/plugins/com.network-example.kernel/Assets/Plugins/Windows/x86_64/$dll_name"
   done
   echo "#define KERNEL_ABI_VERSION 7u" > "$repo_dir/engine/src/kernel/public/kernel_types.h"
@@ -445,6 +462,7 @@ run_builder() {
   echo "fake openssl dll" > "$fake_openssl/libssl-4-x64.dll"
   echo "fake mingw dll" > "$fake_mingw_runtime/libstdc++-6.dll"
   echo "fake mingw dll" > "$fake_mingw_runtime/libwinpthread-1.dll"
+  echo "fake mingw dll" > "$fake_mingw_runtime/libgcc_s_seh-1.dll"
   make_fake_command_dir "$fake_bin"
 
   (
@@ -698,7 +716,7 @@ test_stage_verifies_staged_dylib_from_existing_build_output() {
   [[ "$status" -eq 0 ]] || fail "expected stage mode to succeed with existing build output; got status $status: $(cat "$output_file")"
   [[ "$(cat "$staged_dylib")" == "fake existing build output" ]] || fail "expected stage mode to copy the existing build output"
   [[ "$(cat "$staged_dll")" == "fake existing windows build output" ]] || fail "expected stage mode to copy the existing Windows build output"
-  for dll_name in libcrypto-4-x64.dll libssl-4-x64.dll libstdc++-6.dll libwinpthread-1.dll; do
+  for dll_name in libcrypto-4-x64.dll libssl-4-x64.dll libstdc++-6.dll libwinpthread-1.dll libgcc_s_seh-1.dll; do
     [[ -f "$repo_dir/plugins/com.network-example.kernel/Assets/Plugins/Windows/x86_64/$dll_name" ]] ||
       fail "expected stage mode to copy $dll_name"
   done
@@ -714,7 +732,7 @@ test_verify_fails_when_windows_runtime_dll_is_missing() {
   repo_dir="$sandbox_dir/repo"
   output_file="$sandbox_dir/output.txt"
   make_fake_repo "$repo_dir" "feat-unity-plugin"
-  rm "$repo_dir/plugins/com.network-example.kernel/Assets/Plugins/Windows/x86_64/libwinpthread-1.dll"
+  rm "$repo_dir/plugins/com.network-example.kernel/Assets/Plugins/Windows/x86_64/libgcc_s_seh-1.dll"
 
   set +e
   run_builder "$repo_dir" "$output_file" --mode verify --unity off --auto-commit off
@@ -722,7 +740,26 @@ test_verify_fails_when_windows_runtime_dll_is_missing() {
   set -e
 
   [[ "$status" -ne 0 ]] || fail "expected verify to fail when a Windows support DLL is missing"
-  assert_contains "$(cat "$output_file")" "libwinpthread-1.dll"
+  assert_contains "$(cat "$output_file")" "libgcc_s_seh-1.dll"
+}
+
+test_verify_checks_transitive_windows_dependencies() {
+  local sandbox_dir repo_dir output_file status
+  sandbox_dir="$(mktemp -d "${TMPDIR:-/tmp}/package-builder-transitive-windows.XXXXXX")"
+  repo_dir="$sandbox_dir/repo"
+  output_file="$sandbox_dir/output.txt"
+  make_fake_repo "$repo_dir" "feat-unity-plugin"
+
+  set +e
+  FAKE_MISSING_TRANSITIVE_DLL=1 run_builder "$repo_dir" "$output_file" --mode verify --platform windows-x86_64 --unity off --auto-commit off
+  status="$?"
+  set -e
+
+  [[ "$status" -ne 0 ]] || fail "expected verify to reject a missing transitive Windows dependency"
+  assert_contains "$(cat "$output_file")" "missing-runtime.dll (imported by libstdc++-6.dll)"
+
+  FAKE_MIXED_CASE_DLL=1 run_builder "$repo_dir" "$output_file" --mode verify --platform windows-x86_64 --unity off --auto-commit off
+  assert_contains "$(cat "$output_file")" "Verification passed"
 }
 
 test_verify_requires_abi_15_kernel_exports() {
@@ -984,6 +1021,7 @@ test_build_native_verifies_bazel_signed_dylib
 test_native_build_failure_prints_prominent_work_failed_summary
 test_stage_verifies_staged_dylib_from_existing_build_output
 test_verify_fails_when_windows_runtime_dll_is_missing
+test_verify_checks_transitive_windows_dependencies
 test_verify_requires_abi_15_kernel_exports
 test_verify_requires_abi_16_config_bundle_exports
 test_verify_requires_abi_54_owned_inventory_export

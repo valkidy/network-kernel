@@ -32,7 +32,7 @@ RELEASE_NOTES_REL="${PACKAGE_DIR_REL}/RELEASE_NOTES.md"
 RELEASE_NOTES_META_REL="${RELEASE_NOTES_REL}.meta"
 RELEASE_NOTES=()
 OPENSSL_WINDOWS_DLLS=(libcrypto-4-x64.dll libssl-4-x64.dll)
-MINGW_RUNTIME_DLLS=(libstdc++-6.dll libwinpthread-1.dll)
+MINGW_RUNTIME_DLLS=(libstdc++-6.dll libwinpthread-1.dll libgcc_s_seh-1.dll)
 CURRENT_WORK_STEP="initialization"
 COMPLETED_WORK_STEPS=()
 ARTIFACT_PATH=""
@@ -665,6 +665,35 @@ verify_windows_exports() {
   done
 }
 
+verify_windows_dependencies() {
+  # Inspect every bundled DLL: dependencies of support DLLs must ship too.
+  local dll_path dependency dependency_lower staged_path found imports file_output
+  for dll_path in "$STAGED_WINDOWS_DIR"/*.dll; do
+    file_output="$(file "$dll_path")"
+    [[ "$file_output" == *"PE32+"* && "$file_output" == *"x86-64"* ]] ||
+      die "Windows plugin dependency is not a PE32+ x86-64 DLL: $dll_path"
+    imports="$(x86_64-w64-mingw32-objdump -p "$dll_path")"
+    while IFS= read -r dependency; do
+      dependency_lower="$(printf '%s' "$dependency" | tr '[:upper:]' '[:lower:]')"
+      case "$dependency_lower" in
+        # Windows system libraries and Universal CRT API sets.
+        advapi32.dll|bcrypt.dll|crypt32.dll|dbghelp.dll|iphlpapi.dll|kernel32.dll|\
+        msvcrt.dll|ntdll.dll|ucrtbase.dll|user32.dll|winmm.dll|ws2_32.dll|\
+        api-ms-win-*.dll|ext-ms-win-*.dll) continue ;;
+      esac
+      found=false
+      for staged_path in "$STAGED_WINDOWS_DIR"/*.dll; do
+        if [[ "$(basename "$staged_path" | tr '[:upper:]' '[:lower:]')" == "$dependency_lower" ]]; then
+          found=true
+          break
+        fi
+      done
+      [[ "$found" == true ]] ||
+        die "missing staged Windows dependency: $dependency (imported by $(basename "$dll_path"))"
+    done < <(printf '%s\n' "$imports" | awk '/DLL Name:/ { print $3 }')
+  done
+}
+
 verify_package() {
   note "Verifying package layout, ABI version, and exported symbols"
   [[ -f "$PACKAGE_DIR/package.json" ]] || die "missing package.json"
@@ -691,6 +720,7 @@ verify_package() {
     for dll_name in "${OPENSSL_WINDOWS_DLLS[@]}" "${MINGW_RUNTIME_DLLS[@]}"; do
       [[ -f "$STAGED_WINDOWS_DIR/$dll_name" ]] || die "missing staged Windows support DLL: $STAGED_WINDOWS_DIR/$dll_name"
     done
+    verify_windows_dependencies
   fi
 
   local package_name

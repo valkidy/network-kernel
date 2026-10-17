@@ -62,6 +62,13 @@ plugins/com.network-example.kernel/Assets/Plugins/Windows/x86_64/network_kernel.
 Unity resolves the C# import name `network_kernel` to
 `libnetwork_kernel.dylib` on macOS and `network_kernel.dll` on Windows.
 
+The Windows x86_64 plugin requires the bundled `libstdc++-6.dll`,
+`libwinpthread-1.dll`, and `libgcc_s_seh-1.dll` in the same plugin directory.
+Windows can report `DllNotFoundException: network_kernel` when a dependency
+is missing, even when `network_kernel.dll` itself is present. The package
+builder checks the import tables of all bundled Windows DLLs for missing
+dependencies.
+
 ## Gameplay Config Bundle
 
 The native server can load gameplay catalog, weapon template, and collider
