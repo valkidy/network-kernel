@@ -1,6 +1,6 @@
 # 水柱衝擊魔法實作計劃書
 
-狀態：**Q1–Q5、Q6 採預設值定案；P0 驗證完成（§5.2）；P1 kernel 完成（§5.3），ABI 108；P2 尚未開始。**
+狀態：**Q1–Q5、Q6 採預設值定案；P0 驗證完成（§5.2）；P1 kernel 完成（§5.3），ABI 108；P2 game_server 完成（§5.4）；P3 catalog 內容尚未開始。**
 分支：`claude/water-jet`，從 `main`（dcc805da，ABI 107）開；計畫最早寫在
 `claude/water-jet-plan`。
 最後更新：2026-10-17。
@@ -233,6 +233,20 @@ schema」。實際上 client 只在「會飛的 area effect 撞上 static world�
   - `surface_normal_is_refused_outside_an_impact`：`on_expired` 不能綁這個 source。
 - `kernel_c_header_test` 在 `sizeof(RenderEntityState) == 160u`（第 562 行）失敗，是 `main` 原本就有的：
   這次對 `kernel_types.h` 的改動只有註解、ABI 數字和一個 enum 值，沒有動到這個 struct。
+
+### 5.4 P2 實作紀錄（2026-10-17）
+
+- G1：`gameplay_config.cc` 的 `event_expression_available` 新增 `event.surface_normal`，只有
+  `on_projectile_impact` 提供。projectile 觸發的 `spawn_projectile` direction 可以綁
+  `event.direction` 或 `event.surface_normal`，後者編成 `KernelEventVec3Source_SurfaceNormal`。
+- G2：綁 `event.surface_normal` 的必須是 standard projectile，否則 loader 拋出
+  `event.surface_normal needs a standard projectile: <name>`。用在 `on_expired` 時，由
+  `validate_trigger_parameters` 拋出 `on_expired does not provide event.surface_normal`。
+- 測試（`action_graph_catalog_test.cc` 的 `surface_normal_spawn_direction_is_impact_and_standard_only`）：
+  - 把 rocket 的 impact spawn 改成 `event.surface_normal`：可以載入，編出來的 source 正確，而且
+    kernel 的 `Kernel_LoadGameplayCatalog` 也接受。
+  - 改綁在 `on_expired` 上：被拒絕。
+  - 綁在 area effect（shockwave_blast）上：被拒絕。
 
 ---
 
