@@ -402,8 +402,8 @@ int main() {
     require(Kernel_SetStaticCollisionScene(arena.kernel, &scene_config));
     require(Kernel_StartDedicatedServer(arena.kernel, 8094));
 
-    // Open ground in the open combat zone (-x, +z).
-    const glm::vec3 open{-50.0f, scene.ground(-50.0f, 50.0f) + 1.0f, 50.0f};
+    // Open ground in the open combat zone (-x, -z).
+    const glm::vec3 open{-50.0f, scene.ground(-50.0f, -50.0f) + 1.0f, -50.0f};
     KernelServerEntityCreateInfo create{};
     create.struct_size = sizeof(create);
     create.entity_type = gs::kEntityTypeActor;
@@ -434,14 +434,14 @@ int main() {
              Case{"floor", open, glm::vec3{1.0f, -0.6f, 0.0f}, 0.99f, 1.0f, 0.0f},
              gingerbread, commit_offset, bolt_range, column_push);
 
-    // A slope: the foot of the narrow pass's east wall, which faces +x near
-    // x = -5 and rises at about 33 degrees before it steepens. Found by
-    // casting west along the ground from the corridor's open side, so a
-    // reshaped scene moves the shooter with it rather than breaking this.
+    // A slope: the east face of the ridge along the narrow pass's west side,
+    // which faces +x near x = 36 and rises at about 30 degrees. Found by
+    // casting west along the ground from the valley floor, so a reshaped
+    // scene moves the shooter with it rather than breaking this.
     {
         const float z = -70.0f;
         physics::CollisionHit foot{};
-        require(scene.cast({15.0f, scene.ground(15.0f, z) + 1.4f, z},
+        require(scene.cast({48.0f, scene.ground(48.0f, z) + 1.4f, z},
                            {-1.0f, 0.0f, 0.0f}, 40.0f, &foot));
         const float x = foot.position.x + 7.0f;
         run_case(arena, scene,
@@ -450,16 +450,16 @@ int main() {
                  gingerbread, commit_offset, bolt_range, column_push);
     }
 
-    // A wall: a tree trunk in the forest flank (+x, +z), vertical from the
-    // ground up. Found the same way, casting east at chest height.
+    // A wall: a tree trunk in the forest flank (-x, +z), vertical from the
+    // ground up. Found the same way, casting north at chest height.
     {
-        const float z = 23.4f;
+        const float x = -23.4f;
         physics::CollisionHit trunk{};
-        require(scene.cast({60.0f, scene.ground(60.0f, z) + 1.4f, z},
-                           {1.0f, 0.0f, 0.0f}, 30.0f, &trunk));
-        const float x = trunk.position.x - 7.0f;
+        require(scene.cast({x, scene.ground(x, 60.0f) + 1.4f, 60.0f},
+                           {0.0f, 0.0f, 1.0f}, 30.0f, &trunk));
+        const float z = trunk.position.z - 7.0f;
         run_case(arena, scene,
-                 Case{"wall", {x, scene.ground(x, z) + 1.0f, z}, {1.0f, 0.0f, 0.0f},
+                 Case{"wall", {x, scene.ground(x, z) + 1.0f, z}, {0.0f, 0.0f, 1.0f},
                       -0.2f, 0.2f, 3.0f},
                  gingerbread, commit_offset, bolt_range, column_push);
     }

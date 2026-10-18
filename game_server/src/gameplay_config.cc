@@ -9486,7 +9486,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     if (document["player"]) {
         reject_unknown_keys(
             document["player"],
-            {"actor_template", "entity_template", "respawn"},
+            {"actor_template", "entity_template", "respawn", "spawn_position"},
             path,
             source.source_kind(),
             KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
@@ -9856,6 +9856,16 @@ void apply_catalog_player_config(
             throw std::runtime_error(
                 "player.respawn.team_revive_times must be -1 (unlimited) or more");
         }
+    }
+    if (const YAML::Node spawn = player["spawn_position"]) {
+        if (!spawn.IsMap() || !spawn["x"] || !spawn["y"] || !spawn["z"]) {
+            throw std::runtime_error("player.spawn_position needs x, y and z");
+        }
+        config->player.spawn_position = vec3_from_yaml(spawn);
+        if (!finite_vec3_value(config->player.spawn_position)) {
+            throw std::runtime_error("player.spawn_position must be finite");
+        }
+        config->player.has_spawn_position = true;
     }
 }
 
@@ -10809,6 +10819,10 @@ std::uint64_t compute_gameplay_catalog_hash(
     hash_float(&hash, config.player.respawn.height_offset_meters);
     hash_float(&hash, config.player.respawn.invulnerable_seconds);
     hash_scalar(&hash, config.player.respawn.team_revive_times);
+    hash_scalar(&hash, config.player.has_spawn_position);
+    hash_float(&hash, config.player.spawn_position.x);
+    hash_float(&hash, config.player.spawn_position.y);
+    hash_float(&hash, config.player.spawn_position.z);
     hash_scalar(
         &hash,
         static_cast<std::uint32_t>(

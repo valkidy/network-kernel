@@ -76,6 +76,10 @@ struct PlayerRespawnConfig {
 struct PlayerGameplayDefinition {
     std::uint32_t actor_template_id = 0;
     PlayerRespawnConfig respawn{};
+    // Where a joining player is put. The kernel spawns every player at the
+    // origin; game_server moves it here on PlayerJoined. Unset leaves it there.
+    bool has_spawn_position = false;
+    KernelVec3 spawn_position{0.0f, 0.0f, 0.0f};
 };
 
 

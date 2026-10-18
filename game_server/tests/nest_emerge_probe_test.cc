@@ -390,8 +390,12 @@ void print_walk(const char* label, const WalkOutcome& outcome) {
 }  // namespace
 
 int main() {
-    const network_example::game_server::GameServerGameplayConfig config =
+    network_example::game_server::GameServerGameplayConfig config =
         network_example::game_server::default_game_server_gameplay_config();
+    // The spawn point is the shipping map's, up on a 5 m mound; this runs on
+    // the flat plane instead, where it would leave the host still dropping
+    // when the target is placed level with it.
+    config.player.has_spawn_position = false;
     require(template_id_of(config, "gingerbread_nest") != 0u);
     require(template_id_of(config, "gingerbread") != 0u);
     const std::vector<std::uint8_t> scene = read_ground_scene();

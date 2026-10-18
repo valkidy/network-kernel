@@ -1,14 +1,15 @@
 // The narrow-pass giant walks its authored route, on the real map.
 //
-// Its route goes down an 8 m corridor between ~80 degree cliffs, so the only
+// Its route goes down a valley as narrow as 9 m beside a cliff, so the only
 // meaningful check is against the shipping terrain itself: the baked 4-zone
 // collision under the character controller, and the baked navmesh joining the
 // waypoints. A filesystem catalog load reads neither artifact (only a bundle
 // does), so both are handed over here exactly as the bundle path would.
 //
-// What is asserted is the shape of the walk -- it goes through the corridor to
-// the open ground at its north end, back out along the east-west leg, and
-// never climbs a cliff -- not the timing, which follows move speed.
+// What is asserted is the shape of the walk -- it goes through the valley's
+// narrowest stretch, out onto the open ground at its north end and down to its
+// south end, and never climbs a cliff -- not the timing, which follows move
+// speed.
 
 #include <algorithm>
 #include <cstdint>
@@ -139,7 +140,7 @@ int main() {
     std::uint32_t pass_giant = 0;
     std::vector<std::pair<std::uint32_t, float>> sweep_lanes;
     for (const KernelServerEntityState& giant : giants(kernel, giant_template)) {
-        if (giant.position.x < 0.0f && giant.position.z < 0.0f) {
+        if (giant.position.x > 0.0f && giant.position.z < 0.0f) {
             pass_giant = giant.net_id;
         } else {
             sweep_lanes.emplace_back(giant.net_id, giant.position.z);
@@ -148,12 +149,12 @@ int main() {
     require(pass_giant != 0u);
     require(sweep_lanes.size() == 3u);
 
-    // Long enough to reach the far end of the route and come most of the way
-    // back: it joins at the corner nearest its spawn, walks the east-west leg
-    // out and back, then the whole pass north.
-    bool corridor_deep = false;   // Inside the north-south corridor's walls.
+    // Long enough to walk the whole valley both ways from wherever it joins:
+    // the corner nearest its spawn is mid-valley, so at worst one end, then
+    // the full length to the other.
+    bool corridor_deep = false;   // In the valley's narrowest stretch.
     float northmost = -1e9f;
-    float eastmost = -1e9f;
+    float southmost = 1e9f;
     float highest = -1e9f;
     float sweep_drift = 0.0f;
     for (int tick = 0; tick < 3300; ++tick) {
@@ -163,9 +164,9 @@ int main() {
             if (giant.net_id == pass_giant) {
                 const KernelVec3& p = giant.position;
                 corridor_deep = corridor_deep ||
-                    (p.z < -25.0f && p.z > -40.0f && p.x > -88.0f && p.x < -76.0f);
+                    (p.z < -40.0f && p.z > -60.0f && p.x > 44.0f && p.x < 54.0f);
                 northmost = std::max(northmost, p.z);
-                eastmost = std::max(eastmost, p.x);
+                southmost = std::min(southmost, p.z);
                 highest = std::max(highest, p.y);
                 continue;
             }
@@ -179,20 +180,20 @@ int main() {
     }
     std::fprintf(
         stderr,
-        "pass giant: corridor=%d northmost_z=%.1f eastmost_x=%.1f highest_y=%.2f; "
+        "pass giant: corridor=%d northmost_z=%.1f southmost_z=%.1f highest_y=%.2f; "
         "other giants' lane drift=%.2f\n",
         corridor_deep,
         northmost,
-        eastmost,
+        southmost,
         highest,
         sweep_drift);
     require(corridor_deep);
-    // Out of the pass's north end onto the open ground (its last waypoint is
-    // at z 10), and out along the east-west leg (its last waypoint, x -25).
+    // Out of the valley's north end onto the open ground (its first waypoint
+    // is at z 10), and down to its south end (its last waypoint, z -85).
     require(northmost > 5.0f);
-    require(eastmost > -30.0f);
-    // The corridor floor is ~0.2 m and the cliff tops ~11 m: anything above a
-    // couple of metres is a giant that climbed out.
+    require(southmost < -80.0f);
+    // The valley floor is ~0.2-0.6 m, the plateau ~11 m and the ridge up to
+    // ~9 m: anything above a couple of metres is a giant that climbed out.
     require(highest < 2.0f);
     // A route only for the node that authored one: the other three still
     // sweep their lane along x.

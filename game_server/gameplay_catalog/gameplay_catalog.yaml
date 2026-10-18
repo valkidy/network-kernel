@@ -76,6 +76,10 @@ scene_props:
 # follow, which some order-sensitive tests notice (knockdown_recovery_test).
 player:
   entity_template: player
+  # Where a joining player is put: on the mound beside the camp pad, ~6 m from
+  # the camp, so the first thing a player can do is pick a loadout. y is the
+  # mound top (~4.7 m) plus a little; the controller settles it onto the ground.
+  spawn_position: {x: -85.0, y: 5.0, z: -85.0}
   # A dead player comes back delay_seconds later, height_offset metres above
   # its body (less under a ceiling) so it drops back in, and cannot be hurt for
   # invulnerable_seconds. team_revive_times is one pool shared by every player:
@@ -93,10 +97,10 @@ player:
 #
 # The route is pathed over navigation_mesh when one is loaded, and a straight
 # chord between two points in the area otherwise -- wrong on this map, which is
-# not flat: it would walk squads into cliffs and trunks. Most of
-# plane_200x200_4zones' 04_Narrow_Pass (x<0, z<0) is a plateau ~11 m up, ringed
-# by cliffs no agent can climb, so a point drawn on it finds no route from the
-# low ground. The pass's corridor floor is not on the plateau and is connected;
+# not flat: it would walk squads into cliffs and trunks. East of
+# plane_200x200_4zones_v2's 04_Narrow_Pass valley (x > 62, z < 0) is a plateau
+# ~11 m up, ringed by cliffs no agent can climb, so a point drawn on it finds no
+# route from the low ground. The valley floor below it is connected;
 # pass_giant_route_test walks it. See //game_server:patrol_nav_bench.
 #
 # A ceiling across every definition, which is the one thing the per-definition

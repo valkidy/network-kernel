@@ -50,6 +50,11 @@ void GameServer::handle_event(const KernelEvent& event) {
     if (event.type == KernelEventType_PlayerJoined && event.net_id != 0) {
         players_.insert(event.net_id);
         configure_player(event.net_id);
+        if (kernel_ != nullptr && config_.player.has_spawn_position) {
+            const KernelQuat facing{0.0f, 0.0f, 0.0f, 1.0f};
+            Kernel_ServerSetEntityTransform(
+                kernel_, event.net_id, &config_.player.spawn_position, &facing);
+        }
         // Out of revives: arriving late is not a way back in. The kernel emits
         // no EntityDied for this, so it neither splats nor queues a revive.
         if (kernel_ != nullptr && respawn_.joins_dead()) {
