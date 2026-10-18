@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- ships the v2 four-zone map and updated patrols, improves refused-message retries and keeps players down after landed knockback
+
+
+0.7.0 release notes:
+
 - aligns Unity bindings with ABI 108 for surface-normal Water Jet Staff spawns, fixes first lock strikes and bundles the Windows GCC runtime
 
 
