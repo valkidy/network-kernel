@@ -49,24 +49,26 @@ skeleton_manifests_dir: skeleton_assets/generated
 # It has to name the same source mesh as static_collision_scene, or squads will
 # path over one shape and walk into another.
 navigation_mesh:
-  entry_path: mesh_assets/recast/plane_200x200_4zones.navmesh
-# Four 100 m zones around the origin: open combat (-x,+z), forest flank
-# (+x,+z), swamp shortcut (+x,-z) and narrow pass (-x,-z). The pass is
-# cliff-walled -- its north-south corridor has an 8 m floor -- and the
-# forest is studded with trunks, both of which are static collision here.
+  entry_path: mesh_assets/recast/plane_200x200_4zones_v2.navmesh
+# Four 100 m zones around the origin: open combat (-x,-z), forest flank
+# (-x,+z), swamp shortcut (+x,+z) and narrow pass (+x,-z). Open combat holds
+# the 6 m camp pad at y=5 in its far corner, on the same navmesh island as
+# the rest of the map. The pass's plateau (x 57-99, z -99 to -6, ~11-13 m up)
+# is ringed by cliffs and is its own island: nothing walks up to it. The
+# forest is studded with trunks; all of it is static collision here.
 static_collision_scene:
   # entry_path: mesh_assets/jolt/undulating.joltmesh
   # entry_path: mesh_assets/jolt/plane_200x200.joltmesh
-  entry_path: mesh_assets/jolt/plane_200x200_4zones.joltmesh
+  entry_path: mesh_assets/jolt/plane_200x200_4zones_v2.joltmesh
   scene_id: 1
   collider_id: 2147483649
   collision_layer: 1
 # Props placed once the server is running, before any mission: a stand-in for
 # the scene file that will place a map's fixed props. The initial camp sits
-# beside the spawn point, so the first thing a player can do is pick a loadout.
+# on the camp pad in open combat's far corner (x,z -93 to -87 at y=5).
 scene_props:
   - entity_template: initial_camp
-    position: {x: 6.0, y: 0.0, z: 0.0}
+    position: {x: -90.0, y: 5.0, z: -90.0}
 # `scene_items:` (none by default) lays items on the map from the start, each
 #   - item_template: <name>   quantity: <n, default 1>   position: {x, y, z}
 # A weapon placed so is a map weapon: a loadout being reapplied leaves it with
@@ -74,6 +76,10 @@ scene_props:
 # follow, which some order-sensitive tests notice (knockdown_recovery_test).
 player:
   entity_template: player
+  # Where a joining player is put: on the mound beside the camp pad, ~6 m from
+  # the camp, so the first thing a player can do is pick a loadout. y is the
+  # mound top (~4.7 m) plus a little; the controller settles it onto the ground.
+  spawn_position: {x: -85.0, y: 5.0, z: -85.0}
   # A dead player comes back delay_seconds later, height_offset metres above
   # its body (less under a ceiling) so it drops back in, and cannot be hurt for
   # invulnerable_seconds. team_revive_times is one pool shared by every player:
@@ -91,10 +97,10 @@ player:
 #
 # The route is pathed over navigation_mesh when one is loaded, and a straight
 # chord between two points in the area otherwise -- wrong on this map, which is
-# not flat: it would walk squads into cliffs and trunks. Most of
-# plane_200x200_4zones' 04_Narrow_Pass (x<0, z<0) is a plateau ~11 m up, ringed
-# by cliffs no agent can climb, so a point drawn on it finds no route from the
-# low ground. The pass's corridor floor is not on the plateau and is connected;
+# not flat: it would walk squads into cliffs and trunks. East of
+# plane_200x200_4zones_v2's 04_Narrow_Pass valley (x > 62, z < 0) is a plateau
+# ~11 m up, ringed by cliffs no agent can climb, so a point drawn on it finds no
+# route from the low ground. The valley floor below it is connected;
 # pass_giant_route_test walks it. See //game_server:patrol_nav_bench.
 #
 # A ceiling across every definition, which is the one thing the per-definition
@@ -124,4 +130,4 @@ agent_budget:
 # and validated whether it is listed or not, so a broken definition fails the
 # catalog even while it is switched off; only the listed ids ever spawn.
 patrols:
-  - ids: [1, 2]
+  - ids: [1] # [1, 2]

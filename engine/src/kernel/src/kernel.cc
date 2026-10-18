@@ -14398,6 +14398,7 @@ void KernelEngine::simulate_tick() {
     write_back_weapon_states();
     flush_inventory_replication();
     flush_prop_state_changes();
+    retry_status_effect_states();
     flush_actor_impulses();
     flush_actor_teleports();
     // With the snapshot rather than every tick, which is what
@@ -15165,7 +15166,16 @@ void KernelEngine::sync_session_relevance(
             continue;
         }
         ++spawns_sent;
-        send_entity_spawn(session->peer, *entity);
+        if (!send_entity_spawn(session->peer, *entity)) {
+            // Refused, not lost in flight: GNS turns a send away once the
+            // connection's queue is full, which is what a client that has
+            // stopped reading (a stalled or sleeping process) looks like for
+            // as long as it lasts. Left out of next_relevant like a deferred
+            // entity, so it is offered again; announcing it anyway would put
+            // it in every later snapshot for a client that never heard of it.
+            // What normally follows the spawn waits for it.
+            continue;
+        }
         // Steps alone cannot tell a session where feet already are, so a
         // session that has just started seeing an entity is handed them.
         // Without this its legs would appear one at a time, each only once
@@ -15200,10 +15210,18 @@ void KernelEngine::sync_session_relevance(
                 world_.registry().all_of<ProjectileState>(*world_entity)) {
                 session->out_of_range_projectiles.insert(net_id);
             }
-            send_entity_despawn(
-                session->peer,
-                net_id,
-                KernelDespawnReason_OutOfRange);
+            if (!send_entity_despawn(
+                    session->peer,
+                    net_id,
+                    KernelDespawnReason_OutOfRange)) {
+                // Still the client's, so it stays in the set and leaves again
+                // next snapshot. Dropping it would leave the client holding an
+                // entity nothing will ever take away: Unity keeps a view until
+                // its despawn. Should it come back first, the client never lost
+                // it and needs no spawn. Net ids are never reused, so this is
+                // still the same entity.
+                next_relevant.insert(net_id);
+            }
         }
     }
     session->relevant_entities = std::move(next_relevant);
@@ -15331,7 +15349,7 @@ bool KernelEngine::is_anchored_in_flight_prop(NetId net_id) const {
         trajectory->gravity == motion.gravity;
 }
 
-void KernelEngine::send_entity_spawn(PeerId peer, const EntitySnapshot& entity) {
+bool KernelEngine::send_entity_spawn(PeerId peer, const EntitySnapshot& entity) {
     PeerId owner_peer = 0;
     std::uint32_t actor_template_id = 0;
     std::uint32_t entity_template_id = 0;
@@ -15417,15 +15435,17 @@ void KernelEngine::send_entity_spawn(PeerId peer, const EntitySnapshot& entity) 
             SendMode::kReliable,
             ChannelId::kReliableEvent)) {
         push_event(KernelEventType_Error, entity.net_id, peer, 16);
-    } else {
-        record_sent_packet(
-            static_cast<std::uint32_t>(packet.size()),
-            SendMode::kReliable,
-            ChannelId::kReliableEvent);
+        return false;
     }
-    if (entity.type == EntityType::kProjectile) {
+    record_sent_packet(
+        static_cast<std::uint32_t>(packet.size()),
+        SendMode::kReliable,
+        ChannelId::kReliableEvent);
+    // A projectile's spawn is only half of its metadata: its template comes
+    // in the batch. Offered again whole if the batch is refused; a second
+    // spawn for a net id the client already holds just updates it.
+    return entity.type != EntityType::kProjectile ||
         send_projectile_spawn_batch(peer, entity);
-    }
 }
 
 void KernelEngine::queue_prop_state_change(NetId net_id) {
@@ -16049,13 +16069,22 @@ void KernelEngine::send_prop_state_changes(
     if (session == nullptr || packet.records.empty()) return;
     const std::vector<std::uint8_t> encoded =
         encode_prop_state_change_batch_packet(packet, next_packet_sequence_++);
-    if (encoded.empty() || !transport_->Send(
+    if (encoded.empty()) {
+        push_event(KernelEventType_Error, 0u, session->peer, 29u);
+        return;
+    }
+    if (!transport_->Send(
             session->peer,
             encoded.data(),
             static_cast<std::uint32_t>(encoded.size()),
             SendMode::kReliable,
             ChannelId::kReliableEvent)) {
         push_event(KernelEventType_Error, 0u, session->peer, 29u);
+        // Only a refusal is worth another try; a record the encoder rejects
+        // would be rejected again.
+        for (const PropStateChangeRecord& record : packet.records) {
+            session->prop_state_retries.insert(record.net_id);
+        }
         return;
     }
     record_sent_packet(
@@ -16100,7 +16129,6 @@ void KernelEngine::finish_scope_transfer(
 }
 
 void KernelEngine::flush_prop_state_changes() {
-    if (pending_prop_state_changes_.empty()) return;
     std::sort(
         pending_prop_state_changes_.begin(), pending_prop_state_changes_.end());
     pending_prop_state_changes_.erase(
@@ -16118,7 +16146,6 @@ void KernelEngine::flush_prop_state_changes() {
         }
     }
     pending_prop_state_changes_.clear();
-    if (batch.records.empty()) return;
 
     const auto send = [&](PeerSession* session) {
         PropStateChangeBatchPacket relevant{};
@@ -16128,6 +16155,23 @@ void KernelEngine::flush_prop_state_changes() {
                 relevant.records.push_back(record);
             }
         }
+        // Refused earlier, rebuilt as of now. One that has left relevance
+        // needs nothing: its next spawn carries its state. One that is gone
+        // has no record to build.
+        for (const NetId net_id : session->prop_state_retries) {
+            const bool in_batch = std::any_of(
+                relevant.records.begin(),
+                relevant.records.end(),
+                [net_id](const PropStateChangeRecord& record) {
+                    return record.net_id == net_id;
+                });
+            PropStateChangeRecord record{};
+            if (!in_batch && session->relevant_entities.contains(net_id) &&
+                make_prop_state_change_record(net_id, &record)) {
+                relevant.records.push_back(record);
+            }
+        }
+        session->prop_state_retries.clear();
         if (relevant.records.empty()) return;
         send_prop_state_changes(session, relevant);
     };
@@ -16498,14 +16542,14 @@ bool KernelEngine::thrown_prop_render_transform(
     return true;
 }
 
-void KernelEngine::send_projectile_spawn_batch(
+bool KernelEngine::send_projectile_spawn_batch(
     PeerId peer,
     const EntitySnapshot& entity) {
     const std::optional<entt::entity> world_entity = world_.find_entity(entity.net_id);
     if (!world_entity.has_value() ||
         !world_.registry().all_of<NetworkIdentity, ProjectileState, Velocity>(
             *world_entity)) {
-        return;
+        return true;
     }
     const NetworkIdentity& identity =
         world_.registry().get<NetworkIdentity>(*world_entity);
@@ -16545,15 +16589,16 @@ void KernelEngine::send_projectile_spawn_batch(
             SendMode::kReliable,
             ChannelId::kReliableEvent)) {
         push_event(KernelEventType_Error, entity.net_id, peer, 24);
-    } else {
-        record_sent_packet(
-            static_cast<std::uint32_t>(packet.size()),
-            SendMode::kReliable,
-            ChannelId::kReliableEvent);
+        return false;
     }
+    record_sent_packet(
+        static_cast<std::uint32_t>(packet.size()),
+        SendMode::kReliable,
+        ChannelId::kReliableEvent);
+    return true;
 }
 
-void KernelEngine::send_entity_despawn(
+bool KernelEngine::send_entity_despawn(
     PeerId peer,
     NetId net_id,
     std::uint32_t reason) {
@@ -16567,12 +16612,13 @@ void KernelEngine::send_entity_despawn(
             SendMode::kReliable,
             ChannelId::kReliableEvent)) {
         push_event(KernelEventType_Error, net_id, peer, 17);
-    } else {
-        record_sent_packet(
-            static_cast<std::uint32_t>(packet.size()),
-            SendMode::kReliable,
-            ChannelId::kReliableEvent);
+        return false;
     }
+    record_sent_packet(
+        static_cast<std::uint32_t>(packet.size()),
+        SendMode::kReliable,
+        ChannelId::kReliableEvent);
+    return true;
 }
 
 void KernelEngine::send_entity_template_update(
@@ -17630,8 +17676,13 @@ void KernelEngine::flush_inventory_replication() {
             if (std::find(observed.begin(), observed.end(), cursor->first) ==
                     observed.end() ||
                 item_store_.find_container(cursor->first) == nullptr) {
-                (void)send_inventory_container_closed(session, cursor->first);
-                cursor = session->inventory_revisions.erase(cursor);
+                // Kept until the close goes out, or the client would hold its
+                // copy of a container it can no longer see.
+                if (send_inventory_container_closed(session, cursor->first)) {
+                    cursor = session->inventory_revisions.erase(cursor);
+                } else {
+                    ++cursor;
+                }
             } else {
                 ++cursor;
             }
@@ -18281,12 +18332,26 @@ void KernelEngine::send_status_effect_state(PeerSession* session, NetId target) 
             SendMode::kReliable,
             ChannelId::kReliableEvent)) {
         push_event(KernelEventType_Error, target, session->peer, 35);
+        // Only a refusal is worth another try; a state the encoder rejects
+        // would be rejected again.
+        session->status_effect_state_retry = !bytes.empty();
         return;
     }
+    session->status_effect_state_retry = false;
     record_sent_packet(
         static_cast<std::uint32_t>(bytes.size()),
         SendMode::kReliable,
         ChannelId::kReliableEvent);
+}
+
+// The whole state goes each time, so a retry is just the current one.
+void KernelEngine::retry_status_effect_states() {
+    for (PeerSession& session : peer_sessions_) {
+        if (session.status_effect_state_retry) {
+            session.status_effect_state_retry = false;
+            send_status_effect_state(&session, session.player);
+        }
+    }
 }
 
 void KernelEngine::publish_status_effect_state(NetId target) {

@@ -191,8 +191,14 @@ int main() {
         harness.frame();
     }
     const KernelServerEntityState alive = harness.state();
-    // Standing on the map, or every height below means nothing.
-    require(std::fabs(alive.position.y) < 0.1f);
+    // Standing on the map, or every height below means nothing: grounded, at
+    // the catalog's spawn (the mound beside the camp, ~4.8 m up) when it names
+    // one, else at the origin the kernel puts every player.
+    const float spawn_y = config.player.has_spawn_position
+        ? config.player.spawn_position.y
+        : 0.0f;
+    require((alive.visual_flags & KERNEL_VISUAL_FLAG_GROUNDED) != 0u);
+    require(std::fabs(alive.position.y - spawn_y) < 0.5f);
     require(alive.hp == alive.max_hp);
     require(alive.max_hp == 1000u);
     // One occupied slot per authored slot.

@@ -1501,7 +1501,7 @@ int main() {
     require(config.player.actor_template_id == 1);
     require(
         config.static_collision_scene.entry_path ==
-        "mesh_assets/jolt/plane_200x200_4zones.joltmesh");
+        "mesh_assets/jolt/plane_200x200_4zones_v2.joltmesh");
     require(config.static_collision_scene.scene_id == 1u);
     require(config.static_collision_scene.collider_id == 0x80000001u);
     require(
