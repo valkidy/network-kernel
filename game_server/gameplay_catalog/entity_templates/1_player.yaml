@@ -22,6 +22,13 @@ stagger:
   decay_delay_ticks: 30
   duration_ticks: 12
   immunity_ticks: 60
+# A landed knockback keeps the player down until its impact-falling-flat clip
+# has played out: 0.633 s, started 0.2 s before touchdown
+# (NetworkActorView.launchLandingLeadSeconds), leaves ~0.43 s on the ground --
+# 13 ticks, the least that covers the clip; the blend back to idle is not held.
+# Absent, the player walked and fired the tick it landed, under the clip.
+knockdown:
+  recovery_ticks: 13
 movement:
   controller: character
   move_speed_meters_per_second: 5.0
