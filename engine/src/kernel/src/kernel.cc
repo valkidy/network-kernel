@@ -14335,12 +14335,14 @@ void KernelEngine::simulate_tick() {
         damage_pipeline_.drain_ready_damage(
             world_, server_time_us, tick_loop_.current_tick());
     queue_hit_debug_records(ready_damage);
-    const std::vector<ConfirmedDamage> health_depleted = apply_damage_applications(
+    std::vector<ConfirmedDamage> health_depleted = apply_damage_applications(
         world_,
         ready_damage,
         tick_loop_.current_tick(),
         &events_);
     EntityLifecycleSystem lifecycle_system;
+    lifecycle_system.reclaim_fallen_entities(
+        *this, server_time_us, &health_depleted);
     lifecycle_system.process_health_depleted(
         *this, health_depleted, server_time_us);
     lifecycle_system.enter_death_state(*this, health_depleted);

@@ -898,6 +898,13 @@ typedef enum KernelDespawnReason {
     KernelDespawnReason_Retired = 5,
 } KernelDespawnReason;
 
+/* The kill floor. An actor or prop whose position drops below this height has
+ * left the map: a living actor dies the ordinary death (a player stays dormant
+ * and respawns, an agent is destroyed), anything without health to lose is
+ * removed, and a prop is cleaned up like an expired one (despawn reason
+ * Expired, no on_destroy graph). Projectiles are left to their own lifetime. */
+#define KERNEL_FALL_DEATH_HEIGHT_METERS (-10.0f)
+
 typedef enum RenderEntityStatus {
     RenderEntityStatus_Active = 0,
     RenderEntityStatus_Predicted = 1,

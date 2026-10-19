@@ -140,6 +140,20 @@ void GameServer::revive_player(std::uint32_t net_id, float delta_seconds) {
         return;
     }
     const PlayerRespawnConfig& respawn = config_.player.respawn;
+    // A revive lifts the player off where it died. One that died off the map
+    // has nowhere under it to stand, and would only fall to its death again
+    // -- once per revive, until the team's pool is gone -- so it comes back at
+    // the player spawn instead (the world origin on a map without one).
+    KernelServerEntityState state{};
+    state.struct_size = sizeof(state);
+    if (Kernel_ServerGetEntityState(kernel_, net_id, &state) &&
+        !(state.position.y >= KERNEL_FALL_DEATH_HEIGHT_METERS)) {
+        const KernelVec3 spawn = config_.player.has_spawn_position
+            ? config_.player.spawn_position
+            : KernelVec3{0.0f, 0.0f, 0.0f};
+        const KernelQuat facing{0.0f, 0.0f, 0.0f, 1.0f};
+        Kernel_ServerSetEntityTransform(kernel_, net_id, &spawn, &facing);
+    }
     KernelServerReviveInfo info{};
     info.struct_size = sizeof(info);
     info.net_id = net_id;

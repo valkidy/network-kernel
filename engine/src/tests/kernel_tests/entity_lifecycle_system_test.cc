@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <cstdlib>
@@ -347,6 +348,116 @@ void revive_restores_only_the_dead() {
     require(registry.get<Health>(entity).hp == 90u);
 }
 
+// Below the kill floor, everything goes: the living die the ordinary death --
+// a player stays as a dormant corpse, an agent is destroyed -- the dead are not
+// killed twice, an actor with no health is simply removed, and a prop is
+// cleaned up as an expired one. Anything still above the floor is untouched.
+void fall_below_kill_floor_reclaims_actors_and_props() {
+    using network_example::ConfirmedDamage;
+    using network_example::Health;
+    using network_example::Transform;
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+    engine.reset_runtime_state(KernelMode_DedicatedServer);
+    entt::registry& registry = engine.world_.registry();
+
+    KernelEntityTemplateDefinition prop_template{};
+    prop_template.struct_size = sizeof(prop_template);
+    prop_template.entity_template_id = 300;
+    prop_template.entity_type = KernelEntityType_Prop;
+    prop_template.component_flags = KERNEL_ENTITY_COMPONENT_TRANSFORM;
+    prop_template.ai.struct_size = sizeof(prop_template.ai);
+    prop_template.movement.struct_size = sizeof(prop_template.movement);
+    prop_template.prop.struct_size = sizeof(prop_template.prop);
+    prop_template.prop.interaction.struct_size =
+        sizeof(prop_template.prop.interaction);
+    engine.entity_templates_.push_back(prop_template);
+    const auto prop = [&]() {
+        KernelServerEntityCreateInfo info{};
+        info.struct_size = sizeof(info);
+        info.entity_template_id = 300;
+        info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+        std::uint32_t net_id = 0;
+        require(engine.server_create_entity(info, &net_id));
+        return net_id;
+    };
+    const auto place = [&](std::uint32_t net_id, float y) {
+        const auto entity = engine.world_.find_entity(net_id);
+        require(entity.has_value());
+        registry.get<Transform>(*entity).position.y = y;
+        return *entity;
+    };
+    const auto living = [&](std::uint32_t net_id, float y) {
+        const entt::entity entity = place(net_id, y);
+        registry.emplace_or_replace<Health>(entity, Health{100, 100});
+        return entity;
+    };
+
+    std::uint32_t player = 0;
+    require(engine.server_create_entity(player_create_info(), &player));
+    std::uint32_t standing_player = 0;
+    require(engine.server_create_entity(player_create_info(), &standing_player));
+    const std::uint32_t agent =
+        engine.world_.spawn_enemy(glm::vec3{5.0f, 0.0f, 0.0f});
+    const std::uint32_t healthless_agent =
+        engine.world_.spawn_enemy(glm::vec3{6.0f, 0.0f, 0.0f});
+    const std::uint32_t fallen_prop = prop();
+    const std::uint32_t standing_prop = prop();
+
+    const entt::entity player_entity = living(player, -10.5f);
+    // Just above the floor is still on the map.
+    living(standing_player, -9.5f);
+    living(agent, -40.0f);
+    registry.remove<Health>(place(healthless_agent, -11.0f));
+    place(fallen_prop, -11.0f);
+    place(standing_prop, -9.5f);
+
+    engine.events_.clear();
+    engine.lifecycle_events_.clear();
+    std::vector<ConfirmedDamage> depleted;
+    network_example::EntityLifecycleSystem lifecycle;
+    lifecycle.reclaim_fallen_entities(engine, 0u, &depleted);
+    require(depleted.size() == 2u);
+    require(depleted[0].target_net_id == std::min(player, agent));
+    require(depleted[1].target_net_id == std::max(player, agent));
+    require(registry.get<Health>(player_entity).hp == 0u);
+    // The prop and the healthless agent are gone at once, and how.
+    require(!engine.world_.find_entity(fallen_prop).has_value());
+    require(!engine.world_.find_entity(healthless_agent).has_value());
+    require(engine.world_.find_entity(standing_prop).has_value());
+    bool prop_expired = false;
+    bool agent_destroyed = false;
+    for (const auto& event : engine.lifecycle_events_) {
+        prop_expired |= event.net_id == fallen_prop &&
+            event.reason == KernelDespawnReason_Expired;
+        agent_destroyed |= event.net_id == healthless_agent &&
+            event.reason == KernelDespawnReason_Destroyed;
+    }
+    require(prop_expired);
+    require(agent_destroyed);
+
+    lifecycle.enter_death_state(engine, depleted);
+    lifecycle.destroy_dead_entities(engine, depleted);
+    require(engine.world_.find_entity(player).has_value());
+    require(!engine.world_.find_entity(agent).has_value());
+    require(engine.world_.find_entity(standing_player).has_value());
+    std::size_t died = 0;
+    for (const KernelEvent& event : engine.events_) {
+        died += event.type == KernelEventType_EntityDied ? 1u : 0u;
+    }
+    require(died == 2u);
+
+    // The corpse keeps falling, and is not killed again on the way.
+    place(player, -60.0f);
+    std::vector<ConfirmedDamage> again;
+    lifecycle.reclaim_fallen_entities(engine, 0u, &again);
+    require(again.empty());
+    require(engine.world_.find_entity(player).has_value());
+}
+
 }  // namespace
 
 // The world-rule director cases that used to live here are gone with the
@@ -364,5 +475,6 @@ int main() {
     lifecycle_system_destroy_matches_legacy_side_effects();
     damage_death_follows_each_entity_policy();
     revive_restores_only_the_dead();
+    fall_below_kill_floor_reclaims_actors_and_props();
     return 0;
 }
