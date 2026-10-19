@@ -393,6 +393,8 @@ public:
     bool server_set_entity_movement_collision_mask(
         NetId net_id,
         std::uint32_t movement_collision_mask);
+    bool server_set_fall_death_height(float height_meters);
+    float fall_death_height() const { return fall_death_height_; }
     bool server_submit_entity_input(NetId net_id, const KernelPlayerInput& input);
     bool server_enqueue_entity_transform(
         std::uint32_t command_source,
@@ -1309,6 +1311,9 @@ private:
     std::vector<QueuedInput> pending_inputs_;
     std::vector<KernelEvent> events_;
     std::vector<KernelEntityLifecycleEvent> lifecycle_events_;
+    // Host configuration, not runtime state: reset_runtime_state leaves it, so
+    // a value set before the server starts survives the start.
+    float fall_death_height_ = KERNEL_FALL_DEATH_HEIGHT_METERS;
     std::vector<KernelEvent> pending_presentation_events_;
     std::vector<KernelLocalActionResult> local_action_results_;
     std::vector<KernelRemoteActionPresentationEvent>

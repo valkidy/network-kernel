@@ -84,6 +84,7 @@ EXPORTS
     Kernel_ServerSetEntityHealth
     Kernel_ServerReviveEntity
     Kernel_ServerSetEntityMovementCollisionMask
+    Kernel_ServerSetFallDeathHeight
     Kernel_ServerSubmitEntityInput
     Kernel_ServerSetEntityCombatState
     Kernel_ServerSetEntityActorTemplate

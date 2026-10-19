@@ -80,6 +80,10 @@ player:
   # the camp, so the first thing a player can do is pick a loadout. y is the
   # mound top (~4.7 m) plus a little; the controller settles it onto the ground.
   spawn_position: {x: -85.0, y: 5.0, z: -85.0}
+  # The kill floor, in metres. Any actor or prop that falls below it has left
+  # the map: a living actor dies (a player respawns at spawn_position), and
+  # anything else is removed. Must be under spawn_position.
+  fall_death_height: -10.0
   # A dead player comes back delay_seconds later, height_offset metres above
   # its body (less under a ceiling) so it drops back in, and cannot be hurt for
   # invulnerable_seconds. team_revive_times is one pool shared by every player:

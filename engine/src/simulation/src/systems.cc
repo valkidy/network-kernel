@@ -3031,7 +3031,7 @@ void EntityLifecycleSystem::reclaim_fallen_entities(
         const glm::vec3& position = view.get<Transform>(entity).position;
         // Written so a NaN height fails it: a position that is not a number
         // has left the map as surely as one below it.
-        if (position.y >= KERNEL_FALL_DEATH_HEIGHT_METERS) {
+        if (position.y >= engine.fall_death_height()) {
             continue;
         }
         // A carried prop is where its carrier is, and goes down with it: the

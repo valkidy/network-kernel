@@ -116,6 +116,14 @@ default logger; the first call starts capture, which keeps the newest 1024
 lines, and lines still go to stdout. A dedicated server that never calls it is
 unchanged.
 
+`Kernel_ServerSetFallDeathHeight` is additive within ABI 108, behind
+`KERNEL_CAPABILITY_SERVER_FALL_DEATH_HEIGHT` (`0x0008000000000000`). It moves
+the kill floor, `KERNEL_FALL_DEATH_HEIGHT_METERS` (-10) until called: each tick,
+a living actor below it dies the ordinary death, an actor with no health is
+removed, and a prop is cleaned up as `KernelDespawnReason_Expired`. game_server
+sets it from the catalog's `player.fall_death_height`. A non-finite height is
+rejected. No struct changes, and a client never calls it.
+
 ABI 92 adds `Kernel_ServerReviveEntity`, `KernelServerReviveInfo` (16 B) and
 `KERNEL_CAPABILITY_SERVER_ENTITY_REVIVE`. It brings back an entity whose health
 is zero out of a non-zero maximum, and refuses anything alive. In one call: full

@@ -502,6 +502,9 @@
 /* Kernel_PollLogMessages. Additive within ABI 93: check this flag, not the
  * version, before calling it. */
 #define KERNEL_CAPABILITY_LOG_CAPTURE UINT64_C(0x0001000000000000)
+/* Kernel_ServerSetFallDeathHeight. Additive within ABI 108: check this flag,
+ * not the version, before calling it. */
+#define KERNEL_CAPABILITY_SERVER_FALL_DEATH_HEIGHT UINT64_C(0x0008000000000000)
 
 #define KERNEL_SKELETON_RENDER_STATUS_SUCCESS UINT32_C(0)
 #define KERNEL_SKELETON_RENDER_STATUS_INSUFFICIENT_CAPACITY UINT32_C(1)
@@ -898,8 +901,8 @@ typedef enum KernelDespawnReason {
     KernelDespawnReason_Retired = 5,
 } KernelDespawnReason;
 
-/* The kill floor. An actor or prop whose position drops below this height has
- * left the map: a living actor dies the ordinary death (a player stays dormant
+/* The default kill floor; Kernel_ServerSetFallDeathHeight moves it. An actor
+ * or prop whose position drops below it has left the map: a living actor dies the ordinary death (a player stays dormant
  * and respawns, an agent is destroyed), anything without health to lose is
  * removed, and a prop is cleaned up like an expired one (despawn reason
  * Expired, no on_destroy graph). Projectiles are left to their own lifetime. */

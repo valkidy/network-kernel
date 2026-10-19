@@ -80,6 +80,10 @@ struct PlayerGameplayDefinition {
     // origin; game_server moves it here on PlayerJoined. Unset leaves it there.
     bool has_spawn_position = false;
     KernelVec3 spawn_position{0.0f, 0.0f, 0.0f};
+    // The kill floor: an actor or prop below this height has left the map.
+    // Handed to the kernel at startup, and what a revive checks to tell a
+    // player that died off the map, who comes back at spawn_position.
+    float fall_death_height_meters = KERNEL_FALL_DEATH_HEIGHT_METERS;
 };
 
 

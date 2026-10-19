@@ -9486,7 +9486,8 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     if (document["player"]) {
         reject_unknown_keys(
             document["player"],
-            {"actor_template", "entity_template", "respawn", "spawn_position"},
+            {"actor_template", "entity_template", "fall_death_height", "respawn",
+             "spawn_position"},
             path,
             source.source_kind(),
             KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
@@ -9866,6 +9867,19 @@ void apply_catalog_player_config(
             throw std::runtime_error("player.spawn_position must be finite");
         }
         config->player.has_spawn_position = true;
+    }
+    if (const YAML::Node fall = player["fall_death_height"]) {
+        config->player.fall_death_height_meters = fall.as<float>();
+        if (!std::isfinite(config->player.fall_death_height_meters)) {
+            throw std::runtime_error("player.fall_death_height must be finite");
+        }
+    }
+    // A spawn under the floor would kill every player on arrival, and every
+    // revive after it.
+    if (config->player.has_spawn_position &&
+        !(config->player.spawn_position.y > config->player.fall_death_height_meters)) {
+        throw std::runtime_error(
+            "player.spawn_position must be above player.fall_death_height");
     }
 }
 
@@ -10823,6 +10837,7 @@ std::uint64_t compute_gameplay_catalog_hash(
     hash_float(&hash, config.player.spawn_position.x);
     hash_float(&hash, config.player.spawn_position.y);
     hash_float(&hash, config.player.spawn_position.z);
+    hash_float(&hash, config.player.fall_death_height_meters);
     hash_scalar(
         &hash,
         static_cast<std::uint32_t>(

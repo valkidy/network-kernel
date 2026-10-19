@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <type_traits>
 #include <vector>
@@ -456,6 +457,17 @@ void fall_below_kill_floor_reclaims_actors_and_props() {
     lifecycle.reclaim_fallen_entities(engine, 0u, &again);
     require(again.empty());
     require(engine.world_.find_entity(player).has_value());
+
+    // The floor moves where the host puts it, and only a finite height.
+    require(!engine.server_set_fall_death_height(std::numeric_limits<float>::quiet_NaN()));
+    require(engine.server_set_fall_death_height(-5.0f));
+    require(engine.fall_death_height() == -5.0f);
+    living(standing_player, -9.5f);
+    std::vector<ConfirmedDamage> raised;
+    lifecycle.reclaim_fallen_entities(engine, 0u, &raised);
+    require(raised.size() == 1u);
+    require(raised[0].target_net_id == standing_player);
+    require(!engine.world_.find_entity(standing_prop).has_value());
 }
 
 }  // namespace

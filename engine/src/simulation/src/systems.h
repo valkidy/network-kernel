@@ -42,7 +42,7 @@ public:
 
     void update_prop_lifetimes(KernelEngine& engine) const;
 
-    // Everything that has fallen below KERNEL_FALL_DEATH_HEIGHT_METERS. A
+    // Everything that has fallen below the kill floor. A
     // living actor's health is zeroed and its death appended to
     // health_depleted, so the ordinary death flow runs on it this tick; a
     // prop, or an actor with no health to lose, is destroyed here. Runs after

@@ -397,6 +397,10 @@ int main() {
         load_symbol<bool(KernelHandle*, std::uint32_t, std::uint32_t)>(
             library,
             "Kernel_ServerSetEntityMovementCollisionMask");
+    auto* kernel_server_set_fall_death_height =
+        load_symbol<bool(KernelHandle*, float)>(
+            library,
+            "Kernel_ServerSetFallDeathHeight");
     [[maybe_unused]] auto* kernel_server_revive_entity =
         load_symbol<bool(KernelHandle*, const KernelServerReviveInfo*)>(
             library,
@@ -529,6 +533,9 @@ int main() {
         "Shelter state and log capture must use distinct capability bits.");
     require((abi_info.capability_flags & KERNEL_CAPABILITY_LOCAL_SHELTER_STATE) != 0);
     require((abi_info.capability_flags & KERNEL_CAPABILITY_LOG_CAPTURE) != 0);
+    require(
+        (abi_info.capability_flags & KERNEL_CAPABILITY_SERVER_FALL_DEATH_HEIGHT) != 0);
+    require(!kernel_server_set_fall_death_height(nullptr, -10.0f));
     {
         // A null buffer copies nothing but still starts capture.
         require(kernel_poll_log_messages(nullptr, 4u) == 0u);

@@ -6750,6 +6750,14 @@ bool KernelEngine::server_set_entity_health(NetId net_id, std::uint16_t hp) {
     return true;
 }
 
+bool KernelEngine::server_set_fall_death_height(float height_meters) {
+    if (!std::isfinite(height_meters)) {
+        return false;
+    }
+    fall_death_height_ = height_meters;
+    return true;
+}
+
 bool KernelEngine::server_set_entity_movement_collision_mask(
     NetId net_id,
     std::uint32_t movement_collision_mask) {

@@ -126,6 +126,12 @@ _Static_assert(
         KERNEL_CAPABILITY_LOCAL_SHELTER_STATE == UINT64_C(0x0002000000000000),
     "the local shelter query is added in ABI 96");
 _Static_assert(
+    KERNEL_CAPABILITY_SERVER_FALL_DEATH_HEIGHT == UINT64_C(0x0008000000000000) &&
+        (KERNEL_CAPABILITY_SERVER_FALL_DEATH_HEIGHT &
+         (KERNEL_CAPABILITY_LOG_CAPTURE | KERNEL_CAPABILITY_LOCAL_SHELTER_STATE |
+          KERNEL_CAPABILITY_GAME_MESSAGES)) == 0,
+    "the fall death height is additive within ABI 108, on a bit of its own");
+_Static_assert(
     offsetof(KernelActionDefinition, pull_mode) >
         offsetof(KernelActionDefinition, repeat_stagger_lifetime_ticks),
     "the pull block is appended after every field that existed before ABI 95");
