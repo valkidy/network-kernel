@@ -530,6 +530,30 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
             continue;
         }
         if (action.action_type ==
+            KernelEntityTriggerActionType_ApplyHoverMovement) {
+            // On the same terms as apply_suspend_movement above.
+            if (event_type != TriggerEventType::kStatusApplied ||
+                (action.target_source != KernelEntityRefSource_Self &&
+                 action.target_source != KernelEntityRefSource_EventSubject) ||
+                !hover_height_is_authorable(action.hover_height_meters) ||
+                !hover_speed_is_authorable(action.hover_vertical_speed)) {
+                return std::nullopt;
+            }
+            const std::string target_name = "target" + suffix;
+            binding.graph.parameters.push_back({target_name, std::monostate{}});
+            binding.graph.actions.push_back(ActionApplyHoverMovementDefinition{
+                target_name,
+                action.hover_height_meters,
+                action.hover_vertical_speed,
+                *condition});
+            binding.parameters.push_back({
+                target_name,
+                EntityRefExpression{static_cast<EntityRefSource>(
+                    action.target_source)},
+            });
+            continue;
+        }
+        if (action.action_type ==
                 KernelEntityTriggerActionType_ApplyBlockActions ||
             action.action_type ==
                 KernelEntityTriggerActionType_ApplyUntargetable) {
@@ -1054,6 +1078,22 @@ bool validate_action_graph_binding(
             }
             continue;
         }
+        if (const auto* hover =
+                std::get_if<ActionApplyHoverMovementDefinition>(&action)) {
+            if (!hover_height_is_authorable(hover->height_meters) ||
+                !hover_speed_is_authorable(hover->vertical_speed)) {
+                return fail(
+                    error,
+                    "apply_hover_movement height must be finite, above 0 and at "
+                    "most 20 m, and its speed above 0 and at most 20 m/s");
+            }
+            if (!validate_action_parameter(
+                    binding, hover->target_parameter, ParameterType::kEntityId,
+                    error)) {
+                return false;
+            }
+            continue;
+        }
         if (const auto* block =
                 std::get_if<ActionApplyBlockActionsDefinition>(&action)) {
             if (!validate_action_parameter(
@@ -1377,6 +1417,28 @@ bool evaluate_action_graph(
                 provenance.status_instance_id,
                 suspend->rise_speed,
                 suspend_drift_velocity(event.direction, suspend->drift_speed),
+                provenance,
+            });
+            continue;
+        }
+        if (const auto* hover =
+                std::get_if<ActionApplyHoverMovementDefinition>(&action)) {
+            const ActionGraphParameterValue* target_value =
+                find_resolved_parameter(parameters, hover->target_parameter);
+            if (target_value == nullptr ||
+                !std::holds_alternative<EntityIdValue>(*target_value)) {
+                return fail(error, "apply_hover_movement action input type mismatch");
+            }
+            const NetId target = std::get<EntityIdValue>(*target_value).value;
+            if (target == 0u) {
+                return fail(error, "apply_hover_movement target must not be null");
+            }
+            commands->push_back(ActionApplyHoverMovementCommand{
+                action_source(self, event),
+                target,
+                provenance.status_instance_id,
+                hover->height_meters,
+                hover->vertical_speed,
                 provenance,
             });
             continue;

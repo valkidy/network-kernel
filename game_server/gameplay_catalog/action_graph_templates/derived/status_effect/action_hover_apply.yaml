@@ -1,0 +1,11 @@
+# hover's on_apply: hold the target at a clearance. The height and speed are
+# literals on the action, as the water bubble's speeds are; how long is the
+# status's duration_ticks.
+id: action_hover_apply
+parameters:
+  target: null
+actions:
+  - type: apply_hover_movement
+    target: params.target
+    height_meters: 3.0
+    vertical_speed_meters_per_second: 4.0

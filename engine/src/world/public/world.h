@@ -252,6 +252,11 @@ bool status_untargetable(const World& world, entt::entity entity);
 // builder, which sends it to the actor's owner.
 const ActiveStatusEffect* active_suspension(const World& world, entt::entity entity);
 
+// The status instance holding the actor in an apply_hover_movement, the newest
+// when there are several, or null. Whether the hover is what moves it this
+// tick is the movement step's call (docs/PLAYER_HOVER_PLAN.md §2.1).
+const ActiveStatusEffect* active_hover(const World& world, entt::entity entity);
+
 // Fills in every template's derived_chain_ticks: the longest a chain of
 // derived projectiles it spawns can run past its own expiry -- each spawn's
 // lifetime (its override, or the spawned template's own) plus its repeat

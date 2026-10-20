@@ -1,0 +1,11 @@
+# Puts `status` on `target`, unconditionally and with no direction: a potion
+# that gives its drinker a status (the hover potion). Use
+# action_apply_status_if_target where a hit may name nobody.
+id: action_apply_status
+parameters:
+  target: null
+  status: null
+actions:
+  - type: apply_status
+    target: params.target
+    status: params.status

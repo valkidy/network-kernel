@@ -19,7 +19,11 @@ std::uint32_t derived_visual_flags(const World& world, entt::entity entity) {
     if (world.registry().all_of<MovementState>(entity)) {
         const MovementState& movement =
             world.registry().get<MovementState>(entity);
-        flags |= movement.ground_state == MovementState::GroundState::kGrounded
+        // A hover is airborne the whole time without falling: it says so
+        // instead, or every hovering player would be drawn mid-fall.
+        flags |= movement.hovering
+            ? kVisualFlagHovering
+            : movement.ground_state == MovementState::GroundState::kGrounded
             ? kVisualFlagGrounded
             : kVisualFlagFalling;
         if (movement.landed_this_tick) {
@@ -115,6 +119,13 @@ WorldSnapshot build_world_snapshot(
                 suspension->suspend_rise_speed,
                 suspension->suspend_drift_velocity.z};
             entity_snapshot.suspension_until_tick = suspension->expire_tick;
+        }
+        if (const ActiveStatusEffect* hover = active_hover(world, entity);
+            hover != nullptr && server_tick < hover->expire_tick) {
+            entity_snapshot.has_hover = true;
+            entity_snapshot.hover_height_meters = hover->hover_height_meters;
+            entity_snapshot.hover_vertical_speed = hover->hover_vertical_speed;
+            entity_snapshot.hover_until_tick = hover->expire_tick;
         }
         if (const Sheltered* sheltered = world.registry().try_get<Sheltered>(entity)) {
             entity_snapshot.shelter_net_id = sheltered->shelter_net_id;

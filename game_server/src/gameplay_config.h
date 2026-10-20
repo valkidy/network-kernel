@@ -461,6 +461,10 @@ struct ActionGraphActionConfig {
     // KernelActionDefinition's suspend_* fields.
     float suspend_rise_speed = 0.0f;
     float suspend_drift_speed = 0.0f;
+    // apply_hover_movement only: literals, as the suspension's are. See
+    // KernelActionDefinition's hover_* fields.
+    float hover_height_meters = 0.0f;
+    float hover_vertical_speed = 0.0f;
     // open_ui only: which interface the building offers, as a literal or
     // params.<name>; see KernelActionDefinition::ui_id.
     std::uint32_t ui_id = 0;

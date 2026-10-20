@@ -153,4 +153,47 @@ bool step_character_at_velocity(
     return true;
 }
 
+float hover_vertical_velocity(
+    const physics::PhysicsWorld& physics_world,
+    const physics::CollisionShapeDescriptor& shape,
+    const physics::CollisionQueryFilter& filter,
+    const glm::vec3& position,
+    const glm::quat& rotation,
+    float max_slope_degrees,
+    float height_meters,
+    float vertical_speed,
+    float fixed_delta_seconds) {
+    if (!(fixed_delta_seconds > 0.0f)) {
+        return 0.0f;
+    }
+    // player_movement.cc's probe_ground as step_hover uses it: the first
+    // walkable hit, else the first hit at all.
+    const float distance = std::max(3.0f * height_meters, height_meters + 10.0f);
+    physics::ShapeCastRequest request{};
+    request.shape = shape;
+    request.start = position;
+    request.rotation = rotation;
+    request.displacement = glm::vec3{0.0f, -distance, 0.0f};
+    request.filter = filter;
+    const float walkable_normal_y = std::cos(glm::radians(max_slope_degrees));
+    bool hit = false;
+    float fraction = 0.0f;
+    for (const physics::CollisionHit& candidate : physics_world.shape_cast_all(request)) {
+        if (!hit) {
+            hit = true;
+            fraction = candidate.fraction;
+        }
+        if (candidate.normal.y >= walkable_normal_y) {
+            fraction = candidate.fraction;
+            break;
+        }
+    }
+    if (!hit) {
+        return 0.0f;
+    }
+    const float below = distance * fraction;
+    return std::clamp(
+        (height_meters - below) / fixed_delta_seconds, -vertical_speed, vertical_speed);
+}
+
 }  // namespace network_example::movement_solver

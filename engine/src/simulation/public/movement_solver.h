@@ -92,6 +92,23 @@ bool step_character_at_velocity(
     CharacterMovementState* state,
     std::string* error);
 
+// A status hover's vertical velocity for one step (docs/PLAYER_HOVER_PLAN.md
+// §2): toward height_meters of clearance under the capsule's bottom, at no
+// more than vertical_speed, and zero where nothing is in reach -- off a cliff
+// it holds the height it has. The probe and its reach are step_hover's, so a
+// hovering player and a kHover agent read the ground the same way. Called by
+// the authority and the owner's prediction alike.
+float hover_vertical_velocity(
+    const physics::PhysicsWorld& physics_world,
+    const physics::CollisionShapeDescriptor& shape,
+    const physics::CollisionQueryFilter& filter,
+    const glm::vec3& position,
+    const glm::quat& rotation,
+    float max_slope_degrees,
+    float height_meters,
+    float vertical_speed,
+    float fixed_delta_seconds);
+
 // The velocity a status suspension holds an actor at: its drift, and its rise.
 inline glm::vec3 suspended_velocity(float rise_speed, const glm::vec3& drift_velocity) {
     return glm::vec3{drift_velocity.x, rise_speed, drift_velocity.z};

@@ -1,0 +1,20 @@
+# The hover potion's hover (docs/PLAYER_HOVER_PLAN.md). For as long as it
+# stands a character-controller target holds 3 m above whatever is under it,
+# climbing and sinking toward that at 4 m/s, and walks and fights as usual;
+# when it ends the target falls as any character does. Nothing ahead of the
+# hover in the movement step's order -- death, a tent, a water bubble and its
+# drop -- is changed by it. A client draws it from KERNEL_VISUAL_FLAG_HOVERING.
+#
+# Drinking another restarts the 30 s.
+id: 1006
+name: hover
+kind: status_effect
+channel: hover
+duration_ticks: 900
+interval_ticks: 0
+replace_policy: replace
+triggers:
+  on_apply:
+    action_graph: action_hover_apply
+    parameters:
+      target: event.subject

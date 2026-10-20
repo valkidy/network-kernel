@@ -1048,6 +1048,15 @@ struct ActionApplySuspendMovementDefinition {
     ActionConditionType condition = ActionConditionType::kAlways;
 };
 
+// KernelEntityTriggerActionType_ApplyHoverMovement, on the same terms. The
+// height and speed are literals, as the suspension's speeds are.
+struct ActionApplyHoverMovementDefinition {
+    std::string target_parameter;
+    float height_meters = 0.0f;
+    float vertical_speed = 0.0f;
+    ActionConditionType condition = ActionConditionType::kAlways;
+};
+
 struct ActionSpawnEntityDefinition {
     std::string entity_template_parameter;
     std::string position_parameter;
@@ -1077,7 +1086,8 @@ using ActionGraphAction = std::variant<
     ActionApplyBlockActionsDefinition,
     ActionApplySuspendMovementDefinition,
     ActionApplyUntargetableDefinition,
-    ActionLockStrikeDefinition>;
+    ActionLockStrikeDefinition,
+    ActionApplyHoverMovementDefinition>;
 
 struct ActionGraphTemplate {
     std::string id;
@@ -1180,6 +1190,11 @@ struct ActiveStatusEffect {
     // Set by this instance's on_apply running apply_untargetable, on the same
     // terms.
     bool untargetable = false;
+    // Set by this instance's on_apply running apply_hover_movement, on the
+    // same terms: the clearance its subject holds and how fast it seeks it.
+    bool hovers = false;
+    float hover_height_meters = 0.0f;
+    float hover_vertical_speed = 0.0f;
 };
 
 struct SpeedModifier {
@@ -1422,6 +1437,10 @@ struct MovementState {
     glm::vec3 last_queried_position{0.0f};
     bool has_last_queried_position = false;
     bool landed_this_tick = false;
+    // A status hover moved it this tick (docs/PLAYER_HOVER_PLAN.md §2.1): what
+    // KERNEL_VISUAL_FLAG_HOVERING reports, and a knockback anchor's zero
+    // gravity. Rewritten by every movement step.
+    bool hovering = false;
 };
 
 // Composable presentation hints only; gameplay systems must not treat them as
@@ -1443,6 +1462,8 @@ inline constexpr std::uint32_t kVisualFlagKnockedBack = 0x00000800u;
 inline constexpr std::uint32_t kVisualFlagLeaping = 0x00001000u;
 // A charge (ChargeLockout), from the arming tick until it ends.
 inline constexpr std::uint32_t kVisualFlagCharging = 0x00002000u;
+// A status hover (ActiveStatusEffect::hovers) the movement step is honouring.
+inline constexpr std::uint32_t kVisualFlagHovering = 0x00004000u;
 
 struct ReplicationState {
     std::uint16_t animation_state = 0;
