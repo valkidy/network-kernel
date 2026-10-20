@@ -58,6 +58,8 @@ loadout:
       quantity: 1
     - item_template: fungible_camp_kit
       quantity: 1
+    - item_template: fungible_hover_potion
+      quantity: 3
   weapons:
     - stateful_weapon_rifle
     - stateful_weapon_shotgun

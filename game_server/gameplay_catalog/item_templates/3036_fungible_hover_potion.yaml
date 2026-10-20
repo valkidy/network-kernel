@@ -1,0 +1,21 @@
+# Drink it to hover for 30 s (status hover, docs/PLAYER_HOVER_PLAN.md).
+id: 3036
+name: fungible_hover_potion
+mode: fungible
+max_stack: 5
+capabilities: [consumable, pickupable]
+entity_template: hover_potion
+world_interaction:
+  range: 3.0
+  line_of_sight_required: false
+use:
+  quantity_cost: 1
+  cooldown_ticks: 0
+  destroy_when_empty: true
+triggers:
+  on_item_used:
+    # The drinker, whoever the request names as its target.
+    action_graph: action_apply_status
+    parameters:
+      target: event.instigator
+      status: hover

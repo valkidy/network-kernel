@@ -4206,7 +4206,10 @@ bool KernelEngine::load_gameplay_catalog(
                      KernelEntityTriggerActionType_SpawnProjectile &&
                  find_projectile_template(
                      validated_projectile_templates,
-                     action.spawn_projectile_template_id) == nullptr)) {
+                     action.spawn_projectile_template_id) == nullptr) ||
+                (action.action_type ==
+                     KernelEntityTriggerActionType_ApplyStatus &&
+                 !status_id_in_use(action.status_effect_id))) {
                 return false;
             }
         }

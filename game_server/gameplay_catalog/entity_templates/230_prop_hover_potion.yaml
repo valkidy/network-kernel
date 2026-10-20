@@ -1,0 +1,11 @@
+# fungible_hover_potion in the world: dropped or placed, and picked up again.
+# Not throwable, so it has no on_collision: a hover is for the one who drinks
+# it, not something to hit others with.
+id: 230
+name: hover_potion
+entity_type: prop
+health:
+  hp: 1
+  max_hp: 1
+physics:
+  collider_template: collision_damage_prop_hitbox
