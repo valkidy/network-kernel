@@ -7952,6 +7952,11 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     predicted_impulse_is_knockback_ = false;
     predicted_suspension_velocity_ = glm::vec3{0.0f};
     predicted_suspension_until_tick_ = 0u;
+    predicted_hover_height_meters_ = 0.0f;
+    predicted_hover_vertical_speed_ = 0.0f;
+    predicted_hover_until_tick_ = 0u;
+    predicted_local_dead_ = false;
+    predicted_hovering_ = false;
     predicted_shelter_net_id_ = 0u;
     predicted_shelter_tick_ = 0u;
     predicted_action_buttons_ = 0u;
@@ -9823,6 +9828,11 @@ void KernelEngine::clear_client_session() {
     predicted_impulse_is_knockback_ = false;
     predicted_suspension_velocity_ = glm::vec3{0.0f};
     predicted_suspension_until_tick_ = 0u;
+    predicted_hover_height_meters_ = 0.0f;
+    predicted_hover_vertical_speed_ = 0.0f;
+    predicted_hover_until_tick_ = 0u;
+    predicted_local_dead_ = false;
+    predicted_hovering_ = false;
     predicted_shelter_net_id_ = 0u;
     predicted_shelter_tick_ = 0u;
     local_presentation_position_ = glm::vec3{0.0f, 0.0f, 0.0f};
@@ -10736,9 +10746,18 @@ bool KernelEngine::step_local_character_prediction(
     // authority's own -- step_character_at_velocity at the suspension's
     // velocity, off the ground, whatever the stick says.
     const bool suspended = prediction_tick < predicted_suspension_until_tick_;
+    // The hover's twin of player_movement.cc, in the same order: not dead, not
+    // sheltered, not suspended, and not in a lockout that is not a knockback
+    // -- the drop after a bubble or the recovery from its landing, which the
+    // snapshot tells apart from a knockback by KNOCKED_BACK.
+    const bool hovering =
+        prediction_tick < predicted_hover_until_tick_ && !predicted_local_dead_ &&
+        predicted_shelter_net_id_ == 0u && !suspended &&
+        !(impulse_locked &&
+          (!predicted_impulse_is_knockback_ || predicted_impulse_lockout_recovering_));
     std::string error;
     const glm::vec3 position_before_step = predicted_character_state_.position;
-    if (suspended) {
+    if (suspended || hovering) {
         predicted_character_state_.ground_state = physics::CharacterGroundState::kAirborne;
     }
     const bool stepped = suspended
@@ -10749,6 +10768,24 @@ bool KernelEngine::step_local_character_prediction(
               tick_loop_.fixed_delta_seconds(),
               &predicted_character_state_,
               &error)
+        : hovering
+        ? movement_solver::step_character_at_velocity(
+              *prediction_physics_world_,
+              movement_config,
+              glm::vec3{
+                  desired_horizontal.x,
+                  movement_solver::hover_vertical_velocity(
+                      *prediction_physics_world_, movement_config.shape,
+                      movement_config.filter, predicted_character_state_.position,
+                      predicted_character_state_.rotation,
+                      movement_config.max_slope_degrees,
+                      predicted_hover_height_meters_,
+                      predicted_hover_vertical_speed_,
+                      tick_loop_.fixed_delta_seconds()),
+                  desired_horizontal.z},
+              tick_loop_.fixed_delta_seconds(),
+              &predicted_character_state_,
+              &error)
         : movement_solver::step_character(
               *prediction_physics_world_,
               movement_config,
@@ -10756,9 +10793,10 @@ bool KernelEngine::step_local_character_prediction(
               tick_loop_.fixed_delta_seconds(),
               &predicted_character_state_,
               &error);
-    if (suspended) {
+    if (suspended || hovering) {
         predicted_character_state_.ground_state = physics::CharacterGroundState::kAirborne;
     }
+    predicted_hovering_ = stepped && hovering;
     if (!stepped) {
         spdlog::error("client CharacterVirtual prediction step failed: {}", error);
         return false;
@@ -11092,6 +11130,18 @@ void KernelEngine::adopt_authoritative_suspension(const EntitySnapshot& authorit
         authoritative.has_suspension ? authoritative.suspension_until_tick : 0u;
 }
 
+// Outright, as the suspension is: a hover starts and ends on the authority
+// alone.
+void KernelEngine::adopt_authoritative_hover(const EntitySnapshot& authoritative) {
+    predicted_hover_height_meters_ =
+        authoritative.has_hover ? authoritative.hover_height_meters : 0.0f;
+    predicted_hover_vertical_speed_ =
+        authoritative.has_hover ? authoritative.hover_vertical_speed : 0.0f;
+    predicted_hover_until_tick_ =
+        authoritative.has_hover ? authoritative.hover_until_tick : 0u;
+    predicted_local_dead_ = (authoritative.flags & kVisualFlagDead) != 0u;
+}
+
 void KernelEngine::reconcile_local_prediction(const WorldSnapshot& snapshot) {
     if (local_player_net_id_ == 0) {
         return;
@@ -11171,6 +11221,7 @@ void KernelEngine::reconcile_local_prediction(const WorldSnapshot& snapshot) {
         adopt_authoritative_impulse_lockout(
             *authoritative, snapshot.header.server_tick);
         adopt_authoritative_suspension(*authoritative);
+        adopt_authoritative_hover(*authoritative);
         movement_solver::CharacterMovementConfig movement_config{};
         std::string error;
         if (!build_local_character_movement_config(&movement_config)) {
@@ -12827,9 +12878,11 @@ void KernelEngine::append_predicted_local_render_state() {
     // answer is the only one there is.
     if (prediction_physics_world_ != nullptr) {
         state.visual_flags &= ~(kVisualFlagGrounded | kVisualFlagFalling |
-                                kVisualFlagKnockedBack);
-        state.visual_flags |= predicted_character_state_.ground_state ==
-                physics::CharacterGroundState::kGrounded
+                                kVisualFlagKnockedBack | kVisualFlagHovering);
+        state.visual_flags |= predicted_hovering_
+            ? kVisualFlagHovering
+            : predicted_character_state_.ground_state ==
+                    physics::CharacterGroundState::kGrounded
             ? kVisualFlagGrounded
             : kVisualFlagFalling;
         if (predicted_impulse_is_knockback_ &&

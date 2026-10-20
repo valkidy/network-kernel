@@ -546,3 +546,9 @@ cc_test(
     srcs = ["hover_end_to_end_test.cc"],
     deps = ["//engine/src/kernel:kernel"],
 )
+
+cc_test(
+    name = "hover_prediction_test",
+    srcs = ["hover_prediction_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)

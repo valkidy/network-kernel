@@ -1,6 +1,6 @@
 # 玩家 Hover 模式實作計劃書
 
-狀態：**方案 A 已選；Q1–Q5 已定案（2026-10-21）；P0 驗證完成，假設成立（§5.1）；P1–P3 完成（§5.2–§5.4）；Q6 定案為 (a)；P4 尚未開始。**
+狀態：**方案 A 已選；Q1–Q5 已定案（2026-10-21）；P0 驗證完成，假設成立（§5.1）；P1–P4 完成（§5.2–§5.5）；Q6 定案為 (a)；P5 尚未開始。**
 分支：計畫書在 `claude/player-hover-plan`，從 `main`（a5544579，ABI 108，snapshot schema 31）開。
 實作時另開 `claude/player-hover`。
 最後更新：2026-10-21。
@@ -219,6 +219,27 @@ Snapshot schema 31 → 32。
 - `hover_roundtrip_test`：player 和 agent 的 roundtrip；同時有 suspension 和 hover 的 roundtrip；剛好多 12 bytes，大小估算也一致；6 種非法數值都會被拒絕。
 - `hover_end_to_end_test`：兩個 engine 加上 loopback。只有 owner 收到 hover 欄位；`hovering` 時 knockback anchor 的 `gravity_y` 是 0，對照組是 -9.81。
 - `protocol_tests/...`、`kernel_tests/...`、`simulation_tests/...` 全部跑一遍：紅了 8 個，名單跟 main 已知的紅燈完全一致；跟封包有關的兩個，失敗行都跟 hover 無關。
+
+### 5.5 P4 結果（2026-10-21）
+
+`step_local_character_prediction` 判斷 hover 的順序跟伺服器完全一樣：
+- **不是 dead**：看 owner snapshot 的 DEAD flag，存在 `predicted_local_dead_`。prediction 原本沒有死亡的對應狀態，這是新加的。
+- **不在帳篷裡**：`predicted_shelter_net_id_` 為 0。
+- **不在 suspension 中**。
+- **不在非 knockback 的 lockout 中**：bubble 結束後的 drop 和落地後的倒地起身都算這一類。snapshot 用 `KNOCKED_BACK` 區分它們跟真正的 knockback；伺服器設這個 flag 的條件是 `!free_fall && !recovering`，所以兩邊的判斷剛好對得上。
+- **`prediction_tick < hover_until_tick`**：伺服器在同一個 tick 裡會先跑 `simulate_status_effects`，再跑移動，所以到期那個 tick 已經沒有 hover。
+
+高度用的是跟伺服器同一個 `hover_vertical_velocity()`。owner snapshot 的 hover 欄位是在重播 pending input 之前就套用的（`adopt_authoritative_hover`）。本機畫出來的角色，hover 時會設 `HOVERING`，取代 `GROUNDED`/`FALLING`。
+
+測試（`hover_prediction_test`）：
+- **伺服器和 prediction 並排比對**：同一個場景（地面加一個 1 m 的箱子），伺服器用自己的 `simulate_actor_movement`，client 用 `step_local_character_prediction`，capsule 參數兩邊都取自 client 的 `build_local_character_movement_config`。流程是走路、第 20 tick 喝下、hover 飛過箱子再繞圈、第 260 tick 到期、落地，共 330 個 tick。**每個 tick 的誤差都是 0.000000 m**，`hovering` 兩邊也每個 tick 一致（共 240 個 tick 在 hover）。
+- **對照組**：prediction 不知道 hover 時，誤差最大到 16.18 m。
+- **順序**：dead 會掉下來；在帳篷裡時不 hover；bubble 的 rise 和 drop 期間都不 hover，落地後才升回 3 m；收到沒有 hover 的 snapshot 就清除。
+- **本機畫面**：顯示 `HOVERING`，沒有 `FALLING`/`GROUNDED`。
+
+**這次沒有驗到的**：snapshot 延遲造成的修正。道具是伺服器端使用的，client 要等 snapshot 到了才知道 hover 開始了，開頭那幾個 tick 會被 reconcile 修正一次，這跟 suspension 一樣。並排比對是在「snapshot 正好在套用的那個 tick 抵達」這個最好的情況下做的。實際的延遲要在 Unity 雙機上看。
+
+回歸：`kernel_tests/...`、`simulation_tests/...`、`protocol_tests/...` 全部跑一遍，紅了 8 個，名單和失敗行都跟 P3 那次相同。`client_mode_test` 通過。
 
 ## 6. 待決事項
 

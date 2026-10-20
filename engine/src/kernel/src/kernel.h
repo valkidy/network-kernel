@@ -994,6 +994,7 @@ private:
         const EntitySnapshot& authoritative,
         std::uint32_t snapshot_tick);
     void adopt_authoritative_suspension(const EntitySnapshot& authoritative);
+    void adopt_authoritative_hover(const EntitySnapshot& authoritative);
     void reconcile_local_prediction(const WorldSnapshot& snapshot);
     void apply_authoritative_local_weapon(const WorldSnapshot& snapshot);
     void record_predicted_ammo_spend(
@@ -1672,6 +1673,18 @@ private:
     // it arms the drop itself rather than wait a round trip to be told.
     glm::vec3 predicted_suspension_velocity_{0.0f};
     std::uint32_t predicted_suspension_until_tick_ = 0;
+    // The status hover the local player has, as the last owner snapshot said
+    // (schema 32): until predicted_hover_until_tick_ the prediction holds this
+    // clearance whenever nothing ahead of the hover moves it, in the order the
+    // authority uses (docs/PLAYER_HOVER_PLAN.md §2.1). predicted_local_dead_
+    // is that snapshot's word on the one input to that order the prediction
+    // has no other twin of. predicted_hovering_ is what the last predicted
+    // step did, for the drawn body's flags.
+    float predicted_hover_height_meters_ = 0.0f;
+    float predicted_hover_vertical_speed_ = 0.0f;
+    std::uint32_t predicted_hover_until_tick_ = 0;
+    bool predicted_local_dead_ = false;
+    bool predicted_hovering_ = false;
     // The building the local player is inside, as the last owner snapshot
     // said (0 when outside), and that snapshot's tick. The twin of Sheltered:
     // while it is set the prediction stands still under a terrain-only mask,
