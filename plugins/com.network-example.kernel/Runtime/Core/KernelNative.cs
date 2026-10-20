@@ -551,6 +551,11 @@ namespace NetworkExample.Kernel
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_ServerSetFallDeathHeight(
+            IntPtr kernel, float heightMeters);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
         internal static extern bool Kernel_ServerSetEntityMovementCollisionMask(
             IntPtr kernel,
             uint netId,

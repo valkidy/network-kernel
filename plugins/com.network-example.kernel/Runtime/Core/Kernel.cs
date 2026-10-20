@@ -1093,6 +1093,16 @@ namespace NetworkExample.Kernel
         }
 
         /// <summary>
+        /// Sets the server kill floor from the next tick; rejects non-finite heights.
+        /// The setting survives restarting the same kernel.
+        /// </summary>
+        public bool ServerSetFallDeathHeight(float heightMeters)
+        {
+            ThrowIfDisposed();
+            return KernelNative.Kernel_ServerSetFallDeathHeight(handle, heightMeters);
+        }
+
+        /// <summary>
         /// Sets the movement collision layers for an entity. Zero restores the engine default.
         /// </summary>
         public bool ServerSetEntityMovementCollisionMask(uint netId, uint movementCollisionMask)

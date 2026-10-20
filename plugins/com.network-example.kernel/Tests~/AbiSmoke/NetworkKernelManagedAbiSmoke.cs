@@ -343,6 +343,8 @@ public static class NetworkKernelManagedAbiSmoke
             KernelEntityTriggerActionType.ApplyHoverMovement == (KernelEntityTriggerActionType)17 &&
             KernelConstants.VisualFlagHovering == 0x00004000U &&
             KernelConstants.MaxHoverHeight == 20.0f &&
+            KernelConstants.FallDeathHeightMeters == -10.0f &&
+            (info.capability_flags & KernelConstants.CapabilityServerFallDeathHeight) != 0UL &&
             KernelActionDefinition.StructSize == 172 &&
             (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("hover_height_meters") == 164 &&
             (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("hover_vertical_speed") == 168,
@@ -356,6 +358,11 @@ public static class NetworkKernelManagedAbiSmoke
 
         using (var kernel = new Kernel(KernelConfig.CreateDefault(KernelMode.ListenServer)))
         {
+            Require(
+                kernel.ServerSetFallDeathHeight(KernelConstants.FallDeathHeightMeters) &&
+                !kernel.ServerSetFallDeathHeight(float.NaN) &&
+                !kernel.ServerSetFallDeathHeight(float.PositiveInfinity),
+                "Kernel server fall death height validation failed.");
             Require(
                 kernel.SetPhysicsConfig(new KernelPhysicsConfig()),
                 "Kernel_SetPhysicsConfig failed.");

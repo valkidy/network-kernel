@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- aligns Unity bindings with ABI 109 for player status hover and the hover potion, and exposes the configurable server kill floor
+
+
+0.7.0 release notes:
+
 - ships the v2 four-zone map and updated patrols, improves refused-message retries and keeps players down after landed knockback
 
 

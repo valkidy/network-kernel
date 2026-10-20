@@ -136,6 +136,9 @@ namespace NetworkExample.Kernel
         // Kernel_SendGameMessage / Kernel_PollGameMessages and the server pair
         // (ABI 101): an opaque body between a client and game_server.
         public const ulong CapabilityGameMessages = 0x0004000000000000UL;
+        // Additive within ABI 108: configurable server kill floor.
+        public const ulong CapabilityServerFallDeathHeight = 0x0008000000000000UL;
+        public const float FallDeathHeightMeters = -10.0f;
 
         // Largest KernelGameMessage body (ABI 101).
         public const int MaxGameMessageBytes = 512;
