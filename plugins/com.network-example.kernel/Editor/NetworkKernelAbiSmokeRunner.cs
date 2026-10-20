@@ -24,7 +24,7 @@ namespace NetworkExample.Kernel.Editor
             KernelAbi.ValidateNativeAbi();
             GameServerAbi.ValidateNativeAbi();
             KernelAbiInfo info = KernelAbi.GetInfo();
-            Require(KernelConstants.AbiVersion == 108, "Managed kernel ABI version was not v108.");
+            Require(KernelConstants.AbiVersion == 109, "Managed kernel ABI version was not v109.");
             Require(
                 KernelLocalWeaponState.StructSize == 20 &&
                 info.local_weapon_state_size == KernelLocalWeaponState.StructSize,
@@ -123,7 +123,7 @@ namespace NetworkExample.Kernel.Editor
                 KernelConstants.MaxStaggerTicks == 300U,
                 "Kernel hit stagger ABI mismatch.");
             Require(
-                System.Runtime.InteropServices.Marshal.SizeOf<KernelActionTriggerDefinition>() == 1404 &&
+                System.Runtime.InteropServices.Marshal.SizeOf<KernelActionTriggerDefinition>() == 1468 &&
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("damage_stagger") >
                     (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("impulse_strength_vertical") &&
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelEntityTemplateDefinition>("stagger_immunity_ticks") >
@@ -167,7 +167,7 @@ namespace NetworkExample.Kernel.Editor
                 KernelProjectileReplication.Derived == (KernelProjectileReplication)1 &&
                 KernelProjectileLaunchType.Descent == (KernelProjectileLaunchType)1 &&
                 KernelProjectileLaunchDefinition.StructSize == 24 &&
-                KernelActionDefinition.StructSize == 164 &&
+                KernelActionDefinition.StructSize == 172 &&
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("spawn_lifetime_ticks") == 84 &&
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelProjectileLaunchDefinition>("fall_ticks") == 20 &&
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelProjectileMechanicsDefinition>("launch") ==
@@ -185,7 +185,7 @@ namespace NetworkExample.Kernel.Editor
                 KernelEventType.ShelterChanged == (KernelEventType)17 &&
                 KernelGameplayRequestRejectionReason.InstigatorSheltered == (KernelGameplayRequestRejectionReason)18 &&
                 KernelLocalActionResultReason.Sheltered == (KernelLocalActionResultReason)15 &&
-                KernelActionDefinition.StructSize == 164 &&
+                KernelActionDefinition.StructSize == 172 &&
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("ui_id") == 116 &&
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("spawn_placement") == 120 &&
                 System.Runtime.InteropServices.Marshal.SizeOf<KernelEvent>() == 48 &&
@@ -214,7 +214,7 @@ namespace NetworkExample.Kernel.Editor
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelMovementDefinition>("hover_vertical_speed_meters_per_second") == 52,
                 "Kernel ground-follow area effect and hover ABI mismatch.");
             Require(
-                KernelActionDefinition.StructSize == 164 &&
+                KernelActionDefinition.StructSize == 172 &&
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("pull_strength") == 124,
                 "Kernel pull strength ABI mismatch.");
             Require(
@@ -225,8 +225,8 @@ namespace NetworkExample.Kernel.Editor
                 KernelLocalActionResultReason.ItemAction == (KernelLocalActionResultReason)16 &&
                 KernelInventoryChangeFlag.DropTag == (KernelInventoryChangeFlag)(1U << 3) &&
                 KernelInventoryContainerKind.Stock == (KernelInventoryContainerKind)2 &&
-                KernelItemTemplateDefinition.StructSize == 1636 &&
-                (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelItemTemplateDefinition>("is_weapon") == 1632 &&
+                KernelItemTemplateDefinition.StructSize == 1700 &&
+                (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelItemTemplateDefinition>("is_weapon") == 1696 &&
                 KernelPropDefinition.StructSize == 52 &&
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelPropDefinition>("importance") == 48 &&
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<RenderEntityState>("held_weapon_id") == 161 &&
@@ -290,6 +290,14 @@ namespace NetworkExample.Kernel.Editor
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelEntityTemplateDefinition>("portal") ==
                     (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelEntityTemplateDefinition>("overlap_trigger_instigators") + 4,
                 "Kernel portal and lock-on weapon ABI mismatch.");
+            Require(
+                KernelEntityTriggerActionType.ApplyHoverMovement == (KernelEntityTriggerActionType)17 &&
+                KernelConstants.VisualFlagHovering == 0x00004000U &&
+                KernelConstants.MaxHoverHeight == 20.0f &&
+                KernelActionDefinition.StructSize == 172 &&
+                (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("hover_height_meters") == 164 &&
+                (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("hover_vertical_speed") == 168,
+                "Kernel player hover ABI mismatch.");
             Require(
                 KernelColliderShapeType.Capsule == (KernelColliderShapeType)5 &&
                 KernelColliderShapeType.Cylinder == (KernelColliderShapeType)6,

@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 108;
+        public const uint AbiVersion = 109;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int LogMessageTextSize = 512;
@@ -34,6 +34,9 @@ namespace NetworkExample.Kernel
         public const uint MaxKnockdownRecoveryTicks = 300U;
         // apply_suspend_movement's rise and drift speeds, m/s (ABI 102).
         public const float MaxSuspendSpeed = 20.0f;
+        // apply_hover_movement's hover_height_meters, m (ABI 109). Its
+        // hover_vertical_speed shares MaxSuspendSpeed.
+        public const float MaxHoverHeight = 20.0f;
         public const uint ImpulseStrengthModeRadial = 0U;
         public const uint ImpulseStrengthModeSplit = 1U;
         // apply_pull's pull_mode (ABI 95).
@@ -239,6 +242,9 @@ namespace NetworkExample.Kernel
         // Authority-controlled AI leap and charge; additive within ABI 106.
         public const uint VisualFlagLeaping = 0x00001000U;
         public const uint VisualFlagCharging = 0x00002000U;
+        // A status hover holds the actor above the ground (ABI 109). Set in
+        // place of Grounded and Falling, never with either.
+        public const uint VisualFlagHovering = 0x00004000U;
         public const uint MaxVisibleHostiles = 16;
         public const uint MaxVisibleAllies = 16;
         public const uint MaxVisibleNeutrals = 16;
@@ -522,6 +528,11 @@ namespace NetworkExample.Kernel
         // actors in a damage sphere or cone, struck at once or by a certain
         // missile each; see KernelActionDefinition's lock_* fields.
         LockStrike = 16,
+        // ABI 109: a status on_apply action, onto the status's own subject.
+        // While the instance stands a character-controller target holds
+        // hover_height_meters above the ground and is never grounded; see
+        // KernelActionDefinition's hover_* fields.
+        ApplyHoverMovement = 17,
     }
 
     // How a lock_strike strikes what it locks (ABI 107).
@@ -1235,6 +1246,12 @@ namespace NetworkExample.Kernel
         public uint lock_repeat_interval_ticks;
         // Metres above position the lock is taken from, 0 .. MaxLockOriginLift.
         public float lock_origin_lift;
+        // apply_hover_movement only (ABI 109); zero on every other action.
+        // The clearance above the ground, from the capsule's bottom, in
+        // (0, MaxHoverHeight]; and the most it climbs or sinks toward it, m/s,
+        // in (0, MaxSuspendSpeed].
+        public float hover_height_meters;
+        public float hover_vertical_speed;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelActionDefinition>();
     }
