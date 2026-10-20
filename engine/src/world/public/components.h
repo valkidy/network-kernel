@@ -1437,6 +1437,10 @@ struct MovementState {
     glm::vec3 last_queried_position{0.0f};
     bool has_last_queried_position = false;
     bool landed_this_tick = false;
+    // A status hover moved it this tick (docs/PLAYER_HOVER_PLAN.md §2.1): what
+    // KERNEL_VISUAL_FLAG_HOVERING reports, and a knockback anchor's zero
+    // gravity. Rewritten by every movement step.
+    bool hovering = false;
 };
 
 // Composable presentation hints only; gameplay systems must not treat them as

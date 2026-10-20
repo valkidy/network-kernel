@@ -14510,6 +14510,8 @@ WorldSnapshot KernelEngine::build_relevant_snapshot(
                 entity.impulse_lockout_recovering;
             filtered_entity.has_suspension =
                 entity.has_suspension && entity.net_id == session.player;
+            filtered_entity.has_hover =
+                entity.has_hover && entity.net_id == session.player;
             filtered.entities.push_back(filtered_entity);
         }
     }
@@ -16256,9 +16258,11 @@ void KernelEngine::flush_actor_impulses() {
         record.position = transform->position;
         record.velocity = velocity->linear;
         // A hover does not fall, whatever gravity it authors, except in the
-        // drop after a suspension.
+        // drop after a suspension. Nor does a character a status hover moved
+        // last tick: a knockback carries it along at its height.
         record.gravity_y =
-            movement->controller_type == MovementState::ControllerType::kHover &&
+            (movement->controller_type == MovementState::ControllerType::kHover ||
+             movement->hovering) &&
                 !lockout->free_fall
             ? 0.0f
             : movement->gravity.y;

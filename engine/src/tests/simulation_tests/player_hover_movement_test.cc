@@ -22,6 +22,7 @@
 #include "simulation/public/action_graph.h"
 #include "simulation/public/simulation.h"
 #include "simulation/src/systems.h"
+#include "sync/public/snapshot.h"
 
 namespace {
 
@@ -467,6 +468,58 @@ void the_status_puts_the_hover_on_its_instance() {
     require(world.registry().all_of<Sheltered>(entity));
 }
 
+// ---------------------------------------------------------------------------
+// P3: what the snapshot says
+// ---------------------------------------------------------------------------
+
+const EntitySnapshot& own_record(const Fixture& f, const WorldSnapshot& snapshot) {
+    for (const EntitySnapshot& entity : snapshot.entities) {
+        if (entity.net_id == f.actor) return entity;
+    }
+    require(false);
+    return snapshot.entities.front();
+}
+
+void the_snapshot_says_hovering_not_falling_and_carries_the_status() {
+    Fixture f = hovering_at_height();
+    std::uint32_t expire = 0;
+    for (const ActiveStatusEffect& active : f.statuses().active) {
+        if (active.hovers) expire = active.expire_tick;
+    }
+    {
+        const WorldSnapshot snapshot = build_world_snapshot(f.world, f.tick_index, 0, 0);
+        const EntitySnapshot& own = own_record(f, snapshot);
+        require((own.flags & kVisualFlagHovering) != 0u);
+        require((own.flags & (kVisualFlagFalling | kVisualFlagGrounded)) == 0u);
+        require(own.has_hover);
+        require(own.hover_height_meters == kHeight);
+        require(own.hover_vertical_speed == kClimb);
+        require(own.hover_until_tick == expire);
+    }
+    // In a bubble the status still stands -- the owner's prediction needs it
+    // for after the drop -- but the hover is not what moves it: no flag.
+    f.suspend(1.0f);
+    f.tick();
+    {
+        const WorldSnapshot snapshot = build_world_snapshot(f.world, f.tick_index, 0, 0);
+        const EntitySnapshot& own = own_record(f, snapshot);
+        require((own.flags & kVisualFlagHovering) == 0u);
+        require((own.flags & kVisualFlagFalling) != 0u);
+        require(own.has_hover);
+    }
+    // Gone with the status.
+    f.pop_bubble();
+    f.end_hover();
+    for (int i = 0; i < 40; ++i) f.tick();
+    {
+        const WorldSnapshot snapshot = build_world_snapshot(f.world, f.tick_index, 0, 0);
+        const EntitySnapshot& own = own_record(f, snapshot);
+        require((own.flags & kVisualFlagHovering) == 0u);
+        require((own.flags & kVisualFlagGrounded) != 0u);
+        require(!own.has_hover);
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -480,6 +533,7 @@ int main() {
     a_stagger_stops_it_where_it_hovers();
     a_grounded_controller_ignores_a_hover();
     the_status_puts_the_hover_on_its_instance();
+    the_snapshot_says_hovering_not_falling_and_carries_the_status();
     std::printf("player_hover_movement_test passed\n");
     return 0;
 }

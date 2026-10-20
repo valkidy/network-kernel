@@ -58,6 +58,8 @@ constexpr std::size_t kActorMovementPayloadSize = 22;
 constexpr std::size_t kActorWeaponStatePayloadSize = 4;
 constexpr std::size_t kActorImpulseLockoutPayloadSize = 8;
 constexpr std::size_t kActorSuspensionPayloadSize = 16;
+// Schema 32: clearance and vertical speed (two f32) and end tick (u32).
+constexpr std::size_t kActorHoverPayloadSize = 12u;
 constexpr std::size_t kActorShelterPayloadSize = 5;
 constexpr std::size_t kActorHeldWeaponPayloadSize = 1;
 constexpr std::size_t kProjectileCompactSnapshotPayloadSize = 34;
@@ -305,6 +307,10 @@ enum ActorSnapshotRecordFlag : std::uint16_t {
     // Schema 29. The status suspension holding the actor: its velocity (three
     // f32) and end tick (u32). The receiving session's own player only.
     kActorSnapshotHasSuspension = 1u << 10,
+    // Schema 32. The status hover the actor has: its clearance and vertical
+    // speed (two f32) and end tick (u32). The receiving session's own player
+    // only.
+    kActorSnapshotHasHover = 1u << 11,
 };
 
 bool is_actor_entity_type(EntityType type) {
@@ -343,6 +349,9 @@ std::uint16_t actor_record_flags(const EntitySnapshot& entity) {
     }
     if (entity.has_suspension) {
         flags |= kActorSnapshotHasSuspension;
+    }
+    if (entity.has_hover) {
+        flags |= kActorSnapshotHasHover;
     }
     return flags;
 }
@@ -498,6 +507,7 @@ SnapshotSectionType snapshot_section_type(const EntitySnapshot& entity) {
                 !entity.has_owner_weapon_state &&
                 !entity.has_impulse_lockout &&
                 !entity.has_suspension &&
+                !entity.has_hover &&
                 entity.shelter_net_id == 0u
             ? SnapshotSectionType::kActorAgent
             : SnapshotSectionType::kActor;
@@ -708,6 +718,11 @@ std::vector<std::uint8_t> encode_snapshot_packet(
                     if ((record_flags & kActorSnapshotHasSuspension) != 0u) {
                         payload.write_vec3(entity->suspension_velocity);
                         payload.write_u32(entity->suspension_until_tick);
+                    }
+                    if ((record_flags & kActorSnapshotHasHover) != 0u) {
+                        payload.write_float(entity->hover_height_meters);
+                        payload.write_float(entity->hover_vertical_speed);
+                        payload.write_u32(entity->hover_until_tick);
                     }
                     break;
                 }
@@ -1090,6 +1105,18 @@ bool decode_snapshot_packet(
                         }
                         entity.has_suspension = true;
                     }
+                    if ((record_flags & kActorSnapshotHasHover) != 0u) {
+                        if (!reader.read_float(&entity.hover_height_meters) ||
+                            !reader.read_float(&entity.hover_vertical_speed) ||
+                            !reader.read_u32(&entity.hover_until_tick) ||
+                            !(entity.hover_height_meters > 0.0f) ||
+                            !(entity.hover_height_meters <= KERNEL_MAX_HOVER_HEIGHT) ||
+                            !(entity.hover_vertical_speed > 0.0f) ||
+                            !(entity.hover_vertical_speed <= KERNEL_MAX_SUSPEND_SPEED)) {
+                            return false;
+                        }
+                        entity.has_hover = true;
+                    }
                     break;
                 }
                 case SnapshotSectionType::kActorAgent: {
@@ -1323,6 +1350,9 @@ std::size_t estimate_snapshot_entity_size(const EntitySnapshot& entity) {
                         : 0u) +
                    ((actor_record_flags(entity) & kActorSnapshotHasSuspension) != 0u
                         ? kActorSuspensionPayloadSize
+                        : 0u) +
+                   ((actor_record_flags(entity) & kActorSnapshotHasHover) != 0u
+                        ? kActorHoverPayloadSize
                         : 0u);
         case SnapshotSectionType::kActorAgent: {
             const std::uint8_t flags = agent_record_flags(entity);

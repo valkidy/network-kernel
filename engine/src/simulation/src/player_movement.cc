@@ -610,6 +610,7 @@ void simulate_actor_movement(
         const Velocity& current_velocity = view.get<Velocity>(entity);
         MovementState next_movement = view.get<MovementState>(entity);
         next_movement.landed_this_tick = false;
+        next_movement.hovering = false;
         if (next_movement.controller_type ==
             MovementState::ControllerType::kNone) {
             continue;
@@ -736,15 +737,17 @@ void simulate_actor_movement(
 
         // A status hover (docs/PLAYER_HOVER_PLAN.md §2.1) moves a character
         // only when nothing ahead of it in that order does: not the dead, not
-        // a sheltered occupant, not a suspension (above), and not the drop
-        // after one or the recovery from its landing -- those come down and
-        // get up as any character does, and the hover lifts it again after.
-        // Everything else -- input, a knockback's horizontal, a stagger's
-        // stop -- is already in desired_horizontal.
+        // a sheltered occupant, not a suspension -- a character in one reaches
+        // the character branch below too, so this has to say so itself -- and
+        // not the drop after one or the recovery from its landing: those come
+        // down and get up as any character does, and the hover lifts it again
+        // after. Everything else -- input, a knockback's horizontal, a
+        // stagger's stop -- is already in desired_horizontal.
         const ActiveStatusEffect* hover =
             next_movement.controller_type ==
                     MovementState::ControllerType::kCharacter &&
                 !dead && !world.registry().all_of<Sheltered>(entity) &&
+                suspension == nullptr &&
                 !(impulse_locked &&
                   (impulse_lockout->free_fall || impulse_lockout->recovering))
             ? active_hover(world, entity)
@@ -868,6 +871,7 @@ void simulate_actor_movement(
             if (stepped && (suspension != nullptr || hover != nullptr)) {
                 state.ground_state = physics::CharacterGroundState::kAirborne;
             }
+            result.movement.hovering = stepped && hover != nullptr;
             if (stepped) {
                 result.physics_finalized = true;
                 result.position = state.position;

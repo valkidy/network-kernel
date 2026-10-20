@@ -1,6 +1,6 @@
 # 玩家 Hover 模式實作計劃書
 
-狀態：**方案 A 已選；Q1–Q5 已定案（2026-10-21）；P0 驗證完成，假設成立（§5.1）；P1、P2 完成（§5.2、§5.3）；Q6 待決；P3 尚未開始。**
+狀態：**方案 A 已選；Q1–Q5 已定案（2026-10-21）；P0 驗證完成，假設成立（§5.1）；P1–P3 完成（§5.2–§5.4）；Q6 定案為 (a)；P4 尚未開始。**
 分支：計畫書在 `claude/player-hover-plan`，從 `main`（a5544579，ABI 108，snapshot schema 31）開。
 實作時另開 `claude/player-hover`。
 最後更新：2026-10-21。
@@ -202,6 +202,24 @@ YAML 寫法：
 - 玩家 hover 在 3 m 時，hitbox 底部在 3.0 m，跟球心差了 2.0 m。claw 和 slam 只有在**水平距離小於約 1.27 m**時才打得到，但所有近戰敵人都會在 `stop_distance_meters: 1.8` 的地方停下來。也就是說，只有玩家自己飛到敵人正上方時才會被打中。charge horns 完全打不到。
 - 遠程攻擊不受影響：drone beam、各種 projectile 照樣打得到。
 
+### 5.4 P3 結果（2026-10-21）
+
+Snapshot schema 31 → 32。
+
+- **`MovementState::hovering`**：移動 step 每個 tick 都會重寫這個值，表示這個 tick 是不是 hover 在移動它。visual flag 和 knockback anchor 都讀它。
+- **visual flag**：`hovering` 為 true 時設 `HOVERING`，**取代** `FALLING`/`GROUNDED`。不這樣做的話，Unity 會一直以為 hover 中的玩家在下墜，播下墜動畫。`kHover` 的 drone 和 airship 不受影響，它們沒有 status hover。
+- **owner snapshot**：actor record 新增 flag bit 11（`kActorSnapshotHasHover`），內容是高度 f32、速度 f32、到期 tick u32，共 12 bytes，只有存在時才佔空間。只要 status 還在就送，就算這個 tick 移動它的不是 hover（例如被 bubble 包住）也一樣，P4 的 prediction 自己照 §2.1 的順序判斷。只送給 owner，帶有 hover 的 agent 會改用完整的 actor record。decoder 會拒絕超出範圍的數值和 NaN。
+- **send budget**：大小估算也加上了這 12 bytes。
+- **`ActorImpulseBatch`**：`movement.hovering` 為 true 時，`gravity_y = 0`。
+
+**P3 測試抓到 P2 的一個 bug**：被 bubble 包住的 Character 也會走進 Character 分支，hover 的判斷條件原本沒把 suspension 算進去，導致 `hovering` 被設成 true。移動結果本身沒錯，因為 suspension 的速度選擇排在前面，但 visual flag 和 anchor 的重力會錯。修正方式是把 `suspension == nullptr` 加進判斷條件。
+
+測試：
+- `player_hover_movement_test`：snapshot 的部分包括 HOVERING 有設、FALLING/GROUNDED 沒設、owner 欄位正確；在 bubble 裡時沒有 HOVERING 但 `has_hover` 還在；status 結束後全部清掉。§9 回歸的固定數值照樣吻合。
+- `hover_roundtrip_test`：player 和 agent 的 roundtrip；同時有 suspension 和 hover 的 roundtrip；剛好多 12 bytes，大小估算也一致；6 種非法數值都會被拒絕。
+- `hover_end_to_end_test`：兩個 engine 加上 loopback。只有 owner 收到 hover 欄位；`hovering` 時 knockback anchor 的 `gravity_y` 是 0，對照組是 -9.81。
+- `protocol_tests/...`、`kernel_tests/...`、`simulation_tests/...` 全部跑一遍：紅了 8 個，名單跟 main 已知的紅燈完全一致；跟封包有關的兩個，失敗行都跟 hover 無關。
+
 ## 6. 待決事項
 
 | # | 問題 | 建議 |
@@ -211,7 +229,7 @@ YAML 寫法：
 | Q3 | 高度、上升速度、持續時間 | **定案**：3 m、4 m/s、**30 s**。測過手感後再調 |
 | Q4 | hover 期間能不能使用武器和道具 | **定案**：**可以**。kernel 不需要做任何限制 |
 | Q5 | 重複使用道具時 | **定案**：`replace`：重新計時 |
-| Q6 | 敵人近戰能不能打到 hover 中的玩家 | **算出來的結果：打不到**，除非玩家飛到敵人正上方（§5.3）。待決定：(a) 接受這個結果，hover 本來就是一種躲近戰的手段；(b) 把高度降到大約 2 m；(c) 改 AI，讓它停下來的距離把高度差也算進去 |
+| Q6 | 敵人近戰能不能打到 hover 中的玩家 | **定案（a）**：接受，hover 本來就是一種躲近戰的手段。算出來的結果是打不到，除非玩家飛到敵人正上方（§5.3） |
 
 ---
 

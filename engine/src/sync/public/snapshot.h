@@ -81,6 +81,15 @@ struct EntitySnapshot {
     bool has_suspension = false;
     glm::vec3 suspension_velocity{0.0f};
     std::uint32_t suspension_until_tick = 0;
+    // The status hover the actor has (schema 32), for its owner's prediction
+    // alone, as the suspension is: the clearance, the speed it seeks it at,
+    // and the tick the status ends. Sent whenever the status stands, whether
+    // or not the hover is what moves it this tick -- the prediction applies
+    // the same order the authority does (docs/PLAYER_HOVER_PLAN.md §2.1).
+    bool has_hover = false;
+    float hover_height_meters = 0.0f;
+    float hover_vertical_speed = 0.0f;
+    std::uint32_t hover_until_tick = 0;
     // The building this actor is inside, or 0, and its seat there. Sent to
     // every session that sees the actor (schema 27; 26 sent it to the owner
     // alone): the owner's prediction needs it to stop pushing its player out

@@ -15,8 +15,11 @@
  *     gained hover_height_meters and hover_vertical_speed, appended after
  *     lock_origin_lift (limits KERNEL_MAX_HOVER_HEIGHT and
  *     KERNEL_MAX_SUSPEND_SPEED). KERNEL_VISUAL_FLAG_HOVERING (0x4000): the
- *     actor is in such a hover. KernelActionDefinition is embedded in every
- *     trigger definition, so every managed mirror of those shifts.
+ *     actor is in such a hover, set instead of FALLING (it is airborne the
+ *     whole time without falling). Snapshot schema 32 sends the owner its own
+ *     hover (clearance, speed and end tick) for its prediction.
+ *     KernelActionDefinition is embedded in every trigger definition, so
+ *     every managed mirror of those shifts.
  * 108: water jet (docs/WATER_JET_PLAN.md). KernelEventVec3Source gained
  *     _SurfaceNormal: the face a projectile struck when it struck terrain or
  *     a static obstacle, zero when it struck an actor. Accepted only as a
@@ -624,6 +627,9 @@ typedef enum KernelFootholdQueryType {
  * Aiming                visual_flags & KERNEL_VISUAL_FLAG_AIMING
  * Suspended             visual_flags & KERNEL_VISUAL_FLAG_SUSPENDED (a status
  *                       holds it in the air: the water bubble; ABI 102)
+ * Hovering              visual_flags & KERNEL_VISUAL_FLAG_HOVERING (a status
+ *                       hover holds it above the ground; never together with
+ *                       FALLING or GROUNDED; ABI 109)
  * Firing                visual_flags & KERNEL_VISUAL_FLAG_FIRING, or
  *                       action.phase == KernelActionPhase_Active
  * Windup                action.phase == KernelActionPhase_Windup

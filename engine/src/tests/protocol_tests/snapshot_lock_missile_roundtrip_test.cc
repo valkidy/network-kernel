@@ -246,7 +246,7 @@ void a_broken_missile_section_is_refused() {
 }  // namespace
 
 int main() {
-    require(ne::kSnapshotSchemaVersion == 31u);
+    require(ne::kSnapshotSchemaVersion == 32u);
     require(ne::kPacketSchemaVersion == 33u);
     missiles_survive_the_wire_beside_the_entities();
     a_beam_and_missiles_ride_together();
