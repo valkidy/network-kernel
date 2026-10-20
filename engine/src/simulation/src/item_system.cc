@@ -4,6 +4,8 @@
 #include <limits>
 #include <unordered_set>
 
+#include "simulation/public/action_graph.h"
+
 namespace network_example {
 namespace {
 
@@ -66,6 +68,17 @@ bool valid_item_graph_action(const KernelActionDefinition& action) {
                 static_cast<std::int32_t>(
                     std::numeric_limits<std::uint16_t>::max()) &&
             action.target_source <= KernelEntityRefSource_EventInstigator;
+    }
+    // A status, as an entity trigger's apply_status (docs/PLAYER_HOVER_PLAN.md
+    // P5): onto someone the event names, with an authorable direction and
+    // strength. Whether the status exists is the catalog loader's check --
+    // this one cannot see the statuses.
+    if (action.action_type == KernelEntityTriggerActionType_ApplyStatus) {
+        return action.status_effect_id != 0u &&
+            action.target_source <= KernelEntityRefSource_EventInstigator &&
+            (action.status_direction_authored == 0u ||
+             action.direction_source <= KernelEventVec3Source_SubjectPosition) &&
+            status_strength_is_authorable(action.status_strength);
     }
     if (action.action_type ==
         KernelEntityTriggerActionType_RefillWeaponReserve) {

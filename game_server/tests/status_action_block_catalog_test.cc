@@ -13,7 +13,9 @@
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
+#include <cmath>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -343,6 +345,106 @@ void a_suspension_anywhere_else_or_too_fast_is_refused() {
         "apply_suspend_movement takes only target, rise_speed and drift_speed"));
 }
 
+const std::string kHoverGraph =
+    "id: action_test_hover\n"
+    "parameters:\n"
+    "  target: null\n"
+    "actions:\n"
+    "  - type: apply_hover_movement\n"
+    "    target: params.target\n"
+    "    height_meters: 3.0\n"
+    "    vertical_speed_meters_per_second: 4.0\n";
+
+std::string hover_status_yaml(const std::string& trigger) {
+    std::string text = suspend_status_yaml(trigger);
+    text.replace(text.find("action_test_suspend"), 19, "action_test_hover");
+    return text;
+}
+
+fs::path hover_catalog(const std::string& name, const std::string& graph,
+                       const std::string& trigger = "on_apply") {
+    return catalog_with(
+        name,
+        {{"action_graph_templates/action_test_hover.yaml", graph},
+         {"status_effect_templates/1901_status_effect_test_block.yaml",
+          hover_status_yaml(trigger)}});
+}
+
+std::string hover_graph_with(const std::string& from, const std::string& to) {
+    std::string graph = kHoverGraph;
+    graph.replace(graph.find(from), from.size(), to);
+    return graph;
+}
+
+// docs/PLAYER_HOVER_PLAN.md P1.
+void a_hover_in_on_apply_loads_with_its_height_and_speed() {
+    const gs::KernelGameplayCatalogStorage built = gs::build_kernel_gameplay_catalog(
+        gs::load_gameplay_config_from_catalog_file(
+            hover_catalog("hover_on_apply", kHoverGraph).string()));
+    const KernelStatusEffectDefinition* status = find_status(built);
+    require(status != nullptr);
+    const KernelActionDefinition& action = status->on_apply_trigger.actions[0];
+    require(action.action_type == KernelEntityTriggerActionType_ApplyHoverMovement);
+    require(action.hover_height_meters == 3.0f);
+    require(action.hover_vertical_speed == 4.0f);
+    require(action.suspend_rise_speed == 0.0f);
+    require(kernel_accepts(built));
+}
+
+void a_hover_anywhere_else_or_out_of_range_is_refused() {
+    require(refused_for(
+        hover_catalog("hover_on_tick", kHoverGraph, "on_tick"),
+        "apply_hover_movement is only valid in status on_apply"));
+    // Zero is refused, unlike a suspension's speeds: a hover that holds no
+    // height or cannot reach it is a mistake.
+    for (const auto& [name, from, to] : std::vector<std::tuple<std::string, std::string, std::string>>{
+             {"hover_zero_height", "height_meters: 3.0", "height_meters: 0.0"},
+             {"hover_too_high", "height_meters: 3.0", "height_meters: 25.0"},
+             {"hover_zero_speed", "second: 4.0", "second: 0.0"},
+             {"hover_too_fast", "second: 4.0", "second: 25.0"},
+         }) {
+        require(refused_for(hover_catalog(name, hover_graph_with(from, to)),
+                            "apply_hover_movement height_meters must be"));
+    }
+    require(refused_for(
+        hover_catalog("hover_no_speed",
+                      hover_graph_with("    vertical_speed_meters_per_second: 4.0\n", "")),
+        "apply_hover_movement requires height_meters and"));
+    require(refused_for(
+        hover_catalog("hover_extra_field", kHoverGraph + "    rise_speed: 1.0\n"),
+        "rise_speed and drift_speed are only supported on apply_suspend_movement"));
+    require(refused_for(
+        hover_catalog("hover_unknown_field", kHoverGraph + "    lockout_ticks: 30\n"),
+        "apply_hover_movement takes only target"));
+}
+
+// The kernel's own check, past the loader: a definition built by hand with
+// numbers the loader would never have let through.
+void the_kernel_refuses_a_hover_the_loader_would_have() {
+    // The definition points into the storage's own vectors, so each case
+    // builds its own and edits it where it lies rather than copying one.
+    const gs::GameServerGameplayConfig config =
+        gs::load_gameplay_config_from_catalog_file(
+            hover_catalog("hover_kernel_check", kHoverGraph).string());
+    require(kernel_accepts(gs::build_kernel_gameplay_catalog(config)));
+    for (const auto& [height, speed] : std::vector<std::pair<float, float>>{
+             {0.0f, 4.0f}, {25.0f, 4.0f}, {3.0f, 0.0f}, {3.0f, 25.0f},
+             {std::nanf(""), 4.0f}}) {
+        gs::KernelGameplayCatalogStorage edited =
+            gs::build_kernel_gameplay_catalog(config);
+        bool found = false;
+        for (KernelStatusEffectDefinition& status : edited.status_effects) {
+            if (status.status_effect_id == kStatusId) {
+                status.on_apply_trigger.actions[0].hover_height_meters = height;
+                status.on_apply_trigger.actions[0].hover_vertical_speed = speed;
+                found = true;
+            }
+        }
+        require(found);
+        require(!kernel_accepts(edited));
+    }
+}
+
 void apply_status_carries_the_direction_it_is_bound_to() {
     const auto load = [](const std::string& name, const std::string& direction_line) {
         return catalog_with(
@@ -440,6 +542,9 @@ int main() {
     an_entity_trigger_is_refused();
     a_suspension_in_on_apply_loads_with_its_speeds();
     a_suspension_anywhere_else_or_too_fast_is_refused();
+    a_hover_in_on_apply_loads_with_its_height_and_speed();
+    a_hover_anywhere_else_or_out_of_range_is_refused();
+    the_kernel_refuses_a_hover_the_loader_would_have();
     apply_status_carries_the_direction_it_is_bound_to();
     untargetable_loads_where_a_block_does_and_nowhere_else();
     apply_status_takes_a_literal_strength();

@@ -52,7 +52,8 @@ std::vector<std::uint8_t> read_bundle() {
 struct Harness {
     Harness(
         const GameServerGameplayConfig& config,
-        const std::vector<std::uint8_t>& bundle) {
+        const std::vector<std::uint8_t>& bundle,
+        std::uint16_t port = 7841) {
         KernelConfig kernel_config{};
         kernel_config.mode = KernelMode_ListenServer;
         kernel_config.tick.server_tick_rate = 30;
@@ -74,7 +75,7 @@ struct Harness {
         scene.collider_id = config.static_collision_scene.collider_id;
         scene.collision_layer = config.static_collision_scene.collision_layer;
         require(Kernel_SetStaticCollisionScene(kernel, &scene));
-        require(Kernel_StartListenServer(kernel, 7841));
+        require(Kernel_StartListenServer(kernel, port));
         server = new GameServer(kernel, config);
         pump();
         require(player != 0u);
@@ -157,6 +158,43 @@ struct Harness {
     std::uint32_t player = 0;
 };
 
+// Below the catalog's kill floor a player dies, and comes back at the spawn
+// rather than lifted off a body that has nothing under it.
+void fall_off_the_map_respawns_at_spawn(const std::vector<std::uint8_t>& bundle) {
+    const GameServerGameplayConfig config =
+        network_example::game_server::load_gameplay_config_from_bundle_memory(
+            bundle.data(),
+            static_cast<std::uint32_t>(bundle.size()),
+            "gameplay_catalog.yaml");
+    require(config.player.fall_death_height_meters == -10.0f);
+    require(config.player.has_spawn_position);
+    Harness harness(config, bundle, 7842);
+    for (int settle = 0; settle < 60; ++settle) {
+        harness.frame();
+    }
+    require(harness.state().hp != 0u);
+
+    const KernelVec3 void_position{
+        0.0f, config.player.fall_death_height_meters - 5.0f, 0.0f};
+    const KernelQuat facing{0.0f, 0.0f, 0.0f, 1.0f};
+    require(Kernel_ServerSetEntityTransform(
+        harness.kernel, harness.player, &void_position, &facing));
+    harness.frame();
+    require(harness.state().hp == 0u);
+
+    KernelServerEntityState revived{};
+    require(harness.frames_until_revived(300u, &revived) != 0u);
+    require(revived.hp == revived.max_hp);
+    require(std::fabs(revived.position.x - config.player.spawn_position.x) < 0.01f);
+    require(std::fabs(revived.position.z - config.player.spawn_position.z) < 0.01f);
+    require(revived.position.y > config.player.spawn_position.y);
+    // And it stays alive: the floor does not take it again on the way down.
+    for (int frame = 0; frame < 30; ++frame) {
+        harness.frame();
+    }
+    require(harness.state().hp == revived.max_hp);
+}
+
 }  // namespace
 
 int main() {
@@ -234,6 +272,7 @@ int main() {
     harness.server->handle_event(joined);
     require(harness.state().hp == 0u);
 
+    fall_off_the_map_respawns_at_spawn(bundle);
     std::puts("player_respawn_test: ok");
     return 0;
 }

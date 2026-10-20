@@ -417,6 +417,13 @@ bool prepare_status_lifecycle_trigger(
                             suspend->target == target
                         ? suspend->target
                         : 0u;
+                } else if (const auto* hover =
+                               std::get_if<ActionApplyHoverMovementCommand>(&command)) {
+                    side_effect_target =
+                        event_type == TriggerEventType::kStatusApplied &&
+                            hover->target == target
+                        ? hover->target
+                        : 0u;
                 } else if (const auto* untargetable =
                                std::get_if<ActionApplyUntargetableCommand>(&command)) {
                     side_effect_target =
@@ -484,7 +491,15 @@ bool prepare_status_lifecycle_trigger(
             !std::holds_alternative<ActionApplySpeedModifierCommand>(command) &&
             !std::holds_alternative<ActionApplyBlockActionsCommand>(command) &&
             !std::holds_alternative<ActionApplySuspendMovementCommand>(command) &&
+            !std::holds_alternative<ActionApplyHoverMovementCommand>(command) &&
             !std::holds_alternative<ActionApplyUntargetableCommand>(command)) {
+            return false;
+        }
+        if (const auto* hover =
+                std::get_if<ActionApplyHoverMovementCommand>(&command);
+            hover != nullptr &&
+            (event_type != TriggerEventType::kStatusApplied ||
+             hover->target != target)) {
             return false;
         }
         if (const auto* untargetable =
@@ -873,6 +888,16 @@ bool execute_action_graph_commands(
             if (untargetable->source == 0u ||
                 untargetable->status_instance_id == 0u ||
                 !world.find_entity(untargetable->target).has_value()) {
+                return false;
+            }
+            continue;
+        }
+        if (const auto* hover =
+                std::get_if<ActionApplyHoverMovementCommand>(&command)) {
+            if (hover->source == 0u || hover->status_instance_id == 0u ||
+                !world.find_entity(hover->target).has_value() ||
+                !hover_height_is_authorable(hover->height_meters) ||
+                !hover_speed_is_authorable(hover->vertical_speed)) {
                 return false;
             }
             continue;
@@ -1428,6 +1453,28 @@ bool execute_action_graph_commands(
             movement.supporting_entity_net_id = 0u;
             movement.supporting_collider_id = 0u;
             movement.has_controller_height = false;
+            continue;
+        }
+        if (const auto* hover =
+                std::get_if<ActionApplyHoverMovementCommand>(&command)) {
+            const entt::entity target = *world.find_entity(hover->target);
+            if (world.registry().get<EntityKind>(target).type != EntityType::kActor ||
+                !world.registry().all_of<MovementState>(target)) {
+                continue;
+            }
+            ActiveStatusEffect* active =
+                find_status_instance(world, target, hover->status_instance_id);
+            if (active == nullptr) {
+                return false;
+            }
+            // Only recorded here. Unlike a suspension it takes nothing away
+            // on the spot -- a knockback in flight keeps flying, a sheltered
+            // occupant stays put -- because the movement step decides each
+            // tick whether the hover is the thing moving it
+            // (docs/PLAYER_HOVER_PLAN.md §2.1).
+            active->hovers = true;
+            active->hover_height_meters = hover->height_meters;
+            active->hover_vertical_speed = hover->vertical_speed;
             continue;
         }
         if (const auto* block =
@@ -3014,6 +3061,104 @@ void EntityLifecycleSystem::update_prop_lifetimes(
             0u,
             nullptr,
             cleanup_runs_on_destroy(engine, population_group_id));
+    }
+}
+
+void EntityLifecycleSystem::reclaim_fallen_entities(
+    KernelEngine& engine,
+    std::uint64_t server_time_us,
+    std::vector<ConfirmedDamage>* health_depleted) const {
+    entt::registry& registry = engine.world_.registry();
+    const std::uint32_t tick = engine.tick_loop_.current_tick();
+    std::vector<ConfirmedDamage> deaths;
+    std::vector<std::pair<NetId, std::uint32_t>> props;
+    std::vector<NetId> actors;
+    auto view = registry.view<NetworkIdentity, EntityKind, Transform>();
+    for (const entt::entity entity : view) {
+        const glm::vec3& position = view.get<Transform>(entity).position;
+        // Written so a NaN height fails it: a position that is not a number
+        // has left the map as surely as one below it.
+        if (position.y >= engine.fall_death_height()) {
+            continue;
+        }
+        // A carried prop is where its carrier is, and goes down with it: the
+        // carrier's death drops it, and it is judged on its own after that.
+        if (registry.all_of<CarriedBy>(entity)) {
+            continue;
+        }
+        const NetId net_id = view.get<NetworkIdentity>(entity).net_id;
+        const EntityType type = view.get<EntityKind>(entity).type;
+        if (type == EntityType::kProp) {
+            const PropLifecycle* lifecycle =
+                registry.try_get<PropLifecycle>(entity);
+            props.emplace_back(
+                net_id,
+                lifecycle == nullptr ? 0u : lifecycle->population_group_id);
+            continue;
+        }
+        if (type != EntityType::kActor) {
+            continue;
+        }
+        Health* health = registry.try_get<Health>(entity);
+        if (health == nullptr || health->max_hp == 0u) {
+            // Nothing to kill, so nothing to revive either -- except a player,
+            // whose net id its session is anchored on.
+            if (!registry.all_of<PlayerTag>(entity)) {
+                actors.push_back(net_id);
+            }
+            continue;
+        }
+        // Already dead: a dormant corpse keeps falling until its revive moves
+        // it, and must not die again on every tick of the way.
+        if (health->hp == 0u) {
+            continue;
+        }
+        // The void ignores invulnerability and shelter alike: nothing that
+        // left the map may stay alive below it.
+        const std::uint16_t hp_before = health->hp;
+        health->hp = 0u;
+        engine.events_.push_back(KernelEvent{
+            KernelEventType_HealthChanged,
+            tick,
+            net_id,
+            0u,
+            0u,
+            server_time_us,
+            server_time_us,
+            -static_cast<std::int32_t>(hp_before),
+        });
+        ConfirmedDamage death{};
+        death.server_tick = tick;
+        death.target_net_id = net_id;
+        death.damage = hp_before;
+        death.hit_time_us = server_time_us;
+        death.hit_position = position;
+        deaths.push_back(death);
+    }
+    std::sort(
+        deaths.begin(),
+        deaths.end(),
+        [](const ConfirmedDamage& left, const ConfirmedDamage& right) {
+            return left.target_net_id < right.target_net_id;
+        });
+    health_depleted->insert(
+        health_depleted->end(), deaths.begin(), deaths.end());
+    std::sort(props.begin(), props.end());
+    for (const auto& [net_id, population_group_id] : props) {
+        // Cleanup, not a kill: the same rule as a prop that ran out of
+        // lifetime, so a bottle lost off the edge does not burst down there.
+        (void)destroy_entity_with_context(
+            engine,
+            net_id,
+            KernelDespawnReason_Expired,
+            0u,
+            0u,
+            nullptr,
+            cleanup_runs_on_destroy(engine, population_group_id));
+    }
+    std::sort(actors.begin(), actors.end());
+    for (const NetId net_id : actors) {
+        (void)destroy_entity(engine, net_id, KernelDespawnReason_Destroyed);
     }
 }
 

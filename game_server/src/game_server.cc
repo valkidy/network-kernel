@@ -23,6 +23,13 @@ GameServer::GameServer(KernelHandle* kernel, GameServerGameplayConfig config)
               configure_player_weapons(player, true);
       }) {
     load_kernel_gameplay_catalog(kernel_, config_);
+    if (kernel_ != nullptr &&
+        !Kernel_ServerSetFallDeathHeight(
+            kernel_, config_.player.fall_death_height_meters)) {
+        spdlog::warn(
+            "fall death height not set height={}",
+            config_.player.fall_death_height_meters);
+    }
     // The default loadout as weapon items: every template weapon needs one.
     if (const ActorTemplateConfig* player_template =
             find_actor_template(config_, config_.player.actor_template_id)) {
@@ -140,6 +147,20 @@ void GameServer::revive_player(std::uint32_t net_id, float delta_seconds) {
         return;
     }
     const PlayerRespawnConfig& respawn = config_.player.respawn;
+    // A revive lifts the player off where it died. One that died off the map
+    // has nowhere under it to stand, and would only fall to its death again
+    // -- once per revive, until the team's pool is gone -- so it comes back at
+    // the player spawn instead (the world origin on a map without one).
+    KernelServerEntityState state{};
+    state.struct_size = sizeof(state);
+    if (Kernel_ServerGetEntityState(kernel_, net_id, &state) &&
+        !(state.position.y >= config_.player.fall_death_height_meters)) {
+        const KernelVec3 spawn = config_.player.has_spawn_position
+            ? config_.player.spawn_position
+            : KernelVec3{0.0f, 0.0f, 0.0f};
+        const KernelQuat facing{0.0f, 0.0f, 0.0f, 1.0f};
+        Kernel_ServerSetEntityTransform(kernel_, net_id, &spawn, &facing);
+    }
     KernelServerReviveInfo info{};
     info.struct_size = sizeof(info);
     info.net_id = net_id;

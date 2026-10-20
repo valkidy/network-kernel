@@ -5,6 +5,21 @@
 #include <stdint.h>
 
 /*
+ * 109: player hover (docs/PLAYER_HOVER_PLAN.md).
+ *     KernelEntityTriggerActionType gained _ApplyHoverMovement, a status
+ *     on_apply action: while the instance stands a character-controller
+ *     subject holds hover_height_meters of clearance above whatever is under
+ *     it, climbing and sinking toward it at no more than
+ *     hover_vertical_speed, and is never grounded; when the instance ends it
+ *     is an ordinary character again and falls. KernelActionDefinition
+ *     gained hover_height_meters and hover_vertical_speed, appended after
+ *     lock_origin_lift (limits KERNEL_MAX_HOVER_HEIGHT and
+ *     KERNEL_MAX_SUSPEND_SPEED). KERNEL_VISUAL_FLAG_HOVERING (0x4000): the
+ *     actor is in such a hover, set instead of FALLING (it is airborne the
+ *     whole time without falling). Snapshot schema 32 sends the owner its own
+ *     hover (clearance, speed and end tick) for its prediction.
+ *     KernelActionDefinition is embedded in every trigger definition, so
+ *     every managed mirror of those shifts.
  * 108: water jet (docs/WATER_JET_PLAN.md). KernelEventVec3Source gained
  *     _SurfaceNormal: the face a projectile struck when it struck terrain or
  *     a static obstacle, zero when it struck an actor. Accepted only as a
@@ -381,7 +396,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 108u
+#define KERNEL_ABI_VERSION 109u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -502,6 +517,9 @@
 /* Kernel_PollLogMessages. Additive within ABI 93: check this flag, not the
  * version, before calling it. */
 #define KERNEL_CAPABILITY_LOG_CAPTURE UINT64_C(0x0001000000000000)
+/* Kernel_ServerSetFallDeathHeight. Additive within ABI 108: check this flag,
+ * not the version, before calling it. */
+#define KERNEL_CAPABILITY_SERVER_FALL_DEATH_HEIGHT UINT64_C(0x0008000000000000)
 
 #define KERNEL_SKELETON_RENDER_STATUS_SUCCESS UINT32_C(0)
 #define KERNEL_SKELETON_RENDER_STATUS_INSUFFICIENT_CAPACITY UINT32_C(1)
@@ -612,6 +630,9 @@ typedef enum KernelFootholdQueryType {
  * Aiming                visual_flags & KERNEL_VISUAL_FLAG_AIMING
  * Suspended             visual_flags & KERNEL_VISUAL_FLAG_SUSPENDED (a status
  *                       holds it in the air: the water bubble; ABI 102)
+ * Hovering              visual_flags & KERNEL_VISUAL_FLAG_HOVERING (a status
+ *                       hover holds it above the ground; never together with
+ *                       FALLING or GROUNDED; ABI 109)
  * Firing                visual_flags & KERNEL_VISUAL_FLAG_FIRING, or
  *                       action.phase == KernelActionPhase_Active
  * Windup                action.phase == KernelActionPhase_Windup
@@ -646,6 +667,9 @@ typedef enum KernelFootholdQueryType {
  * on the first hit, on a wall (the charger staggers), on a stagger, or on its
  * tick count. */
 #define KERNEL_VISUAL_FLAG_CHARGING UINT32_C(0x00002000)
+/* A status hover (apply_hover_movement): held at a clearance above the
+ * ground, off it the whole time. */
+#define KERNEL_VISUAL_FLAG_HOVERING UINT32_C(0x00004000)
 
 #define KERNEL_MAX_VISIBLE_HOSTILES 16u
 #define KERNEL_MAX_VISIBLE_ALLIES 16u
@@ -898,6 +922,13 @@ typedef enum KernelDespawnReason {
     KernelDespawnReason_Retired = 5,
 } KernelDespawnReason;
 
+/* The default kill floor; Kernel_ServerSetFallDeathHeight moves it. An actor
+ * or prop whose position drops below it has left the map: a living actor dies the ordinary death (a player stays dormant
+ * and respawns, an agent is destroyed), anything without health to lose is
+ * removed, and a prop is cleaned up like an expired one (despawn reason
+ * Expired, no on_destroy graph). Projectiles are left to their own lifetime. */
+#define KERNEL_FALL_DEATH_HEIGHT_METERS (-10.0f)
+
 typedef enum RenderEntityStatus {
     RenderEntityStatus_Active = 0,
     RenderEntityStatus_Predicted = 1,
@@ -1063,6 +1094,12 @@ typedef enum KernelEntityTriggerActionType {
      * fields. Entity triggers only. Reads spawn_projectile_template_id,
      * position_source and, for a cone, direction_source. */
     KernelEntityTriggerActionType_LockStrike = 16,
+    /* While the status instance whose on_apply ran it stands, its target --
+     * an actor on the character controller -- holds hover_height_meters
+     * above whatever is under it and is never grounded; when the instance
+     * ends it falls as any character does. Status on_apply graphs only, onto
+     * the status's own subject (ABI 109). */
+    KernelEntityTriggerActionType_ApplyHoverMovement = 17,
 } KernelEntityTriggerActionType;
 
 /* How a lock_strike strikes what it locks (ABI 107). */
@@ -1147,6 +1184,10 @@ typedef enum KernelActionConditionType {
 /* Ceiling on apply_suspend_movement's suspend_rise_speed and
  * suspend_drift_speed, metres per second. */
 #define KERNEL_MAX_SUSPEND_SPEED 20.0f
+
+/* Ceiling on apply_hover_movement's hover_height_meters, metres. Its
+ * hover_vertical_speed shares KERNEL_MAX_SUSPEND_SPEED. */
+#define KERNEL_MAX_HOVER_HEIGHT 20.0f
 
 /* Ceiling on an actor's stagger duration_ticks and immunity_ticks, for the
  * same reason and checked by the same two parties as the lockout above. */
@@ -1311,6 +1352,13 @@ typedef struct KernelActionDefinition {
      * does not have every line of sight cut by a bump in it. Stops short of a
      * ceiling. */
     float lock_origin_lift;
+    /* apply_hover_movement only (ABI 109); zero on every other action. The
+     * clearance held above the ground, measured from the capsule's bottom:
+     * finite and in (0, KERNEL_MAX_HOVER_HEIGHT]. And the most it climbs or
+     * sinks toward it, metres per second: finite and in
+     * (0, KERNEL_MAX_SUSPEND_SPEED]. */
+    float hover_height_meters;
+    float hover_vertical_speed;
 } KernelActionDefinition;
 
 typedef struct KernelActionTriggerDefinition {

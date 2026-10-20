@@ -80,6 +80,10 @@ struct PlayerGameplayDefinition {
     // origin; game_server moves it here on PlayerJoined. Unset leaves it there.
     bool has_spawn_position = false;
     KernelVec3 spawn_position{0.0f, 0.0f, 0.0f};
+    // The kill floor: an actor or prop below this height has left the map.
+    // Handed to the kernel at startup, and what a revive checks to tell a
+    // player that died off the map, who comes back at spawn_position.
+    float fall_death_height_meters = KERNEL_FALL_DEATH_HEIGHT_METERS;
 };
 
 
@@ -457,6 +461,10 @@ struct ActionGraphActionConfig {
     // KernelActionDefinition's suspend_* fields.
     float suspend_rise_speed = 0.0f;
     float suspend_drift_speed = 0.0f;
+    // apply_hover_movement only: literals, as the suspension's are. See
+    // KernelActionDefinition's hover_* fields.
+    float hover_height_meters = 0.0f;
+    float hover_vertical_speed = 0.0f;
     // open_ui only: which interface the building offers, as a literal or
     // params.<name>; see KernelActionDefinition::ui_id.
     std::uint32_t ui_id = 0;

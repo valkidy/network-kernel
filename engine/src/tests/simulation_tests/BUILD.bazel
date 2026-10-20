@@ -227,3 +227,15 @@ cc_test(
     srcs = ["entity_charge_test.cc"],
     deps = ["//engine/src/kernel:kernel"],
 )
+
+cc_test(
+    name = "player_hover_p0_test",
+    srcs = ["player_hover_p0_test.cc"],
+    deps = ["//engine/src/simulation:simulation"],
+)
+
+cc_test(
+    name = "player_hover_movement_test",
+    srcs = ["player_hover_movement_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)

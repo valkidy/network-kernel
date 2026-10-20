@@ -393,6 +393,8 @@ public:
     bool server_set_entity_movement_collision_mask(
         NetId net_id,
         std::uint32_t movement_collision_mask);
+    bool server_set_fall_death_height(float height_meters);
+    float fall_death_height() const { return fall_death_height_; }
     bool server_submit_entity_input(NetId net_id, const KernelPlayerInput& input);
     bool server_enqueue_entity_transform(
         std::uint32_t command_source,
@@ -994,6 +996,7 @@ private:
         const EntitySnapshot& authoritative,
         std::uint32_t snapshot_tick);
     void adopt_authoritative_suspension(const EntitySnapshot& authoritative);
+    void adopt_authoritative_hover(const EntitySnapshot& authoritative);
     void reconcile_local_prediction(const WorldSnapshot& snapshot);
     void apply_authoritative_local_weapon(const WorldSnapshot& snapshot);
     void record_predicted_ammo_spend(
@@ -1309,6 +1312,9 @@ private:
     std::vector<QueuedInput> pending_inputs_;
     std::vector<KernelEvent> events_;
     std::vector<KernelEntityLifecycleEvent> lifecycle_events_;
+    // Host configuration, not runtime state: reset_runtime_state leaves it, so
+    // a value set before the server starts survives the start.
+    float fall_death_height_ = KERNEL_FALL_DEATH_HEIGHT_METERS;
     std::vector<KernelEvent> pending_presentation_events_;
     std::vector<KernelLocalActionResult> local_action_results_;
     std::vector<KernelRemoteActionPresentationEvent>
@@ -1672,6 +1678,18 @@ private:
     // it arms the drop itself rather than wait a round trip to be told.
     glm::vec3 predicted_suspension_velocity_{0.0f};
     std::uint32_t predicted_suspension_until_tick_ = 0;
+    // The status hover the local player has, as the last owner snapshot said
+    // (schema 32): until predicted_hover_until_tick_ the prediction holds this
+    // clearance whenever nothing ahead of the hover moves it, in the order the
+    // authority uses (docs/PLAYER_HOVER_PLAN.md §2.1). predicted_local_dead_
+    // is that snapshot's word on the one input to that order the prediction
+    // has no other twin of. predicted_hovering_ is what the last predicted
+    // step did, for the drawn body's flags.
+    float predicted_hover_height_meters_ = 0.0f;
+    float predicted_hover_vertical_speed_ = 0.0f;
+    std::uint32_t predicted_hover_until_tick_ = 0;
+    bool predicted_local_dead_ = false;
+    bool predicted_hovering_ = false;
     // The building the local player is inside, as the last owner snapshot
     // said (0 when outside), and that snapshot's tick. The twin of Sheltered:
     // while it is set the prediction stands still under a terrain-only mask,

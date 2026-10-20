@@ -606,6 +606,15 @@ bool Kernel_ServerSetEntityMovementCollisionMask(
     uint32_t net_id,
     uint32_t movement_collision_mask);
 
+/*
+ * The kill floor: from the next tick, an actor or prop below height_meters has
+ * left the map and is reclaimed (see KERNEL_FALL_DEATH_HEIGHT_METERS, which is
+ * also its value until this is called). Rejected unless the height is finite.
+ * Kept across a restart of the same kernel. Additive within ABI 108, behind
+ * KERNEL_CAPABILITY_SERVER_FALL_DEATH_HEIGHT.
+ */
+bool Kernel_ServerSetFallDeathHeight(KernelHandle* kernel, float height_meters);
+
 bool Kernel_ServerSubmitEntityInput(
     KernelHandle* kernel,
     uint32_t net_id,

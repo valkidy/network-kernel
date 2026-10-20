@@ -610,6 +610,7 @@ void simulate_actor_movement(
         const Velocity& current_velocity = view.get<Velocity>(entity);
         MovementState next_movement = view.get<MovementState>(entity);
         next_movement.landed_this_tick = false;
+        next_movement.hovering = false;
         if (next_movement.controller_type ==
             MovementState::ControllerType::kNone) {
             continue;
@@ -734,6 +735,24 @@ void simulate_actor_movement(
             continue;
         }
 
+        // A status hover (docs/PLAYER_HOVER_PLAN.md §2.1) moves a character
+        // only when nothing ahead of it in that order does: not the dead, not
+        // a sheltered occupant, not a suspension -- a character in one reaches
+        // the character branch below too, so this has to say so itself -- and
+        // not the drop after one or the recovery from its landing: those come
+        // down and get up as any character does, and the hover lifts it again
+        // after. Everything else -- input, a knockback's horizontal, a
+        // stagger's stop -- is already in desired_horizontal.
+        const ActiveStatusEffect* hover =
+            next_movement.controller_type ==
+                    MovementState::ControllerType::kCharacter &&
+                !dead && !world.registry().all_of<Sheltered>(entity) &&
+                suspension == nullptr &&
+                !(impulse_locked &&
+                  (impulse_lockout->free_fall || impulse_lockout->recovering))
+            ? active_hover(world, entity)
+            : nullptr;
+
         if (next_movement.controller_type ==
                 MovementState::ControllerType::kHover &&
             impulse_locked && impulse_lockout->free_fall) {
@@ -822,21 +841,37 @@ void simulate_actor_movement(
                     : physics::CharacterGroundState::kAirborne;
             state.ground_normal = next_movement.ground_normal;
             std::string error;
-            if (suspension != nullptr) {
+            if (suspension != nullptr || hover != nullptr) {
                 // Off the ground for good while held, so the controller never
-                // follows a floor it is rising away from.
+                // follows a floor it is rising away from. A hover is the same:
+                // it is never standing on what it holds its height above.
                 state.ground_state = physics::CharacterGroundState::kAirborne;
             }
             const bool stepped = suspension != nullptr
                 ? movement_solver::step_character_at_velocity(
                       *physics_world, config, suspended, fixed_delta_seconds,
                       &state, &error)
+                : hover != nullptr
+                ? movement_solver::step_character_at_velocity(
+                      *physics_world, config,
+                      glm::vec3{
+                          desired_horizontal.x,
+                          movement_solver::hover_vertical_velocity(
+                              *physics_world, config.shape, config.filter,
+                              state.position, state.rotation,
+                              config.max_slope_degrees,
+                              hover->hover_height_meters,
+                              hover->hover_vertical_speed,
+                              fixed_delta_seconds),
+                          desired_horizontal.z},
+                      fixed_delta_seconds, &state, &error)
                 : movement_solver::step_character(
                       *physics_world, config, desired_horizontal,
                       fixed_delta_seconds, &state, &error);
-            if (stepped && suspension != nullptr) {
+            if (stepped && (suspension != nullptr || hover != nullptr)) {
                 state.ground_state = physics::CharacterGroundState::kAirborne;
             }
+            result.movement.hovering = stepped && hover != nullptr;
             if (stepped) {
                 result.physics_finalized = true;
                 result.position = state.position;

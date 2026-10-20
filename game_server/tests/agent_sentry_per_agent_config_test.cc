@@ -273,7 +273,10 @@ void manager_resolves_config_from_the_spawned_template() {
     KernelServerEntityState before{};
     before.struct_size = sizeof(before);
     require(Kernel_ServerGetEntityState(kernel, agent_net_id, &before));
-    for (int frame = 0; frame < 60; ++frame) {
+    // There is no ground here, so it walks while it falls. A second is enough
+    // to cover the metre (about 2.8 m) and keeps it above the kill floor,
+    // which it crosses at about 1.3 s and is removed for.
+    for (int frame = 0; frame < 30; ++frame) {
         game_server.tick(1.0f / 30.0f);
         Kernel_Update(kernel, 1.0f / 30.0f);
     }

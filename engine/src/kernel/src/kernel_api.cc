@@ -295,7 +295,8 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             KERNEL_CAPABILITY_SKELETON_BIND_POSE |
             KERNEL_CAPABILITY_LOCAL_WEAPON_STATE |
             KERNEL_CAPABILITY_LOCAL_SHELTER_STATE |
-            KERNEL_CAPABILITY_GAME_MESSAGES;
+            KERNEL_CAPABILITY_GAME_MESSAGES |
+            KERNEL_CAPABILITY_SERVER_FALL_DEATH_HEIGHT;
         return true;
     });
 }
@@ -1326,6 +1327,13 @@ bool Kernel_ServerSetEntityMovementCollisionMask(
                        net_id,
                        movement_collision_mask);
         });
+}
+
+bool Kernel_ServerSetFallDeathHeight(KernelHandle* kernel, float height_meters) {
+    return abi_call("Kernel_ServerSetFallDeathHeight", false, [&]() {
+        return kernel != nullptr &&
+               kernel->engine->server_set_fall_death_height(height_meters);
+    });
 }
 
 bool Kernel_ServerEnqueueEntityState(

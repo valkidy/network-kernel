@@ -3300,6 +3300,7 @@ bool KernelEngine::load_gameplay_catalog(
                     std::holds_alternative<ActionApplySpeedModifierDefinition>(action) ||
                     std::holds_alternative<ActionApplyBlockActionsDefinition>(action) ||
                     std::holds_alternative<ActionApplySuspendMovementDefinition>(action) ||
+                    std::holds_alternative<ActionApplyHoverMovementDefinition>(action) ||
                     std::holds_alternative<ActionApplyUntargetableDefinition>(action);
                 if (!damage_or_health && !(allow_speed_modifier && status_bound)) {
                     return false;
@@ -3328,6 +3329,8 @@ bool KernelEngine::load_gameplay_catalog(
                  trigger.action_type ==
                      KernelEntityTriggerActionType_ApplySuspendMovement ||
                  trigger.action_type ==
+                     KernelEntityTriggerActionType_ApplyHoverMovement ||
+                 trigger.action_type ==
                      KernelEntityTriggerActionType_ApplyUntargetable) &&
                 trigger.target_source != KernelEntityRefSource_Self &&
                 trigger.target_source != KernelEntityRefSource_EventSubject) {
@@ -3352,6 +3355,8 @@ bool KernelEngine::load_gameplay_catalog(
                          KernelEntityTriggerActionType_ApplyBlockActions ||
                      action.action_type ==
                          KernelEntityTriggerActionType_ApplySuspendMovement ||
+                     action.action_type ==
+                         KernelEntityTriggerActionType_ApplyHoverMovement ||
                      action.action_type ==
                          KernelEntityTriggerActionType_ApplyUntargetable) &&
                     action.target_source != KernelEntityRefSource_Self &&
@@ -4201,7 +4206,10 @@ bool KernelEngine::load_gameplay_catalog(
                      KernelEntityTriggerActionType_SpawnProjectile &&
                  find_projectile_template(
                      validated_projectile_templates,
-                     action.spawn_projectile_template_id) == nullptr)) {
+                     action.spawn_projectile_template_id) == nullptr) ||
+                (action.action_type ==
+                     KernelEntityTriggerActionType_ApplyStatus &&
+                 !status_id_in_use(action.status_effect_id))) {
                 return false;
             }
         }
@@ -6750,6 +6758,14 @@ bool KernelEngine::server_set_entity_health(NetId net_id, std::uint16_t hp) {
     return true;
 }
 
+bool KernelEngine::server_set_fall_death_height(float height_meters) {
+    if (!std::isfinite(height_meters)) {
+        return false;
+    }
+    fall_death_height_ = height_meters;
+    return true;
+}
+
 bool KernelEngine::server_set_entity_movement_collision_mask(
     NetId net_id,
     std::uint32_t movement_collision_mask) {
@@ -7947,6 +7963,11 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     predicted_impulse_is_knockback_ = false;
     predicted_suspension_velocity_ = glm::vec3{0.0f};
     predicted_suspension_until_tick_ = 0u;
+    predicted_hover_height_meters_ = 0.0f;
+    predicted_hover_vertical_speed_ = 0.0f;
+    predicted_hover_until_tick_ = 0u;
+    predicted_local_dead_ = false;
+    predicted_hovering_ = false;
     predicted_shelter_net_id_ = 0u;
     predicted_shelter_tick_ = 0u;
     predicted_action_buttons_ = 0u;
@@ -9818,6 +9839,11 @@ void KernelEngine::clear_client_session() {
     predicted_impulse_is_knockback_ = false;
     predicted_suspension_velocity_ = glm::vec3{0.0f};
     predicted_suspension_until_tick_ = 0u;
+    predicted_hover_height_meters_ = 0.0f;
+    predicted_hover_vertical_speed_ = 0.0f;
+    predicted_hover_until_tick_ = 0u;
+    predicted_local_dead_ = false;
+    predicted_hovering_ = false;
     predicted_shelter_net_id_ = 0u;
     predicted_shelter_tick_ = 0u;
     local_presentation_position_ = glm::vec3{0.0f, 0.0f, 0.0f};
@@ -10731,9 +10757,18 @@ bool KernelEngine::step_local_character_prediction(
     // authority's own -- step_character_at_velocity at the suspension's
     // velocity, off the ground, whatever the stick says.
     const bool suspended = prediction_tick < predicted_suspension_until_tick_;
+    // The hover's twin of player_movement.cc, in the same order: not dead, not
+    // sheltered, not suspended, and not in a lockout that is not a knockback
+    // -- the drop after a bubble or the recovery from its landing, which the
+    // snapshot tells apart from a knockback by KNOCKED_BACK.
+    const bool hovering =
+        prediction_tick < predicted_hover_until_tick_ && !predicted_local_dead_ &&
+        predicted_shelter_net_id_ == 0u && !suspended &&
+        !(impulse_locked &&
+          (!predicted_impulse_is_knockback_ || predicted_impulse_lockout_recovering_));
     std::string error;
     const glm::vec3 position_before_step = predicted_character_state_.position;
-    if (suspended) {
+    if (suspended || hovering) {
         predicted_character_state_.ground_state = physics::CharacterGroundState::kAirborne;
     }
     const bool stepped = suspended
@@ -10744,6 +10779,24 @@ bool KernelEngine::step_local_character_prediction(
               tick_loop_.fixed_delta_seconds(),
               &predicted_character_state_,
               &error)
+        : hovering
+        ? movement_solver::step_character_at_velocity(
+              *prediction_physics_world_,
+              movement_config,
+              glm::vec3{
+                  desired_horizontal.x,
+                  movement_solver::hover_vertical_velocity(
+                      *prediction_physics_world_, movement_config.shape,
+                      movement_config.filter, predicted_character_state_.position,
+                      predicted_character_state_.rotation,
+                      movement_config.max_slope_degrees,
+                      predicted_hover_height_meters_,
+                      predicted_hover_vertical_speed_,
+                      tick_loop_.fixed_delta_seconds()),
+                  desired_horizontal.z},
+              tick_loop_.fixed_delta_seconds(),
+              &predicted_character_state_,
+              &error)
         : movement_solver::step_character(
               *prediction_physics_world_,
               movement_config,
@@ -10751,9 +10804,10 @@ bool KernelEngine::step_local_character_prediction(
               tick_loop_.fixed_delta_seconds(),
               &predicted_character_state_,
               &error);
-    if (suspended) {
+    if (suspended || hovering) {
         predicted_character_state_.ground_state = physics::CharacterGroundState::kAirborne;
     }
+    predicted_hovering_ = stepped && hovering;
     if (!stepped) {
         spdlog::error("client CharacterVirtual prediction step failed: {}", error);
         return false;
@@ -11087,6 +11141,18 @@ void KernelEngine::adopt_authoritative_suspension(const EntitySnapshot& authorit
         authoritative.has_suspension ? authoritative.suspension_until_tick : 0u;
 }
 
+// Outright, as the suspension is: a hover starts and ends on the authority
+// alone.
+void KernelEngine::adopt_authoritative_hover(const EntitySnapshot& authoritative) {
+    predicted_hover_height_meters_ =
+        authoritative.has_hover ? authoritative.hover_height_meters : 0.0f;
+    predicted_hover_vertical_speed_ =
+        authoritative.has_hover ? authoritative.hover_vertical_speed : 0.0f;
+    predicted_hover_until_tick_ =
+        authoritative.has_hover ? authoritative.hover_until_tick : 0u;
+    predicted_local_dead_ = (authoritative.flags & kVisualFlagDead) != 0u;
+}
+
 void KernelEngine::reconcile_local_prediction(const WorldSnapshot& snapshot) {
     if (local_player_net_id_ == 0) {
         return;
@@ -11166,6 +11232,7 @@ void KernelEngine::reconcile_local_prediction(const WorldSnapshot& snapshot) {
         adopt_authoritative_impulse_lockout(
             *authoritative, snapshot.header.server_tick);
         adopt_authoritative_suspension(*authoritative);
+        adopt_authoritative_hover(*authoritative);
         movement_solver::CharacterMovementConfig movement_config{};
         std::string error;
         if (!build_local_character_movement_config(&movement_config)) {
@@ -12822,9 +12889,11 @@ void KernelEngine::append_predicted_local_render_state() {
     // answer is the only one there is.
     if (prediction_physics_world_ != nullptr) {
         state.visual_flags &= ~(kVisualFlagGrounded | kVisualFlagFalling |
-                                kVisualFlagKnockedBack);
-        state.visual_flags |= predicted_character_state_.ground_state ==
-                physics::CharacterGroundState::kGrounded
+                                kVisualFlagKnockedBack | kVisualFlagHovering);
+        state.visual_flags |= predicted_hovering_
+            ? kVisualFlagHovering
+            : predicted_character_state_.ground_state ==
+                    physics::CharacterGroundState::kGrounded
             ? kVisualFlagGrounded
             : kVisualFlagFalling;
         if (predicted_impulse_is_knockback_ &&
@@ -14335,12 +14404,14 @@ void KernelEngine::simulate_tick() {
         damage_pipeline_.drain_ready_damage(
             world_, server_time_us, tick_loop_.current_tick());
     queue_hit_debug_records(ready_damage);
-    const std::vector<ConfirmedDamage> health_depleted = apply_damage_applications(
+    std::vector<ConfirmedDamage> health_depleted = apply_damage_applications(
         world_,
         ready_damage,
         tick_loop_.current_tick(),
         &events_);
     EntityLifecycleSystem lifecycle_system;
+    lifecycle_system.reclaim_fallen_entities(
+        *this, server_time_us, &health_depleted);
     lifecycle_system.process_health_depleted(
         *this, health_depleted, server_time_us);
     lifecycle_system.enter_death_state(*this, health_depleted);
@@ -14505,6 +14576,8 @@ WorldSnapshot KernelEngine::build_relevant_snapshot(
                 entity.impulse_lockout_recovering;
             filtered_entity.has_suspension =
                 entity.has_suspension && entity.net_id == session.player;
+            filtered_entity.has_hover =
+                entity.has_hover && entity.net_id == session.player;
             filtered.entities.push_back(filtered_entity);
         }
     }
@@ -16251,9 +16324,11 @@ void KernelEngine::flush_actor_impulses() {
         record.position = transform->position;
         record.velocity = velocity->linear;
         // A hover does not fall, whatever gravity it authors, except in the
-        // drop after a suspension.
+        // drop after a suspension. Nor does a character a status hover moved
+        // last tick: a knockback carries it along at its height.
         record.gravity_y =
-            movement->controller_type == MovementState::ControllerType::kHover &&
+            (movement->controller_type == MovementState::ControllerType::kHover ||
+             movement->hovering) &&
                 !lockout->free_fall
             ? 0.0f
             : movement->gravity.y;
