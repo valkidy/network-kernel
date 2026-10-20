@@ -1,6 +1,6 @@
 # 玩家 Hover 模式實作計劃書
 
-狀態：**方案 A 已選；§6 的待決事項還沒定；尚未動工。**
+狀態：**方案 A 已選；Q1–Q5 已定案（2026-10-21）；P0 驗證完成，假設成立（§5.1）；P1 尚未開始。**
 分支：計畫書在 `claude/player-hover-plan`，從 `main`（a5544579，ABI 108，snapshot schema 31）開。
 實作時另開 `claude/player-hover`。
 最後更新：2026-10-21。
@@ -111,7 +111,7 @@ ground_state 強制設成 kAirborne
 - `gameplay_config.cc`：加上 action `apply_hover_movement`，參數為 `height_meters`、`vertical_speed_meters_per_second`。另外要做驗證，並把它納入 hash。
 - status `1006_status_effect_hover.yaml`：channel `hover`，`replace_policy: replace`，on_apply 綁定一個新的 graph `action_hover_apply`（裡面是 `apply_hover_movement`，目標是 `event.subject`）。
 - 道具 `3036_fungible_hover_potion.yaml`：照 `3002_fungible_potion` 的寫法，`on_item_used` 綁定 `action_apply_status_if_target`（`target: event.target`、`status: hover`）。掉在地上時的 prop 外觀先沿用 potion 的 entity template，id 在動工時再確認。
-- 數值暫定：高度 3 m、`vs` 4 m/s、持續 300 ticks（10 s）。見 §6 Q3。
+- 數值暫定：高度 3 m、`vs` 4 m/s、持續 900 ticks（30 s）。見 §6 Q3。
 
 ---
 
@@ -119,7 +119,7 @@ ground_state 強制設成 kAirborne
 
 | 階段 | 內容 | 完成條件 |
 |---|---|---|
-| **P0 驗證** | 不改 ABI。在測試裡直接呼叫 `step_character_at_velocity` 搭配 clearance 速度，在 v2 地圖上量三件事 | (a) 平地維持在 h ± 0.05 m；(b) 遇到 1 m 的箱子會爬上去再降回來；(c) server 和 prediction 用同一組 input 時位置一致。只要有一項失敗，就停下來回報，§2 要重新評估 |
+| **P0 驗證** | 不改 ABI。在測試裡直接呼叫 `step_character_at_velocity` 搭配 clearance 速度，用合成的幾何（平地、箱子、牆、懸崖）量測，v2 地圖留到 P2 再跑 | (a) 平地維持在 h ± 0.05 m；(b) 遇到 1 m 的箱子會爬上去再降回來；(c) server 和 prediction 用同一組 input 時位置一致。只要有一項失敗，就停下來回報，§2 要重新評估 |
 | P1 | §3.1 ABI，加上 §4 loader 的部分 | 載入 catalog 時接受新 action，非法的值會被拒絕 |
 | P2 | §3.2 authority 端的移動 | 玩家套上 status 後升到 h 並維持；到期後落地；bubble、knockback、stagger、death、shelter 都照 §2.1 的順序處理 |
 | P3 | §3.3 replication | owner 收到 hover 相關欄位，visual flag 在 hover 期間成立；remote impulse 的 `gravity_y` 為 0 |
@@ -130,15 +130,30 @@ ground_state 強制設成 kAirborne
 
 ---
 
+### 5.1 P0 結果（2026-10-21，`player_hover_p0_test`）
+
+只用 `PhysicsWorld` 加 `movement_solver`，沒有 World 也沒有動 ABI。clearance probe 是從 `probe_ground` / `step_hover` 複製過來的。
+
+| 情境 | 結果 |
+|---|---|
+| (a) 平地 | 第 22 個 tick 到達 3.0 m（3 m ÷ 4 m/s 約 23 ticks），之後的維持誤差是 **0.0000 m** |
+| (b) 1 m 箱子 | 經過箱頂中段時 y 在 3.93–4.00，有跟上箱頂的高度；離開後回到 3.0 m，沒有被卡住 |
+| 比 clearance 高的牆（5 m） | **會被擋住**（停在 x = -1.37，貼著牆面），不會往上爬。probe 要等到人已經在牆頂上方才看得到牆頂，`kHover` 的 agent 也一樣。地圖上比 3 m 高的牆會擋住 hover 中的玩家 |
+| 懸崖 | 經過邊緣時**下沉 0.18 m**（capsule 的圓底打到邊角，量到的離地距離偏大），之後維持在 2.82 m 不再變。這是 probe 本來就有的行為，airship 也會這樣 |
+| (d) 切換 | 同一個 CharacterVirtual 中途不 reset：hover 結束後直接接回 `step_character`，22 個 tick 後落地（理論值 23），落地後 y = 0 |
+| (c) 兩個 world 的一致性 | 跑 300 ticks、方向一直在變的 input，誤差 **0.000000 m**；對照組只改一個 tick 的 input，就出現 0.24 m 的差距，證明這個比對抓得到差異 |
+
+結論：「留在 Character、只換速度」這個做法成立，可以進入 P1。真正的雙 process 一致性要到 P4 才驗。
+
 ## 6. 待決事項
 
 | # | 問題 | 建議 |
 |---|---|---|
-| Q1 | 死亡時 hover 要不要作用 | **不作用，屍體照常下墜。** 這符合現有「死者會掉下來」的規則，復活位置也會在地面上；反正 splatter 會蓋掉畫面 |
-| Q2 | 在帳篷裡（Sheltered）時要不要作用 | **不作用。** 離開帳篷後，如果 status 還在，就從地面升回去 |
-| Q3 | 高度、上升速度、持續時間 | 3 m、4 m/s、10 s。測過手感後再調 |
-| Q4 | hover 期間能不能使用武器和道具 | **可以**。kernel 不需要做任何限制 |
-| Q5 | 重複使用道具時 | `replace`：重新計時 |
+| Q1 | 死亡時 hover 要不要作用 | **定案**：**不作用，屍體照常下墜。** 這符合現有「死者會掉下來」的規則，復活位置也會在地面上；反正 splatter 會蓋掉畫面 |
+| Q2 | 在帳篷裡（Sheltered）時要不要作用 | **定案**：**不作用。** 離開帳篷後，如果 status 還在，就從地面升回去 |
+| Q3 | 高度、上升速度、持續時間 | **定案**：3 m、4 m/s、**30 s**。測過手感後再調 |
+| Q4 | hover 期間能不能使用武器和道具 | **定案**：**可以**。kernel 不需要做任何限制 |
+| Q5 | 重複使用道具時 | **定案**：`replace`：重新計時 |
 | Q6 | 敵人近戰能不能打到 hover 中的玩家 | P2 時量測近戰和 charge 的接觸距離是 2D 還是 3D 計算。如果高度 3 m 讓它們打不到，再回報來決定 |
 
 ---
