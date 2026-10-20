@@ -1,6 +1,6 @@
 # 玩家 Hover 模式實作計劃書
 
-狀態：**方案 A 已選；Q1–Q5 已定案（2026-10-21）；P0 驗證完成，假設成立（§5.1）；P1–P4 完成（§5.2–§5.5）；Q6 定案為 (a)；P5 尚未開始。**
+狀態：**方案 A 已選；Q1–Q5 已定案（2026-10-21）；P0 驗證完成，假設成立（§5.1）；P0–P5 全部完成（§5.1–§5.6）；Q6 定案為 (a)。剩下 Unity 端和 C# mirror，由使用者處理。**
 分支：計畫書在 `claude/player-hover-plan`，從 `main`（a5544579，ABI 108，snapshot schema 31）開。
 實作時另開 `claude/player-hover`。
 最後更新：2026-10-21。
@@ -241,6 +241,27 @@ Snapshot schema 31 → 32。
 
 回歸：`kernel_tests/...`、`simulation_tests/...`、`protocol_tests/...` 全部跑一遍，紅了 8 個，名單和失敗行都跟 P3 那次相同。`client_mode_test` 通過。
 
+### 5.6 P5 結果（2026-10-21）
+
+新增的 catalog 檔案（動工前查過所有分支，這些 id 都沒有被佔用）：
+- `status_effect_templates/1006_status_effect_hover.yaml`：channel `hover`，900 ticks（30 s），`replace`。
+- `action_graph_templates/derived/status_effect/action_hover_apply.yaml`：`apply_hover_movement` 3 m、4 m/s。
+- `action_graph_templates/common/action_apply_status.yaml`（新的通用 graph）：無條件套用 status，不帶方向。
+- `entity_templates/230_prop_hover_potion.yaml`：掉在地上的 prop。**不能丟**，所以沒有 on_collision。
+- `item_templates/3036_fungible_hover_potion.yaml`：on_item_used 會把 hover 套在 `event.instigator`（喝的人）身上。
+- 取得管道：玩家的初始道具欄加了 3 瓶（放在最後，不影響原本各 slot 的位置）、營地的 loadout 加了 3 瓶。照 §9，要關掉就把這兩處拿掉。
+
+**跟 §4 不同的地方，經使用者同意擴大了範圍：**
+1. **Kernel 原本不允許道具套 status。** `valid_item_graph_action`（`item_system.cc`）只接受 damage、spawn entity、spawn projectile、health change、refill weapon reserve 五種 action。現在加上了 `ApplyStatus`，條件跟 entity trigger 一樣：target 必須是事件裡有的對象、方向和 strength 都要合法。kernel 端另外用 `status_id_in_use` 確認 status 存在。ABI 沒有變（enum 本來就有），但**從此任何道具都可以套 status**。
+2. **不能沿用 `action_apply_status_if_target`。** 它的 `direction` 是必填參數，而且帶有 `when: event.has_target`；但 Consume 的 event target 是 `request.target_net_id`，喝的人沒指定目標時是 0，status 就不會套上。所以改成新的 `action_apply_status`，target 用 `event.instigator`。
+
+測試（`hover_potion_test`，用 shipped catalog、v2 地圖、真正的 dedicated server）：
+- catalog 的內容跟 YAML 寫的一致，kernel 也接受。
+- 繞過 loader 塞非法的值，kernel 都會拒絕：status id 9999、status id 0、target 200。
+- 玩家站在營地平台上：喝之前 y = 4.785，flags GROUNDED；喝下 2 秒後 y = 7.785（正好高 3.000 m），flags 是 `0x4000`（只有 HOVERING）；30 秒到期前一個 tick 還在 3 m；到期 40 ticks 後 y = 4.785，flags `0x10`（GROUNDED）。
+
+回歸：`//game_server/...` 加上 `item_system_test`，紅了 11 個。其中 6 個在已知的紅燈清單上。另外 5 個（`game_server_api`、`limb_collider`、`listen_host_pose_parity`、`patrol_catalog`、`stagger_config`）不在清單上，所以**切到 main 上實際跑過**，main 上也是紅的，失敗行完全一樣。也就是說 main 本身多了這幾個紅燈，不是 hover 造成的。
+
 ## 6. 待決事項
 
 | # | 問題 | 建議 |
@@ -262,6 +283,8 @@ Snapshot schema 31 → 32。
 - 每個階段結束時回報：讀了哪些檔案、改了哪些檔案、搜尋了哪些東西、跑了哪些 build 和 test 指令。
 
 ## 8. 交付給使用者
+
+**實際交付（2026-10-21）：** 分支 `claude/player-hover`，commit 從 096ca019（P0）到 8cb0f032（P5）。
 
 - 分支和 commit。
 - **ABI 109 和 snapshot schema 32 都有變動**，client 和 server 必須用同一版。
