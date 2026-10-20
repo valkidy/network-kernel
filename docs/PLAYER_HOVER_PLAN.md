@@ -1,6 +1,6 @@
 # 玩家 Hover 模式實作計劃書
 
-狀態：**方案 A 已選；Q1–Q5 已定案（2026-10-21）；P0 驗證完成，假設成立（§5.1）；P1 完成（§5.2）；P2 尚未開始。**
+狀態：**方案 A 已選；Q1–Q5 已定案（2026-10-21）；P0 驗證完成，假設成立（§5.1）；P1、P2 完成（§5.2、§5.3）；Q6 待決；P3 尚未開始。**
 分支：計畫書在 `claude/player-hover-plan`，從 `main`（a5544579，ABI 108，snapshot schema 31）開。
 實作時另開 `claude/player-hover`。
 最後更新：2026-10-21。
@@ -171,6 +171,37 @@ YAML 寫法：
 
 `kernel_c_header_test` 新增的 static assert 都有編譯過；執行期在 `sizeof(RenderEntityState) == 160u` 失敗，這是 main 上本來就紅的。
 
+### 5.3 P2 結果（2026-10-21）
+
+- `world.h`：新增 `active_hover()`。
+- `movement_solver`：新增 `hover_vertical_velocity()`，伺服器和 P4 的 prediction 會呼叫同一個函式。
+- `player_movement.cc` 的 Character 分支照 §2.1 的順序判斷：dead、Sheltered、suspension、drop/recovery lockout 都排在 hover 前面；controller 不是 Character 時，hover status 不起作用。
+
+**跟 §3.2 不同的地方：** `probe_ground` 沒有搬走。改成在 `movement_solver` 裡寫一份相同的 probe（大約 20 行重複的程式碼）。這樣 `kHover` agent 的程式碼完全沒動，現有 drone 和 airship 的行為不會受影響。
+
+測試（`player_hover_movement_test`）：
+
+| 情境 | 結果 |
+|---|---|
+| §9 回歸：沒有 hover status 時，跑完 walk、knockback、stagger、bubble 一整串 | 跟改動前錄下的固定數值**完全相同**（position -6532.393735189、velocity -756.999998592、grounded 141）。多掛一個沒有 hover 的 status 時也相同 |
+| 上升並維持高度 | 第 22 個 tick 到達 3.0 m，維持誤差 0.0000 m，3 秒內正好走了 15 m（5 m/s）；**沒有任何 ActorLanded**。對照組：真正落地時確實會發出這個事件 |
+| status 結束 | 22 個 tick 後落地 |
+| 死亡 | 往下掉並落地 |
+| Sheltered | 待在原地不升起；離開帳篷後升到 3 m |
+| Bubble | 升到 4.5 m，破掉後 28 個 tick 落地，drop lockout 解除後再升回 3.0 m |
+| Knockback (6, 8, 0) | 水平推了正好 4.0 m（6 m/s × 20 ticks），垂直變化 0；lockout 結束後玩家重新拿回操控 |
+| Stagger | 水平不動，高度維持 |
+| kGrounded controller | 套上 hover status 也不會升起 |
+| 走完整的 status 套用路徑 | apply_status 觸發 on_apply，再由 apply_hover_movement 把數值記在 instance 上，`expire_tick` 正確；人在帳篷裡時也會記上 |
+
+`simulation_tests/...` 全部跑一遍（`--keep_going`）：只有 `damage_pipeline_test` 和 `hitscan_test` 兩個紅，都是 main 原本就紅的，失敗行和已知紀錄一致，而且這兩個測試都不會呼叫移動程式。
+
+**Q6 計算結果**（從 code 和 catalog 數值算出來，沒有在遊戲裡實測）：
+- AI 判斷要不要出手，看的是**平面距離**（`agent_chaser_controller.cc`，`horizontal_distance` 小於等於 `attack_range_meters`）。
+- 近戰實際命中是一顆 **3D 球**：球心在敵人腳底往上 1.0 m（`projectile_launch_position`），claw 和 slam 的半徑是 2.2 m，charge horns 是 1.0 m。
+- 玩家 hover 在 3 m 時，hitbox 底部在 3.0 m，跟球心差了 2.0 m。claw 和 slam 只有在**水平距離小於約 1.27 m**時才打得到，但所有近戰敵人都會在 `stop_distance_meters: 1.8` 的地方停下來。也就是說，只有玩家自己飛到敵人正上方時才會被打中。charge horns 完全打不到。
+- 遠程攻擊不受影響：drone beam、各種 projectile 照樣打得到。
+
 ## 6. 待決事項
 
 | # | 問題 | 建議 |
@@ -180,7 +211,7 @@ YAML 寫法：
 | Q3 | 高度、上升速度、持續時間 | **定案**：3 m、4 m/s、**30 s**。測過手感後再調 |
 | Q4 | hover 期間能不能使用武器和道具 | **定案**：**可以**。kernel 不需要做任何限制 |
 | Q5 | 重複使用道具時 | **定案**：`replace`：重新計時 |
-| Q6 | 敵人近戰能不能打到 hover 中的玩家 | P2 時量測近戰和 charge 的接觸距離是 2D 還是 3D 計算。如果高度 3 m 讓它們打不到，再回報來決定 |
+| Q6 | 敵人近戰能不能打到 hover 中的玩家 | **算出來的結果：打不到**，除非玩家飛到敵人正上方（§5.3）。待決定：(a) 接受這個結果，hover 本來就是一種躲近戰的手段；(b) 把高度降到大約 2 m；(c) 改 AI，讓它停下來的距離把高度差也算進去 |
 
 ---
 

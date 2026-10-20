@@ -271,6 +271,20 @@ const ActiveStatusEffect* active_suspension(const World& world, entt::entity ent
     return newest;
 }
 
+const ActiveStatusEffect* active_hover(const World& world, entt::entity entity) {
+    const StatusEffectState* state = world.registry().try_get<StatusEffectState>(entity);
+    if (state == nullptr) {
+        return nullptr;
+    }
+    const ActiveStatusEffect* newest = nullptr;
+    for (const ActiveStatusEffect& active : state->active) {
+        if (active.hovers) {
+            newest = &active;
+        }
+    }
+    return newest;
+}
+
 void World::synchronize_standalone_collision_world() {
     if (standalone_collision_world_ == nullptr) {
         standalone_collision_world_ =
