@@ -63,6 +63,18 @@ bool suspend_speed_is_authorable(float speed) {
         speed <= KERNEL_MAX_SUSPEND_SPEED;
 }
 
+// Mirror hover_height_is_authorable and hover_speed_is_authorable in
+// simulation/public/action_graph.h, for the same reason.
+bool hover_height_is_authorable(float height) {
+    return std::isfinite(height) && height > 0.0f &&
+        height <= KERNEL_MAX_HOVER_HEIGHT;
+}
+
+bool hover_speed_is_authorable(float speed) {
+    return std::isfinite(speed) && speed > 0.0f &&
+        speed <= KERNEL_MAX_SUSPEND_SPEED;
+}
+
 // Mirrors pull_is_authorable in simulation/public/action_graph.h, which the
 // kernel's trigger validators use; the loader says so first, with a path.
 bool pull_is_authorable(
@@ -2141,6 +2153,8 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 "percent",
                 "rise_speed",
                 "drift_speed",
+                "height_meters",
+                "vertical_speed_meters_per_second",
                 "collider",
                 "mode",
                 "origin_lift",
@@ -2184,6 +2198,13 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
             throw std::runtime_error(
                 "rise_speed and drift_speed are only supported on "
                 "apply_suspend_movement: " + path);
+        }
+        if ((action["height_meters"] ||
+             action["vertical_speed_meters_per_second"]) &&
+            compiled_action.action_type != "apply_hover_movement") {
+            throw std::runtime_error(
+                "height_meters and vertical_speed_meters_per_second are only "
+                "supported on apply_hover_movement: " + path);
         }
         if (action["ui_id"] && compiled_action.action_type != "open_ui") {
             throw std::runtime_error(
@@ -2639,6 +2660,40 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                     "apply_suspend_movement rise_speed and drift_speed must be "
                     "0 to " + std::to_string(KERNEL_MAX_SUSPEND_SPEED) + " m/s: " +
                     path);
+            }
+            compiled_action.target_parameter =
+                parameter_reference_from_yaml(action["target"], "target");
+            action_parameters = {&compiled_action.target_parameter};
+        } else if (compiled_action.action_type == "apply_hover_movement") {
+            // Whom it holds up, how high and how fast it gets there; how long
+            // is the status's duration_ticks.
+            for (const auto& field : action) {
+                const std::string key = field.first.as<std::string>();
+                if (key != "type" && key != "target" && key != "when" &&
+                    key != "height_meters" &&
+                    key != "vertical_speed_meters_per_second") {
+                    throw std::runtime_error(
+                        "apply_hover_movement takes only target, height_meters and "
+                        "vertical_speed_meters_per_second: " + path);
+                }
+            }
+            if (!action["height_meters"] ||
+                !action["vertical_speed_meters_per_second"]) {
+                throw std::runtime_error(
+                    "apply_hover_movement requires height_meters and "
+                    "vertical_speed_meters_per_second: " + path);
+            }
+            compiled_action.hover_height_meters =
+                action["height_meters"].as<float>();
+            compiled_action.hover_vertical_speed =
+                action["vertical_speed_meters_per_second"].as<float>();
+            if (!hover_height_is_authorable(compiled_action.hover_height_meters) ||
+                !hover_speed_is_authorable(compiled_action.hover_vertical_speed)) {
+                throw std::runtime_error(
+                    "apply_hover_movement height_meters must be above 0 and at "
+                    "most " + std::to_string(KERNEL_MAX_HOVER_HEIGHT) +
+                    " m, vertical_speed_meters_per_second above 0 and at most " +
+                    std::to_string(KERNEL_MAX_SUSPEND_SPEED) + " m/s: " + path);
             }
             compiled_action.target_parameter =
                 parameter_reference_from_yaml(action["target"], "target");
@@ -8845,6 +8900,20 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
             compiled_action.suspend_drift_speed = action.suspend_drift_speed;
             continue;
         }
+        if (action.action_type == "apply_hover_movement") {
+            if (trigger_name != "on_apply") {
+                throw std::runtime_error(
+                    "apply_hover_movement is only valid in status on_apply");
+            }
+            compiled_action.action_type =
+                KernelEntityTriggerActionType_ApplyHoverMovement;
+            compiled_action.target_source = entity_ref_source(
+                trigger_parameter_value(
+                    binding, graph_parameter(action.target_parameter)));
+            compiled_action.hover_height_meters = action.hover_height_meters;
+            compiled_action.hover_vertical_speed = action.hover_vertical_speed;
+            continue;
+        }
         if (action.action_type == "apply_block_actions" ||
             action.action_type == "apply_untargetable") {
             if (trigger_name != "on_apply") {
@@ -12546,6 +12615,7 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
             const bool block_actions =
                 action_type == KernelEntityTriggerActionType_ApplyBlockActions ||
                 action_type == KernelEntityTriggerActionType_ApplySuspendMovement ||
+                action_type == KernelEntityTriggerActionType_ApplyHoverMovement ||
                 action_type == KernelEntityTriggerActionType_ApplyUntargetable;
             if (!damage_or_health && !speed_modifier && !block_actions) {
                 throw std::runtime_error(
@@ -12557,8 +12627,9 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
             }
             if (block_actions && std::string_view(trigger_name) != "on_apply") {
                 throw std::runtime_error(
-                    "apply_block_actions, apply_suspend_movement and "
-                    "apply_untargetable are only allowed in status on_apply");
+                    "apply_block_actions, apply_suspend_movement, "
+                    "apply_hover_movement and apply_untargetable are only "
+                    "allowed in status on_apply");
             }
             if (block_actions &&
                 action.target_source != KernelEntityRefSource_Self &&

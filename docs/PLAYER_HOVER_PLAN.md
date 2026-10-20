@@ -1,6 +1,6 @@
 # 玩家 Hover 模式實作計劃書
 
-狀態：**方案 A 已選；Q1–Q5 已定案（2026-10-21）；P0 驗證完成，假設成立（§5.1）；P1 尚未開始。**
+狀態：**方案 A 已選；Q1–Q5 已定案（2026-10-21）；P0 驗證完成，假設成立（§5.1）；P1 完成（§5.2）；P2 尚未開始。**
 分支：計畫書在 `claude/player-hover-plan`，從 `main`（a5544579，ABI 108，snapshot schema 31）開。
 實作時另開 `claude/player-hover`。
 最後更新：2026-10-21。
@@ -144,6 +144,32 @@ ground_state 強制設成 kAirborne
 | (c) 兩個 world 的一致性 | 跑 300 ticks、方向一直在變的 input，誤差 **0.000000 m**；對照組只改一個 tick 的 input，就出現 0.24 m 的差距，證明這個比對抓得到差異 |
 
 結論：「留在 Character、只換速度」這個做法成立，可以進入 P1。真正的雙 process 一致性要到 P4 才驗。
+
+### 5.2 P1 結果（2026-10-21）
+
+ABI 108 → 109。動工前檢查過本地 56 個分支，都沒有佔用 109、action type 17 或 visual flag `0x4000`。
+
+- `KernelEntityTriggerActionType_ApplyHoverMovement = 17`
+- `KernelActionDefinition` 在 `lock_origin_lift` 後面加了 `hover_height_meters` 和 `hover_vertical_speed`，struct 大了 8 bytes；`KernelActionTriggerDefinition` 有 8 個 action，大了 64 bytes
+- `KERNEL_MAX_HOVER_HEIGHT 20.0f`、`KERNEL_VISUAL_FLAG_HOVERING 0x4000`（P1 只定義了常數，P3 才會真正設定它）
+
+驗證分三關，跟 suspension 一樣：game_server loader、kernel 的 trigger compile（`action_graph.cc`）、command preflight（`systems.cc`）。高度和速度**都不接受 0**，這點跟 suspension 不同。套用時只把數值記在 status instance 上，不會清掉 knockback，也不會跳過在帳篷裡的人（Sheltered），每個 tick 怎麼處理交給 P2 的移動 step。
+
+YAML 寫法：
+```yaml
+- type: apply_hover_movement
+  target: params.target
+  height_meters: 3.0
+  vertical_speed_meters_per_second: 4.0
+```
+
+測試（`status_action_block_catalog_test`）：
+- 在 on_apply 裡可以正常載入，而且 kernel 接受
+- 放在 on_tick 會被拒絕
+- 高度為 0 或超過 20、速度為 0 或超過 20、少了速度、多出 suspension 的欄位、未知欄位，都會被拒絕
+- 繞過 loader、直接把非法的數值（包括 NaN）塞給 kernel，也會被拒絕
+
+`kernel_c_header_test` 新增的 static assert 都有編譯過；執行期在 `sizeof(RenderEntityState) == 160u` 失敗，這是 main 上本來就紅的。
 
 ## 6. 待決事項
 

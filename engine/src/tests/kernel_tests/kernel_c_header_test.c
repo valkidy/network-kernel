@@ -16,8 +16,20 @@ static void require_impl(int condition, const char* expression, int line) {
 #define require(condition) require_impl((condition) ? 1 : 0, #condition, __LINE__)
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 108u,
-    "water jet: the surface normal source");
+    KERNEL_ABI_VERSION == 109u,
+    "player hover: apply_hover_movement");
+_Static_assert(
+    KernelEntityTriggerActionType_ApplyHoverMovement == 17 &&
+        KERNEL_VISUAL_FLAG_HOVERING == 0x00004000u,
+    "ABI 109: the hover action type and visual flag are appended");
+_Static_assert(
+    offsetof(KernelActionDefinition, hover_height_meters) ==
+            offsetof(KernelActionDefinition, lock_origin_lift) + 4u &&
+        offsetof(KernelActionDefinition, hover_vertical_speed) ==
+            offsetof(KernelActionDefinition, hover_height_meters) + 4u &&
+        sizeof(KernelActionDefinition) ==
+            offsetof(KernelActionDefinition, hover_vertical_speed) + 4u,
+    "the ABI 109 hover fields are appended after lock_origin_lift");
 _Static_assert(
     KernelEventVec3Source_SurfaceNormal == 5,
     "ABI 108: the surface normal source is an appended enum value");
@@ -227,21 +239,23 @@ _Static_assert(
         offsetof(KernelSkeletonBindingDefinition, processing_order),
     "stance crouch is appended to the skeleton binding ABI");
 _Static_assert(
-    sizeof(KernelActionDefinition) == 84u + 16u + 16u + 8u + 4u + 4u + 16u + 16u,
+    sizeof(KernelActionDefinition) ==
+        84u + 16u + 16u + 8u + 4u + 4u + 16u + 16u + 8u,
     "KernelActionDefinition ABI size: 84 bytes before ABI 94, plus the "
     "16-byte spawn lifetime and repeat block, plus ABI 95's 16-byte pull "
     "block, plus ABI 96's ui_id and spawn_placement, plus ABI 100's "
     "pull_strength, plus ABI 101's two reserve refill fields, plus ABI 102's "
     "status direction flag, two suspend speeds and status strength, plus "
-    "ABI 107's 16-byte lock_strike block");
+    "ABI 107's 16-byte lock_strike block, plus ABI 109's two hover fields");
 _Static_assert(
     sizeof(KernelActionTriggerDefinition) ==
         764u + 8u * 16u + 8u * 16u + 8u * 8u + 8u * 4u + 8u * 4u + 8u * 16u +
-            8u * 16u,
+            8u * 16u + 8u * 8u,
     "KernelActionTriggerDefinition ABI size: its eight actions each grew by "
     "the ABI 94 repeat block, the ABI 95 pull block, ABI 96's ui_id and "
     "spawn_placement, ABI 100's pull_strength, ABI 101's reserve refill and "
-    "ABI 102's status direction, suspend speeds and status strength");
+    "ABI 102's status direction, suspend speeds and status strength, ABI "
+    "107's lock_strike block and ABI 109's hover fields");
 _Static_assert(
     offsetof(KernelActionDefinition, spawn_placement) >
             offsetof(KernelActionDefinition, ui_id) &&

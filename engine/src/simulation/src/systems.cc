@@ -417,6 +417,13 @@ bool prepare_status_lifecycle_trigger(
                             suspend->target == target
                         ? suspend->target
                         : 0u;
+                } else if (const auto* hover =
+                               std::get_if<ActionApplyHoverMovementCommand>(&command)) {
+                    side_effect_target =
+                        event_type == TriggerEventType::kStatusApplied &&
+                            hover->target == target
+                        ? hover->target
+                        : 0u;
                 } else if (const auto* untargetable =
                                std::get_if<ActionApplyUntargetableCommand>(&command)) {
                     side_effect_target =
@@ -484,7 +491,15 @@ bool prepare_status_lifecycle_trigger(
             !std::holds_alternative<ActionApplySpeedModifierCommand>(command) &&
             !std::holds_alternative<ActionApplyBlockActionsCommand>(command) &&
             !std::holds_alternative<ActionApplySuspendMovementCommand>(command) &&
+            !std::holds_alternative<ActionApplyHoverMovementCommand>(command) &&
             !std::holds_alternative<ActionApplyUntargetableCommand>(command)) {
+            return false;
+        }
+        if (const auto* hover =
+                std::get_if<ActionApplyHoverMovementCommand>(&command);
+            hover != nullptr &&
+            (event_type != TriggerEventType::kStatusApplied ||
+             hover->target != target)) {
             return false;
         }
         if (const auto* untargetable =
@@ -873,6 +888,16 @@ bool execute_action_graph_commands(
             if (untargetable->source == 0u ||
                 untargetable->status_instance_id == 0u ||
                 !world.find_entity(untargetable->target).has_value()) {
+                return false;
+            }
+            continue;
+        }
+        if (const auto* hover =
+                std::get_if<ActionApplyHoverMovementCommand>(&command)) {
+            if (hover->source == 0u || hover->status_instance_id == 0u ||
+                !world.find_entity(hover->target).has_value() ||
+                !hover_height_is_authorable(hover->height_meters) ||
+                !hover_speed_is_authorable(hover->vertical_speed)) {
                 return false;
             }
             continue;
@@ -1428,6 +1453,28 @@ bool execute_action_graph_commands(
             movement.supporting_entity_net_id = 0u;
             movement.supporting_collider_id = 0u;
             movement.has_controller_height = false;
+            continue;
+        }
+        if (const auto* hover =
+                std::get_if<ActionApplyHoverMovementCommand>(&command)) {
+            const entt::entity target = *world.find_entity(hover->target);
+            if (world.registry().get<EntityKind>(target).type != EntityType::kActor ||
+                !world.registry().all_of<MovementState>(target)) {
+                continue;
+            }
+            ActiveStatusEffect* active =
+                find_status_instance(world, target, hover->status_instance_id);
+            if (active == nullptr) {
+                return false;
+            }
+            // Only recorded here. Unlike a suspension it takes nothing away
+            // on the spot -- a knockback in flight keeps flying, a sheltered
+            // occupant stays put -- because the movement step decides each
+            // tick whether the hover is the thing moving it
+            // (docs/PLAYER_HOVER_PLAN.md §2.1).
+            active->hovers = true;
+            active->hover_height_meters = hover->height_meters;
+            active->hover_vertical_speed = hover->vertical_speed;
             continue;
         }
         if (const auto* block =

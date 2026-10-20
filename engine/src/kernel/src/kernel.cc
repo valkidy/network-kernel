@@ -3300,6 +3300,7 @@ bool KernelEngine::load_gameplay_catalog(
                     std::holds_alternative<ActionApplySpeedModifierDefinition>(action) ||
                     std::holds_alternative<ActionApplyBlockActionsDefinition>(action) ||
                     std::holds_alternative<ActionApplySuspendMovementDefinition>(action) ||
+                    std::holds_alternative<ActionApplyHoverMovementDefinition>(action) ||
                     std::holds_alternative<ActionApplyUntargetableDefinition>(action);
                 if (!damage_or_health && !(allow_speed_modifier && status_bound)) {
                     return false;
@@ -3328,6 +3329,8 @@ bool KernelEngine::load_gameplay_catalog(
                  trigger.action_type ==
                      KernelEntityTriggerActionType_ApplySuspendMovement ||
                  trigger.action_type ==
+                     KernelEntityTriggerActionType_ApplyHoverMovement ||
+                 trigger.action_type ==
                      KernelEntityTriggerActionType_ApplyUntargetable) &&
                 trigger.target_source != KernelEntityRefSource_Self &&
                 trigger.target_source != KernelEntityRefSource_EventSubject) {
@@ -3352,6 +3355,8 @@ bool KernelEngine::load_gameplay_catalog(
                          KernelEntityTriggerActionType_ApplyBlockActions ||
                      action.action_type ==
                          KernelEntityTriggerActionType_ApplySuspendMovement ||
+                     action.action_type ==
+                         KernelEntityTriggerActionType_ApplyHoverMovement ||
                      action.action_type ==
                          KernelEntityTriggerActionType_ApplyUntargetable) &&
                     action.target_source != KernelEntityRefSource_Self &&

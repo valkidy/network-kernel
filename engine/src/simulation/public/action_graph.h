@@ -108,6 +108,19 @@ inline bool suspend_speed_is_authorable(float speed) {
         speed <= KERNEL_MAX_SUSPEND_SPEED;
 }
 
+// apply_hover_movement's height and speed, checked by the same three parties.
+// Unlike a suspension's speeds, neither may be zero: a hover that does not
+// hold any height, or cannot move toward it, is an authoring mistake.
+inline bool hover_height_is_authorable(float height) {
+    return std::isfinite(height) && height > 0.0f &&
+        height <= KERNEL_MAX_HOVER_HEIGHT;
+}
+
+inline bool hover_speed_is_authorable(float speed) {
+    return std::isfinite(speed) && speed > 0.0f &&
+        speed <= KERNEL_MAX_SUSPEND_SPEED;
+}
+
 // The drift a suspension moves at: the horizontal of the status's direction,
 // at drift_speed. A direction with no horizontal to it -- straight down, or
 // none at all -- drifts nowhere.
@@ -378,6 +391,17 @@ struct ActionLockStrikeCommand {
     ActionExecutionProvenance provenance;
 };
 
+// The target hovers at height_meters while status instance
+// status_instance_id stands.
+struct ActionApplyHoverMovementCommand {
+    NetId source = 0;
+    NetId target = 0;
+    std::uint32_t status_instance_id = 0;
+    float height_meters = 0.0f;
+    float vertical_speed = 0.0f;
+    ActionExecutionProvenance provenance;
+};
+
 // Nothing can strike the target while status instance status_instance_id
 // stands.
 struct ActionApplyUntargetableCommand {
@@ -412,7 +436,8 @@ using ActionGraphCommand = std::variant<
     ActionApplyBlockActionsCommand,
     ActionApplySuspendMovementCommand,
     ActionApplyUntargetableCommand,
-    ActionLockStrikeCommand>;
+    ActionLockStrikeCommand,
+    ActionApplyHoverMovementCommand>;
 
 struct ActionGraphQueuedTrigger {
     CompiledActionGraphBinding binding;
