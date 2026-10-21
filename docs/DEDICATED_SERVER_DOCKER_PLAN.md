@@ -1,7 +1,6 @@
 # Dedicated Server Docker Image Plan
 
-目標：把 dedicated server 包成 docker image 部署到 **Edgegap**，用本機 Unity client 連過去，
-在真實網路延遲下驗證遊戲表現。
+目標：把 dedicated server 包成 docker image，**部署在 x86_64 Windows 的 WSL2 上**，讓其他機器上的 Unity client 透過真實網路連過去，驗證遊戲在真實網路下的表現。
 
 狀態：規劃（2026-10-21 定稿決策）。尚未實作。
 
@@ -10,8 +9,8 @@
 | # | 問題 | 決定 |
 |---|---|---|
 | 1 | Session 模型 | **常駐世界，同時最多 4 名玩家**。match 流程還不完整，不做「一場一個 container」。 |
-| 2 | Linux build 在哪裡跑 | **x86_64 Windows 上的 WSL2 + Docker**（原生 amd64，不是模擬）。 |
-| 3 | 平台 | **只做 Edgegap**。GameLift 不在範圍內。 |
+| 2 | Build 與部署在哪裡 | **x86_64 Windows 上的 WSL2 + Docker**。同一台機器負責 build 和執行 server。 |
+| 3 | 雲端平台 | **Edgegap 暫緩（pending）**，見 §7。GameLift 不在範圍內。 |
 | 4 | OpenSSL | **由 Bazel 從 source 編**。缺少的 source 由使用者部署（清單見 §5）。 |
 
 ---
@@ -21,13 +20,13 @@
 | 項目 | 現況 | 影響 |
 |---|---|---|
 | Server 進入點 | `//app:app --mode=dedicated_server --port=N`（`run_server.sh`） | 直接當 container entrypoint |
-| 傳輸層 | GameNetworkingSockets 1.5.1，單一 UDP port | Edgegap 支援 UDP port mapping |
+| 傳輸層 | GameNetworkingSockets 1.5.1，單一 UDP port | 只需要開一個 UDP port |
 | Catalog | `--gameplay-catalog-bundle=bundle.zip`，client 從 server 同步 | image 內附 `bundle.zip`，路徑明確傳入 |
-| Log | spdlog 到 stdout | Edgegap 收 stdout，不用改 |
+| Log | spdlog 到 stdout | `docker logs` 直接看 |
 | **Linux build** | **不存在**。`third_party/BUILD` 的 `:openssl` 與 WORKSPACE 的 `zlib` alias 都只有 `macos` / `windows` 分支；`GameNetworkingSockets.BUILD` default 分支寫死 `OSX` | P0 阻擋項 |
 | OpenSSL 來源 | macOS 用 Homebrew 的系統 lib；Windows 用 checked-in 預編 zip。**沒有任何平台從 source 編** | Linux 要新增 source build（§5） |
 | zlib | 已有 `@fossils_zlib`（source） | Linux alias 指向它即可，不用新 source |
-| **關機** | 主迴圈 `while (true)`，無 SIGTERM 處理 | Edgegap 停 deployment 時會被硬殺 |
+| **關機** | 主迴圈 `while (true)`，無 SIGTERM 處理 | `docker stop` 會等 10 秒後硬殺 |
 | **玩家上限** | **沒有**。`gns_transport.cc` 的 `Connecting` 分支接受每一個連線；kernel API 也沒有踢人的函式 | 4 人上限需要一個小的 kernel 改動（§4 P1） |
 | Build config | 非 `-c opt` 的 server 慢 27 倍 | image 一律 `-c opt` |
 
@@ -39,37 +38,61 @@ LAN discovery 是 opt-in API，dedicated server 沒開，container 內不用處�
 
 | | (a) 一場 match 一個 container | (b) 常駐世界（**採用**） |
 |---|---|---|
-| Server 何時結束 | 最後一人離開 N 秒後自行退出，呼叫 `ARBITRIUM_DELETE_URL` | 不主動結束；手動停 deployment，或 crash 時 container 退出 |
-| 需要的 server 改動 | idle 計時 + 退出流程 + 自我刪除 | 只要 SIGTERM 優雅關機 |
-| 誰開 deployment | matchmaker / lobby 依需求開（這部分還不存在） | 人工用 Edgegap dashboard / API 開一台，地址發給測試者 |
+| Server 何時結束 | 最後一人離開 N 秒後自行退出 | 不主動結束；手動 `docker stop`，或 crash 時由 Docker 重啟 |
+| 需要的 server 改動 | idle 計時 + 退出流程 | 只要 SIGTERM 優雅關機 |
+| 誰啟動 server | matchmaker / lobby（還不存在） | 人工在 WSL2 上 `docker compose up` |
 | 世界狀態 | 每場重置 | 一直累積（respawn、spawner 持續跑） |
-| 成本 | 只在有人玩時計費 | 開著就計費，測完要記得停 |
-| 適合 | 正式上線 | **現在的實驗：驗證真實 ping 下的表現** |
+| 適合 | 正式上線 | **現在的實驗** |
 
-(b) 的已知限制：世界跑很久之後的狀態累積（spawner、掉落物）沒被長時間測過。實驗期間建議每次測試前重開 deployment。
+(b) 的已知限制：世界跑很久之後的狀態累積（spawner、掉落物）沒被長時間測過。建議每輪測試前重啟 container。
 
 ---
 
 ## 3. 架構
 
 ```
-┌──────────── docker image (linux/amd64) ────────────┐
-│ /opt/nk/entrypoint.sh   ← 讀 ARBITRIUM_* env，轉成 flags │
-│ /opt/nk/bin/server      ← //app:app (-c opt)        │
-│ /opt/nk/data/bundle.zip ← gameplay catalog bundle   │
-└─────────────────────────────────────────────────────┘
+Windows host (x86_64)
+ └─ WSL2 (Ubuntu)
+     └─ Docker
+         └─ container (linux/amd64)
+             /opt/nk/entrypoint.sh   ← 讀 NK_* env，轉成 flags
+             /opt/nk/bin/server      ← //app:app (-c opt)
+             /opt/nk/data/bundle.zip ← gameplay catalog bundle
+             UDP 7801
 ```
 
-- **Edgegap 相關全部在 entrypoint script。** 常駐模型下 server 不需要知道自己在 Edgegap 上；`ARBITRIUM_*` 只用來印出對外 port 方便除錯。C++ 不加 HTTP client、不加平台 adapter。
-- **Image tag**：`<git short sha>-abi<N>-proto<N>`。client 和 server 必須同版 ABI/protocol，tag 上看得到才不會部署錯版本。
+- **設定走環境變數**：`NK_PORT`（預設 7801）、`NK_MAX_PLAYERS`（預設 4）、`NK_NETCODE`（預設 `standard`）。entrypoint 轉成 server flags。之後接 Edgegap 只要在 entrypoint 加一段讀 `ARBITRIUM_*`，image 本身不用改。
+- **Image tag**：`<git short sha>-abi<N>-proto<N>`。client 和 server 必須同版 ABI/protocol，tag 上看得到才不會跑錯版本。
 - **Dockerfile（multi-stage）**
   1. **builder**：`ubuntu:24.04` + bazelisk（鎖 7.4.1）+ gcc/clang + `perl` + `make`（OpenSSL configure 需要），build `-c opt --config=linux //app:app //game_server/gameplay_catalog_bundle:bundle.zip`。
   2. **runtime**：`debian:bookworm-slim`，non-root user，`EXPOSE 7801/udp`，`ENTRYPOINT ["/opt/nk/entrypoint.sh"]`。OpenSSL 靜態連結，runtime 不需要 `libssl3`。
-- **Build 環境（WSL2）**
-  - Repo clone 在 WSL 檔案系統（`~/src/...`），不放 `/mnt/c`。
-  - `.wslconfig` 記憶體 ≥ 16 GB。
-  - Build 一律在 builder stage 裡跑，glibc 版本與 runtime image 一致。
-  - 推到 Edgegap container registry。
+- **啟動方式**：`tools/docker/compose.yaml`，`restart: unless-stopped`、`ports: "7801:7801/udp"`、`stop_grace_period: 5s`。
+
+### WSL2 環境設定
+- Repo clone 在 WSL 檔案系統（`~/src/...`），不放 `/mnt/c`（Bazel 會慢好幾倍）。
+- `%UserProfile%\.wslconfig`：記憶體 ≥ 16 GB；Windows 11 22H2 以上建議 `networkingMode=mirrored`，讓 Windows 與 WSL 共用網路。
+- Docker：Docker Desktop（WSL2 backend）或 WSL 內直接裝 Docker Engine 擇一。
+- Build 一律在 builder stage 裡跑，glibc 版本與 runtime image 一致。
+
+### 外部 client 怎麼連進來
+WSL2 的 UDP 要經過 Windows 才會到 container，路徑上有三關：
+
+| 關卡 | 設定 |
+|---|---|
+| Docker → WSL | `-p 7801:7801/udp`（compose 已含） |
+| WSL → Windows | mirrored 網路模式，或 Docker Desktop 會自動把 published port 開在 Windows 上；NAT 模式 + WSL 內的 Docker Engine 則需要 `netsh interface portproxy`（**只支援 TCP**，UDP 不通）→ 這種組合不建議 |
+| Windows 防火牆 | 新增 inbound rule：UDP 7801 |
+| 網際網路 → Windows（只有遠端測試者需要） | 路由器把 UDP 7801 轉到 Windows 的區網 IP |
+
+### 「真實 ping」的三種測法
+
+| 測法 | 延遲來源 | 需要的設定 | 說明 |
+|---|---|---|---|
+| 區網 | Mac / 其他電腦在同一個網路 | 上表前三關 | RTT 約 1–5 ms，只能驗證連線流程 |
+| 網際網路 | 遠端測試者經路由器連進來 | 上表四關全部 | 最接近真實；受家用上傳頻寬限制 |
+| 人工注入 | container 內 `tc netem` 加延遲 / 掉包 | container 加 `cap_add: NET_ADMIN`，runtime image 加 `iproute2` | 可重現；適合跟 client 的 fake lag 交叉比對 |
+
+建議順序：區網確認能連 → `tc netem` 做可重現的延遲測試 → 有遠端測試者再開路由器轉發。
 
 ---
 
@@ -84,24 +107,24 @@ LAN discovery 是 opt-in API，dedicated server 沒開，container 內不用處�
 
 ### P1 — Container 友善的 server
 - SIGTERM / SIGINT → 設 flag → 主迴圈退出 → `Kernel_Destroy` → exit 0。
-- **4 人上限**：`KernelSessionRulesConfig` 加一個 `max_connected_peers` 欄位（0 = 不限，維持現行行為），transport 在 `Connecting` 時超過上限就拒絕連線。app 加 `--max-players=N`，entrypoint 預設 4。
+- **4 人上限**：`KernelSessionRulesConfig` 加一個 `max_connected_peers` 欄位（0 = 不限，維持現行行為），transport 在 `Connecting` 時超過上限就拒絕連線。app 加 `--max-players=N`。
   - 這是 kernel 改動。欄位用 `struct_size` 版本化、預設值維持舊行為，預期**不需要 ABI bump**；實作時要確認。
   - 被拒絕的 client 目前只會看到連線中斷，沒有「伺服器已滿」的訊息。實驗階段可接受。
 - **完成條件**：`docker stop` 1 秒內乾淨退出；第 5 個 client 被拒絕，前 4 個不受影響。
 
-### P2 — Image + 本機 smoke test（WSL2）
-- `tools/docker/Dockerfile`、`tools/docker/entrypoint.sh`、`tools/docker/build_image.sh`（含 tag 規則）。
-- 本機 smoke：`docker run -p 7801:7801/udp`，Windows 端 client 連 `127.0.0.1:7801`，確認 catalog 同步、能進場。
-- **完成條件**：image < 200 MB；本機 client 連得上；`docker stop` 乾淨退出。
+### P2 — Image + WSL2 部署
+- `tools/docker/Dockerfile`、`tools/docker/entrypoint.sh`、`tools/docker/compose.yaml`、`tools/docker/build_image.sh`（含 tag 規則）。
+- 在 WSL2 上 `docker compose up -d`；Windows 本機的 client 連 `127.0.0.1:7801` 做第一輪 smoke。
+- **完成條件**：image < 200 MB；Windows 本機 client 連得上、catalog 同步、能進場；`docker compose down` 乾淨退出。
 
-### P3 — Edgegap 部署
-- App version：internal port `7801/UDP`，vCPU / 記憶體依 server perf baseline 選；確認 deployment 沒有預設最長存活時間會把常駐世界收掉。
-- 用 dashboard 或 API 開一個 deployment，選離測試者近的地區。
-- Unity client 用 Edgegap 回傳的 `IP:external port` 連進去（Mac 與 Windows 各一台）。
-- **完成條件**：4 名玩家同時在 Edgegap 上的常駐世界裡玩；記錄實測 RTT 與 server `tick cadence` log；手動停 deployment 時 server 乾淨退出。
+### P3 — 真實網路測試
+- 依 §3 打通 Windows 防火牆，Mac 上的 Unity client 從區網連進來。
+- `tc netem` 注入固定延遲（例如 50 / 100 / 150 ms）與掉包，記錄 client 表現與 server `tick cadence` log。
+- （選用）路由器轉發 UDP 7801，讓遠端測試者連進來。
+- **完成條件**：4 名玩家同時在常駐世界裡玩；有一份紀錄列出各延遲條件下的 RTT 與觀察到的問題。
 
 ### 不在範圍內
-- GameLift。
+- Edgegap（pending，§7）、GameLift。
 - Matchmaking / lobby；client 取得 server 位址靠手動發送。
 - CI/CD pipeline（只提供 build script）。
 - arm64 image。
@@ -135,6 +158,20 @@ Builder image 要有 `perl`（OpenSSL `Configure` 需要）和 `make`。這兩�
 - 不跑全量 `bazel test`；P1 的 kernel 改動只跑 transport / session rules 相關測試。
 - 測試用的 Linux build 產物放 scratchpad，不 commit。
 
-## 7. 交接資訊
+---
+
+## 7. Edgegap（pending）
+
+暫緩，WSL2 的測試結果出來後再決定是否繼續。P0–P2 的產出可以直接沿用，接 Edgegap 時只需要：
+
+- Image 改推到 Edgegap container registry（必須是 `linux/amd64`，WSL2 build 出來的就是）。
+- App version 設定 internal port `7801/UDP`、vCPU / 記憶體（依 server perf baseline 選）。
+- entrypoint 加一段讀 `ARBITRIUM_*` 環境變數（對外 port mapping 等），印在 log 方便除錯。**變數名稱實作前要對照官方文件確認。**
+- 確認 deployment 沒有預設最長存活時間會把常駐世界收掉。
+- Client 用 Edgegap 回傳的 `IP:external port` 連線。
+
+---
+
+## 8. 交接資訊
 - 本計畫不改 snapshot / packet schema。P1 的 session rules 欄位預期不需要 ABI bump（實作時確認）。
 - Unity package 的 `bundle.bytes` 不需要更新。
