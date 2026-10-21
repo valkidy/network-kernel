@@ -99,7 +99,11 @@ WSL2 的 UDP 要經過 Windows 才會到 container，路徑上有三關：
 ## 4. 分階段
 
 ### P0 — Linux build（阻擋項）
-> 狀態（2026-10-21）：build 設定已完成（branch `claude/dedicated-server-p0`）。OpenSSL 4.0.3 用 genrule 跑它自己的 `Configure` + `make`（`third_party/openssl_linux.BUILD`），不需要 `rules_foreign_cc` / `bazel_skylib`。macOS build 不受影響；Linux 設定在 macOS 上 cquery 通過。**尚未在 x86_64 Linux 上實際編譯**：在 WSL2 執行 `tools/docker/build_linux.sh`。
+> 狀態（2026-10-21）：**完成**（branch `claude/dedicated-server-p0`，d97d27d6）。WSL2 上 `tools/docker/build_linux.sh` 通過：gcc 13.3.0、`build_config=release`，server 跑滿 10 秒，tick cadence 30.00 Hz、work avg 65 us / max 170 us（空世界、無玩家）。
+>
+> - OpenSSL 4.0.3 用 genrule 跑它自己的 `Configure` + `make`（`third_party/openssl_linux.BUILD`），不需要 `rules_foreign_cc` / `bazel_skylib`。
+> - 唯一的 gcc 問題：GNS 的 `, ## __VA_ARGS__` 在 ISO `-std=c++20` 下不會吞掉逗號，Linux 上 GNS 改用 `-std=gnu++20`。
+> - Server 實際綁定所有介面（GNS 收到的是 cleared address）；log 裡的 `listening on 127.0.0.1` 是寫死的字串，P1 一併修正。
 
 - `third_party/BUILD`：`:openssl` 加 `//engine:linux` 分支 → 新的 source-built target（§5）。
 - WORKSPACE `zlib` alias：加 `@//engine:linux` → `@fossils_zlib//:zlib`。
@@ -109,6 +113,7 @@ WSL2 的 UDP 要經過 Windows 才會到 container，路徑上有三關：
 
 ### P1 — Container 友善的 server
 - SIGTERM / SIGINT → 設 flag → 主迴圈退出 → `Kernel_Destroy` → exit 0。
+- `dedicated_server_app.cc` 的 `listening on 127.0.0.1:{}` 改成實際的綁定方式（所有介面）。
 - **4 人上限**：`KernelSessionRulesConfig` 加一個 `max_connected_peers` 欄位（0 = 不限，維持現行行為），transport 在 `Connecting` 時超過上限就拒絕連線。app 加 `--max-players=N`。
   - 這是 kernel 改動。欄位用 `struct_size` 版本化、預設值維持舊行為，預期**不需要 ABI bump**；實作時要確認。
   - 被拒絕的 client 目前只會看到連線中斷，沒有「伺服器已滿」的訊息。實驗階段可接受。
