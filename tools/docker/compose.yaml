@@ -1,0 +1,20 @@
+# Persistent dedicated server on WSL2. From the repository root:
+#   docker compose -f tools/docker/compose.yaml up -d
+#   docker compose -f tools/docker/compose.yaml logs -f
+#   docker compose -f tools/docker/compose.yaml down
+#
+# NK_IMAGE picks a specific build (build_image.sh prints its tag); the
+# default is the most recent one.
+name: network-kernel
+
+services:
+  server:
+    image: ${NK_IMAGE:-network-kernel-server:latest}
+    ports:
+      - "${NK_PORT:-7801}:${NK_PORT:-7801}/udp"
+    environment:
+      NK_PORT: ${NK_PORT:-7801}
+      NK_MAX_PLAYERS: ${NK_MAX_PLAYERS:-4}
+      NK_NETCODE: ${NK_NETCODE:-standard}
+    restart: unless-stopped
+    stop_grace_period: 5s

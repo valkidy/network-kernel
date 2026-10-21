@@ -65,7 +65,7 @@ Windows host (x86_64)
 - **Image tag**：`<git short sha>-abi<N>-proto<N>`。client 和 server 必須同版 ABI/protocol，tag 上看得到才不會跑錯版本。
 - **Dockerfile（multi-stage）**
   1. **builder**：`ubuntu:24.04` + bazelisk（鎖 7.4.1）+ gcc/clang + `perl` + `make`（OpenSSL configure 需要），build `-c opt --config=linux //app:app //game_server/gameplay_catalog_bundle:bundle.zip`。
-  2. **runtime**：`debian:bookworm-slim`，non-root user，`EXPOSE 7801/udp`，`ENTRYPOINT ["/opt/nk/entrypoint.sh"]`。OpenSSL 靜態連結，runtime 不需要 `libssl3`。
+  2. **runtime**：`ubuntu:24.04`（與 builder 同 glibc），non-root user，`EXPOSE 7801/udp`，`ENTRYPOINT ["/opt/nk/entrypoint.sh"]`。OpenSSL 靜態連結，runtime 不需要 `libssl3`。
 - **啟動方式**：`tools/docker/compose.yaml`，`restart: unless-stopped`、`ports: "7801:7801/udp"`、`stop_grace_period: 5s`。
 
 ### WSL2 環境設定
@@ -126,6 +126,13 @@ WSL2 的 UDP 要經過 Windows 才會到 container，路徑上有三關：
 - **完成條件**：`docker stop` 1 秒內乾淨退出；第 5 個 client 被拒絕，前 4 個不受影響。
 
 ### P2 — Image + WSL2 部署
+> 狀態（2026-10-21）：檔案已完成（branch `claude/dedicated-server-p0`），**尚未在 WSL2 上跑過**。執行 `tools/docker/build_image.sh`：build → stage → image → 自動 smoke（另一個 container 用 client 模式連進來、server log 要出現 PlayerJoined、`docker stop` 要 exit 0）。
+>
+> - Runtime base 改用 `ubuntu:24.04`（不是 `debian:bookworm-slim`）：binary 是在 ubuntu 24.04 上編的，需要同版 glibc（2.39）。bookworm 只有 2.36。
+> - 只有 binary + `bundle.zip`：bundle 模式下 catalog、navmesh、collision scene 全部從 bundle 讀。
+> - Tag：`<sha>[-dirty]-abi<N>-proto<N>`，外加 `latest`。
+> - macOS 上已驗證：entrypoint 的參數組合能啟動 server；catalog sync client 連進來時 server log 出現 `event type=2`（smoke 依賴這一行）。
+
 - `tools/docker/Dockerfile`、`tools/docker/entrypoint.sh`、`tools/docker/compose.yaml`、`tools/docker/build_image.sh`（含 tag 規則）。
 - 在 WSL2 上 `docker compose up -d`；Windows 本機的 client 連 `127.0.0.1:7801` 做第一輪 smoke。
 - **完成條件**：image < 200 MB；Windows 本機 client 連得上、catalog 同步、能進場；`docker compose down` 乾淨退出。
