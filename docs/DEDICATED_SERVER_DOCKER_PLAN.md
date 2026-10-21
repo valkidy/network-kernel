@@ -70,19 +70,28 @@ Windows host (x86_64)
 
 ### WSL2 環境設定
 - Repo clone 在 WSL 檔案系統（`~/src/...`），不放 `/mnt/c`（Bazel 會慢好幾倍）。
-- `%UserProfile%\.wslconfig`：記憶體 ≥ 16 GB；Windows 11 22H2 以上建議 `networkingMode=mirrored`，讓 Windows 與 WSL 共用網路。
+- `%UserProfile%\.wslconfig`：記憶體 ≥ 16 GB；網路模式見下方「外部 client 怎麼連進來」的實測結果。
 - Docker：Docker Desktop（WSL2 backend）或 WSL 內直接裝 Docker Engine 擇一。
 - Build 一律在 builder stage 裡跑，glibc 版本與 runtime image 一致。
 
 ### 外部 client 怎麼連進來
-WSL2 的 UDP 要經過 Windows 才會到 container，路徑上有三關：
+WSL2 的 UDP 要經過 Windows 才會到 container。
 
-| 關卡 | 設定 |
-|---|---|
-| Docker → WSL | `-p 7801:7801/udp`（compose 已含） |
-| WSL → Windows | mirrored 網路模式，或 Docker Desktop 會自動把 published port 開在 Windows 上；NAT 模式 + WSL 內的 Docker Engine 則需要 `netsh interface portproxy`（**只支援 TCP**，UDP 不通）→ 這種組合不建議 |
-| Windows 防火牆 | 新增 inbound rule：UDP 7801 |
-| 網際網路 → Windows（只有遠端測試者需要） | 路由器把 UDP 7801 轉到 Windows 的區網 IP |
+**實測（2026-10-21，Docker Desktop 4.96.0，WSL NAT 模式）**：用 `alpine nc -lu` 接 7802/udp——
+- container 內部、WSL 的 `127.0.0.1`：收得到。
+- Windows 送到 `127.0.0.1`：**收不到**。Docker Desktop / WSL 的 localhost 轉發在這台機器上不轉 UDP，`netstat` 也看不到 7801/7802。
+- Windows 送到 WSL 的 IP（`wsl hostname -I`，例如 `172.26.150.212`）：收得到。
+
+| 從哪裡連 | 連哪個位址 | 狀態 |
+|---|---|---|
+| 同一台 Windows | `<WSL IP>:7801`（WSL 每次重啟會換 IP） | 可行 |
+| 區網其他電腦 | Windows 的 WiFi IP | NAT 模式下不通：Windows 不會把外來 UDP 轉進 WSL，`netsh portproxy` 只支援 TCP。待解（見下） |
+| 網際網路 | 路由器轉發到 Windows | 同上，先解決區網 |
+
+區網連入的候選做法，依序嘗試：
+1. **mirrored 模式 + Hyper-V 防火牆規則**（系統管理員 PowerShell）：WSL 共用 Windows 的 IP。先前改過 mirrored，但只看了 `netstat`（mirrored 下本來就看不到），沒有實際送封包測過。
+2. **WSL 內直接裝 Docker Engine，不用 Docker Desktop** + mirrored：Linux 端直接開 port，Windows 不需要轉發。
+3. Windows 上跑一個 UDP relay（WiFi IP:7801 → WSL IP:7801）。多一個要維護的程式，最後手段。
 
 ### 「真實 ping」的三種測法
 
