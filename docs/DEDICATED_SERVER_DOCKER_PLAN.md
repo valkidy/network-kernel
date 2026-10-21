@@ -94,6 +94,11 @@ New-NetFirewallHyperVRule -Name "network-kernel-udp" -DisplayName "network-kerne
 | 區網其他電腦 | Windows 的 WiFi IP，例如 `192.168.1.102:7801` | **可行**：Mac native client 經 WiFi 連入，catalog 同步（528178 B、約 2.7 s）、PlayerJoined |
 | 網際網路 | 路由器把 UDP 7801 轉到 Windows 的 WiFi IP | 未測 |
 
+**macOS client 的區域網路權限（2026-10-21 實測）**：Unity Editor 連 Windows 的 `192.168.1.102:7801` 一律約 10 秒逾時（`Native catalog sync failed: Disconnected`，連 `Connected` 都沒有），但同一台 Mac 從「終端機」跑 native client 連同一位址成功。原因是 macOS 15 的「隱私權與安全性 → 區域網路」權限算在負責的 App 頭上：終端機有權限，Unity（或啟動它的 Unity Hub）沒有。連本機 `127.0.0.1` / 自己的 IP 不受影響，所以本機測試看不出來。
+- 驗證 / 繞路：從終端機啟動 Editor（`/Applications/Unity/Hub/Editor/<版本>/Unity.app/Contents/MacOS/Unity -projectPath ~/Projects/unity-network-example`），沿用終端機的權限 → 連上。
+- 正式設定：在「區域網路」裡打開 Unity 與 Unity Hub，兩者完全結束後重開。
+- Windows 有兩張 Wi-Fi（`.102`、`.104`）在同一網段，曾被懷疑是回覆走錯網卡；終端機的 native client 在同樣配置下能連，所以不是原因。
+
 注意：mirrored 模式下 Windows 的 `netstat` 看不到 WSL/Docker 開的 port，不能拿來判斷有沒有在聽；一般 Windows 防火牆規則也管不到 WSL，要用 Hyper-V 規則。
 
 ### 「真實 ping」的三種測法
