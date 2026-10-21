@@ -126,7 +126,7 @@ WSL2 的 UDP 要經過 Windows 才會到 container，路徑上有三關：
 - **完成條件**：`docker stop` 1 秒內乾淨退出；第 5 個 client 被拒絕，前 4 個不受影響。
 
 ### P2 — Image + WSL2 部署
-> 狀態（2026-10-21）：檔案已完成（branch `claude/dedicated-server-p0`），**尚未在 WSL2 上跑過**。執行 `tools/docker/build_image.sh`：build → stage → image → 自動 smoke（另一個 container 用 client 模式連進來、server log 要出現 PlayerJoined、`docker stop` 要 exit 0）。
+> 狀態（2026-10-21）：WSL2 上 `build_image.sh` 通過（991aba08）：image `network-kernel-server:991aba08-abi109-proto3` **136 MB**；client container 連入、server 出現 PlayerJoined；`docker stop` 282 ms、exit 0。**剩下**：compose 常駐 + Windows 本機 Unity client 連 `127.0.0.1:7801`。執行 `tools/docker/build_image.sh`：build → stage → image → 自動 smoke（另一個 container 用 client 模式連進來、server log 要出現 PlayerJoined、`docker stop` 要 exit 0）。
 >
 > - Runtime base 改用 `ubuntu:24.04`（不是 `debian:bookworm-slim`）：binary 是在 ubuntu 24.04 上編的，需要同版 glibc（2.39）。bookworm 只有 2.36。
 > - 只有 binary + `bundle.zip`：bundle 模式下 catalog、navmesh、collision scene 全部從 bundle 讀。
