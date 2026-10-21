@@ -112,6 +112,12 @@ WSL2 的 UDP 要經過 Windows 才會到 container，路徑上有三關：
 - **完成條件**：WSL2 的 builder container 內 `bazel build -c opt //app:app` 成功，server 起得來並印出 build info。
 
 ### P1 — Container 友善的 server
+> 狀態（2026-10-21）：**完成**（branch `claude/dedicated-server-p0`）。macOS 上驗證：SIGTERM 後 26 ms 內 exit 0；`gns_transport_test` 用真實 loopback UDP 驗證上限 1 時第 2 個 client 被拒、第 1 個離開後第 3 個進得來；`kernel_api_test` 驗證舊的 8 bytes struct 仍被接受（該測試之後會停在 main 上既有的 `KERNEL_ABI_VERSION == 72u` 舊斷言，與本次無關）。
+>
+> - 上限做在 `GnsTransport::set_max_connections`，只有 dedicated server 會設；listen server 忽略這個欄位。
+> - `Kernel_SetSessionRules` 改成只複製 caller 宣告的 `struct_size` bytes，最小接受 8（原本兩個欄位）。**不需要 ABI bump**，Unity 端的 C# struct 不改也能用。
+> - Linux 上尚未重跑；P2 的 image smoke 會涵蓋。
+
 - SIGTERM / SIGINT → 設 flag → 主迴圈退出 → `Kernel_Destroy` → exit 0。
 - `dedicated_server_app.cc` 的 `listening on 127.0.0.1:{}` 改成實際的綁定方式（所有介面）。
 - **4 人上限**：`KernelSessionRulesConfig` 加一個 `max_connected_peers` 欄位（0 = 不限，維持現行行為），transport 在 `Connecting` 時超過上限就拒絕連線。app 加 `--max-players=N`。

@@ -1597,7 +1597,8 @@ private:
         sizeof(KernelPhysicsConfig), 0, 0};
     KernelSessionRulesConfig session_rules_{
         sizeof(KernelSessionRulesConfig),
-        KernelActorBlockingMode_Disabled};
+        KernelActorBlockingMode_Disabled,
+        0};
     std::vector<std::uint8_t> static_collision_scene_;
     std::uint32_t static_collision_scene_id_ = 0;
     std::uint32_t static_collision_collider_id_ = 0;

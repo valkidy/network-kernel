@@ -39,9 +39,11 @@ struct Options {
     std::uint32_t physics_workers = 0;
     std::uint32_t actor_blocking = KernelActorBlockingMode_Predicted;
     std::string netcode_preset{"standard"};
+    std::uint32_t max_players = 0;
     float aim_pitch_degrees = 0.0f;
     bool actor_blocking_explicit = false;
     bool gameplay_catalog_explicit = false;
+    bool max_players_explicit = false;
 };
 
 void print_usage() {
@@ -58,6 +60,7 @@ void print_usage() {
         "[--physics_simulation=0|1] [--physics-workers=0|N] "
         "[--actor-blocking=0|1] "
         "[--netcode=standard|responsive] "
+        "[--max-players=0|N] (dedicated server only; 0=unlimited, the default) "
         "(standard=15 snapshots/s, 143 kbit/s, 133 ms interpolation delay; "
         "responsive=30 snapshots/s, 285 kbit/s, 67 ms; dedicated server only) "
         "(0=disabled, 1=predicted; server default=1; predicted clients "
@@ -264,6 +267,14 @@ bool parse_args(int argc, char** argv, Options* options) {
             options->netcode_preset = std::string(value);
             continue;
         }
+        if (read_value(arg, "--max-players", &index, argc, argv, &value)) {
+            if (!parse_u32_allow_zero(value, &options->max_players)) {
+                spdlog::error("invalid max players: {}", value);
+                return false;
+            }
+            options->max_players_explicit = true;
+            continue;
+        }
         if (read_value(arg, "--physics_simulation", &index, argc, argv, &value)) {
             if (!parse_u32_allow_zero(value, &options->physics_simulation) ||
                 options->physics_simulation > 1) {
@@ -299,6 +310,10 @@ bool parse_args(int argc, char** argv, Options* options) {
     }
     if (options->mode == "client" && options->actor_blocking_explicit) {
         spdlog::error("--actor-blocking is server-only");
+        return false;
+    }
+    if (options->mode != "dedicated_server" && options->max_players_explicit) {
+        spdlog::error("--max-players is dedicated-server-only");
         return false;
     }
     return true;
@@ -346,7 +361,8 @@ int main(int argc, char** argv) {
             options.physics_simulation,
             options.physics_workers,
             options.actor_blocking,
-            options.netcode_preset.c_str());
+            options.netcode_preset.c_str(),
+            options.max_players);
     }
     if (options.mode == "client") {
         return RunClient(

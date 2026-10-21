@@ -1809,6 +1809,11 @@ typedef enum KernelActorBlockingMode {
 typedef struct KernelSessionRulesConfig {
     uint32_t struct_size;
     uint32_t actor_blocking_mode;
+    // Remote connections a dedicated server accepts at once; the next one is
+    // refused at connect time. 0 = unlimited. Appended after the first
+    // release: a caller whose struct_size stops before it gets 0. Listen
+    // servers ignore it.
+    uint32_t max_connected_peers;
 } KernelSessionRulesConfig;
 
 typedef struct KernelStaticCollisionSceneConfig {

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <csignal>
 #include <cstdint>
 #include <exception>
 #include <fstream>
@@ -19,6 +20,13 @@
 #include "kernel/src/tick_loop.h"
 
 namespace {
+
+// Which signal asked the tick loop to stop; 0 while it should keep running.
+volatile std::sig_atomic_t g_stop_signal = 0;
+
+void request_stop(int signal) {
+    g_stop_signal = signal;
+}
 
 constexpr std::uint64_t kCatalogBundleChunkBytes = 32u * 1024u;
 constexpr std::uint64_t kCatalogSyncFixedProtocolBytes = 362u;
@@ -208,7 +216,8 @@ int RunDedicatedServer(
     std::uint32_t physics_simulation,
     std::uint32_t physics_workers,
     std::uint32_t actor_blocking,
-    const char* netcode_preset) {
+    const char* netcode_preset,
+    std::uint32_t max_players) {
     log_dedicated_server_build_info(
         physics_simulation,
         physics_workers,
@@ -312,6 +321,7 @@ int RunDedicatedServer(
     KernelSessionRulesConfig session_rules{};
     session_rules.struct_size = sizeof(session_rules);
     session_rules.actor_blocking_mode = actor_blocking;
+    session_rules.max_connected_peers = max_players;
     if (kernel == nullptr || !Kernel_SetPhysicsConfig(kernel, &physics_config) ||
         !Kernel_SetSessionRules(kernel, &session_rules) ||
         !network_example::game_server::load_kernel_gameplay_catalog(
@@ -380,7 +390,20 @@ int RunDedicatedServer(
         Kernel_Destroy(kernel);
         return 1;
     }
-    spdlog::info("dedicated server listening on 127.0.0.1:{}", port);
+    // GNS gets a cleared address, which binds every interface.
+    if (max_players == 0) {
+        spdlog::info("dedicated server listening on 0.0.0.0:{} (no player cap)", port);
+    } else {
+        spdlog::info(
+            "dedicated server listening on 0.0.0.0:{} (max players {})",
+            port,
+            max_players);
+    }
+
+    // docker stop / Ctrl-C ask for a clean exit; the loop below notices within
+    // one tick and falls through to Kernel_Destroy.
+    std::signal(SIGINT, request_stop);
+    std::signal(SIGTERM, request_stop);
 
     constexpr float kDeltaSeconds = 1.0f / 30.0f;
     // Paced against absolute deadlines on a steady clock, not a fixed sleep.
@@ -404,7 +427,7 @@ int RunDedicatedServer(
     const auto resync_threshold = tick_period * 5;
     auto next_tick_deadline = std::chrono::steady_clock::now();
     TickCadenceReport cadence;
-    while (true) {
+    while (g_stop_signal == 0) {
         const auto kernel_start = std::chrono::steady_clock::now();
         Kernel_Update(kernel, kDeltaSeconds);
         const auto events_start = std::chrono::steady_clock::now();
@@ -443,6 +466,10 @@ int RunDedicatedServer(
             rebased);
     }
 
+    spdlog::info(
+        "dedicated server stopping on signal {}",
+        static_cast<int>(g_stop_signal));
     Kernel_Destroy(kernel);
+    spdlog::info("dedicated server stopped");
     return 0;
 }
