@@ -10,7 +10,7 @@ id: 1006
 name: hover
 kind: status_effect
 channel: hover
-duration_ticks: 900
+duration_ticks: 1800
 interval_ticks: 0
 replace_policy: replace
 triggers:

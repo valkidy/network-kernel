@@ -7,5 +7,5 @@ parameters:
 actions:
   - type: apply_hover_movement
     target: params.target
-    height_meters: 3.0
-    vertical_speed_meters_per_second: 4.0
+    height_meters: 15.0
+    vertical_speed_meters_per_second: 8.0
