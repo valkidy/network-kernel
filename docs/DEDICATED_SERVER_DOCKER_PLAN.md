@@ -155,6 +155,23 @@ New-NetFirewallHyperVRule -Name "network-kernel-udp" -DisplayName "network-kerne
 - **完成條件**：image < 200 MB；Windows 本機 client 連得上、catalog 同步、能進場；`docker compose down` 乾淨退出。
 
 ### P3 — 真實網路測試
+> 狀態（2026-10-22）：工具已加（branch `claude/dedicated-server-p0`），尚未在 WSL2 上跑。
+>
+> - Runtime image 加 `iproute2`；compose 加 `cap_add: NET_ADMIN`（只有 `docker exec -u root` 用得到，server 仍以 nk 執行）。
+> - `tools/docker/netem.sh <delay_ms> [jitter_ms] [loss_pct]` / `off` / `show`：即時改，不用重啟 server。
+> - netem 只作用在 container 的**出站**（server → client）：delay 直接加在 RTT 上；loss 只丟 server → client 的封包。要對稱的雙向掉包需要再加 ifb，目前不做。
+> - 另一個選項是 GNS 內建的 `NETWORK_KERNEL_FAKE_LAG_MS` / `_JITTER_MS` / `_LOSS_PCT` 環境變數（啟動時讀，要重啟）。兩者可以交叉比對。
+>
+> **量測方式**：Mac 的 Unity（從終端機啟動，見 §3 的區域網路權限）每秒在 Editor.log 印一行 `[G0]`，含 `rtt` / `jitter` / `loss` / `worldFreezeFrames` / `jumps` / `maxJump` / `staleActors`。每個條件玩 1–2 分鐘，從 Editor.log 取這些行做統計；server 端看 `tick cadence`。
+>
+> | 條件 | netem 指令 |
+> |---|---|
+> | 基準（區網） | `netem.sh off` |
+> | +50 ms | `netem.sh 50` |
+> | +100 ms | `netem.sh 100` |
+> | +150 ms | `netem.sh 150` |
+> | +100 ms、±20 ms jitter、1% loss | `netem.sh 100 20 1` |
+
 - 依 §3 打通 Windows 防火牆，Mac 上的 Unity client 從區網連進來。
 - `tc netem` 注入固定延遲（例如 50 / 100 / 150 ms）與掉包，記錄 client 表現與 server `tick cadence` log。
 - （選用）路由器轉發 UDP 7801，讓遠端測試者連進來。

@@ -15,6 +15,13 @@ ARG NK_IMAGE_VERSION=unknown
 LABEL org.opencontainers.image.title="network-kernel dedicated server" \
       org.opencontainers.image.version="${NK_IMAGE_VERSION}"
 
+# iproute2 is for tools/docker/netem.sh, which runs `tc` as root through
+# `docker exec` to add delay/loss on the container's interface. The server
+# itself never uses it.
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends iproute2 \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin nk
 
 COPY --chmod=0755 . /opt/nk/

@@ -18,3 +18,7 @@ services:
       NK_NETCODE: ${NK_NETCODE:-standard}
     restart: unless-stopped
     stop_grace_period: 5s
+    # Lets tools/docker/netem.sh shape this container's traffic with tc. Only
+    # `docker exec -u root` sessions can use it; the server runs as nk.
+    cap_add:
+      - NET_ADMIN
