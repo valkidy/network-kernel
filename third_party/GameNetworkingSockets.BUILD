@@ -141,10 +141,16 @@ cc_library(
         ],
         "//conditions:default": [
             "ENABLE_OPENSSLCONNECTION",
-            "OSX",
             "VALVE_CRYPTO_25519_OPENSSLEVP",
             "VALVE_CRYPTO_OPENSSL",
         ],
+    }) + select({
+        "@//engine:mingw_w64": [],
+        "@//engine:linux": [
+            "LINUX",
+            "POSIX",
+        ],
+        "//conditions:default": ["OSX"],
     }),
     deps = [
         ":gns_common_cc_proto",

@@ -72,6 +72,7 @@ alias(
     actual = select({
         "@//engine:macos": "@macos_zlib//:zlib",
         "@//engine:windows": "@fossils_zlib//:zlib",
+        "@//engine:linux": "@fossils_zlib//:zlib",
     }),
     visibility = ["//visibility:public"],
 )
@@ -111,6 +112,14 @@ local_archive(
     # defs) that would turn `lib/` into a subpackage and break the
     # `srcs = ["lib/libssl.a", ...]` references in openssl_mingw.BUILD.
     delete = ["lib/BUILD"],
+)
+
+http_archive(
+    name = "openssl_linux",
+    build_file = "@//third_party:openssl_linux.BUILD",
+    sha256 = "325b5c806167c13b40b1ffeadfe0248197c00eccc4cf123ec1e28d2d2fd216d9",
+    strip_prefix = "openssl-4.0.3",
+    urls = ["https://github.com/openssl/openssl/releases/download/openssl-4.0.3/openssl-4.0.3.tar.gz"],
 )
 
 http_archive(

@@ -99,6 +99,8 @@ WSL2 的 UDP 要經過 Windows 才會到 container，路徑上有三關：
 ## 4. 分階段
 
 ### P0 — Linux build（阻擋項）
+> 狀態（2026-10-21）：build 設定已完成（branch `claude/dedicated-server-p0`）。OpenSSL 4.0.3 用 genrule 跑它自己的 `Configure` + `make`（`third_party/openssl_linux.BUILD`），不需要 `rules_foreign_cc` / `bazel_skylib`。macOS build 不受影響；Linux 設定在 macOS 上 cquery 通過。**尚未在 x86_64 Linux 上實際編譯**：在 WSL2 執行 `tools/docker/build_linux.sh`。
+
 - `third_party/BUILD`：`:openssl` 加 `//engine:linux` 分支 → 新的 source-built target（§5）。
 - WORKSPACE `zlib` alias：加 `@//engine:linux` → `@fossils_zlib//:zlib`。
 - `GameNetworkingSockets.BUILD`：default 分支的 `OSX` define 改成依平台選（Linux 用 `POSIX` + `LINUX`）。
