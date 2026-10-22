@@ -155,7 +155,7 @@ New-NetFirewallHyperVRule -Name "network-kernel-udp" -DisplayName "network-kerne
 - **完成條件**：image < 200 MB；Windows 本機 client 連得上、catalog 同步、能進場；`docker compose down` 乾淨退出。
 
 ### P3 — 真實網路測試
-> 狀態（2026-10-22）：工具已加（branch `claude/dedicated-server-p0`），尚未在 WSL2 上跑。
+> 狀態（2026-10-22）：工具已加並在 WSL2 上跑完第一輪（見下方結果）。4 人同時在線尚未測。
 >
 > - Runtime image 加 `iproute2`；compose 加 `cap_add: NET_ADMIN`（只有 `docker exec -u root` 用得到，server 仍以 nk 執行）。
 > - `tools/docker/netem.sh <delay_ms> [jitter_ms] [loss_pct]` / `off` / `show`：即時改，不用重啟 server。
@@ -176,6 +176,25 @@ New-NetFirewallHyperVRule -Name "network-kernel-udp" -DisplayName "network-kerne
 - `tc netem` 注入固定延遲（例如 50 / 100 / 150 ms）與掉包，記錄 client 表現與 server `tick cadence` log。
 - （選用）路由器轉發 UDP 7801，讓遠端測試者連進來。
 - **完成條件**：4 名玩家同時在常駐世界裡玩；有一份紀錄列出各延遲條件下的 RTT 與觀察到的問題。
+
+#### P3 第一輪結果（2026-10-22 11:00–11:10，Mac Unity → WiFi → WSL2 Docker，netem 只加在 server 出站）
+
+資料來源：Unity Editor.log 的 `[G0]` 每秒一行（session 2，611 s；log 11:10:09 結束 → 起點約 11:00:00）。每個條件的時段依使用者標註切分，rtt 的階梯變化與標註吻合。
+
+| 條件 | 秒數 | rtt 中位數 | rtt p95 | world freeze frames | 最長 freeze | jumps | 最大 jump |
+|---|---|---|---|---|---|---|---|
+| 基準（off） | 109 | 33 ms | 33 ms | 2 | 20 ms | 5 | 13.77 m |
+| +50 ms | 120 | 67 ms | 100 ms | 0 | 0 | 0 | 0 |
+| +100 ms | 116 | 133 ms | 133 ms | 499 | 765 ms | 5 | 2.61 m |
+| +150 ms | 118 | 167 ms | 200 ms | 104 | 397 ms | 9 | 1.03 m |
+| +100 ±20 ms、1% loss | 131 | 133 ms | 167 ms | 0 | 0 | 29 | 1.23 m |
+
+觀察（尚未查證原因）：
+1. **rtt 解析度是一個 tick（33.3 ms）**：kernel 用 server tick 時間量 ping，所以區網實際約 3–5 ms 的基準讀成 33 ms，+50 讀成 67、+150 讀成 167（無條件進位到 33.3 的倍數）。這個 rtt 只能看大致量級。
+2. **三次巨大 rtt 尖峰是 client 自己卡住**（t=64 的 5267 ms、t=266 的 4800 ms、t=416 的 2533 ms）：前一秒的 Unity 幀數掉到 147 / 87 / 1（平時 200–600），ping 回覆跟著被延後。基準時段那次 13.77 m 的 jump 也落在這一秒。可能是切換視窗打 netem 指令時 Editor 失去焦點而降頻；不是網路問題。
+3. **+100 / +150 ms 出現 world freeze，但 rtt 平穩、幀數正常**：t≈300–313 s（約 11:05:00–11:05:13）最長 765 ms，t≈380 s（約 11:06:20）397 ms。netem 是固定延遲，封包間隔不變，照理插值 buffer 不該乾掉。疑點：clock sync 依 RTT 調整 render clock 時的跳動（見 memory 的 render clock overrun 項目），或 server 端當時卡頓。需要同時段的 server `tick cadence` log 才能排除後者。
+4. **1% loss 時沒有 freeze，但 jumps 增加到 29 次**（最大 1.23 m）：掉 snapshot 後的外插修正。Unity 報的 loss 是 2.5%，高於設定的 1%，計算方式未查。
+5. +50 ms 完全乾淨。
 
 ### 不在範圍內
 - Edgegap（pending，§7）、GameLift。
