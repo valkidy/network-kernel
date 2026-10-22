@@ -211,9 +211,19 @@ New-NetFirewallHyperVRule -Name "network-kernel-udp" -DisplayName "network-kerne
 結論：
 1. **Server 全程正常**：每個時段 30.00 Hz、late ticks 0，單 tick 最長 13 ms（預算 33 ms）。兩輪看到的 freeze 與 jump 都不是 server 卡頓造成的。
 2. **沒有 client 自己卡住的尖峰**：這輪沒有切換視窗，第一輪那種幾秒的 rtt 尖峰消失，證實那是 Editor 失焦降頻。
-3. **World freeze 與延遲大小無關**：第一輪出現在 +100 / +150，第二輪最嚴重的一次在 +50（t≈255–262 s，約 03:26:15–03:26:23，連續凍結到 2.7 s），+150 反而完全沒有。凍結期間 rtt 持續有讀數（ping 有在通）、server 只有零星戰鬥事件、沒有 late tick，凍結結束後也沒有 jump。代表 snapshot 有到或連線仍在，但 client 沒有往前呈現。指向 client 端的 snapshot / render clock 管線（memory 裡待辦的 render clock overrun），需要在 client 端加 snapshot 到達時間的記錄才能確認。**不在 P3 範圍內，另開調查。**
-4. **Jump 跟戰鬥強度相關**：+150 的 227 次裡有 182 次集中在 t≈525–528 s（03:30:44–47），正好是 server 每秒 20–40 個 ActorLanded、大量命中的混戰；1% loss 時段同樣有大量戰鬥。高延遲與掉包放大了擊退 / 落地的修正，但觸發點是戰鬥。同樣另開調查。
+3. **World freeze 與延遲大小無關**：第一輪出現在 +100 / +150，第二輪最嚴重的一次在 +50（t≈255–262 s，約 03:26:15–03:26:23，連續凍結到 2.7 s），+150 反而完全沒有。凍結期間 rtt 持續有讀數（ping 有在通）、server 只有零星戰鬥事件、沒有 late tick，凍結結束後也沒有 jump。代表 snapshot 有到或連線仍在，但 client 沒有往前呈現。指向 client 端的 snapshot / render clock 管線（memory 裡待辦的 render clock overrun），**已調查：是量測誤判，見下方「後續調查」。**
+4. **Jump 跟戰鬥強度相關**：+150 的 227 次裡有 182 次集中在 t≈525–528 s（03:30:44–47），正好是 server 每秒 20–40 個 ActorLanded、大量命中的混戰；1% loss 時段同樣有大量戰鬥。**已調查：是 nest 出怪疊在一起，見下方「後續調查」。**
 5. 每輪都有 frames 掉到約 100 fps 的時段，屬於 client 渲染負載，不影響判讀。
+
+**後續調查（2026-10-22）：兩個現象都不是網路問題**
+
+- **「World freeze」是量測的誤判，不是 snapshot 停住。** Unity 的判斷式是「至少 2 個 remote 單位的 replicated 速度 > 門檻，但這一幀都沒移動」。第二輪 2.7 s 的那次，`[G0 frozen]` 列出的全是 gingerbread（template 28），速度固定 5.00 m/s、位置數秒不變（例如 net 364 在 (8.19, 3.58) 停 8 s），而且擠在同一點附近，是圍著玩家推擠的近戰單位。凍結前幾秒 `entityFreezeFrames` 已經很高（632、730），其他單位停下來的那一刻就被判成整個世界凍結。根源在 `movement_solver.cc` 的 `step_character_at_velocity`：Jolt 回傳的是輸入的速度，目前只把**垂直**分量修正成實際位移，**水平**速度仍是想要的 5 m/s。所以被擋住的單位在 snapshot 裡一直「在跑」，client 也會播跑步動畫（`anim=1`）。
+- **Jump 暴增是 nest 生怪時單位疊在一起。** 第二輪 182 次 jump 那幾秒，樣本幾乎都是 gingerbread 的 **y 在 0 ↔ ~1.5 m 之間跳**、x/z 不變，好幾隻（54、61、102、103）在完全相同的位置一起移動。`208_prop_gingerbread_nest` 每一波都從**同一個門**（`start (0,0,0)` → `exit (3,0,0)`）出生，`stagger_ticks: 6`，進場時 `movement_collision_mask: terrain`（彼此不碰撞）。釋放時恢復碰撞，重疊的單位就站到彼此頭上（`movement_solver.cc` 註解裡記過同樣的現象）。server log 同時段 ActorLanded 每秒 20–67 次，也符合不斷疊上、掉下。時間點緊接在 03:30:41 / 03:30:49 的 nest 出怪之後。
+
+延遲和掉包只是讓這兩件事在畫面上更明顯，觸發點都在 server 的遊戲狀態。修法候選（尚未決定）：
+1. Snapshot 的速度改送實際位移（水平也比照垂直），被擋住的單位就不會「原地跑」。這是 kernel 行為改變（schema 不變），會影響 client 外插與動畫。
+2. 只修 Unity 的量測：判斷「應該移動」改用位置變化而不是 replicated 速度（Unity 是使用者的範圍）。
+3. Nest 出怪：多個門、加大 `stagger_ticks`，或等門口淨空才釋放下一隻。
 
 P3 剩下：4 人同時在線（需要多個 client）。
 
