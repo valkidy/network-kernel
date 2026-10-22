@@ -1441,6 +1441,15 @@ struct MovementState {
     // KERNEL_VISUAL_FLAG_HOVERING reports, and a knockback anchor's zero
     // gravity. Rewritten by every movement step.
     bool hovering = false;
+    // How far this tick's movement step actually carried the actor, per
+    // second, and whether this tick's step set it. Velocity cannot answer
+    // that for a character: Jolt hands back the velocity it was asked for,
+    // whatever blocked it (step_character_at_velocity), so an agent pressed
+    // against a player keeps its full move speed while standing still.
+    // Replication reads this instead (replicated_velocity). Cleared for an
+    // actor the step skipped.
+    glm::vec3 made_good_velocity{0.0f};
+    bool has_made_good_velocity = false;
 };
 
 // Composable presentation hints only; gameplay systems must not treat them as
