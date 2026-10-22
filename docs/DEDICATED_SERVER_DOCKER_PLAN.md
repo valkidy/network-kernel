@@ -155,7 +155,7 @@ New-NetFirewallHyperVRule -Name "network-kernel-udp" -DisplayName "network-kerne
 - **完成條件**：image < 200 MB；Windows 本機 client 連得上、catalog 同步、能進場；`docker compose down` 乾淨退出。
 
 ### P3 — 真實網路測試
-> 狀態（2026-10-22）：工具已加並在 WSL2 上跑完第一輪（見下方結果）。4 人同時在線尚未測。
+> 狀態（2026-10-22）：工具已加，在 WSL2 上跑完兩輪（見下方結果）。單人延遲測試完成；4 人同時在線尚未測。
 >
 > - Runtime image 加 `iproute2`；compose 加 `cap_add: NET_ADMIN`（只有 `docker exec -u root` 用得到，server 仍以 nk 執行）。
 > - `tools/docker/netem.sh <delay_ms> [jitter_ms] [loss_pct]` / `off` / `show`：即時改，不用重啟 server。
@@ -195,6 +195,27 @@ New-NetFirewallHyperVRule -Name "network-kernel-udp" -DisplayName "network-kerne
 3. **+100 / +150 ms 出現 world freeze，但 rtt 平穩、幀數正常**：t≈300–313 s（約 11:05:00–11:05:13）最長 765 ms，t≈380 s（約 11:06:20）397 ms。netem 是固定延遲，封包間隔不變，照理插值 buffer 不該乾掉。疑點：clock sync 依 RTT 調整 render clock 時的跳動（見 memory 的 render clock overrun 項目），或 server 端當時卡頓。需要同時段的 server `tick cadence` log 才能排除後者。
 4. **1% loss 時沒有 freeze，但 jumps 增加到 29 次**（最大 1.23 m）：掉 snapshot 後的外插修正。Unity 報的 loss 是 2.5%，高於設定的 1%，計算方式未查。
 5. +50 ms 完全乾淨。
+
+#### P3 第二輪結果（2026-10-22 11:22–11:36，同樣配置，server log 同步錄下）
+
+切換時間取自使用者每個條件結束時匯出的 server log（`logs/p3-round-server*.log`，後一個包含前一個）：off 03:22:00–03:24:31、+50 →03:27:10、+100 →03:30:04、+150 →03:33:11、+100±20/1% →03:36:45（UTC）。單一 client（peer 2）。
+
+| 條件 | rtt 中位數 | rtt p95 | world freeze frames | 最長 freeze | jumps | 最大 jump | server late ticks | server work max |
+|---|---|---|---|---|---|---|---|---|
+| 基準（off） | 33 ms | 33 ms | 118 | 132 ms | 0 | 0 | 0 | 13.0 ms |
+| +50 ms | 67 ms | 100 ms | 1372 | **2664 ms** | 0 | 0 | 0 | 6.6 ms |
+| +100 ms | 133 ms | 133 ms | 24 | 67 ms | 17 | 0.92 m | 0 | 5.4 ms |
+| +150 ms | 167 ms | 200 ms | 0 | 0 | **227** | 2.55 m | 0 | 6.2 ms |
+| +100 ±20 ms、1% loss | 133 ms | 167 ms | 85 | 385 ms | **220** | 2.38 m | 0 | 9.3 ms |
+
+結論：
+1. **Server 全程正常**：每個時段 30.00 Hz、late ticks 0，單 tick 最長 13 ms（預算 33 ms）。兩輪看到的 freeze 與 jump 都不是 server 卡頓造成的。
+2. **沒有 client 自己卡住的尖峰**：這輪沒有切換視窗，第一輪那種幾秒的 rtt 尖峰消失，證實那是 Editor 失焦降頻。
+3. **World freeze 與延遲大小無關**：第一輪出現在 +100 / +150，第二輪最嚴重的一次在 +50（t≈255–262 s，約 03:26:15–03:26:23，連續凍結到 2.7 s），+150 反而完全沒有。凍結期間 rtt 持續有讀數（ping 有在通）、server 只有零星戰鬥事件、沒有 late tick，凍結結束後也沒有 jump。代表 snapshot 有到或連線仍在，但 client 沒有往前呈現。指向 client 端的 snapshot / render clock 管線（memory 裡待辦的 render clock overrun），需要在 client 端加 snapshot 到達時間的記錄才能確認。**不在 P3 範圍內，另開調查。**
+4. **Jump 跟戰鬥強度相關**：+150 的 227 次裡有 182 次集中在 t≈525–528 s（03:30:44–47），正好是 server 每秒 20–40 個 ActorLanded、大量命中的混戰；1% loss 時段同樣有大量戰鬥。高延遲與掉包放大了擊退 / 落地的修正，但觸發點是戰鬥。同樣另開調查。
+5. 每輪都有 frames 掉到約 100 fps 的時段，屬於 client 渲染負載，不影響判讀。
+
+P3 剩下：4 人同時在線（需要多個 client）。
 
 ### 不在範圍內
 - Edgegap（pending，§7）、GameLift。
