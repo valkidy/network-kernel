@@ -562,7 +562,7 @@ std::uint32_t SpawnerDirector::emit_wave(
             }
             if (!spawner.controller.empty()) {
                 spawned_controllers_.push_back(
-                    SpawnedControllerSpec{net_id, spawner.controller});
+                    SpawnedControllerSpec{net_id, spawner.controller, instance->carrier_net_id});
             }
             if (door != nullptr) {
                 // Before the next Kernel_Update, so the unit's very first

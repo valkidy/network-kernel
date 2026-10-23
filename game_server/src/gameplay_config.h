@@ -340,6 +340,8 @@ struct ActorTemplateConfig {
     AgentChaseTuning chaser{};
     AgentPatrolTuning patrol{};
     AgentGarrisonTuning garrison{};
+    // controllers.hunter (AI plan P6).
+    AgentHunterTuning hunter{};
     // ai.skills, as authored. Resolved into the weapon, attack range, leap and
     // charge above once every sp_attack template is known.
     std::vector<AgentSkillConfig> skills;

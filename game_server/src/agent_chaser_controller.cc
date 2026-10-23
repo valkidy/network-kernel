@@ -459,8 +459,9 @@ void AgentChaserController::tick(
         bool face_damage_source = false;
         if (perception.damaged) {
             const AgentSentryState state = agent.sentry.state;
-            if (state == AgentSentryState::kIdle || state == AgentSentryState::kSearch) {
-                if (state == AgentSentryState::kIdle) {
+            if (state == AgentSentryState::kIdle || state == AgentSentryState::kSearch ||
+                state == AgentSentryState::kSeek) {
+                if (state != AgentSentryState::kSearch) {
                     agent.patrol.leash_anchor = agent.position;
                 }
                 agent_steering::transition_to(&agent, AgentSentryState::kAlert);
@@ -547,6 +548,10 @@ void AgentChaserController::tick(
                 agent.patrol.leash_anchor = agent.position;
                 agent.sentry.alerted_by_damage = false;
                 agent_steering::transition_to(&agent, AgentSentryState::kAlert);
+            } else if (agent.controller_role == AgentControllerRole::kHunter) {
+                // Nothing in sight: a hunter goes looking (D10). The Seek
+                // below starts walking on this same tick.
+                agent_steering::transition_to(&agent, AgentSentryState::kSeek);
             } else if (has_slot(agent) &&
                        (!standing_in_slot(config_.patrol, agent) ||
                         std::hypot(agent.patrol.travel_velocity.x,
@@ -589,6 +594,47 @@ void AgentChaserController::tick(
             }
         }
 
+        // A hunter walking to its target's last broad-phase position, corner by
+        // corner of the path the manager found. Seeing anything hostile
+        // alerts it the way Idle would, on this same tick.
+        if (agent.sentry.state == AgentSentryState::kSeek) {
+            if (has_visible_target) {
+                agent.patrol.leash_anchor = agent.position;
+                agent.sentry.alerted_by_damage = false;
+                agent_steering::transition_to(&agent, AgentSentryState::kAlert);
+            } else {
+                while (agent.seek_next < agent.seek_path.size() &&
+                       agent_steering::horizontal_distance(
+                           agent.position, agent.seek_path[agent.seek_next]) <=
+                           kSearchArrivalMeters) {
+                    ++agent.seek_next;
+                }
+                if (agent.seek_next < agent.seek_path.size()) {
+                    const KernelVec3& corner = agent.seek_path[agent.seek_next];
+                    move = agent_steering::horizontal_move_toward(
+                        agent.position, corner, config_.chase.input_magnitude);
+                    should_update_rotation =
+                        agent_steering::facing_rotation_from_vision_toward(
+                            agent.position,
+                            corner,
+                            perception.vision_forward,
+                            entity_state.rotation,
+                            &desired_rotation) ||
+                        should_update_rotation;
+                } else {
+                    // There, or nothing to go to: look around until the next
+                    // broad-phase read moves it on.
+                    should_update_rotation = agent_steering::update_patrol_facing(
+                        sentry_config.patrol_rotation_interval_ticks,
+                        sentry_config.patrol_rotation_min_degrees,
+                        sentry_config.patrol_rotation_max_degrees,
+                        &agent,
+                        entity_state.rotation,
+                        &desired_rotation);
+                }
+            }
+        }
+
         if (agent.sentry.state == AgentSentryState::kAlert) {
             if (has_visible_target) {
                 should_update_rotation =
@@ -619,10 +665,17 @@ void AgentChaserController::tick(
                 // A squad member goes back to its formation rather than idling
                 // wherever the chase ended. kIdle would let it re-acquire from
                 // there, which is the runaway the leash exists to prevent.
+                // A hunter goes straight back to looking, re-reading where its
+                // target is now rather than when the chase began.
+                if (agent.controller_role == AgentControllerRole::kHunter) {
+                    agent.seek_repath_in = 0;
+                }
                 agent_steering::transition_to(
                     &agent,
                     has_slot(agent) ? AgentSentryState::kReturn
-                                    : AgentSentryState::kIdle);
+                    : agent.controller_role == AgentControllerRole::kHunter
+                        ? AgentSentryState::kSeek
+                        : AgentSentryState::kIdle);
             } else if (agent.sentry.has_attention_point) {
                 // Nothing in sight: stop and face where its attention is --
                 // the last place it saw something, or where a hit came from.
@@ -782,10 +835,17 @@ void AgentChaserController::tick(
                 agent.sentry.target = 0;
                 agent.sentry.has_attention_point = false;
                 // A squad member goes back to its formation, as from Alert.
+                // A hunter goes straight back to looking, re-reading where its
+                // target is now rather than when the chase began.
+                if (agent.controller_role == AgentControllerRole::kHunter) {
+                    agent.seek_repath_in = 0;
+                }
                 agent_steering::transition_to(
                     &agent,
                     has_slot(agent) ? AgentSentryState::kReturn
-                                    : AgentSentryState::kIdle);
+                    : agent.controller_role == AgentControllerRole::kHunter
+                        ? AgentSentryState::kSeek
+                        : AgentSentryState::kIdle);
             } else if (agent_steering::horizontal_distance(
                            agent.position, agent.sentry.attention_point) >
                        kSearchArrivalMeters) {

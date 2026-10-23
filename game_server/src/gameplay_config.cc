@@ -153,6 +153,10 @@ void hash_vec3(std::uint64_t* hash, const KernelVec3& value) {
 
 void hash_controller_spec(std::uint64_t* hash, const AgentControllerSpec& spec) {
     hash_scalar(hash, static_cast<std::uint32_t>(spec.role));
+    hash_scalar(hash, spec.has_hunter);
+    hash_scalar(hash, static_cast<std::uint32_t>(spec.hunter.target_source));
+    hash_scalar(hash, static_cast<std::uint32_t>(spec.hunter.on_target_lost));
+    hash_scalar(hash, spec.hunter.repath_ticks);
     hash_scalar(hash, static_cast<std::uint32_t>(spec.route.size()));
     for (const KernelVec3& waypoint : spec.route) {
         hash_vec3(hash, waypoint);
@@ -476,6 +480,9 @@ void hash_actor_template(
         hash_string(hash, skill.missing_status_ref);
         hash_scalar(hash, skill.once);
     }
+    hash_scalar(hash, static_cast<std::uint32_t>(actor_template.hunter.target_source));
+    hash_scalar(hash, static_cast<std::uint32_t>(actor_template.hunter.on_target_lost));
+    hash_scalar(hash, actor_template.hunter.repath_ticks);
     hash_float(hash, actor_template.garrison.leash_meters);
     hash_float(hash, actor_template.garrison.leash_resume_meters);
     hash_scalar(hash, actor_template.spawner.authored ? 1u : 0u);
@@ -3704,6 +3711,40 @@ SpawnerConfig spawner_from_yaml(
     std::uint32_t source_kind,
     std::uint32_t template_id);
 
+// target_source / on_target_lost / repath_ticks, wherever a hunter is tuned:
+// a template's controllers.hunter, or a spawn source's controller block.
+void hunter_tuning_from_yaml(
+    const YAML::Node& node,
+    const std::string& where,
+    AgentHunterTuning* hunter) {
+    if (node["target_source"]) {
+        const std::string source = node["target_source"].as<std::string>();
+        if (source == "nearest_hostile") {
+            hunter->target_source = HunterTargetSource::kNearestHostile;
+        } else if (source == "inherited") {
+            hunter->target_source = HunterTargetSource::kInherited;
+        } else {
+            throw std::runtime_error(where + " hunter target_source is unsupported: " + source);
+        }
+    }
+    if (node["on_target_lost"]) {
+        const std::string lost = node["on_target_lost"].as<std::string>();
+        if (lost == "nearest_hostile") {
+            hunter->on_target_lost = HunterOnTargetLost::kNearestHostile;
+        } else if (lost == "garrison") {
+            hunter->on_target_lost = HunterOnTargetLost::kGarrison;
+        } else {
+            throw std::runtime_error(where + " hunter on_target_lost is unsupported: " + lost);
+        }
+    }
+    if (node["repath_ticks"]) {
+        hunter->repath_ticks = node["repath_ticks"].as<std::uint32_t>();
+        if (hunter->repath_ticks == 0u) {
+            throw std::runtime_error(where + " hunter repath_ticks must be positive");
+        }
+    }
+}
+
 // A spawn source's `controller:` block (plan D1): `type` picks the role its
 // agents run as instead of their template's default; `route`, where the
 // source allows one, is waypoints in the source's own frame (world space on a
@@ -3723,11 +3764,13 @@ AgentControllerSpec controller_spec_from_yaml(
         return spec;
     }
     if (allow_route) {
-        reject_unknown_keys(node, {"type", "route"}, path, source_kind,
-                            template_kind, template_id);
+        reject_unknown_keys(
+            node, {"type", "route", "target_source", "on_target_lost", "repath_ticks"},
+            path, source_kind, template_kind, template_id);
     } else {
-        reject_unknown_keys(node, {"type"}, path, source_kind, template_kind,
-                            template_id);
+        reject_unknown_keys(
+            node, {"type", "target_source", "on_target_lost", "repath_ticks"},
+            path, source_kind, template_kind, template_id);
     }
     if (node["type"]) {
         const std::string type = node["type"].as<std::string>();
@@ -3740,12 +3783,20 @@ AgentControllerSpec controller_spec_from_yaml(
                 where + " controller.type patrol: only a patrol template's squad "
                 "makes patrol members");
         } else if (type == "hunter") {
-            throw std::runtime_error(
-                where + " controller.type hunter is not implemented yet (plan P6)");
+            spec.role = AgentControllerRole::kHunter;
         } else {
             throw std::runtime_error(
                 where + " controller.type is unsupported: " + type);
         }
+    }
+    if (node["target_source"] || node["on_target_lost"] || node["repath_ticks"]) {
+        if (spec.role != AgentControllerRole::kHunter) {
+            throw std::runtime_error(
+                where + " controller target_source / on_target_lost / repath_ticks "
+                "need type: hunter");
+        }
+        spec.has_hunter = true;
+        hunter_tuning_from_yaml(node, where + " controller", &spec.hunter);
     }
     if (const YAML::Node route = node["route"]) {
         if (!route.IsSequence() || route.size() < 2u) {
@@ -3996,7 +4047,7 @@ void ai_role_from_yaml(
         } else if (controller == "patrol") {
             actor_template->default_controller_role = AgentControllerRole::kPatrol;
         } else if (controller == "hunter") {
-            fail("default_controller hunter is not implemented yet (plan P6)");
+            actor_template->default_controller_role = AgentControllerRole::kHunter;
         } else {
             fail("default_controller is unsupported: " + controller);
         }
@@ -4027,7 +4078,12 @@ void ai_role_from_yaml(
             if (sentry) {
                 fail("sentry takes no controllers block");
             }
-            reject(controllers, {"patrol", "garrison"});
+            reject(controllers, {"patrol", "garrison", "hunter"});
+            if (const YAML::Node hunter = controllers["hunter"]) {
+                reject(hunter, {"target_source", "on_target_lost", "repath_ticks"});
+                hunter_tuning_from_yaml(hunter, "actor template " + actor_template->name,
+                                        &actor_template->hunter);
+            }
             if (const YAML::Node garrison = controllers["garrison"]) {
                 reject(garrison, {"leash_meters", "leash_resume_meters"});
                 if (garrison["leash_meters"]) {
@@ -11821,7 +11877,9 @@ void validate_controller_spec(
     if (role != AgentControllerRole::kSentry && sentry_template) {
         errors->push_back(
             where + " controller " +
-            (role == AgentControllerRole::kPatrol ? "patrol" : "garrison") +
+            (role == AgentControllerRole::kPatrol   ? "patrol"
+             : role == AgentControllerRole::kHunter ? "hunter"
+                                                    : "garrison") +
             " on a sentry template: " + actor_template->name);
     }
     if (!spec.route.empty() && role != AgentControllerRole::kGarrison) {

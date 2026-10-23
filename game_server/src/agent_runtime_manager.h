@@ -92,6 +92,7 @@ private:
     // over the navmesh. Same timing as attach_pending_entries.
     void attach_pending_controllers();
     void use_item_skills();
+    void update_hunters(const ActorStateView& actors);
     void attach_route(
         AgentRuntimeState* agent,
         const std::vector<KernelVec3>& waypoints);
@@ -129,6 +130,12 @@ private:
     WorldRuleDirector world_rule_director_;
     GameRuleDirector game_rule_director_;
     std::vector<SpawnedControllerSpec> pending_controllers_;
+    // The hunters' broad phase, rebuilt every tick (update_hunters).
+    struct Hostile {
+        std::uint32_t net_id = 0;
+        KernelVec3 position{0.0f, 0.0f, 0.0f};
+    };
+    std::vector<Hostile> hostiles_;
     SpawnerDirector spawner_director_;
     // Templates whose spawner calls on alert. A handful at most, so a scan
     // beats a set; empty means the signal pass never walks the agents at all.

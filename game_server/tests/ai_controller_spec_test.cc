@@ -145,8 +145,21 @@ void mismatched_controllers_are_refused() {
     require(!loads_after("type patrol", kGameRule, [](YAML::Node& root) {
         giant_spawn(root)["controller"]["type"] = "patrol";
     }));
-    require(!loads_after("type hunter", kGameRule, [](YAML::Node& root) {
-        giant_spawn(root)["controller"]["type"] = "hunter";
+    // A hunter since P6a, with its own tuning on the spawn source.
+    require(loads_after("type hunter", kGameRule, [](YAML::Node& root) {
+        YAML::Node spawn = giant_spawn(root);
+        spawn["controller"].remove("route");
+        spawn["controller"]["type"] = "hunter";
+        spawn["controller"]["on_target_lost"] = "garrison";
+    }));
+    require(!loads_after("hunter tuning without type hunter", kGameRule, [](YAML::Node& root) {
+        giant_spawn(root)["controller"]["target_source"] = "nearest_hostile";
+    }));
+    require(!loads_after("hunter on a sentry template", kGameRule, [](YAML::Node& root) {
+        YAML::Node spawn = giant_spawn(root);
+        spawn["entity_template"] = "sentry_grunt";
+        spawn["controller"].remove("route");
+        spawn["controller"]["type"] = "hunter";
     }));
     require(!loads_after("garrison on a sentry template", kGameRule, [](YAML::Node& root) {
         YAML::Node spawn = giant_spawn(root);

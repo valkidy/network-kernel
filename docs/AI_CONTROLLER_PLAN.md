@@ -476,6 +476,30 @@ V1 已確認 speed modifier 對 AI 的移動輸入有效，不需要 kernel 改�
 
 ### P6：hunter
 
+**拆分與進度**：
+
+| 步驟 | 內容 | 狀態 |
+|---|---|---|
+| P6a | `hunter` 角色與設定、全場 hostile 表、Seek、目標失去後的處理 | ✅ `claude/ai-controller-p1` |
+| P6b | 依距離開關 vision（D11）、airship 的 on_alert 增援改成 `inherited` hunter、hunter 的效能量測 | |
+
+P6a 的實作與決定：
+- 設定：`controllers.hunter {target_source: nearest_hostile|inherited, on_target_lost: nearest_hostile|garrison,
+  repath_ticks}`；生成來源也可以寫 `controller: {type: hunter, target_source, ...}` 覆寫。`target_source` 等
+  key 只能和 `type: hunter` 一起出現；hunter 不能用在 sentry template。
+- `inherited`：spawner 會記下是哪個 carrier 生出這個單位，套用 spec 時取該 carrier **當下**的目標；沒有可以
+  繼承的目標就視為已失去。
+- broad phase：`AgentRuntimeManager::update_hunters` 每個 tick 從現成的 actor snapshot 建一次 hostile 表（活著
+  的玩家），所有 hunter 共用；換目標要近 20% 以上；每 `repath_ticks`（預設 60）重新看一次目標位置並在 navmesh
+  上尋路（沒有 navmesh 就直線），之後的重算以 net id 錯開。**目前沒有排除躲在帳篷裡的玩家**（Q3：server 的
+  entity state 沒有可用的標記），hunter 會走到帳篷旁邊。
+- 狀態：hunter 沒看到東西時從 Idle 進入 `kSeek`（新值 6），沿路徑走；看到任何敵對目標就和 Idle 一樣進入
+  Alert；Search / Alert 遺忘後回到 Seek 並立刻重新尋路。在 Seek 中被打和 Idle 相同。Seek 不算交戰。
+- 目標永久消失（死亡或離開世界）：`on_target_lost: garrison` → 角色變成 garrison 留在原地；`nearest_hostile`
+  → 改找最近的。
+- 測試：`ai_hunter_test`（離玩家 60 m、視野 26 m：Seek 175 ticks 後在 25.7 m 看到玩家，接著追擊；玩家被移除後
+  變成 garrison）。`ai_role_based_format_test` 與 `ai_controller_spec_test` 改為接受 hunter，並新增 3 個錯誤寫法。
+
 **前置**：先處理 §11 的 simulation command queue 爆滿（1300 agents 時大量 command 被拒絕）。
 
 1. hostile 位置表（每 tick，全場共用，排除帳篷、死亡、斷線）。

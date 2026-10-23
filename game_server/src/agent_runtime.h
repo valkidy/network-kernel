@@ -47,6 +47,9 @@ enum class AgentSentryState : std::uint8_t {
     // where it last saw the target, a sentry turns to face it. Seeing it again
     // resumes the pursuit; forgetting it ends the engagement.
     kSearch = 5,
+    // A hunter walking to where the shared table says its target is, which it
+    // cannot see yet (D10). Seeing anything hostile alerts it as from Idle.
+    kSeek = 6,
 };
 
 // The pursuit proper: something to close on or to hit.
@@ -93,6 +96,33 @@ enum class AgentControllerRole : std::uint8_t {
     kSentry,
     kGarrison,
     kPatrol,
+    // Goes looking for a target it has not seen (AI plan D2, D10): the chaser,
+    // with a shared table of every hostile's position to walk towards.
+    kHunter,
+};
+
+// Who a hunter goes after (D10).
+enum class HunterTargetSource : std::uint8_t {
+    // The nearest hostile, re-chosen as they move.
+    kNearestHostile = 0,
+    // Whatever the agent that spawned it was fighting: reinforcements.
+    kInherited = 1,
+};
+
+// What a hunter does once its target is gone for good -- dead, gone from the
+// world -- rather than merely out of sight.
+enum class HunterOnTargetLost : std::uint8_t {
+    kNearestHostile = 0,
+    // Stays where it is as a garrison.
+    kGarrison = 1,
+};
+
+struct AgentHunterTuning {
+    HunterTargetSource target_source = HunterTargetSource::kNearestHostile;
+    HunterOnTargetLost on_target_lost = HunterOnTargetLost::kNearestHostile;
+    // How often it re-reads where its target is and re-paths there. Each
+    // hunter's first is staggered by its net id, so a crowd spreads the work.
+    std::uint32_t repath_ticks = 60;
 };
 
 // What a spawn source asks of the agents it makes (plan D1): authored as a
@@ -104,10 +134,14 @@ struct AgentControllerSpec {
     AgentControllerRole role = AgentControllerRole::kNone;
     // World space. Only a garrison follows one.
     std::vector<KernelVec3> route;
+    // kHunter only: overrides the template's controllers.hunter when set.
+    bool has_hunter = false;
+    AgentHunterTuning hunter;
 
     bool empty() const {
-        return role == AgentControllerRole::kNone && route.empty();
+        return role == AgentControllerRole::kNone && route.empty() && !has_hunter;
     }
+
 };
 
 // One agent a director just made, and what it asked of it. Directors only
@@ -115,6 +149,9 @@ struct AgentControllerSpec {
 struct SpawnedControllerSpec {
     std::uint32_t net_id = 0;
     AgentControllerSpec spec;
+    // The agent that spawned it, when one did (a spawner's carrier): whose
+    // target an inherited hunter takes.
+    std::uint32_t source_net_id = 0;
 };
 
 // The most skills one agent may carry (AI plan D13).
@@ -262,6 +299,13 @@ struct AgentRuntimeState {
     bool items_seen_spawn = false;
     AgentSentryState items_last_state = AgentSentryState::kIdle;
     std::uint32_t next_item_request = 1;
+    // Hunter only (AI plan P6a): its tuning, its target, and the path the
+    // manager last found towards it, with the ticks until it looks again.
+    AgentHunterTuning hunter{};
+    std::uint32_t hunt_target = 0;
+    std::vector<KernelVec3> seek_path;
+    std::size_t seek_next = 0;
+    std::uint32_t seek_repath_in = 0;
     AgentPatrolRuntimeState patrol{};
     AgentEntryRuntimeState entry{};
     // Whether the agent was engaged when its controller last ran, so that an

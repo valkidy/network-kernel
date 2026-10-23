@@ -131,7 +131,16 @@ void malformed_blocks_are_refused() {
         }));
     }
     require(!loads_after("missing", [](YAML::Node& ai) { ai.remove("default_controller"); }));
-    require(!loads_after("hunter", [](YAML::Node& ai) { ai["default_controller"] = "hunter"; }));
+    // A hunter since P6a, tuned under controllers.hunter.
+    require(loads_after("hunter", [](YAML::Node& ai) {
+        ai["default_controller"] = "hunter";
+        ai["controllers"]["hunter"]["target_source"] = "nearest_hostile";
+        ai["controllers"]["hunter"]["on_target_lost"] = "garrison";
+        ai["controllers"]["hunter"]["repath_ticks"] = 45;
+    }));
+    require(!loads_after("unknown hunter target_source", [](YAML::Node& ai) {
+        ai["controllers"]["hunter"]["target_source"] = "loudest";
+    }));
     require(!loads_after("unknown role", [](YAML::Node& ai) { ai["default_controller"] = "chaser"; }));
     require(!loads_after("moving stationary", [](YAML::Node& ai) {
         ai["locomotion"]["stationary"] = true;

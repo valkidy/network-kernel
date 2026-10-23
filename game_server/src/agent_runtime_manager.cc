@@ -34,7 +34,8 @@ void take_controllers(
 // whose template has no ai block, is the sentry, as it always was.
 bool runs_chaser(AgentControllerRole role) {
     return role == AgentControllerRole::kGarrison ||
-           role == AgentControllerRole::kPatrol;
+           role == AgentControllerRole::kPatrol ||
+           role == AgentControllerRole::kHunter;
 }
 
 // How to fire one weapon: its own ballistic aim when its projectile arcs, and
@@ -458,6 +459,95 @@ void AgentRuntimeManager::use_item_skills() {
     }
 }
 
+// The broad phase (AI plan D10): where every hostile is, read once per tick off
+// the snapshot the manager already has and shared by every hunter, which
+// cheats its way to its target through it. Seeing that target -- the narrow
+// phase -- is still vision's. Only the living: a dead player is not hunted.
+void AgentRuntimeManager::update_hunters(const ActorStateView& actors) {
+    hostiles_.clear();
+    for (std::uint32_t index = 0; index < actors.count; ++index) {
+        const KernelServerEntityState& state = actors.states[index];
+        if (state.valid != 0u && state.actor_type == kActorTypePlayer && state.hp > 0u &&
+            (state.visual_flags & KERNEL_VISUAL_FLAG_DEAD) == 0u) {
+            hostiles_.push_back(Hostile{state.net_id, state.position});
+        }
+    }
+    const auto distance = [](const KernelVec3& a, const KernelVec3& b) {
+        return std::hypot(a.x - b.x, a.z - b.z);
+    };
+    const auto nearest = [&](const KernelVec3& from) -> const Hostile* {
+        const Hostile* best = nullptr;
+        for (const Hostile& hostile : hostiles_) {
+            if (best == nullptr ||
+                distance(from, hostile.position) < distance(from, best->position)) {
+                best = &hostile;
+            }
+        }
+        return best;
+    };
+    for (AgentRuntimeState& agent : agents_) {
+        if (agent.controller_role != AgentControllerRole::kHunter || agent.entry.active) {
+            continue;
+        }
+        const Hostile* target = nullptr;
+        for (const Hostile& hostile : hostiles_) {
+            if (hostile.net_id == agent.hunt_target) target = &hostile;
+        }
+        if (target == nullptr) {
+            // Gone for good, or never had: an inherited hunter whose caller
+            // had nothing to give it counts as having lost it.
+            const bool lost = agent.hunt_target != 0u ||
+                agent.hunter.target_source == HunterTargetSource::kInherited;
+            agent.hunt_target = 0u;
+            if (lost && agent.hunter.on_target_lost == HunterOnTargetLost::kGarrison) {
+                agent.controller_role = AgentControllerRole::kGarrison;
+                agent.seek_path.clear();
+                agent.seek_next = 0;
+                continue;
+            }
+            agent.hunter.target_source = HunterTargetSource::kNearestHostile;
+            target = nearest(agent.position);
+            if (target == nullptr) {
+                agent.seek_path.clear();
+                agent.seek_next = 0;
+                continue;
+            }
+            agent.hunt_target = target->net_id;
+            agent.seek_repath_in = 0;
+        } else if (agent.hunter.target_source == HunterTargetSource::kNearestHostile &&
+                   agent.seek_repath_in == 0u) {
+            // Switching only for one clearly nearer, or two at much the same
+            // range would trade places on every look.
+            const Hostile* closer = nearest(agent.position);
+            if (closer != nullptr && closer != target &&
+                distance(agent.position, closer->position) <
+                    0.8f * distance(agent.position, target->position)) {
+                target = closer;
+                agent.hunt_target = closer->net_id;
+            }
+        }
+        if (agent.seek_repath_in > 0u) {
+            --agent.seek_repath_in;
+            continue;
+        }
+        // Staggered by net id after the first, so a wave spawned on one tick
+        // does not path on one tick forever after.
+        agent.seek_repath_in = agent.hunter.repath_ticks +
+            agent.net_id % std::max<std::uint32_t>(1u, agent.hunter.repath_ticks / 4u);
+        agent.seek_path.clear();
+        agent.seek_next = 0;
+        PatrolRouteRequest request;
+        request.start = agent.position;
+        request.end = target->position;
+        request.snap_half_extent_meters = 2.0f;
+        if (!patrol_navigation_.valid() ||
+            !patrol_navigation_.find_route(request, &agent.seek_path) ||
+            agent.seek_path.empty()) {
+            agent.seek_path.assign(1, target->position);
+        }
+    }
+}
+
 void AgentRuntimeManager::attach_pending_controllers() {
     for (const SpawnedControllerSpec& spawned :
          std::exchange(pending_controllers_, {})) {
@@ -470,6 +560,20 @@ void AgentRuntimeManager::attach_pending_controllers() {
         // The catalog has already checked the role suits the template.
         if (spawned.spec.role != AgentControllerRole::kNone) {
             agent.controller_role = spawned.spec.role;
+        }
+        if (spawned.spec.has_hunter) {
+            agent.hunter = spawned.spec.hunter;
+        }
+        // Reinforcements go after what called them: the spawning agent's
+        // target as it stands now. Nothing to inherit leaves it 0, which the
+        // hunter pass reads as already lost.
+        if (agent.controller_role == AgentControllerRole::kHunter &&
+            agent.hunter.target_source == HunterTargetSource::kInherited &&
+            spawned.source_net_id != 0u) {
+            const std::size_t source = agent_index_.find(spawned.source_net_id);
+            if (source != AgentIndex::kNotFound) {
+                agent.hunt_target = agents_[source].sentry.target;
+            }
         }
         if (!spawned.spec.route.empty()) {
             attach_route(&agent, spawned.spec.route);
@@ -680,6 +784,8 @@ void AgentRuntimeManager::tick(float delta_seconds) {
     // Ahead of the controllers, so a member reads the slot its squad wants it
     // in this tick rather than the one from last tick.
     patrol_groups_.tick(&agents_, agent_index_, delta_seconds);
+    // Before the controllers, so a hunter seeks along this tick's path.
+    update_hunters(actors);
     // Still on the post-director snapshot: nothing between it and here creates,
     // destroys or moves an entity, so it is what a per-agent query would return.
     dispatch_controllers(actors, delta_seconds);
@@ -811,6 +917,9 @@ void AgentRuntimeManager::sync_agents_from_kernel(const ActorStateView& actors) 
             agent.controller_role = actor_template != nullptr
                 ? actor_template->default_controller_role
                 : AgentControllerRole::kNone;
+            if (actor_template != nullptr) {
+                agent.hunter = actor_template->hunter;
+            }
             agent.has_item_skills = actor_template != nullptr &&
                 std::any_of(actor_template->skills.begin(), actor_template->skills.end(),
                             [](const AgentSkillConfig& skill) {
