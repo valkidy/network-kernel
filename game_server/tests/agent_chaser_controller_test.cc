@@ -700,6 +700,75 @@ void a_leash_breaks_off_a_pursuit_that_drags_too_far(
     require((*agents)[0].sentry.target == player_net_id);
 }
 
+// A garrison's leash (AI plan P2b): the same break-off as a squad's, measured
+// from where the chase began, but it walks back to that point rather than to
+// a slot, and refuses to engage on the way.
+void a_garrison_leash_walks_it_back_to_where_it_broke_off(
+    KernelHandle* kernel,
+    std::uint32_t agent_net_id,
+    std::uint32_t player_net_id,
+    std::vector<network_example::game_server::AgentRuntimeState>* agents) {
+    network_example::game_server::AgentChaserConfig config = chaser_config();
+    config.garrison.leash_meters = 8.0f;
+    config.garrison.leash_resume_meters = 2.0f;
+    const network_example::game_server::AgentChaserController leashed(config);
+    reset_patrol_agent(
+        kernel, agent_net_id, player_net_id, agents, {0.0f, 0.0f, 0.0f});
+    (*agents)[0].patrol = {};  // no squad: a garrison
+    set_position(kernel, player_net_id, {10.0f, 0.0f, 0.0f});
+    Kernel_Update(kernel, kFixedDelta);
+    run_frame(kernel, leashed, agents);
+    require(
+        (*agents)[0].sentry.state ==
+        network_example::game_server::AgentSentryState::kAlert);
+    require(almost_equal((*agents)[0].patrol.leash_anchor.x, 0.0f, 0.5f));
+
+    // Dragged past the leash with the target still in front: it breaks off.
+    set_position(kernel, agent_net_id, {12.0f, 0.0f, 0.0f});
+    set_position(kernel, player_net_id, {16.0f, 0.0f, 0.0f});
+    Kernel_Update(kernel, kFixedDelta);
+    run_frame(kernel, leashed, agents);
+    require(
+        (*agents)[0].sentry.state ==
+        network_example::game_server::AgentSentryState::kReturn);
+    require((*agents)[0].sentry.target == 0u);
+
+    // Walking back toward x=0 with the target still in sight, not engaging.
+    for (int tick = 0; tick < 10; ++tick) {
+        run_frame(kernel, leashed, agents);
+        require(
+            (*agents)[0].sentry.state ==
+            network_example::game_server::AgentSentryState::kReturn);
+        require((*agents)[0].velocity.x < 0.0f);
+    }
+
+    // Inside the resume distance it is idle again, and free to engage.
+    set_position(kernel, agent_net_id, {1.5f, 0.0f, 0.0f});
+    Kernel_Update(kernel, kFixedDelta);
+    run_frame(kernel, leashed, agents);
+    require(
+        (*agents)[0].sentry.state !=
+        network_example::game_server::AgentSentryState::kReturn);
+
+    // Control: the same drag with no garrison leash keeps the pursuit.
+    const network_example::game_server::AgentChaserController free_chaser(
+        chaser_config());
+    reset_patrol_agent(
+        kernel, agent_net_id, player_net_id, agents, {0.0f, 0.0f, 0.0f});
+    (*agents)[0].patrol = {};
+    set_position(kernel, player_net_id, {10.0f, 0.0f, 0.0f});
+    Kernel_Update(kernel, kFixedDelta);
+    run_frame(kernel, free_chaser, agents);
+    set_position(kernel, agent_net_id, {12.0f, 0.0f, 0.0f});
+    set_position(kernel, player_net_id, {16.0f, 0.0f, 0.0f});
+    Kernel_Update(kernel, kFixedDelta);
+    run_frame(kernel, free_chaser, agents);
+    require(
+        (*agents)[0].sentry.state !=
+        network_example::game_server::AgentSentryState::kReturn);
+    require((*agents)[0].sentry.target == player_net_id);
+}
+
 // Seeing a target and being able to hit one are different distances. The vision
 // cone reaches much further than a melee weapon does, and the controller used
 // to commit an attack the moment the sentry half said "visible" -- so a grunt
@@ -1032,6 +1101,8 @@ int main() {
     a_pursuit_that_ends_puts_the_agent_back_in_its_slot(
         kernel, agent_net_id, player_net_id, &agents);
     a_returning_member_walks_to_the_squad_not_to_where_it_left(
+        kernel, agent_net_id, player_net_id, &agents);
+    a_garrison_leash_walks_it_back_to_where_it_broke_off(
         kernel, agent_net_id, player_net_id, &agents);
     a_leash_breaks_off_a_pursuit_that_drags_too_far(
         kernel, agent_net_id, player_net_id, &agents);

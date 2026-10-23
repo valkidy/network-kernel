@@ -13,8 +13,10 @@ namespace network_example::game_server {
 namespace {
 
 // How close Search comes to where the target was last seen before it stops
-// and looks around. The same allowance a route corner gets.
+// and looks around, and a returning garrison to where it broke off. The same
+// allowance a route corner gets.
 constexpr float kSearchArrivalMeters = 1.0f;
+constexpr float kReturnArrivalMeters = 1.0f;
 
 bool is_zero_move(const KernelVec2& move) {
     return move.x == 0.0f && move.y == 0.0f;
@@ -25,15 +27,17 @@ bool has_slot(const AgentRuntimeState& agent) {
     return agent.patrol.has_slot;
 }
 
-// Distance from where the agent broke formation, which is what the leash
-// bounds. A leash of zero means no leash: a chaser without a squad is never
-// dragged away from anything.
-bool leash_exceeded(
-    const AgentPatrolTuning& patrol,
-    const AgentRuntimeState& agent) {
-    return patrol.leash_meters > 0.0f &&
+// Distance from where the agent broke off, which is what the leash bounds. A
+// leash of zero means no leash.
+bool leash_exceeded(float leash_meters, const AgentRuntimeState& agent) {
+    return leash_meters > 0.0f &&
         agent_steering::horizontal_distance(
-            agent.position, agent.patrol.leash_anchor) > patrol.leash_meters;
+            agent.position, agent.patrol.leash_anchor) > leash_meters;
+}
+
+// A squad member answers to its squad's leash, anyone else to its garrison's.
+float leash_meters(const AgentChaserConfig& config, const AgentRuntimeState& agent) {
+    return has_slot(agent) ? config.patrol.leash_meters : config.garrison.leash_meters;
 }
 
 bool inside_leash_resume(
@@ -349,7 +353,7 @@ void AgentChaserController::tick(
         // it is made before the pursuit states get to look at what they can
         // see. Without it the leash could only be enforced on a tick where
         // vision happened to break.
-        if (has_slot(agent) && leash_exceeded(config_.patrol, agent) &&
+        if (leash_exceeded(leash_meters(config_, agent), agent) &&
             is_engaged(agent.sentry.state)) {
             agent.sentry.target = 0;
             agent.sentry.has_attention_point = false;
@@ -362,7 +366,27 @@ void AgentChaserController::tick(
         // already reaches the alert branch in the tick it transitions.
         if (agent.sentry.state == AgentSentryState::kReturn) {
             if (!has_slot(agent)) {
-                agent_steering::transition_to(&agent, AgentSentryState::kIdle);
+                // A garrison walks back to where it broke off, then goes idle
+                // there -- which puts one on a route back onto it.
+                const float back = agent_steering::horizontal_distance(
+                    agent.position, agent.patrol.leash_anchor);
+                if (back <= std::max(config_.garrison.leash_resume_meters,
+                                     kReturnArrivalMeters)) {
+                    agent_steering::transition_to(&agent, AgentSentryState::kIdle);
+                } else {
+                    move = agent_steering::horizontal_move_toward(
+                        agent.position,
+                        agent.patrol.leash_anchor,
+                        config_.chase.input_magnitude);
+                    should_update_rotation =
+                        agent_steering::facing_rotation_from_vision_toward(
+                            agent.position,
+                            agent.patrol.leash_anchor,
+                            perception.vision_forward,
+                            entity_state.rotation,
+                            &desired_rotation) ||
+                        should_update_rotation;
+                }
             } else if (
                 standing_in_slot(config_.patrol, agent) ||
                 inside_leash_resume(config_.patrol, agent)) {

@@ -456,6 +456,8 @@ void hash_actor_template(
     hash_float(hash, actor_template.patrol.input_magnitude);
     hash_float(hash, actor_template.patrol.leash_meters);
     hash_float(hash, actor_template.patrol.leash_resume_meters);
+    hash_float(hash, actor_template.garrison.leash_meters);
+    hash_float(hash, actor_template.garrison.leash_resume_meters);
     hash_scalar(hash, actor_template.spawner.authored ? 1u : 0u);
     hash_scalar(
         hash, static_cast<std::uint32_t>(actor_template.spawner.trigger));
@@ -3898,11 +3900,24 @@ void ai_role_from_yaml(
                 fail("sentry takes no controllers block");
             }
             reject(controllers, {"patrol", "garrison"});
-            // Nothing to tune on a garrison until it has a leash (P2); an
-            // empty block is accepted so templates can name it.
             if (const YAML::Node garrison = controllers["garrison"]) {
-                if (garrison.IsMap() && garrison.size() > 0) {
-                    fail("controllers.garrison takes no keys yet");
+                reject(garrison, {"leash_meters", "leash_resume_meters"});
+                if (garrison["leash_meters"]) {
+                    actor_template->garrison.leash_meters =
+                        garrison["leash_meters"].as<float>();
+                }
+                if (garrison["leash_resume_meters"]) {
+                    actor_template->garrison.leash_resume_meters =
+                        garrison["leash_resume_meters"].as<float>();
+                }
+                const AgentGarrisonTuning& leash = actor_template->garrison;
+                if (!std::isfinite(leash.leash_meters) ||
+                    !std::isfinite(leash.leash_resume_meters) ||
+                    leash.leash_meters < 0.0f || leash.leash_resume_meters < 0.0f ||
+                    (leash.leash_meters > 0.0f &&
+                     leash.leash_resume_meters >= leash.leash_meters)) {
+                    fail("controllers.garrison leash must be non-negative with "
+                         "leash_resume_meters below leash_meters");
                 }
             }
         }

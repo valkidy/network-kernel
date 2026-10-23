@@ -146,8 +146,16 @@ void malformed_blocks_are_refused() {
     require(!loads_after("unknown rotation key", [](YAML::Node& ai) {
         ai["perception"]["idle_rotation_degrees"]["step"] = 5.0;
     }));
-    require(!loads_after("garrison key", [](YAML::Node& ai) {
+    require(loads_after("garrison leash", [](YAML::Node& ai) {
         ai["controllers"]["garrison"]["leash_meters"] = 10.0;
+        ai["controllers"]["garrison"]["leash_resume_meters"] = 3.0;
+    }));
+    require(!loads_after("garrison resume past leash", [](YAML::Node& ai) {
+        ai["controllers"]["garrison"]["leash_meters"] = 10.0;
+        ai["controllers"]["garrison"]["leash_resume_meters"] = 10.0;
+    }));
+    require(!loads_after("unknown garrison key", [](YAML::Node& ai) {
+        ai["controllers"]["garrison"]["slot_radius_meters"] = 1.0;
     }));
 }
 

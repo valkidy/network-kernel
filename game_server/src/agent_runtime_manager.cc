@@ -171,6 +171,7 @@ AgentRuntimeManager::AgentControllerBinding AgentRuntimeManager::make_binding(
                 agent_sentry_config(config_, actor_template.actor_template_id);
             chaser.chase = actor_template.chaser;
             chaser.patrol = actor_template.patrol;
+            chaser.garrison = actor_template.garrison;
             chaser.gravity_y = actor_template.movement_gravity.y;
             binding.chaser = AgentChaserController(chaser);
         }

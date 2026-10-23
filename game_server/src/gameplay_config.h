@@ -278,6 +278,7 @@ struct ActorTemplateConfig {
     // half of a chaser comes from `sentry`.
     AgentChaseTuning chaser{};
     AgentPatrolTuning patrol{};
+    AgentGarrisonTuning garrison{};
     // Authored on the template, run by game_server, never sent to the
     // kernel -- the same shape as the ai.* blocks above.
     SpawnerConfig spawner{};

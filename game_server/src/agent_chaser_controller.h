@@ -108,11 +108,23 @@ struct AgentPatrolTuning {
     float leash_resume_meters = 0.0f;
 };
 
+// A garrison's leash (AI plan D5, `controllers.garrison`): how far a pursuit
+// may drag it from where it broke off before it gives up and walks back.
+// Measured from that point, like a squad member's, and zero turns it off --
+// the garrison then chases until it loses sight, as it did before P2b.
+struct AgentGarrisonTuning {
+    float leash_meters = 0.0f;
+    // Back within this of where it broke off, it may engage again. Must be
+    // below leash_meters; at zero it walks all the way back.
+    float leash_resume_meters = 0.0f;
+};
+
 struct AgentChaserConfig {
     // Detection, alert timing, forgetting, and firing are the sentry's.
     AgentSentryConfig sentry;
     AgentChaseTuning chase;
     AgentPatrolTuning patrol;
+    AgentGarrisonTuning garrison;
     // The template's movement gravity, which a leap's airtime is worked out
     // against. Not authored here.
     float gravity_y = -9.81f;

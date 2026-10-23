@@ -1,6 +1,6 @@
 # AI controller 重構實作計劃書
 
-狀態：**設計已定案（§2）；P0 驗證完成（§11）；P1（P1a–P1d）完成（§6.0，`claude/ai-controller-p1`，2026-10-23）；P2 尚未開始。**
+狀態：**設計已定案（§2）；P0 驗證完成（§11）；P1（§6.0）與 P2（§7.0）完成，在 `claude/ai-controller-p1`（2026-10-23）；P3 尚未開始。**
 分支：計劃在 `claude/ai-controller-plan`，從 `main`（84cc4d40，ABI 109）開。
 各階段的實作各自開 `claude/ai-controller-p<N>` 分支。
 最後更新：2026-10-23。
@@ -249,7 +249,7 @@ spawner:
 | 步驟 | 內容 | 行為改變 | 狀態 |
 |---|---|---|---|
 | P2a | `kChasing`、`kSearch` 兩個新狀態；Alert / Search 的注意點；chaser 與 sentry 都做 Search | **有** | ✅ `claude/ai-controller-p1` |
-| P2b | garrison 的 leash 與 Return（`controllers.garrison.leash_meters` / `leash_resume_meters`） | 只有寫了 leash 的 template | |
+| P2b | garrison 的 leash 與 Return（`controllers.garrison.leash_meters` / `leash_resume_meters`） | 只有寫了 leash 的 template（目前沒有） | ✅ `claude/ai-controller-p1` |
 
 P2a 的實作與決定：
 - 狀態仍是 `AgentSentryState`（新值接在後面：`kChasing = 4`、`kSearch = 5`）；`is_pursuing` = Chasing 或
@@ -262,6 +262,15 @@ P2a 的實作與決定：
   chaser 回到追擊（不重新 Alert）、sentry 回到 Attack；超過 `forget_ticks` → Idle（巡邏隊成員 → Return）。
 - **Alert 中失去目標不進 Search**：照舊等到 forget 後放棄，避免目標進出視野就跳過警告。
 - 失去目標到放棄的時間從 2 × `forget_ticks`（Attack 等一次、再到 Alert 等一次）變成 1 × `forget_ticks`。
+P2b 的實作與決定：
+- leash 的錨點與巡邏隊成員相同：開始追擊（Idle → Alert）時的位置，不是路線上最近的點。這樣「追擊能把
+  單位拉多遠」只看這次追擊，實作也與巡邏隊共用。
+- 超過 leash → Return：直線走回錨點（不經 navmesh），途中不接戰；回到 `leash_resume_meters`（至少 1 m）
+  以內 → Idle，有路線的 garrison 接著走路線。
+- `leash_meters` 0 = 沒有 leash（預設）。shipping catalog 沒有任何 template 寫 garrison leash，所以 P2b
+  不改變現有單位的行為；要讓巨人等單位有 leash，在 template 的 `controllers.garrison` 加上即可。
+- 載入時檢查：非負、有限，且 `leash_resume_meters` < `leash_meters`。
+
 - 測試：`agent_chaser_controller_test` 的「失去視野原地停下」改成 Search（走向最後位置、再看到就恢復、
   forget 後 Idle）；射程外的狀態從 kAttack 改成 kChasing。`agent_sentry_controller_test` 改成 Attack →
   Search → Idle。`agent_runtime_manager_test` 在 main 上第 228 行就失敗，後面對 kAttack 的檢查無法驗證。
