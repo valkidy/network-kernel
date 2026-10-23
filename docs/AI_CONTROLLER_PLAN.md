@@ -57,6 +57,7 @@
 | D16 | **`sp_attack_templates/`** 收納特殊組合攻擊。`kind` 是封閉清單，每種都要有 kernel 實作；目前是 `leap`、`charge` | 跳撲 = leap 移動 + 落地前用 loadout 的近戰（`on_landing.weapon`，需在 loadout 裡）；衝撞 = 蓄力 + 直線衝刺 + 自帶的接觸武器（`contact_weapon`，不需在 loadout 裡） |
 | D17 | **`when` 與 `cooldown_ticks` 放在 skill 上**，不放進 sp_attack template | 同一個 sp_attack 給不同單位時觸發距離可以不同 |
 | D18 | **AI 使用 item 不扣數量**：skill 上的 item 使用視為無限 | 避免 fungible item 被 AI 用完 |
+| D19 | **刪除被動巡邏**（`passive_patrol`：只走路、不看人）。原本使用它的 21–23、39 改成 garrison + route，會接戰 | gameplay 用不到；x 軸來回改寫成兩點 route。見 §6.3 |
 
 ---
 
@@ -109,10 +110,10 @@ snapshot / packet schema：P1–P6 都不需要改。新的 animation_state 值�
 
 ---
 
-## 6. P1：catalog 結構重整（行為不變）
+## 6. P1：catalog 結構重整（除被動巡邏外，行為不變）
 
-目標：**不改任何行為**，只換格式與 controller 的決定方式。現有測試的結果必須完全一樣
-（以失敗集合為準，main 本來就有紅燈）。
+目標：只換格式與 controller 的決定方式。除了 §6.3 刪除被動巡邏造成的改變，現有測試的
+結果必須完全一樣（以失敗集合為準，main 本來就有紅燈）。
 
 ### 6.1 template 格式
 
@@ -160,11 +161,25 @@ spawner:
 | `ai.controller: sentry`（2、24、25、27） | `default_controller: sentry`，`locomotion.stationary: true` |
 | `ai.controller: chaser`，在巡邏隊 | `patrol`（巡邏隊固定） |
 | `ai.controller: chaser`，單獨生成（蟲巢、airship 投放、director） | `garrison`，沒有路線（行為 = 現在的單獨 chaser） |
-| `sentry` + `passive_patrol`（21、22、23、39） | `garrison` + `route` 或 x 軸來回 + **`engage: false`** |
+| `sentry` + `passive_patrol`（21、22、23、39） | `garrison` + `route`；**會接戰**（見下方「唯一的行為改變」） |
+| `passive_patrol` 的 x 軸來回（`patrol_extent_x_meters`） | **刪除**；需要來回走的，改寫成相對出生點的兩點 `route` |
 | director 的 `patrol_route` | `spawn_group.controller.route` |
 
-`engage: false` 是為了讓 locomotion 展示用的單位（21–23）維持「只走路、不打人」。
-39（巨人）之後要改成會攻擊時，拿掉這一行即可。
+**刪除「只走路、不打人」的被動巡邏（D19）**：`passive_patrol`、`patrol_extent_x_meters`、
+`patrol_input_magnitude` 與 sentry 的被動巡邏分支一併刪除，gameplay 用不到。
+
+**唯一的行為改變**：21–23（locomotion 展示用）與 39（巨人）改成 garrison 後，看到目標
+就會接戰；沒有目標時照舊沿路線走。要一起改的地方：
+
+- director 100（`tripod_actor`）、102（`quadruped_actor`）的 x 軸來回 → 兩點 `route`。
+- director 101 的三個巨人長條出生點 → 兩點 `route`；narrow pass 的 `patrol_route` →
+  `controller.route`。
+- `agent_cpu_bench` 的 gait 表（quadruped 靠 passive_patrol 自己走）→ 改成 garrison + route。
+- `agent_sentry_per_agent_config_test`（測 passive 與非 passive 設定不互相污染）→ 改測
+  「同一個 template、不同生成來源的 controller 參數不互相污染」，保留原本要防的 bug。
+- `agent_sentry_gravity_test` 的 passive_patrol 分支 → 改成 garrison 走路線的分支。
+- 依賴「展示用單位只走路」的 locomotion 測試，場上沒有目標時行為不變；
+  有目標的測試要逐一確認。
 
 ### 6.4 驗證
 
