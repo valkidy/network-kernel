@@ -1,6 +1,6 @@
 # AI controller 重構實作計劃書
 
-狀態：**設計已定案（§2）；P0 驗證完成（§11）；P1（§6.0）與 P2（§7.0）完成，在 `claude/ai-controller-p1`（2026-10-23）；P3 尚未開始。**
+狀態：**設計已定案（§2）；P0 驗證完成（§11）；P1（§6.0）、P2（§7.0）、P3（§8.0）完成，在 `claude/ai-controller-p1`（2026-10-23）；P4 尚未開始。**
 分支：計劃在 `claude/ai-controller-plan`，從 `main`（84cc4d40，ABI 109）開。
 各階段的實作各自開 `claude/ai-controller-p<N>` 分支。
 最後更新：2026-10-23。
@@ -305,7 +305,7 @@ Search → ForgetTimeout → Idle / Return）。
 |---|---|---|
 | P3a | K1：`Kernel_ServerQueryDamageRecords` | ✅ `claude/ai-controller-p1` |
 | P3b | perception 的 Damaged 事件與各 state 的處理（D6、D8） | ✅ `claude/ai-controller-p1` |
-| P3c | 巡邏隊成員共享注意點（D7） | |
+| P3c | 巡邏隊成員共享注意點（D7） | ✅ `claude/ai-controller-p1` |
 
 P3a（K1）的實作：
 - `KernelDamageRecord`（32 bytes：tick、受害者、攻擊者、命中位置、傷害）；export
@@ -335,6 +335,11 @@ P3b 的實作與決定：
 - 測試：`damage_reaction_test`（友方光束砲台從背後打 gingerbread：被打之前一直是 Idle；下一個 tick 進入
   被打的 Alert，注意點就是砲台；14 ticks 後轉身追擊砲台）。`ai_controller_spec_test` 的「遺忘後回到路線」
   量測改成 2 秒（Alert 中轉向會讓它停在不同的位置，可能剛好在路線端點轉身）。
+
+P3c 的實作：在 `patrol_group_runtime` 判斷 `holding` 的同一個迴圈裡，找到第一個「交戰中而且有注意點」的成員；
+同隊所有 Idle 的成員進入 Alert，注意點相同，alert 的種類（被打 / 看到）也跟著來源。正在 Return 的成員不受影響。
+被叫醒的成員之後靠自己的 perception：看不到就在 forget 後回到 Idle，只要戰鬥還在就會再被叫醒，所以會一直朝那個
+方向看。測試：`patrol_group_runtime_test` 新增一段（共享注意點、Return 的成員不動、沒有注意點的交戰不叫醒任何人）。
 
 - 既有紅燈（與本步驟無關，main 上相同）：`kernel_c_header_test`（`RenderEntityState` 大小）、
   `damage_pipeline_test`、`hitscan_test`（事件數量）。
