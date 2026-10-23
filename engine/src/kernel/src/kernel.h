@@ -935,6 +935,7 @@ private:
         std::size_t last_event,
         const std::vector<NetId>& actors_before_tick);
     bool enqueue_simulation_command(const simulation::Command& command);
+    std::size_t simulation_command_capacity() const;
     std::size_t drain_simulation_commands();
     void record_simulation_tick_cost(
         std::uint64_t cost_us,

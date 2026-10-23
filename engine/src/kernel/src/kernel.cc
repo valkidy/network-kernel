@@ -13606,14 +13606,29 @@ bool KernelEngine::has_projectiles_of_commit(
         });
 }
 
+// Grows with the world. A fixed 2048 dropped about 600 commands a tick from a
+// 1300-agent world (an input and a state per agent, plus turns), always from
+// the agents that sent last, so the same few hundred lost their input every
+// tick and coasted.
+std::size_t KernelEngine::simulation_command_capacity() const {
+    return simulation::CommandQueue::kDefaultCapacity +
+        simulation::CommandQueue::kPerEntityCapacity *
+            world_.registry().view<NetworkIdentity>().size();
+}
+
 bool KernelEngine::enqueue_simulation_command(const simulation::Command& command) {
-    if (!command_queue_.enqueue(command)) {
+    const std::size_t capacity = simulation_command_capacity();
+    if (!command_queue_.enqueue(command, capacity)) {
         ++rejected_simulation_command_count_;
         return false;
     }
 
+    // The same three quarters of capacity the fixed threshold was of 2048.
+    const std::size_t warning_threshold = capacity *
+        simulation::CommandQueue::kWarningThreshold /
+        simulation::CommandQueue::kDefaultCapacity;
     const std::size_t queue_depth = command_queue_.size();
-    if (queue_depth >= simulation::CommandQueue::kWarningThreshold &&
+    if (queue_depth >= warning_threshold &&
         (command_queue_capacity_warning_count_ == 0 ||
          tick_loop_.current_tick() - last_command_queue_capacity_warning_tick_ >=
              120)) {
@@ -13623,8 +13638,8 @@ bool KernelEngine::enqueue_simulation_command(const simulation::Command& command
             "[NetworkExample] simulation command queue depth={} warning_threshold={} "
             "capacity={} rejected_count={}",
             queue_depth,
-            simulation::CommandQueue::kWarningThreshold,
-            simulation::CommandQueue::kDefaultCapacity,
+            warning_threshold,
+            capacity,
             rejected_simulation_command_count_);
     }
     return true;

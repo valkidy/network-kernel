@@ -157,6 +157,9 @@ class CommandQueue {
 public:
     static constexpr std::size_t kDefaultCapacity = 2048;
     static constexpr std::size_t kWarningThreshold = 1536;
+    // On top of kDefaultCapacity, per networked entity: a server AI sends an
+    // input, a state and sometimes a transform for each agent every tick.
+    static constexpr std::size_t kPerEntityCapacity = 4;
 
     bool enqueue(
         const Command& command,
