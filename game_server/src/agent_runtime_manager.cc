@@ -26,6 +26,13 @@ constexpr float kEntryArrivalMeters = kSpawnerEntryArrivalMeters;
 // game-rule wave silently ran whichever template `enemy:` named -- a
 // passive_patrol walker spawned alongside a stationary artillery sentry never
 // patrolled, because the shared config came from the sentry.
+// Garrison and patrol are both the chaser; everything else, including an agent
+// whose template has no ai block, is the sentry, as it always was.
+bool runs_chaser(AgentControllerRole role) {
+    return role == AgentControllerRole::kGarrison ||
+           role == AgentControllerRole::kPatrol;
+}
+
 AgentSentryConfig agent_sentry_config(
     const GameServerGameplayConfig& config,
     std::uint32_t actor_template_id) {
@@ -136,12 +143,11 @@ void AgentRuntimeManager::build_controllers() {
         }
         AgentControllerBinding binding;
         binding.actor_template_id = actor_template.actor_template_id;
-        binding.ai_controller_type = actor_template.ai_controller_type;
+        binding.role = actor_template.default_controller_role;
         // Only the chaser carries tuning here; the sentry controller is
         // stateless and reads each agent's own AgentRuntimeState::sentry_config,
         // so a binding exists purely to route agents to the right controller.
-        if (actor_template.ai_controller_type ==
-            KernelAiControllerType_Chaser) {
+        if (runs_chaser(binding.role)) {
             AgentChaserConfig chaser;
             chaser.sentry =
                 agent_sentry_config(config_, actor_template.actor_template_id);
@@ -156,9 +162,11 @@ void AgentRuntimeManager::build_controllers() {
 }
 
 AgentRuntimeManager::AgentControllerBinding* AgentRuntimeManager::binding_for(
-    std::uint32_t actor_template_id) {
+    std::uint32_t actor_template_id,
+    AgentControllerRole role) {
     for (AgentControllerBinding& binding : controllers_) {
-        if (binding.actor_template_id == actor_template_id) {
+        if (binding.actor_template_id == actor_template_id &&
+            binding.role == role) {
             return &binding;
         }
     }
@@ -185,7 +193,8 @@ void AgentRuntimeManager::dispatch_controllers(
             // unit back into the building it is halfway out of.
             continue;
         }
-        AgentControllerBinding* binding = binding_for(agent.actor_template_id);
+        AgentControllerBinding* binding =
+            binding_for(agent.actor_template_id, agent.controller_role);
         if (binding == nullptr) {
             continue;
         }
@@ -195,7 +204,7 @@ void AgentRuntimeManager::dispatch_controllers(
         if (binding.batch.empty()) {
             continue;
         }
-        if (binding.ai_controller_type == KernelAiControllerType_Chaser) {
+        if (runs_chaser(binding.role)) {
             binding.chaser.tick(
                 kernel_, perception_frame_, binding.batch, delta_seconds);
         } else {
@@ -627,6 +636,11 @@ void AgentRuntimeManager::sync_agents_from_kernel(const ActorStateView& actors) 
             // a template the catalog never names.
             agent.sentry_config =
                 agent_sentry_config(config_, state.actor_template_id);
+            const ActorTemplateConfig* actor_template =
+                find_actor_template(config_, state.actor_template_id);
+            agent.controller_role = actor_template != nullptr
+                ? actor_template->default_controller_role
+                : AgentControllerRole::kNone;
             apply_weapon_mechanics(state.net_id, state.actor_template_id);
         }
         next_agents.push_back(agent);

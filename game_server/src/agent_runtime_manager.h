@@ -51,12 +51,12 @@ public:
     const std::vector<AlertSignal>& alert_signals() const;
 
 private:
-    // One controller per agent actor template. Agents from different templates
-    // share the runtime list but never each other's tuning, so the list is
-    // split into per-template batches before the controllers run.
+    // One controller per agent actor template and role. Agents from different
+    // templates share the runtime list but never each other's tuning, so the
+    // list is split into per-binding batches before the controllers run.
     struct AgentControllerBinding {
         std::uint32_t actor_template_id = 0;
-        std::uint32_t ai_controller_type = KernelAiControllerType_None;
+        AgentControllerRole role = AgentControllerRole::kNone;
         AgentSentryController sentry;
         AgentChaserController chaser;
         // Pointers into agents_, so a controller writes straight through to the
@@ -104,7 +104,9 @@ private:
     // on_alert spawner. Rebuilt every tick, and empty -- at no cost -- in a
     // catalog that has none.
     void collect_alert_signals();
-    AgentControllerBinding* binding_for(std::uint32_t actor_template_id);
+    AgentControllerBinding* binding_for(
+        std::uint32_t actor_template_id,
+        AgentControllerRole role);
 
     KernelHandle* kernel_ = nullptr;
     GameServerGameplayConfig config_;

@@ -413,6 +413,9 @@ void hash_actor_template(
     }
     hash_scalar(hash, actor_template.animation_idle);
     hash_scalar(hash, actor_template.animation_chasing);
+    hash_scalar(
+        hash, static_cast<std::uint32_t>(actor_template.default_controller_role));
+    hash_scalar(hash, actor_template.ai_stationary);
     hash_scalar(hash, actor_template.sentry.alert_ticks);
     hash_scalar(hash, actor_template.sentry.forget_ticks);
     hash_scalar(hash, actor_template.sentry.ballistic_retry_cooldown_ticks);
@@ -3741,6 +3744,169 @@ bool actor_template_has_weapon(
     return false;
 }
 
+// The role-based `ai:` block (docs/AI_CONTROLLER_PLAN.md §6.1) rewritten in the
+// legacy shape the parsers below read, so both shapes load to exactly the same
+// tuning. Until P1d moves every template over, a template may use either one,
+// never a mix.
+//
+//   default_controller  -> controller (sentry -> sentry, otherwise chaser)
+//   perception          -> sentry   (idle_rotation_* -> patrol_rotation_*)
+//   locomotion          -> chaser   (stationary is checked, not copied)
+//   controllers.patrol  -> patrol
+YAML::Node legacy_ai_from_role_based(
+    const YAML::Node& ai,
+    const ActorTemplateConfig& actor_template,
+    const std::string& path,
+    std::uint32_t source_kind,
+    AgentControllerRole* out_role,
+    bool* out_stationary) {
+    const auto reject = [&](const YAML::Node& node,
+                            std::initializer_list<const char*> keys) {
+        reject_unknown_keys(
+            node,
+            keys,
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+            actor_template.actor_template_id);
+    };
+    const auto fail = [&](const std::string& what) {
+        throw std::runtime_error(
+            "actor template ai " + what + ": " + actor_template.name);
+    };
+    for (const char* legacy_key : {"controller", "sentry", "chaser", "patrol"}) {
+        if (ai[legacy_key]) {
+            fail(std::string("mixes default_controller with legacy key ") +
+                 legacy_key);
+        }
+    }
+    reject(ai, {
+        "default_controller",
+        "profile",
+        "tick_interval",
+        "perception",
+        "locomotion",
+        "controllers",
+    });
+    if (!ai["default_controller"]) {
+        fail("requires default_controller");
+    }
+    const std::string controller = ai["default_controller"].as<std::string>();
+    if (controller == "sentry") {
+        *out_role = AgentControllerRole::kSentry;
+    } else if (controller == "garrison") {
+        *out_role = AgentControllerRole::kGarrison;
+    } else if (controller == "patrol") {
+        *out_role = AgentControllerRole::kPatrol;
+    } else if (controller == "hunter") {
+        fail("default_controller hunter is not implemented yet (plan P6)");
+    } else {
+        fail("default_controller is unsupported: " + controller);
+    }
+    const bool sentry = *out_role == AgentControllerRole::kSentry;
+
+    YAML::Node legacy(YAML::NodeType::Map);
+    legacy["controller"] = sentry ? "sentry" : "chaser";
+    for (const char* key : {"profile", "tick_interval"}) {
+        if (ai[key]) legacy[key] = YAML::Clone(ai[key]);
+    }
+
+    if (const YAML::Node perception = ai["perception"]) {
+        reject(perception, {
+            "alert_ticks",
+            "forget_ticks",
+            "ballistic_retry_cooldown_ticks",
+            "idle_rotation_interval_ticks",
+            "idle_rotation_degrees",
+            "weapon_slot",
+            "animation_idle",
+            "animation_attack",
+        });
+        YAML::Node legacy_sentry(YAML::NodeType::Map);
+        for (const char* key : {
+                 "alert_ticks",
+                 "forget_ticks",
+                 "ballistic_retry_cooldown_ticks",
+                 "weapon_slot",
+                 "animation_idle",
+                 "animation_attack",
+             }) {
+            if (perception[key]) legacy_sentry[key] = YAML::Clone(perception[key]);
+        }
+        if (perception["idle_rotation_interval_ticks"]) {
+            legacy_sentry["patrol_rotation_interval_ticks"] =
+                YAML::Clone(perception["idle_rotation_interval_ticks"]);
+        }
+        if (const YAML::Node degrees = perception["idle_rotation_degrees"]) {
+            reject(degrees, {"min", "max"});
+            if (degrees["min"]) {
+                legacy_sentry["patrol_rotation_min_degrees"] =
+                    YAML::Clone(degrees["min"]);
+            }
+            if (degrees["max"]) {
+                legacy_sentry["patrol_rotation_max_degrees"] =
+                    YAML::Clone(degrees["max"]);
+            }
+        }
+        legacy["sentry"] = legacy_sentry;
+    }
+
+    *out_stationary = sentry;
+    if (const YAML::Node locomotion = ai["locomotion"]) {
+        reject(locomotion, {
+            "stationary",
+            "stop_distance_meters",
+            "resume_distance_meters",
+            "input_magnitude",
+            "attack_range_meters",
+            "leap",
+            "charge",
+        });
+        if (locomotion["stationary"]) {
+            *out_stationary = locomotion["stationary"].as<bool>();
+        }
+        YAML::Node legacy_chaser(YAML::NodeType::Map);
+        for (const char* key : {
+                 "stop_distance_meters",
+                 "resume_distance_meters",
+                 "input_magnitude",
+                 "attack_range_meters",
+                 "leap",
+                 "charge",
+             }) {
+            if (!locomotion[key]) continue;
+            if (sentry) {
+                fail(std::string("sentry is stationary and takes no locomotion.") +
+                     key);
+            }
+            legacy_chaser[key] = YAML::Clone(locomotion[key]);
+        }
+        if (legacy_chaser.size() > 0) legacy["chaser"] = legacy_chaser;
+    }
+    if (*out_stationary != sentry) {
+        fail(sentry ? "sentry must be stationary"
+                    : "only a sentry may be stationary");
+    }
+
+    if (const YAML::Node controllers = ai["controllers"]) {
+        if (sentry) {
+            fail("sentry takes no controllers block");
+        }
+        reject(controllers, {"patrol", "garrison"});
+        if (controllers["patrol"]) {
+            legacy["patrol"] = YAML::Clone(controllers["patrol"]);
+        }
+        // Nothing to tune on a garrison until it walks routes (P1c) and has a
+        // leash (P2); an empty block is accepted so templates can name it.
+        if (const YAML::Node garrison = controllers["garrison"]) {
+            if (garrison.IsMap() && garrison.size() > 0) {
+                fail("controllers.garrison takes no keys yet");
+            }
+        }
+    }
+    return legacy;
+}
+
 AgentSentryConfig sentry_config_from_yaml(
     const YAML::Node& node,
     const ActorTemplateConfig& actor_template,
@@ -4925,9 +5091,22 @@ ActorTemplateConfig actor_template_from_yaml(
                 animations["chasing"].as<std::uint16_t>();
         }
     }
-    if (node["ai"]) {
+    YAML::Node ai = node["ai"];
+    const bool role_based_ai = ai &&
+        (ai["default_controller"] || ai["perception"] || ai["locomotion"] ||
+         ai["controllers"]);
+    if (role_based_ai) {
+        ai = legacy_ai_from_role_based(
+            ai,
+            actor_template,
+            path,
+            source_kind,
+            &actor_template.default_controller_role,
+            &actor_template.ai_stationary);
+    }
+    if (ai) {
         reject_unknown_keys(
-            node["ai"],
+            ai,
             {
                 "controller",
                 "profile",
@@ -4940,30 +5119,41 @@ ActorTemplateConfig actor_template_from_yaml(
             source_kind,
             KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
             actor_template.actor_template_id);
-        if (node["ai"]["controller"]) {
-            const std::string controller =
-                node["ai"]["controller"].as<std::string>();
+        if (ai["controller"]) {
+            const std::string controller = ai["controller"].as<std::string>();
             if (controller == "sentry") {
                 actor_template.ai_controller_type = KernelAiControllerType_Sentry;
+                if (!role_based_ai) {
+                    actor_template.default_controller_role =
+                        AgentControllerRole::kSentry;
+                }
             } else if (controller == "chaser") {
                 actor_template.ai_controller_type = KernelAiControllerType_Chaser;
+                if (!role_based_ai) {
+                    actor_template.default_controller_role =
+                        AgentControllerRole::kGarrison;
+                }
             } else if (controller == "director") {
                 actor_template.ai_controller_type = kAiControllerTypeDirector;
             } else {
                 throw std::runtime_error("unsupported ai.controller: " + controller);
             }
         }
-        if (node["ai"]["tick_interval"]) {
+        if (ai["tick_interval"]) {
             actor_template.ai_tick_interval =
-                node["ai"]["tick_interval"].as<std::uint32_t>();
+                ai["tick_interval"].as<std::uint32_t>();
         }
     }
     actor_template.sentry =
-        sentry_config_from_yaml(node["ai"], actor_template, weapons, path, source_kind);
+        sentry_config_from_yaml(ai, actor_template, weapons, path, source_kind);
     actor_template.chaser =
-        chaser_config_from_yaml(node["ai"], actor_template, path, source_kind);
+        chaser_config_from_yaml(ai, actor_template, path, source_kind);
     actor_template.patrol =
-        patrol_tuning_from_yaml(node["ai"], actor_template, path, source_kind);
+        patrol_tuning_from_yaml(ai, actor_template, path, source_kind);
+    if (!role_based_ai &&
+        actor_template.default_controller_role == AgentControllerRole::kSentry) {
+        actor_template.ai_stationary = !actor_template.sentry.passive_patrol;
+    }
     actor_template.vision = vision_config_from_yaml(
         node["vision"],
         actor_template,

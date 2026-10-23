@@ -68,6 +68,18 @@ struct AgentPatrolRuntimeState {
     KernelVec3 leash_anchor{0.0f, 0.0f, 0.0f};
 };
 
+// What an agent is there to do, which picks the controller that runs it
+// (docs/AI_CONTROLLER_PLAN.md D1, D2). A template names a default; P1b lets
+// whatever spawned the agent choose instead. Sentry runs the sentry
+// controller; garrison and patrol both run the chaser, which tells them apart
+// by whether the squad gave the agent a slot.
+enum class AgentControllerRole : std::uint8_t {
+    kNone = 0,
+    kSentry,
+    kGarrison,
+    kPatrol,
+};
+
 struct AgentSentryRuntimeState {
     std::uint32_t self_id = 0;
     AgentSentryState state = AgentSentryState::kIdle;
@@ -141,6 +153,8 @@ struct AgentRuntimeState {
     // Selects which controller and which tuning this agent runs under; agents
     // spawned from different templates share one runtime list.
     std::uint32_t actor_template_id = 0;
+    // Resolved once, when the runtime first discovers the agent.
+    AgentControllerRole controller_role = AgentControllerRole::kNone;
     KernelVec3 position{0.0f, 0.0f, 0.0f};
     KernelVec3 patrol_anchor{0.0f, 0.0f, 0.0f};
     KernelVec3 velocity{0.0f, 0.0f, 0.0f};

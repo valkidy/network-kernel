@@ -115,6 +115,22 @@ snapshot / packet schema：P1–P6 都不需要改。新的 animation_state 值�
 目標：只換格式與 controller 的決定方式。除了 §6.3 刪除被動巡邏造成的改變，現有測試的
 結果必須完全一樣（以失敗集合為準，main 本來就有紅燈）。
 
+### 6.0 拆分與進度
+
+P1 實作時發現範圍比原本的「catalog 重整」大（garrison 走路線是新的 controller 邏輯；生成來源
+覆寫要穿過四個 director），所以拆成四步，每步一個 commit：
+
+| 步驟 | 內容 | 行為改變 | 狀態 |
+|---|---|---|---|
+| P1a | 新格式與舊格式並存（新格式在載入時轉成舊格式的形狀，再用原本的 parser）；每個 agent 帶 `AgentControllerRole`，controller 依（template, role）綁定 | 無 | ✅ `claude/ai-controller-p1` |
+| P1b | 生成來源覆寫：四個 director 回傳 net_id → controller spec；參數合併與驗證；`patrol_route` → `controller.route` | 無 | |
+| P1c | garrison 走路線（共用 helper）、刪除 `passive_patrol` 與 x 軸來回、轉換 21–23、39 與 director 100–102、更新測試 | **有** | |
+| P1d | 所有 template 改用新格式、刪除舊格式（parser 直接讀新 key）、更新 `shipping_catalog_flow_test` 與 bench | 無 | |
+
+P1a 的對應（舊 → role）：`controller: sentry` → `kSentry`（`stationary` = 不是 passive_patrol）；
+`controller: chaser` → `kGarrison`。kernel 的 `ai_controller_type` 不變（sentry → Sentry，其他 →
+Chaser），**不需要 ABI 改動**。`hunter` 在 P6 之前會被拒絕；`controllers.garrison` 目前只接受空區塊。
+
 ### 6.1 template 格式
 
 ```yaml

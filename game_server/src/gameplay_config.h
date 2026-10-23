@@ -283,6 +283,12 @@ struct ActorTemplateConfig {
     SpawnerConfig spawner{};
     KernelAgentVisionConfig vision{};
     std::uint32_t ai_controller_type = KernelAiControllerType_None;
+    // ai.default_controller, or what a legacy ai.controller amounts to:
+    // sentry -> kSentry, chaser -> kGarrison.
+    AgentControllerRole default_controller_role = AgentControllerRole::kNone;
+    // Never moves on its own. Only a sentry may be stationary, and a sentry is
+    // unless it is a legacy passive_patrol walker.
+    bool ai_stationary = false;
     std::uint32_t ai_tick_interval = 1;
     AuthoredDirectorKind director_kind = AuthoredDirectorKind::kNone;
     std::uint32_t director_spawn_target_count = 0;
