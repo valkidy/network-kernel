@@ -21,11 +21,6 @@ constexpr std::size_t kMaxQueriedActors = 65536;
 // out" and "close enough to stop" cannot drift apart.
 constexpr float kEntryArrivalMeters = kSpawnerEntryArrivalMeters;
 
-// Resolved from the agent's OWN actor template, not from the catalog's single
-// `enemy:` entry. Holding one controller-wide config meant an agent spawned by a
-// game-rule wave silently ran whichever template `enemy:` named -- a
-// passive_patrol walker spawned alongside a stationary artillery sentry never
-// patrolled, because the shared config came from the sentry.
 void take_controllers(
     std::vector<SpawnedControllerSpec> taken,
     std::vector<SpawnedControllerSpec>* pending) {
@@ -42,6 +37,11 @@ bool runs_chaser(AgentControllerRole role) {
            role == AgentControllerRole::kPatrol;
 }
 
+// Resolved from the agent's OWN actor template, not from the catalog's single
+// `enemy:` entry. Holding one controller-wide config meant an agent spawned by a
+// game-rule wave silently ran whichever template `enemy:` named -- a
+// walker spawned alongside a stationary artillery sentry never walked, because
+// the shared config came from the sentry.
 AgentSentryConfig agent_sentry_config(
     const GameServerGameplayConfig& config,
     std::uint32_t actor_template_id) {
@@ -351,12 +351,12 @@ void AgentRuntimeManager::attach_route(
     const std::vector<KernelVec3>& waypoints) {
     AgentRuntimeState& agent = *agent_state;
     {
-        if (!agent.sentry_config.passive_patrol) {
-            // Only the passive sweep walks a route until garrisons do (P1c);
-            // anything else decides its own movement and would silently
-            // ignore one. The catalog refuses this, so it is a bug if seen.
+        if (agent.controller_role != AgentControllerRole::kGarrison) {
+            // Only a garrison walks a route; anything else decides its own
+            // movement and would silently ignore one. The catalog refuses
+            // this, so it is a bug if seen.
             spdlog::warn(
-                "patrol route on an agent without passive_patrol net_id={} template_id={}",
+                "patrol route on an agent that is not a garrison net_id={} template_id={}",
                 agent.net_id,
                 agent.actor_template_id);
             return;
@@ -667,7 +667,6 @@ void AgentRuntimeManager::sync_agents_from_kernel(const ActorStateView& actors) 
         agent.animation_state = state.animation_state;
         agent.sentry.self_id = state.net_id;
         if (discovered_agent) {
-            agent.patrol_anchor = state.position;
             // An actor template is immutable, so this is resolved once rather
             // than every tick. state.actor_template_id is what the entity was
             // actually spawned from, which is the whole point: a wave can spawn

@@ -57,6 +57,14 @@ KernelVec2 horizontal_move_toward(
     const KernelVec3& to,
     float magnitude);
 
+// One tick of walking an authored route: toward the next corner, taking the
+// one after on arrival and turning back at either end. Zero on a one-point
+// route once the agent stands on it.
+KernelVec2 route_patrol_move(
+    AgentRoutePatrolState* route,
+    const KernelVec3& position,
+    float magnitude);
+
 }  // namespace network_example::game_server::agent_steering
 
 #endif  // GAME_SERVER_AGENT_STEERING_H_

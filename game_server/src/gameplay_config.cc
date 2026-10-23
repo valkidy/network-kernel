@@ -430,9 +430,6 @@ void hash_actor_template(
     hash_scalar(hash, actor_template.sentry.patrol_rotation_interval_ticks);
     hash_float(hash, actor_template.sentry.patrol_rotation_min_degrees);
     hash_float(hash, actor_template.sentry.patrol_rotation_max_degrees);
-    hash_scalar(hash, actor_template.sentry.passive_patrol);
-    hash_float(hash, actor_template.sentry.patrol_extent_x_meters);
-    hash_float(hash, actor_template.sentry.patrol_input_magnitude);
     hash_scalar(hash, actor_template.sentry.weapon_id);
     hash_float(hash, actor_template.chaser.stop_distance_meters);
     hash_float(hash, actor_template.chaser.resume_distance_meters);
@@ -3580,7 +3577,8 @@ SpawnerConfig spawner_from_yaml(
 
 // A spawn source's `controller:` block (plan D1): `type` picks the role its
 // agents run as instead of their template's default; `route`, where the
-// source allows one, is world-space waypoints. Whether the role suits the
+// source allows one, is waypoints in the source's own frame (world space on a
+// spawn_group, offsets from the spawn point on a world rule). Whether the role suits the
 // template it spawns is checked once every template is known, in
 // validate_gameplay_config.
 AgentControllerSpec controller_spec_from_yaml(
@@ -3994,6 +3992,15 @@ AgentSentryConfig sentry_config_from_yaml(
                 "actor template sentry weapon_id was replaced by weapon_slot "
                 "(an index into weapon_slots): " + actor_template.name);
         }
+        for (const char* removed :
+             {"passive_patrol", "patrol_extent_x_meters", "patrol_input_magnitude"}) {
+            if (sentry_node[removed]) {
+                throw std::runtime_error(
+                    std::string("actor template sentry ") + removed +
+                    " was removed (AI plan D19): a walker is a garrison with a "
+                    "controller.route: " + actor_template.name);
+            }
+        }
         reject_unknown_keys(
             sentry_node,
             {
@@ -4003,9 +4010,6 @@ AgentSentryConfig sentry_config_from_yaml(
                 "patrol_rotation_interval_ticks",
                 "patrol_rotation_min_degrees",
                 "patrol_rotation_max_degrees",
-                "passive_patrol",
-                "patrol_extent_x_meters",
-                "patrol_input_magnitude",
                 "weapon_slot",
                 "animation_idle",
                 "animation_attack",
@@ -4036,17 +4040,6 @@ AgentSentryConfig sentry_config_from_yaml(
         if (sentry_node["patrol_rotation_max_degrees"]) {
             sentry.patrol_rotation_max_degrees =
                 sentry_node["patrol_rotation_max_degrees"].as<float>();
-        }
-        if (sentry_node["passive_patrol"]) {
-            sentry.passive_patrol = sentry_node["passive_patrol"].as<bool>();
-        }
-        if (sentry_node["patrol_extent_x_meters"]) {
-            sentry.patrol_extent_x_meters =
-                sentry_node["patrol_extent_x_meters"].as<float>();
-        }
-        if (sentry_node["patrol_input_magnitude"]) {
-            sentry.patrol_input_magnitude =
-                sentry_node["patrol_input_magnitude"].as<float>();
         }
         // The fired weapon is named by slot, not id, so the id is authored once
         // in weapon_slots. Omitted, it is the active slot's weapon.
@@ -5219,7 +5212,7 @@ ActorTemplateConfig actor_template_from_yaml(
         patrol_tuning_from_yaml(ai, actor_template, path, source_kind);
     if (!role_based_ai &&
         actor_template.default_controller_role == AgentControllerRole::kSentry) {
-        actor_template.ai_stationary = !actor_template.sentry.passive_patrol;
+        actor_template.ai_stationary = true;
     }
     actor_template.vision = vision_config_from_yaml(
         node["vision"],
@@ -6549,7 +6542,7 @@ EntityTemplateConfig entity_template_from_yaml(
     }
     entity_template.director_spawn_controller = controller_spec_from_yaml(
         spawn["controller"],
-        false,
+        true,
         "world_rule director.spawn",
         path,
         source_kind,
@@ -11613,8 +11606,8 @@ void validate_derived_projectiles(
 
 // Whether a spawn source's controller suits the template it spawns (plan
 // D1, §6.4). A sentry is for a stationary template, garrison and patrol for
-// one that moves; until garrisons walk routes (P1c) a route is followed only
-// by a legacy passive_patrol walker, so anything else would drop it silently.
+// one that moves; only a garrison walks a route, so a route on anything else
+// would be dropped silently.
 void validate_controller_spec(
     const GameServerGameplayConfig& config,
     const AgentControllerSpec& spec,
@@ -11647,11 +11640,9 @@ void validate_controller_spec(
             (role == AgentControllerRole::kPatrol ? "patrol" : "garrison") +
             " on a sentry template: " + actor_template->name);
     }
-    if (!spec.route.empty() &&
-        !(role == AgentControllerRole::kSentry && !actor_template->ai_stationary)) {
+    if (!spec.route.empty() && role != AgentControllerRole::kGarrison) {
         errors->push_back(
-            where + " controller.route needs a passive_patrol walker until "
-            "garrisons walk routes (plan P1c): " + actor_template->name);
+            where + " controller.route needs a garrison: " + actor_template->name);
     }
 }
 
@@ -12112,19 +12103,7 @@ std::vector<std::string> validate_gameplay_config(
              actor_template.sentry.patrol_rotation_interval_ticks == 0 ||
              actor_template.sentry.patrol_rotation_min_degrees <= 0.0f ||
              actor_template.sentry.patrol_rotation_max_degrees <
-                 actor_template.sentry.patrol_rotation_min_degrees ||
-             !std::isfinite(actor_template.sentry.patrol_extent_x_meters) ||
-             !std::isfinite(actor_template.sentry.patrol_input_magnitude) ||
-             (actor_template.sentry.passive_patrol &&
-              (actor_template.sentry.patrol_extent_x_meters <= 0.0f ||
-               actor_template.sentry.patrol_input_magnitude <= 0.0f ||
-               actor_template.sentry.patrol_input_magnitude > 1.0f ||
-               !std::isfinite(
-                   actor_template.sentry.move_speed_meters_per_second) ||
-               actor_template.sentry.move_speed_meters_per_second <= 0.0f)) ||
-             (!actor_template.sentry.passive_patrol &&
-              (actor_template.sentry.patrol_extent_x_meters != 0.0f ||
-               actor_template.sentry.patrol_input_magnitude != 0.0f)))) {
+                 actor_template.sentry.patrol_rotation_min_degrees)) {
             errors.push_back("agent sentry actor template must be valid");
         }
         if (actor_template.actor_type == kActorTypeAgent &&
@@ -12150,7 +12129,6 @@ std::vector<std::string> validate_gameplay_config(
              (actor_template.chaser.attack_range_meters > 0.0f &&
               actor_template.chaser.resume_distance_meters >
                   actor_template.chaser.attack_range_meters) ||
-             actor_template.sentry.passive_patrol ||
              !std::isfinite(actor_template.sentry.move_speed_meters_per_second) ||
              actor_template.sentry.move_speed_meters_per_second <= 0.0f)) {
             errors.push_back("agent chaser actor template must be valid");

@@ -82,8 +82,13 @@ void WorldRuleDirector::tick(
                 break;
             }
             if (!rule.controller.empty()) {
-                spawned_controllers_.push_back(
-                    SpawnedControllerSpec{net_id, rule.controller});
+                SpawnedControllerSpec spawned{net_id, rule.controller};
+                for (KernelVec3& waypoint : spawned.spec.route) {
+                    waypoint.x += create_info.position.x;
+                    waypoint.y += create_info.position.y;
+                    waypoint.z += create_info.position.z;
+                }
+                spawned_controllers_.push_back(std::move(spawned));
             }
             ++created;
         }

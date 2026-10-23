@@ -31,8 +31,9 @@ struct WorldRuleSpawnConfig {
     KernelVec3 position{0.0f, 0.0f, 0.0f};
     float radius = 0.0f;
     std::uint32_t tick_interval = 1;
-    // director.spawn.controller: a type only; a route here would have no frame
-    // to sit in, since the rule spreads its agents round a circle.
+    // director.spawn.controller. The rule spreads its agents round a circle,
+    // so a route here is offsets from each agent's own spawn point; the
+    // director makes them world space when it reports the agent.
     AgentControllerSpec controller;
 };
 

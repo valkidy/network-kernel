@@ -4,8 +4,8 @@
 //
 // Every shipped agent template is rewritten into the new shape and the two
 // catalogs are loaded side by side, so a field the translation drops shows up
-// as a mismatch on whichever template authors it. The legacy passive_patrol
-// walkers have no role-based spelling and are left as they are (P1c).
+// as a mismatch on whichever template authors it. Templates already in the
+// new shape (the garrison walkers, P1c) are left as they are.
 
 #include <cmath>
 #include <cstdint>
@@ -51,12 +51,6 @@ fs::path scratch_catalog(const std::string& name) {
 gs::GameServerGameplayConfig load(const fs::path& root) {
     return gs::load_gameplay_config_from_catalog_file(
         (root / "gameplay_catalog.yaml").string());
-}
-
-bool has_passive_patrol(const YAML::Node& ai) {
-    const YAML::Node sentry = ai["sentry"];
-    return sentry && (sentry["passive_patrol"] || sentry["patrol_extent_x_meters"] ||
-                      sentry["patrol_input_magnitude"]);
 }
 
 // The legacy block in the new shape: the inverse of the loader's translation.
@@ -110,7 +104,6 @@ int rewrite_agents(const fs::path& root) {
         if (!ai || !ai["controller"]) continue;
         const std::string controller = ai["controller"].as<std::string>();
         if (controller != "sentry" && controller != "chaser") continue;
-        if (has_passive_patrol(ai)) continue;
         node["ai"] = role_based(ai);
         write_yaml(entry.path(), node);
         ++rewritten;
@@ -135,7 +128,6 @@ void same_tuning(const gs::ActorTemplateConfig& a, const gs::ActorTemplateConfig
     require(s.patrol_rotation_interval_ticks == t.patrol_rotation_interval_ticks);
     require(same(s.patrol_rotation_min_degrees, t.patrol_rotation_min_degrees));
     require(same(s.patrol_rotation_max_degrees, t.patrol_rotation_max_degrees));
-    require(s.passive_patrol == t.passive_patrol);
     require(same(s.move_speed_meters_per_second, t.move_speed_meters_per_second));
     require(s.weapon_id == t.weapon_id);
     require(s.animation_idle == t.animation_idle);
@@ -198,11 +190,11 @@ void both_shapes_load_the_same_tuning() {
     std::printf("[format] compared %d (sentry %d, garrison %d)\n",
                 compared, sentries, garrisons);
     require(compared >= rewritten);
-    require(sentries >= 4 && garrisons >= 10);
+    require(sentries >= 4 && garrisons >= 14);
 }
 
-// The legacy reading, pinned: sentry -> kSentry (stationary unless it walks),
-// chaser -> kGarrison.
+// The legacy reading, pinned: sentry -> kSentry (always stationary), chaser ->
+// kGarrison; and the walkers, authored in the new shape, are garrisons.
 void legacy_roles_are_what_the_plan_says(const gs::GameServerGameplayConfig& config) {
     const auto role = [&](std::uint32_t id) {
         const gs::ActorTemplateConfig* t = gs::find_actor_template(config, id);
@@ -211,8 +203,8 @@ void legacy_roles_are_what_the_plan_says(const gs::GameServerGameplayConfig& con
     };
     require(role(2)->default_controller_role == gs::AgentControllerRole::kSentry);
     require(role(2)->ai_stationary);
-    require(role(21)->default_controller_role == gs::AgentControllerRole::kSentry);
-    require(!role(21)->ai_stationary);  // passive_patrol walker
+    require(role(21)->default_controller_role == gs::AgentControllerRole::kGarrison);
+    require(!role(21)->ai_stationary);
     require(role(28)->default_controller_role == gs::AgentControllerRole::kGarrison);
     require(!role(28)->ai_stationary);
 }

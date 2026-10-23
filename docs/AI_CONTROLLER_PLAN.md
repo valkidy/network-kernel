@@ -124,7 +124,7 @@ P1 實作時發現範圍比原本的「catalog 重整」大（garrison 走路線
 |---|---|---|---|
 | P1a | 新格式與舊格式並存（新格式在載入時轉成舊格式的形狀，再用原本的 parser）；每個 agent 帶 `AgentControllerRole`，controller 依（template, role）綁定 | 無 | ✅ `claude/ai-controller-p1` |
 | P1b | 生成來源覆寫：四個 director 回傳 net_id → controller spec；驗證；`patrol_route` → `controller.route` | 無 | ✅ `claude/ai-controller-p1` |
-| P1c | garrison 走路線（共用 helper）、刪除 `passive_patrol` 與 x 軸來回、轉換 21–23、39 與 director 100–102、更新測試 | **有** | |
+| P1c | garrison 走路線（共用 helper）、刪除 `passive_patrol` 與 x 軸來回、轉換 21–23、39 與 director 100–102、更新測試 | **有** | ✅ `claude/ai-controller-p1` |
 | P1d | 所有 template 改用新格式、刪除舊格式（parser 直接讀新 key）、更新 `shipping_catalog_flow_test` 與 bench | 無 | |
 
 P1a 的對應（舊 → role）：`controller: sentry` → `kSentry`（`stationary` = 不是 passive_patrol）；
@@ -137,6 +137,20 @@ spawner 與 world rule 只接受 `controller: {type}`（world rule 把 agent 散
 產生，hunter 等 P6）。載入時檢查：sentry 只能用在 sentry template、garrison / patrol 不能用在 sentry
 template、route 在 P1c 之前只能給 legacy passive_patrol walker。**參數覆寫延後**：garrison 在 P2 之前
 沒有參數，巡邏隊成員用 template 的 `controllers.patrol`，目前沒有可以覆寫的東西。
+
+P1c 的實作：路線行走移到 `agent_steering::route_patrol_move`，chaser 在 Idle、沒有巡邏隊位置、
+有路線時走路線（速度沿用 `locomotion.input_magnitude`，garrison 自己的參數等 P2）；打完後從所在位置
+直接走向原本要去的轉角（navmesh 重新尋路與 leash 是 P2 的）。只有 garrison 會被掛上路線。world rule
+的 `controller.route` 是相對每個 agent 出生點的位移。21–23、39 改寫成新格式的 garrison（停在 8 m、
+10 m 再追，射程不設限，因為武器是 spammer）。director 100、102 用 ±30 m 的相對路線，101 的三個
+長條巨人用世界座標的兩點路線。`passive_patrol` / `patrol_extent_x_meters` / `patrol_input_magnitude`
+在載入時會被拒絕，並提示改用 garrison + route。
+
+行為改變與測試：這四種單位看到目標就會接戰（`ai_controller_spec_test` 量了「走路線 → 接戰 → 遺忘
+→ 回到路線」）；`pass_giant_route_test` 的長條巨人偏離容許值從 0.5 m 放寬到 2 m（路段改走 navmesh，
+轉角可能偏離直線約 1 m）；`agent_cpu_bench` 的步態表中，四足單位不再自己走，而是追擊原點的玩家；
+`agent_sentry_per_agent_config_test` 與 `agent_sentry_gravity_test` 改成不依賴被動巡邏。
+`gameplay_config_test` 在 main 上本來就無法 build，沒有改。
 
 ### 6.1 template 格式
 

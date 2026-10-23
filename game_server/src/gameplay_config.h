@@ -286,8 +286,7 @@ struct ActorTemplateConfig {
     // ai.default_controller, or what a legacy ai.controller amounts to:
     // sentry -> kSentry, chaser -> kGarrison.
     AgentControllerRole default_controller_role = AgentControllerRole::kNone;
-    // Never moves on its own. Only a sentry may be stationary, and a sentry is
-    // unless it is a legacy passive_patrol walker.
+    // Never moves on its own: exactly the sentries.
     bool ai_stationary = false;
     std::uint32_t ai_tick_interval = 1;
     AuthoredDirectorKind director_kind = AuthoredDirectorKind::kNone;
@@ -298,7 +297,8 @@ struct ActorTemplateConfig {
     KernelVec3 director_spawn_position{};
     float director_spawn_radius = 0.0f;
     std::uint32_t director_spawn_seed = 1;
-    // director.spawn.controller (world_rule): a role only.
+    // director.spawn.controller (world_rule): a role, and a route as offsets
+    // from each agent's spawn point.
     AgentControllerSpec director_spawn_controller;
     struct GameRuleNodeConfig {
         std::uint32_t node_id = 0;
@@ -314,9 +314,8 @@ struct ActorTemplateConfig {
         KernelVec3 spawn_position{};
         float spawn_radius = 0.0f;
         std::uint32_t spawn_seed = 1;
-        // spawn_group.controller: a role and/or a world-space route (until
-        // P1c only a passive_patrol walker follows one, pathed over the navmesh
-        // and ping-ponged; without one it keeps its template's x-axis sweep).
+        // spawn_group.controller: a role and/or a world-space route, which a
+        // garrison walks pathed over the navmesh and ping-ponged.
         AgentControllerSpec spawn_controller;
         std::vector<std::string> next_refs;
         std::vector<std::uint32_t> next_node_ids;

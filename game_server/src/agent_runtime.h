@@ -87,7 +87,7 @@ enum class AgentControllerRole : std::uint8_t {
 struct AgentControllerSpec {
     // kNone keeps the template's default_controller_role.
     AgentControllerRole role = AgentControllerRole::kNone;
-    // World space. Only a legacy passive_patrol walker follows one until P1c.
+    // World space. Only a garrison follows one.
     std::vector<KernelVec3> route;
 
     bool empty() const {
@@ -126,9 +126,6 @@ struct AgentSentryConfig {
     std::uint32_t patrol_rotation_interval_ticks = 30;
     float patrol_rotation_min_degrees = 15.0f;
     float patrol_rotation_max_degrees = 30.0f;
-    bool passive_patrol = false;
-    float patrol_extent_x_meters = 0.0f;
-    float patrol_input_magnitude = 0.0f;
     float move_speed_meters_per_second = 0.0f;
     std::uint16_t weapon_id = UINT16_MAX;
     BallisticAimProfile ballistic_aim;
@@ -161,8 +158,8 @@ struct AgentEntryRuntimeState {
     std::uint32_t restore_movement_collision_mask = 0;
 };
 
-// An authored route a passive_patrol sentry walks instead of its x-axis sweep:
-// the waypoints joined by navmesh corners, walked to the end and back.
+// An authored route a garrison walks while idle: the waypoints joined by
+// navmesh corners, walked to the end and back.
 struct AgentRoutePatrolState {
     std::vector<KernelVec3> path;
     std::size_t next = 0;
@@ -178,7 +175,6 @@ struct AgentRuntimeState {
     // Resolved once, when the runtime first discovers the agent.
     AgentControllerRole controller_role = AgentControllerRole::kNone;
     KernelVec3 position{0.0f, 0.0f, 0.0f};
-    KernelVec3 patrol_anchor{0.0f, 0.0f, 0.0f};
     KernelVec3 velocity{0.0f, 0.0f, 0.0f};
     std::uint16_t hp = kAgentInitialHp;
     std::uint16_t max_hp = kAgentInitialHp;
@@ -195,8 +191,8 @@ struct AgentRuntimeState {
     // Resolved once from this agent's own actor template when the runtime first
     // discovers it; see AgentRuntimeManager::sync_agents_from_kernel.
     AgentSentryConfig sentry_config{};
-    int patrol_direction = 1;
-    // Sentry passive_patrol only; empty for the x-axis sweep.
+    // Garrison only: the route its spawn source gave it, walked whenever it
+    // has nothing to fight. Empty for a garrison that stands its ground.
     AgentRoutePatrolState route_patrol{};
     // Chaser only: true once the agent has closed inside its stop distance and
     // is holding position, until the target opens the gap back up.

@@ -402,6 +402,22 @@ void AgentChaserController::tick(
                         entity_state.rotation,
                         &desired_rotation) ||
                     should_update_rotation;
+            } else if (!has_slot(agent) && !agent.route_patrol.path.empty()) {
+                // A garrison on a route walks it whenever it has nothing to
+                // fight, and after a fight carries on to the corner it was
+                // heading for from wherever the fight left it. Pathing back
+                // and a leash on the route are P2's.
+                move = agent_steering::route_patrol_move(
+                    &agent.route_patrol, agent.position, config_.chase.input_magnitude);
+                should_update_rotation =
+                    agent_steering::facing_rotation_from_vision_toward(
+                        agent.position,
+                        KernelVec3{agent.position.x + move.x, agent.position.y,
+                                   agent.position.z + move.y},
+                        perception.vision_forward,
+                        entity_state.rotation,
+                        &desired_rotation) ||
+                    should_update_rotation;
             } else {
                 should_update_rotation = agent_steering::update_patrol_facing(
                     sentry_config.patrol_rotation_interval_ticks,

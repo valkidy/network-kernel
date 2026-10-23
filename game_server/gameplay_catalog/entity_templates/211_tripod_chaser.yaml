@@ -1,6 +1,5 @@
-# tripod_actor with the gingerbread's chaser AI instead of a passive-patrol
-# sentry. A separate template rather than an edit, because
-# agent_sentry_per_agent_config_test depends on tripod_actor patrolling.
+# tripod_actor with the gingerbread's melee chaser tuning instead of its
+# ranged garrison one.
 id: 211
 name: tripod_chaser
 entity_type: actor
@@ -39,8 +38,6 @@ vision:
 ai:
   controller: chaser
   profile: default
-  # passive_patrol and its extent/magnitude are gone: the catalog rejects a
-  # chaser that sets them.
   sentry:
     alert_ticks: 90
     forget_ticks: 150

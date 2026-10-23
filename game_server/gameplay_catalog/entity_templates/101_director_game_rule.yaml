@@ -49,12 +49,13 @@ director:
           type: group_eliminated
           group: nests
       # One giant in each of the 4-zone map's zones, each its own objective,
-      # all opened by the same player arrival as the nests. A giant's
-      # passive_patrol walks +/-30 m along world x from where it spawns, in a
-      # straight line with no navmesh, so every spawn point sits on a 60 m
-      # east-west strip with no prop within 7 m of it and no step over 0.25 m
-      # per metre along it (checked against plane_200x200_4zones_v2.obj; y is
-      # the floor plus 0.5 m):
+      # all opened by the same player arrival as the nests. A giant is a
+      # garrison that walks its controller.route and fights what it sees. Three
+      # of them walk +/-30 m along world x from where they spawn -- what the
+      # old passive_patrol sweep did -- so every such spawn point sits on a
+      # 60 m east-west strip with no prop within 7 m of it and no step over
+      # 0.25 m per metre along it (checked against plane_200x200_4zones_v2.obj;
+      # y is the floor plus 0.5 m):
       #   open combat     x -80..-20 at z -56    flat, ~35 m clear of the camp
       #   forest flank    x -63..-3  at z 83     the only clear strip in the
       #                                          forest, along its north edge
@@ -69,6 +70,10 @@ director:
             count: 1
             entity_template: gingerbread_giant
             position: {x: -50.0, y: 0.45, z: -56.0}
+            controller:
+              route:
+                - {x: -80.0, y: 0.0, z: -56.0}
+                - {x: -20.0, y: 0.0, z: -56.0}
         condition:
           type: group_eliminated
           group: giant_open_combat
@@ -79,6 +84,10 @@ director:
             count: 1
             entity_template: gingerbread_giant
             position: {x: -33.0, y: 0.6, z: 83.0}
+            controller:
+              route:
+                - {x: -63.0, y: 0.0, z: 83.0}
+                - {x: -3.0, y: 0.0, z: 83.0}
         condition:
           type: group_eliminated
           group: giant_forest_flank
@@ -89,6 +98,10 @@ director:
             count: 1
             entity_template: gingerbread_giant
             position: {x: 50.0, y: 0.95, z: 86.0}
+            controller:
+              route:
+                - {x: 20.0, y: 0.0, z: 86.0}
+                - {x: 80.0, y: 0.0, z: 86.0}
         condition:
           type: group_eliminated
           group: giant_swamp_shortcut

@@ -6,7 +6,9 @@
 // A game-rule wave spawning tripod_actor (passive_patrol: true) alongside a
 // catalog whose `enemy:` named grenade_sentry (no passive_patrol) produced a
 // tripod that never patrolled -- it ran the artillery sentry's config, and its
-// own ai.sentry block was parsed, validated, and then never read.
+// own ai.sentry block was parsed, validated, and then never read. (The tripod
+// is a garrison walking a controller.route now, AI plan D19; the bug this
+// guards against is the same.)
 //
 // Two layers, one test each:
 //   1. the controller reads each agent's own config, so one instance drives a
@@ -69,21 +71,12 @@ std::uint32_t create_agent(KernelHandle* kernel, const KernelVec3& position) {
     return net_id;
 }
 
-network_example::game_server::AgentSentryConfig patrolling_config() {
+// Two sentry configs that differ in what an idle tick visibly does: one looks
+// around every tick, the other never does.
+network_example::game_server::AgentSentryConfig sentry_config(
+    std::uint32_t rotation_interval_ticks) {
     network_example::game_server::AgentSentryConfig config;
-    config.passive_patrol = true;
-    config.patrol_extent_x_meters = 30.0f;
-    config.patrol_input_magnitude = 1.0f;
-    config.move_speed_meters_per_second = 2.5f;
-    config.animation_idle = 7;
-    return config;
-}
-
-network_example::game_server::AgentSentryConfig stationary_config() {
-    network_example::game_server::AgentSentryConfig config;
-    config.passive_patrol = false;
-    // Rotation off, so "did not move" is unambiguous.
-    config.patrol_rotation_interval_ticks = 0;
+    config.patrol_rotation_interval_ticks = rotation_interval_ticks;
     return config;
 }
 
@@ -103,9 +96,9 @@ void one_controller_drives_a_mixed_population() {
 
     std::vector<network_example::game_server::AgentRuntimeState> agents(2);
     agents[0].net_id = walker_net_id;
-    agents[0].sentry_config = patrolling_config();
+    agents[0].sentry_config = sentry_config(1);
     agents[1].net_id = artillery_net_id;
-    agents[1].sentry_config = stationary_config();
+    agents[1].sentry_config = sentry_config(0);
 
     const network_example::game_server::AgentSentryController controller;
     // AgentRuntimeManager takes the perception frame once per tick off the
@@ -119,54 +112,16 @@ void one_controller_drives_a_mixed_population() {
         network_example::game_server::whole_batch(&agents),
         1.0f / 30.0f);
 
-    // The walker patrols: it submits a move input and carries patrol velocity.
-    require(agents[0].patrol_direction == 1);
-    require(std::fabs(agents[0].velocity.x - 2.5f) < 0.0001f);
-    require(agents[0].next_input_seq == 2);
-    require(agents[0].animation_state == 7);
-    require(
-        agents[0].sentry.state ==
-        network_example::game_server::AgentSentryState::kIdle);
-
-    // The artillery sentry, ticked by the same controller in the same call,
-    // does not.
-    require(agents[1].velocity.x == 0.0f);
-    require(agents[1].next_input_seq == 1);
-
-    Kernel_Destroy(kernel);
-}
-
-// Patrol reverses at the authored extent, and the extent is the agent's own.
-void patrol_turns_around_at_its_own_extent() {
-    KernelConfig config = server_config();
-    KernelHandle* kernel = Kernel_Create(&config);
-    require(kernel != nullptr);
-    require(Kernel_StartDedicatedServer(kernel, 7789));
-
-    const std::uint32_t net_id =
-        create_agent(kernel, KernelVec3{40.0f, 0.0f, 0.0f});
-    Kernel_Update(kernel, 1.0f / 30.0f);
-
-    std::vector<network_example::game_server::AgentRuntimeState> agents(1);
-    agents[0].net_id = net_id;
-    agents[0].sentry_config = patrolling_config();
-    // Anchored at the origin, so x=40 is past the +30 extent.
-    agents[0].patrol_anchor = KernelVec3{0.0f, 0.0f, 0.0f};
-
-    const network_example::game_server::AgentSentryController controller;
-    // AgentRuntimeManager takes the perception frame once per tick off the
-    // actor snapshot it already has; a test driving the controller directly has
-    // the frame take its own.
-    network_example::game_server::PerceptionFrame frame;
-    frame.refresh(kernel);
-    controller.tick(
-        kernel,
-        frame,
-        network_example::game_server::whole_batch(&agents),
-        1.0f / 30.0f);
-
-    require(agents[0].patrol_direction == -1);
-    require(agents[0].velocity.x < 0.0f);
+    // Each looks around on its own config's schedule, ticked by the same
+    // controller in the same call; neither moves.
+    require(agents[0].sentry.patrol_rotation_step == 1u);
+    require(agents[1].sentry.patrol_rotation_step == 0u);
+    for (const network_example::game_server::AgentRuntimeState& agent : agents) {
+        require(agent.velocity.x == 0.0f && agent.velocity.z == 0.0f);
+        require(
+            agent.sentry.state ==
+            network_example::game_server::AgentSentryState::kIdle);
+    }
 
     Kernel_Destroy(kernel);
 }
@@ -183,15 +138,17 @@ void manager_resolves_config_from_the_spawned_template() {
     const network_example::game_server::ActorTemplateConfig* tripod =
         find_actor_template(gameplay_config, kTripodTemplateId);
     require(tripod != nullptr);
-    require(tripod->sentry.passive_patrol);
+    require(tripod->default_controller_role ==
+            network_example::game_server::AgentControllerRole::kGarrison);
 
-    // The divergence this test is built on: the grunt does not patrol and the
-    // tripod does, so an agent reading anyone's sentry config but its own is
-    // visible in whether it walks.
+    // The divergence this test is built on: the grunt is a stationary sentry
+    // and the tripod a garrison, so an agent reading anyone's config but its
+    // own is visible in whether it walks the route below.
     const network_example::game_server::ActorTemplateConfig* grunt =
         find_actor_template(gameplay_config, kSentryGruntTemplateId);
     require(grunt != nullptr);
-    require(!grunt->sentry.passive_patrol);
+    require(grunt->default_controller_role ==
+            network_example::game_server::AgentControllerRole::kSentry);
 
     // Spawn the tripod from a world rule stated here. There used to be an
     // `enemy:` entry to defeat first: it rewrote every world rule's spawn to
@@ -228,6 +185,11 @@ void manager_resolves_config_from_the_spawned_template() {
             entity_template.director_spawn_entity_template_id;
         rule.position = entity_template.director_spawn_position;
         rule.radius = entity_template.director_spawn_radius;
+        // Offsets from the spawn point, as the shipped world rules author it.
+        rule.controller.route = {
+            KernelVec3{-30.0f, 0.0f, 0.0f},
+            KernelVec3{30.0f, 0.0f, 0.0f},
+        };
         gameplay_config.world_rule_spawns.push_back(rule);
     }
     require(!gameplay_config.preload_director_template_ids.empty());
@@ -248,27 +210,18 @@ void manager_resolves_config_from_the_spawned_template() {
     const std::vector<network_example::game_server::AgentRuntimeState>& agents =
         game_server.agent_runtime_manager().agents();
     require(agents.size() == 1);
-    // The tripod's own ai.sentry block, not the grunt's.
-    require(agents[0].sentry_config.passive_patrol);
-    require(
-        agents[0].sentry_config.patrol_extent_x_meters ==
-        tripod->sentry.patrol_extent_x_meters);
+    // The tripod's own template, not the grunt's.
+    require(agents[0].controller_role ==
+            network_example::game_server::AgentControllerRole::kGarrison);
+    require(!agents[0].route_patrol.path.empty());
     require(
         agents[0].sentry_config.move_speed_meters_per_second ==
         tripod->move_speed_meters_per_second);
     require(agents[0].sentry_config.weapon_id == tripod->sentry.weapon_id);
-    // And decisively not the `enemy:` template's: the grunt authors no patrol
-    // extent at all, so reading its config is what the old code did.
-    require(
-        grunt->sentry.patrol_extent_x_meters !=
-        tripod->sentry.patrol_extent_x_meters);
-    require(
-        agents[0].sentry_config.patrol_extent_x_meters !=
-        grunt->sentry.patrol_extent_x_meters);
 
     // Config resolution is only half the story -- the point of the fix is that
-    // the thing actually walks. Patrol starts in +x from the anchor it took at
-    // spawn, so a run of frames has to move it.
+    // the thing actually walks. It joins the route 30 m from where it spawned,
+    // so a run of frames has to move it along x, one way or the other.
     const std::uint32_t agent_net_id = agents[0].net_id;
     KernelServerEntityState before{};
     before.struct_size = sizeof(before);
@@ -284,7 +237,7 @@ void manager_resolves_config_from_the_spawned_template() {
     after.struct_size = sizeof(after);
     require(Kernel_ServerGetEntityState(kernel, agent_net_id, &after));
     require(after.valid != 0u);
-    require(after.position.x > before.position.x + 1.0f);
+    require(std::fabs(after.position.x - before.position.x) > 1.0f);
 
     Kernel_Destroy(kernel);
 }
@@ -293,7 +246,6 @@ void manager_resolves_config_from_the_spawned_template() {
 
 int main() {
     one_controller_drives_a_mixed_population();
-    patrol_turns_around_at_its_own_extent();
     manager_resolves_config_from_the_spawned_template();
     std::printf("agent_sentry_per_agent_config_test: PASS\n");
     return 0;
