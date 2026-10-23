@@ -64,8 +64,15 @@ void AgentSentryController::tick(
             }
             agent.sentry.target = perception.target_id;
             agent.sentry.lost_target_ticks = 0;
+            agent.sentry.attention_point = perception.target_position;
+            agent.sentry.has_attention_point = true;
         } else {
             ++agent.sentry.lost_target_ticks;
+        }
+
+        // A sentry that saw it again picks up where it left off.
+        if (agent.sentry.state == AgentSentryState::kSearch && has_visible_target) {
+            agent_steering::transition_to(&agent, AgentSentryState::kAttack);
         }
 
         if (agent.sentry.state == AgentSentryState::kIdle) {
@@ -99,7 +106,10 @@ void AgentSentryController::tick(
                         &agent, AgentSentryState::kAttack);
                 }
             } else if (agent.sentry.lost_target_ticks >= config.forget_ticks) {
+                // Lost before the alert ran out: no Search, so a target that
+                // ducks in and out of view cannot skip the warning.
                 agent.sentry.target = 0;
+                agent.sentry.has_attention_point = false;
                 agent_steering::transition_to(&agent, AgentSentryState::kIdle);
             }
         }
@@ -135,8 +145,28 @@ void AgentSentryController::tick(
                             config.ballistic_retry_cooldown_ticks;
                     }
                 }
-            } else if (agent.sentry.lost_target_ticks >= config.forget_ticks) {
-                agent_steering::transition_to(&agent, AgentSentryState::kAlert);
+            } else {
+                agent_steering::transition_to(&agent, AgentSentryState::kSearch);
+            }
+        }
+
+        // Rooted, so searching is turning to face where the target was last
+        // seen until it forgets.
+        if (agent.sentry.state == AgentSentryState::kSearch) {
+            if (agent.sentry.lost_target_ticks >= config.forget_ticks ||
+                !agent.sentry.has_attention_point) {
+                agent.sentry.target = 0;
+                agent.sentry.has_attention_point = false;
+                agent_steering::transition_to(&agent, AgentSentryState::kIdle);
+            } else {
+                should_update_rotation =
+                    agent_steering::facing_rotation_from_vision_toward(
+                        agent.position,
+                        agent.sentry.attention_point,
+                        perception.vision_forward,
+                        entity_state.rotation,
+                        &desired_rotation) ||
+                    should_update_rotation;
             }
         }
 

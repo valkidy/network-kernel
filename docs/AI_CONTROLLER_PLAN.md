@@ -244,6 +244,28 @@ spawner:
 
 ## 7. P2：state machine 重構
 
+### 7.0 拆分與進度
+
+| 步驟 | 內容 | 行為改變 | 狀態 |
+|---|---|---|---|
+| P2a | `kChasing`、`kSearch` 兩個新狀態；Alert / Search 的注意點；chaser 與 sentry 都做 Search | **有** | ✅ `claude/ai-controller-p1` |
+| P2b | garrison 的 leash 與 Return（`controllers.garrison.leash_meters` / `leash_resume_meters`） | 只有寫了 leash 的 template | |
+
+P2a 的實作與決定：
+- 狀態仍是 `AgentSentryState`（新值接在後面：`kChasing = 4`、`kSearch = 5`）；`is_pursuing` = Chasing 或
+  Attack，`is_engaged` 多了 Chasing 與 Search（巡邏隊在成員搜尋時仍然停下）。`kSeek` 留給 P6 再加。
+- 事件沒有另外做成資料結構：每個 tick 開頭由 perception 算出（看得到 = SawTarget，`lost_target_ticks`
+  ≥ `forget_ticks` = ForgetTimeout，leash 判斷照舊）。
+- Chasing / Attack 每個 tick 依 `attack_range_meters`（或跳撲的落地時間、蓄力中）切換，直接設定狀態、
+  不經 `transition_to`，以免重設計數。sentry 沒有射程，看得到就是 Attack。
+- Search：chaser 走向最後看到目標的位置（腳下），到了就原地環顧；sentry 轉向那個位置。再次看到 →
+  chaser 回到追擊（不重新 Alert）、sentry 回到 Attack；超過 `forget_ticks` → Idle（巡邏隊成員 → Return）。
+- **Alert 中失去目標不進 Search**：照舊等到 forget 後放棄，避免目標進出視野就跳過警告。
+- 失去目標到放棄的時間從 2 × `forget_ticks`（Attack 等一次、再到 Alert 等一次）變成 1 × `forget_ticks`。
+- 測試：`agent_chaser_controller_test` 的「失去視野原地停下」改成 Search（走向最後位置、再看到就恢復、
+  forget 後 Idle）；射程外的狀態從 kAttack 改成 kChasing。`agent_sentry_controller_test` 改成 Attack →
+  Search → Idle。`agent_runtime_manager_test` 在 main 上第 228 行就失敗，後面對 kAttack 的檢查無法驗證。
+
 目標：所有 controller 共用 state 與事件（D3、D4、D5），各 controller 提供每個
 state 的處理。
 

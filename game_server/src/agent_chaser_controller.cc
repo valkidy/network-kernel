@@ -12,6 +12,10 @@
 namespace network_example::game_server {
 namespace {
 
+// How close Search comes to where the target was last seen before it stops
+// and looks around. The same allowance a route corner gets.
+constexpr float kSearchArrivalMeters = 1.0f;
+
 bool is_zero_move(const KernelVec2& move) {
     return move.x == 0.0f && move.y == 0.0f;
 }
@@ -328,10 +332,16 @@ void AgentChaserController::tick(
             }
             agent.sentry.target = perception.target_id;
             agent.sentry.lost_target_ticks = 0;
+            // Feet, not the aim point: Search walks to it.
+            const KernelServerEntityState* seen =
+                frame.actor_state(perception.target_id);
+            agent.sentry.attention_point =
+                seen != nullptr ? seen->position : perception.target_position;
+            agent.sentry.has_attention_point = true;
         } else {
             ++agent.sentry.lost_target_ticks;
-            // Losing sight ends the pursuit outright; the agent stops where it
-            // stands rather than walking to where the target was.
+            // The hold is about a target in sight; Search walks to where it
+            // was last seen instead.
             agent.chase_holding = false;
         }
 
@@ -340,9 +350,9 @@ void AgentChaserController::tick(
         // see. Without it the leash could only be enforced on a tick where
         // vision happened to break.
         if (has_slot(agent) && leash_exceeded(config_.patrol, agent) &&
-            (agent.sentry.state == AgentSentryState::kAlert ||
-             agent.sentry.state == AgentSentryState::kAttack)) {
+            is_engaged(agent.sentry.state)) {
             agent.sentry.target = 0;
+            agent.sentry.has_attention_point = false;
             agent.chase_holding = false;
             agent_steering::transition_to(&agent, AgentSentryState::kReturn);
         }
@@ -443,12 +453,17 @@ void AgentChaserController::tick(
                     config_.chase, &agent, perception.target_position);
                 ++agent.sentry.state_ticks;
                 if (agent.sentry.state_ticks >= sentry_config.alert_ticks) {
+                    // The pursuit below sorts Chasing from Attack this tick.
                     agent_steering::transition_to(
-                        &agent, AgentSentryState::kAttack);
+                        &agent, AgentSentryState::kChasing);
                 }
             } else if (agent.sentry.lost_target_ticks >=
                        sentry_config.forget_ticks) {
+                // Lost before the alert ran out: no Search, so a target that
+                // ducks in and out of view cannot skip the warning. It waits
+                // here, as it always has, and gives up.
                 agent.sentry.target = 0;
+                agent.sentry.has_attention_point = false;
                 // A squad member goes back to its formation rather than idling
                 // wherever the chase ended. kIdle would let it re-acquire from
                 // there, which is the runaway the leash exists to prevent.
@@ -462,7 +477,7 @@ void AgentChaserController::tick(
         // A wind-up is for this target in this pursuit: losing either drops it.
         // So does being knocked back or staggered out of it.
         if (agent.charge_windup_ticks > 0u &&
-            (agent.sentry.state != AgentSentryState::kAttack ||
+            (!is_pursuing(agent.sentry.state) ||
              !has_visible_target ||
              (entity_state.visual_flags & (KERNEL_VISUAL_FLAG_KNOCKED_BACK |
                                            KERNEL_VISUAL_FLAG_STAGGERED)) != 0u)) {
@@ -471,15 +486,17 @@ void AgentChaserController::tick(
 
         const KernelServerEntityState* target_state =
             frame.actor_state(agent.sentry.target);
-        if (agent.sentry.state == AgentSentryState::kAttack &&
+        if (is_pursuing(agent.sentry.state) &&
             has_visible_target && agent.charge_ticks_left > 0u) {
             // The kernel runs the charge: no steering, no turning, no swing.
             // The tail still sends the one input, with no move in it.
             agent.sentry.lost_target_ticks = 0;
-        } else if (agent.sentry.state == AgentSentryState::kAttack &&
+            agent.sentry.state = AgentSentryState::kAttack;
+        } else if (is_pursuing(agent.sentry.state) &&
                    has_visible_target && agent.charge_windup_ticks > 0u) {
             // Winding up: rooted, turning to keep the target in front.
             agent.sentry.lost_target_ticks = 0;
+            agent.sentry.state = AgentSentryState::kAttack;
             should_update_rotation =
                 agent_steering::facing_rotation_from_vision_toward(
                     agent.position,
@@ -491,7 +508,7 @@ void AgentChaserController::tick(
             if (--agent.charge_windup_ticks == 0u && target_state != nullptr) {
                 release_charge(kernel, config_, &agent, target_state->position);
             }
-        } else if (agent.sentry.state == AgentSentryState::kAttack) {
+        } else if (is_pursuing(agent.sentry.state)) {
             if (has_visible_target) {
                 agent.sentry.lost_target_ticks = 0;
                 should_update_rotation =
@@ -530,6 +547,13 @@ void AgentChaserController::tick(
                         agent_steering::horizontal_distance(
                             agent.position, perception.target_position) <=
                             config_.chase.attack_range_meters;
+                // Set directly, not through transition_to: flipping between
+                // the two must not reset the pursuit's counters. A wind-up
+                // started this tick is an attack already.
+                agent.sentry.state =
+                    target_within_attack_range || agent.charge_windup_ticks > 0u
+                    ? AgentSentryState::kAttack
+                    : AgentSentryState::kChasing;
                 if (agent.sentry.ballistic_retry_ticks > 0) {
                     --agent.sentry.ballistic_retry_ticks;
                 } else if (agent.charge_windup_ticks > 0u) {
@@ -556,9 +580,51 @@ void AgentChaserController::tick(
                     }
                     submitted_input = execution.submitted_input;
                 }
+            } else {
+                agent_steering::transition_to(&agent, AgentSentryState::kSearch);
+            }
+        }
+
+        // After the pursuit, so an agent that loses sight starts walking to
+        // where it last saw the target on that same tick. Seeing it again
+        // resumes the pursuit from the next one.
+        if (agent.sentry.state == AgentSentryState::kSearch) {
+            if (has_visible_target) {
+                agent_steering::transition_to(&agent, AgentSentryState::kChasing);
             } else if (agent.sentry.lost_target_ticks >=
-                       sentry_config.forget_ticks) {
-                agent_steering::transition_to(&agent, AgentSentryState::kAlert);
+                           sentry_config.forget_ticks ||
+                       !agent.sentry.has_attention_point) {
+                agent.sentry.target = 0;
+                agent.sentry.has_attention_point = false;
+                // A squad member goes back to its formation, as from Alert.
+                agent_steering::transition_to(
+                    &agent,
+                    has_slot(agent) ? AgentSentryState::kReturn
+                                    : AgentSentryState::kIdle);
+            } else if (agent_steering::horizontal_distance(
+                           agent.position, agent.sentry.attention_point) >
+                       kSearchArrivalMeters) {
+                move = agent_steering::horizontal_move_toward(
+                    agent.position,
+                    agent.sentry.attention_point,
+                    config_.chase.input_magnitude);
+                should_update_rotation =
+                    agent_steering::facing_rotation_from_vision_toward(
+                        agent.position,
+                        agent.sentry.attention_point,
+                        perception.vision_forward,
+                        entity_state.rotation,
+                        &desired_rotation) ||
+                    should_update_rotation;
+            } else {
+                // Arrived and nothing there: look around until it forgets.
+                should_update_rotation = agent_steering::update_patrol_facing(
+                    sentry_config.patrol_rotation_interval_ticks,
+                    sentry_config.patrol_rotation_min_degrees,
+                    sentry_config.patrol_rotation_max_degrees,
+                    &agent,
+                    entity_state.rotation,
+                    &desired_rotation);
             }
         }
 

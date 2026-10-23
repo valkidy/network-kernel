@@ -38,13 +38,27 @@ enum class AgentSentryState : std::uint8_t {
     // one on the way. Without a state of its own the agent re-acquires the
     // target it just broke off from on the very next tick and never returns.
     kReturn = 3,
+    // The target is in sight but no attack can reach it yet: a chaser closes,
+    // a sentry -- which has no reach to fall short of -- never is. (AI plan
+    // D4: Attack is the same pursuit once something can hit.)
+    kChasing = 4,
+    // Sight lost mid-pursuit, still inside forget_ticks: a chaser walks to
+    // where it last saw the target, a sentry turns to face it. Seeing it again
+    // resumes the pursuit; forgetting it ends the engagement.
+    kSearch = 5,
 };
 
-// Alert or attack: the agent has a target, or had one recently enough that it
-// has not given up on it yet. A squad holds while a member is engaged, and an
-// on_alert spawner only calls while its carrier is.
+// The pursuit proper: something to close on or to hit.
+inline bool is_pursuing(AgentSentryState state) {
+    return state == AgentSentryState::kChasing || state == AgentSentryState::kAttack;
+}
+
+// The agent has a target, or had one recently enough that it has not given up
+// on it yet. A squad holds while a member is engaged, and an on_alert spawner
+// only calls while its carrier is.
 inline bool is_engaged(AgentSentryState state) {
-    return state == AgentSentryState::kAlert || state == AgentSentryState::kAttack;
+    return state == AgentSentryState::kAlert || is_pursuing(state) ||
+           state == AgentSentryState::kSearch;
 }
 
 // What a squad member needs to know about the squad, which is very little: the
@@ -111,6 +125,11 @@ struct AgentSentryRuntimeState {
     std::uint32_t patrol_rotation_step = 0;
     std::uint32_t ballistic_retry_ticks = 0;
     std::uint32_t target = 0;
+    // Where the agent's attention is (AI plan D6): the target's feet while it
+    // is in sight, and where it was last seen after. Search walks or turns to
+    // it. Cleared when the engagement ends.
+    bool has_attention_point = false;
+    KernelVec3 attention_point{0.0f, 0.0f, 0.0f};
 };
 
 // The sentry knobs an agent runs on. These are authored per actor template
