@@ -243,6 +243,9 @@ struct SpAttackTemplateConfig {
 enum class AgentSkillType : std::uint8_t {
     kWeapon = 0,
     kSpAttack = 1,
+    // An item the agent uses on itself (AI plan D13, P5): what a passive skill
+    // was going to be, triggered by `when` instead of by a target in reach.
+    kItem = 2,
 };
 
 struct AgentSkillConfig {
@@ -256,6 +259,23 @@ struct AgentSkillConfig {
     float range_max_meters = 0.0f;
     std::uint32_t cooldown_ticks = 0;
     std::uint32_t weight = 1;
+    // kItem: the item template, by name, and its id once resolved.
+    std::string item_ref;
+    std::uint32_t item_template_id = 0;
+    // kItem's `when` (D15), every one given having to hold. Continuous: in a
+    // state, below a share of health, without a status. Events, true only on
+    // the tick they happen: entering a state, spawning, being hit.
+    bool has_when_state = false;
+    AgentSentryState when_state = AgentSentryState::kIdle;
+    bool has_on_state_enter = false;
+    AgentSentryState on_state_enter = AgentSentryState::kIdle;
+    bool on_spawn = false;
+    bool on_damaged = false;
+    float hp_below = 0.0f;
+    std::string missing_status_ref;
+    std::uint32_t missing_status_id = 0;
+    // Used at most once in the agent's life.
+    bool once = false;
 };
 
 struct ActorTemplateConfig {

@@ -1,6 +1,6 @@
 # AI controller 重構實作計劃書
 
-狀態：**設計已定案（§2）；P0 驗證完成（§11）；P1（§6.0）、P2（§7.0）、P3（§8.0）、P4（§9）完成，在 `claude/ai-controller-p1`（2026-10-23）；P5 尚未開始。**
+狀態：**設計已定案（§2）；P0 驗證完成（§11）；P1（§6.0）、P2（§7.0）、P3（§8.0）、P4、P5（§9）完成，在 `claude/ai-controller-p1`（2026-10-24）；P6 尚未開始。**
 分支：計劃在 `claude/ai-controller-plan`，從 `main`（84cc4d40，ABI 109）開。
 各階段的實作各自開 `claude/ai-controller-p<N>` 分支。
 最後更新：2026-10-23。
@@ -435,6 +435,31 @@ P4b 的實作與決定：
 sp_attack 後，`gingerbread_leap_test`、`gingerbread_charge_test` 照舊通過。
 
 ### P5：AI 使用 item
+
+**狀態**：✅ `claude/ai-controller-p1`（2026-10-24）。
+
+P5 的實作與決定：
+- `use: {type: item, value: <item 名稱>}`（item 的 `name` 是機器名稱，例如 `fungible_hover_potion`）。
+  item 必須是 consumable，且不能是武器。
+- `when`（全部都要成立）：持續條件 `state`、`hp_below`（0–1 的比例）、`missing_status`（status 名稱）；
+  事件條件 `on_state_enter`、`on_spawn`、`on_damaged`（只在發生的那個 tick 成立）。另有 `cooldown_ticks` 與
+  `once`（一生只用一次；只有 item skill 可以用）。武器與 sp_attack 的 `when` 仍只有 `range_meters`。
+- 載入檢查：item skill 一定要有 `when`；只有持續條件時，必須另有 `cooldown_ticks`、`once` 或
+  `missing_status`，否則每個 tick 都會用。狀態名稱、status 名稱、item 名稱都要存在。
+- 執行：`AgentRuntimeManager::use_item_skills`，在 controller 之後跑（這個 tick 進入的狀態算數）。第一次需要時
+  為 agent 建立 inventory；每次使用前，若 item 不在或數量為 0 就補一個（D18：AI 不會用完）；以 server
+  （peer 0）送出 Consume request。`missing_status` 只在需要時查 status。
+- **kernel 改動（不 bump ABI，沒有新 export）**：agent 的 **Committed Consume** 不再記錄到
+  `processed_gameplay_requests_` 與 `pending_gameplay_request_outcomes_`。兩者只在 reset 時清空，dedicated server
+  上沒有人 poll；AI 頻繁使用 item 會讓它們一直變大，duplicate 檢查也會跟著變慢。agent 的其他 request 與所有
+  被拒絕的 request 照常記錄（`weapon_item_test` 依賴 agent 撿武器被拒絕的 outcome）。**既有問題**：玩家的
+  request 在 dedicated server 上同樣只增不減，這次沒有處理。
+- 使用 item 會中斷 agent 當下的 action（`PendingActionInterrupt`），和玩家相同。
+- **沒有新增**出貨用的 AI item 或讓任何 template 使用 item：這是遊戲設計的決定。測試在 catalog 複本中建立。
+- 測試：`ai_item_skills_test`（catalog 複本中的 speed tonic：進入 chasing 的那個 tick 就使用；之後每次
+  `speed_up` 4 秒結束就再用，360 ticks 內 3 次，每次都有補貨；outcome 佇列沒有留下東西）；`ai_skills_test`
+  新增 2 個合法與 8 個錯誤的 item 寫法。既有紅燈（不改的程式碼上也一樣）：`hover_potion_test`（hover 時間
+  在 dbdc197a 改成 1800）、`loadout_test`。
 
 1. 透過 `Kernel_ServerSubmitGameplayRequest`（`requester_peer = 0`、`instigator = agent`、
    `KernelDomainAction_Consume`）使用 item；Committed 後補回數量（D18）。

@@ -250,6 +250,18 @@ struct AgentRuntimeState {
     // next draw is due -- not when the input asking for it was sent, which an
     // action still recovering ignores.
     std::uint32_t seen_action_instance_id = 0;
+    // Item skills (AI plan P5): whether its template has any, the inventory
+    // they live in (made the first time they are needed), each skill's item
+    // instance, cooldown and used-once bit, and what on_spawn / on_state_enter
+    // compare against.
+    bool has_item_skills = false;
+    KernelInventoryContainerId item_container = 0;
+    std::array<KernelItemInstanceId, kMaxAgentSkills> item_instances{};
+    std::array<std::uint32_t, kMaxAgentSkills> item_cooldown_ticks{};
+    std::uint32_t items_used_once = 0;
+    bool items_seen_spawn = false;
+    AgentSentryState items_last_state = AgentSentryState::kIdle;
+    std::uint32_t next_item_request = 1;
     AgentPatrolRuntimeState patrol{};
     AgentEntryRuntimeState entry{};
     // Whether the agent was engaged when its controller last ran, so that an

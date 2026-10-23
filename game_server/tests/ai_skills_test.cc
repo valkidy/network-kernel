@@ -139,8 +139,61 @@ void bad_skills_are_refused() {
     require(!loads_after("sp_attack with no band", kGingerbread, [](YAML::Node& root) {
         root["ai"]["skills"][1].remove("when");
     }));
-    require(!loads_after("item skill (P5)", kGingerbread, [](YAML::Node& root) {
-        root["ai"]["skills"][1]["use"]["type"] = "item";
+    // P5: items, on conditions.
+    const auto item_skill = [](const char* item) {
+        YAML::Node skill;
+        skill["use"]["type"] = "item";
+        skill["use"]["value"] = item;
+        return skill;
+    };
+    require(loads_after("item on entering chasing", kGingerbread, [&](YAML::Node& root) {
+        YAML::Node skill = item_skill("fungible_hover_potion");
+        skill["when"]["on_state_enter"] = "chasing";
+        root["ai"]["skills"].push_back(skill);
+    }));
+    require(loads_after("item once below a third of health", kGingerbread, [&](YAML::Node& root) {
+        YAML::Node skill = item_skill("fungible_hover_potion");
+        skill["when"]["hp_below"] = 0.3;
+        skill["once"] = true;
+        root["ai"]["skills"].push_back(skill);
+    }));
+    require(!loads_after("item with no when", kGingerbread, [&](YAML::Node& root) {
+        root["ai"]["skills"].push_back(item_skill("fungible_hover_potion"));
+    }));
+    require(!loads_after("item every tick it is chasing", kGingerbread, [&](YAML::Node& root) {
+        YAML::Node skill = item_skill("fungible_hover_potion");
+        skill["when"]["state"] = "chasing";
+        root["ai"]["skills"].push_back(skill);
+    }));
+    require(!loads_after("unknown item", kGingerbread, [&](YAML::Node& root) {
+        YAML::Node skill = item_skill("fungible_elixir_of_nothing");
+        skill["when"]["on_spawn"] = true;
+        root["ai"]["skills"].push_back(skill);
+    }));
+    require(!loads_after("weapon item", kGingerbread, [&](YAML::Node& root) {
+        YAML::Node skill = item_skill("stateful_weapon_rifle");
+        skill["when"]["on_spawn"] = true;
+        root["ai"]["skills"].push_back(skill);
+    }));
+    require(!loads_after("unknown state", kGingerbread, [&](YAML::Node& root) {
+        YAML::Node skill = item_skill("fungible_hover_potion");
+        skill["when"]["on_state_enter"] = "panicking";
+        root["ai"]["skills"].push_back(skill);
+    }));
+    require(!loads_after("unknown status", kGingerbread, [&](YAML::Node& root) {
+        YAML::Node skill = item_skill("fungible_hover_potion");
+        skill["when"]["state"] = "chasing";
+        skill["when"]["missing_status"] = "invisibility";
+        root["ai"]["skills"].push_back(skill);
+    }));
+    require(!loads_after("hp_below past full", kGingerbread, [&](YAML::Node& root) {
+        YAML::Node skill = item_skill("fungible_hover_potion");
+        skill["when"]["hp_below"] = 1.5;
+        skill["once"] = true;
+        root["ai"]["skills"].push_back(skill);
+    }));
+    require(!loads_after("once on a weapon", kGingerbread, [](YAML::Node& root) {
+        root["ai"]["skills"][0]["once"] = true;
     }));
     require(!loads_after("leap swinging another weapon", kLeap, [](YAML::Node& root) {
         root["on_landing"]["weapon"] = 11;

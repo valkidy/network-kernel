@@ -353,6 +353,111 @@ void AgentRuntimeManager::attach_pending_entries() {
     }
 }
 
+// Item skills (AI plan P5, D15, D18). The agent uses the item on itself the
+// way a player would -- a consume request, here sent by the server, which owns
+// every agent -- so its on_item_used graph runs, statuses land and the client
+// sees the same thing. It never runs out: an item used up is replaced before
+// the next use.
+void AgentRuntimeManager::use_item_skills() {
+    std::vector<KernelStatusEffectView> statuses;
+    for (AgentRuntimeState& agent : agents_) {
+        if (!agent.has_item_skills || agent.entry.active) {
+            continue;
+        }
+        const ActorTemplateConfig* actor_template =
+            find_actor_template(config_, agent.actor_template_id);
+        if (actor_template == nullptr) {
+            continue;
+        }
+        for (std::uint32_t& cooldown : agent.item_cooldown_ticks) {
+            if (cooldown > 0u) --cooldown;
+        }
+        const AgentSentryState state = agent.sentry.state;
+        const bool spawned = !agent.items_seen_spawn;
+        const bool entered = state != agent.items_last_state;
+        agent.items_seen_spawn = true;
+        agent.items_last_state = state;
+        const bool damaged = perception_frame_.damage_to(agent.net_id) != nullptr;
+
+        if (agent.item_container == 0u) {
+            std::uint32_t capacity = 0;
+            for (const AgentSkillConfig& skill : actor_template->skills) {
+                if (skill.type == AgentSkillType::kItem) ++capacity;
+            }
+            if (!Kernel_ServerCreateInventoryContainer(
+                    kernel_, agent.net_id, capacity, &agent.item_container)) {
+                agent.has_item_skills = false;
+                spdlog::warn("item skills: no inventory for net_id={}", agent.net_id);
+                continue;
+            }
+        }
+
+        for (std::size_t index = 0; index < actor_template->skills.size(); ++index) {
+            const AgentSkillConfig& skill = actor_template->skills[index];
+            if (skill.type != AgentSkillType::kItem ||
+                agent.item_cooldown_ticks[index] > 0u ||
+                (skill.once && (agent.items_used_once & (1u << index)) != 0u)) {
+                continue;
+            }
+            if ((skill.has_when_state && state != skill.when_state) ||
+                (skill.has_on_state_enter && !(entered && state == skill.on_state_enter)) ||
+                (skill.on_spawn && !spawned) || (skill.on_damaged && !damaged) ||
+                (skill.hp_below > 0.0f &&
+                 !(agent.max_hp > 0u &&
+                   static_cast<float>(agent.hp) <
+                       skill.hp_below * static_cast<float>(agent.max_hp)))) {
+                continue;
+            }
+            if (skill.missing_status_id != 0u) {
+                const std::uint32_t count =
+                    Kernel_QueryStatusEffects(kernel_, agent.net_id, nullptr, 0u);
+                statuses.assign(count, KernelStatusEffectView{});
+                for (KernelStatusEffectView& view : statuses) {
+                    view.struct_size = sizeof(KernelStatusEffectView);
+                }
+                (void)Kernel_QueryStatusEffects(kernel_, agent.net_id, statuses.data(), count);
+                if (std::any_of(statuses.begin(), statuses.end(),
+                                [&](const KernelStatusEffectView& view) {
+                                    return view.status_effect_id == skill.missing_status_id;
+                                })) {
+                    continue;
+                }
+            }
+
+            // Refilled, not kept: a fungible stack runs down and an empty one
+            // is destroyed, so whatever is not there with some left is made.
+            KernelItemInstanceView held{};
+            held.struct_size = sizeof(held);
+            if (agent.item_instances[index] == 0u ||
+                !Kernel_GetItemInstance(kernel_, agent.item_instances[index], &held) ||
+                held.quantity == 0u) {
+                agent.item_instances[index] = 0u;
+                if (!Kernel_ServerCreateInventoryItem(
+                        kernel_, skill.item_template_id, 1u, agent.item_container,
+                        &agent.item_instances[index])) {
+                    spdlog::warn("item skills: could not stock {} for net_id={}",
+                                 skill.item_ref, agent.net_id);
+                    continue;
+                }
+            }
+            KernelGameplayRequest request{};
+            request.struct_size = sizeof(request);
+            request.requester_peer = 0u;
+            // Unique per agent: the kernel refuses a request id it has seen.
+            request.request_id = (static_cast<std::uint64_t>(agent.net_id) << 32u) |
+                agent.next_item_request++;
+            request.instigator_net_id = agent.net_id;
+            request.domain_action = KernelDomainAction_Consume;
+            request.selected_item_instance_id = agent.item_instances[index];
+            request.requested_quantity = 1u;
+            if (Kernel_ServerSubmitGameplayRequest(kernel_, &request)) {
+                agent.item_cooldown_ticks[index] = skill.cooldown_ticks;
+                if (skill.once) agent.items_used_once |= 1u << index;
+            }
+        }
+    }
+}
+
 void AgentRuntimeManager::attach_pending_controllers() {
     for (const SpawnedControllerSpec& spawned :
          std::exchange(pending_controllers_, {})) {
@@ -578,6 +683,8 @@ void AgentRuntimeManager::tick(float delta_seconds) {
     // Still on the post-director snapshot: nothing between it and here creates,
     // destroys or moves an entity, so it is what a per-agent query would return.
     dispatch_controllers(actors, delta_seconds);
+    // After the controllers, so a state entered this tick is entered here too.
+    use_item_skills();
     collect_alert_signals();
 }
 
@@ -704,6 +811,11 @@ void AgentRuntimeManager::sync_agents_from_kernel(const ActorStateView& actors) 
             agent.controller_role = actor_template != nullptr
                 ? actor_template->default_controller_role
                 : AgentControllerRole::kNone;
+            agent.has_item_skills = actor_template != nullptr &&
+                std::any_of(actor_template->skills.begin(), actor_template->skills.end(),
+                            [](const AgentSkillConfig& skill) {
+                                return skill.type == AgentSkillType::kItem;
+                            });
             apply_weapon_mechanics(state.net_id, state.actor_template_id);
         }
         next_agents.push_back(agent);

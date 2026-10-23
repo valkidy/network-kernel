@@ -91,6 +91,7 @@ private:
     // Binds the routes game_rule spawns handed over to their agents, expanded
     // over the navmesh. Same timing as attach_pending_entries.
     void attach_pending_controllers();
+    void use_item_skills();
     void attach_route(
         AgentRuntimeState* agent,
         const std::vector<KernelVec3>& waypoints);

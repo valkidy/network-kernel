@@ -466,6 +466,15 @@ void hash_actor_template(
         hash_float(hash, skill.range_max_meters);
         hash_scalar(hash, skill.cooldown_ticks);
         hash_scalar(hash, skill.weight);
+        hash_string(hash, skill.item_ref);
+        hash_scalar(hash, skill.has_when_state ? 1u + static_cast<std::uint32_t>(skill.when_state) : 0u);
+        hash_scalar(hash, skill.has_on_state_enter
+                              ? 1u + static_cast<std::uint32_t>(skill.on_state_enter) : 0u);
+        hash_scalar(hash, skill.on_spawn);
+        hash_scalar(hash, skill.on_damaged);
+        hash_float(hash, skill.hp_below);
+        hash_string(hash, skill.missing_status_ref);
+        hash_scalar(hash, skill.once);
     }
     hash_float(hash, actor_template.garrison.leash_meters);
     hash_float(hash, actor_template.garrison.leash_resume_meters);
@@ -4047,7 +4056,7 @@ void ai_role_from_yaml(
             fail("skills must list 1 to " + std::to_string(kMaxAgentSkills) + " skills");
         }
         for (const YAML::Node& node : skills) {
-            reject(node, {"use", "when", "cooldown_ticks", "weight"});
+            reject(node, {"use", "when", "cooldown_ticks", "weight", "once"});
             const YAML::Node use = node["use"];
             if (!use || !use["type"] || !use["value"]) {
                 fail("skill requires use: {type, value}");
@@ -4062,11 +4071,46 @@ void ai_role_from_yaml(
                 skill.type = AgentSkillType::kSpAttack;
                 skill.sp_attack_ref = use["value"].as<std::string>();
             } else if (type == "item") {
-                fail("skill type item is not implemented yet (plan P5)");
+                skill.type = AgentSkillType::kItem;
+                skill.item_ref = use["value"].as<std::string>();
             } else {
                 fail("skill type is unsupported: " + type);
             }
-            if (const YAML::Node when = node["when"]) {
+            const auto state_named = [&](const YAML::Node& value) {
+                const std::string name = value.as<std::string>();
+                if (name == "idle") return AgentSentryState::kIdle;
+                if (name == "alert") return AgentSentryState::kAlert;
+                if (name == "chasing") return AgentSentryState::kChasing;
+                if (name == "attack") return AgentSentryState::kAttack;
+                if (name == "search") return AgentSentryState::kSearch;
+                if (name == "return") return AgentSentryState::kReturn;
+                fail("skill when names an unknown state: " + name);
+                return AgentSentryState::kIdle;
+            };
+            if (const YAML::Node when = node["when"]; when &&
+                skill.type == AgentSkillType::kItem) {
+                reject(when, {"state", "on_state_enter", "on_spawn", "on_damaged",
+                              "hp_below", "missing_status"});
+                if (when["state"]) {
+                    skill.has_when_state = true;
+                    skill.when_state = state_named(when["state"]);
+                }
+                if (when["on_state_enter"]) {
+                    skill.has_on_state_enter = true;
+                    skill.on_state_enter = state_named(when["on_state_enter"]);
+                }
+                if (when["on_spawn"]) skill.on_spawn = when["on_spawn"].as<bool>();
+                if (when["on_damaged"]) skill.on_damaged = when["on_damaged"].as<bool>();
+                if (when["hp_below"]) {
+                    skill.hp_below = when["hp_below"].as<float>();
+                    if (!(skill.hp_below > 0.0f && skill.hp_below <= 1.0f)) {
+                        fail("skill when.hp_below must be a share of health in (0, 1]");
+                    }
+                }
+                if (when["missing_status"]) {
+                    skill.missing_status_ref = when["missing_status"].as<std::string>();
+                }
+            } else if (when) {
                 reject(when, {"range_meters"});
                 if (const YAML::Node range = when["range_meters"]) {
                     reject(range, {"min", "max"});
@@ -4079,6 +4123,27 @@ void ai_role_from_yaml(
             }
             if (node["weight"]) {
                 skill.weight = node["weight"].as<std::uint32_t>();
+            }
+            if (node["once"]) {
+                skill.once = node["once"].as<bool>();
+            }
+            if (skill.type == AgentSkillType::kItem) {
+                const bool event = skill.has_on_state_enter || skill.on_spawn || skill.on_damaged;
+                const bool any = event || skill.has_when_state || skill.hp_below > 0.0f ||
+                    !skill.missing_status_ref.empty();
+                if (!any) {
+                    fail("item skill " + skill.item_ref + " needs a when: it would be used "
+                         "every tick");
+                }
+                // Only a continuous condition: it holds tick after tick, so
+                // something has to stop it being used on every one of them.
+                if (!event && skill.cooldown_ticks == 0u && !skill.once &&
+                    skill.missing_status_ref.empty()) {
+                    fail("item skill " + skill.item_ref + " holds every tick: give it a "
+                         "cooldown_ticks, once, or a missing_status");
+                }
+            } else if (skill.once) {
+                fail("only an item skill may be once");
             }
             if (!std::isfinite(skill.range_min_meters) ||
                 !std::isfinite(skill.range_max_meters) || skill.range_min_meters < 0.0f ||
@@ -10075,7 +10140,36 @@ void resolve_agent_skills(GameServerGameplayConfig* config) {
         AgentLeapTuning leap_tuning = agent.chaser.leap;
         AgentChargeTuning charge_tuning = agent.chaser.charge;
         std::uint32_t leap_weapon_id = 0;
-        for (const AgentSkillConfig& skill : agent.skills) {
+        for (AgentSkillConfig& skill : agent.skills) {
+            if (skill.type == AgentSkillType::kItem) {
+                const auto item = std::find_if(
+                    config->item_templates.begin(), config->item_templates.end(),
+                    [&](const ItemTemplateConfig& candidate) {
+                        return candidate.name == skill.item_ref;
+                    });
+                if (item == config->item_templates.end()) {
+                    fail("name an unknown item: " + skill.item_ref);
+                }
+                if ((item->definition.capability_flags & KernelItemCapability_Consumable) == 0u ||
+                    item->definition.is_weapon != 0u) {
+                    fail("name item " + skill.item_ref + ", which cannot be used: it is not "
+                         "consumable, or it is a weapon");
+                }
+                skill.item_template_id = item->definition.item_template_id;
+                if (!skill.missing_status_ref.empty()) {
+                    const auto status = std::find_if(
+                        config->status_effect_templates.begin(),
+                        config->status_effect_templates.end(),
+                        [&](const StatusEffectTemplateConfig& candidate) {
+                            return candidate.name == skill.missing_status_ref;
+                        });
+                    if (status == config->status_effect_templates.end()) {
+                        fail("name an unknown status: " + skill.missing_status_ref);
+                    }
+                    skill.missing_status_id = status->status_effect_id;
+                }
+                continue;
+            }
             if (skill.type == AgentSkillType::kWeapon) {
                 if (weapon != nullptr && sentry) {
                     fail("give a sentry more than one weapon: it has nothing to choose by");
