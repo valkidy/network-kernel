@@ -10046,10 +10046,13 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
 }
 
 // ai.skills resolved against the loadout and the sp_attack templates (AI plan
-// P4a), into the fields the controllers read: the weapon fired, the attack
-// range, the leap and the charge. Until skill selection exists (P4b) an agent
-// carries exactly one weapon skill, with no minimum range or cooldown, and at
-// most one leap and one charge.
+// P4), into the fields the controllers read: the weapon a sentry fires, the
+// leap and the charge. A chaser draws between its weapon skills at runtime
+// (P4b); a sentry, which has nothing to draw by, carries exactly one with no
+// range. At most one leap and one charge, and the leap swings one of the
+// agent's own weapons. sentry.weapon_id is the first weapon skill, and
+// chase.attack_range_meters the reach from the stop distance -- what the
+// existing hold-band check needs.
 void resolve_agent_skills(GameServerGameplayConfig* config) {
     for (EntityTemplateConfig& agent : config->entity_templates) {
         const auto fail = [&](const std::string& what) {
@@ -10066,6 +10069,7 @@ void resolve_agent_skills(GameServerGameplayConfig* config) {
         }
         const bool sentry = agent.default_controller_role == AgentControllerRole::kSentry;
         const AgentSkillConfig* weapon = nullptr;
+        std::vector<std::uint32_t> weapon_ids;
         bool leap = false;
         bool charge = false;
         AgentLeapTuning leap_tuning = agent.chaser.leap;
@@ -10073,20 +10077,22 @@ void resolve_agent_skills(GameServerGameplayConfig* config) {
         std::uint32_t leap_weapon_id = 0;
         for (const AgentSkillConfig& skill : agent.skills) {
             if (skill.type == AgentSkillType::kWeapon) {
-                if (weapon != nullptr) {
-                    fail("name more than one weapon: choosing between them is plan P4b");
+                if (weapon != nullptr && sentry) {
+                    fail("give a sentry more than one weapon: it has nothing to choose by");
                 }
-                weapon = &skill;
+                if (weapon == nullptr) {
+                    weapon = &skill;
+                }
+                weapon_ids.push_back(skill.weapon_id);
                 if (skill.weapon_id > UINT8_MAX ||
                     !actor_template_has_weapon(agent, static_cast<std::uint8_t>(skill.weapon_id))) {
                     fail("name weapon " + std::to_string(skill.weapon_id) +
                          ", which is not in weapon_slots");
                 }
-                if (skill.range_min_meters > 0.0f || skill.cooldown_ticks != 0u) {
-                    fail("give a weapon a minimum range or cooldown: plan P4b");
-                }
-                if (sentry && skill.range_max_meters > 0.0f) {
-                    fail("give a sentry's weapon a range: a sentry fires at whatever it sees");
+                if (sentry && (skill.range_min_meters > 0.0f || skill.range_max_meters > 0.0f ||
+                               skill.cooldown_ticks != 0u)) {
+                    fail("give a sentry's weapon a range or cooldown: a sentry fires at "
+                         "whatever it sees");
                 }
                 continue;
             }
@@ -10111,6 +10117,7 @@ void resolve_agent_skills(GameServerGameplayConfig* config) {
                 leap_tuning.min_distance_meters = skill.range_min_meters;
                 leap_tuning.max_distance_meters = skill.range_max_meters;
                 leap_tuning.cooldown_ticks = skill.cooldown_ticks;
+                leap_tuning.on_landing_weapon_id = found->on_landing_weapon_id;
                 leap_weapon_id = found->on_landing_weapon_id;
             } else {
                 if (charge) fail("name more than one charge");
@@ -10127,12 +10134,31 @@ void resolve_agent_skills(GameServerGameplayConfig* config) {
         if (weapon == nullptr) {
             fail("need a weapon");
         }
-        // The swing that lands with a leap is the agent's own weapon.
-        if (leap && leap_weapon_id != weapon->weapon_id) {
-            fail("leap on_landing.weapon must be the agent's weapon skill");
+        // The swing that lands with a leap is one of the agent's own weapons.
+        if (leap && std::find(weapon_ids.begin(), weapon_ids.end(), leap_weapon_id) ==
+                        weapon_ids.end()) {
+            fail("leap on_landing.weapon must be one of the agent's weapon skills");
+        }
+        // A chaser closes to its stop distance and holds; something has to
+        // reach from there, or it parks in front of a target it cannot hit.
+        float reach = -1.0f;
+        if (!sentry) {
+            for (const AgentSkillConfig& skill : agent.skills) {
+                if (skill.type != AgentSkillType::kWeapon ||
+                    skill.range_min_meters > agent.chaser.stop_distance_meters) {
+                    continue;
+                }
+                reach = skill.range_max_meters <= 0.0f || reach == 0.0f
+                    ? 0.0f
+                    : std::max(reach, skill.range_max_meters);
+            }
+            if (reach < 0.0f) {
+                fail("leave nothing that reaches from the stop distance (" +
+                     std::to_string(agent.chaser.stop_distance_meters) + " m)");
+            }
         }
         agent.sentry.weapon_id = static_cast<std::uint16_t>(weapon->weapon_id);
-        agent.chaser.attack_range_meters = weapon->range_max_meters;
+        agent.chaser.attack_range_meters = sentry ? 0.0f : reach;
         agent.chaser.leap = leap_tuning;
         agent.chaser.charge = charge_tuning;
     }

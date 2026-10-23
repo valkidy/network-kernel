@@ -3,6 +3,7 @@
 
 #include <vector>
 
+#include "game_server/src/actor_intent_executor.h"
 #include "game_server/src/agent_runtime.h"
 #include "game_server/src/agent_sentry_controller.h"
 #include "game_server/src/ai_perception_adapter.h"
@@ -15,6 +16,18 @@ namespace network_example::game_server {
 // short of it, on a flight the kernel solves to land there on a known tick.
 // Inert while max_distance_meters is zero, which is every chaser authored
 // before leaps existed.
+// One weapon skill as the chaser runs it (AI plan D13, D14): how to fire the
+// weapon -- its own aim and charge, not the template's first weapon's -- and
+// when it may.
+struct AgentWeaponSkill {
+    ActorIntentExecutorConfig executor;
+    // Origin to origin. A max of zero is no limit.
+    float range_min_meters = 0.0f;
+    float range_max_meters = 0.0f;
+    std::uint32_t cooldown_ticks = 0;
+    std::uint32_t weight = 1;
+};
+
 struct AgentLeapTuning {
     // The band, measured between origins like attack_range_meters. Below
     // min_distance_meters it just walks the rest.
@@ -32,6 +45,9 @@ struct AgentLeapTuning {
     // Start the swing this many ticks before the landing, so a wind-up of the
     // same length puts the hit on touchdown. Zero swings once it is down.
     std::uint32_t attack_lead_ticks = 0;
+    // The weapon swung on the way down (its sp_attack's on_landing.weapon):
+    // one of the agent's weapon skills, chosen for the landing.
+    std::uint32_t on_landing_weapon_id = 0;
 };
 
 // A charge at the target: when it stands inside the band, the agent stops and
@@ -125,15 +141,18 @@ struct AgentChaserConfig {
     AgentChaseTuning chase;
     AgentPatrolTuning patrol;
     AgentGarrisonTuning garrison;
+    // Its weapon skills, in authored order. Left empty, the controller makes
+    // one from sentry.weapon_id reaching chase.attack_range_meters -- what a
+    // config built in code (the tests) means.
+    std::vector<AgentWeaponSkill> weapon_skills;
     // The template's movement gravity, which a leap's airtime is worked out
     // against. Not authored here.
     float gravity_y = -9.81f;
 };
 
-// A sentry that closes on what it sees. It pursues only while the target is
-// actually visible: the tick vision breaks the agent stops where it stands and
-// falls back through the sentry's forget timers. It never walks to a remembered
-// position.
+// A sentry that closes on what it sees. It pursues while the target is in
+// sight; the tick vision breaks it searches -- walks to where it last saw it --
+// until the sentry's forget timer gives up (AI plan P2a).
 //
 // Given a squad slot it also walks to that slot while nothing is in sight,
 // breaks off a pursuit that drags it further than its leash, and walks back.
@@ -155,6 +174,8 @@ public:
 
 private:
     AgentChaserConfig config_;
+    // The weapon skill a leap swings on landing (chase.leap.on_landing_weapon_id).
+    std::uint8_t leap_weapon_skill_ = 0;
 };
 
 }  // namespace network_example::game_server

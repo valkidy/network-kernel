@@ -2,6 +2,7 @@
 #define GAME_SERVER_AGENT_RUNTIME_H_
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -115,6 +116,9 @@ struct SpawnedControllerSpec {
     std::uint32_t net_id = 0;
     AgentControllerSpec spec;
 };
+
+// The most skills one agent may carry (AI plan D13).
+inline constexpr std::size_t kMaxAgentSkills = 8;
 
 struct AgentSentryRuntimeState {
     std::uint32_t self_id = 0;
@@ -233,6 +237,19 @@ struct AgentRuntimeState {
     std::uint32_t charge_ticks_left = 0;
     KernelVec3 charge_direction{0.0f, 0.0f, 0.0f};
     std::uint32_t charge_cooldown_ticks = 0;
+    // Chaser only (AI plan P4b): the weapon skill it is using, each skill's
+    // cooldown, whether to choose again (after a shot, or once the one in hand
+    // stops being usable), and its own random stream for the weighted choice,
+    // seeded from its net id so a run replays.
+    std::uint8_t weapon_skill = 0;
+    std::array<std::uint32_t, kMaxAgentSkills> skill_cooldown_ticks{};
+    bool choose_weapon = true;
+    std::uint32_t skill_random = 0;
+    // The last action instance it saw start: a new one that is not a reload is
+    // the weapon in hand going off, which is when its cooldown starts and the
+    // next draw is due -- not when the input asking for it was sent, which an
+    // action still recovering ignores.
+    std::uint32_t seen_action_instance_id = 0;
     AgentPatrolRuntimeState patrol{};
     AgentEntryRuntimeState entry{};
     // Whether the agent was engaged when its controller last ran, so that an

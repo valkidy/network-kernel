@@ -37,6 +37,43 @@ bool runs_chaser(AgentControllerRole role) {
            role == AgentControllerRole::kPatrol;
 }
 
+// How to fire one weapon: its own ballistic aim when its projectile arcs, and
+// its own charge time when its fire action charges.
+ActorIntentExecutorConfig weapon_executor_config(
+    const GameServerGameplayConfig& config,
+    std::uint16_t weapon_id) {
+    ActorIntentExecutorConfig executor;
+    executor.weapon_id = weapon_id;
+    executor.charge_ticks = weapon_charge_ticks(config, weapon_id);
+    if (weapon_id > UINT8_MAX) {
+        return executor;
+    }
+    const auto weapon = static_cast<std::uint8_t>(weapon_id);
+    if (!config.weapons.configured[weapon]) {
+        return executor;
+    }
+    const std::uint32_t projectile_template_id =
+        config.weapons.definitions[weapon].projectile_template_id;
+    const auto projectile = std::find_if(
+        config.projectile_templates.begin(),
+        config.projectile_templates.end(),
+        [projectile_template_id](const ProjectileTemplateConfig& candidate) {
+            return candidate.definition.projectile_template_id ==
+                   projectile_template_id;
+        });
+    if (projectile == config.projectile_templates.end() ||
+        projectile->definition.mechanics.motion_model !=
+            KernelProjectileMotionModel_Parabolic) {
+        return executor;
+    }
+    executor.ballistic_aim.enabled = true;
+    executor.ballistic_aim.speed = projectile->definition.mechanics.speed;
+    executor.ballistic_aim.gravity = projectile->definition.mechanics.gravity;
+    executor.ballistic_aim.lifetime_ticks =
+        projectile->definition.mechanics.lifetime_ticks;
+    return executor;
+}
+
 // Resolved from the agent's OWN actor template, not from the catalog's single
 // `enemy:` entry. Holding one controller-wide config meant an agent spawned by a
 // game-rule wave silently ran whichever template `enemy:` named -- a
@@ -50,36 +87,11 @@ AgentSentryConfig agent_sentry_config(
     if (actor_template == nullptr) {
         return AgentSentryConfig{};
     }
-
     AgentSentryConfig sentry = actor_template->sentry;
-    sentry.charge_ticks = weapon_charge_ticks(config, sentry.weapon_id);
-    if (sentry.weapon_id > UINT8_MAX) {
-        return sentry;
-    }
-    const auto weapon_id = static_cast<std::uint8_t>(sentry.weapon_id);
-    if (!config.weapons.configured[weapon_id]) {
-        return sentry;
-    }
-    const std::uint32_t projectile_template_id =
-        config.weapons.definitions[weapon_id].projectile_template_id;
-    const auto projectile = std::find_if(
-        config.projectile_templates.begin(),
-        config.projectile_templates.end(),
-        [projectile_template_id](const ProjectileTemplateConfig& candidate) {
-            return candidate.definition.projectile_template_id ==
-                   projectile_template_id;
-        });
-    if (projectile == config.projectile_templates.end() ||
-        projectile->definition.mechanics.motion_model !=
-            KernelProjectileMotionModel_Parabolic) {
-        return sentry;
-    }
-
-    sentry.ballistic_aim.enabled = true;
-    sentry.ballistic_aim.speed = projectile->definition.mechanics.speed;
-    sentry.ballistic_aim.gravity = projectile->definition.mechanics.gravity;
-    sentry.ballistic_aim.lifetime_ticks =
-        projectile->definition.mechanics.lifetime_ticks;
+    const ActorIntentExecutorConfig executor =
+        weapon_executor_config(config, sentry.weapon_id);
+    sentry.charge_ticks = executor.charge_ticks;
+    sentry.ballistic_aim = executor.ballistic_aim;
     return sentry;
 }
 
@@ -172,6 +184,19 @@ AgentRuntimeManager::AgentControllerBinding AgentRuntimeManager::make_binding(
             chaser.chase = actor_template.chaser;
             chaser.patrol = actor_template.patrol;
             chaser.garrison = actor_template.garrison;
+            for (const AgentSkillConfig& skill : actor_template.skills) {
+                if (skill.type != AgentSkillType::kWeapon) {
+                    continue;
+                }
+                AgentWeaponSkill weapon;
+                weapon.executor = weapon_executor_config(
+                    config_, static_cast<std::uint16_t>(skill.weapon_id));
+                weapon.range_min_meters = skill.range_min_meters;
+                weapon.range_max_meters = skill.range_max_meters;
+                weapon.cooldown_ticks = skill.cooldown_ticks;
+                weapon.weight = skill.weight;
+                chaser.weapon_skills.push_back(weapon);
+            }
             chaser.gravity_y = actor_template.movement_gravity.y;
             binding.chaser = AgentChaserController(chaser);
         }

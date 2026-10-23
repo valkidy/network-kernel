@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 #include "ai_intent.h"
 #include "game_server/src/actor_intent_executor.h"
@@ -11,6 +12,78 @@
 
 namespace network_example::game_server {
 namespace {
+
+bool in_reach(const AgentWeaponSkill& weapon, float distance) {
+    return distance >= weapon.range_min_meters &&
+        (weapon.range_max_meters <= 0.0f || distance <= weapon.range_max_meters);
+}
+
+bool has_ammo(const KernelServerEntityState& self, std::uint16_t weapon_id) {
+    for (std::uint8_t slot = 0; slot < self.weapon_slot_count; ++slot) {
+        if (self.weapon_ids[slot] == weapon_id) {
+            return self.ammo[slot] > 0u || self.reserve_magazines[slot] > 0u;
+        }
+    }
+    return false;
+}
+
+// Mid-swing or reloading: the kernel would not take the weapon out of its hand
+// (hold_selected_weapon), and a change of weapon cancels a hold.
+bool busy(const KernelServerEntityState& self) {
+    return self.is_reloading != 0u ||
+        self.action.phase == KernelActionPhase_Windup ||
+        self.action.phase == KernelActionPhase_Active;
+}
+
+std::uint32_t next_random(AgentRuntimeState* agent) {
+    std::uint32_t x = agent->skill_random != 0u
+        ? agent->skill_random
+        : agent->net_id * 2654435761u + 0x9e3779b9u;
+    x ^= x << 13u;
+    x ^= x >> 17u;
+    x ^= x << 5u;
+    agent->skill_random = x != 0u ? x : 1u;
+    return agent->skill_random;
+}
+
+// D14: keeps the weapon in hand while it can still be used and the agent has
+// not just fired it; otherwise, once the agent is free to switch, draws one by
+// weight from the skills that are in reach, off cooldown and loaded. With none
+// usable it keeps what it has, and the pursuit closes instead.
+void choose_weapon_skill(
+    const std::vector<AgentWeaponSkill>& skills,
+    const KernelServerEntityState& self,
+    float distance,
+    AgentRuntimeState* agent) {
+    const auto usable = [&](std::size_t index) {
+        return in_reach(skills[index], distance) &&
+            agent->skill_cooldown_ticks[index] == 0u &&
+            has_ammo(self, skills[index].executor.weapon_id);
+    };
+    if (agent->weapon_skill >= skills.size()) {
+        agent->weapon_skill = 0;
+    }
+    if ((!agent->choose_weapon && usable(agent->weapon_skill)) || busy(self)) {
+        return;
+    }
+    std::uint32_t total = 0;
+    for (std::size_t index = 0; index < skills.size(); ++index) {
+        if (usable(index)) total += skills[index].weight;
+    }
+    if (total == 0u) {
+        return;
+    }
+    std::uint32_t pick = next_random(agent) % total;
+    for (std::size_t index = 0; index < skills.size(); ++index) {
+        if (!usable(index)) continue;
+        if (pick < skills[index].weight) {
+            agent->weapon_skill = static_cast<std::uint8_t>(index);
+            agent->choose_weapon = false;
+            return;
+        }
+        pick -= skills[index].weight;
+    }
+}
 
 // How close Search comes to where the target was last seen before it stops
 // and looks around, and a returning garrison to where it broke off. The same
@@ -264,7 +337,23 @@ KernelVec2 chase_move(
 }  // namespace
 
 AgentChaserController::AgentChaserController(AgentChaserConfig config)
-    : config_(config) {}
+    : config_(std::move(config)) {
+    if (config_.weapon_skills.empty()) {
+        AgentWeaponSkill weapon;
+        weapon.executor.weapon_id = config_.sentry.weapon_id;
+        weapon.executor.ballistic_aim = config_.sentry.ballistic_aim;
+        weapon.executor.charge_ticks = config_.sentry.charge_ticks;
+        weapon.range_max_meters = config_.chase.attack_range_meters;
+        config_.weapon_skills.push_back(weapon);
+    }
+    for (std::size_t index = 0; index < config_.weapon_skills.size(); ++index) {
+        if (config_.weapon_skills[index].executor.weapon_id ==
+            config_.chase.leap.on_landing_weapon_id) {
+            leap_weapon_skill_ = static_cast<std::uint8_t>(index);
+            break;
+        }
+    }
+}
 
 void AgentChaserController::tick(
     KernelHandle* kernel,
@@ -277,14 +366,14 @@ void AgentChaserController::tick(
 
     const AgentSentryConfig& sentry_config = config_.sentry;
 
-    ActorIntentExecutorConfig executor_config;
-    executor_config.weapon_id = sentry_config.weapon_id;
-    executor_config.ballistic_aim = sentry_config.ballistic_aim;
-    executor_config.charge_ticks = sentry_config.charge_ticks;
-    const ActorIntentExecutor actor_executor(executor_config);
-
     for (AgentRuntimeState* agent_pointer : agents) {
         AgentRuntimeState& agent = *agent_pointer;
+        for (std::uint32_t& cooldown : agent.skill_cooldown_ticks) {
+            if (cooldown > 0u) --cooldown;
+        }
+        if (agent.weapon_skill >= config_.weapon_skills.size()) {
+            agent.weapon_skill = 0;
+        }
         const SentryPerceptionSnapshot perception =
             AiPerceptionAdapter::build_sentry_snapshot(
                 kernel, frame, agent.net_id);
@@ -292,6 +381,18 @@ void AgentChaserController::tick(
             continue;
         }
         const KernelServerEntityState& entity_state = perception.self_state;
+        // The weapon in hand went off (D14): its cooldown runs from here, and
+        // the next shot is drawn afresh.
+        if (entity_state.action.action_instance_id != 0u &&
+            entity_state.action.action_instance_id != agent.seen_action_instance_id) {
+            agent.seen_action_instance_id = entity_state.action.action_instance_id;
+            if (entity_state.is_reloading == 0u &&
+                entity_state.action.phase != KernelActionPhase_None) {
+                agent.skill_cooldown_ticks[agent.weapon_skill] =
+                    config_.weapon_skills[agent.weapon_skill].cooldown_ticks;
+                agent.choose_weapon = true;
+            }
+        }
 
         agent.position = entity_state.position;
         agent.hp = entity_state.hp;
@@ -601,19 +702,41 @@ void AgentChaserController::tick(
                 //
                 // In a leap, range is the landing's business: it comes down
                 // inside it, so the swing goes by how soon that is instead.
+                // Which weapon (D14): the leap's own swing while one is in the
+                // air, otherwise whichever skill the agent draws.
+                const float distance = agent_steering::horizontal_distance(
+                    agent.position, perception.target_position);
+                if (agent.leap_ticks_to_landing > 0u) {
+                    agent.weapon_skill = leap_weapon_skill_;
+                } else {
+                    choose_weapon_skill(
+                        config_.weapon_skills, entity_state, distance, &agent);
+                }
+                const AgentWeaponSkill& weapon =
+                    config_.weapon_skills[agent.weapon_skill];
+                // Whether to fire: the weapon in hand reaches and is off its
+                // cooldown. Whether it is attacking at all (D4): anything it
+                // carries reaches, cooling down or not -- a rocket that has
+                // just gone off is still an attack in progress.
                 const bool target_within_attack_range =
                     agent.leap_ticks_to_landing > 0u
                     ? agent.leap_ticks_to_landing <=
                         config_.chase.leap.attack_lead_ticks
-                    : config_.chase.attack_range_meters <= 0.0f ||
-                        agent_steering::horizontal_distance(
-                            agent.position, perception.target_position) <=
-                            config_.chase.attack_range_meters;
+                    : in_reach(weapon, distance) &&
+                        agent.skill_cooldown_ticks[agent.weapon_skill] == 0u;
+                const bool something_reaches =
+                    agent.leap_ticks_to_landing > 0u
+                    ? target_within_attack_range
+                    : std::any_of(
+                          config_.weapon_skills.begin(), config_.weapon_skills.end(),
+                          [distance](const AgentWeaponSkill& skill) {
+                              return in_reach(skill, distance);
+                          });
                 // Set directly, not through transition_to: flipping between
                 // the two must not reset the pursuit's counters. A wind-up
                 // started this tick is an attack already.
                 agent.sentry.state =
-                    target_within_attack_range || agent.charge_windup_ticks > 0u
+                    something_reaches || agent.charge_windup_ticks > 0u
                     ? AgentSentryState::kAttack
                     : AgentSentryState::kChasing;
                 if (agent.sentry.ballistic_retry_ticks > 0) {
@@ -630,7 +753,7 @@ void AgentChaserController::tick(
                     // input in the same tick would carry a higher input_seq and
                     // the movement solver would take that one instead.
                     const ActorIntentExecutionResult execution =
-                        actor_executor.execute(
+                        ActorIntentExecutor(weapon.executor).execute(
                             kernel,
                             &agent,
                             intent,
@@ -726,14 +849,15 @@ void AgentChaserController::tick(
             input.move = move;
             // Must match what the executor sends, or an in-flight action reads
             // this as a weapon change and cancels itself.
-            input.selected_weapon =
-                static_cast<std::uint8_t>(sentry_config.weapon_id);
+            const ActorIntentExecutorConfig& in_hand =
+                config_.weapon_skills[agent.weapon_skill].executor;
+            input.selected_weapon = static_cast<std::uint8_t>(in_hand.weapon_id);
             // And so must the aim. A zero aim_dir is not "no opinion": the
             // kernel reads it as aiming down world +X and replicates that, so
             // every tick the executor declined to fire on -- reloading, waiting
             // out a ballistic retry, closing the last metres into range -- used
             // to turn the agent away from the target it is shooting at.
-            input.aim_dir = actor_executor.input_aim_direction(
+            input.aim_dir = ActorIntentExecutor(in_hand).input_aim_direction(
                 kernel, agent.net_id, perception);
             if (Kernel_ServerEnqueueEntityInput(
                     kernel,

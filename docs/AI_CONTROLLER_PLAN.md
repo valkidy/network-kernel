@@ -1,6 +1,6 @@
 # AI controller 重構實作計劃書
 
-狀態：**設計已定案（§2）；P0 驗證完成（§11）；P1（§6.0）、P2（§7.0）、P3（§8.0）完成，在 `claude/ai-controller-p1`（2026-10-23）；P4 尚未開始。**
+狀態：**設計已定案（§2）；P0 驗證完成（§11）；P1（§6.0）、P2（§7.0）、P3（§8.0）、P4（§9）完成，在 `claude/ai-controller-p1`（2026-10-23）；P5 尚未開始。**
 分支：計劃在 `claude/ai-controller-plan`，從 `main`（84cc4d40，ABI 109）開。
 各階段的實作各自開 `claude/ai-controller-p<N>` 分支。
 最後更新：2026-10-23。
@@ -369,7 +369,7 @@ P3c 的實作：在 `patrol_group_runtime` 判斷 `holding` 的同一個迴圈�
 | 步驟 | 內容 | 行為改變 | 狀態 |
 |---|---|---|---|
 | P4a | `sp_attack_templates/` 與每個 agent 必填的 `ai.skills`；載入時解析成原本的 weapon / attack range / leap / charge | 無 | ✅ `claude/ai-controller-p1` |
-| P4b | 多個 weapon skill、依權重與 seed 挑選、切換武器、Chasing / Attack 依「有沒有 skill 搆得到」 | 有 | |
+| P4b | 多個 weapon skill、依權重與 seed 挑選、切換武器、Chasing / Attack 依「有沒有 skill 搆得到」 | 只有寫了多個武器的 template（目前沒有） | ✅ `claude/ai-controller-p1` |
 
 P4a 的實作與決定：
 - **skill 用 weapon id 引用武器**（`{type: weapon, value: 10}`），和 `weapon_slots` 一致。武器的 `name` 是給人看的
@@ -389,6 +389,27 @@ P4a 的實作與決定：
   留到 P4b。
 - 新目錄加進了 bundle 與 52 個測試 target 的 data glob，以及 legged locomotion 測試 catalog。
 - 測試：`ai_skills_test`（解析結果、13 種錯誤寫法、一個合法的對照編輯）。
+
+P4b 的實作與決定：
+- 只有 chaser 會在武器之間挑；sentry 仍是恰好一個、沒有射程與 cooldown 的武器（沒有距離可以依據）。
+- 每個 weapon skill 有自己的 executor 設定（拋物線瞄準、蓄力時間來自那把武器），由 manager 建立。
+- 挑選（D14）：只在 agent **空閒**時（沒有 Windup / Active 的 action、沒有在 reload，否則 kernel 不會換武器，
+  而且換武器會取消 hold）、而且只在剛開火之後或手上的武器不能用時重新挑；在射程內、cooldown 已結束、有子彈的
+  skill 依 `weight` 隨機挑，亂數以 net id 為種子（可重現）。都不能用就保留手上的，繼續靠近。
+- **cooldown 從 action 真的開始時算**（看到新的、不是 reload 的 action instance），不是從送出 input 時算：最初
+  的版本在 recovery 中換成火箭、input 被忽略、cooldown 卻開始了，30 秒只射出 1 發火箭。
+- 跳撲在空中時強制使用 `on_landing.weapon` 那個 skill。
+- Attack / Chasing：**任何**武器在射程內就是 Attack（即使在 cooldown，例如火箭剛射出）；開火則要手上的武器
+  在射程內而且 cooldown 結束。
+- 載入檢查：至少一個武器要能從停下的距離打到（否則會停在打不到的地方）；`chase.attack_range_meters` 改成
+  「從停下的距離能打多遠」，原本 resume 距離的檢查照舊有意義。leap 的 `on_landing.weapon` 必須是 agent 的
+  其中一個 weapon skill。
+- **沒有做**：skill 的 min 距離超出視野範圍的檢查（要查 vision cone 的 collider range）、`lead_ticks ==
+  commit_offset + 1` 的檢查；cooldown 只對武器 skill，sp_attack 的 cooldown 仍由原本的 leap / charge 計時。
+- 測試：`ai_weapon_choice_test`（catalog 複本中給法師加上火箭：榴彈權重 3、火箭權重 1 + 150 ticks cooldown；
+  對 12 m 外的玩家 30 秒：16 發榴彈、4 發火箭，火箭不超過 cooldown 允許的 7 發）。`ai_skills_test` 改為允許多個
+  武器、拒絕停下距離打不到與 sentry 多武器。
+- 效能：1 km 的 AI 時間約 +6%（446 µs，原本約 420 µs），kernel 不變，總計仍約 7% tick。
 
 1. 新增 `sp_attack_templates/`（`$id_sp_attack_$name.yaml`），把 `chaser.leap` 和
    `chaser.charge` 的參數搬過去：

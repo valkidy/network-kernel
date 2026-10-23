@@ -258,9 +258,6 @@ struct AgentSkillConfig {
     std::uint32_t weight = 1;
 };
 
-// The most skills one agent may carry.
-inline constexpr std::size_t kMaxAgentSkills = 8;
-
 struct ActorTemplateConfig {
     std::uint32_t actor_template_id = 0;
     std::string name;

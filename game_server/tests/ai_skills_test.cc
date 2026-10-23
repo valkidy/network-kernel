@@ -107,14 +107,28 @@ void bad_skills_are_refused() {
     require(!loads_after("weapon not in loadout", kGingerbread, [](YAML::Node& root) {
         root["ai"]["skills"][0]["use"]["value"] = 11;
     }));
-    require(!loads_after("two weapons (P4b)", kGingerbread, [](YAML::Node& root) {
+    // P4b: a chaser may carry several weapon skills, with minimum ranges and
+    // cooldowns, as long as one reaches from where it stops.
+    require(loads_after("two weapons", kGingerbread, [](YAML::Node& root) {
         YAML::Node second;
         second["use"]["type"] = "weapon";
         second["use"]["value"] = 10;
+        second["when"]["range_meters"]["min"] = 1.0;
+        second["when"]["range_meters"]["max"] = 2.2;
+        second["cooldown_ticks"] = 30;
+        second["weight"] = 3;
         root["ai"]["skills"].push_back(second);
     }));
-    require(!loads_after("weapon minimum range (P4b)", kGingerbread, [](YAML::Node& root) {
-        root["ai"]["skills"][0]["when"]["range_meters"]["min"] = 1.0;
+    require(!loads_after("nothing reaches from the stop distance", kGingerbread,
+                         [](YAML::Node& root) {
+        root["ai"]["skills"][0]["when"]["range_meters"]["min"] = 2.0;
+        root["ai"]["skills"][0]["when"]["range_meters"]["max"] = 6.0;
+    }));
+    require(!loads_after("sentry with two weapons", kSentry, [](YAML::Node& root) {
+        YAML::Node second;
+        second["use"]["type"] = "weapon";
+        second["use"]["value"] = 2;
+        root["ai"]["skills"].push_back(second);
     }));
     require(!loads_after("min past max", kGingerbread, [](YAML::Node& root) {
         root["ai"]["skills"][1]["when"]["range_meters"]["min"] = 30.0;
