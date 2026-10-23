@@ -25,14 +25,13 @@ animations:
 vision:
   collider_template: grenade_sentry_vision_cone
 ai:
-  controller: sentry
+  default_controller: sentry
   profile: grenade_artillery
-  sentry:
+  perception:
     alert_ticks: 90
     forget_ticks: 150
     ballistic_retry_cooldown_ticks: 30
-    patrol_rotation_interval_ticks: 30
-    patrol_rotation_min_degrees: 15.0
-    patrol_rotation_max_degrees: 30.0
+    idle_rotation_interval_ticks: 30
+    idle_rotation_degrees: {min: 15.0, max: 30.0}
     animation_idle: idle
     animation_attack: chasing

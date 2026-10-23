@@ -1,6 +1,6 @@
 # AI controller 重構實作計劃書
 
-狀態：**設計已定案（§2）；P0 驗證完成（§11，2026-10-23）；P1 尚未開始。**
+狀態：**設計已定案（§2）；P0 驗證完成（§11）；P1（P1a–P1d）完成（§6.0，`claude/ai-controller-p1`，2026-10-23）；P2 尚未開始。**
 分支：計劃在 `claude/ai-controller-plan`，從 `main`（84cc4d40，ABI 109）開。
 各階段的實作各自開 `claude/ai-controller-p<N>` 分支。
 最後更新：2026-10-23。
@@ -125,7 +125,7 @@ P1 實作時發現範圍比原本的「catalog 重整」大（garrison 走路線
 | P1a | 新格式與舊格式並存（新格式在載入時轉成舊格式的形狀，再用原本的 parser）；每個 agent 帶 `AgentControllerRole`，controller 依（template, role）綁定 | 無 | ✅ `claude/ai-controller-p1` |
 | P1b | 生成來源覆寫：四個 director 回傳 net_id → controller spec；驗證；`patrol_route` → `controller.route` | 無 | ✅ `claude/ai-controller-p1` |
 | P1c | garrison 走路線（共用 helper）、刪除 `passive_patrol` 與 x 軸來回、轉換 21–23、39 與 director 100–102、更新測試 | **有** | ✅ `claude/ai-controller-p1` |
-| P1d | 所有 template 改用新格式、刪除舊格式（parser 直接讀新 key）、更新 `shipping_catalog_flow_test` 與 bench | 無 | |
+| P1d | 所有 template 改用新格式、刪除舊格式（parser 直接讀新 key） | 無 | ✅ `claude/ai-controller-p1` |
 
 P1a 的對應（舊 → role）：`controller: sentry` → `kSentry`（`stationary` = 不是 passive_patrol）；
 `controller: chaser` → `kGarrison`。kernel 的 `ai_controller_type` 不變（sentry → Sentry，其他 →
@@ -151,6 +151,13 @@ P1c 的實作：路線行走移到 `agent_steering::route_patrol_move`，chaser 
 轉角可能偏離直線約 1 m）；`agent_cpu_bench` 的步態表中，四足單位不再自己走，而是追擊原點的玩家；
 `agent_sentry_per_agent_config_test` 與 `agent_sentry_gravity_test` 改成不依賴被動巡邏。
 `gameplay_config_test` 在 main 上本來就無法 build，沒有改。
+
+P1d 的實作：17 個 legacy agent template 用腳本轉換（保留註解）；`perception` / `locomotion` /
+`controllers.patrol` 由原本的 parser 直接讀，轉換函式刪除。驗證方式：轉換前後與 parser 改寫後各傾印一次
+所有 actor template 的 AI 欄位與 catalog hash，三份完全相同。舊 key（`controller` / `sentry` / `chaser` /
+`patrol`）在載入時被拒絕並提示新名稱；director 仍可寫 `controller: director`。`shipping_catalog_flow_test`
+與 bench 不需要改。`ai_role_based_format_test` 改為檢查所有 agent template 都是新格式，以及 13 種錯誤寫法
+會被拒絕。
 
 ### 6.1 template 格式
 

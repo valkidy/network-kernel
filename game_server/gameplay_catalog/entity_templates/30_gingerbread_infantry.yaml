@@ -29,18 +29,17 @@ animations:
 vision:
   collider_template: sentry_grunt_vision_cone
 ai:
-  controller: chaser
+  default_controller: garrison
   profile: default
-  sentry:
+  perception:
     alert_ticks: 90
     forget_ticks: 150
-    patrol_rotation_interval_ticks: 30
-    patrol_rotation_min_degrees: 15.0
-    patrol_rotation_max_degrees: 30.0
+    idle_rotation_interval_ticks: 30
+    idle_rotation_degrees: {min: 15.0, max: 30.0}
     animation_idle: idle
     # See 28_gingerbread.yaml: this is the locomotion clip, not the swing.
     animation_attack: chasing
-  chaser:
+  locomotion:
     stop_distance_meters: 1.8
     resume_distance_meters: 2.1
     input_magnitude: 1.0
@@ -54,11 +53,12 @@ ai:
   # SLOWEST member's patrol speed has to beat advance_speed_meters_per_second,
   # or that member falls behind its slot for the whole route and never arrives.
   # 2.0 m/s x 0.6 = 1.2 m/s here, against a cursor at 0.9.
-  patrol:
-    slot_radius_meters: 1.2
-    input_magnitude: 0.6
-    # About the vision cone's own reach, so it gives up at roughly the distance
-    # it would have lost sight anyway. resume sits well inside it, or it yo-yos
-    # on the boundary.
-    leash_meters: 18.0
-    leash_resume_meters: 6.0
+  controllers:
+    patrol:
+      slot_radius_meters: 1.2
+      input_magnitude: 0.6
+      # About the vision cone's own reach, so it gives up at roughly the distance
+      # it would have lost sight anyway. resume sits well inside it, or it yo-yos
+      # on the boundary.
+      leash_meters: 18.0
+      leash_resume_meters: 6.0

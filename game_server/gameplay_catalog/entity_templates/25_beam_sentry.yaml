@@ -34,16 +34,15 @@ animations:
 vision:
   collider_template: sentry_grunt_vision_cone
 ai:
-  controller: sentry
+  default_controller: sentry
   profile: beam_sentry
-  sentry:
+  perception:
     # 3 s of tracking before the first shot, against sentry_grunt's 3 s as well:
     # a beam that starts the moment the cone clips a player is far harder to
     # read than a projectile stream.
     alert_ticks: 90
     forget_ticks: 150
-    patrol_rotation_interval_ticks: 30
-    patrol_rotation_min_degrees: 15.0
-    patrol_rotation_max_degrees: 30.0
+    idle_rotation_interval_ticks: 30
+    idle_rotation_degrees: {min: 15.0, max: 30.0}
     animation_idle: idle
     animation_attack: chasing

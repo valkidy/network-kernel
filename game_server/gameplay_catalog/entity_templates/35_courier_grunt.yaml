@@ -48,17 +48,16 @@ vision:
 # chaser.attack_range_meters below is for -- visibility alone would have it
 # swinging from across the room.
 ai:
-  controller: chaser
+  default_controller: garrison
   profile: default
-  sentry:
+  perception:
     alert_ticks: 90
     forget_ticks: 150
-    patrol_rotation_interval_ticks: 30
-    patrol_rotation_min_degrees: 15.0
-    patrol_rotation_max_degrees: 30.0
+    idle_rotation_interval_ticks: 30
+    idle_rotation_degrees: {min: 15.0, max: 30.0}
     animation_idle: idle
     animation_attack: chasing
-  chaser:
+  locomotion:
     # These three are one setting, not three. Holding persists from
     # stop_distance all the way out to resume_distance, so a resume_distance
     # beyond attack_range opens a band where the grunt has stopped chasing and
@@ -74,16 +73,17 @@ ai:
     attack_range_meters: 2.2
   # Only read when this grunt is in a squad; a lone chaser has no slot and none
   # of this applies to it.
-  patrol:
-    slot_radius_meters: 1.2
-    # Half speed, so a patrol reads as a patrol rather than as a pursuit that
-    # has not noticed anyone yet.
-    input_magnitude: 0.5
-    # Roughly the vision cone's own reach, so a grunt gives up at about the
-    # distance it would have stopped seeing anything anyway. resume has to sit
-    # well inside it or the grunt yo-yos on the boundary.
-    leash_meters: 18.0
-    leash_resume_meters: 6.0
+  controllers:
+    patrol:
+      slot_radius_meters: 1.2
+      # Half speed, so a patrol reads as a patrol rather than as a pursuit that
+      # has not noticed anyone yet.
+      input_magnitude: 0.5
+      # Roughly the vision cone's own reach, so a grunt gives up at about the
+      # distance it would have stopped seeing anything anyway. resume has to sit
+      # well inside it or the grunt yo-yos on the boundary.
+      leash_meters: 18.0
+      leash_resume_meters: 6.0
 # On first spotting someone, two chaser_grunts come out around it.
 #
 # Once per engagement, and no more often than every 20 s however its alert

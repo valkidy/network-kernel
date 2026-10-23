@@ -48,16 +48,15 @@ animations:
 vision:
   collider_template: sentry_grunt_vision_cone
 ai:
-  controller: sentry
+  default_controller: sentry
   profile: allied_beam_sentry
-  sentry:
+  perception:
     # Half the hostile sentry's 90-tick windup. The 3 s telegraph on an enemy
     # exists to give the player time to break line of sight; on a unit fighting
     # for the player that delay is only a handicap.
     alert_ticks: 45
     forget_ticks: 150
-    patrol_rotation_interval_ticks: 30
-    patrol_rotation_min_degrees: 15.0
-    patrol_rotation_max_degrees: 30.0
+    idle_rotation_interval_ticks: 30
+    idle_rotation_degrees: {min: 15.0, max: 30.0}
     animation_idle: idle
     animation_attack: chasing
