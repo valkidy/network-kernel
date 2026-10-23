@@ -2772,6 +2772,9 @@ void KernelEngine::update(float delta_seconds) {
     if (!running_) {
         return;
     }
+    // Per call, not per tick: one update may run several ticks, and a host
+    // that reads after each update must see every hit those ticks applied.
+    applied_damage_.clear();
 
     if (delta_seconds > 0.0f &&
         (config_.mode == KernelMode_Client || config_.mode == KernelMode_ListenServer)) {
@@ -4741,6 +4744,69 @@ void KernelEngine::refill_byte_token_bucket(
     bucket->refill_remainder = refill_numerator % UINT64_C(1000000);
     bucket->tokens = std::min(bytes_per_second, bucket->tokens + refill_bytes);
     bucket->last_refill_time_us = now_us;
+}
+
+// A hit's source is whatever dealt it: an actor for a melee swing or a
+// hitscan shot, but the projectile or beam for anything fired. The record
+// names the shooter instead, which means remembering it, since a projectile is
+// gone by the time its damage is applied. Kept ten seconds, well past any
+// confirm delay or scheduled hit, and well short of a net id coming back.
+void KernelEngine::remember_damage_source_shooters() {
+    const std::uint32_t tick = tick_loop_.current_tick();
+    for (const auto [entity, identity, projectile] :
+         world_.registry().view<NetworkIdentity, ProjectileState>().each()) {
+        (void)entity;
+        damage_source_shooters_[identity.net_id] =
+            DamageSourceShooter{projectile.shooter_net_id, tick};
+    }
+    for (const auto [entity, identity, beam] :
+         world_.registry().view<NetworkIdentity, ProjectileBeamRuntime>().each()) {
+        (void)entity;
+        damage_source_shooters_[identity.net_id] =
+            DamageSourceShooter{beam.shooter_net_id, tick};
+    }
+    constexpr std::uint32_t kRememberTicks = 300u;
+    for (auto entry = damage_source_shooters_.begin();
+         entry != damage_source_shooters_.end();) {
+        entry = tick - entry->second.seen_tick > kRememberTicks
+            ? damage_source_shooters_.erase(entry)
+            : std::next(entry);
+    }
+}
+
+NetId KernelEngine::attacker_of(NetId source_net_id) const {
+    const auto shooter = damage_source_shooters_.find(source_net_id);
+    return shooter == damage_source_shooters_.end() ? source_net_id
+                                                    : shooter->second.shooter;
+}
+
+std::uint32_t KernelEngine::server_query_damage_records(
+    KernelDamageRecord* out_records,
+    std::uint32_t max_records) const {
+    if (!is_server_mode(config_.mode)) {
+        return 0u;
+    }
+    const std::uint32_t count = static_cast<std::uint32_t>(applied_damage_.size());
+    if (out_records == nullptr) {
+        return count;
+    }
+    const std::uint32_t written = std::min(count, max_records);
+    for (std::uint32_t index = 0; index < written; ++index) {
+        KernelDamageRecord& out = out_records[index];
+        if (out.struct_size < sizeof(KernelDamageRecord)) {
+            return 0u;
+        }
+        const ConfirmedDamage& damage = applied_damage_[index];
+        out = KernelDamageRecord{};
+        out.struct_size = sizeof(KernelDamageRecord);
+        out.tick = damage.server_tick;
+        out.victim_net_id = damage.target_net_id;
+        out.attacker_net_id = attacker_of(damage.source_net_id);
+        out.hit_position = KernelVec3{
+            damage.hit_position.x, damage.hit_position.y, damage.hit_position.z};
+        out.damage = damage.damage;
+    }
+    return count;
 }
 
 std::uint32_t KernelEngine::poll_debug_records(
@@ -7880,6 +7946,8 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     prediction_local_hitbox_template_id_ = 0u;
     history_buffer_ = HistoryBuffer(history_frame_count(config_.tick));
     damage_pipeline_.clear();
+    applied_damage_.clear();
+    damage_source_shooters_.clear();
     next_action_graph_sequence_ = 1;
     active_prop_collision_pairs_.clear();
     command_queue_.clear();
@@ -14361,6 +14429,7 @@ void KernelEngine::simulate_tick() {
         server_time_us,
         &damage_pipeline_,
         &action_graph_batches);
+    remember_damage_source_shooters();
     const std::size_t first_projectile_simulation_event = events_.size();
     simulate_projectiles(
         world_,
@@ -14395,6 +14464,9 @@ void KernelEngine::simulate_tick() {
         server_time_us,
         &events_,
         &damage_pipeline_);
+    // Again before they are destroyed: what simulate_projectiles spawned and
+    // what it hit with are about to be gone by the time their damage lands.
+    remember_damage_source_shooters();
     finalize_simulated_projectile_destructions(
         first_projectile_simulation_event,
         events_.size(),
@@ -14408,7 +14480,8 @@ void KernelEngine::simulate_tick() {
         world_,
         ready_damage,
         tick_loop_.current_tick(),
-        &events_);
+        &events_,
+        &applied_damage_);
     EntityLifecycleSystem lifecycle_system;
     lifecycle_system.reclaim_fallen_entities(
         *this, server_time_us, &health_depleted);

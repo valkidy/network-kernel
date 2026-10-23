@@ -757,11 +757,14 @@ KernelLocalActionResultReason action_block_reason(
     entt::entity entity,
     std::uint32_t current_tick);
 
+// Returns the hits that emptied a health bar. `applied`, when given, also
+// receives every hit that landed at all (immune and corpse hits do not).
 std::vector<ConfirmedDamage> apply_damage_applications(
     World& world,
     const std::vector<ConfirmedDamage>& damage_applications,
     std::uint32_t current_tick,
-    std::vector<KernelEvent>* events);
+    std::vector<KernelEvent>* events,
+    std::vector<ConfirmedDamage>* applied = nullptr);
 
 }  // namespace network_example
 

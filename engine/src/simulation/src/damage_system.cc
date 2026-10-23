@@ -165,7 +165,8 @@ std::vector<ConfirmedDamage> apply_damage_applications(
     World& world,
     const std::vector<ConfirmedDamage>& damage_applications,
     std::uint32_t current_tick,
-    std::vector<KernelEvent>* events) {
+    std::vector<KernelEvent>* events,
+    std::vector<ConfirmedDamage>* applied) {
     std::vector<ConfirmedDamage> health_depleted;
     for (const ConfirmedDamage& damage : damage_applications) {
         const std::optional<entt::entity> target =
@@ -209,6 +210,9 @@ std::vector<ConfirmedDamage> apply_damage_applications(
         }
         if (hp_before > 0u && world.registry().get<Health>(*target).hp == 0u) {
             health_depleted.push_back(damage);
+        }
+        if (applied != nullptr) {
+            applied->push_back(damage);
         }
         if (events != nullptr) {
             events->push_back(KernelEvent{

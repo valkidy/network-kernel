@@ -299,6 +299,32 @@ Search → ForgetTimeout → Idle / Return）。
 
 ## 8. P3：受傷事件（under attack）
 
+### 8.0 拆分與進度
+
+| 步驟 | 內容 | 狀態 |
+|---|---|---|
+| P3a | K1：`Kernel_ServerQueryDamageRecords` | ✅ `claude/ai-controller-p1` |
+| P3b | perception 的 Damaged 事件與各 state 的處理（D6、D8） | |
+| P3c | 巡邏隊成員共享注意點（D7） | |
+
+P3a（K1）的實作：
+- `KernelDamageRecord`（32 bytes：tick、受害者、攻擊者、命中位置、傷害）；export
+  `Kernel_ServerQueryDamageRecords(kernel, out, max)`：回傳**最近一次 `Kernel_Update`** 實際套用的命中
+  （免疫、屍體、躲在帳篷裡的都不算），每次 update 取代上一次的內容；寫入至多 `max` 筆，回傳總數。
+- capability `KERNEL_CAPABILITY_SERVER_DAMAGE_RECORDS = 0x0010000000000000`（檢查過所有本地分支沒有人用）；
+  兩份 export 清單（`.def` 與 `BUILD.bazel`）都加了；**ABI 不 bump**。
+- **攻擊者是「誰開的火」，不是「什麼造成的傷害」**：傷害的 source 是投射物或光束本身，而投射物在傷害套用
+  之前就已經被銷毀。kernel 每個 tick 在投射物模擬前、銷毀前各記一次「投射物 / 光束 → 射手」，保留 300
+  ticks；記錄時用它轉換。近戰、hitscan 的 source 就是角色本身；沒有射手的爆炸（瓶子）是 0。
+- 不走 `Kernel_PollEvents`：dedicated server 每 tick 只讀 32 個事件且每個都寫 info log，而且
+  `DamageApplied` 事件沒有攻擊者 id 與位置。
+- 測試：`damage_records_test`（光束無人機燒玩家：記錄的攻擊者是無人機而不是光束；沒有命中的 update 回報 0
+  筆）；`damage_record_shooter_test`（kernel 層：投射物銷毀後仍能查到射手、沒有射手的爆炸是 0、近戰是角色
+  本身、未設定 struct_size 的緩衝會被拒絕）；`dynamic_abi_smoke_test` 與 `kernel_c_header_test` 涵蓋新
+  export 與 bit。用真的投射物打玩家需要 session 的 rewind 歷史，所以投射物的部分在 kernel 層測。
+- 既有紅燈（與本步驟無關，main 上相同）：`kernel_c_header_test`（`RenderEntityState` 大小）、
+  `damage_pipeline_test`、`hitscan_test`（事件數量）。
+
 1. **K1**：kernel 收集每 tick 的受傷事件，新增 export（capability flag）。
    攻擊者可能是 0（瓶子爆炸、area effect）。
 2. perception 加上本 tick 的受傷事件；轉成 Damaged 事件。
