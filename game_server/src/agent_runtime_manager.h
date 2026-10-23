@@ -90,7 +90,10 @@ private:
     void attach_pending_entries();
     // Binds the routes game_rule spawns handed over to their agents, expanded
     // over the navmesh. Same timing as attach_pending_entries.
-    void attach_pending_patrol_routes();
+    void attach_pending_controllers();
+    void attach_route(
+        AgentRuntimeState* agent,
+        const std::vector<KernelVec3>& waypoints);
     // Drives everyone still walking out of whatever spawned them: one input per
     // tick towards the door, and the template's own movement mask back the
     // moment they are through it or out of time.
@@ -107,6 +110,9 @@ private:
     AgentControllerBinding* binding_for(
         std::uint32_t actor_template_id,
         AgentControllerRole role);
+    AgentControllerBinding make_binding(
+        const ActorTemplateConfig& actor_template,
+        AgentControllerRole role) const;
 
     KernelHandle* kernel_ = nullptr;
     GameServerGameplayConfig config_;
@@ -121,7 +127,7 @@ private:
     PatrolNavigation patrol_navigation_;
     WorldRuleDirector world_rule_director_;
     GameRuleDirector game_rule_director_;
-    std::vector<SpawnedPatrolRoute> pending_patrol_routes_;
+    std::vector<SpawnedControllerSpec> pending_controllers_;
     SpawnerDirector spawner_director_;
     // Templates whose spawner calls on alert. A handful at most, so a scan
     // beats a set; empty means the signal pass never walks the agents at all.

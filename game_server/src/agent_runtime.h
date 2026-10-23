@@ -80,6 +80,28 @@ enum class AgentControllerRole : std::uint8_t {
     kPatrol,
 };
 
+// What a spawn source asks of the agents it makes (plan D1): authored as a
+// `controller:` block on a spawn_group, a spawner or a world rule, and set to
+// patrol by a squad for its own members. Empty means the template's default
+// controller and no route.
+struct AgentControllerSpec {
+    // kNone keeps the template's default_controller_role.
+    AgentControllerRole role = AgentControllerRole::kNone;
+    // World space. Only a legacy passive_patrol walker follows one until P1c.
+    std::vector<KernelVec3> route;
+
+    bool empty() const {
+        return role == AgentControllerRole::kNone && route.empty();
+    }
+};
+
+// One agent a director just made, and what it asked of it. Directors only
+// report these: the runtime applies them once it has discovered the agent.
+struct SpawnedControllerSpec {
+    std::uint32_t net_id = 0;
+    AgentControllerSpec spec;
+};
+
 struct AgentSentryRuntimeState {
     std::uint32_t self_id = 0;
     AgentSentryState state = AgentSentryState::kIdle;

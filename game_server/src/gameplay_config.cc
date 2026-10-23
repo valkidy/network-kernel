@@ -151,6 +151,14 @@ void hash_vec3(std::uint64_t* hash, const KernelVec3& value) {
     hash_float(hash, value.z);
 }
 
+void hash_controller_spec(std::uint64_t* hash, const AgentControllerSpec& spec) {
+    hash_scalar(hash, static_cast<std::uint32_t>(spec.role));
+    hash_scalar(hash, static_cast<std::uint32_t>(spec.route.size()));
+    for (const KernelVec3& waypoint : spec.route) {
+        hash_vec3(hash, waypoint);
+    }
+}
+
 void hash_vec2(std::uint64_t* hash, const KernelVec2& value) {
     hash_float(hash, value.x);
     hash_float(hash, value.y);
@@ -462,6 +470,7 @@ void hash_actor_template(
     hash_float(hash, actor_template.spawner.radius);
     hash_scalar(hash, actor_template.spawner.count_min);
     hash_scalar(hash, actor_template.spawner.count_max);
+    hash_controller_spec(hash, actor_template.spawner.controller);
     for (const SpawnCompositionEntry& entry : actor_template.spawner.composition) {
         hash_string(hash, entry.entity_template_ref);
         hash_scalar(hash, entry.min_count);
@@ -492,6 +501,7 @@ void hash_actor_template(
     hash_vec3(hash, actor_template.director_spawn_position);
     hash_float(hash, actor_template.director_spawn_radius);
     hash_scalar(hash, actor_template.director_spawn_seed);
+    hash_controller_spec(hash, actor_template.director_spawn_controller);
     for (const ActorTemplateConfig::GameRuleNodeConfig& node :
          actor_template.game_rule_nodes) {
         hash_scalar(hash, node.node_id);
@@ -507,10 +517,7 @@ void hash_actor_template(
         hash_vec3(hash, node.spawn_position);
         hash_float(hash, node.spawn_radius);
         hash_scalar(hash, node.spawn_seed);
-        hash_scalar(hash, node.spawn_patrol_route.size());
-        for (const KernelVec3& waypoint : node.spawn_patrol_route) {
-            hash_vec3(hash, waypoint);
-        }
+        hash_controller_spec(hash, node.spawn_controller);
         for (const std::uint32_t next_node_id : node.next_node_ids) {
             hash_scalar(hash, next_node_id);
         }
@@ -3570,6 +3577,66 @@ SpawnerConfig spawner_from_yaml(
     const std::string& path,
     std::uint32_t source_kind,
     std::uint32_t template_id);
+
+// A spawn source's `controller:` block (plan D1): `type` picks the role its
+// agents run as instead of their template's default; `route`, where the
+// source allows one, is world-space waypoints. Whether the role suits the
+// template it spawns is checked once every template is known, in
+// validate_gameplay_config.
+AgentControllerSpec controller_spec_from_yaml(
+    const YAML::Node& node,
+    bool allow_route,
+    const std::string& where,
+    const std::string& path,
+    std::uint32_t source_kind,
+    std::uint32_t template_kind,
+    std::uint32_t template_id) {
+    AgentControllerSpec spec;
+    if (!node) {
+        return spec;
+    }
+    if (allow_route) {
+        reject_unknown_keys(node, {"type", "route"}, path, source_kind,
+                            template_kind, template_id);
+    } else {
+        reject_unknown_keys(node, {"type"}, path, source_kind, template_kind,
+                            template_id);
+    }
+    if (node["type"]) {
+        const std::string type = node["type"].as<std::string>();
+        if (type == "sentry") {
+            spec.role = AgentControllerRole::kSentry;
+        } else if (type == "garrison") {
+            spec.role = AgentControllerRole::kGarrison;
+        } else if (type == "patrol") {
+            throw std::runtime_error(
+                where + " controller.type patrol: only a patrol template's squad "
+                "makes patrol members");
+        } else if (type == "hunter") {
+            throw std::runtime_error(
+                where + " controller.type hunter is not implemented yet (plan P6)");
+        } else {
+            throw std::runtime_error(
+                where + " controller.type is unsupported: " + type);
+        }
+    }
+    if (const YAML::Node route = node["route"]) {
+        if (!route.IsSequence() || route.size() < 2u) {
+            throw std::runtime_error(
+                where + " controller.route needs at least two waypoints");
+        }
+        for (const YAML::Node& waypoint : route) {
+            const KernelVec3 point = vec3_from_yaml(waypoint);
+            if (!std::isfinite(point.x) || !std::isfinite(point.y) ||
+                !std::isfinite(point.z)) {
+                throw std::runtime_error(
+                    where + " controller.route has an invalid waypoint");
+            }
+            spec.route.push_back(point);
+        }
+    }
+    return spec;
+}
 std::uint32_t collider_template_id_from_ref(
     const YAML::Node& node,
     const ColliderCatalogConfig& colliders);
@@ -6336,7 +6403,7 @@ EntityTemplateConfig entity_template_from_yaml(
                 reject_unknown_keys(
                     effect,
                     {"type", "group", "count", "entity_template", "position", "radius", "seed",
-                     "patrol_route"},
+                     "controller", "patrol_route"},
                     path,
                     source_kind,
                     KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_GAME_RULE,
@@ -6361,21 +6428,18 @@ EntityTemplateConfig entity_template_from_yaml(
                 node_config.spawn_seed =
                     effect["seed"] ? effect["seed"].as<std::uint32_t>() : 1u;
                 if (effect["patrol_route"]) {
-                    const YAML::Node route = effect["patrol_route"];
-                    if (!route.IsSequence() || route.size() < 2u) {
-                        throw std::runtime_error(
-                            "game_rule spawn_group patrol_route needs at least two waypoints");
-                    }
-                    for (const YAML::Node& waypoint : route) {
-                        const KernelVec3 point = vec3_from_yaml(waypoint);
-                        if (!std::isfinite(point.x) || !std::isfinite(point.y) ||
-                            !std::isfinite(point.z)) {
-                            throw std::runtime_error(
-                                "invalid game_rule spawn_group patrol_route waypoint");
-                        }
-                        node_config.spawn_patrol_route.push_back(point);
-                    }
+                    throw std::runtime_error(
+                        "game_rule spawn_group patrol_route moved to "
+                        "controller.route: " + entity_template.name);
                 }
+                node_config.spawn_controller = controller_spec_from_yaml(
+                    effect["controller"],
+                    true,
+                    "game_rule spawn_group",
+                    path,
+                    source_kind,
+                    KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_GAME_RULE,
+                    entity_template.actor_template_id);
                 if (node_config.spawn_count == 0u ||
                     node_config.spawn_entity_template_ref.empty() ||
                     !std::isfinite(node_config.spawn_position.x) ||
@@ -6462,6 +6526,7 @@ EntityTemplateConfig entity_template_from_yaml(
             "radius",
             "seed",
             "position",
+            "controller",
         },
         path,
         source_kind,
@@ -6482,6 +6547,14 @@ EntityTemplateConfig entity_template_from_yaml(
     if (spawn["position"]) {
         entity_template.director_spawn_position = vec3_from_yaml(spawn["position"]);
     }
+    entity_template.director_spawn_controller = controller_spec_from_yaml(
+        spawn["controller"],
+        false,
+        "world_rule director.spawn",
+        path,
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+        entity_template.actor_template_id);
     return entity_template;
 }
 
@@ -10202,12 +10275,21 @@ SpawnerConfig spawner_from_yaml(
             "count",
             "composition",
             "entry",
+            "controller",
         },
         path,
         source_kind,
         KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
         template_id);
     spawner.authored = true;
+    spawner.controller = controller_spec_from_yaml(
+        node["controller"],
+        false,
+        "spawner",
+        path,
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+        template_id);
     if (node["trigger"]) {
         const std::string trigger = node["trigger"].as<std::string>();
         if (trigger == "interval") {
@@ -10605,7 +10687,7 @@ void apply_catalog_world_rule_config(GameServerGameplayConfig* config) {
                 node.spawn.position = authored_node.spawn_position;
                 node.spawn.radius = authored_node.spawn_radius;
                 node.spawn.seed = authored_node.spawn_seed;
-                node.spawn.patrol_route = authored_node.spawn_patrol_route;
+                node.spawn.controller = authored_node.spawn_controller;
                 game_rule.nodes.push_back(std::move(node));
             }
             config->game_rules.push_back(std::move(game_rule));
@@ -10624,6 +10706,7 @@ void apply_catalog_world_rule_config(GameServerGameplayConfig* config) {
             entity_template->director_spawn_actor_template_id;
         rule.position = entity_template->director_spawn_position;
         rule.radius = entity_template->director_spawn_radius;
+        rule.controller = entity_template->director_spawn_controller;
         config->world_rule_spawns.push_back(std::move(rule));
     }
 }
@@ -11528,9 +11611,83 @@ void validate_derived_projectiles(
     }
 }
 
+// Whether a spawn source's controller suits the template it spawns (plan
+// D1, §6.4). A sentry is for a stationary template, garrison and patrol for
+// one that moves; until garrisons walk routes (P1c) a route is followed only
+// by a legacy passive_patrol walker, so anything else would drop it silently.
+void validate_controller_spec(
+    const GameServerGameplayConfig& config,
+    const AgentControllerSpec& spec,
+    std::uint32_t template_id,
+    const std::string& where,
+    std::vector<std::string>* errors) {
+    if (spec.empty()) {
+        return;
+    }
+    const ActorTemplateConfig* actor_template =
+        find_actor_template(config, template_id);
+    if (actor_template == nullptr ||
+        actor_template->default_controller_role == AgentControllerRole::kNone) {
+        errors->push_back(where + " controller names a template with no ai");
+        return;
+    }
+    const AgentControllerRole role = spec.role == AgentControllerRole::kNone
+        ? actor_template->default_controller_role
+        : spec.role;
+    const bool sentry_template =
+        actor_template->default_controller_role == AgentControllerRole::kSentry;
+    if (role == AgentControllerRole::kSentry && !sentry_template) {
+        errors->push_back(
+            where + " controller sentry on a template that moves: " +
+            actor_template->name);
+    }
+    if (role != AgentControllerRole::kSentry && sentry_template) {
+        errors->push_back(
+            where + " controller " +
+            (role == AgentControllerRole::kPatrol ? "patrol" : "garrison") +
+            " on a sentry template: " + actor_template->name);
+    }
+    if (!spec.route.empty() &&
+        !(role == AgentControllerRole::kSentry && !actor_template->ai_stationary)) {
+        errors->push_back(
+            where + " controller.route needs a passive_patrol walker until "
+            "garrisons walk routes (plan P1c): " + actor_template->name);
+    }
+}
+
 std::vector<std::string> validate_gameplay_config(
     const GameServerGameplayConfig& config) {
     std::vector<std::string> errors;
+    for (const GameRuleConfig& rule : config.game_rules) {
+        for (const GameRuleNodeConfig& node : rule.nodes) {
+            validate_controller_spec(
+                config, node.spawn.controller, node.spawn.entity_template_id,
+                "game_rule " + rule.name + " spawn_group", &errors);
+        }
+    }
+    for (const WorldRuleSpawnConfig& rule : config.world_rule_spawns) {
+        validate_controller_spec(
+            config, rule.controller,
+            rule.spawn_entity_template_id != 0u ? rule.spawn_entity_template_id
+                                                : rule.spawn_actor_template_id,
+            "world_rule " + rule.name, &errors);
+    }
+    for (const SpawnerCarrierConfig& carrier : config.spawner_carriers) {
+        for (const SpawnCompositionEntry& entry : carrier.spawner.composition) {
+            validate_controller_spec(
+                config, carrier.spawner.controller, entry.entity_template_id,
+                "spawner on " + carrier.name, &errors);
+        }
+    }
+    // A squad makes every member patrol; the definition names no controller.
+    const AgentControllerSpec patrol_member{AgentControllerRole::kPatrol, {}};
+    for (const PatrolDefinitionConfig& patrol : config.patrols) {
+        for (const SpawnCompositionEntry& entry : patrol.composition) {
+            validate_controller_spec(
+                config, patrol_member, entry.entity_template_id,
+                "patrol " + patrol.name, &errors);
+        }
+    }
     std::vector<std::uint32_t> prop_population_rule_ids;
     std::vector<std::string> prop_population_rule_names;
     for (const PropPopulationRuleConfig& rule :

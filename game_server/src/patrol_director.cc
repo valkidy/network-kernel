@@ -354,6 +354,10 @@ bool PatrolDirector::spawn_patrol(
             }
             member_net_ids.push_back(net_id);
             member_offsets.push_back(offsets[member]);
+            // A squad's members are patrol, whatever their template defaults
+            // to; the catalog only lets a squad name templates that can be.
+            spawned_controllers_.push_back(SpawnedControllerSpec{
+                net_id, AgentControllerSpec{AgentControllerRole::kPatrol, {}}});
             ++member;
         }
     }
@@ -414,6 +418,10 @@ std::uint32_t PatrolDirector::retired_group_count() const {
 
 std::uint32_t PatrolDirector::route_failure_count() const {
     return route_failure_count_;
+}
+
+std::vector<SpawnedControllerSpec> PatrolDirector::take_spawned_controllers() {
+    return std::exchange(spawned_controllers_, {});
 }
 
 }  // namespace network_example::game_server

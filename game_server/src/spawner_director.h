@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "game_server/src/agent_budget.h"
+#include "game_server/src/agent_runtime.h"
 #include "game_server/src/spawn_sampling.h"
 #include "kernel/public/kernel_api.h"
 #include "kernel/public/kernel_types.h"
@@ -108,6 +109,8 @@ struct SpawnerConfig {
     std::uint32_t count_min = 1;
     std::uint32_t count_max = 1;
     std::vector<SpawnCompositionEntry> composition;
+    // spawner.controller: a type only, for every unit it emits.
+    AgentControllerSpec controller;
     SpawnerEntryConfig entry;
 };
 
@@ -205,6 +208,9 @@ public:
     // runs agents takes them once and owns them from then on. Left here they
     // would be replayed on the tick after, and the unit would set off twice.
     std::vector<SpawnerEntryRequest> take_pending_entries();
+    // Controller specs for agents spawned since the last call, handed over
+    // once; see SpawnedControllerSpec.
+    std::vector<SpawnedControllerSpec> take_spawned_controllers();
 
 private:
     const SpawnerCarrierConfig* carrier_for(std::uint32_t entity_template_id) const;
@@ -230,6 +236,7 @@ private:
     std::vector<Instance> instances_;
     std::vector<KernelServerEntityState> query_buffer_;
     std::vector<SpawnerEntryRequest> pending_entries_;
+    std::vector<SpawnedControllerSpec> spawned_controllers_;
     std::uint32_t spawned_unit_count_ = 0;
     std::uint32_t reinforce_max_live_agents_ = 0;
     // Alive units from on_alert calls, kept apart from the per-caller lists so

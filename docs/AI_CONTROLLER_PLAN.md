@@ -123,13 +123,20 @@ P1 實作時發現範圍比原本的「catalog 重整」大（garrison 走路線
 | 步驟 | 內容 | 行為改變 | 狀態 |
 |---|---|---|---|
 | P1a | 新格式與舊格式並存（新格式在載入時轉成舊格式的形狀，再用原本的 parser）；每個 agent 帶 `AgentControllerRole`，controller 依（template, role）綁定 | 無 | ✅ `claude/ai-controller-p1` |
-| P1b | 生成來源覆寫：四個 director 回傳 net_id → controller spec；參數合併與驗證；`patrol_route` → `controller.route` | 無 | |
+| P1b | 生成來源覆寫：四個 director 回傳 net_id → controller spec；驗證；`patrol_route` → `controller.route` | 無 | ✅ `claude/ai-controller-p1` |
 | P1c | garrison 走路線（共用 helper）、刪除 `passive_patrol` 與 x 軸來回、轉換 21–23、39 與 director 100–102、更新測試 | **有** | |
 | P1d | 所有 template 改用新格式、刪除舊格式（parser 直接讀新 key）、更新 `shipping_catalog_flow_test` 與 bench | 無 | |
 
 P1a 的對應（舊 → role）：`controller: sentry` → `kSentry`（`stationary` = 不是 passive_patrol）；
 `controller: chaser` → `kGarrison`。kernel 的 `ai_controller_type` 不變（sentry → Sentry，其他 →
 Chaser），**不需要 ABI 改動**。`hunter` 在 P6 之前會被拒絕；`controllers.garrison` 目前只接受空區塊。
+
+P1b 的實作：`AgentControllerSpec`（role + 世界座標 route）。spawn_group 接受 `controller: {type, route}`，
+spawner 與 world rule 只接受 `controller: {type}`（world rule 把 agent 散在圓周上，spawner 的路線座標系
+要到 P1c 才需要）；巡邏隊固定把成員設成 patrol。`type` 只接受 sentry / garrison（patrol 只能由巡邏隊
+產生，hunter 等 P6）。載入時檢查：sentry 只能用在 sentry template、garrison / patrol 不能用在 sentry
+template、route 在 P1c 之前只能給 legacy passive_patrol walker。**參數覆寫延後**：garrison 在 P2 之前
+沒有參數，巡邏隊成員用 template 的 `controllers.patrol`，目前沒有可以覆寫的東西。
 
 ### 6.1 template 格式
 

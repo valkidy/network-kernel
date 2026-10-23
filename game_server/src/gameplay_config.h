@@ -298,6 +298,8 @@ struct ActorTemplateConfig {
     KernelVec3 director_spawn_position{};
     float director_spawn_radius = 0.0f;
     std::uint32_t director_spawn_seed = 1;
+    // director.spawn.controller (world_rule): a role only.
+    AgentControllerSpec director_spawn_controller;
     struct GameRuleNodeConfig {
         std::uint32_t node_id = 0;
         std::string id;
@@ -312,10 +314,10 @@ struct ActorTemplateConfig {
         KernelVec3 spawn_position{};
         float spawn_radius = 0.0f;
         std::uint32_t spawn_seed = 1;
-        // Optional: waypoints a passive_patrol sentry spawned by this node
-        // walks, pathed over the navmesh and ping-ponged. Empty keeps the
-        // template's own x-axis patrol.
-        std::vector<KernelVec3> spawn_patrol_route;
+        // spawn_group.controller: a role and/or a world-space route (until
+        // P1c only a passive_patrol walker follows one, pathed over the navmesh
+        // and ping-ponged; without one it keeps its template's x-axis sweep).
+        AgentControllerSpec spawn_controller;
         std::vector<std::string> next_refs;
         std::vector<std::uint32_t> next_node_ids;
     };

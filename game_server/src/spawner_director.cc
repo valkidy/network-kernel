@@ -560,6 +560,10 @@ std::uint32_t SpawnerDirector::emit_wave(
                     spawner.composition[entry].entity_template_id);
                 continue;
             }
+            if (!spawner.controller.empty()) {
+                spawned_controllers_.push_back(
+                    SpawnedControllerSpec{net_id, spawner.controller});
+            }
             if (door != nullptr) {
                 // Before the next Kernel_Update, so the unit's very first
                 // physics tick already runs under the entry mask. Set any
@@ -630,6 +634,10 @@ std::uint32_t SpawnerDirector::spawned_unit_count() const {
 
 std::uint32_t SpawnerDirector::reinforce_live_count() const {
     return static_cast<std::uint32_t>(reinforce_live_net_ids_.size());
+}
+
+std::vector<SpawnedControllerSpec> SpawnerDirector::take_spawned_controllers() {
+    return std::exchange(spawned_controllers_, {});
 }
 
 std::vector<SpawnerEntryRequest> SpawnerDirector::take_pending_entries() {

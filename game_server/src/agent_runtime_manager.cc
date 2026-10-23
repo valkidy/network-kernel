@@ -26,6 +26,15 @@ constexpr float kEntryArrivalMeters = kSpawnerEntryArrivalMeters;
 // game-rule wave silently ran whichever template `enemy:` named -- a
 // passive_patrol walker spawned alongside a stationary artillery sentry never
 // patrolled, because the shared config came from the sentry.
+void take_controllers(
+    std::vector<SpawnedControllerSpec> taken,
+    std::vector<SpawnedControllerSpec>* pending) {
+    pending->insert(
+        pending->end(),
+        std::make_move_iterator(taken.begin()),
+        std::make_move_iterator(taken.end()));
+}
+
 // Garrison and patrol are both the chaser; everything else, including an agent
 // whose template has no ai block, is the sentry, as it always was.
 bool runs_chaser(AgentControllerRole role) {
@@ -141,9 +150,18 @@ void AgentRuntimeManager::build_controllers() {
         if (actor_template.actor_type != kActorTypeAgent) {
             continue;
         }
+        controllers_.push_back(
+            make_binding(actor_template, actor_template.default_controller_role));
+    }
+}
+
+AgentRuntimeManager::AgentControllerBinding AgentRuntimeManager::make_binding(
+    const ActorTemplateConfig& actor_template,
+    AgentControllerRole role) const {
+    {
         AgentControllerBinding binding;
         binding.actor_template_id = actor_template.actor_template_id;
-        binding.role = actor_template.default_controller_role;
+        binding.role = role;
         // Only the chaser carries tuning here; the sentry controller is
         // stateless and reads each agent's own AgentRuntimeState::sentry_config,
         // so a binding exists purely to route agents to the right controller.
@@ -156,9 +174,8 @@ void AgentRuntimeManager::build_controllers() {
             chaser.gravity_y = actor_template.movement_gravity.y;
             binding.chaser = AgentChaserController(chaser);
         }
-        controllers_.push_back(std::move(binding));
+        return binding;
     }
-
 }
 
 AgentRuntimeManager::AgentControllerBinding* AgentRuntimeManager::binding_for(
@@ -170,12 +187,17 @@ AgentRuntimeManager::AgentControllerBinding* AgentRuntimeManager::binding_for(
             return &binding;
         }
     }
-    // No fallback. build_controllers makes a binding for every agent actor
-    // template in the catalog, so an agent with no binding was spawned from a
-    // template the catalog does not have -- which the kernel would have
-    // refused. The fallback that used to sit here was chosen by the `enemy:`
-    // block and could never be reached.
-    return nullptr;
+    // build_controllers made one per template for its default role; a spawn
+    // source that chose another role (a squad's patrol) gets its binding the
+    // first time one of its agents is ticked. A template the catalog does not
+    // have still gets none -- the kernel would have refused to spawn it.
+    const ActorTemplateConfig* actor_template =
+        find_actor_template(config_, actor_template_id);
+    if (actor_template == nullptr) {
+        return nullptr;
+    }
+    controllers_.push_back(make_binding(*actor_template, role));
+    return &controllers_.back();
 }
 
 void AgentRuntimeManager::dispatch_controllers(
@@ -305,23 +327,39 @@ void AgentRuntimeManager::attach_pending_entries() {
     }
 }
 
-void AgentRuntimeManager::attach_pending_patrol_routes() {
-    for (const SpawnedPatrolRoute& route :
-         std::exchange(pending_patrol_routes_, {})) {
-        const std::size_t index = agent_index_.find(route.net_id);
-        if (index == AgentIndex::kNotFound || route.waypoints.empty()) {
-            spdlog::warn("patrol route has no agent net_id={}", route.net_id);
+void AgentRuntimeManager::attach_pending_controllers() {
+    for (const SpawnedControllerSpec& spawned :
+         std::exchange(pending_controllers_, {})) {
+        const std::size_t index = agent_index_.find(spawned.net_id);
+        if (index == AgentIndex::kNotFound) {
+            spdlog::warn("controller spec has no agent net_id={}", spawned.net_id);
             continue;
         }
         AgentRuntimeState& agent = agents_[index];
+        // The catalog has already checked the role suits the template.
+        if (spawned.spec.role != AgentControllerRole::kNone) {
+            agent.controller_role = spawned.spec.role;
+        }
+        if (!spawned.spec.route.empty()) {
+            attach_route(&agent, spawned.spec.route);
+        }
+    }
+}
+
+void AgentRuntimeManager::attach_route(
+    AgentRuntimeState* agent_state,
+    const std::vector<KernelVec3>& waypoints) {
+    AgentRuntimeState& agent = *agent_state;
+    {
         if (!agent.sentry_config.passive_patrol) {
-            // Only the passive sweep walks a route; anything else decides its
-            // own movement and would silently ignore one.
+            // Only the passive sweep walks a route until garrisons do (P1c);
+            // anything else decides its own movement and would silently
+            // ignore one. The catalog refuses this, so it is a bug if seen.
             spdlog::warn(
                 "patrol route on an agent without passive_patrol net_id={} template_id={}",
-                route.net_id,
+                agent.net_id,
                 agent.actor_template_id);
-            continue;
+            return;
         }
         // Each leg pathed on its own, so the authored waypoints are kept as
         // corners: they are what keeps a wide body off the walls, which the
@@ -329,13 +367,13 @@ void AgentRuntimeManager::attach_pending_patrol_routes() {
         // the navmesh cannot connect is walked straight rather than dropped --
         // the waypoints are authored, and a straight leg is visibly wrong
         // where a missing one would be invisibly wrong.
-        std::vector<KernelVec3> path{route.waypoints.front()};
+        std::vector<KernelVec3> path{waypoints.front()};
         const bool navigable = patrol_navigation_.valid();
-        for (std::size_t leg = 1; leg < route.waypoints.size(); ++leg) {
+        for (std::size_t leg = 1; leg < waypoints.size(); ++leg) {
             std::vector<KernelVec3> corners;
             PatrolRouteRequest request;
             request.start = path.back();
-            request.end = route.waypoints[leg];
+            request.end = waypoints[leg];
             request.snap_half_extent_meters = 2.0f;
             if (navigable && patrol_navigation_.find_route(request, &corners) &&
                 !corners.empty()) {
@@ -344,10 +382,10 @@ void AgentRuntimeManager::attach_pending_patrol_routes() {
                 if (navigable) {
                     spdlog::warn(
                         "patrol route leg not on the navmesh net_id={} leg={}; walking it straight",
-                        route.net_id,
+                        agent.net_id,
                         leg);
                 }
-                path.push_back(route.waypoints[leg]);
+                path.push_back(waypoints[leg]);
             }
         }
         // Joined at the corner nearest where it stands, not at the first one:
@@ -367,8 +405,8 @@ void AgentRuntimeManager::attach_pending_patrol_routes() {
         agent.route_patrol = AgentRoutePatrolState{std::move(path), nearest, 1};
         spdlog::info(
             "patrol route attached net_id={} waypoints={} corners={}",
-            route.net_id,
-            route.waypoints.size(),
+            agent.net_id,
+            waypoints.size(),
             agent.route_patrol.path.size());
     }
 }
@@ -471,6 +509,7 @@ void AgentRuntimeManager::tick(float delta_seconds) {
         patrol_director_.spawned_group_count();
     patrol_director_.tick(
         kernel_, &patrol_groups_, &patrol_navigation_, actors, &agent_budget);
+    take_controllers(patrol_director_.take_spawned_controllers(), &pending_controllers_);
     // Only on a tick a squad actually appeared, which is once per definition
     // per interval_ticks. The world rule counts every agent alive including the
     // ones just spawned -- counting the pre-spawn list would have it top up
@@ -485,17 +524,16 @@ void AgentRuntimeManager::tick(float delta_seconds) {
     const std::uint32_t world_rule_spawned_before =
         world_rule_director_.spawned_agent_count();
     world_rule_director_.tick(kernel_, agent_budget.live);
+    take_controllers(world_rule_director_.take_spawned_controllers(), &pending_controllers_);
     agent_budget.spend(
         world_rule_director_.spawned_agent_count() - world_rule_spawned_before);
 
     game_rule_director_.tick(kernel_);
-    for (SpawnedPatrolRoute& route :
-         game_rule_director_.take_spawned_patrol_routes()) {
-        pending_patrol_routes_.push_back(std::move(route));
-    }
+    take_controllers(game_rule_director_.take_spawned_controllers(), &pending_controllers_);
     // Last tick's engagement: the controllers that produced it have all run,
     // and nothing has been created since.
     spawner_director_.tick(kernel_, alert_signals_, &agent_budget);
+    take_controllers(spawner_director_.take_spawned_controllers(), &pending_controllers_);
     // Re-taken because the three directors above all create, and the resync
     // exists to discover what they made -- that is the whole reason it runs
     // after them.
@@ -504,7 +542,7 @@ void AgentRuntimeManager::tick(float delta_seconds) {
     // After the resync, because the agent a walk names was created by one of
     // the directors above and is not in the list until now.
     attach_pending_entries();
-    attach_pending_patrol_routes();
+    attach_pending_controllers();
     // Before the controllers, which skip anyone still walking: this is what
     // submits their input for the tick, and only one input per agent survives.
     tick_entries();
