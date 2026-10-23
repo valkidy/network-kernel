@@ -1,6 +1,6 @@
 # AI controller 重構實作計劃書
 
-狀態：**設計已定案（§2），P0 尚未開始。**
+狀態：**設計已定案（§2）；P0 驗證完成（§11，2026-10-23）；P1 尚未開始。**
 分支：計劃在 `claude/ai-controller-plan`，從 `main`（84cc4d40，ABI 109）開。
 各階段的實作各自開 `claude/ai-controller-p<N>` 分支。
 最後更新：2026-10-23。
@@ -45,18 +45,18 @@
 | D4 | **Chasing** = 目標已知，但沒有任何 active skill 的條件成立。**Search** = 失去視野、還在 `forget_ticks` 內，朝最後看到的位置。**Return** = 超過 leash，回 anchor，途中不接戰 | sentry 的 Chasing 是原地轉向（目標仍在視野內）；失去視野後的原地掃視屬於 Search |
 | D5 | **leash anchor 屬於 controller**：sentry 無；patrol 為開始追擊的位置，回隊伍位置；garrison 為蟲巢或路線上最近的點；hunter 無 leash | |
 | D6 | **Alert 記注意點（attention point），不記目標 id**。被攻擊時：停下、轉向攻擊者或傷害來源；攻擊者為 0 時用傷害來源位置。Damaged 進入的 Alert 用 `alert_on_damage_ticks`（建議 15），Sighted 用 `alert_ticks` | Alert 中再次 Damaged 只更新注意點，不重設計時 |
-| D7 | **巡邏隊連動**：任一成員進入 Alert → 巡邏隊 Halted（cursor 暫停），其他成員以同一個注意點進入 Alert；全員回到 Idle 才繼續前進 | 放在 `patrol_director` |
+| D7 | **巡邏隊連動**：任一成員進入 Alert → 巡邏隊 Halted（cursor 暫停），其他成員以同一個注意點進入 Alert；全員回到 Idle 才繼續前進 | cursor 暫停**已經存在**（`group.holding`，V3）；新的只有「其他成員一起進 Alert」 |
 | D8 | **各 state 收到 Damaged**：Idle → Alert；Alert → 更新注意點；Chasing / Attack → 目前目標仍可見就不換，看不到才換成攻擊者；Search → 換成攻擊者並進 Alert；**Return → 只轉頭，不追** | |
 | D9 | **`pursuer` pending**：要做時另開一種 controller，所有覆寫（不換目標、不 forget）關在它自己的 state graph 裡；catalog 不允許它加入巡邏隊或當 garrison | 未決：目標死亡（重生在死亡點上方，會變守屍）、目標失效（重連會換 net_id）、卡住（hover 中的 player、navmesh 到不了的位置） |
 | D10 | **hunter 兩段式搜尋**。broad phase：全場共用一張 hostile 位置表（排除躲在帳篷裡、死亡中、斷線的 player），hunter 每 60 ticks 選一次目標，以 `net_id` 錯開；進入 Seek 時立刻查一次。narrow phase：沿用 kernel vision | broad phase 只給**目的地**，攻擊仍要先被 vision 看到。換目標門檻：新目標要近 20% |
-| D11 | **narrow phase 先用距離開關 vision**：最近的目標 > vision range + 10 m 就 `Kernel_ServerClearEntityVisionConfig`，進入範圍再 Set | kernel 降頻（每 N ticks 算一次）等量過再決定（§9 P7） |
+| D11 | **narrow phase 先用距離開關 vision**：最近的目標 > vision range + 10 m 就 `Kernel_ServerClearEntityVisionConfig`，進入範圍再 Set | V4：1300 agents 時 vision 只佔 kernel tick 約 13%，切換成本可忽略；kernel 降頻（K3）**不做** |
 | D12 | **追擊時目標位置依 id 從 actor 狀態讀取**，vision 只用來確認「還看不看得到」 | Chasing 不會因為 vision 降頻追著過期的位置 |
 | D13 | **skill slot**：每個單位最多 8 個，格式為 `{use: {type, value}, when, cooldown_ticks, weight, once}`。type：`weapon`、`item`、`sp_attack` | **不分 passive / active**：原本的 passive（對自己掛 status）改成「在某條件下使用 item」 |
 | D14 | **skill 挑選**：每個 tick，從條件成立、cooldown 結束、有彈、且**沒有進行中 action** 的 skill 裡依 `weight` 挑一個；隨機數用每個 agent 自己的 seed | 沒有任何 skill 符合 → Chasing |
 | D15 | **`when` 條件**：持續條件（`state`、`range_meters`、`hp_below`、`missing_status`）每個 tick 檢查；事件條件（`on_spawn`、`on_state_enter`、`on_damaged`）只在事件發生的 tick 成立 | |
 | D16 | **`sp_attack_templates/`** 收納特殊組合攻擊。`kind` 是封閉清單，每種都要有 kernel 實作；目前是 `leap`、`charge` | 跳撲 = leap 移動 + 落地前用 loadout 的近戰（`on_landing.weapon`，需在 loadout 裡）；衝撞 = 蓄力 + 直線衝刺 + 自帶的接觸武器（`contact_weapon`，不需在 loadout 裡） |
 | D17 | **`when` 與 `cooldown_ticks` 放在 skill 上**，不放進 sp_attack template | 同一個 sp_attack 給不同單位時觸發距離可以不同 |
-| D18 | **AI 使用 item 不扣數量**：skill 上的 item 使用視為無限 | 避免 fungible item 被 AI 用完 |
+| D18 | **AI 使用 item 不扣數量**：skill 上的 item 使用視為無限 | V2：kernel 照常扣數量。P5 由 game_server 在使用後補回（`Kernel_ServerCreateInventoryItem`），不改 kernel |
 | D19 | **刪除被動巡邏**（`passive_patrol`：只走路、不看人）。原本使用它的 21–23、39 改成 garrison + route，會接戰 | gameplay 用不到；x 軸來回改寫成兩點 route。見 §6.3 |
 
 ---
@@ -83,9 +83,9 @@
 
 | # | 改動 | 階段 | ABI |
 |---|---|---|---|
-| K1 | 受傷事件：每 tick 的（受害者、攻擊者、位置、weapon_id），供 game_server 讀取 | P3 | 新增 export，用 capability flag，**不 bump** |
-| K2 | AI 使用 item 的進入點（若現有路徑只有 client 封包） | P5 | 同上，不 bump；P0 確認 |
-| K3 | vision 每 agent 降頻 | P7（量過才做） | export 不 bump；若改 template 欄位則要更新 `bundle.bytes` |
+| K1 | 受傷事件：每 tick 的（受害者、攻擊者、位置、weapon_id），供 game_server 讀取。**獨立的 batch export**，不走 `Kernel_PollEvents`（V6） | P3 | 新增 export，用 capability flag，**不 bump** |
+| K2 | ~~AI 使用 item 的進入點~~ **不需要**：`Kernel_ServerSubmitGameplayRequest` 已可用（V2） | — | — |
+| K3 | ~~vision 每 agent 降頻~~ **不做**（V4：上限只省約 13% kernel tick） | — | — |
 | K4 | 傷害倍率（attack up） | 獨立軌（§10） | 改到傷害公式與 status，**很可能 bump** |
 
 snapshot / packet schema：P1–P6 都不需要改。新的 animation_state 值（例如 Alert 轉身）
@@ -228,7 +228,8 @@ Search → ForgetTimeout → Idle / Return）。
    攻擊者可能是 0（瓶子爆炸、area effect）。
 2. perception 加上本 tick 的受傷事件；轉成 Damaged 事件。
 3. 依 D8 處理每個 state；Alert 用 `alert_on_damage_ticks`。
-4. **D7**：`patrol_director` 加上 Halted；依 V3 的結果決定改動量。
+4. **D7**：cursor 暫停已存在（`patrol_group_runtime.cc` 的 `group.holding`，看 `is_engaged`）。
+   新增：成員進入 Alert 時，把注意點傳給同隊其他 Idle 成員；`is_engaged` 改用新的 state 清單。
 
 測試：
 
@@ -268,19 +269,22 @@ sp_attack 後，`gingerbread_leap_test`、`gingerbread_charge_test` 照舊通過
 
 ### P5：AI 使用 item
 
-1. **K2**（依 V2 結果）：AI 使用 item 的進入點。
+1. 透過 `Kernel_ServerSubmitGameplayRequest`（`requester_peer = 0`、`instigator = agent`、
+   `KernelDomainAction_Consume`）使用 item；Committed 後補回數量（D18）。
 2. agent 生成時依 template 建立 inventory，放入 skill 引用的 item。
 3. `use.type: item`；使用時不扣數量（D18）。
 4. 事件條件 `on_spawn`、`on_state_enter`、`on_damaged`，持續條件 `hp_below`、
    `missing_status`。
 5. 新增 AI 專用的 item（例如 `enemy_speed_tonic`），用現有的 `speed_up` status。
 
-依 V1 結果：若 speed modifier 對 AI 無效，這一階段要加一項 kernel 改動。
+V1 已確認 speed modifier 對 AI 的移動輸入有效，不需要 kernel 改動。
 
 測試：進入 Chasing 時使用 speed tonic，量測速度；`slow` 蓋掉 `speed_up` 後，
 `missing_status` 讓它再用一次。
 
 ### P6：hunter
+
+**前置**：先處理 §11 的 simulation command queue 爆滿（1300 agents 時大量 command 被拒絕）。
 
 1. hostile 位置表（每 tick，全場共用，排除帳篷、死亡、斷線）。
 2. `target_source`：`inherited`（生成時由呼叫者給目標 id）、`nearest_hostile`；
@@ -320,7 +324,25 @@ sp_attack 後，`gingerbread_leap_test`、`gingerbread_charge_test` 照舊通過
 | Q3 | broad phase 跳過躲在帳篷裡的 player：確認採用 |
 | Q4 | `pursuer` 的三個未決問題（D9） |
 
-**P0 驗證結果**：（尚未開始）
+**P0 驗證結果**（2026-10-23，`-c opt`，臨時測試與 bench 修改都沒有 commit）：
+
+| # | 結果 | 對計劃的影響 |
+|---|---|---|
+| V1 | ✅ speed modifier 對 AI 有效。gingerbread agent 以 move input 前進：5.01 m/s → 掛 `speed_up` 後 **7.00 m/s** → 到期後 5.00 m/s | P5 不用改 kernel。只量了直接送 input 的路徑；經過 `AgentRuntimeManager` 的 controller 路徑在 P5 再確認 |
+| V2 | ✅ AI 可以使用 item。`Kernel_ServerSubmitGameplayRequest`，`requester_peer = 0`（server 擁有 agent）、`instigator = agent`、Consume → Committed，status 掛到 agent 身上。**數量照扣**（2 → 1）。注意：weapon item 的取得有 `PlayerTag` 檢查，consume 沒有 | K2 刪除；D18 改由 game_server 補回數量 |
+| V3 | ✅ cursor 暫停已存在：任一成員 `is_engaged`（Alert / Attack）時 `group.holding = true`，cursor 停止前進，也不會被回收 | D7 只剩「其他成員一起進 Alert」 |
+| V4 | 1 km、1300 agents：kernel 1807 µs/tick，清掉所有 vision 後 1579 µs（**vision ≈ 228 µs，約 13%**）。對 1300 個 agent 全部 Clear 約 70 µs、全部 Set 約 75–88 µs；Set 之後的第一個 tick 沒有尖峰。200 m、52 agents：vision 約 7 µs | D11 照做（成本極低）；K3 不做 |
+| V5 | 基準（open world）：200 m / 52 agents：ai 17.5 µs、kernel 119.7 µs。1 km / 1300 agents：ai 432 µs、kernel 1807 µs，佔 33 ms 的 **7.1%**（players 分散）/ 7.0%（同一隊） | 之後各階段對照這組數字 |
+| V6 | 所有傷害都經過 `apply_damage_applications`（`damage_system.cc:164`），`ConfirmedDamage` 已有 `source_net_id`、`hit_position`。現有的 `KernelEventType_DamageApplied` 只有受害者與 `source_peer`，沒有攻擊者 id 與位置；而且 dedicated server 每 tick 只讀 32 個事件，每個都用 info 等級寫 log | K1 做成獨立的 batch export，直接從 `ConfirmedDamage` 收集 |
+
+**P0 順帶發現**（不在本計劃範圍，另外處理）：
+
+- **1 km 的 bench 裡，simulation command queue 爆滿**：`depth=1536 capacity=2048`，
+  `rejected_count` 在 sample 期間累積到 14 萬以上。1300 個 agent 每 tick 送的 command
+  超過 queue 容量，被拒絕的 command（很可能包含 AI 的移動 / 攻擊）就這樣不見了。hunter
+  數量多的時候會直接碰到這個問題，P6 之前要先處理。
+- **預設的 `agent_cpu_bench` 在 G 表的「20 agents」那一列中斷**：`unknown prop
+  population_group: portal`。main 上就是這樣（與本計劃無關），所以 V5 只用 open world 的數字。
 
 ---
 
@@ -339,7 +361,7 @@ sp_attack 後，`gingerbread_leap_test`、`gingerbread_charge_test` 照舊通過
 | P2 | — | — | — |
 | P3 | export（capability，不 bump） | — | — |
 | P4 | — | — | 要 |
-| P5 | 可能新增 export（不 bump） | — | 要 |
+| P5 | — | — | 要 |
 | P6 | — | — | 要 |
 | P7 | 視做法而定 | — | 視做法而定 |
 | 傷害倍率 | 很可能 bump | — | 要 |
