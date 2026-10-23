@@ -46,3 +46,5 @@ ai:
     idle_rotation_degrees: {min: 15.0, max: 30.0}
     animation_idle: idle
     animation_attack: chasing
+  skills:
+    - use: {type: weapon, value: 8}

@@ -61,10 +61,6 @@ ai:
     stop_distance_meters: 1.8
     resume_distance_meters: 2.1
     input_magnitude: 1.0
-    # Matches the claw's cone range. Measured origin to origin, while the swing
-    # reaches to a target's near edge, so this sits on the conservative side of
-    # the weapon: everything this lets the grunt attack, it can actually hit.
-    attack_range_meters: 2.2
   # Only read when this grunt is in a squad; a lone chaser has no slot and none
   # of this applies to it.
   controllers:
@@ -78,3 +74,9 @@ ai:
       # well inside it or the grunt yo-yos on the boundary.
       leash_meters: 18.0
       leash_resume_meters: 6.0
+  skills:
+    # Matches the claw's cone range. Measured origin to origin, while the swing
+    # reaches to a target's near edge, so this sits on the conservative side of
+    # the weapon: everything this lets the grunt attack, it can actually hit.
+    - use: {type: weapon, value: 10}
+      when: {range_meters: {max: 2.2}}

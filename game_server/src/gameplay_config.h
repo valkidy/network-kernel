@@ -217,6 +217,50 @@ struct StaggerConfig {
     std::uint32_t immunity_ticks = 0;
 };
 
+// A special attack (AI plan D16, sp_attack_templates/): a movement the kernel
+// runs, joined to a hit. The kinds are a closed list, each one a kernel
+// lockout: a leap lands and swings the agent's own weapon; a charge winds up
+// and runs, carrying a contact weapon of its own. When it may be used -- its
+// distance band and cooldown -- belongs to the skill that names it.
+enum class SpAttackKind : std::uint8_t {
+    kLeap = 0,
+    kCharge = 1,
+};
+
+struct SpAttackTemplateConfig {
+    std::uint32_t sp_attack_template_id = 0;
+    std::string name;
+    SpAttackKind kind = SpAttackKind::kLeap;
+    // kLeap: the flight, and what it swings on the way down (on_landing).
+    AgentLeapTuning leap;
+    std::uint32_t on_landing_weapon_id = 0;
+    // kCharge: the wind-up and the run; weapon_id is its contact weapon.
+    AgentChargeTuning charge;
+};
+
+// One of an agent's skills (AI plan D13, `ai.skills`): something it can use,
+// and when.
+enum class AgentSkillType : std::uint8_t {
+    kWeapon = 0,
+    kSpAttack = 1,
+};
+
+struct AgentSkillConfig {
+    AgentSkillType type = AgentSkillType::kWeapon;
+    // kWeapon: a weapon id from the template's weapon_slots.
+    std::uint32_t weapon_id = 0;
+    // kSpAttack: an sp_attack template, by name.
+    std::string sp_attack_ref;
+    // when.range_meters, origin to origin. A max of zero is no limit.
+    float range_min_meters = 0.0f;
+    float range_max_meters = 0.0f;
+    std::uint32_t cooldown_ticks = 0;
+    std::uint32_t weight = 1;
+};
+
+// The most skills one agent may carry.
+inline constexpr std::size_t kMaxAgentSkills = 8;
+
 struct ActorTemplateConfig {
     std::uint32_t actor_template_id = 0;
     std::string name;
@@ -279,6 +323,9 @@ struct ActorTemplateConfig {
     AgentChaseTuning chaser{};
     AgentPatrolTuning patrol{};
     AgentGarrisonTuning garrison{};
+    // ai.skills, as authored. Resolved into the weapon, attack range, leap and
+    // charge above once every sp_attack template is known.
+    std::vector<AgentSkillConfig> skills;
     // Authored on the template, run by game_server, never sent to the
     // kernel -- the same shape as the ai.* blocks above.
     SpawnerConfig spawner{};
@@ -612,6 +659,7 @@ struct GameServerGameplayConfig {
     ColliderCatalogConfig colliders;
     std::vector<ActionGraphTemplateConfig> action_graph_templates;
     std::vector<StatusEffectTemplateConfig> status_effect_templates;
+    std::vector<SpAttackTemplateConfig> sp_attack_templates;
     std::vector<ItemTemplateConfig> item_templates;
     std::vector<ProjectileTemplateConfig> projectile_templates;
     std::vector<PropPopulationRuleConfig> prop_population_rules;

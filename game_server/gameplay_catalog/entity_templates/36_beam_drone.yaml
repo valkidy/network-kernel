@@ -62,10 +62,12 @@ ai:
     stop_distance_meters: 8.0
     resume_distance_meters: 10.0
     input_magnitude: 1.0
-    attack_range_meters: 14.0
   controllers:
     patrol:
       slot_radius_meters: 1.2
       input_magnitude: 0.5
       leash_meters: 24.0
       leash_resume_meters: 8.0
+  skills:
+    - use: {type: weapon, value: 16}
+      when: {range_meters: {max: 14.0}}

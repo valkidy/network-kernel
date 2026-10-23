@@ -39,6 +39,8 @@ ai:
     stop_distance_meters: 8.0
     resume_distance_meters: 10.0
     input_magnitude: 1.0
+  skills:
+    - use: {type: weapon, value: 2}
 animations:
   idle: 0
   chasing: 1

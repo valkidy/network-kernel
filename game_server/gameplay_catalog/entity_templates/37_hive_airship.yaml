@@ -60,13 +60,15 @@ ai:
     stop_distance_meters: 4.0
     resume_distance_meters: 6.0
     input_magnitude: 1.0
-    attack_range_meters: 10.0
   controllers:
     patrol:
       slot_radius_meters: 2.0
       input_magnitude: 0.6
       leash_meters: 30.0
       leash_resume_meters: 10.0
+  skills:
+    - use: {type: weapon, value: 16}
+      when: {range_meters: {max: 10.0}}
 spawner:
   trigger: on_alert
   # Unbounded while it sees its target; the gap and its own ceiling are what

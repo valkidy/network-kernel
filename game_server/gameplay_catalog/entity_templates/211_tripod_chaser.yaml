@@ -53,9 +53,6 @@ ai:
     stop_distance_meters: 14.0
     resume_distance_meters: 18.0
     input_magnitude: 1.0
-    # Weapon 2 is the projectile spammer, a ranged weapon, so no gate: it
-    # fires whenever it sees something.
-    attack_range_meters: 0.0
   # Only read when in a squad. 2.5 m/s x 0.6 = 1.5 m/s beats the warband's
   # 0.9 m/s cursor.
   controllers:
@@ -66,6 +63,10 @@ ai:
       # sight anyway; resume well inside it so it does not yo-yo.
       leash_meters: 60.0
       leash_resume_meters: 20.0
+  skills:
+    # Weapon 2 is the projectile spammer, a ranged weapon, so no gate: it
+    # fires whenever it sees something.
+    - use: {type: weapon, value: 2}
 animations:
   idle: 0
   chasing: 1

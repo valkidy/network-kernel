@@ -364,6 +364,32 @@ P3c 的實作：在 `patrol_group_runtime` 判斷 `holding` 的同一個迴圈�
 
 ### P4：skill slot（weapon 與 sp_attack）
 
+**拆分與進度**：
+
+| 步驟 | 內容 | 行為改變 | 狀態 |
+|---|---|---|---|
+| P4a | `sp_attack_templates/` 與每個 agent 必填的 `ai.skills`；載入時解析成原本的 weapon / attack range / leap / charge | 無 | ✅ `claude/ai-controller-p1` |
+| P4b | 多個 weapon skill、依權重與 seed 挑選、切換武器、Chasing / Attack 依「有沒有 skill 搆得到」 | 有 | |
+
+P4a 的實作與決定：
+- **skill 用 weapon id 引用武器**（`{type: weapon, value: 10}`），和 `weapon_slots` 一致。武器的 `name` 是給人看的
+  （例如 spammer 的 name 是 "Projectile Spammer"），對不上檔名，所以沒有用名稱。sp_attack 用 template 的 `name`。
+- skill 的順序就是 slot（最多 8 個），沒有另外的 `slot:` 欄位。`when` 目前只有 `range_meters {min, max}`
+  （max 0 = 不限）；`state`、`hp_below` 等條件等 P5 一起做。
+- `locomotion.attack_range_meters`、`locomotion.leap`、`locomotion.charge`、`perception.weapon_slot` 移除：前三個
+  在載入時被拒絕並提示改用 skill，`weapon_slot` 沒有任何 template 使用。
+- sp_attack template：leap = `leap {landing_distance_meters, apex_meters, max_horizontal_speed_meters_per_second}`
+  + `on_landing {weapon, lead_ticks}`；charge = `windup {ticks, animation}` + `charge {speed, overshoot}` +
+  `contact_weapon`。`windup.animation` 只接受數字（template 不屬於任何角色，沒有 idle / chasing 可指）。
+- P4a 的限制（P4b 解除）：每個 agent 恰好一個 weapon skill，且沒有 min 距離與 cooldown；leap / charge 各最多一個；
+  sentry 不能有 range 也不能有 sp_attack；leap 的 `on_landing.weapon` 必須是 agent 的 weapon skill。
+- 驗證：轉換前後傾印所有 actor template 的武器、射程、leap、charge 欄位，完全相同；原本的 leap / charge / 射程
+  驗證在解析後照常執行（例如射程小於 resume 距離仍會被拒絕）。
+- `lead_ticks == commit_offset_ticks + 1` 的檢查**沒有做**：需要從武器找到 action template 的 commit offset，
+  留到 P4b。
+- 新目錄加進了 bundle 與 52 個測試 target 的 data glob，以及 legged locomotion 測試 catalog。
+- 測試：`ai_skills_test`（解析結果、13 種錯誤寫法、一個合法的對照編輯）。
+
 1. 新增 `sp_attack_templates/`（`$id_sp_attack_$name.yaml`），把 `chaser.leap` 和
    `chaser.charge` 的參數搬過去：
    - leap：`leap.*`、`on_landing: {weapon, lead_ticks}`

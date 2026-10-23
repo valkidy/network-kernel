@@ -66,10 +66,6 @@ ai:
     stop_distance_meters: 1.8
     resume_distance_meters: 2.1
     input_magnitude: 1.0
-    # Matches grunt_claw_cone's range. Measured origin to origin, while the
-    # swing reaches to a target's near edge, so this is conservative: whatever
-    # this lets the gingerbread attack, it can actually hit.
-    attack_range_meters: 2.2
   # Only read when this one is in a squad; a lone chaser has no slot.
   #
   # input_magnitude is a fraction of this template's own move speed, and the
@@ -86,3 +82,9 @@ ai:
       # on the boundary.
       leash_meters: 18.0
       leash_resume_meters: 6.0
+  skills:
+    # Matches grunt_claw_cone's range. Measured origin to origin, while the
+    # swing reaches to a target's near edge, so this is conservative: whatever
+    # this lets the gingerbread attack, it can actually hit.
+    - use: {type: weapon, value: 10}
+      when: {range_meters: {max: 2.2}}
