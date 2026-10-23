@@ -31,6 +31,12 @@ struct SentryPerceptionSnapshot {
     bool has_target_position = false;
     KernelVec3 target_position{0.0f, 0.0f, 0.0f};
     KernelVec3 vision_forward{1.0f, 0.0f, 0.0f};
+    // Hit during the last update (AI plan D6, K1). The attacker is 0 when
+    // nobody fired it, or when whoever did is no longer an actor; the source
+    // is then where the hit landed rather than where it came from.
+    bool damaged = false;
+    std::uint32_t attacker_id = 0;
+    KernelVec3 damage_source{0.0f, 0.0f, 0.0f};
 };
 
 // One tick's perception inputs for the whole population, taken once instead of
@@ -60,10 +66,13 @@ public:
 
     const KernelServerEntityState* actor_state(std::uint32_t net_id) const;
     const KernelVisionStateView* vision_state(std::uint32_t net_id) const;
+    // The last hit on `net_id` in the last update, or null.
+    const KernelDamageRecord* damage_to(std::uint32_t net_id) const;
 
 private:
     void index_actors(const ActorStateView& actors);
     void refresh_vision_states(KernelHandle* kernel);
+    void refresh_damage(KernelHandle* kernel);
 
     ActorStateView actors_{};
     // Owned only by the snapshot-less overload above; empty otherwise, and
@@ -75,6 +84,8 @@ private:
     std::uint32_t vision_count_ = 0;
     std::unordered_map<std::uint32_t, std::uint32_t> actor_by_net_id_;
     std::unordered_map<std::uint32_t, std::uint32_t> vision_by_net_id_;
+    std::vector<KernelDamageRecord> damage_buffer_;
+    std::unordered_map<std::uint32_t, std::uint32_t> damage_by_victim_;
 };
 
 class AiPerceptionAdapter {

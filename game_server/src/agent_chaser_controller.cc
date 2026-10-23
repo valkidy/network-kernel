@@ -349,6 +349,30 @@ void AgentChaserController::tick(
             agent.chase_holding = false;
         }
 
+        // A hit (AI plan D8), before the states run. Idle or searching, it
+        // alerts -- the short alert -- with its attention on where the hit came
+        // from; already alert or pursuing something it cannot see, its
+        // attention moves there (a Search then heads for it); something it can
+        // see keeps its attention. Returning on a leash it only turns its head:
+        // a leash it could be shot back out of would never bring it home.
+        bool face_damage_source = false;
+        if (perception.damaged) {
+            const AgentSentryState state = agent.sentry.state;
+            if (state == AgentSentryState::kIdle || state == AgentSentryState::kSearch) {
+                if (state == AgentSentryState::kIdle) {
+                    agent.patrol.leash_anchor = agent.position;
+                }
+                agent_steering::transition_to(&agent, AgentSentryState::kAlert);
+                agent.sentry.alerted_by_damage = true;
+            }
+            if (agent.sentry.state == AgentSentryState::kReturn) {
+                face_damage_source = true;
+            } else if (!has_visible_target) {
+                agent.sentry.attention_point = perception.damage_source;
+                agent.sentry.has_attention_point = true;
+            }
+        }
+
         // Breaking off is a decision about the squad, not about the target, so
         // it is made before the pursuit states get to look at what they can
         // see. Without it the leash could only be enforced on a tick where
@@ -420,6 +444,7 @@ void AgentChaserController::tick(
                 // Recorded before the chase starts, so the leash measures the
                 // pursuit rather than the ground the squad has since covered.
                 agent.patrol.leash_anchor = agent.position;
+                agent.sentry.alerted_by_damage = false;
                 agent_steering::transition_to(&agent, AgentSentryState::kAlert);
             } else if (has_slot(agent) &&
                        (!standing_in_slot(config_.patrol, agent) ||
@@ -476,7 +501,9 @@ void AgentChaserController::tick(
                 move = chase_move(
                     config_.chase, &agent, perception.target_position);
                 ++agent.sentry.state_ticks;
-                if (agent.sentry.state_ticks >= sentry_config.alert_ticks) {
+                if (agent.sentry.state_ticks >=
+                    (agent.sentry.alerted_by_damage ? sentry_config.alert_on_damage_ticks
+                                                    : sentry_config.alert_ticks)) {
                     // The pursuit below sorts Chasing from Attack this tick.
                     agent_steering::transition_to(
                         &agent, AgentSentryState::kChasing);
@@ -495,6 +522,17 @@ void AgentChaserController::tick(
                     &agent,
                     has_slot(agent) ? AgentSentryState::kReturn
                                     : AgentSentryState::kIdle);
+            } else if (agent.sentry.has_attention_point) {
+                // Nothing in sight: stop and face where its attention is --
+                // the last place it saw something, or where a hit came from.
+                should_update_rotation =
+                    agent_steering::facing_rotation_from_vision_toward(
+                        agent.position,
+                        agent.sentry.attention_point,
+                        perception.vision_forward,
+                        entity_state.rotation,
+                        &desired_rotation) ||
+                    should_update_rotation;
             }
         }
 
@@ -650,6 +688,17 @@ void AgentChaserController::tick(
                     entity_state.rotation,
                     &desired_rotation);
             }
+        }
+
+        if (face_damage_source) {
+            should_update_rotation =
+                agent_steering::facing_rotation_from_vision_toward(
+                    agent.position,
+                    perception.damage_source,
+                    perception.vision_forward,
+                    entity_state.rotation,
+                    &desired_rotation) ||
+                should_update_rotation;
         }
 
         if (!is_zero_move(move)) {

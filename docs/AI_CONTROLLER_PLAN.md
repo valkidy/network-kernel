@@ -304,7 +304,7 @@ Search → ForgetTimeout → Idle / Return）。
 | 步驟 | 內容 | 狀態 |
 |---|---|---|
 | P3a | K1：`Kernel_ServerQueryDamageRecords` | ✅ `claude/ai-controller-p1` |
-| P3b | perception 的 Damaged 事件與各 state 的處理（D6、D8） | |
+| P3b | perception 的 Damaged 事件與各 state 的處理（D6、D8） | ✅ `claude/ai-controller-p1` |
 | P3c | 巡邏隊成員共享注意點（D7） | |
 
 P3a（K1）的實作：
@@ -322,6 +322,20 @@ P3a（K1）的實作：
   筆）；`damage_record_shooter_test`（kernel 層：投射物銷毀後仍能查到射手、沒有射手的爆炸是 0、近戰是角色
   本身、未設定 struct_size 的緩衝會被拒絕）；`dynamic_abi_smoke_test` 與 `kernel_c_header_test` 涵蓋新
   export 與 bit。用真的投射物打玩家需要 session 的 rewind 歷史，所以投射物的部分在 kernel 層測。
+P3b 的實作與決定：
+- `PerceptionFrame` 每個 tick 查一次 damage records（全體共用，和 vision 一樣），在 `Kernel_Update` 之前讀，
+  所以是上一次 update 的命中：命中的那個 tick，受害者在下一個 tick 反應。每個受害者取最後一筆。
+- `SentryPerceptionSnapshot` 多了 `damaged`、`attacker_id`、`damage_source`：攻擊者還是活著的角色時，
+  來源是攻擊者**現在**的位置；攻擊者是 0 或已經不在，來源是命中位置。
+- `perception.alert_on_damage_ticks`（預設 15）：被打而進入的 Alert 用這個時間（`alerted_by_damage`）；
+  看到而進入的仍用 `alert_ticks`。
+- 處理（D8）：Idle / Search → Alert（被打）；Alert 或追擊中但看不到 → 注意點移到來源（Search 會走過去）；
+  看得到目標 → 不換；Return → 只轉頭。sentry 在 Attack 中被打不理會。
+- Alert 中看不到目標時，chaser 與 sentry 都會轉向注意點（包括「看到後又失去」的 Alert，原本是站著不動）。
+- 測試：`damage_reaction_test`（友方光束砲台從背後打 gingerbread：被打之前一直是 Idle；下一個 tick 進入
+  被打的 Alert，注意點就是砲台；14 ticks 後轉身追擊砲台）。`ai_controller_spec_test` 的「遺忘後回到路線」
+  量測改成 2 秒（Alert 中轉向會讓它停在不同的位置，可能剛好在路線端點轉身）。
+
 - 既有紅燈（與本步驟無關，main 上相同）：`kernel_c_header_test`（`RenderEntityState` 大小）、
   `damage_pipeline_test`、`hitscan_test`（事件數量）。
 

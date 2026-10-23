@@ -75,8 +75,24 @@ void AgentSentryController::tick(
             agent_steering::transition_to(&agent, AgentSentryState::kAttack);
         }
 
+        // A hit (AI plan D8). Idle or searching, it alerts -- the short alert --
+        // facing where the hit came from; alert already, it turns there; an
+        // attacking sentry keeps the target it has.
+        if (perception.damaged) {
+            const AgentSentryState state = agent.sentry.state;
+            if (state == AgentSentryState::kIdle || state == AgentSentryState::kSearch) {
+                agent_steering::transition_to(&agent, AgentSentryState::kAlert);
+                agent.sentry.alerted_by_damage = true;
+            }
+            if (agent.sentry.state == AgentSentryState::kAlert && !has_visible_target) {
+                agent.sentry.attention_point = perception.damage_source;
+                agent.sentry.has_attention_point = true;
+            }
+        }
+
         if (agent.sentry.state == AgentSentryState::kIdle) {
             if (has_visible_target) {
+                agent.sentry.alerted_by_damage = false;
                 agent_steering::transition_to(&agent, AgentSentryState::kAlert);
             } else {
                 should_update_rotation = agent_steering::update_patrol_facing(
@@ -101,7 +117,9 @@ void AgentSentryController::tick(
                         &desired_rotation) ||
                     should_update_rotation;
                 ++agent.sentry.state_ticks;
-                if (agent.sentry.state_ticks >= config.alert_ticks) {
+                if (agent.sentry.state_ticks >=
+                    (agent.sentry.alerted_by_damage ? config.alert_on_damage_ticks
+                                                    : config.alert_ticks)) {
                     agent_steering::transition_to(
                         &agent, AgentSentryState::kAttack);
                 }
@@ -111,6 +129,17 @@ void AgentSentryController::tick(
                 agent.sentry.target = 0;
                 agent.sentry.has_attention_point = false;
                 agent_steering::transition_to(&agent, AgentSentryState::kIdle);
+            } else if (agent.sentry.has_attention_point) {
+                // Nothing in sight: face where its attention is -- the last
+                // place it saw something, or where a hit came from.
+                should_update_rotation =
+                    agent_steering::facing_rotation_from_vision_toward(
+                        agent.position,
+                        agent.sentry.attention_point,
+                        perception.vision_forward,
+                        entity_state.rotation,
+                        &desired_rotation) ||
+                    should_update_rotation;
             }
         }
 

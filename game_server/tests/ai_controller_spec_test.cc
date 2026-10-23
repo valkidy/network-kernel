@@ -365,11 +365,12 @@ void a_garrison_leaves_its_route_to_fight_and_returns(gs::GameServerGameplayConf
         idle = tripod().sentry.state == gs::AgentSentryState::kIdle;
     }
     require(idle);
+    // Two seconds, not one: it may have to turn round at a route end first.
     const KernelVec3 resumed_from = tripod().position;
-    run(30);
+    run(60);
     const KernelVec3 resumed_to = tripod().position;
     const float resumed = std::hypot(resumed_to.x - resumed_from.x, resumed_to.z - resumed_from.z);
-    std::printf("[garrison] after forgetting: %.2f m in 1 s\n", resumed);
+    std::printf("[garrison] after forgetting: %.2f m in 2 s\n", resumed);
     require(resumed > 1.0f);
     Kernel_Destroy(kernel);
 }

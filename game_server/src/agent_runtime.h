@@ -130,6 +130,8 @@ struct AgentSentryRuntimeState {
     // it. Cleared when the engagement ends.
     bool has_attention_point = false;
     KernelVec3 attention_point{0.0f, 0.0f, 0.0f};
+    // This alert began with a hit, so it runs alert_on_damage_ticks.
+    bool alerted_by_damage = false;
 };
 
 // The sentry knobs an agent runs on. These are authored per actor template
@@ -140,6 +142,9 @@ struct AgentSentryRuntimeState {
 // template the catalog's `enemy:` entry happens to name.
 struct AgentSentryConfig {
     std::uint32_t alert_ticks = 90;
+    // The alert after being hit (AI plan D6): long enough to turn round, not
+    // the warning alert_ticks gives a target that has not fired yet.
+    std::uint32_t alert_on_damage_ticks = 15;
     std::uint32_t forget_ticks = 150;
     std::uint32_t ballistic_retry_cooldown_ticks = 30;
     std::uint32_t patrol_rotation_interval_ticks = 30;

@@ -425,6 +425,7 @@ void hash_actor_template(
         hash, static_cast<std::uint32_t>(actor_template.default_controller_role));
     hash_scalar(hash, actor_template.ai_stationary);
     hash_scalar(hash, actor_template.sentry.alert_ticks);
+    hash_scalar(hash, actor_template.sentry.alert_on_damage_ticks);
     hash_scalar(hash, actor_template.sentry.forget_ticks);
     hash_scalar(hash, actor_template.sentry.ballistic_retry_cooldown_ticks);
     hash_scalar(hash, actor_template.sentry.patrol_rotation_interval_ticks);
@@ -3951,6 +3952,7 @@ AgentSentryConfig sentry_config_from_yaml(
             sentry_node,
             {
                 "alert_ticks",
+                "alert_on_damage_ticks",
                 "forget_ticks",
                 "ballistic_retry_cooldown_ticks",
                 "idle_rotation_interval_ticks",
@@ -3968,6 +3970,10 @@ AgentSentryConfig sentry_config_from_yaml(
         }
         if (sentry_node["forget_ticks"]) {
             sentry.forget_ticks = sentry_node["forget_ticks"].as<std::uint32_t>();
+        }
+        if (sentry_node["alert_on_damage_ticks"]) {
+            sentry.alert_on_damage_ticks =
+                sentry_node["alert_on_damage_ticks"].as<std::uint32_t>();
         }
         if (sentry_node["ballistic_retry_cooldown_ticks"]) {
             sentry.ballistic_retry_cooldown_ticks =
