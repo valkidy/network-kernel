@@ -513,8 +513,10 @@ P6b 的實作與決定：
   一致，尋路大多退回直線，所以 navmesh 尋路的成本**沒有量到**。flow field（P7）暫時不需要。
 - 測試：`ai_hunter_test` 檢查 vision 在 60 m 時關閉、靠近到 36 m 內打開、變成 garrison 後不會失明；
   `flying_units_test` 檢查 airship 投下的單位是 hunter、目標是 airship 正在打的玩家。
-- 前置條件提醒：command queue 的修正在 `claude/command-queue-overflow`，**不在這個分支**；大量 hunter 同時運作
-  前需要先合併它。
+- command queue 的修正已合併進這個分支（725c15a0，2026-10-24）。合併後重新量測（1 km、玩家分散）：出貨的 catalog
+  AI 461 µs、kernel 1821 µs（7.3% tick）；全部改成 hunter 時 AI 640 µs、kernel 2462 µs（**9.8% tick**）。兩者都
+  沒有 queue 警告。比合併前高，是因為之前每個 tick 約 23% 的 command 被丟掉，那些 agent 其實沒有在動；現在
+  每個 hunter 都真的在移動。
 
 **前置**：先處理 §11 的 simulation command queue 爆滿（1300 agents 時大量 command 被拒絕）。
 
