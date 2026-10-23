@@ -87,3 +87,9 @@ spawner:
     - entity_template: gingerbread
       min: 2
       max: 3
+  # What it drops goes after what it is fighting (AI plan D10), however far
+  # that has run, and stands as a garrison wherever it is once that is gone.
+  controller:
+    type: hunter
+    target_source: inherited
+    on_target_lost: garrison

@@ -1,6 +1,6 @@
 # AI controller 重構實作計劃書
 
-狀態：**設計已定案（§2）；P0 驗證完成（§11）；P1（§6.0）、P2（§7.0）、P3（§8.0）、P4、P5（§9）完成，在 `claude/ai-controller-p1`（2026-10-24）；P6 尚未開始。**
+狀態：**設計已定案（§2）；P0 驗證完成（§11）；P1–P6 完成（§6.0、§7.0、§8.0、§9），在 `claude/ai-controller-p1`（2026-10-24）；P7 依量測結果暫不需要。**
 分支：計劃在 `claude/ai-controller-plan`，從 `main`（84cc4d40，ABI 109）開。
 各階段的實作各自開 `claude/ai-controller-p<N>` 分支。
 最後更新：2026-10-23。
@@ -481,7 +481,7 @@ V1 已確認 speed modifier 對 AI 的移動輸入有效，不需要 kernel 改�
 | 步驟 | 內容 | 狀態 |
 |---|---|---|
 | P6a | `hunter` 角色與設定、全場 hostile 表、Seek、目標失去後的處理 | ✅ `claude/ai-controller-p1` |
-| P6b | 依距離開關 vision（D11）、airship 的 on_alert 增援改成 `inherited` hunter、hunter 的效能量測 | |
+| P6b | 依距離開關 vision（D11）、airship 的 on_alert 增援改成 `inherited` hunter、hunter 的效能量測 | ✅ `claude/ai-controller-p1` |
 
 P6a 的實作與決定：
 - 設定：`controllers.hunter {target_source: nearest_hostile|inherited, on_target_lost: nearest_hostile|garrison,
@@ -499,6 +499,22 @@ P6a 的實作與決定：
   → 改找最近的。
 - 測試：`ai_hunter_test`（離玩家 60 m、視野 26 m：Seek 175 ticks 後在 25.7 m 看到玩家，接著追擊；玩家被移除後
   變成 garrison）。`ai_role_based_format_test` 與 `ai_controller_spec_test` 改為接受 hunter，並新增 3 個錯誤寫法。
+
+P6b 的實作與決定：
+- vision 開關（D11）只對 hunter：最近的敵對目標超過 vision cone 的射程 + 10 m 就 Clear，進入範圍就 Set；沒有
+  任何敵對目標時也關掉；hunter 變成其他角色（例如目標消失後變成 garrison）時一定恢復。cone 射程在發現 agent
+  時讀一次。
+- **出貨的行為改變**：hive airship（37）的 on_alert 增援改成 `controller: {type: hunter, target_source: inherited,
+  on_target_lost: garrison}`——投下的 gingerbread 追擊 airship 當下的目標，目標消失後原地成為 garrison。
+- 效能（臨時修改 bench、未 commit：1 km 的 1300 個 chaser_grunt 全部改成 hunter，玩家分散 250 m）：AI 434 →
+  585 µs（+35%），kernel 1662 → 1911 µs（+15%），總計 6.7% → 7.9% tick；1300 個中 1234 個 vision 關閉。kernel
+  增加主要是所有 hunter 都在移動（移動是 kernel 的主要成本），vision 關閉省下的部分被抵消；AI 增加看起來是每個
+  hunter 每個 tick 都在轉向與移動（快取 cone 射程後沒有可見差異）。bench 的 1 km 地面和 catalog 的 navmesh 不
+  一致，尋路大多退回直線，所以 navmesh 尋路的成本**沒有量到**。flow field（P7）暫時不需要。
+- 測試：`ai_hunter_test` 檢查 vision 在 60 m 時關閉、靠近到 36 m 內打開、變成 garrison 後不會失明；
+  `flying_units_test` 檢查 airship 投下的單位是 hunter、目標是 airship 正在打的玩家。
+- 前置條件提醒：command queue 的修正在 `claude/command-queue-overflow`，**不在這個分支**；大量 hunter 同時運作
+  前需要先合併它。
 
 **前置**：先處理 §11 的 simulation command queue 爆滿（1300 agents 時大量 command 被拒絕）。
 

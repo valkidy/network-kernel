@@ -306,6 +306,11 @@ struct AgentRuntimeState {
     std::vector<KernelVec3> seek_path;
     std::size_t seek_next = 0;
     std::uint32_t seek_repath_in = 0;
+    // Its vision cone is switched off while nothing hostile is near enough to
+    // see (D11). The cone's range, read once when the agent is discovered; 0
+    // when it has none, which leaves vision alone.
+    bool vision_off = false;
+    float vision_reach_meters = 0.0f;
     AgentPatrolRuntimeState patrol{};
     AgentEntryRuntimeState entry{};
     // Whether the agent was engaged when its controller last ran, so that an

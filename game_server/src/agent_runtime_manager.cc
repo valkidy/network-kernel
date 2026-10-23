@@ -485,9 +485,37 @@ void AgentRuntimeManager::update_hunters(const ActorStateView& actors) {
         }
         return best;
     };
+    // D11: a hunter's cone is its narrow phase and costs a query a tick. With
+    // the nearest hostile past the cone's reach and a margin -- the ground a
+    // player covers before the next look -- there is nothing for it to see, so
+    // it is switched off until there is.
+    constexpr float kVisionMarginMeters = 10.0f;
+    const auto set_vision = [&](AgentRuntimeState& agent, bool on) {
+        if (agent.vision_off != on) {
+            return;
+        }
+        const ActorTemplateConfig* actor_template =
+            find_actor_template(config_, agent.actor_template_id);
+        if (actor_template == nullptr) {
+            return;
+        }
+        const bool done = on
+            ? Kernel_ServerSetEntityVisionConfig(kernel_, agent.net_id, &actor_template->vision)
+            : Kernel_ServerClearEntityVisionConfig(kernel_, agent.net_id);
+        if (done) {
+            agent.vision_off = !on;
+        }
+    };
     for (AgentRuntimeState& agent : agents_) {
         if (agent.controller_role != AgentControllerRole::kHunter || agent.entry.active) {
+            if (agent.vision_off) set_vision(agent, true);
             continue;
+        }
+        if (agent.vision_reach_meters > 0.0f) {
+            const Hostile* closest = nearest(agent.position);
+            set_vision(agent, closest != nullptr &&
+                                  distance(agent.position, closest->position) <=
+                                      agent.vision_reach_meters + kVisionMarginMeters);
         }
         const Hostile* target = nullptr;
         for (const Hostile& hostile : hostiles_) {
@@ -919,6 +947,12 @@ void AgentRuntimeManager::sync_agents_from_kernel(const ActorStateView& actors) 
                 : AgentControllerRole::kNone;
             if (actor_template != nullptr) {
                 agent.hunter = actor_template->hunter;
+                for (const ColliderTemplateConfig& collider : config_.colliders.templates) {
+                    if (collider.definition.template_id ==
+                        actor_template->vision.vision_collider_template_id) {
+                        agent.vision_reach_meters = collider.definition.shape_params.x;
+                    }
+                }
             }
             agent.has_item_skills = actor_template != nullptr &&
                 std::any_of(actor_template->skills.begin(), actor_template->skills.end(),

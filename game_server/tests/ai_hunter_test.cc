@@ -156,6 +156,8 @@ int main() {
     require(agent->controller_role == gs::AgentControllerRole::kHunter);
     require(agent->hunt_target == player);
     require(agent->sentry.state == gs::AgentSentryState::kSeek);
+    // 60 m off, past its 26 m cone and the 10 m margin: its vision is off (D11).
+    require(agent->vision_off);
     const float start_gap = std::hypot(position_of(hunter).x - 0.0f, position_of(hunter).z - 60.0f);
 
     int seen_at = -1;
@@ -172,6 +174,8 @@ int main() {
                 seen_at, start_gap, gap, static_cast<int>(agent->sentry.state));
     require(seen_at >= 0);
     require(gap < 26.0f);  // inside its cone's reach: it got there
+    // On again before it could see: it switched back at 36 m.
+    require(!agent->vision_off);
     for (int tick = 0; tick < 150; ++tick) {
         require(Kernel_ServerSetEntityHealth(kernel, player, full_hp));
         step();
@@ -193,6 +197,9 @@ int main() {
                 static_cast<int>(agent->controller_role));
     require(agent->controller_role == gs::AgentControllerRole::kGarrison);
     require(agent->hunt_target == 0u);
+    // A garrison is never left blind.
+    for (int tick = 0; tick < 2; ++tick) step();
+    require(!agent_of(game_server, hunter)->vision_off);
 
     Kernel_Destroy(kernel);
     std::printf("ai_hunter_test passed\n");
