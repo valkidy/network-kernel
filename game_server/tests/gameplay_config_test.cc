@@ -1373,7 +1373,7 @@ int main() {
             {2u, 0.8f, 0.4f, 0.8f, 0.4f},
             {21u, 12.0f, 14.5f, 16.5f, 18.0f},
             {22u, 12.0f, 11.5f, 16.5f, 16.0f},
-            {23u, 20.0f, 24.0f, 27.5f, 12.0f},
+            {23u, 20.0f, 24.0f, 27.5f, 14.0f},
             {24u, 0.8f, 0.4f, 0.8f, 0.4f},
             {25u, 0.8f, 0.4f, 0.8f, 0.4f},
             {26u, 0.8f, 0.4f, 0.8f, 0.4f},
@@ -1614,6 +1614,9 @@ int main() {
             return entity.name == "quadruped_actor";
         });
     require(changed_quadruped_sentry != changed_config.entity_templates.end());
+    // A garrison now (AI plan P1c): its leash is the tuning that must move the
+    // hash, where the retired patrol extent used to be.
+    changed_quadruped_sentry->garrison.leash_meters += 1.0f;
     require(
         config.weapons.catalog_hash !=
         network_example::game_server::compute_gameplay_catalog_hash(changed_config));
