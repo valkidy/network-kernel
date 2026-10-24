@@ -30,7 +30,6 @@ void require_impl(bool condition, int line, const char* text) {
 
 constexpr float kTickSeconds = 1.0f / 30.0f;
 constexpr std::uint32_t kHoverStatus = 1006u;
-constexpr std::uint32_t kHoverTicks = 900u;
 
 std::filesystem::path catalog_root() {
     const char* test_srcdir = std::getenv("TEST_SRCDIR");
@@ -61,21 +60,31 @@ std::uint32_t item_id(const gs::GameServerGameplayConfig& config, const std::str
     return 0u;
 }
 
+// The hover's tuning, as compiled. Read rather than restated: duration, height
+// and speed are tuned in 1006_status_effect_hover.yaml.
+struct HoverTuning {
+    std::uint32_t duration_ticks = 0;
+    float height_meters = 0.0f;
+    float vertical_speed = 0.0f;
+};
+
 // The catalog: the status, its on_apply and the item, as authored.
-void the_catalog_has_the_potion(const gs::GameServerGameplayConfig& config) {
+HoverTuning the_catalog_has_the_potion(const gs::GameServerGameplayConfig& config) {
     const gs::KernelGameplayCatalogStorage storage = gs::build_kernel_gameplay_catalog(config);
     const KernelStatusEffectDefinition* hover = nullptr;
     for (const KernelStatusEffectDefinition& status : storage.status_effects) {
         if (status.status_effect_id == kHoverStatus) hover = &status;
     }
     require(hover != nullptr);
-    require(hover->duration_ticks == kHoverTicks);
+    require(hover->duration_ticks > 0u);
     const KernelActionDefinition& action = hover->on_apply_trigger.actions[0];
     require(action.action_type == KernelEntityTriggerActionType_ApplyHoverMovement);
     require(action.target_source == KernelEntityRefSource_EventSubject);
-    require(action.hover_height_meters == 3.0f);
-    require(action.hover_vertical_speed == 4.0f);
+    require(action.hover_height_meters > 0.0f);
+    require(action.hover_vertical_speed > 0.0f);
     require(item_id(config, "fungible_hover_potion") == 3036u);
+    return HoverTuning{
+        hover->duration_ticks, action.hover_height_meters, action.hover_vertical_speed};
 }
 
 bool kernel_takes(const gs::KernelGameplayCatalogStorage& storage) {
@@ -116,8 +125,8 @@ void the_kernel_refuses_an_item_status_it_cannot_apply(
     }
 }
 
-void drinking_it_lifts_the_player_for_thirty_seconds(
-    const gs::GameServerGameplayConfig& config) {
+void drinking_it_lifts_the_player_for_its_duration(
+    const gs::GameServerGameplayConfig& config, const HoverTuning& hover) {
     const std::vector<std::uint8_t> scene =
         read_file(catalog_root() / config.static_collision_scene.entry_path);
     KernelConfig kernel_config{};
@@ -179,22 +188,31 @@ void drinking_it_lifts_the_player_for_thirty_seconds(
     require(Kernel_PollGameplayRequestOutcomes(kernel, &result, 1) == 1u);
     require(result.status == KernelGameplayRequestStatus_Committed);
 
+    // The climb at its authored speed, and a second to settle.
+    const int climb_ticks = static_cast<int>(
+        std::ceil(hover.height_meters / hover.vertical_speed / kTickSeconds)) + 30;
+    require(climb_ticks < static_cast<int>(hover.duration_ticks) - 2);
     int ticks = 0;
-    for (; ticks < 60; ++ticks) Kernel_Update(kernel, kTickSeconds);
+    for (; ticks < climb_ticks; ++ticks) Kernel_Update(kernel, kTickSeconds);
     const KernelServerEntityState up = entity_state(kernel, player);
-    std::printf("[potion] floor %.3f, after 2 s %.3f, flags 0x%x\n",
-                floor, up.position.y, up.visual_flags);
-    require(std::fabs(up.position.y - (floor + 3.0f)) < 0.05f);
+    std::printf("[potion] floor %.3f, after %d ticks %.3f, flags 0x%x\n",
+                floor, climb_ticks, up.position.y, up.visual_flags);
+    require(std::fabs(up.position.y - (floor + hover.height_meters)) < 0.05f);
     require((up.visual_flags & KERNEL_VISUAL_FLAG_HOVERING) != 0u);
     require((up.visual_flags & (KERNEL_VISUAL_FLAG_FALLING | KERNEL_VISUAL_FLAG_GROUNDED)) == 0u);
 
-    // Still up a tick before the 30 s are out, down within a second after.
-    for (; ticks < static_cast<int>(kHoverTicks) - 2; ++ticks) Kernel_Update(kernel, kTickSeconds);
-    require(std::fabs(entity_state(kernel, player).position.y - (floor + 3.0f)) < 0.05f);
-    for (; ticks < static_cast<int>(kHoverTicks) + 40; ++ticks) Kernel_Update(kernel, kTickSeconds);
+    // Still up a tick before the duration is out, and down after a free fall
+    // from the hover height (9.81 m/s^2) and a second to land.
+    const int duration = static_cast<int>(hover.duration_ticks);
+    for (; ticks < duration - 2; ++ticks) Kernel_Update(kernel, kTickSeconds);
+    require(std::fabs(entity_state(kernel, player).position.y -
+                      (floor + hover.height_meters)) < 0.05f);
+    const int fall_ticks = static_cast<int>(
+        std::ceil(std::sqrt(2.0f * hover.height_meters / 9.81f) / kTickSeconds)) + 30;
+    for (; ticks < duration + fall_ticks; ++ticks) Kernel_Update(kernel, kTickSeconds);
     const KernelServerEntityState down = entity_state(kernel, player);
-    std::printf("[potion] 40 ticks past 30 s: %.3f, flags 0x%x\n",
-                down.position.y, down.visual_flags);
+    std::printf("[potion] %d ticks past the duration: %.3f, flags 0x%x\n",
+                fall_ticks, down.position.y, down.visual_flags);
     require(std::fabs(down.position.y - floor) < 0.05f);
     require((down.visual_flags & KERNEL_VISUAL_FLAG_HOVERING) == 0u);
     require((down.visual_flags & KERNEL_VISUAL_FLAG_GROUNDED) != 0u);
@@ -206,9 +224,9 @@ void drinking_it_lifts_the_player_for_thirty_seconds(
 int main() {
     const gs::GameServerGameplayConfig config = gs::load_gameplay_config_from_catalog_file(
         (catalog_root() / "gameplay_catalog.yaml").string());
-    the_catalog_has_the_potion(config);
+    const HoverTuning hover = the_catalog_has_the_potion(config);
     the_kernel_refuses_an_item_status_it_cannot_apply(config);
-    drinking_it_lifts_the_player_for_thirty_seconds(config);
+    drinking_it_lifts_the_player_for_its_duration(config, hover);
     std::printf("hover_potion_test passed\n");
     return 0;
 }
