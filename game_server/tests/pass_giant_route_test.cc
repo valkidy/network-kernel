@@ -157,17 +157,10 @@ int main() {
     float southmost = 1e9f;
     float highest = -1e9f;
     float sweep_drift = 0.0f;
-    float lowest = 1e9f;
     for (int tick = 0; tick < 3300; ++tick) {
         game_server.tick(kTickSeconds);
         Kernel_Update(kernel, kTickSeconds);
         for (const KernelServerEntityState& giant : giants(kernel, giant_template)) {
-            lowest = std::min(lowest, giant.position.y);
-            if (tick % 300 == 0) {
-                std::fprintf(stderr, "DIAG tick=%d giant=%u pos=(%.2f, %.2f, %.2f)\n",
-                    tick, giant.net_id, giant.position.x, giant.position.y,
-                    giant.position.z);
-            }
             if (giant.net_id == pass_giant) {
                 const KernelVec3& p = giant.position;
                 corridor_deep = corridor_deep ||
@@ -188,13 +181,12 @@ int main() {
     std::fprintf(
         stderr,
         "pass giant: corridor=%d northmost_z=%.1f southmost_z=%.1f highest_y=%.2f; "
-        "other giants' lane drift=%.2f lowest_y=%.2f\n",
+        "other giants' lane drift=%.2f\n",
         corridor_deep,
         northmost,
         southmost,
         highest,
-        sweep_drift,
-        lowest);
+        sweep_drift);
     require(corridor_deep);
     // Out of the valley's north end onto the open ground (its first waypoint
     // is at z 10), and down to its south end (its last waypoint, z -85).
