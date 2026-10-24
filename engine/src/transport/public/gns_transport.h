@@ -82,6 +82,11 @@ public:
     bool PollEvent(TransportEvent& out_event) override;
     bool running() const;
 
+    // Server only. Connections past this many are closed while still
+    // connecting, before a kConnected event or a peer id exists for them; the
+    // client sees a plain disconnect. 0 = unlimited.
+    void set_max_connections(std::uint32_t max_connections);
+
 private:
     enum class Role {
         kStopped,
@@ -112,6 +117,7 @@ private:
     std::unordered_map<ConnectionHandle, PeerId> connection_to_peer_;
     std::deque<TransportEvent> events_;
     PeerId next_peer_id_ = 2;
+    std::uint32_t max_connections_ = 0;
     bool initialized_ = false;
 };
 

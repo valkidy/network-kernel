@@ -112,7 +112,14 @@ cc_library(
         "-Wno-unused-local-typedef",
         "-Wno-unused-private-field",
         "-Wno-unused-variable",
-    ],
+    ] + select({
+        # GNS writes `, ## __VA_ARGS__` and relies on the comma being dropped
+        # when no arguments follow (AssertHeldByCurrentThread()). Clang always
+        # drops it; gcc only does in GNU mode, and .bazelrc's build:linux pins
+        # ISO -std=c++20. This later flag wins for GNS's sources only.
+        "@//engine:linux": ["-std=gnu++20"],
+        "//conditions:default": [],
+    }),
     defines = [
         "STEAMNETWORKINGSOCKETS_STATIC_LINK",
     ],
@@ -141,10 +148,16 @@ cc_library(
         ],
         "//conditions:default": [
             "ENABLE_OPENSSLCONNECTION",
-            "OSX",
             "VALVE_CRYPTO_25519_OPENSSLEVP",
             "VALVE_CRYPTO_OPENSSL",
         ],
+    }) + select({
+        "@//engine:mingw_w64": [],
+        "@//engine:linux": [
+            "LINUX",
+            "POSIX",
+        ],
+        "//conditions:default": ["OSX"],
     }),
     deps = [
         ":gns_common_cc_proto",

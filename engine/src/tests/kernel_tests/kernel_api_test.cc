@@ -134,7 +134,42 @@ void server_set_entity_health_updates_hp_only() {
 
 }  // namespace
 
+// max_connected_peers was appended to the session rules; a caller built before
+// it passes the original two-field size and must still be taken. Reading the
+// full struct from a real 8-byte object is the case that would overrun.
+// Runs first: main() still asserts a stale KERNEL_ABI_VERSION further down.
+void session_rules_accept_the_original_size() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    KernelHandle* kernel = Kernel_Create(&config);
+    require(kernel != nullptr);
+
+    struct OriginalSessionRules {
+        std::uint32_t struct_size;
+        std::uint32_t actor_blocking_mode;
+    };
+    const OriginalSessionRules original_rules{
+        sizeof(OriginalSessionRules),
+        KernelActorBlockingMode_Predicted};
+    require(Kernel_SetSessionRules(
+        kernel,
+        reinterpret_cast<const KernelSessionRulesConfig*>(&original_rules)));
+
+    KernelSessionRulesConfig short_rules{};
+    short_rules.struct_size = sizeof(OriginalSessionRules) - 1;
+    require(!Kernel_SetSessionRules(kernel, &short_rules));
+
+    KernelSessionRulesConfig capped_rules{};
+    capped_rules.struct_size = sizeof(capped_rules);
+    capped_rules.max_connected_peers = 4;
+    require(Kernel_SetSessionRules(kernel, &capped_rules));
+    Kernel_Destroy(kernel);
+}
+
 int main() {
+    session_rules_accept_the_original_size();
     KernelAbiInfo abi_info{};
     require(Kernel_GetAbiInfo(&abi_info, sizeof(abi_info)));
     require(abi_info.struct_size == sizeof(KernelAbiInfo));

@@ -2609,6 +2609,7 @@ bool KernelEngine::start_dedicated_server(std::uint16_t port) {
     }
     auto gns_transport = std::make_unique<GnsTransport>();
     listen_server_transport_ = nullptr;
+    gns_transport->set_max_connections(session_rules_.max_connected_peers);
     if (!gns_transport->StartServer(port)) {
         push_event(KernelEventType_Error, 0, 0, 3);
         return false;
