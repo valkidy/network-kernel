@@ -1047,6 +1047,11 @@ int main() {
         network_example::PropWorldMode{network_example::PropMode::kPlaced});
     engine.world_.registry().get<network_example::Velocity>(
         *dormant_prop_entity).linear = glm::vec3{0.0f};
+    // A real prop has authored health; the prop-state encoder refuses
+    // max_hp 0, which is what a bare spawn_enemy leaves.
+    engine.world_.registry().emplace_or_replace<network_example::Health>(
+        *dormant_prop_entity,
+        network_example::Health{40u, 40u});
     const network_example::NetId owned_projectile = engine.world_.spawn_projectile(
         1,
         glm::vec3{100.0f, 0.0f, 0.0f},
@@ -1065,12 +1070,12 @@ int main() {
     engine.world_.registry()
         .get<network_example::ProjectileState>(*owned_projectile_entity)
         .projectile_template_id = 77;
-    KernelProjectileTemplateDefinition predicted_template{};
-    predicted_template.struct_size = sizeof(predicted_template);
+    // The send set reads sync modes from the runtime catalog.
+    network_example::RuntimeProjectileTemplate predicted_template{};
     predicted_template.projectile_template_id = 77;
-    predicted_template.mechanics.sync_mode =
-        KernelProjectileSyncMode_LocalPredictedDeterministic;
-    engine.projectile_templates_.push_back(predicted_template);
+    predicted_template.sync_mode =
+        network_example::ProjectileSyncMode::kLocalPredictedDeterministic;
+    engine.catalog_runtime_.projectile_templates.push_back(predicted_template);
 
     network_example::KernelEngine::PeerSession session_one{
         1,
@@ -1143,7 +1148,9 @@ int main() {
 
     engine.world_.registry().get<network_example::Velocity>(
         *dormant_prop_entity).linear = glm::vec3{0.0f};
-    set_position(engine.world_, dormant_prop, glm::vec3{40.01f, 0.0f, 0.0f});
+    // Already relevant, so it holds until the exit radius (44 m), and that is
+    // measured to its near edge, 0.71 m in from its origin.
+    set_position(engine.world_, dormant_prop, glm::vec3{45.0f, 0.0f, 0.0f});
     const network_example::WorldSnapshot dormant_out_of_range =
         engine.build_relevant_snapshot(session_one, 130);
     engine.sync_session_relevance(&session_one, dormant_out_of_range);
@@ -1182,7 +1189,8 @@ int main() {
         engine,
         near_enemy,
         KernelDespawnReason_OutOfRange));
-    set_position(engine.world_, near_enemy, glm::vec3{40.0f, 0.0f, 0.0f});
+    // Distances are to the enemy's near edge, 0.71 m in from its origin.
+    set_position(engine.world_, near_enemy, glm::vec3{40.7f, 0.0f, 0.0f});
     const network_example::WorldSnapshot at_relevance_boundary =
         engine.build_relevant_snapshot(session_one, 175);
     require(contains_entity(at_relevance_boundary, near_enemy));
@@ -1193,7 +1201,7 @@ int main() {
         KernelDespawnReason_OutOfRange));
     // Past the entry radius, but near_enemy is already relevant and leaving
     // costs more than staying: it holds until the exit radius.
-    set_position(engine.world_, near_enemy, glm::vec3{40.01f, 0.0f, 0.0f});
+    set_position(engine.world_, near_enemy, glm::vec3{41.0f, 0.0f, 0.0f});
     const network_example::WorldSnapshot inside_hysteresis_band =
         engine.build_relevant_snapshot(session_one, 200);
     require(contains_entity(inside_hysteresis_band, near_enemy));
@@ -1202,7 +1210,7 @@ int main() {
         engine,
         near_enemy,
         KernelDespawnReason_OutOfRange));
-    set_position(engine.world_, near_enemy, glm::vec3{44.01f, 0.0f, 0.0f});
+    set_position(engine.world_, near_enemy, glm::vec3{45.0f, 0.0f, 0.0f});
     const network_example::WorldSnapshot after_range_change =
         engine.build_relevant_snapshot(session_one, 225);
     require(!contains_entity(after_range_change, near_enemy));
@@ -1251,29 +1259,30 @@ int main() {
     require(!contains_entity(byte_budgeted, 102));
     require(network_example::estimate_snapshot_packet_size(byte_budgeted) <= player_budget);
 
-    const std::size_t player_enemy_budget =
-        network_example::estimate_snapshot_base_packet_size() +
-        network_example::estimate_snapshot_entity_size(player_entity) +
-        network_example::estimate_snapshot_entity_size(enemy_entity);
+    // Room for exactly one of the two. Player 100 is not this session's own
+    // player, so it would be scheduled like anyone else -- and having just
+    // been sent, it would wait while both newcomers fit -- so it is left out.
     network_example::WorldSnapshot round_robin_relevant;
     round_robin_relevant.header = crowded.header;
-    round_robin_relevant.entities.push_back(player_entity);
     network_example::EntitySnapshot first_enemy = enemy_entity;
     first_enemy.net_id = 201;
     network_example::EntitySnapshot second_enemy = enemy_entity;
     second_enemy.net_id = 202;
+    const std::size_t one_of_two_budget =
+        network_example::estimate_snapshot_base_packet_size() +
+        network_example::estimate_snapshot_entity_size(first_enemy);
     round_robin_relevant.entities.push_back(first_enemy);
     round_robin_relevant.entities.push_back(second_enemy);
     const network_example::WorldSnapshot first_round =
         engine.build_snapshot_send_set(
             session_one,
             round_robin_relevant,
-            player_enemy_budget);
+            one_of_two_budget);
     const network_example::WorldSnapshot second_round =
         engine.build_snapshot_send_set(
             session_one,
             round_robin_relevant,
-            player_enemy_budget);
+            one_of_two_budget);
     require(contains_entity(first_round, 201));
     require(!contains_entity(first_round, 202));
     require(!contains_entity(second_round, 201));
