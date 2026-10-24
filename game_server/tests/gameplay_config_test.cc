@@ -597,8 +597,12 @@ std::string sentry_grunt_entity_template_yaml(std::string entity_type) {
         "vision:\n"
         "  collider_template: sentry_grunt_vision_cone\n"
         "ai:\n"
-        "  controller: sentry\n"
-        "  profile: default\n";
+        "  default_controller: sentry\n"
+        "  profile: default\n"
+        // Every agent names its skills (AI plan P4); a sentry exactly one
+        // weapon, which is what it fires.
+        "  skills:\n"
+        "    - use: {type: weapon, value: 2}\n";
 }
 
 }  // namespace
@@ -1196,15 +1200,11 @@ int main() {
 
     const std::string data_driven_sentry_yaml =
         sentry_grunt_entity_template_yaml("actor") +
-        "  sentry:\n"
+        "  perception:\n"
         "    alert_ticks: 4\n"
         "    forget_ticks: 6\n"
-        "    patrol_rotation_interval_ticks: 2\n"
-        "    patrol_rotation_min_degrees: 10.5\n"
-        "    patrol_rotation_max_degrees: 22.5\n"
-        "    passive_patrol: true\n"
-        "    patrol_extent_x_meters: 8.0\n"
-        "    patrol_input_magnitude: 0.6\n"
+        "    idle_rotation_interval_ticks: 2\n"
+        "    idle_rotation_degrees: {min: 10.5, max: 22.5}\n"
         "    animation_idle: idle\n"
         "    animation_attack: chasing\n";
     const std::vector<std::uint8_t> data_driven_sentry_bundle =
@@ -1218,6 +1218,9 @@ int main() {
     const network_example::game_server::ActorTemplateConfig&
         data_driven_sentry =
             data_driven_sentry_config.entity_templates[1];
+    require(data_driven_sentry.default_controller_role ==
+            network_example::game_server::AgentControllerRole::kSentry);
+    require(data_driven_sentry.ai_stationary);
     require(data_driven_sentry.sentry.alert_ticks == 4);
     require(data_driven_sentry.sentry.forget_ticks == 6);
     require(data_driven_sentry.sentry.patrol_rotation_interval_ticks == 2);
@@ -1230,8 +1233,6 @@ int main() {
     require(data_driven_sentry.sentry.animation_attack ==
            data_driven_sentry.animation_chasing);
 
-    // sentry.weapon_slot picks a non-active slot to fire from; it names a
-    // slot, never a weapon id, and the retired weapon_id key is refused.
     const auto load_sentry_yaml = [](const std::string& yaml) {
         const std::vector<std::uint8_t> bundle =
             make_entity_template_bundle_zip(yaml);
@@ -1241,6 +1242,18 @@ int main() {
                 static_cast<std::uint32_t>(bundle.size()),
                 "gameplay_catalog.yaml");
     };
+    // The message a load fails with, or empty if it loaded.
+    const auto sentry_rejection = [&load_sentry_yaml](const std::string& yaml) {
+        try {
+            (void)load_sentry_yaml(yaml);
+        } catch (const std::exception& error) {
+            return std::string(error.what());
+        }
+        return std::string();
+    };
+
+    // A sentry fires its one weapon skill (AI plan P4), whichever slot holds
+    // it: the skill names a weapon id, and active_weapon_slot is left alone.
     const std::string two_slot_sentry_yaml = replace_once(
         data_driven_sentry_yaml, "  - 2\n", "  - 2\n  - 3\n");
     require(load_sentry_yaml(two_slot_sentry_yaml)
@@ -1248,53 +1261,83 @@ int main() {
     const network_example::game_server::GameServerGameplayConfig
         slot_sentry_config = load_sentry_yaml(replace_once(
             two_slot_sentry_yaml,
-            "    animation_idle: idle\n",
-            "    weapon_slot: 1\n    animation_idle: idle\n"));
+            "    - use: {type: weapon, value: 2}\n",
+            "    - use: {type: weapon, value: 3}\n"));
     require(slot_sentry_config.entity_templates[1].active_weapon_slot == 0);
     require(slot_sentry_config.entity_templates[1].sentry.weapon_id == 3);
-    for (const std::string& rejected_sentry_line : {
-             std::string("    weapon_slot: 2\n"),
-             std::string("    weapon_slot: -1\n"),
-             std::string("    weapon_id: 2\n"),
+    for (const std::pair<std::string, std::string>& rejected_skill : {
+             // Not one of its weapons.
+             std::pair<std::string, std::string>{
+                 "    - use: {type: weapon, value: 4}\n",
+                 "which is not in weapon_slots"},
+             // Two, with nothing to choose between them by.
+             std::pair<std::string, std::string>{
+                 "    - use: {type: weapon, value: 2}\n"
+                 "    - use: {type: weapon, value: 3}\n",
+                 "more than one weapon"},
+             // A band, which a sentry that fires at whatever it sees ignores.
+             std::pair<std::string, std::string>{
+                 "    - use: {type: weapon, value: 2}\n"
+                 "      when: {range_meters: {max: 10.0}}\n",
+                 "range or cooldown"},
          }) {
-        bool rejected = false;
-        try {
-            (void)load_sentry_yaml(replace_once(
-                two_slot_sentry_yaml,
-                "    animation_idle: idle\n",
-                rejected_sentry_line + "    animation_idle: idle\n"));
-        } catch (const std::exception&) {
-            rejected = true;
+        const std::string message = sentry_rejection(replace_once(
+            two_slot_sentry_yaml,
+            "    - use: {type: weapon, value: 2}\n",
+            rejected_skill.first));
+        if (message.find(rejected_skill.second) == std::string::npos) {
+            std::fprintf(stderr, "sentry skill case: expected \"%s\", got \"%s\"\n",
+                         rejected_skill.second.c_str(), message.c_str());
         }
-        require(rejected);
+        require(message.find(rejected_skill.second) != std::string::npos);
     }
+    // And an agent with no skills at all.
+    require(sentry_rejection(replace_once(
+                data_driven_sentry_yaml,
+                "  skills:\n    - use: {type: weapon, value: 2}\n",
+                ""))
+                .find("are required") != std::string::npos);
 
-    for (const std::pair<std::string, std::string>& invalid_patrol_value : {
+    // The keys the role-based block replaced (AI plan P1c, P1d) are refused
+    // rather than ignored: passive patrol is gone, sentry: is perception:,
+    // controller: is default_controller:, and a weapon is a skill, never a
+    // perception key.
+    for (const std::pair<std::string, std::string>& retired : {
              std::pair<std::string, std::string>{
-                 "patrol_extent_x_meters: 8.0",
-                 "patrol_extent_x_meters: 0.0"},
+                 "  perception:\n", "  sentry:\n"},
              std::pair<std::string, std::string>{
-                 "patrol_input_magnitude: 0.6",
-                 "patrol_input_magnitude: .nan"},
+                 "  default_controller: sentry\n", "  controller: sentry\n"},
+             std::pair<std::string, std::string>{
+                 "    alert_ticks: 4\n",
+                 "    alert_ticks: 4\n    passive_patrol: true\n"},
+             std::pair<std::string, std::string>{
+                 "    alert_ticks: 4\n",
+                 "    alert_ticks: 4\n    patrol_extent_x_meters: 8.0\n"},
+             std::pair<std::string, std::string>{
+                 "    alert_ticks: 4\n",
+                 "    alert_ticks: 4\n    weapon_slot: 1\n"},
+             std::pair<std::string, std::string>{
+                 "    alert_ticks: 4\n",
+                 "    alert_ticks: 4\n    weapon_id: 2\n"},
          }) {
-        bool invalid_passive_patrol_rejected = false;
-        try {
-            const std::vector<std::uint8_t> invalid_passive_patrol_bundle =
-                make_entity_template_bundle_zip(replace_once(
-                    data_driven_sentry_yaml,
-                    invalid_patrol_value.first,
-                    invalid_patrol_value.second));
-            (void)network_example::game_server::
-                load_gameplay_config_from_bundle_memory(
-                    invalid_passive_patrol_bundle.data(),
-                    static_cast<std::uint32_t>(
-                        invalid_passive_patrol_bundle.size()),
-                    "gameplay_catalog.yaml");
-        } catch (const std::exception&) {
-            invalid_passive_patrol_rejected = true;
+        const std::string message = sentry_rejection(
+            replace_once(data_driven_sentry_yaml, retired.first, retired.second));
+        if (message.empty()) {
+            std::fprintf(stderr, "retired ai key loaded: %s", retired.second.c_str());
         }
-        require(invalid_passive_patrol_rejected);
+        require(!message.empty());
     }
+    // A sentry does not move, so it takes no locomotion beyond saying so.
+    require(sentry_rejection(
+                data_driven_sentry_yaml +
+                "  locomotion:\n"
+                "    input_magnitude: 1.0\n")
+                .find("sentry is stationary") != std::string::npos);
+    require(sentry_rejection(
+                data_driven_sentry_yaml +
+                "  locomotion:\n"
+                "    stationary: true\n")
+                .empty());
 
     const std::vector<std::uint8_t> invalid_enemy_entity_bundle =
         make_entity_template_bundle_zip(
@@ -1671,6 +1714,11 @@ int main() {
         });
     require(quadruped_template != config.entity_templates.end());
     require(quadruped_template->skeleton.enabled);
+    // A garrison that walks its spawn source's route (AI plan P1c), where it
+    // used to patrol passively; walkers are never stationary.
+    require(quadruped_template->default_controller_role ==
+            network_example::game_server::AgentControllerRole::kGarrison);
+    require(!quadruped_template->ai_stationary);
     require(quadruped_template->movement_controller_type ==
             KernelMovementControllerType_Character);
     require(quadruped_template->movement_collider_template_id == 14u);
@@ -3437,6 +3485,8 @@ int main() {
                 legged_locomotion_rule.spawn_entity_template_id);
     require(legged_locomotion_actor != nullptr);
     require(legged_locomotion_actor->name == "quadruped_actor");
+    require(legged_locomotion_actor->default_controller_role ==
+            network_example::game_server::AgentControllerRole::kGarrison);
     require(legged_locomotion_actor->movement_controller_type ==
             KernelMovementControllerType_Character);
     require(
