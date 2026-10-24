@@ -585,8 +585,14 @@ P6b 的實作與決定：
   （vector 擴充時最多再 1 倍），每次 submit 的重複檢查約 0.4 ms（以每筆約 1.5 ns 估），佔 33 ms tick 約 1.2%；
   vector 擴充時一次複製約 11 MB，會有數 ms 的停頓。**數小時的 session 影響可忽略，連續數天不重啟的 server 才
   會明顯**。
-- 可行的修正（未做）：dedicated server 模式不寫 `pending_`；`processed_` 在 peer 斷線時清掉該 peer 的紀錄，
-  或只保留最近一段時間（client 重送的視窗）。都不需要改 ABI。AI 的 Committed Consume 已在 P5 排除。
+- **已修正**（2026-10-25，5e7a6bc4 與其後的 commit，不改 ABI）：
+  - peer 斷線時，從 `processed_` 移除該 peer 的紀錄（peer id 不會重用，這些紀錄不可能再被比對到）。
+  - dedicated server 的 `pending_` 只保留最新的 4096 筆（約 160 KB），超過就丟掉最舊的。原本打算「dedicated
+    不寫 `pending_`」，但約 12 個測試在 dedicated 模式下 poll outcome，也沒有其他 export 能依 request id 查詢，
+    所以改成上限：邊做邊 poll 的 host 與測試完全不受影響。client 與 listen server 不設上限。
+  - 所有寫入 `pending_` 的地方改走 `KernelEngine::queue_gameplay_request_outcome`。
+  - 測試：`gameplay_request_prune_test`。
+  - 修正後仍會累積的只有「還連線中的玩家」在 `processed_` 的紀錄，隨該玩家的連線時間成長。
 
 **P0 驗證結果**（2026-10-23，`-c opt`，臨時測試與 bench 修改都沒有 commit）：
 

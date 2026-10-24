@@ -367,6 +367,9 @@ public:
         KernelItemInstanceView* out_items,
         std::uint32_t max_items) const;
     void forget_gameplay_requests_of(PeerId peer);
+    void queue_gameplay_request_outcome(const KernelGameplayRequestOutcome& outcome);
+    // The most outcomes a dedicated server keeps for Kernel_PollGameplayRequestOutcomes.
+    static constexpr std::size_t kMaxQueuedGameplayRequestOutcomes = 4096;
     std::uint32_t poll_gameplay_request_outcomes(
         KernelGameplayRequestOutcome* out_outcomes,
         std::uint32_t max_outcomes);

@@ -533,7 +533,7 @@ bool ItemGameplaySystem::submit_request(
                 candidate.request_id == request.request_id;
         });
     if (duplicate != engine.processed_gameplay_requests_.end()) {
-        engine.pending_gameplay_request_outcomes_.push_back(*duplicate);
+        engine.queue_gameplay_request_outcome(*duplicate);
         return true;
     }
 
@@ -541,7 +541,7 @@ bool ItemGameplaySystem::submit_request(
     if (!valid_domain_action(request.domain_action)) {
         reject(&outcome, KernelGameplayRequestRejection_InvalidRequest);
         engine.processed_gameplay_requests_.push_back(outcome);
-        engine.pending_gameplay_request_outcomes_.push_back(outcome);
+        engine.queue_gameplay_request_outcome(outcome);
         return true;
     }
     const std::optional<entt::entity> instigator =
@@ -1460,7 +1460,7 @@ record_outcome:
         }
     }
     engine.processed_gameplay_requests_.push_back(outcome);
-    engine.pending_gameplay_request_outcomes_.push_back(outcome);
+    engine.queue_gameplay_request_outcome(outcome);
     return true;
 }
 

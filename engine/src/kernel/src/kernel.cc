@@ -6702,6 +6702,23 @@ std::uint32_t KernelEngine::poll_gameplay_request_outcomes(
     return copied;
 }
 
+// Outcomes for Kernel_PollGameplayRequestOutcomes. On a dedicated server
+// nothing may ever poll -- the shipped server does not -- and the queue was
+// only emptied when a server started, so it grew with every request for as
+// long as the server ran. There it keeps the newest few thousand, dropping the
+// oldest: a host or test that polls as it goes loses nothing. A client's and a
+// listen server's host poll their own, so theirs are left alone.
+void KernelEngine::queue_gameplay_request_outcome(
+    const KernelGameplayRequestOutcome& outcome) {
+    pending_gameplay_request_outcomes_.push_back(outcome);
+    if (config_.mode == KernelMode_DedicatedServer) {
+        while (pending_gameplay_request_outcomes_.size() >
+               kMaxQueuedGameplayRequestOutcomes) {
+            pending_gameplay_request_outcomes_.pop_front();
+        }
+    }
+}
+
 // A peer that has gone can never resend a request: peer ids are handed out
 // once per server run and never reused, so its processed requests can never
 // match again. Kept, they are only weight on every later duplicate scan.
@@ -8715,7 +8732,7 @@ void KernelEngine::handle_client_reliable_event(const TransportEvent& transport_
             &gameplay_outcome)) {
         record_packet_deserialization_cost(elapsed_cost_us(decode_start));
         handle_predicted_throw_outcome(gameplay_outcome);
-        pending_gameplay_request_outcomes_.push_back(gameplay_outcome);
+        queue_gameplay_request_outcome(gameplay_outcome);
         return;
     }
 

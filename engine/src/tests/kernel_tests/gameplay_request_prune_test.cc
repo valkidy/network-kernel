@@ -1,7 +1,10 @@
-// A disconnected peer's processed gameplay requests are dropped: peer ids are
+// The two gameplay request lists that used to grow for as long as a server
+// ran. A disconnected peer's processed requests are dropped: peer ids are
 // never reused within a server run, so they can never match a resend again,
 // and kept they only lengthen every later duplicate scan. Everyone else's stay
-// answerable.
+// answerable. And a dedicated server, which nothing may ever poll, keeps only
+// the newest outcomes for Kernel_PollGameplayRequestOutcomes; a listen server,
+// whose host polls its own, keeps them all.
 
 #include <algorithm>
 #include <cstdint>
@@ -68,6 +71,31 @@ int main() {
     // A peer with nothing recorded changes nothing.
     engine.forget_gameplay_requests_of(9u);
     require(engine.processed_gameplay_requests_.size() == 3u);
+
+    // The dedicated server's outcome queue keeps the newest, in order.
+    constexpr std::size_t kCap = network_example::KernelEngine::kMaxQueuedGameplayRequestOutcomes;
+    constexpr std::uint64_t kQueued = kCap + 904u;
+    for (std::uint64_t id = 1; id <= kQueued; ++id) {
+        engine.queue_gameplay_request_outcome(outcome(2u, id));
+    }
+    require(engine.pending_gameplay_request_outcomes_.size() == kCap);
+    require(engine.pending_gameplay_request_outcomes_.front().request_id == kQueued - kCap + 1u);
+    require(engine.pending_gameplay_request_outcomes_.back().request_id == kQueued);
+    // A host polling it as it goes still gets every one it has not read.
+    KernelGameplayRequestOutcome polled[4]{};
+    require(engine.poll_gameplay_request_outcomes(polled, 4u) == 4u);
+    require(polled[0].request_id == kQueued - kCap + 1u);
+    require(engine.pending_gameplay_request_outcomes_.size() == kCap - 4u);
+
+    // A listen server's host polls its own: no cap.
+    KernelConfig listen_config = config;
+    listen_config.mode = KernelMode_ListenServer;
+    network_example::KernelEngine listen(listen_config);
+    listen.reset_runtime_state(KernelMode_ListenServer);
+    for (std::uint64_t id = 1; id <= kQueued; ++id) {
+        listen.queue_gameplay_request_outcome(outcome(2u, id));
+    }
+    require(listen.pending_gameplay_request_outcomes_.size() == kQueued);
 
     std::printf("gameplay_request_prune_test passed\n");
     return 0;
