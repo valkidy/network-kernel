@@ -586,12 +586,51 @@ namespace NetworkExample.Kernel.Editor
                     Require(
                         binding.TryValidate(out string validationError),
                         $"{manifest.Name} binding failed validation: {validationError}");
+
+                    RequireSerializedBonesResolveHash(root, manifest, expectedBones);
                 }
                 finally
                 {
                     UnityEngine.Object.DestroyImmediate(root);
                 }
             }
+        }
+
+        // A prefab binding as the client ships it: bones already serialized, so
+        // it never auto-maps, and the hash left at 0 so it follows whichever
+        // skeleton the server's bundle carries. Validation has to adopt the
+        // manifest hash itself, or every pose is compared against 0 and
+        // rejected. A non-zero hash that disagrees is still refused.
+        private static void RequireSerializedBonesResolveHash(
+            GameObject root,
+            KernelSkeletonManifest manifest,
+            Transform[] expectedBones)
+        {
+            UnityEngine.Object.DestroyImmediate(root.GetComponent<KernelSkeletonBinding>());
+            KernelSkeletonBinding binding = root.AddComponent<KernelSkeletonBinding>();
+            binding.SkeletonAssetId = manifest.AssetId;
+            binding.SkeletonContentHash = 0ul;
+            binding.Bones = (Transform[])expectedBones.Clone();
+            Require(
+                binding.TryValidate(out string error),
+                $"{manifest.Name} serialized binding with hash 0 failed validation: {error}");
+            Require(
+                binding.SkeletonContentHash == manifest.ContentHash,
+                $"{manifest.Name} serialized binding did not adopt the manifest hash.");
+            var state = new KernelSkeletonRenderState
+            {
+                skeleton_asset_id = manifest.AssetId,
+                skeleton_content_hash = manifest.ContentHash,
+                bone_count = (uint)expectedBones.Length,
+            };
+            Require(
+                binding.TryValidate(state, out error),
+                $"{manifest.Name} pose was rejected after resolving hash 0: {error}");
+
+            binding.SkeletonContentHash = manifest.ContentHash ^ 1ul;
+            Require(
+                !binding.TryValidate(out error),
+                $"{manifest.Name} binding accepted a pinned hash the manifest does not carry.");
         }
 
         private static void RequireSkeletonAbsolutePoseApplication()
