@@ -229,6 +229,12 @@ cc_test(
 )
 
 cc_test(
+    name = "blocked_actor_velocity_test",
+    srcs = ["blocked_actor_velocity_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
+cc_test(
     name = "player_hover_p0_test",
     srcs = ["player_hover_p0_test.cc"],
     deps = ["//engine/src/simulation:simulation"],

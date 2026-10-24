@@ -231,6 +231,11 @@ public:
         std::uint32_t max_effects) const;
     bool get_benchmark_stats(KernelBenchmarkStats* out_stats) const;
     bool get_network_stats(KernelNetworkStats* out_stats) const;
+    std::uint32_t server_query_damage_records(
+        KernelDamageRecord* out_records,
+        std::uint32_t max_records) const;
+    void remember_damage_source_shooters();
+    NetId attacker_of(NetId source_net_id) const;
     std::uint32_t poll_debug_records(
         const KernelDebugRecordFilter* filter,
         KernelDebugInfo* out_records,
@@ -361,6 +366,10 @@ public:
         KernelInventoryContainerId id,
         KernelItemInstanceView* out_items,
         std::uint32_t max_items) const;
+    void forget_gameplay_requests_of(PeerId peer);
+    void queue_gameplay_request_outcome(const KernelGameplayRequestOutcome& outcome);
+    // The most outcomes a dedicated server keeps for Kernel_PollGameplayRequestOutcomes.
+    static constexpr std::size_t kMaxQueuedGameplayRequestOutcomes = 4096;
     std::uint32_t poll_gameplay_request_outcomes(
         KernelGameplayRequestOutcome* out_outcomes,
         std::uint32_t max_outcomes);
@@ -935,6 +944,7 @@ private:
         std::size_t last_event,
         const std::vector<NetId>& actors_before_tick);
     bool enqueue_simulation_command(const simulation::Command& command);
+    std::size_t simulation_command_capacity() const;
     std::size_t drain_simulation_commands();
     void record_simulation_tick_cost(
         std::uint64_t cost_us,
@@ -1563,6 +1573,15 @@ private:
     std::vector<NetId> actors_before_tick_;
     std::unordered_map<NetId, PendingFirstPhysicsActor>
         pending_first_physics_actors_;
+    // The hits applied during the current (or, between updates, the last)
+    // Kernel_Update; see Kernel_ServerQueryDamageRecords.
+    std::vector<ConfirmedDamage> applied_damage_;
+    // Projectile and beam net id -> who fired it, for damage records.
+    struct DamageSourceShooter {
+        NetId shooter = 0;
+        std::uint32_t seen_tick = 0;
+    };
+    std::unordered_map<NetId, DamageSourceShooter> damage_source_shooters_;
     simulation::CommandQueue command_queue_;
     KernelRpcMethodRegistry rpc_method_registry_;
     KernelRpcResponseStore rpc_response_store_;

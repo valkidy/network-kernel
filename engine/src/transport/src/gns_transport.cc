@@ -17,6 +17,13 @@ namespace {
 
 constexpr PeerId kServerPeerId = 0;
 constexpr std::size_t kTransportPrefixSize = 2;
+// GNS caps every connection at 256 KB/s by default, which is what made an
+// 800 KB gameplay catalog bundle take ~3.3 s to reach a client. GNS has no
+// bandwidth estimation: the rate starts at about four packets per RTT and is
+// clamped into [min, max], so the minimum is what an internet link gets and
+// the maximum is what LAN and localhost get.
+constexpr int kSendRateMinBytesPerSecond = 1024 * 1024;
+constexpr int kSendRateMaxBytesPerSecond = 8 * 1024 * 1024;
 
 GnsTransport*& callback_owner() {
     static GnsTransport* owner = nullptr;
@@ -386,6 +393,12 @@ bool GnsTransport::initialize_gns() {
     SteamNetworkingUtils()->SetGlobalConfigValueInt32(
         k_ESteamNetworkingConfig_IP_AllowWithoutAuth,
         1);
+    SteamNetworkingUtils()->SetGlobalConfigValueInt32(
+        k_ESteamNetworkingConfig_SendRateMin,
+        kSendRateMinBytesPerSecond);
+    SteamNetworkingUtils()->SetGlobalConfigValueInt32(
+        k_ESteamNetworkingConfig_SendRateMax,
+        kSendRateMaxBytesPerSecond);
     apply_fake_network_conditions(parse_gns_fake_network_conditions(
         std::getenv("NETWORK_KERNEL_FAKE_LAG_MS"),
         std::getenv("NETWORK_KERNEL_FAKE_JITTER_MS"),

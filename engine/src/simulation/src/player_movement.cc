@@ -608,6 +608,10 @@ void simulate_actor_movement(
         const NetworkIdentity& identity = view.get<NetworkIdentity>(entity);
         const Transform& transform = view.get<Transform>(entity);
         const Velocity& current_velocity = view.get<Velocity>(entity);
+        // Cleared in place, not just on the copy: an actor this loop skips
+        // never has its MovementState written back, and must not go on
+        // replicating the last motion it made.
+        view.get<MovementState>(entity).has_made_good_velocity = false;
         MovementState next_movement = view.get<MovementState>(entity);
         next_movement.landed_this_tick = false;
         next_movement.hovering = false;
@@ -1080,9 +1084,16 @@ void simulate_actor_movement(
     }
 
     for (const BufferedMovementResult& result : buffered) {
-        world.registry().get<Transform>(result.entity).position = result.position;
+        Transform& moved = world.registry().get<Transform>(result.entity);
+        const glm::vec3 made_good = fixed_delta_seconds > 0.0f
+            ? (result.position - moved.position) / fixed_delta_seconds
+            : glm::vec3{0.0f};
+        moved.position = result.position;
         world.registry().get<Velocity>(result.entity).linear = result.velocity;
-        world.registry().get<MovementState>(result.entity) = result.movement;
+        MovementState& stored = world.registry().get<MovementState>(result.entity);
+        stored = result.movement;
+        stored.made_good_velocity = made_good;
+        stored.has_made_good_velocity = fixed_delta_seconds > 0.0f;
         // Landing ends the lockout early: once the ground is back under the
         // actor, control belongs to whoever is driving it again. The tick
         // count is only the ceiling for a knockback that never lands -- and a

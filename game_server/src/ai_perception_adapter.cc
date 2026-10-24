@@ -86,6 +86,7 @@ void PerceptionFrame::refresh(
     owned_actors_.clear();
     index_actors(actors);
     refresh_vision_states(kernel);
+    refresh_damage(kernel);
 }
 
 void PerceptionFrame::refresh(KernelHandle* kernel) {
@@ -113,6 +114,38 @@ void PerceptionFrame::refresh(KernelHandle* kernel) {
     }
     index_actors(ActorStateView{owned_actors_.data(), count});
     refresh_vision_states(kernel);
+    refresh_damage(kernel);
+}
+
+// One query for the whole population, like vision. Read before this tick's
+// Kernel_Update, so it is the previous update's hits: the tick the damage
+// landed on is the tick its victim reacts on.
+void PerceptionFrame::refresh_damage(KernelHandle* kernel) {
+    damage_by_victim_.clear();
+    damage_buffer_.clear();
+    if (kernel == nullptr) {
+        return;
+    }
+    const std::uint32_t count = Kernel_ServerQueryDamageRecords(kernel, nullptr, 0u);
+    if (count == 0u) {
+        return;
+    }
+    damage_buffer_.resize(count);
+    for (KernelDamageRecord& record : damage_buffer_) {
+        record.struct_size = sizeof(KernelDamageRecord);
+    }
+    const std::uint32_t written =
+        Kernel_ServerQueryDamageRecords(kernel, damage_buffer_.data(), count);
+    damage_buffer_.resize(std::min(written, count));
+    // In the order the kernel applied them, so the last hit on a victim wins.
+    for (std::uint32_t index = 0; index < damage_buffer_.size(); ++index) {
+        damage_by_victim_[damage_buffer_[index].victim_net_id] = index;
+    }
+}
+
+const KernelDamageRecord* PerceptionFrame::damage_to(std::uint32_t net_id) const {
+    const auto found = damage_by_victim_.find(net_id);
+    return found == damage_by_victim_.end() ? nullptr : &damage_buffer_[found->second];
 }
 
 const KernelServerEntityState* PerceptionFrame::actor_state(
@@ -144,6 +177,19 @@ SentryPerceptionSnapshot AiPerceptionAdapter::build_sentry_snapshot(
     }
     snapshot.self_state = *self_state;
     snapshot.has_self_state = true;
+
+    // Ahead of vision: an agent without a cone still feels a hit.
+    if (const KernelDamageRecord* hit = frame.damage_to(agent_net_id)) {
+        snapshot.damaged = true;
+        const KernelServerEntityState* attacker =
+            hit->attacker_net_id == 0u ? nullptr : frame.actor_state(hit->attacker_net_id);
+        if (attacker != nullptr && attacker->valid != 0u) {
+            snapshot.attacker_id = hit->attacker_net_id;
+            snapshot.damage_source = attacker->position;
+        } else {
+            snapshot.damage_source = hit->hit_position;
+        }
+    }
 
     // An agent with no cone has no vision state, and leaves the snapshot with
     // its default forward and no target -- which is what the per-agent query

@@ -180,6 +180,17 @@ struct WorldSnapshot {
     std::vector<SnapshotLockStrike> lock_strikes;
 };
 
+// The velocity a snapshot says an entity is moving at. For an agent, the
+// horizontal part is brought down to what this tick's movement step actually
+// made good (MovementState::made_good_velocity), never up: the simulation's
+// velocity is what the character asked the controller for, and Jolt hands
+// that back whatever blocked it. Without this, an agent pressed against a
+// player replicates its full move speed standing still -- drawn running in
+// place, and extrapolated into the player. Players keep their own: the
+// owner's prediction replays a knockback from the replicated horizontal
+// velocity and has to be handed the authority's.
+glm::vec3 replicated_velocity(const World& world, entt::entity entity);
+
 // The visual flags a world entity's own components imply: moving, reloading,
 // dead, and grounded / falling / landed from its movement state. Every render
 // and snapshot path takes its flags from here, so a flag one path learns about

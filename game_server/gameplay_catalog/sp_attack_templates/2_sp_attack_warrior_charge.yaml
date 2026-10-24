@@ -1,0 +1,20 @@
+# Stops, winds up, and runs at where the target stood, carrying its own contact
+# weapon (AI plan D16). Stops on the first hit, staggers itself on a wall, and
+# is stopped dead by a stagger. When it is used -- the distance band and the
+# cooldown -- belongs to the skill that names it.
+id: 2
+name: warrior_charge
+kind: charge
+windup:
+  # 0.6 s of standing still, facing the target: the tell.
+  ticks: 18
+  # animation_state while winding up, so the client can play the tell
+  # instead of idle. A raw number: a template belongs to no actor, so it has
+  # no idle or chasing to name.
+  animation: 2
+charge:
+  speed_meters_per_second: 9.0
+  overshoot_meters: 2.0
+# charge_horns: not in the user's loadout, and not swung -- it is the run's
+# contact.
+contact_weapon: 20

@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "game_server/src/agent_runtime.h"
 #include "kernel/public/kernel_api.h"
 #include "kernel/public/kernel_types.h"
 
@@ -30,6 +31,10 @@ struct WorldRuleSpawnConfig {
     KernelVec3 position{0.0f, 0.0f, 0.0f};
     float radius = 0.0f;
     std::uint32_t tick_interval = 1;
+    // director.spawn.controller. The rule spreads its agents round a circle,
+    // so a route here is offsets from each agent's own spawn point; the
+    // director makes them world space when it reports the agent.
+    AgentControllerSpec controller;
 };
 
 // Tops the world's agent population back up to each rule's target.
@@ -49,6 +54,9 @@ public:
 
     const std::vector<WorldRuleSpawnConfig>& rules() const;
     std::uint32_t spawned_agent_count() const;
+    // Controller specs for agents spawned since the last call, handed over
+    // once; see SpawnedControllerSpec.
+    std::vector<SpawnedControllerSpec> take_spawned_controllers();
 
 private:
     struct RuleRuntime {
@@ -67,6 +75,7 @@ private:
     std::vector<WorldRuleSpawnConfig> rules_;
     std::vector<RuleRuntime> runtimes_;
     std::uint32_t spawned_agent_count_ = 0;
+    std::vector<SpawnedControllerSpec> spawned_controllers_;
 };
 
 }  // namespace network_example::game_server

@@ -44,21 +44,20 @@ vision:
 # up to. The distances below are one setting, not three -- see the comment on
 # them.
 ai:
-  controller: chaser
+  default_controller: garrison
   profile: default
-  sentry:
+  perception:
     alert_ticks: 90
     forget_ticks: 150
-    patrol_rotation_interval_ticks: 30
-    patrol_rotation_min_degrees: 15.0
-    patrol_rotation_max_degrees: 30.0
+    idle_rotation_interval_ticks: 30
+    idle_rotation_degrees: {min: 15.0, max: 30.0}
     animation_idle: idle
     # Despite the name this plays whenever the agent is *moving*, not when it
     # attacks -- the controller sets it from a non-zero move, and the swing
     # itself is driven client-side off the replicated action timeline. Naming
     # an "attack" clip here would play it while walking.
     animation_attack: chasing
-  chaser:
+  locomotion:
     # Holding persists from stop_distance out to resume_distance, so a resume
     # beyond attack_range opens a band where the agent has stopped chasing and
     # cannot yet attack: it parks and does nothing. Keeping resume inside
@@ -66,10 +65,6 @@ ai:
     stop_distance_meters: 1.8
     resume_distance_meters: 2.1
     input_magnitude: 1.0
-    # Matches grunt_claw_cone's range. Measured origin to origin, while the
-    # swing reaches to a target's near edge, so this is conservative: whatever
-    # this lets the gingerbread attack, it can actually hit.
-    attack_range_meters: 2.2
   # Only read when this one is in a squad; a lone chaser has no slot.
   #
   # input_magnitude is a fraction of this template's own move speed, and the
@@ -77,14 +72,21 @@ ai:
   # SLOWEST member's patrol speed has to beat advance_speed_meters_per_second,
   # or that member falls behind its slot for the whole route and never arrives.
   # 2.8 m/s x 0.45 = 1.26 m/s here, against a cursor at 0.9.
-  patrol:
-    slot_radius_meters: 1.2
-    input_magnitude: 0.45
-    # About the vision cone's own reach, so it gives up at roughly the distance
-    # it would have lost sight anyway. resume sits well inside it, or it yo-yos
-    # on the boundary.
-    leash_meters: 18.0
-    leash_resume_meters: 6.0
+  controllers:
+    patrol:
+      slot_radius_meters: 1.2
+      input_magnitude: 0.45
+      # About the vision cone's own reach, so it gives up at roughly the distance
+      # it would have lost sight anyway. resume sits well inside it, or it yo-yos
+      # on the boundary.
+      leash_meters: 18.0
+      leash_resume_meters: 6.0
+  skills:
+    # Matches grunt_claw_cone's range. Measured origin to origin, while the
+    # swing reaches to a target's near edge, so this is conservative: whatever
+    # this lets the gingerbread attack, it can actually hit.
+    - use: {type: weapon, value: 10}
+      when: {range_meters: {max: 2.2}}
 # Once per engagement, at most every 20 s, only while it can see its target.
 # A call refused for room is given up for that fight.
 spawner:

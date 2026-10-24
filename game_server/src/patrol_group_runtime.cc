@@ -107,11 +107,34 @@ void PatrolGroupRuntime::tick(
         // and it makes the leash useless, because the slot being chased would
         // run away as fast as the pursuit dragged the member off it.
         group.holding = false;
+        const AgentRuntimeState* alerting = nullptr;
         for (const std::uint32_t net_id : group.member_net_ids) {
             const AgentRuntimeState* member = find_agent(agents, index, net_id);
             if (member != nullptr && is_engaged(member->sentry.state)) {
                 group.holding = true;
-                break;
+                if (alerting == nullptr && member->sentry.has_attention_point) {
+                    alerting = member;
+                }
+            }
+        }
+        // And the squad turns as one (AI plan D7): whoever is still idle
+        // alerts, facing where the engaged member's attention is. A member
+        // shot at alerts the rest on the short alert too. Each one's own
+        // perception takes over from there; one that sees nothing forgets and
+        // is alerted again for as long as the fight goes on, so it keeps
+        // watching that way.
+        if (alerting != nullptr) {
+            const AgentSentryRuntimeState source = alerting->sentry;
+            for (const std::uint32_t net_id : group.member_net_ids) {
+                AgentRuntimeState* member = find_agent(agents, index, net_id);
+                if (member == nullptr || member->sentry.state != AgentSentryState::kIdle) {
+                    continue;
+                }
+                member->patrol.leash_anchor = member->position;
+                agent_steering::transition_to(member, AgentSentryState::kAlert);
+                member->sentry.alerted_by_damage = source.alerted_by_damage;
+                member->sentry.attention_point = source.attention_point;
+                member->sentry.has_attention_point = true;
             }
         }
 

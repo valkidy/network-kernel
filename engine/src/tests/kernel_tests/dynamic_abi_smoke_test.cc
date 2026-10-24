@@ -401,6 +401,10 @@ int main() {
         load_symbol<bool(KernelHandle*, float)>(
             library,
             "Kernel_ServerSetFallDeathHeight");
+    auto* kernel_server_query_damage_records =
+        load_symbol<std::uint32_t(KernelHandle*, KernelDamageRecord*, std::uint32_t)>(
+            library,
+            "Kernel_ServerQueryDamageRecords");
     [[maybe_unused]] auto* kernel_server_revive_entity =
         load_symbol<bool(KernelHandle*, const KernelServerReviveInfo*)>(
             library,
@@ -536,6 +540,9 @@ int main() {
     require(
         (abi_info.capability_flags & KERNEL_CAPABILITY_SERVER_FALL_DEATH_HEIGHT) != 0);
     require(!kernel_server_set_fall_death_height(nullptr, -10.0f));
+    require(
+        (abi_info.capability_flags & KERNEL_CAPABILITY_SERVER_DAMAGE_RECORDS) != 0);
+    require(kernel_server_query_damage_records(nullptr, nullptr, 0u) == 0u);
     {
         // A null buffer copies nothing but still starts capture.
         require(kernel_poll_log_messages(nullptr, 4u) == 0u);

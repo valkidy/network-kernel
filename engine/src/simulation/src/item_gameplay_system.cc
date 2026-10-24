@@ -533,7 +533,7 @@ bool ItemGameplaySystem::submit_request(
                 candidate.request_id == request.request_id;
         });
     if (duplicate != engine.processed_gameplay_requests_.end()) {
-        engine.pending_gameplay_request_outcomes_.push_back(*duplicate);
+        engine.queue_gameplay_request_outcome(*duplicate);
         return true;
     }
 
@@ -541,7 +541,7 @@ bool ItemGameplaySystem::submit_request(
     if (!valid_domain_action(request.domain_action)) {
         reject(&outcome, KernelGameplayRequestRejection_InvalidRequest);
         engine.processed_gameplay_requests_.push_back(outcome);
-        engine.pending_gameplay_request_outcomes_.push_back(outcome);
+        engine.queue_gameplay_request_outcome(outcome);
         return true;
     }
     const std::optional<entt::entity> instigator =
@@ -1444,8 +1444,23 @@ record_outcome:
                     KernelLocalActionResultReason_ItemAction)});
         }
     }
+    // An AI agent using an item (AI plan P5) has nobody to read the outcome
+    // and no client to replay it: game_server submits it, never polls, and
+    // may do it every few seconds per agent. Both lists are only cleared on
+    // reset, so recording these would grow them -- and the duplicate scan
+    // above with them -- for as long as the server ran. Anything else an
+    // agent asks, and every refusal, is still recorded.
+    if (outcome.status == KernelGameplayRequestStatus_Committed &&
+        request.domain_action == KernelDomainAction_Consume) {
+        if (const std::optional<entt::entity> instigator =
+                engine.world_.find_entity(request.instigator_net_id);
+            instigator.has_value() &&
+            engine.world_.registry().all_of<AgentRuntime>(*instigator)) {
+            return true;
+        }
+    }
     engine.processed_gameplay_requests_.push_back(outcome);
-    engine.pending_gameplay_request_outcomes_.push_back(outcome);
+    engine.queue_gameplay_request_outcome(outcome);
     return true;
 }
 

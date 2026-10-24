@@ -234,7 +234,6 @@ Row measure(
             position);
         agent.actor_template_id = chaser->actor_template_id;
         agent.position = position;
-        agent.patrol_anchor = position;
         agent.sentry_config = chaser->sentry;
         agents.push_back(agent);
     }
@@ -727,8 +726,9 @@ void print_composition_table(const Catalog& catalog) {
 // Locomotion steps are their own packet on the snapshot channel, flushed with
 // the snapshot and capped by their own budget rather than by the 1,200 B
 // snapshot one. This measures the rate directly rather than deriving it from the
-// gait: quadrupeds patrol on their own (passive_patrol, a 30 m extent), so they
-// walk without a player to chase.
+// gait. The quadrupeds are garrisons spawned here with no route (AI plan P1c),
+// so it is the player at the origin, which they see and close on, that keeps
+// them walking -- before P1c they swept 30 m on their own instead.
 struct LocomotionRow {
     std::size_t agent_count = 0;
     double steps_per_second = 0.0;

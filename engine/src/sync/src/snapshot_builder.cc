@@ -2,10 +2,33 @@
 
 namespace network_example {
 
+glm::vec3 replicated_velocity(const World& world, entt::entity entity) {
+    const Velocity* velocity = world.registry().try_get<Velocity>(entity);
+    if (velocity == nullptr) {
+        return glm::vec3{0.0f};
+    }
+    glm::vec3 replicated = velocity->linear;
+    const MovementState* movement = world.registry().try_get<MovementState>(entity);
+    if (movement == nullptr || !movement->has_made_good_velocity ||
+        world.registry().all_of<PlayerTag>(entity)) {
+        return replicated;
+    }
+    const glm::vec2 asked{replicated.x, replicated.z};
+    const glm::vec2 made_good{
+        movement->made_good_velocity.x, movement->made_good_velocity.z};
+    // Only ever toward zero, as the solver treats the vertical part: a step
+    // up or a ground snap can carry the body further than it was asked to
+    // walk, and that is not speed.
+    if (glm::length(made_good) < glm::length(asked)) {
+        replicated.x = made_good.x;
+        replicated.z = made_good.y;
+    }
+    return replicated;
+}
+
 std::uint32_t derived_visual_flags(const World& world, entt::entity entity) {
     std::uint32_t flags = 0;
-    if (world.registry().all_of<Velocity>(entity) &&
-        glm::length(world.registry().get<Velocity>(entity).linear) > 0.001f) {
+    if (glm::length(replicated_velocity(world, entity)) > 0.001f) {
         flags |= kVisualFlagMoving;
     }
     if (world.registry().all_of<WeaponState>(entity) &&
@@ -78,7 +101,7 @@ WorldSnapshot build_world_snapshot(
         entity_snapshot.position = view.get<const Transform>(entity).position;
         entity_snapshot.rotation = view.get<const Transform>(entity).rotation;
         if (world.registry().all_of<Velocity>(entity)) {
-            entity_snapshot.velocity = world.registry().get<Velocity>(entity).linear;
+            entity_snapshot.velocity = replicated_velocity(world, entity);
         }
         if (world.registry().all_of<ProjectileBeamRuntime>(entity)) {
             // effective_length, not the authored length: the authored one

@@ -18,6 +18,7 @@
 #include <string>
 #include <vector>
 
+#include "game_server/src/agent_runtime.h"
 #include "game_server/src/game_server.h"
 #include "game_server/src/gameplay_config.h"
 #include "kernel/public/kernel_api.h"
@@ -158,6 +159,13 @@ public:
             kernel_, net_id, &position, &kIdentityRotation));
     }
 
+    const network_example::game_server::AgentRuntimeState* agent(std::uint32_t net_id) const {
+        for (const auto& candidate : game_server_->agent_runtime_manager().agents()) {
+            if (candidate.net_id == net_id) return &candidate;
+        }
+        return nullptr;
+    }
+
     std::vector<std::uint32_t> spawned_by(std::uint32_t carrier) const {
         for (const auto& instance :
              game_server_->agent_runtime_manager().spawner_director().instances()) {
@@ -232,6 +240,15 @@ void the_airship_drops_gingerbread_that_falls() {
         require(state.entity_template_id == gingerbread);
         // Out from under the hull, 3 m below the clearance it holds.
         require(state.position.y > 9.0f);
+    }
+    // Hunters going after what the airship was fighting (AI plan P6b).
+    server.step();
+    for (const std::uint32_t unit : drop) {
+        const network_example::game_server::AgentRuntimeState* agent = server.agent(unit);
+        require(agent != nullptr);
+        require(agent->controller_role ==
+                network_example::game_server::AgentControllerRole::kHunter);
+        require(agent->hunt_target == player);
     }
     server.steps(120);
     for (const std::uint32_t unit : drop) {

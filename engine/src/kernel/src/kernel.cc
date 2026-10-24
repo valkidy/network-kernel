@@ -2772,6 +2772,9 @@ void KernelEngine::update(float delta_seconds) {
     if (!running_) {
         return;
     }
+    // Per call, not per tick: one update may run several ticks, and a host
+    // that reads after each update must see every hit those ticks applied.
+    applied_damage_.clear();
 
     if (delta_seconds > 0.0f &&
         (config_.mode == KernelMode_Client || config_.mode == KernelMode_ListenServer)) {
@@ -4743,6 +4746,69 @@ void KernelEngine::refill_byte_token_bucket(
     bucket->last_refill_time_us = now_us;
 }
 
+// A hit's source is whatever dealt it: an actor for a melee swing or a
+// hitscan shot, but the projectile or beam for anything fired. The record
+// names the shooter instead, which means remembering it, since a projectile is
+// gone by the time its damage is applied. Kept ten seconds, well past any
+// confirm delay or scheduled hit, and well short of a net id coming back.
+void KernelEngine::remember_damage_source_shooters() {
+    const std::uint32_t tick = tick_loop_.current_tick();
+    for (const auto [entity, identity, projectile] :
+         world_.registry().view<NetworkIdentity, ProjectileState>().each()) {
+        (void)entity;
+        damage_source_shooters_[identity.net_id] =
+            DamageSourceShooter{projectile.shooter_net_id, tick};
+    }
+    for (const auto [entity, identity, beam] :
+         world_.registry().view<NetworkIdentity, ProjectileBeamRuntime>().each()) {
+        (void)entity;
+        damage_source_shooters_[identity.net_id] =
+            DamageSourceShooter{beam.shooter_net_id, tick};
+    }
+    constexpr std::uint32_t kRememberTicks = 300u;
+    for (auto entry = damage_source_shooters_.begin();
+         entry != damage_source_shooters_.end();) {
+        entry = tick - entry->second.seen_tick > kRememberTicks
+            ? damage_source_shooters_.erase(entry)
+            : std::next(entry);
+    }
+}
+
+NetId KernelEngine::attacker_of(NetId source_net_id) const {
+    const auto shooter = damage_source_shooters_.find(source_net_id);
+    return shooter == damage_source_shooters_.end() ? source_net_id
+                                                    : shooter->second.shooter;
+}
+
+std::uint32_t KernelEngine::server_query_damage_records(
+    KernelDamageRecord* out_records,
+    std::uint32_t max_records) const {
+    if (!is_server_mode(config_.mode)) {
+        return 0u;
+    }
+    const std::uint32_t count = static_cast<std::uint32_t>(applied_damage_.size());
+    if (out_records == nullptr) {
+        return count;
+    }
+    const std::uint32_t written = std::min(count, max_records);
+    for (std::uint32_t index = 0; index < written; ++index) {
+        KernelDamageRecord& out = out_records[index];
+        if (out.struct_size < sizeof(KernelDamageRecord)) {
+            return 0u;
+        }
+        const ConfirmedDamage& damage = applied_damage_[index];
+        out = KernelDamageRecord{};
+        out.struct_size = sizeof(KernelDamageRecord);
+        out.tick = damage.server_tick;
+        out.victim_net_id = damage.target_net_id;
+        out.attacker_net_id = attacker_of(damage.source_net_id);
+        out.hit_position = KernelVec3{
+            damage.hit_position.x, damage.hit_position.y, damage.hit_position.z};
+        out.damage = damage.damage;
+    }
+    return count;
+}
+
 std::uint32_t KernelEngine::poll_debug_records(
     const KernelDebugRecordFilter* filter,
     KernelDebugInfo* out_records,
@@ -6636,6 +6702,37 @@ std::uint32_t KernelEngine::poll_gameplay_request_outcomes(
     return copied;
 }
 
+// Outcomes for Kernel_PollGameplayRequestOutcomes. On a dedicated server
+// nothing may ever poll -- the shipped server does not -- and the queue was
+// only emptied when a server started, so it grew with every request for as
+// long as the server ran. There it keeps the newest few thousand, dropping the
+// oldest: a host or test that polls as it goes loses nothing. A client's and a
+// listen server's host poll their own, so theirs are left alone.
+void KernelEngine::queue_gameplay_request_outcome(
+    const KernelGameplayRequestOutcome& outcome) {
+    pending_gameplay_request_outcomes_.push_back(outcome);
+    if (config_.mode == KernelMode_DedicatedServer) {
+        while (pending_gameplay_request_outcomes_.size() >
+               kMaxQueuedGameplayRequestOutcomes) {
+            pending_gameplay_request_outcomes_.pop_front();
+        }
+    }
+}
+
+// A peer that has gone can never resend a request: peer ids are handed out
+// once per server run and never reused, so its processed requests can never
+// match again. Kept, they are only weight on every later duplicate scan.
+void KernelEngine::forget_gameplay_requests_of(PeerId peer) {
+    processed_gameplay_requests_.erase(
+        std::remove_if(
+            processed_gameplay_requests_.begin(),
+            processed_gameplay_requests_.end(),
+            [peer](const KernelGameplayRequestOutcome& outcome) {
+                return outcome.requester_peer == peer;
+            }),
+        processed_gameplay_requests_.end());
+}
+
 bool KernelEngine::get_gameplay_request_outcome(
     std::uint32_t requester_peer,
     std::uint64_t request_id,
@@ -7880,6 +7977,8 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     prediction_local_hitbox_template_id_ = 0u;
     history_buffer_ = HistoryBuffer(history_frame_count(config_.tick));
     damage_pipeline_.clear();
+    applied_damage_.clear();
+    damage_source_shooters_.clear();
     next_action_graph_sequence_ = 1;
     active_prop_collision_pairs_.clear();
     command_queue_.clear();
@@ -8030,6 +8129,7 @@ void KernelEngine::poll_transport() {
         } else if (transport_event.type == TransportEventType::kDisconnected) {
             if (is_server_mode(config_.mode)) {
                 handle_server_disconnect(transport_event);
+                forget_gameplay_requests_of(transport_event.peer);
             } else if (config_.mode == KernelMode_Client) {
                 if (gameplay_catalog_sync_state_ !=
                         KernelGameplayCatalogSyncState_Idle &&
@@ -8632,7 +8732,7 @@ void KernelEngine::handle_client_reliable_event(const TransportEvent& transport_
             &gameplay_outcome)) {
         record_packet_deserialization_cost(elapsed_cost_us(decode_start));
         handle_predicted_throw_outcome(gameplay_outcome);
-        pending_gameplay_request_outcomes_.push_back(gameplay_outcome);
+        queue_gameplay_request_outcome(gameplay_outcome);
         return;
     }
 
@@ -13606,14 +13706,29 @@ bool KernelEngine::has_projectiles_of_commit(
         });
 }
 
+// Grows with the world. A fixed 2048 dropped about 600 commands a tick from a
+// 1300-agent world (an input and a state per agent, plus turns), always from
+// the agents that sent last, so the same few hundred lost their input every
+// tick and coasted.
+std::size_t KernelEngine::simulation_command_capacity() const {
+    return simulation::CommandQueue::kDefaultCapacity +
+        simulation::CommandQueue::kPerEntityCapacity *
+            world_.registry().view<NetworkIdentity>().size();
+}
+
 bool KernelEngine::enqueue_simulation_command(const simulation::Command& command) {
-    if (!command_queue_.enqueue(command)) {
+    const std::size_t capacity = simulation_command_capacity();
+    if (!command_queue_.enqueue(command, capacity)) {
         ++rejected_simulation_command_count_;
         return false;
     }
 
+    // The same three quarters of capacity the fixed threshold was of 2048.
+    const std::size_t warning_threshold = capacity *
+        simulation::CommandQueue::kWarningThreshold /
+        simulation::CommandQueue::kDefaultCapacity;
     const std::size_t queue_depth = command_queue_.size();
-    if (queue_depth >= simulation::CommandQueue::kWarningThreshold &&
+    if (queue_depth >= warning_threshold &&
         (command_queue_capacity_warning_count_ == 0 ||
          tick_loop_.current_tick() - last_command_queue_capacity_warning_tick_ >=
              120)) {
@@ -13623,8 +13738,8 @@ bool KernelEngine::enqueue_simulation_command(const simulation::Command& command
             "[NetworkExample] simulation command queue depth={} warning_threshold={} "
             "capacity={} rejected_count={}",
             queue_depth,
-            simulation::CommandQueue::kWarningThreshold,
-            simulation::CommandQueue::kDefaultCapacity,
+            warning_threshold,
+            capacity,
             rejected_simulation_command_count_);
     }
     return true;
@@ -14361,6 +14476,7 @@ void KernelEngine::simulate_tick() {
         server_time_us,
         &damage_pipeline_,
         &action_graph_batches);
+    remember_damage_source_shooters();
     const std::size_t first_projectile_simulation_event = events_.size();
     simulate_projectiles(
         world_,
@@ -14395,6 +14511,9 @@ void KernelEngine::simulate_tick() {
         server_time_us,
         &events_,
         &damage_pipeline_);
+    // Again before they are destroyed: what simulate_projectiles spawned and
+    // what it hit with are about to be gone by the time their damage lands.
+    remember_damage_source_shooters();
     finalize_simulated_projectile_destructions(
         first_projectile_simulation_event,
         events_.size(),
@@ -14408,7 +14527,8 @@ void KernelEngine::simulate_tick() {
         world_,
         ready_damage,
         tick_loop_.current_tick(),
-        &events_);
+        &events_,
+        &applied_damage_);
     EntityLifecycleSystem lifecycle_system;
     lifecycle_system.reclaim_fallen_entities(
         *this, server_time_us, &health_depleted);

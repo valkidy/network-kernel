@@ -44,29 +44,31 @@ animations:
 vision:
   collider_template: hive_airship_vision_cone
 ai:
-  controller: chaser
+  default_controller: garrison
   profile: default
-  sentry:
+  perception:
     alert_ticks: 60
     forget_ticks: 300
-    patrol_rotation_interval_ticks: 60
-    patrol_rotation_min_degrees: 10.0
-    patrol_rotation_max_degrees: 20.0
+    idle_rotation_interval_ticks: 60
+    idle_rotation_degrees: {min: 10.0, max: 20.0}
     animation_idle: idle
     animation_attack: chasing
-  chaser:
+  locomotion:
     # Drifts to within 4 m of being overhead and stays there, so its drops
     # land around the target. The beam reaches 20 m: from 14 m up that is
     # about 14 m across, so 10 is comfortably inside it.
     stop_distance_meters: 4.0
     resume_distance_meters: 6.0
     input_magnitude: 1.0
-    attack_range_meters: 10.0
-  patrol:
-    slot_radius_meters: 2.0
-    input_magnitude: 0.6
-    leash_meters: 30.0
-    leash_resume_meters: 10.0
+  controllers:
+    patrol:
+      slot_radius_meters: 2.0
+      input_magnitude: 0.6
+      leash_meters: 30.0
+      leash_resume_meters: 10.0
+  skills:
+    - use: {type: weapon, value: 16}
+      when: {range_meters: {max: 10.0}}
 spawner:
   trigger: on_alert
   # Unbounded while it sees its target; the gap and its own ceiling are what
@@ -85,3 +87,9 @@ spawner:
     - entity_template: gingerbread
       min: 2
       max: 3
+  # What it drops goes after what it is fighting (AI plan D10), however far
+  # that has run, and stands as a garrison wherever it is once that is gone.
+  controller:
+    type: hunter
+    target_source: inherited
+    on_target_lost: garrison

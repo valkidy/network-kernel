@@ -161,4 +161,50 @@ KernelVec2 horizontal_move_toward(
     return KernelVec2{delta_x * scale, delta_z * scale};
 }
 
+namespace {
+
+// How close a route walker comes to a corner before taking the next one.
+// Movement follows input direction at once (only the body's facing slews), so
+// this needs no allowance for a turning circle -- just enough that a body
+// which stops short of a point, against a wall or on a slope, still counts.
+constexpr float kRoutePatrolArrivalMeters = 1.0f;
+
+}  // namespace
+
+KernelVec2 route_patrol_move(
+    AgentRoutePatrolState* route,
+    const KernelVec3& position,
+    float magnitude) {
+    if (route == nullptr || route->path.empty()) {
+        return KernelVec2{0.0f, 0.0f};
+    }
+    const auto offset_to = [&position](const KernelVec3& point) {
+        return KernelVec2{point.x - position.x, point.z - position.z};
+    };
+    KernelVec2 offset = offset_to(route->path[route->next]);
+    // Bounded by the path length, so a degenerate route of coincident points
+    // cannot spin here.
+    for (std::size_t visited = 0;
+         visited < route->path.size() &&
+         offset.x * offset.x + offset.y * offset.y <=
+             kRoutePatrolArrivalMeters * kRoutePatrolArrivalMeters;
+         ++visited) {
+        if (route->path.size() == 1u) {
+            break;
+        }
+        if (route->step > 0 && route->next + 1u >= route->path.size()) {
+            route->step = -1;
+        } else if (route->step < 0 && route->next == 0u) {
+            route->step = 1;
+        }
+        route->next = route->step > 0 ? route->next + 1u : route->next - 1u;
+        offset = offset_to(route->path[route->next]);
+    }
+    const float length = std::sqrt(offset.x * offset.x + offset.y * offset.y);
+    if (length <= kRoutePatrolArrivalMeters) {
+        return KernelVec2{0.0f, 0.0f};
+    }
+    return KernelVec2{offset.x / length * magnitude, offset.y / length * magnitude};
+}
+
 }  // namespace network_example::game_server::agent_steering
