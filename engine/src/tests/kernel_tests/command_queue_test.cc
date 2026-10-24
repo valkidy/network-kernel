@@ -127,6 +127,7 @@ void queued_submit_player_input_drains_before_movement() {
     KernelPlayerInput input{};
     input.input_seq = 11;
     input.move = KernelVec2{1.0f, 0.0f};
+    input.aim_dir = KernelVec3{0.0f, 0.0f, 1.0f};
     require(Kernel_ServerEnqueueEntityInput(
         kernel,
         KernelCommandSource_Test,
@@ -136,13 +137,15 @@ void queued_submit_player_input_drains_before_movement() {
     KernelServerEntityState state{};
     state.struct_size = sizeof(state);
     require(Kernel_ServerGetEntityState(kernel, net_id, &state));
-    require(state.position.x == 1.0f);
+    require(state.aim_direction.z != 1.0f);
 
     Kernel_Update(kernel, 1.0f / 30.0f);
     state = KernelServerEntityState{};
     state.struct_size = sizeof(state);
     require(Kernel_ServerGetEntityState(kernel, net_id, &state));
-    require(state.position.x > 1.0f);
+    // A template-less player is kNone and never moves, so the aim is what
+    // shows the queued input reached the entity on this tick.
+    require(state.aim_direction.z == 1.0f);
 
     Kernel_Destroy(kernel);
 }
