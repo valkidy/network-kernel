@@ -491,8 +491,7 @@ P6a 的實作與決定：
   繼承的目標就視為已失去。
 - broad phase：`AgentRuntimeManager::update_hunters` 每個 tick 從現成的 actor snapshot 建一次 hostile 表（活著
   的玩家），所有 hunter 共用；換目標要近 20% 以上；每 `repath_ticks`（預設 60）重新看一次目標位置並在 navmesh
-  上尋路（沒有 navmesh 就直線），之後的重算以 net id 錯開。**目前沒有排除躲在帳篷裡的玩家**（Q3：server 的
-  entity state 沒有可用的標記），hunter 會走到帳篷旁邊。
+  上尋路（沒有 navmesh 就直線），之後的重算以 net id 錯開。躲在帳篷裡的玩家在 2026-10-25 排除（Q3，見 §11）。
 - 狀態：hunter 沒看到東西時從 Idle 進入 `kSeek`（新值 6），沿路徑走；看到任何敵對目標就和 Idle 一樣進入
   Alert；Search / Alert 遺忘後回到 Seek 並立刻重新尋路。在 Seek 中被打和 Idle 相同。Seek 不算交戰。
 - 目標永久消失（死亡或離開世界）：`on_target_lost: garrison` → 角色變成 garrison 留在原地；`nearest_hostile`
@@ -549,14 +548,45 @@ P6b 的實作與決定：
 
 ## 11. 待決與驗證紀錄
 
-**待決**：
+**待決與決定**（2026-10-25 更新）：
 
-| # | 問題 |
-|---|---|
-| Q1 | passive 用途的 status 要和玩家的 debuff 共用 channel（互相取代），還是用獨立的 channel（疊加）？ |
-| Q2 | `duration_ticks` 要不要允許 0 代表永久？還是一律靠 `missing_status` 補上？ |
-| Q3 | broad phase 跳過躲在帳篷裡的 player：確認採用 |
-| Q4 | `pursuer` 的三個未決問題（D9） |
+| # | 問題 | 狀態 |
+|---|---|---|
+| Q1 | passive 用途的 status 要和玩家的 debuff 共用 channel（互相取代），還是用獨立的 channel（疊加）？ | 待決（和出貨內容一起由使用者決定） |
+| Q2 | `duration_ticks` 要不要允許 0 代表永久？還是一律靠 `missing_status` 補上？ | 待決；目前可用 `missing_status` 補上 |
+| Q3 | broad phase 跳過躲在帳篷裡的玩家 | **決定：跳過**，已實作（見下） |
+| Q4 | `pursuer` 的三個未決問題（D9） | **維持 pending** |
+| Q5 | attack up（傷害倍率，§10） | **記錄，不在本輪實作** |
+| Q6 | 出貨內容的設計（哪些單位用多把武器、item skill、hunter） | **由使用者決定**；目前只有 airship 的增援是 hunter |
+
+**Q3 的實作**：game_server 的 `ShelterDirector` 已經知道誰在哪棟建築裡；`GameServer` 把它交給 manager。玩家在
+`shelter_hides_occupants`（YAML 的 `hide_occupants_from_vision`）的建築裡時，不放進 hunter 的 hostile 表，和 vision
+的規則相同。**躲起來不等於消失**：hunter 保留這個目標、維持 hunter 角色；若是 `nearest_hostile` 而且有其他找得到
+的玩家就改追那個，否則原地等待（沒有路徑）；不會觸發 `on_target_lost`。玩家出來後繼續追。`ai_hunter_test` 涵蓋。
+
+**新增的載入檢查**（原本列為「沒有做」）：
+- leap 的 `on_landing.lead_ticks` 必須等於落地武器 fire action 的 `commit_offset_ticks + 1`（否則揮擊不會在落地
+  那個 tick commit）。
+- chaser 的武器 / sp_attack skill：band 的 min 不能 ≥ vision cone 射程（永遠看不到）；sp_attack 的 max 不能超過
+  vision 射程（跳撲 / 衝撞只對看得到的目標開始，超出的部分永遠用不到）。
+- `ai_skills_test` 新增 3 個對應的錯誤寫法；出貨的 catalog 全部通過（gingerbread 跳撲 24 m < 26 m 視野，
+  warrior 衝撞 18 m < 20 m 視野，claw 的 commit offset 8、lead 9）。
+
+**既有問題的影響評估：dedicated server 上玩家的 gameplay request 結果只增不減**（只評估，未修改）：
+- 每個玩家 request 會在 `processed_gameplay_requests_`（vector）與 `pending_gameplay_request_outcomes_`（deque）
+  各存一份 40 bytes 的 outcome，兩者只在 server 啟動時清空。
+- `pending_` 只有 `Kernel_PollGameplayRequestOutcomes` 會讀；dedicated server 沒有人呼叫，**純粹是記憶體累積**，
+  不影響行為。listen server 的 host 會 poll，不受影響。
+- `processed_` 用在三處：每次 submit 的重複檢查（**從最舊的往後掃，新 request 一定找不到，所以每次都掃完整個
+  list**）、網路路徑回送 outcome（從最新的往前掃，O(1)）、`Kernel_GetGameplayRequestOutcome`。
+- client 收到的 outcome 走另一個每次 flush 就清空的 list，**不受影響**；peer id 只增不減（重連會拿到新 id），
+  所以不會有舊紀錄被誤判成重複 request 的問題。
+- 估算（假設 16 名玩家、每人每 5 秒 1 個 request，約 11,500 個 / 小時）：24 小時後約 28 萬筆，記憶體約 22 MB
+  （vector 擴充時最多再 1 倍），每次 submit 的重複檢查約 0.4 ms（以每筆約 1.5 ns 估），佔 33 ms tick 約 1.2%；
+  vector 擴充時一次複製約 11 MB，會有數 ms 的停頓。**數小時的 session 影響可忽略，連續數天不重啟的 server 才
+  會明顯**。
+- 可行的修正（未做）：dedicated server 模式不寫 `pending_`；`processed_` 在 peer 斷線時清掉該 peer 的紀錄，
+  或只保留最近一段時間（client 重送的視窗）。都不需要改 ABI。AI 的 Committed Consume 已在 P5 排除。
 
 **P0 驗證結果**（2026-10-23，`-c opt`，臨時測試與 bench 修改都沒有 commit）：
 
