@@ -4,11 +4,12 @@
 # Sized to enclose the bones, with a metre to spare on every axis and the
 # centre kept where the old hitbox had it: walking the undulating scene
 # (limb_collider_test), its bones reached, from the root:
-# x -22.7..22.7, y -1.4..46.2, z -9.6..11.0 m.
+# x -22.7..22.7, y -1.4..46.2, z -9.6..11.0 m -- and later, bone 7 pitched
+# down a slope reached 13.0 m in z, so z keeps its metre past that.
 id: 48
 name: biped_bounds_aabb
 shape: aabb
 center: {x: 0.0, y: 20.0, z: 0.0}
-half_extents: {x: 24.0, y: 27.5, z: 12.0}
+half_extents: {x: 24.0, y: 27.5, z: 14.0}
 purpose: bounds
 layer: hostile_side
