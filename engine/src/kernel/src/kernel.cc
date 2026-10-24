@@ -6702,6 +6702,20 @@ std::uint32_t KernelEngine::poll_gameplay_request_outcomes(
     return copied;
 }
 
+// A peer that has gone can never resend a request: peer ids are handed out
+// once per server run and never reused, so its processed requests can never
+// match again. Kept, they are only weight on every later duplicate scan.
+void KernelEngine::forget_gameplay_requests_of(PeerId peer) {
+    processed_gameplay_requests_.erase(
+        std::remove_if(
+            processed_gameplay_requests_.begin(),
+            processed_gameplay_requests_.end(),
+            [peer](const KernelGameplayRequestOutcome& outcome) {
+                return outcome.requester_peer == peer;
+            }),
+        processed_gameplay_requests_.end());
+}
+
 bool KernelEngine::get_gameplay_request_outcome(
     std::uint32_t requester_peer,
     std::uint64_t request_id,
@@ -8098,6 +8112,7 @@ void KernelEngine::poll_transport() {
         } else if (transport_event.type == TransportEventType::kDisconnected) {
             if (is_server_mode(config_.mode)) {
                 handle_server_disconnect(transport_event);
+                forget_gameplay_requests_of(transport_event.peer);
             } else if (config_.mode == KernelMode_Client) {
                 if (gameplay_catalog_sync_state_ !=
                         KernelGameplayCatalogSyncState_Idle &&

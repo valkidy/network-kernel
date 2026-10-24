@@ -366,6 +366,7 @@ public:
         KernelInventoryContainerId id,
         KernelItemInstanceView* out_items,
         std::uint32_t max_items) const;
+    void forget_gameplay_requests_of(PeerId peer);
     std::uint32_t poll_gameplay_request_outcomes(
         KernelGameplayRequestOutcome* out_outcomes,
         std::uint32_t max_outcomes);
