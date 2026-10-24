@@ -395,6 +395,8 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip(
     append_directory_files(&files, "item_templates");
     append_directory_files(&files, "projectile_templates");
     append_directory_files(&files, "patrol_templates");
+    // Agent skills name sp_attacks (AI plan P4a).
+    append_directory_files(&files, "sp_attack_templates");
     files.insert(files.end(), extra_files.begin(), extra_files.end());
     return make_store_zip(files);
 }
@@ -566,6 +568,8 @@ std::vector<std::uint8_t> make_entity_template_bundle_zip(
     // weapons above need the effects they name.
     append_directory_files(&files, "status_effect_templates");
     append_directory_files(&files, "projectile_templates");
+    // Agent skills name sp_attacks (AI plan P4a).
+    append_directory_files(&files, "sp_attack_templates");
     return make_store_zip(files);
 }
 
@@ -1219,9 +1223,6 @@ int main() {
     require(data_driven_sentry.sentry.patrol_rotation_interval_ticks == 2);
     require(data_driven_sentry.sentry.patrol_rotation_min_degrees == 10.5f);
     require(data_driven_sentry.sentry.patrol_rotation_max_degrees == 22.5f);
-    require(data_driven_sentry.sentry.passive_patrol);
-    require(data_driven_sentry.sentry.patrol_extent_x_meters == 8.0f);
-    require(data_driven_sentry.sentry.patrol_input_magnitude == 0.6f);
     require(data_driven_sentry.sentry.move_speed_meters_per_second == 2.5f);
     require(data_driven_sentry.sentry.weapon_id == 2);
     require(data_driven_sentry.sentry.animation_idle ==
@@ -1570,7 +1571,6 @@ int main() {
             return entity.name == "quadruped_actor";
         });
     require(changed_quadruped_sentry != changed_config.entity_templates.end());
-    changed_quadruped_sentry->sentry.patrol_extent_x_meters += 1.0f;
     require(
         config.weapons.catalog_hash !=
         network_example::game_server::compute_gameplay_catalog_hash(changed_config));
@@ -1671,9 +1671,6 @@ int main() {
         });
     require(quadruped_template != config.entity_templates.end());
     require(quadruped_template->skeleton.enabled);
-    require(quadruped_template->sentry.passive_patrol);
-    require(quadruped_template->sentry.patrol_extent_x_meters == 30.0f);
-    require(quadruped_template->sentry.patrol_input_magnitude == 1.0f);
     require(quadruped_template->movement_controller_type ==
             KernelMovementControllerType_Character);
     require(quadruped_template->movement_collider_template_id == 14u);
@@ -3440,8 +3437,6 @@ int main() {
                 legged_locomotion_rule.spawn_entity_template_id);
     require(legged_locomotion_actor != nullptr);
     require(legged_locomotion_actor->name == "quadruped_actor");
-    require(legged_locomotion_actor->sentry.passive_patrol);
-    require(legged_locomotion_actor->sentry.patrol_input_magnitude == 1.0f);
     require(legged_locomotion_actor->movement_controller_type ==
             KernelMovementControllerType_Character);
     require(
