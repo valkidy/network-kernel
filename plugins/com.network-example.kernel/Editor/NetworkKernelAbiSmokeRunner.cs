@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.Compression;
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
+using System.Text;
 using System.Threading;
 using UnityEditor;
 using UnityEngine;
@@ -498,8 +500,73 @@ namespace NetworkExample.Kernel.Editor
             Debug.Log("Network kernel ABI 74 smoke passed.");
         }
 
+        // The binding and pose cases build their own one- and two-bone
+        // hierarchies. A binding only validates against a loaded manifest, so
+        // they load a bundle describing exactly those rigs instead of the
+        // catalog's real ones.
+        private const uint SyntheticPoseAssetId = 7;
+        private const ulong SyntheticPoseContentHash = 0x1234UL;
+        private const string SyntheticPoseBoneName = "PoseBone";
+        private const uint SyntheticBindingAssetId = 8;
+        private const ulong SyntheticBindingContentHash = 0x5678UL;
+
+        private static void LoadSyntheticSkeletonManifests()
+        {
+            byte[] bundle;
+            using (var stream = new MemoryStream())
+            {
+                using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, true))
+                {
+                    WriteSyntheticManifest(
+                        archive,
+                        SyntheticPoseAssetId,
+                        SyntheticPoseContentHash,
+                        SyntheticPoseBoneName);
+                    WriteSyntheticManifest(
+                        archive,
+                        SyntheticBindingAssetId,
+                        SyntheticBindingContentHash,
+                        "FirstBone",
+                        "SecondBone");
+                }
+                bundle = stream.ToArray();
+            }
+            Require(
+                KernelSkeletonManifestCatalog.TryLoadFromBundle(bundle, out string error),
+                $"Synthetic skeleton manifests failed to load: {error}");
+        }
+
+        // Bones form a chain: each one's parent is the bone before it.
+        private static void WriteSyntheticManifest(
+            ZipArchive archive,
+            uint assetId,
+            ulong contentHash,
+            params string[] boneNames)
+        {
+            var json = new StringBuilder();
+            json.Append($"{{\"manifest_version\": 1, \"asset_id\": {assetId}, ");
+            json.Append($"\"name\": \"synthetic_{assetId}\", ");
+            json.Append($"\"content_hash\": \"0x{contentHash:x16}\", ");
+            json.Append($"\"bone_count\": {boneNames.Length}, \"bones\": [");
+            for (int index = 0; index < boneNames.Length; ++index)
+            {
+                json.Append(index == 0 ? "" : ", ");
+                json.Append(
+                    $"{{\"index\": {index}, \"name\": \"{boneNames[index]}\", " +
+                    $"\"parent_index\": {index - 1}}}");
+            }
+            json.Append("]}");
+            ZipArchiveEntry entry = archive.CreateEntry(
+                $"skeleton_assets/generated/synthetic_{assetId}.skeleton_manifest.json");
+            using (var writer = new StreamWriter(entry.Open(), new UTF8Encoding(false)))
+            {
+                writer.Write(json.ToString());
+            }
+        }
+
         private static void RequireSkeletonBindingValidation()
         {
+            LoadSyntheticSkeletonManifests();
             var root = new GameObject("KernelSkeletonBindingSmoke");
             try
             {
@@ -509,13 +576,13 @@ namespace NetworkExample.Kernel.Editor
                 second.SetParent(first, false);
                 KernelSkeletonBinding binding =
                     root.AddComponent<KernelSkeletonBinding>();
-                binding.SkeletonAssetId = 7;
-                binding.SkeletonContentHash = 0x1234UL;
+                binding.SkeletonAssetId = SyntheticBindingAssetId;
+                binding.SkeletonContentHash = SyntheticBindingContentHash;
                 binding.Bones = new[] { first, second };
                 var state = new KernelSkeletonRenderState
                 {
-                    skeleton_asset_id = 7,
-                    skeleton_content_hash = 0x1234UL,
+                    skeleton_asset_id = SyntheticBindingAssetId,
+                    skeleton_content_hash = SyntheticBindingContentHash,
                     bone_count = 2,
                 };
                 Require(
@@ -635,10 +702,28 @@ namespace NetworkExample.Kernel.Editor
 
         private static void RequireSkeletonAbsolutePoseApplication()
         {
+            LoadSyntheticSkeletonManifests();
+            try
+            {
+                RequireSkeletonAbsolutePose();
+                RequireSkeletonZeroReferenceScale();
+                RequireSkeletonReferenceReset();
+            }
+            finally
+            {
+                // Later cases see the catalog's real rigs, as they did before.
+                KernelSkeletonManifestCatalog.TryLoadFromBundle(
+                    LoadGameplayCatalogBundleBytes(),
+                    out string _);
+            }
+        }
+
+        private static void RequireSkeletonAbsolutePose()
+        {
             var root = new GameObject("KernelSkeletonAbsolutePoseSmoke");
             try
             {
-                Transform bone = new GameObject("AbsolutePoseBone").transform;
+                Transform bone = new GameObject(SyntheticPoseBoneName).transform;
                 bone.SetParent(root.transform, false);
                 Vector3 bindPosition = new Vector3(10.0f, 20.0f, 30.0f);
                 Quaternion bindRotation = Quaternion.Euler(25.0f, 0.0f, 10.0f);
@@ -704,9 +789,6 @@ namespace NetworkExample.Kernel.Editor
             {
                 UnityEngine.Object.DestroyImmediate(root);
             }
-
-            RequireSkeletonZeroReferenceScale();
-            RequireSkeletonReferenceReset();
         }
 
         private static void RequireSkeletonZeroReferenceScale()
@@ -714,7 +796,7 @@ namespace NetworkExample.Kernel.Editor
             var root = new GameObject("KernelSkeletonZeroScaleSmoke");
             try
             {
-                Transform bone = new GameObject("ZeroScaleBone").transform;
+                Transform bone = new GameObject(SyntheticPoseBoneName).transform;
                 bone.SetParent(root.transform, false);
                 bone.localScale = new Vector3(0.0f, 1.0e-10f, 2.0f);
                 KernelSkeletonPoseApplicator applicator =
@@ -776,7 +858,7 @@ namespace NetworkExample.Kernel.Editor
                 var root = new GameObject($"KernelSkeletonRespawnSmoke{index}");
                 try
                 {
-                    Transform bone = new GameObject("RespawnBone").transform;
+                    Transform bone = new GameObject(SyntheticPoseBoneName).transform;
                     bone.SetParent(root.transform, false);
                     bone.localPosition = bindPosition;
                     KernelSkeletonPoseApplicator applicator =
@@ -823,8 +905,8 @@ namespace NetworkExample.Kernel.Editor
             bool preservePrefabBindPose = true)
         {
             KernelSkeletonBinding binding = root.AddComponent<KernelSkeletonBinding>();
-            binding.SkeletonAssetId = 7;
-            binding.SkeletonContentHash = 0x1234UL;
+            binding.SkeletonAssetId = SyntheticPoseAssetId;
+            binding.SkeletonContentHash = SyntheticPoseContentHash;
             binding.AutoMapKnownSkeleton = false;
             binding.PreservePrefabBindPose = preservePrefabBindPose;
             binding.Bones = new[] { bone };
@@ -836,8 +918,8 @@ namespace NetworkExample.Kernel.Editor
             return new KernelSkeletonRenderState
             {
                 entity_net_id = 1,
-                skeleton_asset_id = 7,
-                skeleton_content_hash = 0x1234UL,
+                skeleton_asset_id = SyntheticPoseAssetId,
+                skeleton_content_hash = SyntheticPoseContentHash,
                 first_bone_transform = 0,
                 bone_count = 1,
                 pose_tick = 2,
