@@ -31,7 +31,7 @@ using network_example::game_server::GameServerGameplayConfig;
 constexpr const char* kCatalogDir = "game_server/gameplay_catalog";
 constexpr const char* kWarbandFile =
     "patrol_templates/1_patrol_gingerbread_warband.yaml";
-constexpr const char* kShippedIds = "  - ids: [1, 2]\n";
+constexpr const char* kBothIds = "  - ids: [1, 2]\n";
 
 std::string read_file(const fs::path& path) {
     std::ifstream stream(path, std::ios::binary);
@@ -52,8 +52,24 @@ void write_file(const fs::path& path, const std::string& text) {
 std::string replace(
     const std::string& text, const std::string& from, const std::string& to) {
     const std::size_t start = text.find(from);
+    if (start == std::string::npos) {
+        std::fprintf(stderr, "needle not found: %s\n", from.c_str());
+    }
     require(start != std::string::npos);
     return text.substr(0, start) + to + text.substr(start + from.size());
+}
+
+// The catalog with the line after `patrols:` replaced by `ids_line`. Found by
+// position, not by content: which ids ship is tuning, and changes.
+std::string with_patrol_ids(const std::string& text, const std::string& ids_line) {
+    const std::string key = "\npatrols:\n";
+    const std::size_t key_at = text.find(key);
+    require(key_at != std::string::npos);
+    const std::size_t line_at = key_at + key.size();
+    const std::size_t line_end = text.find('\n', line_at);
+    require(line_end != std::string::npos);
+    require(text.compare(line_at, 8, "  - ids:") == 0);
+    return text.substr(0, line_at) + ids_line + text.substr(line_end + 1);
 }
 
 class CatalogCopy {
@@ -74,7 +90,7 @@ public:
     GameServerGameplayConfig load_with_ids(const std::string& ids_line) {
         write_file(
             root_ / "gameplay_catalog.yaml",
-            replace(catalog_, kShippedIds, ids_line));
+            with_patrol_ids(catalog_, ids_line));
         GameServerGameplayConfig config =
             network_example::game_server::load_gameplay_config_from_catalog_file(
                 (root_ / "gameplay_catalog.yaml").string());
@@ -102,9 +118,9 @@ bool contains(const std::string& text, const std::string& needle) {
     return text.find(needle) != std::string::npos;
 }
 
-void the_shipping_catalog_runs_both_patrols() {
+void listing_both_runs_both_patrols() {
     CatalogCopy catalog;
-    const GameServerGameplayConfig config = catalog.load_with_ids(kShippedIds);
+    const GameServerGameplayConfig config = catalog.load_with_ids(kBothIds);
     require(config.patrols.size() == 2u);
     require(config.patrols[0].id == 1u);
     require(config.patrols[0].name == "gingerbread_warband");
@@ -167,7 +183,7 @@ void every_file_is_validated_listed_or_not() {
         catalog.root() / "patrol_templates/3_patrol_gingerbread_warband.yaml";
     write_file(copy, warband);
     require(contains(
-        catalog.rejection(kShippedIds),
+        catalog.rejection(kBothIds),
         "patrol file must be named 1_patrol_gingerbread_warband.yaml"));
     // Renamed with its id: a third definition, which runs when listed.
     write_file(copy, replace(warband, "id: 1\n", "id: 3\n"));
@@ -182,14 +198,14 @@ void every_file_is_validated_listed_or_not() {
     write_file(
         other,
         replace(warband, "name: gingerbread_warband\n", "name: other\n"));
-    require(contains(catalog.rejection(kShippedIds), "duplicate patrol id 1"));
+    require(contains(catalog.rejection(kBothIds), "duplicate patrol id 1"));
     fs::remove(other);
 }
 
 }  // namespace
 
 int main() {
-    the_shipping_catalog_runs_both_patrols();
+    listing_both_runs_both_patrols();
     listed_order_is_run_order();
     only_listed_ids_run();
     misauthored_lists_are_refused();
