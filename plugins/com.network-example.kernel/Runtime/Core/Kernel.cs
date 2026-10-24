@@ -1612,9 +1612,12 @@ namespace NetworkExample.Kernel
                 PrepareActionTrigger(ref templates[index].collision_trigger);
                 PrepareActionTrigger(ref templates[index].health_depleted_trigger);
                 PrepareActionTrigger(ref templates[index].destroy_entity_trigger);
-                PrepareActionTrigger(ref templates[index].enter_trigger);
-                PrepareActionTrigger(ref templates[index].overlap_trigger);
-                PrepareActionTrigger(ref templates[index].exit_trigger);
+                // A sized volume trigger is an authored one: the kernel then
+                // requires a prop with a trigger collider and mask, so sizing
+                // these unasked rejected every other entity template.
+                PrepareOptionalActionTriggerStorage(ref templates[index].enter_trigger);
+                PrepareOptionalActionTriggerStorage(ref templates[index].overlap_trigger);
+                PrepareOptionalActionTriggerStorage(ref templates[index].exit_trigger);
                 if (templates[index].prop.struct_size == 0)
                 {
                     templates[index].prop.struct_size = KernelPropDefinition.StructSize;
