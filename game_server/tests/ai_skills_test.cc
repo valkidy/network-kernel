@@ -198,6 +198,23 @@ void bad_skills_are_refused() {
     require(!loads_after("leap swinging another weapon", kLeap, [](YAML::Node& root) {
         root["on_landing"]["weapon"] = 11;
     }));
+    // A leap's swing commits on landing only at commit_offset_ticks + 1 (the
+    // claw's offset is 8).
+    require(!loads_after("leap lead_ticks off by one", kLeap, [](YAML::Node& root) {
+        root["on_landing"]["lead_ticks"] = 8;
+    }));
+    // The gingerbread sees 26 m.
+    require(!loads_after("leap band past vision", kGingerbread, [](YAML::Node& root) {
+        root["ai"]["skills"][1]["when"]["range_meters"]["max"] = 30.0;
+    }));
+    require(!loads_after("weapon band past vision", kGingerbread, [](YAML::Node& root) {
+        YAML::Node far;
+        far["use"]["type"] = "weapon";
+        far["use"]["value"] = 10;
+        far["when"]["range_meters"]["min"] = 27.0;
+        far["when"]["range_meters"]["max"] = 40.0;
+        root["ai"]["skills"].push_back(far);
+    }));
     require(!loads_after("sentry weapon range", kSentry, [](YAML::Node& root) {
         root["ai"]["skills"][0]["when"]["range_meters"]["max"] = 10.0;
     }));

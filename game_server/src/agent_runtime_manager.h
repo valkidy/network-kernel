@@ -12,6 +12,7 @@
 #include "game_server/src/game_rule_director.h"
 #include "game_server/src/gameplay_config.h"
 #include "game_server/src/patrol_director.h"
+#include "game_server/src/shelter_director.h"
 #include "game_server/src/patrol_navigation.h"
 #include "game_server/src/spawner_director.h"
 #include "game_server/src/world_rule_director.h"
@@ -37,6 +38,9 @@ public:
 
     std::size_t agent_count() const;
     const std::vector<AgentRuntimeState>& agents() const;
+    // Who is inside which building, so hunters can leave alone a player a
+    // tent hides (AI plan Q3). Not owned; null leaves every player huntable.
+    void set_shelter_director(const ShelterDirector* shelter) { shelter_ = shelter; }
     // The squads this server is running. Empty until something creates one;
     // ticking them is already wired, so creating one is all that is left.
     PatrolGroupRuntime& patrol_groups();
@@ -92,6 +96,8 @@ private:
     // over the navmesh. Same timing as attach_pending_entries.
     void attach_pending_controllers();
     void use_item_skills();
+    // Whether a building that hides its occupants holds `net_id` now.
+    bool hidden_in_shelter(std::uint32_t net_id) const;
     void update_hunters(const ActorStateView& actors);
     void attach_route(
         AgentRuntimeState* agent,
@@ -136,6 +142,9 @@ private:
         KernelVec3 position{0.0f, 0.0f, 0.0f};
     };
     std::vector<Hostile> hostiles_;
+    // Players a tent hides this tick: out of the table, but not gone.
+    std::vector<std::uint32_t> hidden_hostiles_;
+    const ShelterDirector* shelter_ = nullptr;
     SpawnerDirector spawner_director_;
     // Templates whose spawner calls on alert. A handful at most, so a scan
     // beats a set; empty means the signal pass never walks the agents at all.

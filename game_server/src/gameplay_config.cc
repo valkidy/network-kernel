@@ -10289,6 +10289,52 @@ void resolve_agent_skills(GameServerGameplayConfig* config) {
                         weapon_ids.end()) {
             fail("leap on_landing.weapon must be one of the agent's weapon skills");
         }
+        // ...and it commits on the landing tick: the swing starts the tick
+        // after the controller asks for it, so the ask leads the landing by
+        // the swing's commit offset plus one (gingerbread_leap_test).
+        if (leap && leap_weapon_id <= UINT8_MAX &&
+            config->weapons.configured[leap_weapon_id]) {
+            const std::uint32_t fire_action =
+                config->weapons.definitions[leap_weapon_id].fire_action_template_id;
+            for (const ActionTemplateConfig& action : config->action_templates) {
+                if (action.definition.action_template_id == fire_action &&
+                    leap_tuning.attack_lead_ticks !=
+                        action.definition.commit_offset_ticks + 1u) {
+                    fail("leap on_landing.lead_ticks (" +
+                         std::to_string(leap_tuning.attack_lead_ticks) +
+                         ") must be the swing's commit_offset_ticks plus one (" +
+                         std::to_string(action.definition.commit_offset_ticks + 1u) +
+                         ") so it commits on the landing tick");
+                }
+            }
+        }
+        // Nothing starts on a target the agent cannot see: a band that begins
+        // past its vision cone is never used, and a leap or charge only
+        // starts on a target in sight, so one reaching past the cone has a
+        // dead stretch.
+        float vision_reach = 0.0f;
+        for (const ColliderTemplateConfig& collider : config->colliders.templates) {
+            if (collider.definition.template_id == agent.vision.vision_collider_template_id) {
+                vision_reach = collider.definition.shape_params.x;
+            }
+        }
+        if (!sentry && vision_reach > 0.0f) {
+            for (const AgentSkillConfig& skill : agent.skills) {
+                if (skill.type == AgentSkillType::kItem) continue;
+                if (skill.range_min_meters >= vision_reach) {
+                    fail("give a skill a band starting at " +
+                         std::to_string(skill.range_min_meters) + " m, past its " +
+                         std::to_string(vision_reach) + " m vision: it is never in sight");
+                }
+                if (skill.type == AgentSkillType::kSpAttack &&
+                    skill.range_max_meters > vision_reach) {
+                    fail("let sp_attack " + skill.sp_attack_ref + " reach " +
+                         std::to_string(skill.range_max_meters) + " m, past its " +
+                         std::to_string(vision_reach) + " m vision: it only starts on a "
+                         "target it sees");
+                }
+            }
+        }
         // A chaser closes to its stop distance and holds; something has to
         // reach from there, or it parks in front of a target it cannot hit.
         float reach = -1.0f;

@@ -184,6 +184,40 @@ int main() {
     require(gs::is_pursuing(agent->sentry.state));
     require(agent->sentry.target == player);
 
+    // A tent that hides its occupants hides them from the hunter too (Q3) --
+    // but hidden is not gone: it keeps its target and stays a hunter, waiting
+    // with no path, rather than turning garrison.
+    const KernelVec3 player_at = position_of(player);
+    const std::uint32_t tent = create(
+        kernel, template_id_of(config, "tent"),
+        {player_at.x + 3.0f, 0.0f, player_at.z + 3.0f});
+    require(Kernel_ServerEnqueueEntityShelter(kernel, KernelCommandSource_Test, player, tent));
+    for (int tick = 0; tick < 300; ++tick) {
+        require(Kernel_ServerSetEntityHealth(kernel, player, full_hp));
+        step();
+    }
+    require(game_server.shelter_director().shelter_of(player) == tent);
+    agent = agent_of(game_server, hunter);
+    std::printf("[hunter] player in the tent: role %d target %u state %d path %zu\n",
+                static_cast<int>(agent->controller_role), agent->hunt_target,
+                static_cast<int>(agent->sentry.state), agent->seek_path.size());
+    require(agent->controller_role == gs::AgentControllerRole::kHunter);
+    require(agent->hunt_target == player);
+    require(agent->sentry.state == gs::AgentSentryState::kSeek);
+    require(agent->seek_path.empty());
+
+    // Out again: it goes after them.
+    require(Kernel_ServerEnqueueEntityShelter(kernel, KernelCommandSource_Test, player, 0u));
+    bool after_them = false;
+    for (int tick = 0; tick < 150 && !after_them; ++tick) {
+        require(Kernel_ServerSetEntityHealth(kernel, player, full_hp));
+        step();
+        agent = agent_of(game_server, hunter);
+        after_them = !agent->seek_path.empty() || gs::is_engaged(agent->sentry.state);
+    }
+    require(game_server.shelter_director().shelter_of(player) == 0u);
+    require(after_them);
+
     // Gone for good: with on_target_lost garrison, it stays where it is.
     KernelEntityLifecycleCommand destroy{};
     destroy.struct_size = sizeof(destroy);

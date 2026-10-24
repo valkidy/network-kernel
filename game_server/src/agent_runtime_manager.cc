@@ -465,11 +465,18 @@ void AgentRuntimeManager::use_item_skills() {
 // phase -- is still vision's. Only the living: a dead player is not hunted.
 void AgentRuntimeManager::update_hunters(const ActorStateView& actors) {
     hostiles_.clear();
+    hidden_hostiles_.clear();
     for (std::uint32_t index = 0; index < actors.count; ++index) {
         const KernelServerEntityState& state = actors.states[index];
         if (state.valid != 0u && state.actor_type == kActorTypePlayer && state.hp > 0u &&
             (state.visual_flags & KERNEL_VISUAL_FLAG_DEAD) == 0u) {
-            hostiles_.push_back(Hostile{state.net_id, state.position});
+            // A tent that hides its occupants hides them from the cheat too,
+            // as it does from every cone (Q3).
+            if (hidden_in_shelter(state.net_id)) {
+                hidden_hostiles_.push_back(state.net_id);
+            } else {
+                hostiles_.push_back(Hostile{state.net_id, state.position});
+            }
         }
     }
     const auto distance = [](const KernelVec3& a, const KernelVec3& b) {
@@ -520,6 +527,24 @@ void AgentRuntimeManager::update_hunters(const ActorStateView& actors) {
         const Hostile* target = nullptr;
         for (const Hostile& hostile : hostiles_) {
             if (hostile.net_id == agent.hunt_target) target = &hostile;
+        }
+        // Hidden is not gone: a player who ducks into a tent is still its
+        // target. It goes after another it can find, or waits where it is
+        // until this one comes out -- never on_target_lost, which would turn
+        // a garrison for good over a player stepping inside for a moment.
+        if (target == nullptr &&
+            std::find(hidden_hostiles_.begin(), hidden_hostiles_.end(), agent.hunt_target) !=
+                hidden_hostiles_.end()) {
+            const Hostile* other = nearest(agent.position);
+            if (agent.hunter.target_source != HunterTargetSource::kNearestHostile ||
+                other == nullptr) {
+                agent.seek_path.clear();
+                agent.seek_next = 0;
+                continue;
+            }
+            agent.hunt_target = other->net_id;
+            agent.seek_repath_in = 0;
+            target = other;
         }
         if (target == nullptr) {
             // Gone for good, or never had: an inherited hunter whose caller
@@ -574,6 +599,29 @@ void AgentRuntimeManager::update_hunters(const ActorStateView& actors) {
             agent.seek_path.assign(1, target->position);
         }
     }
+}
+
+bool AgentRuntimeManager::hidden_in_shelter(std::uint32_t net_id) const {
+    if (shelter_ == nullptr) {
+        return false;
+    }
+    const std::uint32_t building = shelter_->shelter_of(net_id);
+    if (building == 0u) {
+        return false;
+    }
+    KernelServerEntityState state{};
+    state.struct_size = sizeof(state);
+    if (!Kernel_ServerGetEntityState(kernel_, building, &state)) {
+        return false;
+    }
+    // A building is a prop, so it is among the entity templates, not the
+    // actor templates find_actor_template reads.
+    for (const EntityTemplateConfig& building_template : config_.entity_templates) {
+        if (building_template.actor_template_id == state.entity_template_id) {
+            return building_template.shelter_hides_occupants != 0u;
+        }
+    }
+    return false;
 }
 
 void AgentRuntimeManager::attach_pending_controllers() {
