@@ -195,9 +195,10 @@ int main() {
     // The valley floor is ~0.2-0.6 m, the plateau ~11 m and the ridge up to
     // ~9 m: anything above a couple of metres is a giant that climbed out.
     require(highest < 2.0f);
-    // A route only for the node that authored one: the other three still
-    // sweep their lane along x.
-    require(sweep_drift < 0.5f);
+    // The other three walk their own 2-point routes along x. Each leg is
+    // pathed over the navmesh now (AI plan P1c) rather than swept in a dead
+    // straight line, so a corner may sit a metre or so off the lane.
+    require(sweep_drift < 2.0f);
 
     Kernel_Destroy(kernel);
     return 0;

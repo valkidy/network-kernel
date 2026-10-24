@@ -1,0 +1,25 @@
+# Closing the gap in one long jump, swinging on the way down (AI plan D16).
+# When it is used -- the distance band and the cooldown -- belongs to the skill
+# that names it; this is only the jump and the swing.
+id: 1
+name: gingerbread_leap
+kind: leap
+leap:
+  # Lands this far short of the target: inside the user's stop distance, so it
+  # holds there, and inside its weapon's reach, so the swing connects.
+  landing_distance_meters: 1.6
+  # 60 ticks (2 s) in the air on the level: sqrt(8h/g) = 2 s at h = 4.9 m.
+  # Airtime goes with the square root of the apex, so a longer flight is a
+  # much higher one. The airtime, not the height, is what a player has to
+  # react in.
+  apex_meters: 4.9
+  # Unreached: the farthest leap the gingerbread makes covers 22.4 m in 2 s,
+  # 11.2 m/s.
+  max_horizontal_speed_meters_per_second: 12.0
+on_landing:
+  # The user's own weapon skill: grunt_claw.
+  weapon: 10
+  # grunt_claw_swing's commit_offset_ticks plus one, because the swing starts
+  # on the tick after the controller asks for it: the claw then commits on the
+  # landing tick (gingerbread_leap_test). Change one, change the other.
+  lead_ticks: 9

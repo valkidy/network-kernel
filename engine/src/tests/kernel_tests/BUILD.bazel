@@ -10,6 +10,18 @@ cc_test(
 )
 
 cc_test(
+    name = "gameplay_request_prune_test",
+    srcs = ["gameplay_request_prune_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
+cc_test(
+    name = "damage_record_shooter_test",
+    srcs = ["damage_record_shooter_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
+cc_test(
     name = "entity_lifecycle_system_test",
     srcs = ["entity_lifecycle_system_test.cc"],
     deps = ["//engine/src/kernel:kernel"],

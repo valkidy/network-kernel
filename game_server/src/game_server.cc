@@ -22,6 +22,8 @@ GameServer::GameServer(KernelHandle* kernel, GameServerGameplayConfig config)
               configure_player_inventory(player, *actor_template, true) &&
               configure_player_weapons(player, true);
       }) {
+    // Hunters leave alone a player a tent hides (AI plan Q3).
+    agent_runtime_manager_.set_shelter_director(&shelter_);
     load_kernel_gameplay_catalog(kernel_, config_);
     if (kernel_ != nullptr &&
         !Kernel_ServerSetFallDeathHeight(

@@ -2,8 +2,9 @@
 //
 // AgentSentryController enqueues a velocity for its agent every single tick,
 // unconditionally. It used to build that velocity by zeroing all three axes at
-// the top of the loop, and only the passive_patrol branch rebuilt it with the
-// vertical component carried through. Every other sentry therefore told the
+// the top of the loop, and only the (since removed) passive_patrol branch
+// rebuilt it with the vertical component carried through. Every other sentry
+// therefore told the
 // kernel "my vertical speed is zero" thirty times a second: each tick of
 // gravity was overwritten by the next enqueue, so vertical velocity never grew
 // past a single tick's worth and an agent spawned above the ground effectively
@@ -145,7 +146,7 @@ std::vector<std::uint8_t> read_ground_scene() {
 }
 
 // One sentry, spawned in the air, driven exactly as AgentRuntimeManager drives
-// it. passive_patrol is left at its default false -- the path the bug lived on.
+// it.
 struct SentryFixture {
     explicit SentryFixture(std::uint16_t port) {
         KernelConfig config{};
@@ -187,7 +188,6 @@ struct SentryFixture {
         agent.actor_template_id = kAgentTemplateId;
         agent.position = create_info.position;
         agent.sentry_config = network_example::game_server::AgentSentryConfig{};
-        require(!agent.sentry_config.passive_patrol);
         agents.push_back(agent);
     }
 
@@ -264,32 +264,10 @@ void a_sentry_spawned_in_the_air_falls() {
     require((early - later) > (start - early));
 }
 
-// The patrol branch always carried the vertical component through, and it is
-// untouched by this fix. Pinning the two paths against each other is what
-// keeps them from drifting apart again.
-KernelVec3 fall_after(std::uint16_t port, bool passive_patrol, std::uint32_t ticks) {
-    SentryFixture fixture(port);
-    fixture.agents[0].sentry_config.passive_patrol = passive_patrol;
-    fixture.tick(ticks);
-    const KernelServerEntityState state = fixture.state();
-    return KernelVec3{0.0f, state.position.y, state.velocity.y};
-}
-
-void the_patrol_path_falls_identically() {
-    // Sequentially, never both at once: two live KernelHandles in one process
-    // is not a configuration the game has, and it does not survive here.
-    const KernelVec3 patrol = fall_after(8038, true, 10u);
-    const KernelVec3 sentry = fall_after(8039, false, 10u);
-
-    require(std::fabs(patrol.z - sentry.z) < 0.001f);
-    require(std::fabs(patrol.y - sentry.y) < 0.001f);
-}
-
 }  // namespace
 
 int main() {
     the_controller_no_longer_overwrites_vertical_velocity();
     a_sentry_spawned_in_the_air_falls();
-    the_patrol_path_falls_identically();
     return 0;
 }

@@ -1,6 +1,5 @@
-# tripod_actor with the gingerbread's chaser AI instead of a passive-patrol
-# sentry. A separate template rather than an edit, because
-# agent_sentry_per_agent_config_test depends on tripod_actor patrolling.
+# tripod_actor with the gingerbread's melee chaser tuning instead of its
+# ranged garrison one.
 id: 211
 name: tripod_chaser
 entity_type: actor
@@ -37,38 +36,37 @@ active_weapon_slot: 0
 vision:
   collider_template: tripod_vision_cone
 ai:
-  controller: chaser
+  default_controller: garrison
   profile: default
-  # passive_patrol and its extent/magnitude are gone: the catalog rejects a
-  # chaser that sets them.
-  sentry:
+  perception:
     alert_ticks: 90
     forget_ticks: 150
-    patrol_rotation_interval_ticks: 30
-    patrol_rotation_min_degrees: 15.0
-    patrol_rotation_max_degrees: 30.0
+    idle_rotation_interval_ticks: 30
+    idle_rotation_degrees: {min: 15.0, max: 30.0}
     animation_idle: idle
     # The moving clip, not the attack -- see 28_gingerbread.yaml.
     animation_attack: chasing
-  chaser:
+  locomotion:
     # Scaled to the body, not copied from the gingerbread's 1.8/2.1: the
     # bounds are 10 m in half extent, so a metre-scale stop would park it on
     # top of its target.
     stop_distance_meters: 14.0
     resume_distance_meters: 18.0
     input_magnitude: 1.0
-    # Weapon 2 is the projectile spammer, a ranged weapon, so no gate: it
-    # fires whenever it sees something.
-    attack_range_meters: 0.0
   # Only read when in a squad. 2.5 m/s x 0.6 = 1.5 m/s beats the warband's
   # 0.9 m/s cursor.
-  patrol:
-    slot_radius_meters: 3.0
-    input_magnitude: 0.6
-    # Past the 50 m vision cone, so it gives up about when it would have lost
-    # sight anyway; resume well inside it so it does not yo-yo.
-    leash_meters: 60.0
-    leash_resume_meters: 20.0
+  controllers:
+    patrol:
+      slot_radius_meters: 3.0
+      input_magnitude: 0.6
+      # Past the 50 m vision cone, so it gives up about when it would have lost
+      # sight anyway; resume well inside it so it does not yo-yo.
+      leash_meters: 60.0
+      leash_resume_meters: 20.0
+  skills:
+    # Weapon 2 is the projectile spammer, a ranged weapon, so no gate: it
+    # fires whenever it sees something.
+    - use: {type: weapon, value: 2}
 animations:
   idle: 0
   chasing: 1

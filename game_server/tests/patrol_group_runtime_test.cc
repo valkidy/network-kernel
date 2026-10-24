@@ -209,5 +209,49 @@ int main() {
     runtime.remove_group(group_id);
     require(runtime.find_group(group_id) == nullptr);
     require(runtime.groups().empty());
+
+    // The squad turns as one (AI plan D7): a member engaged with somewhere to
+    // look alerts its idle squad-mates, facing the same way, on its own kind
+    // of alert. One that is busy -- walking back to its slot -- is left alone.
+    {
+        PatrolGroupRuntime squad_runtime;
+        std::vector<AgentRuntimeState> squad{agent(11), agent(12), agent(13)};
+        const std::uint32_t squad_id = squad_runtime.create_group(
+            kDefinitionId,
+            {KernelVec3{10.0f, 0.0f, 0.0f}},
+            KernelVec3{0.0f, 0.0f, 0.0f},
+            {11u, 12u, 13u},
+            wedge_offsets(),
+            tuning);
+        require(squad_id != 0);
+        tick_groups(&squad_runtime, &squad, kFixedDelta);
+        const KernelVec3 shot_from{-6.0f, 0.0f, 4.0f};
+        squad[0].sentry.state = AgentSentryState::kAlert;
+        squad[0].sentry.alerted_by_damage = true;
+        squad[0].sentry.attention_point = shot_from;
+        squad[0].sentry.has_attention_point = true;
+        squad[2].sentry.state = AgentSentryState::kReturn;
+        tick_groups(&squad_runtime, &squad, kFixedDelta);
+        require(squad[1].sentry.state == AgentSentryState::kAlert);
+        require(squad[1].sentry.has_attention_point);
+        require(almost_equal(squad[1].sentry.attention_point.x, shot_from.x));
+        require(almost_equal(squad[1].sentry.attention_point.z, shot_from.z));
+        require(squad[1].sentry.alerted_by_damage);
+        require(squad[2].sentry.state == AgentSentryState::kReturn);
+
+        // Control: an engaged member with nowhere to look alerts nobody.
+        std::vector<AgentRuntimeState> quiet{agent(21), agent(22), agent(23)};
+        const std::uint32_t quiet_id = squad_runtime.create_group(
+            kDefinitionId,
+            {KernelVec3{10.0f, 0.0f, 0.0f}},
+            KernelVec3{0.0f, 0.0f, 0.0f},
+            {21u, 22u, 23u},
+            wedge_offsets(),
+            tuning);
+        require(quiet_id != 0);
+        quiet[0].sentry.state = AgentSentryState::kAlert;
+        tick_groups(&squad_runtime, &quiet, kFixedDelta);
+        require(quiet[1].sentry.state == AgentSentryState::kIdle);
+    }
     return 0;
 }

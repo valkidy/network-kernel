@@ -615,6 +615,19 @@ bool Kernel_ServerSetEntityMovementCollisionMask(
  */
 bool Kernel_ServerSetFallDeathHeight(KernelHandle* kernel, float height_meters);
 
+/*
+ * The hits the server applied during the most recent Kernel_Update, in the
+ * order it applied them; each update replaces the last one's. Writes up to
+ * max_records (each out record's struct_size must be set) and returns how many
+ * there were, so a short buffer can be grown and the call repeated. Damage the
+ * victim was immune to, or that landed on a corpse, is not a hit. Server modes
+ * only. Additive within ABI 109, behind KERNEL_CAPABILITY_SERVER_DAMAGE_RECORDS.
+ */
+uint32_t Kernel_ServerQueryDamageRecords(
+    KernelHandle* kernel,
+    KernelDamageRecord* out_records,
+    uint32_t max_records);
+
 bool Kernel_ServerSubmitEntityInput(
     KernelHandle* kernel,
     uint32_t net_id,

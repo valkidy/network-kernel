@@ -44,28 +44,30 @@ animations:
 vision:
   collider_template: drone_vision_cone
 ai:
-  controller: chaser
+  default_controller: garrison
   profile: default
-  sentry:
+  perception:
     # A second of tracking before it fires, against a grunt's three: it saw
     # first and from further, and should feel quick to react.
     alert_ticks: 30
     forget_ticks: 150
-    patrol_rotation_interval_ticks: 30
-    patrol_rotation_min_degrees: 15.0
-    patrol_rotation_max_degrees: 30.0
+    idle_rotation_interval_ticks: 30
+    idle_rotation_degrees: {min: 15.0, max: 30.0}
     animation_idle: idle
     animation_attack: chasing
-  chaser:
+  locomotion:
     # Closes to 8 m across the ground and holds out to 10, inside a 14 m
     # attack range, so wherever it is parked it can fire. drone_beam reaches
     # 20 m, enough for 14 m across and 9 m down.
     stop_distance_meters: 8.0
     resume_distance_meters: 10.0
     input_magnitude: 1.0
-    attack_range_meters: 14.0
-  patrol:
-    slot_radius_meters: 1.2
-    input_magnitude: 0.5
-    leash_meters: 24.0
-    leash_resume_meters: 8.0
+  controllers:
+    patrol:
+      slot_radius_meters: 1.2
+      input_magnitude: 0.5
+      leash_meters: 24.0
+      leash_resume_meters: 8.0
+  skills:
+    - use: {type: weapon, value: 16}
+      when: {range_meters: {max: 14.0}}

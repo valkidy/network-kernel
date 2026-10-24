@@ -144,6 +144,16 @@ _Static_assert(
           KERNEL_CAPABILITY_GAME_MESSAGES)) == 0,
     "the fall death height is additive within ABI 108, on a bit of its own");
 _Static_assert(
+    KERNEL_CAPABILITY_SERVER_DAMAGE_RECORDS == UINT64_C(0x0010000000000000) &&
+        (KERNEL_CAPABILITY_SERVER_DAMAGE_RECORDS &
+         (KERNEL_CAPABILITY_LOG_CAPTURE | KERNEL_CAPABILITY_LOCAL_SHELTER_STATE |
+          KERNEL_CAPABILITY_GAME_MESSAGES |
+          KERNEL_CAPABILITY_SERVER_FALL_DEATH_HEIGHT)) == 0 &&
+        sizeof(KernelDamageRecord) == 32u &&
+        offsetof(KernelDamageRecord, hit_position) == 16u,
+    "damage records are additive within ABI 109, on a bit of their own; a "
+    "managed mirror must match this layout");
+_Static_assert(
     offsetof(KernelActionDefinition, pull_mode) >
         offsetof(KernelActionDefinition, repeat_stagger_lifetime_ticks),
     "the pull block is appended after every field that existed before ABI 95");

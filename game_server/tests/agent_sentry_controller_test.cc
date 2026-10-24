@@ -406,21 +406,21 @@ int main() {
     require(state.ammo[0] == 2);
     require(enemies[0].sentry.ballistic_retry_ticks == 3);
 
+    // Sight lost mid-attack: it searches -- turns to where it last saw the
+    // player -- for forget_ticks (3), then goes idle. Before AI plan P2 it sat
+    // in Attack for forget_ticks and then in Alert for as many again.
     require(Kernel_ServerSetEntityTransform(kernel, player_net_id, &out_of_range, &identity));
     Kernel_Update(kernel, 1.0f / 30.0f);
-    for (int tick = 0; tick < 2; ++tick) {
-        run_frame(kernel, controller, &enemies);
-        require(enemies[0].sentry.state == network_example::game_server::AgentSentryState::kAttack);
-    }
     run_frame(kernel, controller, &enemies);
-    require(enemies[0].sentry.state == network_example::game_server::AgentSentryState::kAlert);
-
+    require(enemies[0].sentry.state == network_example::game_server::AgentSentryState::kSearch);
+    require(enemies[0].sentry.has_attention_point);
     for (int tick = 0; tick < 2; ++tick) {
         run_frame(kernel, controller, &enemies);
-        require(enemies[0].sentry.state == network_example::game_server::AgentSentryState::kAlert);
+        require(enemies[0].sentry.state == network_example::game_server::AgentSentryState::kSearch);
     }
     run_frame(kernel, controller, &enemies);
     require(enemies[0].sentry.state == network_example::game_server::AgentSentryState::kIdle);
+    require(!enemies[0].sentry.has_attention_point);
     require(enemies[0].velocity.x == 0.0f);
     require(enemies[0].velocity.y == 0.0f);
     require(enemies[0].velocity.z == 0.0f);

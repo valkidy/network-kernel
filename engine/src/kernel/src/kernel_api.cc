@@ -296,7 +296,8 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             KERNEL_CAPABILITY_LOCAL_WEAPON_STATE |
             KERNEL_CAPABILITY_LOCAL_SHELTER_STATE |
             KERNEL_CAPABILITY_GAME_MESSAGES |
-            KERNEL_CAPABILITY_SERVER_FALL_DEATH_HEIGHT;
+            KERNEL_CAPABILITY_SERVER_FALL_DEATH_HEIGHT |
+            KERNEL_CAPABILITY_SERVER_DAMAGE_RECORDS;
         return true;
     });
 }
@@ -1333,6 +1334,17 @@ bool Kernel_ServerSetFallDeathHeight(KernelHandle* kernel, float height_meters) 
     return abi_call("Kernel_ServerSetFallDeathHeight", false, [&]() {
         return kernel != nullptr &&
                kernel->engine->server_set_fall_death_height(height_meters);
+    });
+}
+
+uint32_t Kernel_ServerQueryDamageRecords(
+    KernelHandle* kernel,
+    KernelDamageRecord* out_records,
+    uint32_t max_records) {
+    return abi_call("Kernel_ServerQueryDamageRecords", 0u, [&]() -> std::uint32_t {
+        return kernel == nullptr
+            ? 0u
+            : kernel->engine->server_query_damage_records(out_records, max_records);
     });
 }
 

@@ -114,9 +114,9 @@ void GameRuleDirector::activate_node(
             return;
         }
         group->member_net_ids.push_back(net_id);
-        if (!node.spawn.patrol_route.empty()) {
-            spawned_patrol_routes_.push_back(
-                SpawnedPatrolRoute{net_id, node.spawn.patrol_route});
+        if (!node.spawn.controller.empty()) {
+            spawned_controllers_.push_back(
+                SpawnedControllerSpec{net_id, node.spawn.controller});
         }
     }
     spdlog::info(
@@ -126,8 +126,8 @@ void GameRuleDirector::activate_node(
         node.spawn.count);
 }
 
-std::vector<SpawnedPatrolRoute> GameRuleDirector::take_spawned_patrol_routes() {
-    return std::exchange(spawned_patrol_routes_, {});
+std::vector<SpawnedControllerSpec> GameRuleDirector::take_spawned_controllers() {
+    return std::exchange(spawned_controllers_, {});
 }
 
 void GameRuleDirector::tick(KernelHandle* kernel) {

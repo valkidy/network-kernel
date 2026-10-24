@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 #include "ai_intent.h"
 #include "game_server/src/actor_intent_executor.h"
@@ -12,6 +13,84 @@
 namespace network_example::game_server {
 namespace {
 
+bool in_reach(const AgentWeaponSkill& weapon, float distance) {
+    return distance >= weapon.range_min_meters &&
+        (weapon.range_max_meters <= 0.0f || distance <= weapon.range_max_meters);
+}
+
+bool has_ammo(const KernelServerEntityState& self, std::uint16_t weapon_id) {
+    for (std::uint8_t slot = 0; slot < self.weapon_slot_count; ++slot) {
+        if (self.weapon_ids[slot] == weapon_id) {
+            return self.ammo[slot] > 0u || self.reserve_magazines[slot] > 0u;
+        }
+    }
+    return false;
+}
+
+// Mid-swing or reloading: the kernel would not take the weapon out of its hand
+// (hold_selected_weapon), and a change of weapon cancels a hold.
+bool busy(const KernelServerEntityState& self) {
+    return self.is_reloading != 0u ||
+        self.action.phase == KernelActionPhase_Windup ||
+        self.action.phase == KernelActionPhase_Active;
+}
+
+std::uint32_t next_random(AgentRuntimeState* agent) {
+    std::uint32_t x = agent->skill_random != 0u
+        ? agent->skill_random
+        : agent->net_id * 2654435761u + 0x9e3779b9u;
+    x ^= x << 13u;
+    x ^= x >> 17u;
+    x ^= x << 5u;
+    agent->skill_random = x != 0u ? x : 1u;
+    return agent->skill_random;
+}
+
+// D14: keeps the weapon in hand while it can still be used and the agent has
+// not just fired it; otherwise, once the agent is free to switch, draws one by
+// weight from the skills that are in reach, off cooldown and loaded. With none
+// usable it keeps what it has, and the pursuit closes instead.
+void choose_weapon_skill(
+    const std::vector<AgentWeaponSkill>& skills,
+    const KernelServerEntityState& self,
+    float distance,
+    AgentRuntimeState* agent) {
+    const auto usable = [&](std::size_t index) {
+        return in_reach(skills[index], distance) &&
+            agent->skill_cooldown_ticks[index] == 0u &&
+            has_ammo(self, skills[index].executor.weapon_id);
+    };
+    if (agent->weapon_skill >= skills.size()) {
+        agent->weapon_skill = 0;
+    }
+    if ((!agent->choose_weapon && usable(agent->weapon_skill)) || busy(self)) {
+        return;
+    }
+    std::uint32_t total = 0;
+    for (std::size_t index = 0; index < skills.size(); ++index) {
+        if (usable(index)) total += skills[index].weight;
+    }
+    if (total == 0u) {
+        return;
+    }
+    std::uint32_t pick = next_random(agent) % total;
+    for (std::size_t index = 0; index < skills.size(); ++index) {
+        if (!usable(index)) continue;
+        if (pick < skills[index].weight) {
+            agent->weapon_skill = static_cast<std::uint8_t>(index);
+            agent->choose_weapon = false;
+            return;
+        }
+        pick -= skills[index].weight;
+    }
+}
+
+// How close Search comes to where the target was last seen before it stops
+// and looks around, and a returning garrison to where it broke off. The same
+// allowance a route corner gets.
+constexpr float kSearchArrivalMeters = 1.0f;
+constexpr float kReturnArrivalMeters = 1.0f;
+
 bool is_zero_move(const KernelVec2& move) {
     return move.x == 0.0f && move.y == 0.0f;
 }
@@ -21,15 +100,17 @@ bool has_slot(const AgentRuntimeState& agent) {
     return agent.patrol.has_slot;
 }
 
-// Distance from where the agent broke formation, which is what the leash
-// bounds. A leash of zero means no leash: a chaser without a squad is never
-// dragged away from anything.
-bool leash_exceeded(
-    const AgentPatrolTuning& patrol,
-    const AgentRuntimeState& agent) {
-    return patrol.leash_meters > 0.0f &&
+// Distance from where the agent broke off, which is what the leash bounds. A
+// leash of zero means no leash.
+bool leash_exceeded(float leash_meters, const AgentRuntimeState& agent) {
+    return leash_meters > 0.0f &&
         agent_steering::horizontal_distance(
-            agent.position, agent.patrol.leash_anchor) > patrol.leash_meters;
+            agent.position, agent.patrol.leash_anchor) > leash_meters;
+}
+
+// A squad member answers to its squad's leash, anyone else to its garrison's.
+float leash_meters(const AgentChaserConfig& config, const AgentRuntimeState& agent) {
+    return has_slot(agent) ? config.patrol.leash_meters : config.garrison.leash_meters;
 }
 
 bool inside_leash_resume(
@@ -256,7 +337,23 @@ KernelVec2 chase_move(
 }  // namespace
 
 AgentChaserController::AgentChaserController(AgentChaserConfig config)
-    : config_(config) {}
+    : config_(std::move(config)) {
+    if (config_.weapon_skills.empty()) {
+        AgentWeaponSkill weapon;
+        weapon.executor.weapon_id = config_.sentry.weapon_id;
+        weapon.executor.ballistic_aim = config_.sentry.ballistic_aim;
+        weapon.executor.charge_ticks = config_.sentry.charge_ticks;
+        weapon.range_max_meters = config_.chase.attack_range_meters;
+        config_.weapon_skills.push_back(weapon);
+    }
+    for (std::size_t index = 0; index < config_.weapon_skills.size(); ++index) {
+        if (config_.weapon_skills[index].executor.weapon_id ==
+            config_.chase.leap.on_landing_weapon_id) {
+            leap_weapon_skill_ = static_cast<std::uint8_t>(index);
+            break;
+        }
+    }
+}
 
 void AgentChaserController::tick(
     KernelHandle* kernel,
@@ -269,14 +366,14 @@ void AgentChaserController::tick(
 
     const AgentSentryConfig& sentry_config = config_.sentry;
 
-    ActorIntentExecutorConfig executor_config;
-    executor_config.weapon_id = sentry_config.weapon_id;
-    executor_config.ballistic_aim = sentry_config.ballistic_aim;
-    executor_config.charge_ticks = sentry_config.charge_ticks;
-    const ActorIntentExecutor actor_executor(executor_config);
-
     for (AgentRuntimeState* agent_pointer : agents) {
         AgentRuntimeState& agent = *agent_pointer;
+        for (std::uint32_t& cooldown : agent.skill_cooldown_ticks) {
+            if (cooldown > 0u) --cooldown;
+        }
+        if (agent.weapon_skill >= config_.weapon_skills.size()) {
+            agent.weapon_skill = 0;
+        }
         const SentryPerceptionSnapshot perception =
             AiPerceptionAdapter::build_sentry_snapshot(
                 kernel, frame, agent.net_id);
@@ -284,6 +381,18 @@ void AgentChaserController::tick(
             continue;
         }
         const KernelServerEntityState& entity_state = perception.self_state;
+        // The weapon in hand went off (D14): its cooldown runs from here, and
+        // the next shot is drawn afresh.
+        if (entity_state.action.action_instance_id != 0u &&
+            entity_state.action.action_instance_id != agent.seen_action_instance_id) {
+            agent.seen_action_instance_id = entity_state.action.action_instance_id;
+            if (entity_state.is_reloading == 0u &&
+                entity_state.action.phase != KernelActionPhase_None) {
+                agent.skill_cooldown_ticks[agent.weapon_skill] =
+                    config_.weapon_skills[agent.weapon_skill].cooldown_ticks;
+                agent.choose_weapon = true;
+            }
+        }
 
         agent.position = entity_state.position;
         agent.hp = entity_state.hp;
@@ -328,21 +437,52 @@ void AgentChaserController::tick(
             }
             agent.sentry.target = perception.target_id;
             agent.sentry.lost_target_ticks = 0;
+            // Feet, not the aim point: Search walks to it.
+            const KernelServerEntityState* seen =
+                frame.actor_state(perception.target_id);
+            agent.sentry.attention_point =
+                seen != nullptr ? seen->position : perception.target_position;
+            agent.sentry.has_attention_point = true;
         } else {
             ++agent.sentry.lost_target_ticks;
-            // Losing sight ends the pursuit outright; the agent stops where it
-            // stands rather than walking to where the target was.
+            // The hold is about a target in sight; Search walks to where it
+            // was last seen instead.
             agent.chase_holding = false;
+        }
+
+        // A hit (AI plan D8), before the states run. Idle or searching, it
+        // alerts -- the short alert -- with its attention on where the hit came
+        // from; already alert or pursuing something it cannot see, its
+        // attention moves there (a Search then heads for it); something it can
+        // see keeps its attention. Returning on a leash it only turns its head:
+        // a leash it could be shot back out of would never bring it home.
+        bool face_damage_source = false;
+        if (perception.damaged) {
+            const AgentSentryState state = agent.sentry.state;
+            if (state == AgentSentryState::kIdle || state == AgentSentryState::kSearch ||
+                state == AgentSentryState::kSeek) {
+                if (state != AgentSentryState::kSearch) {
+                    agent.patrol.leash_anchor = agent.position;
+                }
+                agent_steering::transition_to(&agent, AgentSentryState::kAlert);
+                agent.sentry.alerted_by_damage = true;
+            }
+            if (agent.sentry.state == AgentSentryState::kReturn) {
+                face_damage_source = true;
+            } else if (!has_visible_target) {
+                agent.sentry.attention_point = perception.damage_source;
+                agent.sentry.has_attention_point = true;
+            }
         }
 
         // Breaking off is a decision about the squad, not about the target, so
         // it is made before the pursuit states get to look at what they can
         // see. Without it the leash could only be enforced on a tick where
         // vision happened to break.
-        if (has_slot(agent) && leash_exceeded(config_.patrol, agent) &&
-            (agent.sentry.state == AgentSentryState::kAlert ||
-             agent.sentry.state == AgentSentryState::kAttack)) {
+        if (leash_exceeded(leash_meters(config_, agent), agent) &&
+            is_engaged(agent.sentry.state)) {
             agent.sentry.target = 0;
+            agent.sentry.has_attention_point = false;
             agent.chase_holding = false;
             agent_steering::transition_to(&agent, AgentSentryState::kReturn);
         }
@@ -352,7 +492,27 @@ void AgentChaserController::tick(
         // already reaches the alert branch in the tick it transitions.
         if (agent.sentry.state == AgentSentryState::kReturn) {
             if (!has_slot(agent)) {
-                agent_steering::transition_to(&agent, AgentSentryState::kIdle);
+                // A garrison walks back to where it broke off, then goes idle
+                // there -- which puts one on a route back onto it.
+                const float back = agent_steering::horizontal_distance(
+                    agent.position, agent.patrol.leash_anchor);
+                if (back <= std::max(config_.garrison.leash_resume_meters,
+                                     kReturnArrivalMeters)) {
+                    agent_steering::transition_to(&agent, AgentSentryState::kIdle);
+                } else {
+                    move = agent_steering::horizontal_move_toward(
+                        agent.position,
+                        agent.patrol.leash_anchor,
+                        config_.chase.input_magnitude);
+                    should_update_rotation =
+                        agent_steering::facing_rotation_from_vision_toward(
+                            agent.position,
+                            agent.patrol.leash_anchor,
+                            perception.vision_forward,
+                            entity_state.rotation,
+                            &desired_rotation) ||
+                        should_update_rotation;
+                }
             } else if (
                 standing_in_slot(config_.patrol, agent) ||
                 inside_leash_resume(config_.patrol, agent)) {
@@ -386,13 +546,34 @@ void AgentChaserController::tick(
                 // Recorded before the chase starts, so the leash measures the
                 // pursuit rather than the ground the squad has since covered.
                 agent.patrol.leash_anchor = agent.position;
+                agent.sentry.alerted_by_damage = false;
                 agent_steering::transition_to(&agent, AgentSentryState::kAlert);
+            } else if (agent.controller_role == AgentControllerRole::kHunter) {
+                // Nothing in sight: a hunter goes looking (D10). The Seek
+                // below starts walking on this same tick.
+                agent_steering::transition_to(&agent, AgentSentryState::kSeek);
             } else if (has_slot(agent) &&
                        (!standing_in_slot(config_.patrol, agent) ||
                         std::hypot(agent.patrol.travel_velocity.x,
                                    agent.patrol.travel_velocity.z) > 0.0001f)) {
                 move = patrol_move(
                     config_.patrol, agent, sentry_config.move_speed_meters_per_second);
+                should_update_rotation =
+                    agent_steering::facing_rotation_from_vision_toward(
+                        agent.position,
+                        KernelVec3{agent.position.x + move.x, agent.position.y,
+                                   agent.position.z + move.y},
+                        perception.vision_forward,
+                        entity_state.rotation,
+                        &desired_rotation) ||
+                    should_update_rotation;
+            } else if (!has_slot(agent) && !agent.route_patrol.path.empty()) {
+                // A garrison on a route walks it whenever it has nothing to
+                // fight, and after a fight carries on to the corner it was
+                // heading for from wherever the fight left it. Pathing back
+                // and a leash on the route are P2's.
+                move = agent_steering::route_patrol_move(
+                    &agent.route_patrol, agent.position, config_.chase.input_magnitude);
                 should_update_rotation =
                     agent_steering::facing_rotation_from_vision_toward(
                         agent.position,
@@ -413,6 +594,47 @@ void AgentChaserController::tick(
             }
         }
 
+        // A hunter walking to its target's last broad-phase position, corner by
+        // corner of the path the manager found. Seeing anything hostile
+        // alerts it the way Idle would, on this same tick.
+        if (agent.sentry.state == AgentSentryState::kSeek) {
+            if (has_visible_target) {
+                agent.patrol.leash_anchor = agent.position;
+                agent.sentry.alerted_by_damage = false;
+                agent_steering::transition_to(&agent, AgentSentryState::kAlert);
+            } else {
+                while (agent.seek_next < agent.seek_path.size() &&
+                       agent_steering::horizontal_distance(
+                           agent.position, agent.seek_path[agent.seek_next]) <=
+                           kSearchArrivalMeters) {
+                    ++agent.seek_next;
+                }
+                if (agent.seek_next < agent.seek_path.size()) {
+                    const KernelVec3& corner = agent.seek_path[agent.seek_next];
+                    move = agent_steering::horizontal_move_toward(
+                        agent.position, corner, config_.chase.input_magnitude);
+                    should_update_rotation =
+                        agent_steering::facing_rotation_from_vision_toward(
+                            agent.position,
+                            corner,
+                            perception.vision_forward,
+                            entity_state.rotation,
+                            &desired_rotation) ||
+                        should_update_rotation;
+                } else {
+                    // There, or nothing to go to: look around until the next
+                    // broad-phase read moves it on.
+                    should_update_rotation = agent_steering::update_patrol_facing(
+                        sentry_config.patrol_rotation_interval_ticks,
+                        sentry_config.patrol_rotation_min_degrees,
+                        sentry_config.patrol_rotation_max_degrees,
+                        &agent,
+                        entity_state.rotation,
+                        &desired_rotation);
+                }
+            }
+        }
+
         if (agent.sentry.state == AgentSentryState::kAlert) {
             if (has_visible_target) {
                 should_update_rotation =
@@ -426,27 +648,52 @@ void AgentChaserController::tick(
                 move = chase_move(
                     config_.chase, &agent, perception.target_position);
                 ++agent.sentry.state_ticks;
-                if (agent.sentry.state_ticks >= sentry_config.alert_ticks) {
+                if (agent.sentry.state_ticks >=
+                    (agent.sentry.alerted_by_damage ? sentry_config.alert_on_damage_ticks
+                                                    : sentry_config.alert_ticks)) {
+                    // The pursuit below sorts Chasing from Attack this tick.
                     agent_steering::transition_to(
-                        &agent, AgentSentryState::kAttack);
+                        &agent, AgentSentryState::kChasing);
                 }
             } else if (agent.sentry.lost_target_ticks >=
                        sentry_config.forget_ticks) {
+                // Lost before the alert ran out: no Search, so a target that
+                // ducks in and out of view cannot skip the warning. It waits
+                // here, as it always has, and gives up.
                 agent.sentry.target = 0;
+                agent.sentry.has_attention_point = false;
                 // A squad member goes back to its formation rather than idling
                 // wherever the chase ended. kIdle would let it re-acquire from
                 // there, which is the runaway the leash exists to prevent.
+                // A hunter goes straight back to looking, re-reading where its
+                // target is now rather than when the chase began.
+                if (agent.controller_role == AgentControllerRole::kHunter) {
+                    agent.seek_repath_in = 0;
+                }
                 agent_steering::transition_to(
                     &agent,
                     has_slot(agent) ? AgentSentryState::kReturn
-                                    : AgentSentryState::kIdle);
+                    : agent.controller_role == AgentControllerRole::kHunter
+                        ? AgentSentryState::kSeek
+                        : AgentSentryState::kIdle);
+            } else if (agent.sentry.has_attention_point) {
+                // Nothing in sight: stop and face where its attention is --
+                // the last place it saw something, or where a hit came from.
+                should_update_rotation =
+                    agent_steering::facing_rotation_from_vision_toward(
+                        agent.position,
+                        agent.sentry.attention_point,
+                        perception.vision_forward,
+                        entity_state.rotation,
+                        &desired_rotation) ||
+                    should_update_rotation;
             }
         }
 
         // A wind-up is for this target in this pursuit: losing either drops it.
         // So does being knocked back or staggered out of it.
         if (agent.charge_windup_ticks > 0u &&
-            (agent.sentry.state != AgentSentryState::kAttack ||
+            (!is_pursuing(agent.sentry.state) ||
              !has_visible_target ||
              (entity_state.visual_flags & (KERNEL_VISUAL_FLAG_KNOCKED_BACK |
                                            KERNEL_VISUAL_FLAG_STAGGERED)) != 0u)) {
@@ -455,15 +702,17 @@ void AgentChaserController::tick(
 
         const KernelServerEntityState* target_state =
             frame.actor_state(agent.sentry.target);
-        if (agent.sentry.state == AgentSentryState::kAttack &&
+        if (is_pursuing(agent.sentry.state) &&
             has_visible_target && agent.charge_ticks_left > 0u) {
             // The kernel runs the charge: no steering, no turning, no swing.
             // The tail still sends the one input, with no move in it.
             agent.sentry.lost_target_ticks = 0;
-        } else if (agent.sentry.state == AgentSentryState::kAttack &&
+            agent.sentry.state = AgentSentryState::kAttack;
+        } else if (is_pursuing(agent.sentry.state) &&
                    has_visible_target && agent.charge_windup_ticks > 0u) {
             // Winding up: rooted, turning to keep the target in front.
             agent.sentry.lost_target_ticks = 0;
+            agent.sentry.state = AgentSentryState::kAttack;
             should_update_rotation =
                 agent_steering::facing_rotation_from_vision_toward(
                     agent.position,
@@ -475,7 +724,7 @@ void AgentChaserController::tick(
             if (--agent.charge_windup_ticks == 0u && target_state != nullptr) {
                 release_charge(kernel, config_, &agent, target_state->position);
             }
-        } else if (agent.sentry.state == AgentSentryState::kAttack) {
+        } else if (is_pursuing(agent.sentry.state)) {
             if (has_visible_target) {
                 agent.sentry.lost_target_ticks = 0;
                 should_update_rotation =
@@ -506,14 +755,43 @@ void AgentChaserController::tick(
                 //
                 // In a leap, range is the landing's business: it comes down
                 // inside it, so the swing goes by how soon that is instead.
+                // Which weapon (D14): the leap's own swing while one is in the
+                // air, otherwise whichever skill the agent draws.
+                const float distance = agent_steering::horizontal_distance(
+                    agent.position, perception.target_position);
+                if (agent.leap_ticks_to_landing > 0u) {
+                    agent.weapon_skill = leap_weapon_skill_;
+                } else {
+                    choose_weapon_skill(
+                        config_.weapon_skills, entity_state, distance, &agent);
+                }
+                const AgentWeaponSkill& weapon =
+                    config_.weapon_skills[agent.weapon_skill];
+                // Whether to fire: the weapon in hand reaches and is off its
+                // cooldown. Whether it is attacking at all (D4): anything it
+                // carries reaches, cooling down or not -- a rocket that has
+                // just gone off is still an attack in progress.
                 const bool target_within_attack_range =
                     agent.leap_ticks_to_landing > 0u
                     ? agent.leap_ticks_to_landing <=
                         config_.chase.leap.attack_lead_ticks
-                    : config_.chase.attack_range_meters <= 0.0f ||
-                        agent_steering::horizontal_distance(
-                            agent.position, perception.target_position) <=
-                            config_.chase.attack_range_meters;
+                    : in_reach(weapon, distance) &&
+                        agent.skill_cooldown_ticks[agent.weapon_skill] == 0u;
+                const bool something_reaches =
+                    agent.leap_ticks_to_landing > 0u
+                    ? target_within_attack_range
+                    : std::any_of(
+                          config_.weapon_skills.begin(), config_.weapon_skills.end(),
+                          [distance](const AgentWeaponSkill& skill) {
+                              return in_reach(skill, distance);
+                          });
+                // Set directly, not through transition_to: flipping between
+                // the two must not reset the pursuit's counters. A wind-up
+                // started this tick is an attack already.
+                agent.sentry.state =
+                    something_reaches || agent.charge_windup_ticks > 0u
+                    ? AgentSentryState::kAttack
+                    : AgentSentryState::kChasing;
                 if (agent.sentry.ballistic_retry_ticks > 0) {
                     --agent.sentry.ballistic_retry_ticks;
                 } else if (agent.charge_windup_ticks > 0u) {
@@ -528,7 +806,7 @@ void AgentChaserController::tick(
                     // input in the same tick would carry a higher input_seq and
                     // the movement solver would take that one instead.
                     const ActorIntentExecutionResult execution =
-                        actor_executor.execute(
+                        ActorIntentExecutor(weapon.executor).execute(
                             kernel,
                             &agent,
                             intent,
@@ -540,10 +818,70 @@ void AgentChaserController::tick(
                     }
                     submitted_input = execution.submitted_input;
                 }
-            } else if (agent.sentry.lost_target_ticks >=
-                       sentry_config.forget_ticks) {
-                agent_steering::transition_to(&agent, AgentSentryState::kAlert);
+            } else {
+                agent_steering::transition_to(&agent, AgentSentryState::kSearch);
             }
+        }
+
+        // After the pursuit, so an agent that loses sight starts walking to
+        // where it last saw the target on that same tick. Seeing it again
+        // resumes the pursuit from the next one.
+        if (agent.sentry.state == AgentSentryState::kSearch) {
+            if (has_visible_target) {
+                agent_steering::transition_to(&agent, AgentSentryState::kChasing);
+            } else if (agent.sentry.lost_target_ticks >=
+                           sentry_config.forget_ticks ||
+                       !agent.sentry.has_attention_point) {
+                agent.sentry.target = 0;
+                agent.sentry.has_attention_point = false;
+                // A squad member goes back to its formation, as from Alert.
+                // A hunter goes straight back to looking, re-reading where its
+                // target is now rather than when the chase began.
+                if (agent.controller_role == AgentControllerRole::kHunter) {
+                    agent.seek_repath_in = 0;
+                }
+                agent_steering::transition_to(
+                    &agent,
+                    has_slot(agent) ? AgentSentryState::kReturn
+                    : agent.controller_role == AgentControllerRole::kHunter
+                        ? AgentSentryState::kSeek
+                        : AgentSentryState::kIdle);
+            } else if (agent_steering::horizontal_distance(
+                           agent.position, agent.sentry.attention_point) >
+                       kSearchArrivalMeters) {
+                move = agent_steering::horizontal_move_toward(
+                    agent.position,
+                    agent.sentry.attention_point,
+                    config_.chase.input_magnitude);
+                should_update_rotation =
+                    agent_steering::facing_rotation_from_vision_toward(
+                        agent.position,
+                        agent.sentry.attention_point,
+                        perception.vision_forward,
+                        entity_state.rotation,
+                        &desired_rotation) ||
+                    should_update_rotation;
+            } else {
+                // Arrived and nothing there: look around until it forgets.
+                should_update_rotation = agent_steering::update_patrol_facing(
+                    sentry_config.patrol_rotation_interval_ticks,
+                    sentry_config.patrol_rotation_min_degrees,
+                    sentry_config.patrol_rotation_max_degrees,
+                    &agent,
+                    entity_state.rotation,
+                    &desired_rotation);
+            }
+        }
+
+        if (face_damage_source) {
+            should_update_rotation =
+                agent_steering::facing_rotation_from_vision_toward(
+                    agent.position,
+                    perception.damage_source,
+                    perception.vision_forward,
+                    entity_state.rotation,
+                    &desired_rotation) ||
+                should_update_rotation;
         }
 
         if (!is_zero_move(move)) {
@@ -571,14 +909,15 @@ void AgentChaserController::tick(
             input.move = move;
             // Must match what the executor sends, or an in-flight action reads
             // this as a weapon change and cancels itself.
-            input.selected_weapon =
-                static_cast<std::uint8_t>(sentry_config.weapon_id);
+            const ActorIntentExecutorConfig& in_hand =
+                config_.weapon_skills[agent.weapon_skill].executor;
+            input.selected_weapon = static_cast<std::uint8_t>(in_hand.weapon_id);
             // And so must the aim. A zero aim_dir is not "no opinion": the
             // kernel reads it as aiming down world +X and replicates that, so
             // every tick the executor declined to fire on -- reloading, waiting
             // out a ballistic retry, closing the last metres into range -- used
             // to turn the agent away from the target it is shooting at.
-            input.aim_dir = actor_executor.input_aim_direction(
+            input.aim_dir = ActorIntentExecutor(in_hand).input_aim_direction(
                 kernel, agent.net_id, perception);
             if (Kernel_ServerEnqueueEntityInput(
                     kernel,

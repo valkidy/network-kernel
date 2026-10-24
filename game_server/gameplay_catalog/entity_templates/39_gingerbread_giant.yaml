@@ -29,19 +29,24 @@ active_weapon_slot: 0
 vision:
   collider_template: sentry_grunt_vision_cone
 ai:
-  controller: sentry
+  # A garrison (AI plan D19): walks the route its spawn source gives it, and
+  # fights whatever it sees with its spammer. Without a route it stands and
+  # looks around. Ranged, so it closes to 8 m and holds there.
+  default_controller: garrison
   profile: monster_sim
-  sentry:
+  perception:
     alert_ticks: 90
     forget_ticks: 150
-    patrol_rotation_interval_ticks: 30
-    patrol_rotation_min_degrees: 15.0
-    patrol_rotation_max_degrees: 30.0
-    passive_patrol: true
-    patrol_extent_x_meters: 30.0
-    patrol_input_magnitude: 1.0
+    idle_rotation_interval_ticks: 30
+    idle_rotation_degrees: {min: 15.0, max: 30.0}
     animation_idle: idle
     animation_attack: chasing
+  locomotion:
+    stop_distance_meters: 8.0
+    resume_distance_meters: 10.0
+    input_magnitude: 1.0
+  skills:
+    - use: {type: weapon, value: 2}
 animations:
   idle: 0
   chasing: 1

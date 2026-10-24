@@ -81,6 +81,15 @@ void WorldRuleDirector::tick(
                         : rule.spawn_actor_template_id);
                 break;
             }
+            if (!rule.controller.empty()) {
+                SpawnedControllerSpec spawned{net_id, rule.controller};
+                for (KernelVec3& waypoint : spawned.spec.route) {
+                    waypoint.x += create_info.position.x;
+                    waypoint.y += create_info.position.y;
+                    waypoint.z += create_info.position.z;
+                }
+                spawned_controllers_.push_back(std::move(spawned));
+            }
             ++created;
         }
 
@@ -107,6 +116,10 @@ const std::vector<WorldRuleSpawnConfig>& WorldRuleDirector::rules() const {
 
 std::uint32_t WorldRuleDirector::spawned_agent_count() const {
     return spawned_agent_count_;
+}
+
+std::vector<SpawnedControllerSpec> WorldRuleDirector::take_spawned_controllers() {
+    return std::exchange(spawned_controllers_, {});
 }
 
 }  // namespace network_example::game_server

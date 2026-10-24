@@ -26,13 +26,14 @@ vision:
   collider_template: sentry_grunt_vision_cone
 # Linear-projectile sentry. See 24_grenade_sentry.yaml for ballistic aiming.
 ai:
-  controller: sentry
+  default_controller: sentry
   profile: default
-  sentry:
+  perception:
     alert_ticks: 90
     forget_ticks: 150
-    patrol_rotation_interval_ticks: 30
-    patrol_rotation_min_degrees: 15.0
-    patrol_rotation_max_degrees: 30.0
+    idle_rotation_interval_ticks: 30
+    idle_rotation_degrees: {min: 15.0, max: 30.0}
     animation_idle: idle
     animation_attack: chasing
+  skills:
+    - use: {type: weapon, value: 2}

@@ -39,21 +39,20 @@ vision:
 # up to. The distances below are one setting, not three -- see the comment on
 # them.
 ai:
-  controller: chaser
+  default_controller: garrison
   profile: default
-  sentry:
+  perception:
     alert_ticks: 90
     forget_ticks: 150
-    patrol_rotation_interval_ticks: 30
-    patrol_rotation_min_degrees: 15.0
-    patrol_rotation_max_degrees: 30.0
+    idle_rotation_interval_ticks: 30
+    idle_rotation_degrees: {min: 15.0, max: 30.0}
     animation_idle: idle
     # Despite the name this plays whenever the agent is *moving*, not when it
     # attacks -- the controller sets it from a non-zero move, and the swing
     # itself is driven client-side off the replicated action timeline. Naming
     # an "attack" clip here would play it while walking.
     animation_attack: chasing
-  chaser:
+  locomotion:
     # Holding persists from stop_distance out to resume_distance, so a resume
     # beyond attack_range opens a band where the agent has stopped chasing and
     # cannot yet attack: it parks and does nothing. Keeping resume inside
@@ -61,32 +60,6 @@ ai:
     stop_distance_meters: 1.8
     resume_distance_meters: 2.1
     input_magnitude: 1.0
-    # Matches grunt_claw_cone's range. Measured origin to origin, while the
-    # swing reaches to a target's near edge, so this is conservative: whatever
-    # this lets the gingerbread attack, it can actually hit.
-    attack_range_meters: 2.2
-    # Closing the gap in one long jump, swinging on the way down. The band is
-    # origin to origin like the range above, and its far end has to stay
-    # inside the vision cone; it lands landing_distance short of the target,
-    # inside stop_distance so it holds there, and inside attack_range so the
-    # swing reaches.
-    leap:
-      min_distance_meters: 10.5
-      max_distance_meters: 24.0
-      landing_distance_meters: 1.6
-      # 60 ticks (2 s) in the air on the level: sqrt(8h/g) = 2 s at h = 4.9 m.
-      # Airtime goes with the square root of the apex, so a longer flight is
-      # a much higher one. The airtime, not the height, is what a player has
-      # to react in.
-      apex_meters: 4.9
-      # Unreached: the farthest leap covers 22.4 m in 2 s, 11.2 m/s.
-      max_horizontal_speed_meters_per_second: 12.0
-      cooldown_ticks: 90
-      # grunt_claw_swing's commit_offset_ticks plus one, because the swing
-      # starts on the tick after the controller asks for it: the claw then
-      # commits on the landing tick (gingerbread_leap_test). Change one,
-      # change the other.
-      attack_lead_ticks: 9
   # Only read when this one is in a squad; a lone chaser has no slot.
   #
   # input_magnitude is a fraction of this template's own move speed, and the
@@ -94,11 +67,23 @@ ai:
   # SLOWEST member's patrol speed has to beat advance_speed_meters_per_second,
   # or that member falls behind its slot for the whole route and never arrives.
   # 2.8 m/s x 0.45 = 1.26 m/s here, against a cursor at 0.9.
-  patrol:
-    slot_radius_meters: 1.2
-    input_magnitude: 0.45
-    # About the vision cone's own reach, so it gives up at roughly the distance
-    # it would have lost sight anyway. resume sits well inside it, or it yo-yos
-    # on the boundary.
-    leash_meters: 18.0
-    leash_resume_meters: 6.0
+  controllers:
+    patrol:
+      slot_radius_meters: 1.2
+      input_magnitude: 0.45
+      # About the vision cone's own reach, so it gives up at roughly the distance
+      # it would have lost sight anyway. resume sits well inside it, or it yo-yos
+      # on the boundary.
+      leash_meters: 18.0
+      leash_resume_meters: 6.0
+  skills:
+    # Matches grunt_claw_cone's range. Measured origin to origin, while the
+    # swing reaches to a target's near edge, so this is conservative: whatever
+    # this lets the gingerbread attack, it can actually hit.
+    - use: {type: weapon, value: 10}
+      when: {range_meters: {max: 2.2}}
+    # Closing the gap in one long jump. The band is origin to origin like the
+    # claw's range, and its far end has to stay inside the vision cone.
+    - use: {type: sp_attack, value: gingerbread_leap}
+      when: {range_meters: {min: 10.5, max: 24.0}}
+      cooldown_ticks: 90

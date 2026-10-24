@@ -58,9 +58,9 @@ vision:
 # walked far enough away to restart the chase. 16 < 20 <= 22 closes that band:
 # everywhere the mage is parked, it shoots.
 ai:
-  controller: chaser
+  default_controller: garrison
   profile: grenade_artillery
-  sentry:
+  perception:
     # 1.5 s of wind-up before the first shell, half the grunt's, and it is spent
     # closing -- kAlert already chases. Long enough to read as a cast, short
     # enough that a mage that has just come into range is a threat.
@@ -71,28 +71,30 @@ ai:
     # how long the mage waits before trying again instead of re-solving the same
     # impossible shot every tick.
     ballistic_retry_cooldown_ticks: 30
-    patrol_rotation_interval_ticks: 30
-    patrol_rotation_min_degrees: 15.0
-    patrol_rotation_max_degrees: 30.0
+    idle_rotation_interval_ticks: 30
+    idle_rotation_degrees: {min: 15.0, max: 30.0}
     animation_idle: idle
     animation_attack: chasing
-  chaser:
+  locomotion:
     # The fighting distance. Far enough that the shell's ~0.9 s flight time is a
     # real dodge window and the 1 m explosion never reaches the mage, close
     # enough to stay well inside both the vision cone and the shell's reach.
     stop_distance_meters: 16.0
     resume_distance_meters: 20.0
     input_magnitude: 1.0
-    # Deliberately outside resume_distance, so the mage is already firing while
-    # it closes the last few metres rather than only once it has parked.
-    attack_range_meters: 22.0
   # Only read when this mage is in a squad; a lone one has no slot and none of
   # this applies to it.
-  patrol:
-    slot_radius_meters: 1.2
-    input_magnitude: 0.5
-    # The cone's own reach, measured from where the mage broke formation. A
-    # chaser that stops 16 m short of its target travels less than a melee one
-    # for the same pursuit, so this is roughly one engagement's worth of ground.
-    leash_meters: 30.0
-    leash_resume_meters: 10.0
+  controllers:
+    patrol:
+      slot_radius_meters: 1.2
+      input_magnitude: 0.5
+      # The cone's own reach, measured from where the mage broke formation. A
+      # chaser that stops 16 m short of its target travels less than a melee one
+      # for the same pursuit, so this is roughly one engagement's worth of ground.
+      leash_meters: 30.0
+      leash_resume_meters: 10.0
+  skills:
+    # Deliberately outside resume_distance, so the mage is already firing while
+    # it closes the last few metres rather than only once it has parked.
+    - use: {type: weapon, value: 12}
+      when: {range_meters: {max: 22.0}}

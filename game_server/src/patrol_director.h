@@ -137,6 +137,9 @@ public:
     // Squads spawned since the server started, across all definitions. The
     // draws are derived from it, so it is also what makes them replayable.
     std::uint32_t spawned_group_count() const;
+    // Controller specs for agents spawned since the last call, handed over
+    // once; see SpawnedControllerSpec.
+    std::vector<SpawnedControllerSpec> take_spawned_controllers();
     std::uint32_t retired_group_count() const;
     // Spawns abandoned because no start/end pair in the area produced an
     // acceptable route. Worth watching: a definition whose area is mostly
@@ -165,6 +168,7 @@ private:
     PatrolBudgetConfig budget_;
     std::vector<DefinitionRuntime> runtimes_;
     std::uint32_t spawned_group_count_ = 0;
+    std::vector<SpawnedControllerSpec> spawned_controllers_;
     std::uint32_t retired_group_count_ = 0;
     std::uint32_t route_failure_count_ = 0;
 };

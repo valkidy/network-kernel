@@ -2,6 +2,7 @@
 #define GAME_SERVER_AGENT_RUNTIME_H_
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -38,13 +39,30 @@ enum class AgentSentryState : std::uint8_t {
     // one on the way. Without a state of its own the agent re-acquires the
     // target it just broke off from on the very next tick and never returns.
     kReturn = 3,
+    // The target is in sight but no attack can reach it yet: a chaser closes,
+    // a sentry -- which has no reach to fall short of -- never is. (AI plan
+    // D4: Attack is the same pursuit once something can hit.)
+    kChasing = 4,
+    // Sight lost mid-pursuit, still inside forget_ticks: a chaser walks to
+    // where it last saw the target, a sentry turns to face it. Seeing it again
+    // resumes the pursuit; forgetting it ends the engagement.
+    kSearch = 5,
+    // A hunter walking to where the shared table says its target is, which it
+    // cannot see yet (D10). Seeing anything hostile alerts it as from Idle.
+    kSeek = 6,
 };
 
-// Alert or attack: the agent has a target, or had one recently enough that it
-// has not given up on it yet. A squad holds while a member is engaged, and an
-// on_alert spawner only calls while its carrier is.
+// The pursuit proper: something to close on or to hit.
+inline bool is_pursuing(AgentSentryState state) {
+    return state == AgentSentryState::kChasing || state == AgentSentryState::kAttack;
+}
+
+// The agent has a target, or had one recently enough that it has not given up
+// on it yet. A squad holds while a member is engaged, and an on_alert spawner
+// only calls while its carrier is.
 inline bool is_engaged(AgentSentryState state) {
-    return state == AgentSentryState::kAlert || state == AgentSentryState::kAttack;
+    return state == AgentSentryState::kAlert || is_pursuing(state) ||
+           state == AgentSentryState::kSearch;
 }
 
 // What a squad member needs to know about the squad, which is very little: the
@@ -68,6 +86,77 @@ struct AgentPatrolRuntimeState {
     KernelVec3 leash_anchor{0.0f, 0.0f, 0.0f};
 };
 
+// What an agent is there to do, which picks the controller that runs it
+// (docs/AI_CONTROLLER_PLAN.md D1, D2). A template names a default; P1b lets
+// whatever spawned the agent choose instead. Sentry runs the sentry
+// controller; garrison and patrol both run the chaser, which tells them apart
+// by whether the squad gave the agent a slot.
+enum class AgentControllerRole : std::uint8_t {
+    kNone = 0,
+    kSentry,
+    kGarrison,
+    kPatrol,
+    // Goes looking for a target it has not seen (AI plan D2, D10): the chaser,
+    // with a shared table of every hostile's position to walk towards.
+    kHunter,
+};
+
+// Who a hunter goes after (D10).
+enum class HunterTargetSource : std::uint8_t {
+    // The nearest hostile, re-chosen as they move.
+    kNearestHostile = 0,
+    // Whatever the agent that spawned it was fighting: reinforcements.
+    kInherited = 1,
+};
+
+// What a hunter does once its target is gone for good -- dead, gone from the
+// world -- rather than merely out of sight.
+enum class HunterOnTargetLost : std::uint8_t {
+    kNearestHostile = 0,
+    // Stays where it is as a garrison.
+    kGarrison = 1,
+};
+
+struct AgentHunterTuning {
+    HunterTargetSource target_source = HunterTargetSource::kNearestHostile;
+    HunterOnTargetLost on_target_lost = HunterOnTargetLost::kNearestHostile;
+    // How often it re-reads where its target is and re-paths there. Each
+    // hunter's first is staggered by its net id, so a crowd spreads the work.
+    std::uint32_t repath_ticks = 60;
+};
+
+// What a spawn source asks of the agents it makes (plan D1): authored as a
+// `controller:` block on a spawn_group, a spawner or a world rule, and set to
+// patrol by a squad for its own members. Empty means the template's default
+// controller and no route.
+struct AgentControllerSpec {
+    // kNone keeps the template's default_controller_role.
+    AgentControllerRole role = AgentControllerRole::kNone;
+    // World space. Only a garrison follows one.
+    std::vector<KernelVec3> route;
+    // kHunter only: overrides the template's controllers.hunter when set.
+    bool has_hunter = false;
+    AgentHunterTuning hunter;
+
+    bool empty() const {
+        return role == AgentControllerRole::kNone && route.empty() && !has_hunter;
+    }
+
+};
+
+// One agent a director just made, and what it asked of it. Directors only
+// report these: the runtime applies them once it has discovered the agent.
+struct SpawnedControllerSpec {
+    std::uint32_t net_id = 0;
+    AgentControllerSpec spec;
+    // The agent that spawned it, when one did (a spawner's carrier): whose
+    // target an inherited hunter takes.
+    std::uint32_t source_net_id = 0;
+};
+
+// The most skills one agent may carry (AI plan D13).
+inline constexpr std::size_t kMaxAgentSkills = 8;
+
 struct AgentSentryRuntimeState {
     std::uint32_t self_id = 0;
     AgentSentryState state = AgentSentryState::kIdle;
@@ -77,6 +166,13 @@ struct AgentSentryRuntimeState {
     std::uint32_t patrol_rotation_step = 0;
     std::uint32_t ballistic_retry_ticks = 0;
     std::uint32_t target = 0;
+    // Where the agent's attention is (AI plan D6): the target's feet while it
+    // is in sight, and where it was last seen after. Search walks or turns to
+    // it. Cleared when the engagement ends.
+    bool has_attention_point = false;
+    KernelVec3 attention_point{0.0f, 0.0f, 0.0f};
+    // This alert began with a hit, so it runs alert_on_damage_ticks.
+    bool alerted_by_damage = false;
 };
 
 // The sentry knobs an agent runs on. These are authored per actor template
@@ -87,14 +183,14 @@ struct AgentSentryRuntimeState {
 // template the catalog's `enemy:` entry happens to name.
 struct AgentSentryConfig {
     std::uint32_t alert_ticks = 90;
+    // The alert after being hit (AI plan D6): long enough to turn round, not
+    // the warning alert_ticks gives a target that has not fired yet.
+    std::uint32_t alert_on_damage_ticks = 15;
     std::uint32_t forget_ticks = 150;
     std::uint32_t ballistic_retry_cooldown_ticks = 30;
     std::uint32_t patrol_rotation_interval_ticks = 30;
     float patrol_rotation_min_degrees = 15.0f;
     float patrol_rotation_max_degrees = 30.0f;
-    bool passive_patrol = false;
-    float patrol_extent_x_meters = 0.0f;
-    float patrol_input_magnitude = 0.0f;
     float move_speed_meters_per_second = 0.0f;
     std::uint16_t weapon_id = UINT16_MAX;
     BallisticAimProfile ballistic_aim;
@@ -127,8 +223,8 @@ struct AgentEntryRuntimeState {
     std::uint32_t restore_movement_collision_mask = 0;
 };
 
-// An authored route a passive_patrol sentry walks instead of its x-axis sweep:
-// the waypoints joined by navmesh corners, walked to the end and back.
+// An authored route a garrison walks while idle: the waypoints joined by
+// navmesh corners, walked to the end and back.
 struct AgentRoutePatrolState {
     std::vector<KernelVec3> path;
     std::size_t next = 0;
@@ -141,8 +237,9 @@ struct AgentRuntimeState {
     // Selects which controller and which tuning this agent runs under; agents
     // spawned from different templates share one runtime list.
     std::uint32_t actor_template_id = 0;
+    // Resolved once, when the runtime first discovers the agent.
+    AgentControllerRole controller_role = AgentControllerRole::kNone;
     KernelVec3 position{0.0f, 0.0f, 0.0f};
-    KernelVec3 patrol_anchor{0.0f, 0.0f, 0.0f};
     KernelVec3 velocity{0.0f, 0.0f, 0.0f};
     std::uint16_t hp = kAgentInitialHp;
     std::uint16_t max_hp = kAgentInitialHp;
@@ -159,8 +256,8 @@ struct AgentRuntimeState {
     // Resolved once from this agent's own actor template when the runtime first
     // discovers it; see AgentRuntimeManager::sync_agents_from_kernel.
     AgentSentryConfig sentry_config{};
-    int patrol_direction = 1;
-    // Sentry passive_patrol only; empty for the x-axis sweep.
+    // Garrison only: the route its spawn source gave it, walked whenever it
+    // has nothing to fight. Empty for a garrison that stands its ground.
     AgentRoutePatrolState route_patrol{};
     // Chaser only: true once the agent has closed inside its stop distance and
     // is holding position, until the target opens the gap back up.
@@ -177,6 +274,43 @@ struct AgentRuntimeState {
     std::uint32_t charge_ticks_left = 0;
     KernelVec3 charge_direction{0.0f, 0.0f, 0.0f};
     std::uint32_t charge_cooldown_ticks = 0;
+    // Chaser only (AI plan P4b): the weapon skill it is using, each skill's
+    // cooldown, whether to choose again (after a shot, or once the one in hand
+    // stops being usable), and its own random stream for the weighted choice,
+    // seeded from its net id so a run replays.
+    std::uint8_t weapon_skill = 0;
+    std::array<std::uint32_t, kMaxAgentSkills> skill_cooldown_ticks{};
+    bool choose_weapon = true;
+    std::uint32_t skill_random = 0;
+    // The last action instance it saw start: a new one that is not a reload is
+    // the weapon in hand going off, which is when its cooldown starts and the
+    // next draw is due -- not when the input asking for it was sent, which an
+    // action still recovering ignores.
+    std::uint32_t seen_action_instance_id = 0;
+    // Item skills (AI plan P5): whether its template has any, the inventory
+    // they live in (made the first time they are needed), each skill's item
+    // instance, cooldown and used-once bit, and what on_spawn / on_state_enter
+    // compare against.
+    bool has_item_skills = false;
+    KernelInventoryContainerId item_container = 0;
+    std::array<KernelItemInstanceId, kMaxAgentSkills> item_instances{};
+    std::array<std::uint32_t, kMaxAgentSkills> item_cooldown_ticks{};
+    std::uint32_t items_used_once = 0;
+    bool items_seen_spawn = false;
+    AgentSentryState items_last_state = AgentSentryState::kIdle;
+    std::uint32_t next_item_request = 1;
+    // Hunter only (AI plan P6a): its tuning, its target, and the path the
+    // manager last found towards it, with the ticks until it looks again.
+    AgentHunterTuning hunter{};
+    std::uint32_t hunt_target = 0;
+    std::vector<KernelVec3> seek_path;
+    std::size_t seek_next = 0;
+    std::uint32_t seek_repath_in = 0;
+    // Its vision cone is switched off while nothing hostile is near enough to
+    // see (D11). The cone's range, read once when the agent is discovered; 0
+    // when it has none, which leaves vision alone.
+    bool vision_off = false;
+    float vision_reach_meters = 0.0f;
     AgentPatrolRuntimeState patrol{};
     AgentEntryRuntimeState entry{};
     // Whether the agent was engaged when its controller last ran, so that an

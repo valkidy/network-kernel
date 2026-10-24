@@ -12,16 +12,6 @@
 
 namespace network_example::game_server {
 
-namespace {
-
-// How close a route patroller comes to a corner before taking the next one.
-// Movement follows input direction at once (only the body's facing slews), so
-// this needs no allowance for a turning circle -- just enough that a body
-// which stops short of a point, against a wall or on a slope, still counts.
-constexpr float kRoutePatrolArrivalMeters = 1.0f;
-
-}  // namespace
-
 void AgentSentryController::tick(
     KernelHandle* kernel,
     const PerceptionFrame& frame,
@@ -63,89 +53,6 @@ void AgentSentryController::tick(
         agent.animation_state = 0;
         agent.sentry.self_id = agent.net_id;
 
-        if (config.passive_patrol) {
-            KernelVec2 move{0.0f, 0.0f};
-            AgentRoutePatrolState& route = agent.route_patrol;
-            if (!route.path.empty()) {
-                // An authored route: head for the next corner, and on reaching
-                // it take the one after, turning back at either end.
-                const auto offset_to = [&entity_state](const KernelVec3& point) {
-                    return KernelVec2{
-                        point.x - entity_state.position.x,
-                        point.z - entity_state.position.z,
-                    };
-                };
-                KernelVec2 offset = offset_to(route.path[route.next]);
-                // Bounded by the path length, so a degenerate route of
-                // coincident points cannot spin here.
-                for (std::size_t visited = 0;
-                     visited < route.path.size() &&
-                     offset.x * offset.x + offset.y * offset.y <=
-                         kRoutePatrolArrivalMeters * kRoutePatrolArrivalMeters;
-                     ++visited) {
-                    if (route.path.size() == 1u) {
-                        break;
-                    }
-                    if (route.step > 0 && route.next + 1u >= route.path.size()) {
-                        route.step = -1;
-                    } else if (route.step < 0 && route.next == 0u) {
-                        route.step = 1;
-                    }
-                    route.next = route.step > 0 ? route.next + 1u : route.next - 1u;
-                    offset = offset_to(route.path[route.next]);
-                }
-                const float length =
-                    std::sqrt(offset.x * offset.x + offset.y * offset.y);
-                if (length > kRoutePatrolArrivalMeters) {
-                    move = KernelVec2{
-                        offset.x / length * config.patrol_input_magnitude,
-                        offset.y / length * config.patrol_input_magnitude,
-                    };
-                }
-            } else {
-                if (entity_state.position.x >=
-                    agent.patrol_anchor.x + config.patrol_extent_x_meters) {
-                    agent.patrol_direction = -1;
-                } else if (entity_state.position.x <=
-                           agent.patrol_anchor.x - config.patrol_extent_x_meters) {
-                    agent.patrol_direction = 1;
-                }
-                move = KernelVec2{
-                    static_cast<float>(agent.patrol_direction) *
-                        config.patrol_input_magnitude,
-                    0.0f,
-                };
-            }
-
-            KernelPlayerInput input{};
-            input.input_seq = agent.next_input_seq;
-            input.move = move;
-            // A passive patroller never aims at anything, but its input still
-            // carries an aim: the kernel reads a zero aim_dir as world +X and
-            // replicates it, which would point the sentry east however its cone
-            // was placed. It looks where it looks.
-            input.aim_dir = perception.vision_forward;
-            if (Kernel_ServerSubmitEntityInput(kernel, agent.net_id, &input)) {
-                ++agent.next_input_seq;
-            }
-            agent.velocity = KernelVec3{
-                input.move.x * config.move_speed_meters_per_second,
-                entity_state.velocity.y,
-                input.move.y * config.move_speed_meters_per_second,
-            };
-            agent.sentry.target = 0;
-            agent.target_player_net_id = 0;
-            agent.sentry.state = AgentSentryState::kIdle;
-            agent.animation_state = config.animation_idle;
-            Kernel_ServerEnqueueEntityState(
-                kernel,
-                KernelCommandSource_AI,
-                agent.net_id,
-                agent.animation_state,
-                0);
-            continue;
-        }
-
         KernelQuat desired_rotation = entity_state.rotation;
         bool should_update_rotation = false;
 
@@ -157,12 +64,35 @@ void AgentSentryController::tick(
             }
             agent.sentry.target = perception.target_id;
             agent.sentry.lost_target_ticks = 0;
+            agent.sentry.attention_point = perception.target_position;
+            agent.sentry.has_attention_point = true;
         } else {
             ++agent.sentry.lost_target_ticks;
         }
 
+        // A sentry that saw it again picks up where it left off.
+        if (agent.sentry.state == AgentSentryState::kSearch && has_visible_target) {
+            agent_steering::transition_to(&agent, AgentSentryState::kAttack);
+        }
+
+        // A hit (AI plan D8). Idle or searching, it alerts -- the short alert --
+        // facing where the hit came from; alert already, it turns there; an
+        // attacking sentry keeps the target it has.
+        if (perception.damaged) {
+            const AgentSentryState state = agent.sentry.state;
+            if (state == AgentSentryState::kIdle || state == AgentSentryState::kSearch) {
+                agent_steering::transition_to(&agent, AgentSentryState::kAlert);
+                agent.sentry.alerted_by_damage = true;
+            }
+            if (agent.sentry.state == AgentSentryState::kAlert && !has_visible_target) {
+                agent.sentry.attention_point = perception.damage_source;
+                agent.sentry.has_attention_point = true;
+            }
+        }
+
         if (agent.sentry.state == AgentSentryState::kIdle) {
             if (has_visible_target) {
+                agent.sentry.alerted_by_damage = false;
                 agent_steering::transition_to(&agent, AgentSentryState::kAlert);
             } else {
                 should_update_rotation = agent_steering::update_patrol_facing(
@@ -187,13 +117,29 @@ void AgentSentryController::tick(
                         &desired_rotation) ||
                     should_update_rotation;
                 ++agent.sentry.state_ticks;
-                if (agent.sentry.state_ticks >= config.alert_ticks) {
+                if (agent.sentry.state_ticks >=
+                    (agent.sentry.alerted_by_damage ? config.alert_on_damage_ticks
+                                                    : config.alert_ticks)) {
                     agent_steering::transition_to(
                         &agent, AgentSentryState::kAttack);
                 }
             } else if (agent.sentry.lost_target_ticks >= config.forget_ticks) {
+                // Lost before the alert ran out: no Search, so a target that
+                // ducks in and out of view cannot skip the warning.
                 agent.sentry.target = 0;
+                agent.sentry.has_attention_point = false;
                 agent_steering::transition_to(&agent, AgentSentryState::kIdle);
+            } else if (agent.sentry.has_attention_point) {
+                // Nothing in sight: face where its attention is -- the last
+                // place it saw something, or where a hit came from.
+                should_update_rotation =
+                    agent_steering::facing_rotation_from_vision_toward(
+                        agent.position,
+                        agent.sentry.attention_point,
+                        perception.vision_forward,
+                        entity_state.rotation,
+                        &desired_rotation) ||
+                    should_update_rotation;
             }
         }
 
@@ -228,8 +174,28 @@ void AgentSentryController::tick(
                             config.ballistic_retry_cooldown_ticks;
                     }
                 }
-            } else if (agent.sentry.lost_target_ticks >= config.forget_ticks) {
-                agent_steering::transition_to(&agent, AgentSentryState::kAlert);
+            } else {
+                agent_steering::transition_to(&agent, AgentSentryState::kSearch);
+            }
+        }
+
+        // Rooted, so searching is turning to face where the target was last
+        // seen until it forgets.
+        if (agent.sentry.state == AgentSentryState::kSearch) {
+            if (agent.sentry.lost_target_ticks >= config.forget_ticks ||
+                !agent.sentry.has_attention_point) {
+                agent.sentry.target = 0;
+                agent.sentry.has_attention_point = false;
+                agent_steering::transition_to(&agent, AgentSentryState::kIdle);
+            } else {
+                should_update_rotation =
+                    agent_steering::facing_rotation_from_vision_toward(
+                        agent.position,
+                        agent.sentry.attention_point,
+                        perception.vision_forward,
+                        entity_state.rotation,
+                        &desired_rotation) ||
+                    should_update_rotation;
             }
         }
 

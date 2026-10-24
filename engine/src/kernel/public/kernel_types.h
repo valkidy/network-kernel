@@ -520,6 +520,9 @@
 /* Kernel_ServerSetFallDeathHeight. Additive within ABI 108: check this flag,
  * not the version, before calling it. */
 #define KERNEL_CAPABILITY_SERVER_FALL_DEATH_HEIGHT UINT64_C(0x0008000000000000)
+/* Kernel_ServerQueryDamageRecords. Additive within ABI 109: check this flag,
+ * not the version, before calling it. */
+#define KERNEL_CAPABILITY_SERVER_DAMAGE_RECORDS UINT64_C(0x0010000000000000)
 
 #define KERNEL_SKELETON_RENDER_STATUS_SUCCESS UINT32_C(0)
 #define KERNEL_SKELETON_RENDER_STATUS_INSUFFICIENT_CAPACITY UINT32_C(1)
@@ -3206,6 +3209,21 @@ typedef struct KernelGameMessage {
     uint32_t payload_size;
     uint8_t payload[KERNEL_MAX_GAME_MESSAGE_BYTES];
 } KernelGameMessage;
+
+/* One hit the server applied (Kernel_ServerQueryDamageRecords): what an AI
+ * needs to react to being attacked by something it cannot see. */
+typedef struct KernelDamageRecord {
+    uint32_t struct_size;
+    uint32_t tick;
+    uint32_t victim_net_id;
+    /* Whoever the damage is credited to; 0 when nobody is (an area effect's
+     * or a thrown bottle's blast). */
+    uint32_t attacker_net_id;
+    /* Where it landed, on the victim. */
+    KernelVec3 hit_position;
+    uint16_t damage;
+    uint16_t reserved0;
+} KernelDamageRecord;
 
 typedef struct KernelEvent {
     KernelEventType type;

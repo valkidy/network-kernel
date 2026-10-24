@@ -217,6 +217,67 @@ struct StaggerConfig {
     std::uint32_t immunity_ticks = 0;
 };
 
+// A special attack (AI plan D16, sp_attack_templates/): a movement the kernel
+// runs, joined to a hit. The kinds are a closed list, each one a kernel
+// lockout: a leap lands and swings the agent's own weapon; a charge winds up
+// and runs, carrying a contact weapon of its own. When it may be used -- its
+// distance band and cooldown -- belongs to the skill that names it.
+enum class SpAttackKind : std::uint8_t {
+    kLeap = 0,
+    kCharge = 1,
+};
+
+struct SpAttackTemplateConfig {
+    std::uint32_t sp_attack_template_id = 0;
+    std::string name;
+    SpAttackKind kind = SpAttackKind::kLeap;
+    // kLeap: the flight, and what it swings on the way down (on_landing).
+    AgentLeapTuning leap;
+    std::uint32_t on_landing_weapon_id = 0;
+    // kCharge: the wind-up and the run; weapon_id is its contact weapon.
+    AgentChargeTuning charge;
+};
+
+// One of an agent's skills (AI plan D13, `ai.skills`): something it can use,
+// and when.
+enum class AgentSkillType : std::uint8_t {
+    kWeapon = 0,
+    kSpAttack = 1,
+    // An item the agent uses on itself (AI plan D13, P5): what a passive skill
+    // was going to be, triggered by `when` instead of by a target in reach.
+    kItem = 2,
+};
+
+struct AgentSkillConfig {
+    AgentSkillType type = AgentSkillType::kWeapon;
+    // kWeapon: a weapon id from the template's weapon_slots.
+    std::uint32_t weapon_id = 0;
+    // kSpAttack: an sp_attack template, by name.
+    std::string sp_attack_ref;
+    // when.range_meters, origin to origin. A max of zero is no limit.
+    float range_min_meters = 0.0f;
+    float range_max_meters = 0.0f;
+    std::uint32_t cooldown_ticks = 0;
+    std::uint32_t weight = 1;
+    // kItem: the item template, by name, and its id once resolved.
+    std::string item_ref;
+    std::uint32_t item_template_id = 0;
+    // kItem's `when` (D15), every one given having to hold. Continuous: in a
+    // state, below a share of health, without a status. Events, true only on
+    // the tick they happen: entering a state, spawning, being hit.
+    bool has_when_state = false;
+    AgentSentryState when_state = AgentSentryState::kIdle;
+    bool has_on_state_enter = false;
+    AgentSentryState on_state_enter = AgentSentryState::kIdle;
+    bool on_spawn = false;
+    bool on_damaged = false;
+    float hp_below = 0.0f;
+    std::string missing_status_ref;
+    std::uint32_t missing_status_id = 0;
+    // Used at most once in the agent's life.
+    bool once = false;
+};
+
 struct ActorTemplateConfig {
     std::uint32_t actor_template_id = 0;
     std::string name;
@@ -278,11 +339,22 @@ struct ActorTemplateConfig {
     // half of a chaser comes from `sentry`.
     AgentChaseTuning chaser{};
     AgentPatrolTuning patrol{};
+    AgentGarrisonTuning garrison{};
+    // controllers.hunter (AI plan P6).
+    AgentHunterTuning hunter{};
+    // ai.skills, as authored. Resolved into the weapon, attack range, leap and
+    // charge above once every sp_attack template is known.
+    std::vector<AgentSkillConfig> skills;
     // Authored on the template, run by game_server, never sent to the
     // kernel -- the same shape as the ai.* blocks above.
     SpawnerConfig spawner{};
     KernelAgentVisionConfig vision{};
     std::uint32_t ai_controller_type = KernelAiControllerType_None;
+    // ai.default_controller, or what a legacy ai.controller amounts to:
+    // sentry -> kSentry, chaser -> kGarrison.
+    AgentControllerRole default_controller_role = AgentControllerRole::kNone;
+    // Never moves on its own: exactly the sentries.
+    bool ai_stationary = false;
     std::uint32_t ai_tick_interval = 1;
     AuthoredDirectorKind director_kind = AuthoredDirectorKind::kNone;
     std::uint32_t director_spawn_target_count = 0;
@@ -292,6 +364,9 @@ struct ActorTemplateConfig {
     KernelVec3 director_spawn_position{};
     float director_spawn_radius = 0.0f;
     std::uint32_t director_spawn_seed = 1;
+    // director.spawn.controller (world_rule): a role, and a route as offsets
+    // from each agent's spawn point.
+    AgentControllerSpec director_spawn_controller;
     struct GameRuleNodeConfig {
         std::uint32_t node_id = 0;
         std::string id;
@@ -306,10 +381,9 @@ struct ActorTemplateConfig {
         KernelVec3 spawn_position{};
         float spawn_radius = 0.0f;
         std::uint32_t spawn_seed = 1;
-        // Optional: waypoints a passive_patrol sentry spawned by this node
-        // walks, pathed over the navmesh and ping-ponged. Empty keeps the
-        // template's own x-axis patrol.
-        std::vector<KernelVec3> spawn_patrol_route;
+        // spawn_group.controller: a role and/or a world-space route, which a
+        // garrison walks pathed over the navmesh and ping-ponged.
+        AgentControllerSpec spawn_controller;
         std::vector<std::string> next_refs;
         std::vector<std::uint32_t> next_node_ids;
     };
@@ -604,6 +678,7 @@ struct GameServerGameplayConfig {
     ColliderCatalogConfig colliders;
     std::vector<ActionGraphTemplateConfig> action_graph_templates;
     std::vector<StatusEffectTemplateConfig> status_effect_templates;
+    std::vector<SpAttackTemplateConfig> sp_attack_templates;
     std::vector<ItemTemplateConfig> item_templates;
     std::vector<ProjectileTemplateConfig> projectile_templates;
     std::vector<PropPopulationRuleConfig> prop_population_rules;

@@ -147,7 +147,8 @@ void queued_submit_player_input_drains_before_movement() {
     Kernel_Destroy(kernel);
 }
 
-void queue_capacity_rejects_after_default_capacity() {
+// The floor plus four per networked entity: the one player here adds four.
+void queue_capacity_rejects_after_capacity() {
     KernelConfig config = server_config();
     KernelHandle* kernel = Kernel_Create(&config);
     require(kernel != nullptr);
@@ -157,7 +158,7 @@ void queue_capacity_rejects_after_default_capacity() {
     KernelServerEntityCreateInfo create_info = player_create_info();
     require(Kernel_ServerCreateEntity(kernel, &create_info, &net_id));
 
-    for (std::size_t index = 0; index < 2048; ++index) {
+    for (std::size_t index = 0; index < 2048 + 4; ++index) {
         KernelVec3 velocity{0.0f, 0.0f, 0.0f};
         require(Kernel_ServerEnqueueEntityVelocity(
             kernel,
@@ -191,6 +192,29 @@ void queue_warning_threshold_records_warning_once() {
     require(engine.command_queue_capacity_warning_count_ == 1);
 }
 
+// A 1300-agent world sends an input and a state per agent every tick, plus a
+// transform for the ones turning: about 2650 commands, which the fixed 2048
+// used to cut short. Three per entity all fit now.
+void queue_capacity_grows_with_the_world() {
+    network_example::KernelEngine engine(server_config());
+    engine.reset_runtime_state(KernelMode_DedicatedServer);
+    entt::registry& registry = engine.world_.registry();
+    for (std::size_t index = 0; index < 1300; ++index) {
+        registry.emplace<network_example::NetworkIdentity>(registry.create());
+    }
+    require(engine.simulation_command_capacity() == 2048 + 4 * 1300);
+
+    KernelVec3 velocity{0.0f, 0.0f, 0.0f};
+    for (std::size_t index = 0; index < 3 * 1300; ++index) {
+        require(engine.server_enqueue_entity_velocity(
+            KernelCommandSource_Test,
+            77,
+            velocity));
+    }
+    require(engine.rejected_simulation_command_count_ == 0);
+    require(engine.command_queue_capacity_warning_count_ == 0);
+}
+
 void tick_monitor_records_warning_when_threshold_is_low() {
     network_example::KernelEngine engine(server_config());
     engine.reset_runtime_state(KernelMode_DedicatedServer);
@@ -208,8 +232,9 @@ int main() {
     queued_transform_applies_on_next_tick();
     queued_lifecycle_destroy_applies_on_next_tick();
     queued_submit_player_input_drains_before_movement();
-    queue_capacity_rejects_after_default_capacity();
+    queue_capacity_rejects_after_capacity();
     queue_warning_threshold_records_warning_once();
+    queue_capacity_grows_with_the_world();
     tick_monitor_records_warning_when_threshold_is_low();
     return 0;
 }

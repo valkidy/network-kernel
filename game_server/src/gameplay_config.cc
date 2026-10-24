@@ -151,6 +151,18 @@ void hash_vec3(std::uint64_t* hash, const KernelVec3& value) {
     hash_float(hash, value.z);
 }
 
+void hash_controller_spec(std::uint64_t* hash, const AgentControllerSpec& spec) {
+    hash_scalar(hash, static_cast<std::uint32_t>(spec.role));
+    hash_scalar(hash, spec.has_hunter);
+    hash_scalar(hash, static_cast<std::uint32_t>(spec.hunter.target_source));
+    hash_scalar(hash, static_cast<std::uint32_t>(spec.hunter.on_target_lost));
+    hash_scalar(hash, spec.hunter.repath_ticks);
+    hash_scalar(hash, static_cast<std::uint32_t>(spec.route.size()));
+    for (const KernelVec3& waypoint : spec.route) {
+        hash_vec3(hash, waypoint);
+    }
+}
+
 void hash_vec2(std::uint64_t* hash, const KernelVec2& value) {
     hash_float(hash, value.x);
     hash_float(hash, value.y);
@@ -413,15 +425,16 @@ void hash_actor_template(
     }
     hash_scalar(hash, actor_template.animation_idle);
     hash_scalar(hash, actor_template.animation_chasing);
+    hash_scalar(
+        hash, static_cast<std::uint32_t>(actor_template.default_controller_role));
+    hash_scalar(hash, actor_template.ai_stationary);
     hash_scalar(hash, actor_template.sentry.alert_ticks);
+    hash_scalar(hash, actor_template.sentry.alert_on_damage_ticks);
     hash_scalar(hash, actor_template.sentry.forget_ticks);
     hash_scalar(hash, actor_template.sentry.ballistic_retry_cooldown_ticks);
     hash_scalar(hash, actor_template.sentry.patrol_rotation_interval_ticks);
     hash_float(hash, actor_template.sentry.patrol_rotation_min_degrees);
     hash_float(hash, actor_template.sentry.patrol_rotation_max_degrees);
-    hash_scalar(hash, actor_template.sentry.passive_patrol);
-    hash_float(hash, actor_template.sentry.patrol_extent_x_meters);
-    hash_float(hash, actor_template.sentry.patrol_input_magnitude);
     hash_scalar(hash, actor_template.sentry.weapon_id);
     hash_float(hash, actor_template.chaser.stop_distance_meters);
     hash_float(hash, actor_template.chaser.resume_distance_meters);
@@ -448,6 +461,30 @@ void hash_actor_template(
     hash_float(hash, actor_template.patrol.input_magnitude);
     hash_float(hash, actor_template.patrol.leash_meters);
     hash_float(hash, actor_template.patrol.leash_resume_meters);
+    hash_scalar(hash, static_cast<std::uint32_t>(actor_template.skills.size()));
+    for (const AgentSkillConfig& skill : actor_template.skills) {
+        hash_scalar(hash, static_cast<std::uint32_t>(skill.type));
+        hash_scalar(hash, skill.weapon_id);
+        hash_string(hash, skill.sp_attack_ref);
+        hash_float(hash, skill.range_min_meters);
+        hash_float(hash, skill.range_max_meters);
+        hash_scalar(hash, skill.cooldown_ticks);
+        hash_scalar(hash, skill.weight);
+        hash_string(hash, skill.item_ref);
+        hash_scalar(hash, skill.has_when_state ? 1u + static_cast<std::uint32_t>(skill.when_state) : 0u);
+        hash_scalar(hash, skill.has_on_state_enter
+                              ? 1u + static_cast<std::uint32_t>(skill.on_state_enter) : 0u);
+        hash_scalar(hash, skill.on_spawn);
+        hash_scalar(hash, skill.on_damaged);
+        hash_float(hash, skill.hp_below);
+        hash_string(hash, skill.missing_status_ref);
+        hash_scalar(hash, skill.once);
+    }
+    hash_scalar(hash, static_cast<std::uint32_t>(actor_template.hunter.target_source));
+    hash_scalar(hash, static_cast<std::uint32_t>(actor_template.hunter.on_target_lost));
+    hash_scalar(hash, actor_template.hunter.repath_ticks);
+    hash_float(hash, actor_template.garrison.leash_meters);
+    hash_float(hash, actor_template.garrison.leash_resume_meters);
     hash_scalar(hash, actor_template.spawner.authored ? 1u : 0u);
     hash_scalar(
         hash, static_cast<std::uint32_t>(actor_template.spawner.trigger));
@@ -459,6 +496,7 @@ void hash_actor_template(
     hash_float(hash, actor_template.spawner.radius);
     hash_scalar(hash, actor_template.spawner.count_min);
     hash_scalar(hash, actor_template.spawner.count_max);
+    hash_controller_spec(hash, actor_template.spawner.controller);
     for (const SpawnCompositionEntry& entry : actor_template.spawner.composition) {
         hash_string(hash, entry.entity_template_ref);
         hash_scalar(hash, entry.min_count);
@@ -489,6 +527,7 @@ void hash_actor_template(
     hash_vec3(hash, actor_template.director_spawn_position);
     hash_float(hash, actor_template.director_spawn_radius);
     hash_scalar(hash, actor_template.director_spawn_seed);
+    hash_controller_spec(hash, actor_template.director_spawn_controller);
     for (const ActorTemplateConfig::GameRuleNodeConfig& node :
          actor_template.game_rule_nodes) {
         hash_scalar(hash, node.node_id);
@@ -504,10 +543,7 @@ void hash_actor_template(
         hash_vec3(hash, node.spawn_position);
         hash_float(hash, node.spawn_radius);
         hash_scalar(hash, node.spawn_seed);
-        hash_scalar(hash, node.spawn_patrol_route.size());
-        for (const KernelVec3& waypoint : node.spawn_patrol_route) {
-            hash_vec3(hash, waypoint);
-        }
+        hash_controller_spec(hash, node.spawn_controller);
         for (const std::uint32_t next_node_id : node.next_node_ids) {
             hash_scalar(hash, next_node_id);
         }
@@ -2951,6 +2987,112 @@ StatusEffectTemplateConfig status_effect_template_from_yaml(
     return status;
 }
 
+// One sp_attack template (AI plan D16), from `$id_sp_attack_$name.yaml`.
+SpAttackTemplateConfig sp_attack_template_from_yaml(
+    const YAML::Node& node,
+    const std::string& path,
+    std::uint32_t source_kind) {
+    SpAttackTemplateConfig sp_attack;
+    const auto reject = [&](const YAML::Node& block,
+                            std::initializer_list<const char*> keys) {
+        reject_unknown_keys(
+            block, keys, path, source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+            sp_attack.sp_attack_template_id);
+    };
+    const auto fail = [&](const std::string& what) {
+        throw std::runtime_error("sp_attack template " + what + ": " + path);
+    };
+    if (!node["id"] || !node["name"] || !node["kind"]) {
+        fail("requires id, name and kind");
+    }
+    sp_attack.sp_attack_template_id = node["id"].as<std::uint32_t>();
+    sp_attack.name = node["name"].as<std::string>();
+    const std::string kind = node["kind"].as<std::string>();
+    const std::string stem = std::filesystem::path(path).stem().string();
+    if (stem != std::to_string(sp_attack.sp_attack_template_id) + "_sp_attack_" +
+                    sp_attack.name) {
+        fail("file must be named $id_sp_attack_$name.yaml");
+    }
+    if (kind == "leap") {
+        sp_attack.kind = SpAttackKind::kLeap;
+        reject(node, {"id", "name", "kind", "leap", "on_landing"});
+        const YAML::Node leap = node["leap"];
+        const YAML::Node on_landing = node["on_landing"];
+        if (!leap || !on_landing || !on_landing["weapon"] || !on_landing["lead_ticks"]) {
+            fail("leap requires leap and on_landing {weapon, lead_ticks}");
+        }
+        reject(leap, {"landing_distance_meters", "apex_meters",
+                      "max_horizontal_speed_meters_per_second"});
+        reject(on_landing, {"weapon", "lead_ticks"});
+        if (leap["landing_distance_meters"]) {
+            sp_attack.leap.landing_distance_meters =
+                leap["landing_distance_meters"].as<float>();
+        }
+        if (leap["apex_meters"]) {
+            sp_attack.leap.apex_meters = leap["apex_meters"].as<float>();
+        }
+        if (leap["max_horizontal_speed_meters_per_second"]) {
+            sp_attack.leap.max_horizontal_speed_meters_per_second =
+                leap["max_horizontal_speed_meters_per_second"].as<float>();
+        }
+        sp_attack.on_landing_weapon_id = on_landing["weapon"].as<std::uint32_t>();
+        sp_attack.leap.attack_lead_ticks = on_landing["lead_ticks"].as<std::uint32_t>();
+    } else if (kind == "charge") {
+        sp_attack.kind = SpAttackKind::kCharge;
+        reject(node, {"id", "name", "kind", "windup", "charge", "contact_weapon"});
+        const YAML::Node windup = node["windup"];
+        const YAML::Node charge = node["charge"];
+        if (!windup || !charge || !node["contact_weapon"]) {
+            fail("charge requires windup, charge and contact_weapon");
+        }
+        reject(windup, {"ticks", "animation"});
+        reject(charge, {"speed_meters_per_second", "overshoot_meters"});
+        if (windup["ticks"]) {
+            sp_attack.charge.windup_ticks = windup["ticks"].as<std::uint32_t>();
+        }
+        // A raw animation_state: the template belongs to no actor, so there is
+        // no `idle` or `chasing` for it to name.
+        if (windup["animation"]) {
+            sp_attack.charge.windup_animation = windup["animation"].as<std::uint16_t>();
+            sp_attack.charge.has_windup_animation = true;
+        }
+        if (charge["speed_meters_per_second"]) {
+            sp_attack.charge.speed_meters_per_second =
+                charge["speed_meters_per_second"].as<float>();
+        }
+        if (charge["overshoot_meters"]) {
+            sp_attack.charge.overshoot_meters = charge["overshoot_meters"].as<float>();
+        }
+        const std::uint32_t contact = node["contact_weapon"].as<std::uint32_t>();
+        if (contact > 255u) {
+            fail("contact_weapon must be 0-255");
+        }
+        sp_attack.charge.weapon_id = static_cast<std::uint8_t>(contact);
+    } else {
+        fail("kind is unsupported: " + kind);
+    }
+    return sp_attack;
+}
+
+std::vector<SpAttackTemplateConfig> load_sp_attack_templates_from_source(
+    const GameplayConfigSource& source,
+    const std::string& directory) {
+    std::vector<SpAttackTemplateConfig> sp_attacks;
+    for (const std::string& file : source.list_yaml_files(directory)) {
+        SpAttackTemplateConfig sp_attack = sp_attack_template_from_yaml(
+            source.load_yaml(file), file, source.source_kind());
+        for (const SpAttackTemplateConfig& existing : sp_attacks) {
+            if (existing.sp_attack_template_id == sp_attack.sp_attack_template_id ||
+                existing.name == sp_attack.name) {
+                throw std::runtime_error("duplicate sp_attack id or name: " + file);
+            }
+        }
+        sp_attacks.push_back(std::move(sp_attack));
+    }
+    return sp_attacks;
+}
+
 std::vector<StatusEffectTemplateConfig> load_status_effect_templates_from_source(
     const GameplayConfigSource& source,
     const std::string& directory) {
@@ -3553,6 +3695,7 @@ void apply_catalog_patrol_config(
     GameServerGameplayConfig* config,
     const std::string& path);
 void apply_catalog_world_rule_config(GameServerGameplayConfig* config);
+void resolve_agent_skills(GameServerGameplayConfig* config);
 void apply_catalog_population_budget_config(
     const YAML::Node& document,
     GameServerGameplayConfig* config,
@@ -3567,6 +3710,111 @@ SpawnerConfig spawner_from_yaml(
     const std::string& path,
     std::uint32_t source_kind,
     std::uint32_t template_id);
+
+// target_source / on_target_lost / repath_ticks, wherever a hunter is tuned:
+// a template's controllers.hunter, or a spawn source's controller block.
+void hunter_tuning_from_yaml(
+    const YAML::Node& node,
+    const std::string& where,
+    AgentHunterTuning* hunter) {
+    if (node["target_source"]) {
+        const std::string source = node["target_source"].as<std::string>();
+        if (source == "nearest_hostile") {
+            hunter->target_source = HunterTargetSource::kNearestHostile;
+        } else if (source == "inherited") {
+            hunter->target_source = HunterTargetSource::kInherited;
+        } else {
+            throw std::runtime_error(where + " hunter target_source is unsupported: " + source);
+        }
+    }
+    if (node["on_target_lost"]) {
+        const std::string lost = node["on_target_lost"].as<std::string>();
+        if (lost == "nearest_hostile") {
+            hunter->on_target_lost = HunterOnTargetLost::kNearestHostile;
+        } else if (lost == "garrison") {
+            hunter->on_target_lost = HunterOnTargetLost::kGarrison;
+        } else {
+            throw std::runtime_error(where + " hunter on_target_lost is unsupported: " + lost);
+        }
+    }
+    if (node["repath_ticks"]) {
+        hunter->repath_ticks = node["repath_ticks"].as<std::uint32_t>();
+        if (hunter->repath_ticks == 0u) {
+            throw std::runtime_error(where + " hunter repath_ticks must be positive");
+        }
+    }
+}
+
+// A spawn source's `controller:` block (plan D1): `type` picks the role its
+// agents run as instead of their template's default; `route`, where the
+// source allows one, is waypoints in the source's own frame (world space on a
+// spawn_group, offsets from the spawn point on a world rule). Whether the role suits the
+// template it spawns is checked once every template is known, in
+// validate_gameplay_config.
+AgentControllerSpec controller_spec_from_yaml(
+    const YAML::Node& node,
+    bool allow_route,
+    const std::string& where,
+    const std::string& path,
+    std::uint32_t source_kind,
+    std::uint32_t template_kind,
+    std::uint32_t template_id) {
+    AgentControllerSpec spec;
+    if (!node) {
+        return spec;
+    }
+    if (allow_route) {
+        reject_unknown_keys(
+            node, {"type", "route", "target_source", "on_target_lost", "repath_ticks"},
+            path, source_kind, template_kind, template_id);
+    } else {
+        reject_unknown_keys(
+            node, {"type", "target_source", "on_target_lost", "repath_ticks"},
+            path, source_kind, template_kind, template_id);
+    }
+    if (node["type"]) {
+        const std::string type = node["type"].as<std::string>();
+        if (type == "sentry") {
+            spec.role = AgentControllerRole::kSentry;
+        } else if (type == "garrison") {
+            spec.role = AgentControllerRole::kGarrison;
+        } else if (type == "patrol") {
+            throw std::runtime_error(
+                where + " controller.type patrol: only a patrol template's squad "
+                "makes patrol members");
+        } else if (type == "hunter") {
+            spec.role = AgentControllerRole::kHunter;
+        } else {
+            throw std::runtime_error(
+                where + " controller.type is unsupported: " + type);
+        }
+    }
+    if (node["target_source"] || node["on_target_lost"] || node["repath_ticks"]) {
+        if (spec.role != AgentControllerRole::kHunter) {
+            throw std::runtime_error(
+                where + " controller target_source / on_target_lost / repath_ticks "
+                "need type: hunter");
+        }
+        spec.has_hunter = true;
+        hunter_tuning_from_yaml(node, where + " controller", &spec.hunter);
+    }
+    if (const YAML::Node route = node["route"]) {
+        if (!route.IsSequence() || route.size() < 2u) {
+            throw std::runtime_error(
+                where + " controller.route needs at least two waypoints");
+        }
+        for (const YAML::Node& waypoint : route) {
+            const KernelVec3 point = vec3_from_yaml(waypoint);
+            if (!std::isfinite(point.x) || !std::isfinite(point.y) ||
+                !std::isfinite(point.z)) {
+                throw std::runtime_error(
+                    where + " controller.route has an invalid waypoint");
+            }
+            spec.route.push_back(point);
+        }
+    }
+    return spec;
+}
 std::uint32_t collider_template_id_from_ref(
     const YAML::Node& node,
     const ColliderCatalogConfig& colliders);
@@ -3741,6 +3989,235 @@ bool actor_template_has_weapon(
     return false;
 }
 
+// The `ai:` block's own keys (docs/AI_CONTROLLER_PLAN.md §6.1): the role, and
+// the checks that tie it to locomotion and controllers. perception,
+// locomotion and controllers.patrol are read by the parsers below. An entity
+// that is not an agent may still say `controller: director`; the agent keys
+// that went with `controller:` (sentry / chaser / patrol) are refused with a
+// pointer to what replaced them.
+void ai_role_from_yaml(
+    const YAML::Node& ai,
+    ActorTemplateConfig* actor_template,
+    const std::string& path,
+    std::uint32_t source_kind) {
+    const auto reject = [&](const YAML::Node& node,
+                            std::initializer_list<const char*> keys) {
+        reject_unknown_keys(
+            node,
+            keys,
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+            actor_template->actor_template_id);
+    };
+    const auto fail = [&](const std::string& what) {
+        throw std::runtime_error(
+            "actor template ai " + what + ": " + actor_template->name);
+    };
+    if (ai["controller"] &&
+        ai["controller"].as<std::string>() == "director") {
+        reject(ai, {"controller", "profile", "tick_interval"});
+        actor_template->ai_controller_type = kAiControllerTypeDirector;
+    } else {
+        for (const char* legacy_key : {"controller", "sentry", "chaser", "patrol"}) {
+            if (ai[legacy_key]) {
+                fail(std::string(legacy_key) +
+                     " was replaced (AI plan P1d): controller -> "
+                     "default_controller, sentry -> perception, chaser -> "
+                     "locomotion, patrol -> controllers.patrol");
+            }
+        }
+        reject(ai, {
+            "default_controller",
+            "profile",
+            "tick_interval",
+            "perception",
+            "locomotion",
+            "controllers",
+            "skills",
+        });
+        if (!ai["default_controller"]) {
+            fail("requires default_controller");
+        }
+        const std::string controller = ai["default_controller"].as<std::string>();
+        if (controller == "sentry") {
+            actor_template->default_controller_role = AgentControllerRole::kSentry;
+        } else if (controller == "garrison") {
+            actor_template->default_controller_role = AgentControllerRole::kGarrison;
+        } else if (controller == "patrol") {
+            actor_template->default_controller_role = AgentControllerRole::kPatrol;
+        } else if (controller == "hunter") {
+            actor_template->default_controller_role = AgentControllerRole::kHunter;
+        } else {
+            fail("default_controller is unsupported: " + controller);
+        }
+        const bool sentry =
+            actor_template->default_controller_role == AgentControllerRole::kSentry;
+        actor_template->ai_controller_type =
+            sentry ? KernelAiControllerType_Sentry : KernelAiControllerType_Chaser;
+
+        actor_template->ai_stationary = sentry;
+        if (const YAML::Node locomotion = ai["locomotion"]) {
+            if (locomotion["stationary"]) {
+                actor_template->ai_stationary = locomotion["stationary"].as<bool>();
+            }
+            if (sentry) {
+                for (const auto& entry : locomotion) {
+                    const std::string key = entry.first.as<std::string>();
+                    if (key != "stationary") {
+                        fail("sentry is stationary and takes no locomotion." + key);
+                    }
+                }
+            }
+        }
+        if (actor_template->ai_stationary != sentry) {
+            fail(sentry ? "sentry must be stationary"
+                        : "only a sentry may be stationary");
+        }
+        if (const YAML::Node controllers = ai["controllers"]) {
+            if (sentry) {
+                fail("sentry takes no controllers block");
+            }
+            reject(controllers, {"patrol", "garrison", "hunter"});
+            if (const YAML::Node hunter = controllers["hunter"]) {
+                reject(hunter, {"target_source", "on_target_lost", "repath_ticks"});
+                hunter_tuning_from_yaml(hunter, "actor template " + actor_template->name,
+                                        &actor_template->hunter);
+            }
+            if (const YAML::Node garrison = controllers["garrison"]) {
+                reject(garrison, {"leash_meters", "leash_resume_meters"});
+                if (garrison["leash_meters"]) {
+                    actor_template->garrison.leash_meters =
+                        garrison["leash_meters"].as<float>();
+                }
+                if (garrison["leash_resume_meters"]) {
+                    actor_template->garrison.leash_resume_meters =
+                        garrison["leash_resume_meters"].as<float>();
+                }
+                const AgentGarrisonTuning& leash = actor_template->garrison;
+                if (!std::isfinite(leash.leash_meters) ||
+                    !std::isfinite(leash.leash_resume_meters) ||
+                    leash.leash_meters < 0.0f || leash.leash_resume_meters < 0.0f ||
+                    (leash.leash_meters > 0.0f &&
+                     leash.leash_resume_meters >= leash.leash_meters)) {
+                    fail("controllers.garrison leash must be non-negative with "
+                         "leash_resume_meters below leash_meters");
+                }
+            }
+        }
+    }
+    if (const YAML::Node skills = ai["skills"]) {
+        if (!skills.IsSequence() || skills.size() == 0u ||
+            skills.size() > kMaxAgentSkills) {
+            fail("skills must list 1 to " + std::to_string(kMaxAgentSkills) + " skills");
+        }
+        for (const YAML::Node& node : skills) {
+            reject(node, {"use", "when", "cooldown_ticks", "weight", "once"});
+            const YAML::Node use = node["use"];
+            if (!use || !use["type"] || !use["value"]) {
+                fail("skill requires use: {type, value}");
+            }
+            reject(use, {"type", "value"});
+            AgentSkillConfig skill;
+            const std::string type = use["type"].as<std::string>();
+            if (type == "weapon") {
+                skill.type = AgentSkillType::kWeapon;
+                skill.weapon_id = use["value"].as<std::uint32_t>();
+            } else if (type == "sp_attack") {
+                skill.type = AgentSkillType::kSpAttack;
+                skill.sp_attack_ref = use["value"].as<std::string>();
+            } else if (type == "item") {
+                skill.type = AgentSkillType::kItem;
+                skill.item_ref = use["value"].as<std::string>();
+            } else {
+                fail("skill type is unsupported: " + type);
+            }
+            const auto state_named = [&](const YAML::Node& value) {
+                const std::string name = value.as<std::string>();
+                if (name == "idle") return AgentSentryState::kIdle;
+                if (name == "alert") return AgentSentryState::kAlert;
+                if (name == "chasing") return AgentSentryState::kChasing;
+                if (name == "attack") return AgentSentryState::kAttack;
+                if (name == "search") return AgentSentryState::kSearch;
+                if (name == "return") return AgentSentryState::kReturn;
+                fail("skill when names an unknown state: " + name);
+                return AgentSentryState::kIdle;
+            };
+            if (const YAML::Node when = node["when"]; when &&
+                skill.type == AgentSkillType::kItem) {
+                reject(when, {"state", "on_state_enter", "on_spawn", "on_damaged",
+                              "hp_below", "missing_status"});
+                if (when["state"]) {
+                    skill.has_when_state = true;
+                    skill.when_state = state_named(when["state"]);
+                }
+                if (when["on_state_enter"]) {
+                    skill.has_on_state_enter = true;
+                    skill.on_state_enter = state_named(when["on_state_enter"]);
+                }
+                if (when["on_spawn"]) skill.on_spawn = when["on_spawn"].as<bool>();
+                if (when["on_damaged"]) skill.on_damaged = when["on_damaged"].as<bool>();
+                if (when["hp_below"]) {
+                    skill.hp_below = when["hp_below"].as<float>();
+                    if (!(skill.hp_below > 0.0f && skill.hp_below <= 1.0f)) {
+                        fail("skill when.hp_below must be a share of health in (0, 1]");
+                    }
+                }
+                if (when["missing_status"]) {
+                    skill.missing_status_ref = when["missing_status"].as<std::string>();
+                }
+            } else if (when) {
+                reject(when, {"range_meters"});
+                if (const YAML::Node range = when["range_meters"]) {
+                    reject(range, {"min", "max"});
+                    if (range["min"]) skill.range_min_meters = range["min"].as<float>();
+                    if (range["max"]) skill.range_max_meters = range["max"].as<float>();
+                }
+            }
+            if (node["cooldown_ticks"]) {
+                skill.cooldown_ticks = node["cooldown_ticks"].as<std::uint32_t>();
+            }
+            if (node["weight"]) {
+                skill.weight = node["weight"].as<std::uint32_t>();
+            }
+            if (node["once"]) {
+                skill.once = node["once"].as<bool>();
+            }
+            if (skill.type == AgentSkillType::kItem) {
+                const bool event = skill.has_on_state_enter || skill.on_spawn || skill.on_damaged;
+                const bool any = event || skill.has_when_state || skill.hp_below > 0.0f ||
+                    !skill.missing_status_ref.empty();
+                if (!any) {
+                    fail("item skill " + skill.item_ref + " needs a when: it would be used "
+                         "every tick");
+                }
+                // Only a continuous condition: it holds tick after tick, so
+                // something has to stop it being used on every one of them.
+                if (!event && skill.cooldown_ticks == 0u && !skill.once &&
+                    skill.missing_status_ref.empty()) {
+                    fail("item skill " + skill.item_ref + " holds every tick: give it a "
+                         "cooldown_ticks, once, or a missing_status");
+                }
+            } else if (skill.once) {
+                fail("only an item skill may be once");
+            }
+            if (!std::isfinite(skill.range_min_meters) ||
+                !std::isfinite(skill.range_max_meters) || skill.range_min_meters < 0.0f ||
+                skill.range_max_meters < 0.0f ||
+                (skill.range_max_meters > 0.0f &&
+                 skill.range_max_meters <= skill.range_min_meters) ||
+                skill.weight == 0u) {
+                fail("skill range must be 0 <= min < max (max 0 = no limit) and "
+                     "weight positive");
+            }
+            actor_template->skills.push_back(std::move(skill));
+        }
+    }
+    if (ai["tick_interval"]) {
+        actor_template->ai_tick_interval = ai["tick_interval"].as<std::uint32_t>();
+    }
+}
+
 AgentSentryConfig sentry_config_from_yaml(
     const YAML::Node& node,
     const ActorTemplateConfig& actor_template,
@@ -3754,26 +4231,22 @@ AgentSentryConfig sentry_config_from_yaml(
     sentry.animation_idle = actor_template.animation_idle;
     sentry.animation_attack = actor_template.animation_chasing;
 
-    const YAML::Node sentry_node = node ? node["sentry"] : YAML::Node{};
+    const YAML::Node sentry_node = node ? node["perception"] : YAML::Node{};
     if (sentry_node) {
         if (sentry_node["weapon_id"]) {
             throw std::runtime_error(
-                "actor template sentry weapon_id was replaced by weapon_slot "
+                "actor template ai.perception weapon_id was replaced by weapon_slot "
                 "(an index into weapon_slots): " + actor_template.name);
         }
         reject_unknown_keys(
             sentry_node,
             {
                 "alert_ticks",
+                "alert_on_damage_ticks",
                 "forget_ticks",
                 "ballistic_retry_cooldown_ticks",
-                "patrol_rotation_interval_ticks",
-                "patrol_rotation_min_degrees",
-                "patrol_rotation_max_degrees",
-                "passive_patrol",
-                "patrol_extent_x_meters",
-                "patrol_input_magnitude",
-                "weapon_slot",
+                "idle_rotation_interval_ticks",
+                "idle_rotation_degrees",
                 "animation_idle",
                 "animation_attack",
             },
@@ -3787,45 +4260,33 @@ AgentSentryConfig sentry_config_from_yaml(
         if (sentry_node["forget_ticks"]) {
             sentry.forget_ticks = sentry_node["forget_ticks"].as<std::uint32_t>();
         }
+        if (sentry_node["alert_on_damage_ticks"]) {
+            sentry.alert_on_damage_ticks =
+                sentry_node["alert_on_damage_ticks"].as<std::uint32_t>();
+        }
         if (sentry_node["ballistic_retry_cooldown_ticks"]) {
             sentry.ballistic_retry_cooldown_ticks =
                 sentry_node["ballistic_retry_cooldown_ticks"]
                     .as<std::uint32_t>();
         }
-        if (sentry_node["patrol_rotation_interval_ticks"]) {
+        if (sentry_node["idle_rotation_interval_ticks"]) {
             sentry.patrol_rotation_interval_ticks =
-                sentry_node["patrol_rotation_interval_ticks"].as<std::uint32_t>();
+                sentry_node["idle_rotation_interval_ticks"].as<std::uint32_t>();
         }
-        if (sentry_node["patrol_rotation_min_degrees"]) {
-            sentry.patrol_rotation_min_degrees =
-                sentry_node["patrol_rotation_min_degrees"].as<float>();
-        }
-        if (sentry_node["patrol_rotation_max_degrees"]) {
-            sentry.patrol_rotation_max_degrees =
-                sentry_node["patrol_rotation_max_degrees"].as<float>();
-        }
-        if (sentry_node["passive_patrol"]) {
-            sentry.passive_patrol = sentry_node["passive_patrol"].as<bool>();
-        }
-        if (sentry_node["patrol_extent_x_meters"]) {
-            sentry.patrol_extent_x_meters =
-                sentry_node["patrol_extent_x_meters"].as<float>();
-        }
-        if (sentry_node["patrol_input_magnitude"]) {
-            sentry.patrol_input_magnitude =
-                sentry_node["patrol_input_magnitude"].as<float>();
-        }
-        // The fired weapon is named by slot, not id, so the id is authored once
-        // in weapon_slots. Omitted, it is the active slot's weapon.
-        if (sentry_node["weapon_slot"]) {
-            const int authored_slot = sentry_node["weapon_slot"].as<int>();
-            if (authored_slot < 0 ||
-                authored_slot >= actor_template.weapon_slot_count) {
-                throw std::runtime_error(
-                    "actor template sentry weapon_slot is out of range: " +
-                    actor_template.name);
+        if (const YAML::Node degrees = sentry_node["idle_rotation_degrees"]) {
+            reject_unknown_keys(
+                degrees,
+                {"min", "max"},
+                path,
+                source_kind,
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+                actor_template.actor_template_id);
+            if (degrees["min"]) {
+                sentry.patrol_rotation_min_degrees = degrees["min"].as<float>();
             }
-            sentry.weapon_id = actor_template.weapon_ids[authored_slot];
+            if (degrees["max"]) {
+                sentry.patrol_rotation_max_degrees = degrees["max"].as<float>();
+            }
         }
         if (sentry_node["animation_idle"]) {
             sentry.animation_idle = sentry_animation_from_yaml(
@@ -3849,7 +4310,8 @@ AgentPatrolTuning patrol_tuning_from_yaml(
     const std::string& path,
     std::uint32_t source_kind) {
     AgentPatrolTuning patrol = actor_template.patrol;
-    const YAML::Node patrol_node = node ? node["patrol"] : YAML::Node{};
+    const YAML::Node patrol_node =
+        node && node["controllers"] ? node["controllers"]["patrol"] : YAML::Node{};
     if (!patrol_node) {
         return patrol;
     }
@@ -3888,19 +4350,25 @@ AgentChaseTuning chaser_config_from_yaml(
     const std::string& path,
     std::uint32_t source_kind) {
     AgentChaseTuning chaser = actor_template.chaser;
-    const YAML::Node chaser_node = node ? node["chaser"] : YAML::Node{};
+    const YAML::Node chaser_node = node ? node["locomotion"] : YAML::Node{};
     if (!chaser_node) {
         return chaser;
+    }
+    for (const char* moved : {"attack_range_meters", "leap", "charge"}) {
+        if (chaser_node[moved]) {
+            throw std::runtime_error(
+                std::string("actor template ai.locomotion.") + moved +
+                " moved to ai.skills (AI plan P4): a weapon skill's "
+                "when.range_meters, or an sp_attack skill: " + actor_template.name);
+        }
     }
     reject_unknown_keys(
         chaser_node,
         {
+            "stationary",
             "stop_distance_meters",
             "resume_distance_meters",
             "input_magnitude",
-            "attack_range_meters",
-            "leap",
-            "charge",
         },
         path,
         source_kind,
@@ -3916,109 +4384,6 @@ AgentChaseTuning chaser_config_from_yaml(
     }
     if (chaser_node["input_magnitude"]) {
         chaser.input_magnitude = chaser_node["input_magnitude"].as<float>();
-    }
-    if (chaser_node["attack_range_meters"]) {
-        chaser.attack_range_meters =
-            chaser_node["attack_range_meters"].as<float>();
-    }
-    if (const YAML::Node leap_node = chaser_node["leap"]) {
-        reject_unknown_keys(
-            leap_node,
-            {
-                "min_distance_meters",
-                "max_distance_meters",
-                "landing_distance_meters",
-                "apex_meters",
-                "max_horizontal_speed_meters_per_second",
-                "cooldown_ticks",
-                "attack_lead_ticks",
-            },
-            path,
-            source_kind,
-            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
-            actor_template.actor_template_id);
-        AgentLeapTuning& leap = chaser.leap;
-        if (leap_node["min_distance_meters"]) {
-            leap.min_distance_meters =
-                leap_node["min_distance_meters"].as<float>();
-        }
-        if (leap_node["max_distance_meters"]) {
-            leap.max_distance_meters =
-                leap_node["max_distance_meters"].as<float>();
-        }
-        if (leap_node["landing_distance_meters"]) {
-            leap.landing_distance_meters =
-                leap_node["landing_distance_meters"].as<float>();
-        }
-        if (leap_node["apex_meters"]) {
-            leap.apex_meters = leap_node["apex_meters"].as<float>();
-        }
-        if (leap_node["max_horizontal_speed_meters_per_second"]) {
-            leap.max_horizontal_speed_meters_per_second =
-                leap_node["max_horizontal_speed_meters_per_second"].as<float>();
-        }
-        if (leap_node["cooldown_ticks"]) {
-            leap.cooldown_ticks = leap_node["cooldown_ticks"].as<std::uint32_t>();
-        }
-        if (leap_node["attack_lead_ticks"]) {
-            leap.attack_lead_ticks =
-                leap_node["attack_lead_ticks"].as<std::uint32_t>();
-        }
-    }
-    if (const YAML::Node charge_node = chaser_node["charge"]) {
-        reject_unknown_keys(
-            charge_node,
-            {
-                "min_distance_meters",
-                "max_distance_meters",
-                "windup_ticks",
-                "speed_meters_per_second",
-                "overshoot_meters",
-                "cooldown_ticks",
-                "weapon_id",
-                "windup_animation",
-            },
-            path,
-            source_kind,
-            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
-            actor_template.actor_template_id);
-        AgentChargeTuning& charge = chaser.charge;
-        if (charge_node["min_distance_meters"]) {
-            charge.min_distance_meters =
-                charge_node["min_distance_meters"].as<float>();
-        }
-        if (charge_node["max_distance_meters"]) {
-            charge.max_distance_meters =
-                charge_node["max_distance_meters"].as<float>();
-        }
-        if (charge_node["windup_ticks"]) {
-            charge.windup_ticks = charge_node["windup_ticks"].as<std::uint32_t>();
-        }
-        if (charge_node["speed_meters_per_second"]) {
-            charge.speed_meters_per_second =
-                charge_node["speed_meters_per_second"].as<float>();
-        }
-        if (charge_node["overshoot_meters"]) {
-            charge.overshoot_meters = charge_node["overshoot_meters"].as<float>();
-        }
-        if (charge_node["cooldown_ticks"]) {
-            charge.cooldown_ticks = charge_node["cooldown_ticks"].as<std::uint32_t>();
-        }
-        if (charge_node["weapon_id"]) {
-            const std::uint32_t weapon_id =
-                charge_node["weapon_id"].as<std::uint32_t>();
-            if (weapon_id > 255u) {
-                throw std::runtime_error("chaser charge weapon_id must be 0-255");
-            }
-            charge.weapon_id = static_cast<std::uint8_t>(weapon_id);
-        }
-        if (charge_node["windup_animation"]) {
-            charge.windup_animation = sentry_animation_from_yaml(
-                charge_node["windup_animation"],
-                actor_template,
-                "charge windup_animation");
-            charge.has_windup_animation = true;
-        }
     }
     return chaser;
 }
@@ -4925,45 +5290,16 @@ ActorTemplateConfig actor_template_from_yaml(
                 animations["chasing"].as<std::uint16_t>();
         }
     }
-    if (node["ai"]) {
-        reject_unknown_keys(
-            node["ai"],
-            {
-                "controller",
-                "profile",
-                "tick_interval",
-                "sentry",
-                "chaser",
-                "patrol",
-            },
-            path,
-            source_kind,
-            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
-            actor_template.actor_template_id);
-        if (node["ai"]["controller"]) {
-            const std::string controller =
-                node["ai"]["controller"].as<std::string>();
-            if (controller == "sentry") {
-                actor_template.ai_controller_type = KernelAiControllerType_Sentry;
-            } else if (controller == "chaser") {
-                actor_template.ai_controller_type = KernelAiControllerType_Chaser;
-            } else if (controller == "director") {
-                actor_template.ai_controller_type = kAiControllerTypeDirector;
-            } else {
-                throw std::runtime_error("unsupported ai.controller: " + controller);
-            }
-        }
-        if (node["ai"]["tick_interval"]) {
-            actor_template.ai_tick_interval =
-                node["ai"]["tick_interval"].as<std::uint32_t>();
-        }
+    const YAML::Node ai = node["ai"];
+    if (ai) {
+        ai_role_from_yaml(ai, &actor_template, path, source_kind);
     }
     actor_template.sentry =
-        sentry_config_from_yaml(node["ai"], actor_template, weapons, path, source_kind);
+        sentry_config_from_yaml(ai, actor_template, weapons, path, source_kind);
     actor_template.chaser =
-        chaser_config_from_yaml(node["ai"], actor_template, path, source_kind);
+        chaser_config_from_yaml(ai, actor_template, path, source_kind);
     actor_template.patrol =
-        patrol_tuning_from_yaml(node["ai"], actor_template, path, source_kind);
+        patrol_tuning_from_yaml(ai, actor_template, path, source_kind);
     actor_template.vision = vision_config_from_yaml(
         node["vision"],
         actor_template,
@@ -6146,7 +6482,7 @@ EntityTemplateConfig entity_template_from_yaml(
                 reject_unknown_keys(
                     effect,
                     {"type", "group", "count", "entity_template", "position", "radius", "seed",
-                     "patrol_route"},
+                     "controller", "patrol_route"},
                     path,
                     source_kind,
                     KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_GAME_RULE,
@@ -6171,21 +6507,18 @@ EntityTemplateConfig entity_template_from_yaml(
                 node_config.spawn_seed =
                     effect["seed"] ? effect["seed"].as<std::uint32_t>() : 1u;
                 if (effect["patrol_route"]) {
-                    const YAML::Node route = effect["patrol_route"];
-                    if (!route.IsSequence() || route.size() < 2u) {
-                        throw std::runtime_error(
-                            "game_rule spawn_group patrol_route needs at least two waypoints");
-                    }
-                    for (const YAML::Node& waypoint : route) {
-                        const KernelVec3 point = vec3_from_yaml(waypoint);
-                        if (!std::isfinite(point.x) || !std::isfinite(point.y) ||
-                            !std::isfinite(point.z)) {
-                            throw std::runtime_error(
-                                "invalid game_rule spawn_group patrol_route waypoint");
-                        }
-                        node_config.spawn_patrol_route.push_back(point);
-                    }
+                    throw std::runtime_error(
+                        "game_rule spawn_group patrol_route moved to "
+                        "controller.route: " + entity_template.name);
                 }
+                node_config.spawn_controller = controller_spec_from_yaml(
+                    effect["controller"],
+                    true,
+                    "game_rule spawn_group",
+                    path,
+                    source_kind,
+                    KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_GAME_RULE,
+                    entity_template.actor_template_id);
                 if (node_config.spawn_count == 0u ||
                     node_config.spawn_entity_template_ref.empty() ||
                     !std::isfinite(node_config.spawn_position.x) ||
@@ -6272,6 +6605,7 @@ EntityTemplateConfig entity_template_from_yaml(
             "radius",
             "seed",
             "position",
+            "controller",
         },
         path,
         source_kind,
@@ -6292,6 +6626,14 @@ EntityTemplateConfig entity_template_from_yaml(
     if (spawn["position"]) {
         entity_template.director_spawn_position = vec3_from_yaml(spawn["position"]);
     }
+    entity_template.director_spawn_controller = controller_spec_from_yaml(
+        spawn["controller"],
+        true,
+        "world_rule director.spawn",
+        path,
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+        entity_template.actor_template_id);
     return entity_template;
 }
 
@@ -9527,6 +9869,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             "action_template_dir",
             "action_graph_template_dir",
             "status_effect_template_dir",
+            "sp_attack_template_dir",
             "reload_action_template",
             "weapon_template_dir",
             "projectile_template_dir",
@@ -9797,6 +10140,11 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     resolve_inventory_item_template_references(
         config.item_templates, &config.entity_templates);
     resolve_weapon_item_templates(config.weapons, &config.item_templates);
+    if (document["sp_attack_template_dir"]) {
+        config.sp_attack_templates = load_sp_attack_templates_from_source(
+            source, source.resolve_path(base_path, document["sp_attack_template_dir"]));
+    }
+    resolve_agent_skills(&config);
     config.actor_templates =
         actor_templates_from_entity_templates(config.entity_templates);
 
@@ -9816,6 +10164,200 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     }
     config.weapons.catalog_hash = compute_gameplay_catalog_hash(config);
     return config;
+}
+
+// ai.skills resolved against the loadout and the sp_attack templates (AI plan
+// P4), into the fields the controllers read: the weapon a sentry fires, the
+// leap and the charge. A chaser draws between its weapon skills at runtime
+// (P4b); a sentry, which has nothing to draw by, carries exactly one with no
+// range. At most one leap and one charge, and the leap swings one of the
+// agent's own weapons. sentry.weapon_id is the first weapon skill, and
+// chase.attack_range_meters the reach from the stop distance -- what the
+// existing hold-band check needs.
+void resolve_agent_skills(GameServerGameplayConfig* config) {
+    for (EntityTemplateConfig& agent : config->entity_templates) {
+        const auto fail = [&](const std::string& what) {
+            throw std::runtime_error("actor template ai.skills " + what + ": " + agent.name);
+        };
+        if (agent.default_controller_role == AgentControllerRole::kNone) {
+            if (!agent.skills.empty()) {
+                fail("on a template with no agent ai");
+            }
+            continue;
+        }
+        if (agent.skills.empty()) {
+            fail("are required (AI plan P4)");
+        }
+        const bool sentry = agent.default_controller_role == AgentControllerRole::kSentry;
+        const AgentSkillConfig* weapon = nullptr;
+        std::vector<std::uint32_t> weapon_ids;
+        bool leap = false;
+        bool charge = false;
+        AgentLeapTuning leap_tuning = agent.chaser.leap;
+        AgentChargeTuning charge_tuning = agent.chaser.charge;
+        std::uint32_t leap_weapon_id = 0;
+        for (AgentSkillConfig& skill : agent.skills) {
+            if (skill.type == AgentSkillType::kItem) {
+                const auto item = std::find_if(
+                    config->item_templates.begin(), config->item_templates.end(),
+                    [&](const ItemTemplateConfig& candidate) {
+                        return candidate.name == skill.item_ref;
+                    });
+                if (item == config->item_templates.end()) {
+                    fail("name an unknown item: " + skill.item_ref);
+                }
+                if ((item->definition.capability_flags & KernelItemCapability_Consumable) == 0u ||
+                    item->definition.is_weapon != 0u) {
+                    fail("name item " + skill.item_ref + ", which cannot be used: it is not "
+                         "consumable, or it is a weapon");
+                }
+                skill.item_template_id = item->definition.item_template_id;
+                if (!skill.missing_status_ref.empty()) {
+                    const auto status = std::find_if(
+                        config->status_effect_templates.begin(),
+                        config->status_effect_templates.end(),
+                        [&](const StatusEffectTemplateConfig& candidate) {
+                            return candidate.name == skill.missing_status_ref;
+                        });
+                    if (status == config->status_effect_templates.end()) {
+                        fail("name an unknown status: " + skill.missing_status_ref);
+                    }
+                    skill.missing_status_id = status->status_effect_id;
+                }
+                continue;
+            }
+            if (skill.type == AgentSkillType::kWeapon) {
+                if (weapon != nullptr && sentry) {
+                    fail("give a sentry more than one weapon: it has nothing to choose by");
+                }
+                if (weapon == nullptr) {
+                    weapon = &skill;
+                }
+                weapon_ids.push_back(skill.weapon_id);
+                if (skill.weapon_id > UINT8_MAX ||
+                    !actor_template_has_weapon(agent, static_cast<std::uint8_t>(skill.weapon_id))) {
+                    fail("name weapon " + std::to_string(skill.weapon_id) +
+                         ", which is not in weapon_slots");
+                }
+                if (sentry && (skill.range_min_meters > 0.0f || skill.range_max_meters > 0.0f ||
+                               skill.cooldown_ticks != 0u)) {
+                    fail("give a sentry's weapon a range or cooldown: a sentry fires at "
+                         "whatever it sees");
+                }
+                continue;
+            }
+            if (sentry) {
+                fail("give a sentry an sp_attack: it does not move");
+            }
+            const auto found = std::find_if(
+                config->sp_attack_templates.begin(), config->sp_attack_templates.end(),
+                [&](const SpAttackTemplateConfig& candidate) {
+                    return candidate.name == skill.sp_attack_ref;
+                });
+            if (found == config->sp_attack_templates.end()) {
+                fail("name an unknown sp_attack: " + skill.sp_attack_ref);
+            }
+            if (!(skill.range_max_meters > 0.0f)) {
+                fail("give sp_attack " + skill.sp_attack_ref + " no range: it needs a band");
+            }
+            if (found->kind == SpAttackKind::kLeap) {
+                if (leap) fail("name more than one leap");
+                leap = true;
+                leap_tuning = found->leap;
+                leap_tuning.min_distance_meters = skill.range_min_meters;
+                leap_tuning.max_distance_meters = skill.range_max_meters;
+                leap_tuning.cooldown_ticks = skill.cooldown_ticks;
+                leap_tuning.on_landing_weapon_id = found->on_landing_weapon_id;
+                leap_weapon_id = found->on_landing_weapon_id;
+            } else {
+                if (charge) fail("name more than one charge");
+                charge = true;
+                charge_tuning = found->charge;
+                charge_tuning.min_distance_meters = skill.range_min_meters;
+                charge_tuning.max_distance_meters = skill.range_max_meters;
+                charge_tuning.cooldown_ticks = skill.cooldown_ticks;
+                if (!config->weapons.configured[charge_tuning.weapon_id]) {
+                    fail("charge " + skill.sp_attack_ref + " has an unknown contact_weapon");
+                }
+            }
+        }
+        if (weapon == nullptr) {
+            fail("need a weapon");
+        }
+        // The swing that lands with a leap is one of the agent's own weapons.
+        if (leap && std::find(weapon_ids.begin(), weapon_ids.end(), leap_weapon_id) ==
+                        weapon_ids.end()) {
+            fail("leap on_landing.weapon must be one of the agent's weapon skills");
+        }
+        // ...and it commits on the landing tick: the swing starts the tick
+        // after the controller asks for it, so the ask leads the landing by
+        // the swing's commit offset plus one (gingerbread_leap_test).
+        if (leap && leap_weapon_id <= UINT8_MAX &&
+            config->weapons.configured[leap_weapon_id]) {
+            const std::uint32_t fire_action =
+                config->weapons.definitions[leap_weapon_id].fire_action_template_id;
+            for (const ActionTemplateConfig& action : config->action_templates) {
+                if (action.definition.action_template_id == fire_action &&
+                    leap_tuning.attack_lead_ticks !=
+                        action.definition.commit_offset_ticks + 1u) {
+                    fail("leap on_landing.lead_ticks (" +
+                         std::to_string(leap_tuning.attack_lead_ticks) +
+                         ") must be the swing's commit_offset_ticks plus one (" +
+                         std::to_string(action.definition.commit_offset_ticks + 1u) +
+                         ") so it commits on the landing tick");
+                }
+            }
+        }
+        // Nothing starts on a target the agent cannot see: a band that begins
+        // past its vision cone is never used, and a leap or charge only
+        // starts on a target in sight, so one reaching past the cone has a
+        // dead stretch.
+        float vision_reach = 0.0f;
+        for (const ColliderTemplateConfig& collider : config->colliders.templates) {
+            if (collider.definition.template_id == agent.vision.vision_collider_template_id) {
+                vision_reach = collider.definition.shape_params.x;
+            }
+        }
+        if (!sentry && vision_reach > 0.0f) {
+            for (const AgentSkillConfig& skill : agent.skills) {
+                if (skill.type == AgentSkillType::kItem) continue;
+                if (skill.range_min_meters >= vision_reach) {
+                    fail("give a skill a band starting at " +
+                         std::to_string(skill.range_min_meters) + " m, past its " +
+                         std::to_string(vision_reach) + " m vision: it is never in sight");
+                }
+                if (skill.type == AgentSkillType::kSpAttack &&
+                    skill.range_max_meters > vision_reach) {
+                    fail("let sp_attack " + skill.sp_attack_ref + " reach " +
+                         std::to_string(skill.range_max_meters) + " m, past its " +
+                         std::to_string(vision_reach) + " m vision: it only starts on a "
+                         "target it sees");
+                }
+            }
+        }
+        // A chaser closes to its stop distance and holds; something has to
+        // reach from there, or it parks in front of a target it cannot hit.
+        float reach = -1.0f;
+        if (!sentry) {
+            for (const AgentSkillConfig& skill : agent.skills) {
+                if (skill.type != AgentSkillType::kWeapon ||
+                    skill.range_min_meters > agent.chaser.stop_distance_meters) {
+                    continue;
+                }
+                reach = skill.range_max_meters <= 0.0f || reach == 0.0f
+                    ? 0.0f
+                    : std::max(reach, skill.range_max_meters);
+            }
+            if (reach < 0.0f) {
+                fail("leave nothing that reaches from the stop distance (" +
+                     std::to_string(agent.chaser.stop_distance_meters) + " m)");
+            }
+        }
+        agent.sentry.weapon_id = static_cast<std::uint16_t>(weapon->weapon_id);
+        agent.chaser.attack_range_meters = sentry ? 0.0f : reach;
+        agent.chaser.leap = leap_tuning;
+        agent.chaser.charge = charge_tuning;
+    }
 }
 
 void apply_default_non_weapon_config(GameServerGameplayConfig* config) {
@@ -10012,12 +10554,21 @@ SpawnerConfig spawner_from_yaml(
             "count",
             "composition",
             "entry",
+            "controller",
         },
         path,
         source_kind,
         KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
         template_id);
     spawner.authored = true;
+    spawner.controller = controller_spec_from_yaml(
+        node["controller"],
+        false,
+        "spawner",
+        path,
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+        template_id);
     if (node["trigger"]) {
         const std::string trigger = node["trigger"].as<std::string>();
         if (trigger == "interval") {
@@ -10415,7 +10966,7 @@ void apply_catalog_world_rule_config(GameServerGameplayConfig* config) {
                 node.spawn.position = authored_node.spawn_position;
                 node.spawn.radius = authored_node.spawn_radius;
                 node.spawn.seed = authored_node.spawn_seed;
-                node.spawn.patrol_route = authored_node.spawn_patrol_route;
+                node.spawn.controller = authored_node.spawn_controller;
                 game_rule.nodes.push_back(std::move(node));
             }
             config->game_rules.push_back(std::move(game_rule));
@@ -10434,6 +10985,7 @@ void apply_catalog_world_rule_config(GameServerGameplayConfig* config) {
             entity_template->director_spawn_actor_template_id;
         rule.position = entity_template->director_spawn_position;
         rule.radius = entity_template->director_spawn_radius;
+        rule.controller = entity_template->director_spawn_controller;
         config->world_rule_spawns.push_back(std::move(rule));
     }
 }
@@ -11338,9 +11890,83 @@ void validate_derived_projectiles(
     }
 }
 
+// Whether a spawn source's controller suits the template it spawns (plan
+// D1, §6.4). A sentry is for a stationary template, garrison and patrol for
+// one that moves; only a garrison walks a route, so a route on anything else
+// would be dropped silently.
+void validate_controller_spec(
+    const GameServerGameplayConfig& config,
+    const AgentControllerSpec& spec,
+    std::uint32_t template_id,
+    const std::string& where,
+    std::vector<std::string>* errors) {
+    if (spec.empty()) {
+        return;
+    }
+    const ActorTemplateConfig* actor_template =
+        find_actor_template(config, template_id);
+    if (actor_template == nullptr ||
+        actor_template->default_controller_role == AgentControllerRole::kNone) {
+        errors->push_back(where + " controller names a template with no ai");
+        return;
+    }
+    const AgentControllerRole role = spec.role == AgentControllerRole::kNone
+        ? actor_template->default_controller_role
+        : spec.role;
+    const bool sentry_template =
+        actor_template->default_controller_role == AgentControllerRole::kSentry;
+    if (role == AgentControllerRole::kSentry && !sentry_template) {
+        errors->push_back(
+            where + " controller sentry on a template that moves: " +
+            actor_template->name);
+    }
+    if (role != AgentControllerRole::kSentry && sentry_template) {
+        errors->push_back(
+            where + " controller " +
+            (role == AgentControllerRole::kPatrol   ? "patrol"
+             : role == AgentControllerRole::kHunter ? "hunter"
+                                                    : "garrison") +
+            " on a sentry template: " + actor_template->name);
+    }
+    if (!spec.route.empty() && role != AgentControllerRole::kGarrison) {
+        errors->push_back(
+            where + " controller.route needs a garrison: " + actor_template->name);
+    }
+}
+
 std::vector<std::string> validate_gameplay_config(
     const GameServerGameplayConfig& config) {
     std::vector<std::string> errors;
+    for (const GameRuleConfig& rule : config.game_rules) {
+        for (const GameRuleNodeConfig& node : rule.nodes) {
+            validate_controller_spec(
+                config, node.spawn.controller, node.spawn.entity_template_id,
+                "game_rule " + rule.name + " spawn_group", &errors);
+        }
+    }
+    for (const WorldRuleSpawnConfig& rule : config.world_rule_spawns) {
+        validate_controller_spec(
+            config, rule.controller,
+            rule.spawn_entity_template_id != 0u ? rule.spawn_entity_template_id
+                                                : rule.spawn_actor_template_id,
+            "world_rule " + rule.name, &errors);
+    }
+    for (const SpawnerCarrierConfig& carrier : config.spawner_carriers) {
+        for (const SpawnCompositionEntry& entry : carrier.spawner.composition) {
+            validate_controller_spec(
+                config, carrier.spawner.controller, entry.entity_template_id,
+                "spawner on " + carrier.name, &errors);
+        }
+    }
+    // A squad makes every member patrol; the definition names no controller.
+    const AgentControllerSpec patrol_member{AgentControllerRole::kPatrol, {}};
+    for (const PatrolDefinitionConfig& patrol : config.patrols) {
+        for (const SpawnCompositionEntry& entry : patrol.composition) {
+            validate_controller_spec(
+                config, patrol_member, entry.entity_template_id,
+                "patrol " + patrol.name, &errors);
+        }
+    }
     std::vector<std::uint32_t> prop_population_rule_ids;
     std::vector<std::string> prop_population_rule_names;
     for (const PropPopulationRuleConfig& rule :
@@ -11765,19 +12391,7 @@ std::vector<std::string> validate_gameplay_config(
              actor_template.sentry.patrol_rotation_interval_ticks == 0 ||
              actor_template.sentry.patrol_rotation_min_degrees <= 0.0f ||
              actor_template.sentry.patrol_rotation_max_degrees <
-                 actor_template.sentry.patrol_rotation_min_degrees ||
-             !std::isfinite(actor_template.sentry.patrol_extent_x_meters) ||
-             !std::isfinite(actor_template.sentry.patrol_input_magnitude) ||
-             (actor_template.sentry.passive_patrol &&
-              (actor_template.sentry.patrol_extent_x_meters <= 0.0f ||
-               actor_template.sentry.patrol_input_magnitude <= 0.0f ||
-               actor_template.sentry.patrol_input_magnitude > 1.0f ||
-               !std::isfinite(
-                   actor_template.sentry.move_speed_meters_per_second) ||
-               actor_template.sentry.move_speed_meters_per_second <= 0.0f)) ||
-             (!actor_template.sentry.passive_patrol &&
-              (actor_template.sentry.patrol_extent_x_meters != 0.0f ||
-               actor_template.sentry.patrol_input_magnitude != 0.0f)))) {
+                 actor_template.sentry.patrol_rotation_min_degrees)) {
             errors.push_back("agent sentry actor template must be valid");
         }
         if (actor_template.actor_type == kActorTypeAgent &&
@@ -11803,7 +12417,6 @@ std::vector<std::string> validate_gameplay_config(
              (actor_template.chaser.attack_range_meters > 0.0f &&
               actor_template.chaser.resume_distance_meters >
                   actor_template.chaser.attack_range_meters) ||
-             actor_template.sentry.passive_patrol ||
              !std::isfinite(actor_template.sentry.move_speed_meters_per_second) ||
              actor_template.sentry.move_speed_meters_per_second <= 0.0f)) {
             errors.push_back("agent chaser actor template must be valid");

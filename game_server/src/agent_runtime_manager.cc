@@ -21,31 +21,40 @@ constexpr std::size_t kMaxQueriedActors = 65536;
 // out" and "close enough to stop" cannot drift apart.
 constexpr float kEntryArrivalMeters = kSpawnerEntryArrivalMeters;
 
-// Resolved from the agent's OWN actor template, not from the catalog's single
-// `enemy:` entry. Holding one controller-wide config meant an agent spawned by a
-// game-rule wave silently ran whichever template `enemy:` named -- a
-// passive_patrol walker spawned alongside a stationary artillery sentry never
-// patrolled, because the shared config came from the sentry.
-AgentSentryConfig agent_sentry_config(
-    const GameServerGameplayConfig& config,
-    std::uint32_t actor_template_id) {
-    const ActorTemplateConfig* actor_template =
-        find_actor_template(config, actor_template_id);
-    if (actor_template == nullptr) {
-        return AgentSentryConfig{};
-    }
+void take_controllers(
+    std::vector<SpawnedControllerSpec> taken,
+    std::vector<SpawnedControllerSpec>* pending) {
+    pending->insert(
+        pending->end(),
+        std::make_move_iterator(taken.begin()),
+        std::make_move_iterator(taken.end()));
+}
 
-    AgentSentryConfig sentry = actor_template->sentry;
-    sentry.charge_ticks = weapon_charge_ticks(config, sentry.weapon_id);
-    if (sentry.weapon_id > UINT8_MAX) {
-        return sentry;
+// Garrison and patrol are both the chaser; everything else, including an agent
+// whose template has no ai block, is the sentry, as it always was.
+bool runs_chaser(AgentControllerRole role) {
+    return role == AgentControllerRole::kGarrison ||
+           role == AgentControllerRole::kPatrol ||
+           role == AgentControllerRole::kHunter;
+}
+
+// How to fire one weapon: its own ballistic aim when its projectile arcs, and
+// its own charge time when its fire action charges.
+ActorIntentExecutorConfig weapon_executor_config(
+    const GameServerGameplayConfig& config,
+    std::uint16_t weapon_id) {
+    ActorIntentExecutorConfig executor;
+    executor.weapon_id = weapon_id;
+    executor.charge_ticks = weapon_charge_ticks(config, weapon_id);
+    if (weapon_id > UINT8_MAX) {
+        return executor;
     }
-    const auto weapon_id = static_cast<std::uint8_t>(sentry.weapon_id);
-    if (!config.weapons.configured[weapon_id]) {
-        return sentry;
+    const auto weapon = static_cast<std::uint8_t>(weapon_id);
+    if (!config.weapons.configured[weapon]) {
+        return executor;
     }
     const std::uint32_t projectile_template_id =
-        config.weapons.definitions[weapon_id].projectile_template_id;
+        config.weapons.definitions[weapon].projectile_template_id;
     const auto projectile = std::find_if(
         config.projectile_templates.begin(),
         config.projectile_templates.end(),
@@ -56,14 +65,34 @@ AgentSentryConfig agent_sentry_config(
     if (projectile == config.projectile_templates.end() ||
         projectile->definition.mechanics.motion_model !=
             KernelProjectileMotionModel_Parabolic) {
-        return sentry;
+        return executor;
     }
-
-    sentry.ballistic_aim.enabled = true;
-    sentry.ballistic_aim.speed = projectile->definition.mechanics.speed;
-    sentry.ballistic_aim.gravity = projectile->definition.mechanics.gravity;
-    sentry.ballistic_aim.lifetime_ticks =
+    executor.ballistic_aim.enabled = true;
+    executor.ballistic_aim.speed = projectile->definition.mechanics.speed;
+    executor.ballistic_aim.gravity = projectile->definition.mechanics.gravity;
+    executor.ballistic_aim.lifetime_ticks =
         projectile->definition.mechanics.lifetime_ticks;
+    return executor;
+}
+
+// Resolved from the agent's OWN actor template, not from the catalog's single
+// `enemy:` entry. Holding one controller-wide config meant an agent spawned by a
+// game-rule wave silently ran whichever template `enemy:` named -- a
+// walker spawned alongside a stationary artillery sentry never walked, because
+// the shared config came from the sentry.
+AgentSentryConfig agent_sentry_config(
+    const GameServerGameplayConfig& config,
+    std::uint32_t actor_template_id) {
+    const ActorTemplateConfig* actor_template =
+        find_actor_template(config, actor_template_id);
+    if (actor_template == nullptr) {
+        return AgentSentryConfig{};
+    }
+    AgentSentryConfig sentry = actor_template->sentry;
+    const ActorIntentExecutorConfig executor =
+        weapon_executor_config(config, sentry.weapon_id);
+    sentry.charge_ticks = executor.charge_ticks;
+    sentry.ballistic_aim = executor.ballistic_aim;
     return sentry;
 }
 
@@ -134,40 +163,68 @@ void AgentRuntimeManager::build_controllers() {
         if (actor_template.actor_type != kActorTypeAgent) {
             continue;
         }
+        controllers_.push_back(
+            make_binding(actor_template, actor_template.default_controller_role));
+    }
+}
+
+AgentRuntimeManager::AgentControllerBinding AgentRuntimeManager::make_binding(
+    const ActorTemplateConfig& actor_template,
+    AgentControllerRole role) const {
+    {
         AgentControllerBinding binding;
         binding.actor_template_id = actor_template.actor_template_id;
-        binding.ai_controller_type = actor_template.ai_controller_type;
+        binding.role = role;
         // Only the chaser carries tuning here; the sentry controller is
         // stateless and reads each agent's own AgentRuntimeState::sentry_config,
         // so a binding exists purely to route agents to the right controller.
-        if (actor_template.ai_controller_type ==
-            KernelAiControllerType_Chaser) {
+        if (runs_chaser(binding.role)) {
             AgentChaserConfig chaser;
             chaser.sentry =
                 agent_sentry_config(config_, actor_template.actor_template_id);
             chaser.chase = actor_template.chaser;
             chaser.patrol = actor_template.patrol;
+            chaser.garrison = actor_template.garrison;
+            for (const AgentSkillConfig& skill : actor_template.skills) {
+                if (skill.type != AgentSkillType::kWeapon) {
+                    continue;
+                }
+                AgentWeaponSkill weapon;
+                weapon.executor = weapon_executor_config(
+                    config_, static_cast<std::uint16_t>(skill.weapon_id));
+                weapon.range_min_meters = skill.range_min_meters;
+                weapon.range_max_meters = skill.range_max_meters;
+                weapon.cooldown_ticks = skill.cooldown_ticks;
+                weapon.weight = skill.weight;
+                chaser.weapon_skills.push_back(weapon);
+            }
             chaser.gravity_y = actor_template.movement_gravity.y;
             binding.chaser = AgentChaserController(chaser);
         }
-        controllers_.push_back(std::move(binding));
+        return binding;
     }
-
 }
 
 AgentRuntimeManager::AgentControllerBinding* AgentRuntimeManager::binding_for(
-    std::uint32_t actor_template_id) {
+    std::uint32_t actor_template_id,
+    AgentControllerRole role) {
     for (AgentControllerBinding& binding : controllers_) {
-        if (binding.actor_template_id == actor_template_id) {
+        if (binding.actor_template_id == actor_template_id &&
+            binding.role == role) {
             return &binding;
         }
     }
-    // No fallback. build_controllers makes a binding for every agent actor
-    // template in the catalog, so an agent with no binding was spawned from a
-    // template the catalog does not have -- which the kernel would have
-    // refused. The fallback that used to sit here was chosen by the `enemy:`
-    // block and could never be reached.
-    return nullptr;
+    // build_controllers made one per template for its default role; a spawn
+    // source that chose another role (a squad's patrol) gets its binding the
+    // first time one of its agents is ticked. A template the catalog does not
+    // have still gets none -- the kernel would have refused to spawn it.
+    const ActorTemplateConfig* actor_template =
+        find_actor_template(config_, actor_template_id);
+    if (actor_template == nullptr) {
+        return nullptr;
+    }
+    controllers_.push_back(make_binding(*actor_template, role));
+    return &controllers_.back();
 }
 
 void AgentRuntimeManager::dispatch_controllers(
@@ -185,7 +242,8 @@ void AgentRuntimeManager::dispatch_controllers(
             // unit back into the building it is halfway out of.
             continue;
         }
-        AgentControllerBinding* binding = binding_for(agent.actor_template_id);
+        AgentControllerBinding* binding =
+            binding_for(agent.actor_template_id, agent.controller_role);
         if (binding == nullptr) {
             continue;
         }
@@ -195,7 +253,7 @@ void AgentRuntimeManager::dispatch_controllers(
         if (binding.batch.empty()) {
             continue;
         }
-        if (binding.ai_controller_type == KernelAiControllerType_Chaser) {
+        if (runs_chaser(binding.role)) {
             binding.chaser.tick(
                 kernel_, perception_frame_, binding.batch, delta_seconds);
         } else {
@@ -296,23 +354,323 @@ void AgentRuntimeManager::attach_pending_entries() {
     }
 }
 
-void AgentRuntimeManager::attach_pending_patrol_routes() {
-    for (const SpawnedPatrolRoute& route :
-         std::exchange(pending_patrol_routes_, {})) {
-        const std::size_t index = agent_index_.find(route.net_id);
-        if (index == AgentIndex::kNotFound || route.waypoints.empty()) {
-            spdlog::warn("patrol route has no agent net_id={}", route.net_id);
+// Item skills (AI plan P5, D15, D18). The agent uses the item on itself the
+// way a player would -- a consume request, here sent by the server, which owns
+// every agent -- so its on_item_used graph runs, statuses land and the client
+// sees the same thing. It never runs out: an item used up is replaced before
+// the next use.
+void AgentRuntimeManager::use_item_skills() {
+    std::vector<KernelStatusEffectView> statuses;
+    for (AgentRuntimeState& agent : agents_) {
+        if (!agent.has_item_skills || agent.entry.active) {
+            continue;
+        }
+        const ActorTemplateConfig* actor_template =
+            find_actor_template(config_, agent.actor_template_id);
+        if (actor_template == nullptr) {
+            continue;
+        }
+        for (std::uint32_t& cooldown : agent.item_cooldown_ticks) {
+            if (cooldown > 0u) --cooldown;
+        }
+        const AgentSentryState state = agent.sentry.state;
+        const bool spawned = !agent.items_seen_spawn;
+        const bool entered = state != agent.items_last_state;
+        agent.items_seen_spawn = true;
+        agent.items_last_state = state;
+        const bool damaged = perception_frame_.damage_to(agent.net_id) != nullptr;
+
+        if (agent.item_container == 0u) {
+            std::uint32_t capacity = 0;
+            for (const AgentSkillConfig& skill : actor_template->skills) {
+                if (skill.type == AgentSkillType::kItem) ++capacity;
+            }
+            if (!Kernel_ServerCreateInventoryContainer(
+                    kernel_, agent.net_id, capacity, &agent.item_container)) {
+                agent.has_item_skills = false;
+                spdlog::warn("item skills: no inventory for net_id={}", agent.net_id);
+                continue;
+            }
+        }
+
+        for (std::size_t index = 0; index < actor_template->skills.size(); ++index) {
+            const AgentSkillConfig& skill = actor_template->skills[index];
+            if (skill.type != AgentSkillType::kItem ||
+                agent.item_cooldown_ticks[index] > 0u ||
+                (skill.once && (agent.items_used_once & (1u << index)) != 0u)) {
+                continue;
+            }
+            if ((skill.has_when_state && state != skill.when_state) ||
+                (skill.has_on_state_enter && !(entered && state == skill.on_state_enter)) ||
+                (skill.on_spawn && !spawned) || (skill.on_damaged && !damaged) ||
+                (skill.hp_below > 0.0f &&
+                 !(agent.max_hp > 0u &&
+                   static_cast<float>(agent.hp) <
+                       skill.hp_below * static_cast<float>(agent.max_hp)))) {
+                continue;
+            }
+            if (skill.missing_status_id != 0u) {
+                const std::uint32_t count =
+                    Kernel_QueryStatusEffects(kernel_, agent.net_id, nullptr, 0u);
+                statuses.assign(count, KernelStatusEffectView{});
+                for (KernelStatusEffectView& view : statuses) {
+                    view.struct_size = sizeof(KernelStatusEffectView);
+                }
+                (void)Kernel_QueryStatusEffects(kernel_, agent.net_id, statuses.data(), count);
+                if (std::any_of(statuses.begin(), statuses.end(),
+                                [&](const KernelStatusEffectView& view) {
+                                    return view.status_effect_id == skill.missing_status_id;
+                                })) {
+                    continue;
+                }
+            }
+
+            // Refilled, not kept: a fungible stack runs down and an empty one
+            // is destroyed, so whatever is not there with some left is made.
+            KernelItemInstanceView held{};
+            held.struct_size = sizeof(held);
+            if (agent.item_instances[index] == 0u ||
+                !Kernel_GetItemInstance(kernel_, agent.item_instances[index], &held) ||
+                held.quantity == 0u) {
+                agent.item_instances[index] = 0u;
+                if (!Kernel_ServerCreateInventoryItem(
+                        kernel_, skill.item_template_id, 1u, agent.item_container,
+                        &agent.item_instances[index])) {
+                    spdlog::warn("item skills: could not stock {} for net_id={}",
+                                 skill.item_ref, agent.net_id);
+                    continue;
+                }
+            }
+            KernelGameplayRequest request{};
+            request.struct_size = sizeof(request);
+            request.requester_peer = 0u;
+            // Unique per agent: the kernel refuses a request id it has seen.
+            request.request_id = (static_cast<std::uint64_t>(agent.net_id) << 32u) |
+                agent.next_item_request++;
+            request.instigator_net_id = agent.net_id;
+            request.domain_action = KernelDomainAction_Consume;
+            request.selected_item_instance_id = agent.item_instances[index];
+            request.requested_quantity = 1u;
+            if (Kernel_ServerSubmitGameplayRequest(kernel_, &request)) {
+                agent.item_cooldown_ticks[index] = skill.cooldown_ticks;
+                if (skill.once) agent.items_used_once |= 1u << index;
+            }
+        }
+    }
+}
+
+// The broad phase (AI plan D10): where every hostile is, read once per tick off
+// the snapshot the manager already has and shared by every hunter, which
+// cheats its way to its target through it. Seeing that target -- the narrow
+// phase -- is still vision's. Only the living: a dead player is not hunted.
+void AgentRuntimeManager::update_hunters(const ActorStateView& actors) {
+    hostiles_.clear();
+    hidden_hostiles_.clear();
+    for (std::uint32_t index = 0; index < actors.count; ++index) {
+        const KernelServerEntityState& state = actors.states[index];
+        if (state.valid != 0u && state.actor_type == kActorTypePlayer && state.hp > 0u &&
+            (state.visual_flags & KERNEL_VISUAL_FLAG_DEAD) == 0u) {
+            // A tent that hides its occupants hides them from the cheat too,
+            // as it does from every cone (Q3).
+            if (hidden_in_shelter(state.net_id)) {
+                hidden_hostiles_.push_back(state.net_id);
+            } else {
+                hostiles_.push_back(Hostile{state.net_id, state.position});
+            }
+        }
+    }
+    const auto distance = [](const KernelVec3& a, const KernelVec3& b) {
+        return std::hypot(a.x - b.x, a.z - b.z);
+    };
+    const auto nearest = [&](const KernelVec3& from) -> const Hostile* {
+        const Hostile* best = nullptr;
+        for (const Hostile& hostile : hostiles_) {
+            if (best == nullptr ||
+                distance(from, hostile.position) < distance(from, best->position)) {
+                best = &hostile;
+            }
+        }
+        return best;
+    };
+    // D11: a hunter's cone is its narrow phase and costs a query a tick. With
+    // the nearest hostile past the cone's reach and a margin -- the ground a
+    // player covers before the next look -- there is nothing for it to see, so
+    // it is switched off until there is.
+    constexpr float kVisionMarginMeters = 10.0f;
+    const auto set_vision = [&](AgentRuntimeState& agent, bool on) {
+        if (agent.vision_off != on) {
+            return;
+        }
+        const ActorTemplateConfig* actor_template =
+            find_actor_template(config_, agent.actor_template_id);
+        if (actor_template == nullptr) {
+            return;
+        }
+        const bool done = on
+            ? Kernel_ServerSetEntityVisionConfig(kernel_, agent.net_id, &actor_template->vision)
+            : Kernel_ServerClearEntityVisionConfig(kernel_, agent.net_id);
+        if (done) {
+            agent.vision_off = !on;
+        }
+    };
+    for (AgentRuntimeState& agent : agents_) {
+        if (agent.controller_role != AgentControllerRole::kHunter || agent.entry.active) {
+            if (agent.vision_off) set_vision(agent, true);
+            continue;
+        }
+        if (agent.vision_reach_meters > 0.0f) {
+            const Hostile* closest = nearest(agent.position);
+            set_vision(agent, closest != nullptr &&
+                                  distance(agent.position, closest->position) <=
+                                      agent.vision_reach_meters + kVisionMarginMeters);
+        }
+        const Hostile* target = nullptr;
+        for (const Hostile& hostile : hostiles_) {
+            if (hostile.net_id == agent.hunt_target) target = &hostile;
+        }
+        // Hidden is not gone: a player who ducks into a tent is still its
+        // target. It goes after another it can find, or waits where it is
+        // until this one comes out -- never on_target_lost, which would turn
+        // a garrison for good over a player stepping inside for a moment.
+        if (target == nullptr &&
+            std::find(hidden_hostiles_.begin(), hidden_hostiles_.end(), agent.hunt_target) !=
+                hidden_hostiles_.end()) {
+            const Hostile* other = nearest(agent.position);
+            if (agent.hunter.target_source != HunterTargetSource::kNearestHostile ||
+                other == nullptr) {
+                agent.seek_path.clear();
+                agent.seek_next = 0;
+                continue;
+            }
+            agent.hunt_target = other->net_id;
+            agent.seek_repath_in = 0;
+            target = other;
+        }
+        if (target == nullptr) {
+            // Gone for good, or never had: an inherited hunter whose caller
+            // had nothing to give it counts as having lost it.
+            const bool lost = agent.hunt_target != 0u ||
+                agent.hunter.target_source == HunterTargetSource::kInherited;
+            agent.hunt_target = 0u;
+            if (lost && agent.hunter.on_target_lost == HunterOnTargetLost::kGarrison) {
+                agent.controller_role = AgentControllerRole::kGarrison;
+                agent.seek_path.clear();
+                agent.seek_next = 0;
+                continue;
+            }
+            agent.hunter.target_source = HunterTargetSource::kNearestHostile;
+            target = nearest(agent.position);
+            if (target == nullptr) {
+                agent.seek_path.clear();
+                agent.seek_next = 0;
+                continue;
+            }
+            agent.hunt_target = target->net_id;
+            agent.seek_repath_in = 0;
+        } else if (agent.hunter.target_source == HunterTargetSource::kNearestHostile &&
+                   agent.seek_repath_in == 0u) {
+            // Switching only for one clearly nearer, or two at much the same
+            // range would trade places on every look.
+            const Hostile* closer = nearest(agent.position);
+            if (closer != nullptr && closer != target &&
+                distance(agent.position, closer->position) <
+                    0.8f * distance(agent.position, target->position)) {
+                target = closer;
+                agent.hunt_target = closer->net_id;
+            }
+        }
+        if (agent.seek_repath_in > 0u) {
+            --agent.seek_repath_in;
+            continue;
+        }
+        // Staggered by net id after the first, so a wave spawned on one tick
+        // does not path on one tick forever after.
+        agent.seek_repath_in = agent.hunter.repath_ticks +
+            agent.net_id % std::max<std::uint32_t>(1u, agent.hunter.repath_ticks / 4u);
+        agent.seek_path.clear();
+        agent.seek_next = 0;
+        PatrolRouteRequest request;
+        request.start = agent.position;
+        request.end = target->position;
+        request.snap_half_extent_meters = 2.0f;
+        if (!patrol_navigation_.valid() ||
+            !patrol_navigation_.find_route(request, &agent.seek_path) ||
+            agent.seek_path.empty()) {
+            agent.seek_path.assign(1, target->position);
+        }
+    }
+}
+
+bool AgentRuntimeManager::hidden_in_shelter(std::uint32_t net_id) const {
+    if (shelter_ == nullptr) {
+        return false;
+    }
+    const std::uint32_t building = shelter_->shelter_of(net_id);
+    if (building == 0u) {
+        return false;
+    }
+    KernelServerEntityState state{};
+    state.struct_size = sizeof(state);
+    if (!Kernel_ServerGetEntityState(kernel_, building, &state)) {
+        return false;
+    }
+    // A building is a prop, so it is among the entity templates, not the
+    // actor templates find_actor_template reads.
+    for (const EntityTemplateConfig& building_template : config_.entity_templates) {
+        if (building_template.actor_template_id == state.entity_template_id) {
+            return building_template.shelter_hides_occupants != 0u;
+        }
+    }
+    return false;
+}
+
+void AgentRuntimeManager::attach_pending_controllers() {
+    for (const SpawnedControllerSpec& spawned :
+         std::exchange(pending_controllers_, {})) {
+        const std::size_t index = agent_index_.find(spawned.net_id);
+        if (index == AgentIndex::kNotFound) {
+            spdlog::warn("controller spec has no agent net_id={}", spawned.net_id);
             continue;
         }
         AgentRuntimeState& agent = agents_[index];
-        if (!agent.sentry_config.passive_patrol) {
-            // Only the passive sweep walks a route; anything else decides its
-            // own movement and would silently ignore one.
+        // The catalog has already checked the role suits the template.
+        if (spawned.spec.role != AgentControllerRole::kNone) {
+            agent.controller_role = spawned.spec.role;
+        }
+        if (spawned.spec.has_hunter) {
+            agent.hunter = spawned.spec.hunter;
+        }
+        // Reinforcements go after what called them: the spawning agent's
+        // target as it stands now. Nothing to inherit leaves it 0, which the
+        // hunter pass reads as already lost.
+        if (agent.controller_role == AgentControllerRole::kHunter &&
+            agent.hunter.target_source == HunterTargetSource::kInherited &&
+            spawned.source_net_id != 0u) {
+            const std::size_t source = agent_index_.find(spawned.source_net_id);
+            if (source != AgentIndex::kNotFound) {
+                agent.hunt_target = agents_[source].sentry.target;
+            }
+        }
+        if (!spawned.spec.route.empty()) {
+            attach_route(&agent, spawned.spec.route);
+        }
+    }
+}
+
+void AgentRuntimeManager::attach_route(
+    AgentRuntimeState* agent_state,
+    const std::vector<KernelVec3>& waypoints) {
+    AgentRuntimeState& agent = *agent_state;
+    {
+        if (agent.controller_role != AgentControllerRole::kGarrison) {
+            // Only a garrison walks a route; anything else decides its own
+            // movement and would silently ignore one. The catalog refuses
+            // this, so it is a bug if seen.
             spdlog::warn(
-                "patrol route on an agent without passive_patrol net_id={} template_id={}",
-                route.net_id,
+                "patrol route on an agent that is not a garrison net_id={} template_id={}",
+                agent.net_id,
                 agent.actor_template_id);
-            continue;
+            return;
         }
         // Each leg pathed on its own, so the authored waypoints are kept as
         // corners: they are what keeps a wide body off the walls, which the
@@ -320,13 +678,13 @@ void AgentRuntimeManager::attach_pending_patrol_routes() {
         // the navmesh cannot connect is walked straight rather than dropped --
         // the waypoints are authored, and a straight leg is visibly wrong
         // where a missing one would be invisibly wrong.
-        std::vector<KernelVec3> path{route.waypoints.front()};
+        std::vector<KernelVec3> path{waypoints.front()};
         const bool navigable = patrol_navigation_.valid();
-        for (std::size_t leg = 1; leg < route.waypoints.size(); ++leg) {
+        for (std::size_t leg = 1; leg < waypoints.size(); ++leg) {
             std::vector<KernelVec3> corners;
             PatrolRouteRequest request;
             request.start = path.back();
-            request.end = route.waypoints[leg];
+            request.end = waypoints[leg];
             request.snap_half_extent_meters = 2.0f;
             if (navigable && patrol_navigation_.find_route(request, &corners) &&
                 !corners.empty()) {
@@ -335,10 +693,10 @@ void AgentRuntimeManager::attach_pending_patrol_routes() {
                 if (navigable) {
                     spdlog::warn(
                         "patrol route leg not on the navmesh net_id={} leg={}; walking it straight",
-                        route.net_id,
+                        agent.net_id,
                         leg);
                 }
-                path.push_back(route.waypoints[leg]);
+                path.push_back(waypoints[leg]);
             }
         }
         // Joined at the corner nearest where it stands, not at the first one:
@@ -358,8 +716,8 @@ void AgentRuntimeManager::attach_pending_patrol_routes() {
         agent.route_patrol = AgentRoutePatrolState{std::move(path), nearest, 1};
         spdlog::info(
             "patrol route attached net_id={} waypoints={} corners={}",
-            route.net_id,
-            route.waypoints.size(),
+            agent.net_id,
+            waypoints.size(),
             agent.route_patrol.path.size());
     }
 }
@@ -462,6 +820,7 @@ void AgentRuntimeManager::tick(float delta_seconds) {
         patrol_director_.spawned_group_count();
     patrol_director_.tick(
         kernel_, &patrol_groups_, &patrol_navigation_, actors, &agent_budget);
+    take_controllers(patrol_director_.take_spawned_controllers(), &pending_controllers_);
     // Only on a tick a squad actually appeared, which is once per definition
     // per interval_ticks. The world rule counts every agent alive including the
     // ones just spawned -- counting the pre-spawn list would have it top up
@@ -476,17 +835,16 @@ void AgentRuntimeManager::tick(float delta_seconds) {
     const std::uint32_t world_rule_spawned_before =
         world_rule_director_.spawned_agent_count();
     world_rule_director_.tick(kernel_, agent_budget.live);
+    take_controllers(world_rule_director_.take_spawned_controllers(), &pending_controllers_);
     agent_budget.spend(
         world_rule_director_.spawned_agent_count() - world_rule_spawned_before);
 
     game_rule_director_.tick(kernel_);
-    for (SpawnedPatrolRoute& route :
-         game_rule_director_.take_spawned_patrol_routes()) {
-        pending_patrol_routes_.push_back(std::move(route));
-    }
+    take_controllers(game_rule_director_.take_spawned_controllers(), &pending_controllers_);
     // Last tick's engagement: the controllers that produced it have all run,
     // and nothing has been created since.
     spawner_director_.tick(kernel_, alert_signals_, &agent_budget);
+    take_controllers(spawner_director_.take_spawned_controllers(), &pending_controllers_);
     // Re-taken because the three directors above all create, and the resync
     // exists to discover what they made -- that is the whole reason it runs
     // after them.
@@ -495,16 +853,20 @@ void AgentRuntimeManager::tick(float delta_seconds) {
     // After the resync, because the agent a walk names was created by one of
     // the directors above and is not in the list until now.
     attach_pending_entries();
-    attach_pending_patrol_routes();
+    attach_pending_controllers();
     // Before the controllers, which skip anyone still walking: this is what
     // submits their input for the tick, and only one input per agent survives.
     tick_entries();
     // Ahead of the controllers, so a member reads the slot its squad wants it
     // in this tick rather than the one from last tick.
     patrol_groups_.tick(&agents_, agent_index_, delta_seconds);
+    // Before the controllers, so a hunter seeks along this tick's path.
+    update_hunters(actors);
     // Still on the post-director snapshot: nothing between it and here creates,
     // destroys or moves an entity, so it is what a per-agent query would return.
     dispatch_controllers(actors, delta_seconds);
+    // After the controllers, so a state entered this tick is entered here too.
+    use_item_skills();
     collect_alert_signals();
 }
 
@@ -620,13 +982,31 @@ void AgentRuntimeManager::sync_agents_from_kernel(const ActorStateView& actors) 
         agent.animation_state = state.animation_state;
         agent.sentry.self_id = state.net_id;
         if (discovered_agent) {
-            agent.patrol_anchor = state.position;
             // An actor template is immutable, so this is resolved once rather
             // than every tick. state.actor_template_id is what the entity was
             // actually spawned from, which is the whole point: a wave can spawn
             // a template the catalog never names.
             agent.sentry_config =
                 agent_sentry_config(config_, state.actor_template_id);
+            const ActorTemplateConfig* actor_template =
+                find_actor_template(config_, state.actor_template_id);
+            agent.controller_role = actor_template != nullptr
+                ? actor_template->default_controller_role
+                : AgentControllerRole::kNone;
+            if (actor_template != nullptr) {
+                agent.hunter = actor_template->hunter;
+                for (const ColliderTemplateConfig& collider : config_.colliders.templates) {
+                    if (collider.definition.template_id ==
+                        actor_template->vision.vision_collider_template_id) {
+                        agent.vision_reach_meters = collider.definition.shape_params.x;
+                    }
+                }
+            }
+            agent.has_item_skills = actor_template != nullptr &&
+                std::any_of(actor_template->skills.begin(), actor_template->skills.end(),
+                            [](const AgentSkillConfig& skill) {
+                                return skill.type == AgentSkillType::kItem;
+                            });
             apply_weapon_mechanics(state.net_id, state.actor_template_id);
         }
         next_agents.push_back(agent);
