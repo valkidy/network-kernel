@@ -88,7 +88,7 @@ namespace NetworkExample.Kernel.Editor
                 "KernelVec4 layout size mismatch.");
             Require(
                 KernelPhysicsConfig.StructSize == 12 &&
-                KernelSessionRulesConfig.StructSize == 8,
+                KernelSessionRulesConfig.StructSize == 12,
                 "Kernel configuration layout size mismatch.");
             Require(
                 KernelMovementDefinition.StructSize == 56,
@@ -297,6 +297,8 @@ namespace NetworkExample.Kernel.Editor
                 KernelConstants.VisualFlagHovering == 0x00004000U &&
                 KernelConstants.MaxHoverHeight == 20.0f &&
                 KernelConstants.FallDeathHeightMeters == -10.0f &&
+                KernelDamageRecord.StructSize == 32 &&
+                (info.capability_flags & KernelConstants.CapabilityServerDamageRecords) != 0UL &&
                 (info.capability_flags & KernelConstants.CapabilityServerFallDeathHeight) != 0UL &&
                 KernelActionDefinition.StructSize == 172 &&
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("hover_height_meters") == 164 &&
@@ -312,6 +314,7 @@ namespace NetworkExample.Kernel.Editor
             using (var kernel = new Kernel(KernelConfig.CreateDefault(KernelMode.ListenServer)))
             {
                 Require(
+                    kernel.ServerQueryDamageRecords(null) == 0 &&
                     kernel.ServerSetFallDeathHeight(KernelConstants.FallDeathHeightMeters) &&
                     !kernel.ServerSetFallDeathHeight(float.NaN) &&
                     !kernel.ServerSetFallDeathHeight(float.PositiveInfinity),

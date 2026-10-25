@@ -138,6 +138,7 @@ namespace NetworkExample.Kernel
         public const ulong CapabilityGameMessages = 0x0004000000000000UL;
         // Additive within ABI 108: configurable server kill floor.
         public const ulong CapabilityServerFallDeathHeight = 0x0008000000000000UL;
+        public const ulong CapabilityServerDamageRecords = 0x0010000000000000UL;
         public const float FallDeathHeightMeters = -10.0f;
 
         // Largest KernelGameMessage body (ABI 101).
@@ -1138,6 +1139,8 @@ namespace NetworkExample.Kernel
     {
         public uint struct_size;
         public KernelActorBlockingMode actor_blocking_mode;
+        // Dedicated-server remote peer limit; zero is unlimited.
+        public uint max_connected_peers;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelSessionRulesConfig>();
     }
@@ -1764,6 +1767,21 @@ namespace NetworkExample.Kernel
         Items = 0,
         Weapons = 1,
         Stock = 2,
+    }
+
+    /// <summary>One hit applied during the server's most recent update.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelDamageRecord
+    {
+        public uint struct_size;
+        public uint tick;
+        public uint victim_net_id;
+        public uint attacker_net_id;
+        public KernelVec3 hit_position;
+        public ushort damage;
+        public ushort reserved0;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelDamageRecord>();
     }
 
     /// <summary>

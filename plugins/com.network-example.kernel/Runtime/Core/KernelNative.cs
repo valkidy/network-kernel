@@ -550,6 +550,10 @@ namespace NetworkExample.Kernel
             ref KernelServerReviveInfo info);
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern uint Kernel_ServerQueryDamageRecords(
+            IntPtr kernel, [Out] KernelDamageRecord[] records, uint maxRecords);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         [return: MarshalAs(UnmanagedType.I1)]
         internal static extern bool Kernel_ServerSetFallDeathHeight(
             IntPtr kernel, float heightMeters);

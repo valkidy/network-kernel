@@ -1093,6 +1093,24 @@ namespace NetworkExample.Kernel
         }
 
         /// <summary>
+        /// Copies the latest update's server hits without draining them. Returns the total
+        /// available count, which may exceed the buffer length; null queries the count.
+        /// </summary>
+        public uint ServerQueryDamageRecords(KernelDamageRecord[] records)
+        {
+            ThrowIfDisposed();
+            if (records != null)
+            {
+                for (int index = 0; index < records.Length; ++index)
+                {
+                    records[index].struct_size = KernelDamageRecord.StructSize;
+                }
+            }
+            return KernelNative.Kernel_ServerQueryDamageRecords(
+                handle, records, (uint)(records == null ? 0 : records.Length));
+        }
+
+        /// <summary>
         /// Sets the server kill floor from the next tick; rejects non-finite heights.
         /// The setting survives restarting the same kernel.
         /// </summary>

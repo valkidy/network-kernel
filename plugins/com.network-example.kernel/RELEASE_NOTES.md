@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- adds server damage-record and peer-limit bindings, resolves skeleton manifest hashes and refreshes native plugins and the gameplay catalog
+
+
+0.7.0 release notes:
+
 - aligns Unity bindings with ABI 109 for player status hover and the hover potion, and exposes the configurable server kill floor
 
 
