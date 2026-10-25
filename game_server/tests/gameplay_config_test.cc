@@ -4790,18 +4790,30 @@ int main() {
     require(observer_pose_moved_within_tick);
     const auto patrol_velocity_from_synthetic_position =
         [&](float position_x) {
-            KernelVec3 position{
-                position_x,
-                observer_actor_last_position.y,
-                observer_actor_last_position.z,
-            };
+            // On the route's line (z 0) and at the rule's spawn height: a
+            // garrison turns at a corner it arrives within a metre of, where the
+            // passive sweep turned on x alone, and the old position's height is
+            // inside the slope at the corners -- depenetration shoves it metres
+            // off the line in a tick.
+            KernelVec3 position{position_x, 10.0f, 0.0f};
             KernelQuat rotation{0.0f, 0.0f, 0.0f, 1.0f};
+            // Drained first: the AI's last re-aim is still queued with the
+            // position it read (the 1/90 s update above ran no tick), and
+            // draining it after the move would put the walker straight back.
+            Kernel_Update(observer_kernel, 1.0f / 30.0f);
             require(Kernel_ServerSetEntityTransform(
                 observer_kernel,
                 observer_actor_net_id,
                 &position,
                 &rotation));
             Kernel_Update(observer_kernel, 1.0f / 30.0f);
+            // It has to have arrived, or the velocity says nothing about it.
+            KernelServerEntityState moved{};
+            moved.struct_size = sizeof(moved);
+            require(Kernel_ServerGetEntityState(
+                observer_kernel, observer_actor_net_id, &moved));
+            require(std::abs(moved.position.x - position_x) < 1.0f);
+            require(std::abs(moved.position.z) < 1.0f);
             observer_server.tick(1.0f / 30.0f);
             Kernel_Update(observer_kernel, 1.0f / 30.0f);
             KernelServerEntityState state{};
