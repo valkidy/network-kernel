@@ -1303,6 +1303,12 @@ float available_lift(
         net_id,
         collider->collider_id,
         movement == nullptr ? 0u : movement->movement_collision_mask);
+    // Only the world is a ceiling. An actor over the body -- a giant's legs and
+    // capsule standing on the corpse -- moves on, and counting it took the
+    // whole lift away: the player came back exactly where it died.
+    request.filter.collision_mask &=
+        physics::collision_layer_bit(physics::CollisionLayer::kTerrain) |
+        physics::collision_layer_bit(physics::CollisionLayer::kStaticObstacle);
     float clear = lift;
     for (const physics::CollisionHit& hit :
          physics_world->shape_cast_all(request)) {

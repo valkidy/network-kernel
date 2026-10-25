@@ -195,6 +195,56 @@ void fall_off_the_map_respawns_at_spawn(const std::vector<std::uint8_t>& bundle)
     require(harness.state().hp == revived.max_hp);
 }
 
+// A player killed at a giant's feet still comes back the whole offset up. The
+// giant's capsule and leg boxes are in the player's movement mask and were
+// read as a ceiling: the revive came back exactly at the corpse's height.
+void a_giant_over_the_body_does_not_take_the_lift(const std::vector<std::uint8_t>& bundle) {
+    const GameServerGameplayConfig config =
+        network_example::game_server::load_gameplay_config_from_bundle_memory(
+            bundle.data(),
+            static_cast<std::uint32_t>(bundle.size()),
+            "gameplay_catalog.yaml");
+    constexpr std::uint32_t kGingerbreadGiantTemplateId = 39u;
+    const auto giant_template = std::find_if(
+        config.entity_templates.begin(),
+        config.entity_templates.end(),
+        [](const network_example::game_server::EntityTemplateConfig& candidate) {
+            return candidate.name == "gingerbread_giant";
+        });
+    require(giant_template != config.entity_templates.end());
+    require(giant_template->actor_template_id == kGingerbreadGiantTemplateId);
+    Harness harness(config, bundle, 7843);
+    for (int settle = 0; settle < 60; ++settle) {
+        harness.frame();
+    }
+    const KernelServerEntityState alive = harness.state();
+    require(alive.hp != 0u);
+
+    // Standing on the player: its body is right over the corpse.
+    KernelServerEntityCreateInfo giant{};
+    giant.struct_size = sizeof(giant);
+    giant.entity_type = giant_template->entity_type;
+    giant.actor_type = giant_template->actor_type;
+    giant.entity_template_id = kGingerbreadGiantTemplateId;
+    giant.position = alive.position;
+    giant.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+    std::uint32_t giant_net_id = 0;
+    require(Kernel_ServerCreateEntity(harness.kernel, &giant, &giant_net_id));
+    harness.kill();
+    const float body_y = harness.state().position.y;
+
+    KernelServerEntityState revived{};
+    require(harness.frames_until_revived(300u, &revived) != 0u);
+    // Still there, so the check below is the giant's and not open sky's.
+    KernelServerEntityState giant_state{};
+    giant_state.struct_size = sizeof(giant_state);
+    require(Kernel_ServerGetEntityState(harness.kernel, giant_net_id, &giant_state));
+    require(std::hypot(giant_state.position.x - revived.position.x,
+                       giant_state.position.z - revived.position.z) < 1.0f);
+    const float height_offset = config.player.respawn.height_offset_meters;
+    require(revived.position.y > body_y + height_offset - 0.01f);
+}
+
 }  // namespace
 
 int main() {
@@ -273,6 +323,7 @@ int main() {
     require(harness.state().hp == 0u);
 
     fall_off_the_map_respawns_at_spawn(bundle);
+    a_giant_over_the_body_does_not_take_the_lift(bundle);
     std::puts("player_respawn_test: ok");
     return 0;
 }
