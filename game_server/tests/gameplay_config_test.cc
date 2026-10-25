@@ -1552,7 +1552,7 @@ int main() {
         config.static_collision_scene.collision_layer ==
         KERNEL_STATIC_COLLISION_LAYER_TERRAIN);
     require(config.weapons.catalog_version == 16);
-    require(config.prop_population_rules.size() == 2u);
+    require(config.prop_population_rules.size() == 3u);
     require(config.prop_population_rules[0].name == "temporary_deployable");
     require(
         config.prop_population_rules[0].definition.population_group_id == 1u);
@@ -1561,6 +1561,9 @@ int main() {
     require(
         config.prop_population_rules[1].definition.population_group_id == 2u);
     require(config.prop_population_rules[1].definition.max_alive == 4u);
+    require(config.prop_population_rules[2].name == "portal");
+    require(
+        config.prop_population_rules[2].definition.population_group_id == 3u);
     const auto ice_block = std::find_if(
         config.entity_templates.begin(),
         config.entity_templates.end(),
@@ -1679,10 +1682,11 @@ int main() {
     require(stack_catalog.status_effects.front().max_stacks == 3u);
     require(stack_catalog.status_effects.front().refresh_on_stack == 1u);
     // Discovered by scanning skeleton_assets/generated, not by a list in the
-    // catalog: the three locomotion rigs are present here only because their
-    // build targets are data deps of this test.
-    require(config.skeleton_assets.size() == 3u);
-    for (const std::uint32_t expected_asset_id : {3u, 4u, 5u}) {
+    // catalog: the four rigs (three locomotion rigs and the gingerbread giant)
+    // are present here only because their build targets are data deps of this
+    // test.
+    require(config.skeleton_assets.size() == 4u);
+    for (const std::uint32_t expected_asset_id : {3u, 4u, 5u, 6u}) {
         require(
             std::any_of(
                 config.skeleton_assets.begin(),
@@ -1829,7 +1833,7 @@ int main() {
         tripod_template->skeleton.collision_flags.layer_mask ==
         KERNEL_COLLISION_LAYER_HOSTILE_SIDE);
 
-    require(catalog.definition.skeleton_asset_count == 3u);
+    require(catalog.definition.skeleton_asset_count == 4u);
     const auto quadruped_asset = std::find_if(
         catalog.skeleton_assets.begin(),
         catalog.skeleton_assets.end(),
@@ -2582,30 +2586,33 @@ int main() {
     require(player_template.entity_type == network_example::game_server::kEntityTypeActor);
     require(player_template.actor_type == network_example::game_server::kActorTypePlayer);
     require(player_template.collider_template_id == 1);
-    require(player_template.weapon_slot_count == 4);
-    require(player_template.weapon_ids[0] == network_example::game_server::kWeaponRocket);
-    require(player_template.weapon_ids[1] == network_example::game_server::kWeaponShotgun);
-    require(player_template.weapon_ids[2] == network_example::game_server::kWeaponGrenade);
-    // Rifle rides in the last slot rather than the first so the weapon a player
-    // spawns holding is unchanged; it is here to make weapon 0 reachable at all.
-    require(player_template.weapon_ids[3] == network_example::game_server::kWeaponRifle);
-    require(player_template.active_weapon_slot == 0);
+    // The loadout and backpack in 1_player.yaml are tuning, retuned by hand
+    // (4100c9a9, d1a3f876, 8cb0f032), so they are checked for what any shipped
+    // loadout must be rather than restated: every weapon one the catalog
+    // defines, the active slot one of them, and every backpack slot a known
+    // item, stocked, within the capacity. The loader's handling of slots is
+    // pinned by inventory_player_yaml, a fixture of this test's own.
+    require(player_template.weapon_slot_count > 0u);
+    require(player_template.weapon_slot_count <= KERNEL_MAX_WEAPON_SLOTS);
+    for (std::uint8_t slot = 0; slot < player_template.weapon_slot_count; ++slot) {
+        const std::uint32_t weapon_id = player_template.weapon_ids[slot];
+        require(weapon_id < network_example::game_server::kWeaponIdCount);
+        require(config.weapons.configured[weapon_id]);
+    }
+    require(player_template.active_weapon_slot < player_template.weapon_slot_count);
     require(player_template.inventory_slot_capacity == 16);
-    // 1_player.yaml stocks shockwave (3008) and frag (3009) bottles, four
-    // stateful_magic_bottle (3004) slots, and pull (3010) bottles last; the
-    // fungible_potion and stateful_potion slots are commented out there. The
-    // shape they used to give this case is exercised by inventory_player_yaml
-    // instead, which is a fixture of the test's own.
-    require(player_template.inventory_slots.size() == 7);
-    require(player_template.inventory_slots[6].item_template_id == 3010);
-    require(player_template.inventory_slots[6].quantity == 3);
-    require(player_template.inventory_slots[0].item_template_id == 3008);
-    require(player_template.inventory_slots[0].quantity == 3);
-    require(player_template.inventory_slots[1].item_template_id == 3009);
-    require(player_template.inventory_slots[1].quantity == 2);
-    for (std::size_t index = 2; index < 6; ++index) {
-        require(player_template.inventory_slots[index].item_template_id == 3004);
-        require(player_template.inventory_slots[index].quantity == 1);
+    require(!player_template.inventory_slots.empty());
+    require(player_template.inventory_slots.size() <=
+            player_template.inventory_slot_capacity);
+    for (const network_example::game_server::InventorySlotConfig& slot :
+         player_template.inventory_slots) {
+        require(slot.quantity > 0u);
+        require(std::any_of(
+            config.item_templates.begin(),
+            config.item_templates.end(),
+            [&slot](const network_example::game_server::ItemTemplateConfig& item) {
+                return item.definition.item_template_id == slot.item_template_id;
+            }));
     }
     require(player_template.vision.camp == KernelAgentCamp_PlayerSide);
     require(player_template.vision.vision_collider_template_id == 0);
@@ -2754,9 +2761,12 @@ int main() {
                    KernelProjectileDamageFalloff_Linear);
             require(projectile.definition.mechanics.area_effect.collision_mask &
                    KERNEL_COLLISION_MASK_PROP);
-            require(projectile.definition.mechanics.projectile_impact_trigger.action_count ==
-                   2u);
-            require(projectile.definition.mechanics.projectile_impact_trigger.actions[1].action_type ==
+            // The damage is the projectile's (ABI 105); the graph only shoves,
+            // so the impulse is its one action.
+            const KernelActionTriggerDefinition& blast =
+                projectile.definition.mechanics.projectile_impact_trigger;
+            require(blast.action_count == 1u);
+            require(blast.actions[0].action_type ==
                    KernelEntityTriggerActionType_ApplyImpulse);
             // All four, not just the horizontal. `impulse_strength` alone reads
             // 12.0 under both forms, so on its own it cannot tell the split
@@ -2765,14 +2775,11 @@ int main() {
             // binding is always taken as the scalar form and would quietly
             // defeat the graph's [horizontal, vertical] default. The mode is
             // what pins that down.
-            require(projectile.definition.mechanics.projectile_impact_trigger.actions[1].impulse_strength_mode ==
+            require(blast.actions[0].impulse_strength_mode ==
                    KERNEL_IMPULSE_STRENGTH_MODE_SPLIT);
-            require(projectile.definition.mechanics.projectile_impact_trigger.actions[1].impulse_strength ==
-                   12.0f);
-            require(projectile.definition.mechanics.projectile_impact_trigger.actions[1].impulse_strength_vertical ==
-                   5.0f);
-            require(projectile.definition.mechanics.projectile_impact_trigger.actions[1].impulse_lockout_ticks ==
-                   40u);
+            require(blast.actions[0].impulse_strength == 12.0f);
+            require(blast.actions[0].impulse_strength_vertical == 5.0f);
+            require(blast.actions[0].impulse_lockout_ticks == 40u);
         }
         if (projectile.name == "homing_missile") {
             found_homing_projectile = true;
@@ -3001,8 +3008,10 @@ int main() {
             found_pull_blast = true;
             const KernelActionTriggerDefinition& trigger =
                 projectile.definition.mechanics.projectile_impact_trigger;
-            require(trigger.action_count == 2u);
-            const KernelActionDefinition& pull = trigger.actions[1];
+            // The damage is the projectile's (ABI 105); the graph is the pull
+            // alone.
+            require(trigger.action_count == 1u);
+            const KernelActionDefinition& pull = trigger.actions[0];
             require(pull.action_type == KernelEntityTriggerActionType_ApplyPull);
             require(pull.target_source == KernelEntityRefSource_EventTarget);
             require(pull.pull_mode == KERNEL_PULL_MODE_TO_POINT);
@@ -3130,8 +3139,11 @@ int main() {
     require(bundle_config.projectile_templates.size() == config.projectile_templates.size());
     require(bundle_config.actor_templates.size() == config.actor_templates.size());
 
+    // The test's own graph, apart from the shipped common/
+    // action_apply_health_change: that one has no `when`, and sharing its id
+    // would be a duplicate in any bundle that carries the whole directory.
     const std::string health_change_graph =
-        "id: action_apply_health_change\n"
+        "id: action_health_change_test\n"
         "parameters:\n"
         "  target: null\n"
         "  amount: 1\n"
@@ -3152,7 +3164,7 @@ int main() {
         "triggers:\n"
         "  on_collision:\n"
         "    collision_mask: actor | terrain | static_obstacle\n"
-        "    action_graph: action_apply_health_change\n"
+        "    action_graph: action_health_change_test\n"
         "    parameters:\n"
         "      target: event.target\n"
         "      amount: 30\n";
@@ -3160,7 +3172,7 @@ int main() {
         make_gameplay_bundle_zip(
             read_text_file("game_server/gameplay_catalog/entity_templates/2_sentry_grunt.yaml"),
             {
-                {"action_graph_templates/action_apply_health_change.yaml",
+                {"action_graph_templates/action_health_change_test.yaml",
                  health_change_graph},
                 {"entity_templates/health_change_collision_prop.yaml",
                  collision_prop},
@@ -3308,7 +3320,7 @@ int main() {
             "triggers:\n"
             "  on_collision:\n"
             "    collision_mask: actor\n"
-            "    action_graph: action_apply_health_change\n"
+            "    action_graph: action_health_change_test\n"
             "    parameters:\n"
             "      target: self\n"
             "      amount: " + std::string(invalid_amount) + "\n";
@@ -3316,7 +3328,7 @@ int main() {
             make_gameplay_bundle_zip(
                 read_text_file("game_server/gameplay_catalog/entity_templates/2_sentry_grunt.yaml"),
                 {
-                    {"action_graph_templates/action_apply_health_change.yaml",
+                    {"action_graph_templates/action_health_change_test.yaml",
                      health_change_graph},
                     {"entity_templates/health_change_collision_prop.yaml",
                      invalid_prop},
@@ -3339,13 +3351,13 @@ int main() {
     for (const std::string& invalid_trigger : {
              std::string(
                  "  on_collision:\n"
-                 "    action_graph: action_apply_health_change\n"
+                 "    action_graph: action_health_change_test\n"
                  "    parameters:\n"
                  "      target: self\n"
                  "      amount: 30\n"),
              std::string(
                  "  on_world_impact:\n"
-                 "    action_graph: action_apply_health_change\n"
+                 "    action_graph: action_health_change_test\n"
                  "    parameters:\n"
                  "      target: self\n"
                  "      amount: 30\n"),
@@ -3364,7 +3376,7 @@ int main() {
             make_gameplay_bundle_zip(
                 read_text_file("game_server/gameplay_catalog/entity_templates/2_sentry_grunt.yaml"),
                 {
-                    {"action_graph_templates/action_apply_health_change.yaml",
+                    {"action_graph_templates/action_health_change_test.yaml",
                      health_change_graph},
                     {"entity_templates/invalid_collision_prop.yaml",
                      invalid_prop},
