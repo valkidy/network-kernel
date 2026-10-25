@@ -62,6 +62,14 @@ network_example::game_server::GameServerGameplayConfig single_spawn_gameplay_con
     // nonstop), so the magazine is pinned here like the agent is.
     config.weapons.definitions[network_example::game_server::kWeaponSpammer]
         .magazine_size = 120;
+    // The player at the origin, where the rule's 6 m offset puts the grunt
+    // in sight. The catalog's spawn point is map layout and moves with it.
+    config.player.has_spawn_position = true;
+    config.player.spawn_position = KernelVec3{0.0f, 0.0f, 0.0f};
+    // No ground is loaded here, so everything falls from the first tick; the
+    // kill floor (y < -10 in the catalog) would reclaim the player and the
+    // grunt a second in. These checks are about neither.
+    config.player.fall_death_height_meters = -1.0e6f;
     return config;
 }
 
@@ -393,11 +401,13 @@ int main() {
     game_server.tick(1.0f / 30.0f);
     agent_count = query_enemies(kernel, &enemy_states);
     require(agent_count == 1);
+    // Out of sight, an attacking sentry searches where it last saw the
+    // target (AI plan P2a), then forgets it after forget_ticks (3).
     require(game_server.agent_runtime_manager().agents()[0].sentry.state ==
-            network_example::game_server::AgentSentryState::kAttack);
+            network_example::game_server::AgentSentryState::kSearch);
     run_server_frames(kernel, &game_server, 2);
     require(game_server.agent_runtime_manager().agents()[0].sentry.state ==
-            network_example::game_server::AgentSentryState::kAlert);
+            network_example::game_server::AgentSentryState::kSearch);
     run_server_frames(kernel, &game_server, 3);
     agent_count = query_enemies(kernel, &enemy_states);
     require(agent_count == 1);

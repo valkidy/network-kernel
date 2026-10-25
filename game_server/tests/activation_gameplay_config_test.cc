@@ -81,9 +81,10 @@ int main() {
             return value.entity_template_id == 201;
         });
     require(compiled_collision != catalog.entity_templates.end());
+    // actor | limb, as 201_prop_collision_damage.yaml authors it.
     require(
         compiled_collision->collision_trigger_mask ==
-        KERNEL_COLLISION_MASK_ACTOR);
+        (KERNEL_COLLISION_MASK_ACTOR | KERNEL_COLLISION_LAYER_LIMB));
     require(
         (compiled_collision->component_flags &
          KERNEL_ENTITY_COMPONENT_HEALTH) != 0u);
@@ -93,9 +94,10 @@ int main() {
     require(
         compiled_collision->collision_trigger.action_type ==
         KernelEntityTriggerActionType_ApplyDamage);
+    // The flat fields mirror the first action, which damages the prop itself.
     require(
         compiled_collision->collision_trigger.target_source ==
-        KernelEntityRefSource_EventTarget);
+        KernelEntityRefSource_Self);
     require(compiled_collision->collision_trigger.damage_amount == 1);
     require(
         compiled_collision->collision_trigger.actions[0].target_source ==

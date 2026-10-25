@@ -297,6 +297,10 @@ int main() {
     const KernelInventoryContainerId weapons =
         harness.container(KernelInventoryContainerKind_Weapons);
 
+    // The default loadout, which the respawn has to put back. Read here, not
+    // restated: the player template's weapons are tuning.
+    const std::vector<std::uint32_t> default_weapons = harness.weapons();
+
     // The scene: a map weapon, tagged by where it was put; a quest relic,
     // tagged by what it is.
     auto [beam, beam_prop] = world_item(harness, beam_item);
@@ -304,8 +308,8 @@ int main() {
     require(harness.item(beam).drop_tag == KERNEL_DROP_TAG_MAP_WEAPON);
     require(harness.item(relic).drop_tag == KERNEL_DROP_TAG_QUEST);
 
-    // Picked up, both keep their tags. The beam rifle shares the sky laser's
-    // category, so the (untagged) sky laser goes to the feet.
+    // Picked up, both keep their tags. The beam rifle is category 2, so the
+    // (untagged) default category-2 weapon goes to the feet.
     harness.stand_at(harness.state_of(beam_prop).position);
     require(harness.request(KernelDomainAction_Pickup, beam, beam_prop).status ==
             KernelGameplayRequestStatus_Committed);
@@ -362,12 +366,12 @@ int main() {
     // The respawn reapplies the default loadout over what is left.
     harness.step(static_cast<int>(std::lround(config.player.respawn.delay_seconds * 30.0f)) + 5);
     require(harness.state_of(harness.player).hp != 0u);
-    require((harness.weapons() == std::vector<std::uint32_t>{0u, 13u, 15u, 14u}));
+    require(harness.weapons() == default_weapons);
     require(harness.item(beam).residency == KernelItemResidency_World);
     require(harness.item(relic).residency == KernelItemResidency_World);
 
-    // Both can be picked back up, still tagged; the beam rifle swaps the sky
-    // laser out again.
+    // Both can be picked back up, still tagged; the beam rifle swaps the
+    // default category-2 weapon out again.
     harness.stand_at(harness.state_of(relic_view.prop_entity_id).position);
     require(harness.request(KernelDomainAction_Pickup, relic, relic_view.prop_entity_id).status ==
             KernelGameplayRequestStatus_Committed);

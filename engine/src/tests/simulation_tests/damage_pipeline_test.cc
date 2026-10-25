@@ -65,7 +65,8 @@ void confirm_after_grace_window() {
     pipeline.confirm_ready(world, 101000, 4, &events);
     require(health(world, player).hp == 60);
     require(pipeline.pending_count() == 0);
-    require(events.size() == 2);
+    // HitConfirmed, DamageApplied, HealthChanged.
+    require(events.size() == 3);
     require(events[0].type == KernelEventType_HitConfirmed);
     require(events[1].type == KernelEventType_DamageApplied);
     require(events[1].code == 40);
@@ -98,7 +99,8 @@ void immediate_damage_request_applies_on_confirm() {
 
     pipeline.confirm_ready(world, 3000, 11, &events);
     require(health(world, enemy).hp == 65);
-    require(events.size() == 2);
+    // HitConfirmed, DamageApplied, HealthChanged.
+    require(events.size() == 3);
     require(events[0].type == KernelEventType_HitConfirmed);
     require(events[0].net_id == enemy);
     require(events[0].code == 3);
@@ -138,7 +140,8 @@ void drain_ready_damage_does_not_apply_health_until_damage_system() {
 
     network_example::apply_damage_applications(world, ready, 11, &events);
     require(health(world, enemy).hp == 65);
-    require(events.size() == 2);
+    // HitConfirmed, DamageApplied, HealthChanged.
+    require(events.size() == 3);
     require(events[0].type == KernelEventType_HitConfirmed);
     require(events[1].type == KernelEventType_DamageApplied);
     require(events[1].code == 35);
@@ -179,15 +182,19 @@ void damage_requests_apply_in_deterministic_order() {
     });
 
     pipeline.confirm_ready(world, 1000, 3, &events);
-    require(events.size() == 4);
+    require(events.size() == 6);
     require(events[0].type == KernelEventType_HitConfirmed);
     require(events[0].net_id == first);
     require(events[1].type == KernelEventType_DamageApplied);
     require(events[1].net_id == first);
-    require(events[2].type == KernelEventType_HitConfirmed);
-    require(events[2].net_id == second);
-    require(events[3].type == KernelEventType_DamageApplied);
+    require(events[2].type == KernelEventType_HealthChanged);
+    require(events[2].net_id == first);
+    require(events[3].type == KernelEventType_HitConfirmed);
     require(events[3].net_id == second);
+    require(events[4].type == KernelEventType_DamageApplied);
+    require(events[4].net_id == second);
+    require(events[5].type == KernelEventType_HealthChanged);
+    require(events[5].net_id == second);
 }
 
 void dodge_cancels_pending_damage() {
@@ -221,7 +228,8 @@ void parry_reduces_pending_damage() {
         120000);
     pipeline.confirm_ready(world, 200000, 6, &events);
     require(health(world, player).hp == 79);
-    require(events.size() == 2);
+    // HitConfirmed, DamageApplied, HealthChanged.
+    require(events.size() == 3);
     require(events[1].code == 21);
 }
 
@@ -239,7 +247,8 @@ void reload_does_not_modify_pending_damage() {
     pipeline.ingest_defensive_input(1, reload_input, 120000);
     pipeline.confirm_ready(world, 200000, 6, &events);
     require(health(world, player).hp == 60);
-    require(events.size() == 2);
+    // HitConfirmed, DamageApplied, HealthChanged.
+    require(events.size() == 3);
     require(events[1].code == 40);
 }
 
@@ -271,7 +280,8 @@ void non_server_damage_applies_without_grace_window() {
     require(pipeline.pending_count() == 1);
     pipeline.confirm_ready(world, 100000, 6, &events);
     require(health(world, player).hp == 60);
-    require(events.size() == 2);
+    // HitConfirmed, DamageApplied, HealthChanged.
+    require(events.size() == 3);
 }
 
 }  // namespace

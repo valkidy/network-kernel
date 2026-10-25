@@ -318,7 +318,7 @@ int main() {
     // Rejected before it can reach a world: an unknown movement layer bit, and
     // a null handle.
     require(!Kernel_ServerSetEntityMovementCollisionMask(nullptr, 1u, 0u));
-    require(KERNEL_ABI_VERSION == 72u);
+    require(KERNEL_ABI_VERSION == 109u);
     require(Kernel_QueryStatusEffects(nullptr, 1u, nullptr, 0u) == 0u);
     require((abi_info.capability_flags &
             KERNEL_CAPABILITY_SKELETON_RENDER_STATES) != 0u);
@@ -336,7 +336,7 @@ int main() {
     require(sizeof(KernelActionIntent) == 8u);
     require(sizeof(KernelActionInput) == 8u);
     require(sizeof(KernelLocalActionResult) == 12u);
-    require(sizeof(KernelRemoteActionPresentationEvent) == 36u);
+    require(sizeof(KernelRemoteActionPresentationEvent) == 40u);
     require(sizeof(KernelVec4) == 16u);
     require((abi_info.capability_flags & KERNEL_CAPABILITY_ENTITY_LIFECYCLE_EVENTS) != 0);
     require(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
@@ -386,7 +386,7 @@ int main() {
            offsetof(KernelServerEntityState, reload_remaining_ticks));
     require(offsetof(RenderEntityState, action) >
            offsetof(RenderEntityState, collider_template_id));
-    require(sizeof(RenderEntityState) == 144u);
+    require(sizeof(RenderEntityState) == 168u);
     require(offsetof(KernelWeaponMechanicsDefinition, reserve_magazines) >
            offsetof(KernelWeaponMechanicsDefinition, magazine_size));
     require(offsetof(KernelWeaponMechanicsDefinition, damage) >

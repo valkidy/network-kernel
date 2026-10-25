@@ -47,7 +47,7 @@ int main() {
     config.max_render_states = 512;
     KernelHandle* kernel = Kernel_Create(&config);
     require(kernel != nullptr);
-    require(Kernel_StartDedicatedServer(kernel, 7842));
+    require(Kernel_StartDedicatedServer(kernel, 8480));
 
     network_example::game_server::GameServerGameplayConfig gameplay_config =
         network_example::game_server::default_game_server_gameplay_config();

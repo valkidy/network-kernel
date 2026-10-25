@@ -395,6 +395,8 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip(
     append_directory_files(&files, "item_templates");
     append_directory_files(&files, "projectile_templates");
     append_directory_files(&files, "patrol_templates");
+    // Agent skills name sp_attacks (AI plan P4a).
+    append_directory_files(&files, "sp_attack_templates");
     files.insert(files.end(), extra_files.begin(), extra_files.end());
     return make_store_zip(files);
 }
@@ -566,6 +568,8 @@ std::vector<std::uint8_t> make_entity_template_bundle_zip(
     // weapons above need the effects they name.
     append_directory_files(&files, "status_effect_templates");
     append_directory_files(&files, "projectile_templates");
+    // Agent skills name sp_attacks (AI plan P4a).
+    append_directory_files(&files, "sp_attack_templates");
     return make_store_zip(files);
 }
 
@@ -593,8 +597,12 @@ std::string sentry_grunt_entity_template_yaml(std::string entity_type) {
         "vision:\n"
         "  collider_template: sentry_grunt_vision_cone\n"
         "ai:\n"
-        "  controller: sentry\n"
-        "  profile: default\n";
+        "  default_controller: sentry\n"
+        "  profile: default\n"
+        // Every agent names its skills (AI plan P4); a sentry exactly one
+        // weapon, which is what it fires.
+        "  skills:\n"
+        "    - use: {type: weapon, value: 2}\n";
 }
 
 }  // namespace
@@ -1192,15 +1200,11 @@ int main() {
 
     const std::string data_driven_sentry_yaml =
         sentry_grunt_entity_template_yaml("actor") +
-        "  sentry:\n"
+        "  perception:\n"
         "    alert_ticks: 4\n"
         "    forget_ticks: 6\n"
-        "    patrol_rotation_interval_ticks: 2\n"
-        "    patrol_rotation_min_degrees: 10.5\n"
-        "    patrol_rotation_max_degrees: 22.5\n"
-        "    passive_patrol: true\n"
-        "    patrol_extent_x_meters: 8.0\n"
-        "    patrol_input_magnitude: 0.6\n"
+        "    idle_rotation_interval_ticks: 2\n"
+        "    idle_rotation_degrees: {min: 10.5, max: 22.5}\n"
         "    animation_idle: idle\n"
         "    animation_attack: chasing\n";
     const std::vector<std::uint8_t> data_driven_sentry_bundle =
@@ -1214,14 +1218,14 @@ int main() {
     const network_example::game_server::ActorTemplateConfig&
         data_driven_sentry =
             data_driven_sentry_config.entity_templates[1];
+    require(data_driven_sentry.default_controller_role ==
+            network_example::game_server::AgentControllerRole::kSentry);
+    require(data_driven_sentry.ai_stationary);
     require(data_driven_sentry.sentry.alert_ticks == 4);
     require(data_driven_sentry.sentry.forget_ticks == 6);
     require(data_driven_sentry.sentry.patrol_rotation_interval_ticks == 2);
     require(data_driven_sentry.sentry.patrol_rotation_min_degrees == 10.5f);
     require(data_driven_sentry.sentry.patrol_rotation_max_degrees == 22.5f);
-    require(data_driven_sentry.sentry.passive_patrol);
-    require(data_driven_sentry.sentry.patrol_extent_x_meters == 8.0f);
-    require(data_driven_sentry.sentry.patrol_input_magnitude == 0.6f);
     require(data_driven_sentry.sentry.move_speed_meters_per_second == 2.5f);
     require(data_driven_sentry.sentry.weapon_id == 2);
     require(data_driven_sentry.sentry.animation_idle ==
@@ -1229,8 +1233,6 @@ int main() {
     require(data_driven_sentry.sentry.animation_attack ==
            data_driven_sentry.animation_chasing);
 
-    // sentry.weapon_slot picks a non-active slot to fire from; it names a
-    // slot, never a weapon id, and the retired weapon_id key is refused.
     const auto load_sentry_yaml = [](const std::string& yaml) {
         const std::vector<std::uint8_t> bundle =
             make_entity_template_bundle_zip(yaml);
@@ -1240,6 +1242,18 @@ int main() {
                 static_cast<std::uint32_t>(bundle.size()),
                 "gameplay_catalog.yaml");
     };
+    // The message a load fails with, or empty if it loaded.
+    const auto sentry_rejection = [&load_sentry_yaml](const std::string& yaml) {
+        try {
+            (void)load_sentry_yaml(yaml);
+        } catch (const std::exception& error) {
+            return std::string(error.what());
+        }
+        return std::string();
+    };
+
+    // A sentry fires its one weapon skill (AI plan P4), whichever slot holds
+    // it: the skill names a weapon id, and active_weapon_slot is left alone.
     const std::string two_slot_sentry_yaml = replace_once(
         data_driven_sentry_yaml, "  - 2\n", "  - 2\n  - 3\n");
     require(load_sentry_yaml(two_slot_sentry_yaml)
@@ -1247,53 +1261,83 @@ int main() {
     const network_example::game_server::GameServerGameplayConfig
         slot_sentry_config = load_sentry_yaml(replace_once(
             two_slot_sentry_yaml,
-            "    animation_idle: idle\n",
-            "    weapon_slot: 1\n    animation_idle: idle\n"));
+            "    - use: {type: weapon, value: 2}\n",
+            "    - use: {type: weapon, value: 3}\n"));
     require(slot_sentry_config.entity_templates[1].active_weapon_slot == 0);
     require(slot_sentry_config.entity_templates[1].sentry.weapon_id == 3);
-    for (const std::string& rejected_sentry_line : {
-             std::string("    weapon_slot: 2\n"),
-             std::string("    weapon_slot: -1\n"),
-             std::string("    weapon_id: 2\n"),
+    for (const std::pair<std::string, std::string>& rejected_skill : {
+             // Not one of its weapons.
+             std::pair<std::string, std::string>{
+                 "    - use: {type: weapon, value: 4}\n",
+                 "which is not in weapon_slots"},
+             // Two, with nothing to choose between them by.
+             std::pair<std::string, std::string>{
+                 "    - use: {type: weapon, value: 2}\n"
+                 "    - use: {type: weapon, value: 3}\n",
+                 "more than one weapon"},
+             // A band, which a sentry that fires at whatever it sees ignores.
+             std::pair<std::string, std::string>{
+                 "    - use: {type: weapon, value: 2}\n"
+                 "      when: {range_meters: {max: 10.0}}\n",
+                 "range or cooldown"},
          }) {
-        bool rejected = false;
-        try {
-            (void)load_sentry_yaml(replace_once(
-                two_slot_sentry_yaml,
-                "    animation_idle: idle\n",
-                rejected_sentry_line + "    animation_idle: idle\n"));
-        } catch (const std::exception&) {
-            rejected = true;
+        const std::string message = sentry_rejection(replace_once(
+            two_slot_sentry_yaml,
+            "    - use: {type: weapon, value: 2}\n",
+            rejected_skill.first));
+        if (message.find(rejected_skill.second) == std::string::npos) {
+            std::fprintf(stderr, "sentry skill case: expected \"%s\", got \"%s\"\n",
+                         rejected_skill.second.c_str(), message.c_str());
         }
-        require(rejected);
+        require(message.find(rejected_skill.second) != std::string::npos);
     }
+    // And an agent with no skills at all.
+    require(sentry_rejection(replace_once(
+                data_driven_sentry_yaml,
+                "  skills:\n    - use: {type: weapon, value: 2}\n",
+                ""))
+                .find("are required") != std::string::npos);
 
-    for (const std::pair<std::string, std::string>& invalid_patrol_value : {
+    // The keys the role-based block replaced (AI plan P1c, P1d) are refused
+    // rather than ignored: passive patrol is gone, sentry: is perception:,
+    // controller: is default_controller:, and a weapon is a skill, never a
+    // perception key.
+    for (const std::pair<std::string, std::string>& retired : {
              std::pair<std::string, std::string>{
-                 "patrol_extent_x_meters: 8.0",
-                 "patrol_extent_x_meters: 0.0"},
+                 "  perception:\n", "  sentry:\n"},
              std::pair<std::string, std::string>{
-                 "patrol_input_magnitude: 0.6",
-                 "patrol_input_magnitude: .nan"},
+                 "  default_controller: sentry\n", "  controller: sentry\n"},
+             std::pair<std::string, std::string>{
+                 "    alert_ticks: 4\n",
+                 "    alert_ticks: 4\n    passive_patrol: true\n"},
+             std::pair<std::string, std::string>{
+                 "    alert_ticks: 4\n",
+                 "    alert_ticks: 4\n    patrol_extent_x_meters: 8.0\n"},
+             std::pair<std::string, std::string>{
+                 "    alert_ticks: 4\n",
+                 "    alert_ticks: 4\n    weapon_slot: 1\n"},
+             std::pair<std::string, std::string>{
+                 "    alert_ticks: 4\n",
+                 "    alert_ticks: 4\n    weapon_id: 2\n"},
          }) {
-        bool invalid_passive_patrol_rejected = false;
-        try {
-            const std::vector<std::uint8_t> invalid_passive_patrol_bundle =
-                make_entity_template_bundle_zip(replace_once(
-                    data_driven_sentry_yaml,
-                    invalid_patrol_value.first,
-                    invalid_patrol_value.second));
-            (void)network_example::game_server::
-                load_gameplay_config_from_bundle_memory(
-                    invalid_passive_patrol_bundle.data(),
-                    static_cast<std::uint32_t>(
-                        invalid_passive_patrol_bundle.size()),
-                    "gameplay_catalog.yaml");
-        } catch (const std::exception&) {
-            invalid_passive_patrol_rejected = true;
+        const std::string message = sentry_rejection(
+            replace_once(data_driven_sentry_yaml, retired.first, retired.second));
+        if (message.empty()) {
+            std::fprintf(stderr, "retired ai key loaded: %s", retired.second.c_str());
         }
-        require(invalid_passive_patrol_rejected);
+        require(!message.empty());
     }
+    // A sentry does not move, so it takes no locomotion beyond saying so.
+    require(sentry_rejection(
+                data_driven_sentry_yaml +
+                "  locomotion:\n"
+                "    input_magnitude: 1.0\n")
+                .find("sentry is stationary") != std::string::npos);
+    require(sentry_rejection(
+                data_driven_sentry_yaml +
+                "  locomotion:\n"
+                "    stationary: true\n")
+                .empty());
 
     const std::vector<std::uint8_t> invalid_enemy_entity_bundle =
         make_entity_template_bundle_zip(
@@ -1329,7 +1373,7 @@ int main() {
             {2u, 0.8f, 0.4f, 0.8f, 0.4f},
             {21u, 12.0f, 14.5f, 16.5f, 18.0f},
             {22u, 12.0f, 11.5f, 16.5f, 16.0f},
-            {23u, 20.0f, 24.0f, 27.5f, 12.0f},
+            {23u, 20.0f, 24.0f, 27.5f, 14.0f},
             {24u, 0.8f, 0.4f, 0.8f, 0.4f},
             {25u, 0.8f, 0.4f, 0.8f, 0.4f},
             {26u, 0.8f, 0.4f, 0.8f, 0.4f},
@@ -1508,7 +1552,7 @@ int main() {
         config.static_collision_scene.collision_layer ==
         KERNEL_STATIC_COLLISION_LAYER_TERRAIN);
     require(config.weapons.catalog_version == 16);
-    require(config.prop_population_rules.size() == 2u);
+    require(config.prop_population_rules.size() == 3u);
     require(config.prop_population_rules[0].name == "temporary_deployable");
     require(
         config.prop_population_rules[0].definition.population_group_id == 1u);
@@ -1517,6 +1561,9 @@ int main() {
     require(
         config.prop_population_rules[1].definition.population_group_id == 2u);
     require(config.prop_population_rules[1].definition.max_alive == 4u);
+    require(config.prop_population_rules[2].name == "portal");
+    require(
+        config.prop_population_rules[2].definition.population_group_id == 3u);
     const auto ice_block = std::find_if(
         config.entity_templates.begin(),
         config.entity_templates.end(),
@@ -1570,7 +1617,9 @@ int main() {
             return entity.name == "quadruped_actor";
         });
     require(changed_quadruped_sentry != changed_config.entity_templates.end());
-    changed_quadruped_sentry->sentry.patrol_extent_x_meters += 1.0f;
+    // A garrison now (AI plan P1c): its leash is the tuning that must move the
+    // hash, where the retired patrol extent used to be.
+    changed_quadruped_sentry->garrison.leash_meters += 1.0f;
     require(
         config.weapons.catalog_hash !=
         network_example::game_server::compute_gameplay_catalog_hash(changed_config));
@@ -1633,10 +1682,11 @@ int main() {
     require(stack_catalog.status_effects.front().max_stacks == 3u);
     require(stack_catalog.status_effects.front().refresh_on_stack == 1u);
     // Discovered by scanning skeleton_assets/generated, not by a list in the
-    // catalog: the three locomotion rigs are present here only because their
-    // build targets are data deps of this test.
-    require(config.skeleton_assets.size() == 3u);
-    for (const std::uint32_t expected_asset_id : {3u, 4u, 5u}) {
+    // catalog: the four rigs (three locomotion rigs and the gingerbread giant)
+    // are present here only because their build targets are data deps of this
+    // test.
+    require(config.skeleton_assets.size() == 4u);
+    for (const std::uint32_t expected_asset_id : {3u, 4u, 5u, 6u}) {
         require(
             std::any_of(
                 config.skeleton_assets.begin(),
@@ -1671,9 +1721,11 @@ int main() {
         });
     require(quadruped_template != config.entity_templates.end());
     require(quadruped_template->skeleton.enabled);
-    require(quadruped_template->sentry.passive_patrol);
-    require(quadruped_template->sentry.patrol_extent_x_meters == 30.0f);
-    require(quadruped_template->sentry.patrol_input_magnitude == 1.0f);
+    // A garrison that walks its spawn source's route (AI plan P1c), where it
+    // used to patrol passively; walkers are never stationary.
+    require(quadruped_template->default_controller_role ==
+            network_example::game_server::AgentControllerRole::kGarrison);
+    require(!quadruped_template->ai_stationary);
     require(quadruped_template->movement_controller_type ==
             KernelMovementControllerType_Character);
     require(quadruped_template->movement_collider_template_id == 14u);
@@ -1781,7 +1833,7 @@ int main() {
         tripod_template->skeleton.collision_flags.layer_mask ==
         KERNEL_COLLISION_LAYER_HOSTILE_SIDE);
 
-    require(catalog.definition.skeleton_asset_count == 3u);
+    require(catalog.definition.skeleton_asset_count == 4u);
     const auto quadruped_asset = std::find_if(
         catalog.skeleton_assets.begin(),
         catalog.skeleton_assets.end(),
@@ -2534,30 +2586,33 @@ int main() {
     require(player_template.entity_type == network_example::game_server::kEntityTypeActor);
     require(player_template.actor_type == network_example::game_server::kActorTypePlayer);
     require(player_template.collider_template_id == 1);
-    require(player_template.weapon_slot_count == 4);
-    require(player_template.weapon_ids[0] == network_example::game_server::kWeaponRocket);
-    require(player_template.weapon_ids[1] == network_example::game_server::kWeaponShotgun);
-    require(player_template.weapon_ids[2] == network_example::game_server::kWeaponGrenade);
-    // Rifle rides in the last slot rather than the first so the weapon a player
-    // spawns holding is unchanged; it is here to make weapon 0 reachable at all.
-    require(player_template.weapon_ids[3] == network_example::game_server::kWeaponRifle);
-    require(player_template.active_weapon_slot == 0);
+    // The loadout and backpack in 1_player.yaml are tuning, retuned by hand
+    // (4100c9a9, d1a3f876, 8cb0f032), so they are checked for what any shipped
+    // loadout must be rather than restated: every weapon one the catalog
+    // defines, the active slot one of them, and every backpack slot a known
+    // item, stocked, within the capacity. The loader's handling of slots is
+    // pinned by inventory_player_yaml, a fixture of this test's own.
+    require(player_template.weapon_slot_count > 0u);
+    require(player_template.weapon_slot_count <= KERNEL_MAX_WEAPON_SLOTS);
+    for (std::uint8_t slot = 0; slot < player_template.weapon_slot_count; ++slot) {
+        const std::uint32_t weapon_id = player_template.weapon_ids[slot];
+        require(weapon_id < network_example::game_server::kWeaponIdCount);
+        require(config.weapons.configured[weapon_id]);
+    }
+    require(player_template.active_weapon_slot < player_template.weapon_slot_count);
     require(player_template.inventory_slot_capacity == 16);
-    // 1_player.yaml stocks shockwave (3008) and frag (3009) bottles, four
-    // stateful_magic_bottle (3004) slots, and pull (3010) bottles last; the
-    // fungible_potion and stateful_potion slots are commented out there. The
-    // shape they used to give this case is exercised by inventory_player_yaml
-    // instead, which is a fixture of the test's own.
-    require(player_template.inventory_slots.size() == 7);
-    require(player_template.inventory_slots[6].item_template_id == 3010);
-    require(player_template.inventory_slots[6].quantity == 3);
-    require(player_template.inventory_slots[0].item_template_id == 3008);
-    require(player_template.inventory_slots[0].quantity == 3);
-    require(player_template.inventory_slots[1].item_template_id == 3009);
-    require(player_template.inventory_slots[1].quantity == 2);
-    for (std::size_t index = 2; index < 6; ++index) {
-        require(player_template.inventory_slots[index].item_template_id == 3004);
-        require(player_template.inventory_slots[index].quantity == 1);
+    require(!player_template.inventory_slots.empty());
+    require(player_template.inventory_slots.size() <=
+            player_template.inventory_slot_capacity);
+    for (const network_example::game_server::InventorySlotConfig& slot :
+         player_template.inventory_slots) {
+        require(slot.quantity > 0u);
+        require(std::any_of(
+            config.item_templates.begin(),
+            config.item_templates.end(),
+            [&slot](const network_example::game_server::ItemTemplateConfig& item) {
+                return item.definition.item_template_id == slot.item_template_id;
+            }));
     }
     require(player_template.vision.camp == KernelAgentCamp_PlayerSide);
     require(player_template.vision.vision_collider_template_id == 0);
@@ -2706,9 +2761,12 @@ int main() {
                    KernelProjectileDamageFalloff_Linear);
             require(projectile.definition.mechanics.area_effect.collision_mask &
                    KERNEL_COLLISION_MASK_PROP);
-            require(projectile.definition.mechanics.projectile_impact_trigger.action_count ==
-                   2u);
-            require(projectile.definition.mechanics.projectile_impact_trigger.actions[1].action_type ==
+            // The damage is the projectile's (ABI 105); the graph only shoves,
+            // so the impulse is its one action.
+            const KernelActionTriggerDefinition& blast =
+                projectile.definition.mechanics.projectile_impact_trigger;
+            require(blast.action_count == 1u);
+            require(blast.actions[0].action_type ==
                    KernelEntityTriggerActionType_ApplyImpulse);
             // All four, not just the horizontal. `impulse_strength` alone reads
             // 12.0 under both forms, so on its own it cannot tell the split
@@ -2717,14 +2775,11 @@ int main() {
             // binding is always taken as the scalar form and would quietly
             // defeat the graph's [horizontal, vertical] default. The mode is
             // what pins that down.
-            require(projectile.definition.mechanics.projectile_impact_trigger.actions[1].impulse_strength_mode ==
+            require(blast.actions[0].impulse_strength_mode ==
                    KERNEL_IMPULSE_STRENGTH_MODE_SPLIT);
-            require(projectile.definition.mechanics.projectile_impact_trigger.actions[1].impulse_strength ==
-                   12.0f);
-            require(projectile.definition.mechanics.projectile_impact_trigger.actions[1].impulse_strength_vertical ==
-                   5.0f);
-            require(projectile.definition.mechanics.projectile_impact_trigger.actions[1].impulse_lockout_ticks ==
-                   40u);
+            require(blast.actions[0].impulse_strength == 12.0f);
+            require(blast.actions[0].impulse_strength_vertical == 5.0f);
+            require(blast.actions[0].impulse_lockout_ticks == 40u);
         }
         if (projectile.name == "homing_missile") {
             found_homing_projectile = true;
@@ -2953,8 +3008,10 @@ int main() {
             found_pull_blast = true;
             const KernelActionTriggerDefinition& trigger =
                 projectile.definition.mechanics.projectile_impact_trigger;
-            require(trigger.action_count == 2u);
-            const KernelActionDefinition& pull = trigger.actions[1];
+            // The damage is the projectile's (ABI 105); the graph is the pull
+            // alone.
+            require(trigger.action_count == 1u);
+            const KernelActionDefinition& pull = trigger.actions[0];
             require(pull.action_type == KernelEntityTriggerActionType_ApplyPull);
             require(pull.target_source == KernelEntityRefSource_EventTarget);
             require(pull.pull_mode == KERNEL_PULL_MODE_TO_POINT);
@@ -3082,8 +3139,11 @@ int main() {
     require(bundle_config.projectile_templates.size() == config.projectile_templates.size());
     require(bundle_config.actor_templates.size() == config.actor_templates.size());
 
+    // The test's own graph, apart from the shipped common/
+    // action_apply_health_change: that one has no `when`, and sharing its id
+    // would be a duplicate in any bundle that carries the whole directory.
     const std::string health_change_graph =
-        "id: action_apply_health_change\n"
+        "id: action_health_change_test\n"
         "parameters:\n"
         "  target: null\n"
         "  amount: 1\n"
@@ -3104,7 +3164,7 @@ int main() {
         "triggers:\n"
         "  on_collision:\n"
         "    collision_mask: actor | terrain | static_obstacle\n"
-        "    action_graph: action_apply_health_change\n"
+        "    action_graph: action_health_change_test\n"
         "    parameters:\n"
         "      target: event.target\n"
         "      amount: 30\n";
@@ -3112,7 +3172,7 @@ int main() {
         make_gameplay_bundle_zip(
             read_text_file("game_server/gameplay_catalog/entity_templates/2_sentry_grunt.yaml"),
             {
-                {"action_graph_templates/action_apply_health_change.yaml",
+                {"action_graph_templates/action_health_change_test.yaml",
                  health_change_graph},
                 {"entity_templates/health_change_collision_prop.yaml",
                  collision_prop},
@@ -3260,7 +3320,7 @@ int main() {
             "triggers:\n"
             "  on_collision:\n"
             "    collision_mask: actor\n"
-            "    action_graph: action_apply_health_change\n"
+            "    action_graph: action_health_change_test\n"
             "    parameters:\n"
             "      target: self\n"
             "      amount: " + std::string(invalid_amount) + "\n";
@@ -3268,7 +3328,7 @@ int main() {
             make_gameplay_bundle_zip(
                 read_text_file("game_server/gameplay_catalog/entity_templates/2_sentry_grunt.yaml"),
                 {
-                    {"action_graph_templates/action_apply_health_change.yaml",
+                    {"action_graph_templates/action_health_change_test.yaml",
                      health_change_graph},
                     {"entity_templates/health_change_collision_prop.yaml",
                      invalid_prop},
@@ -3291,13 +3351,13 @@ int main() {
     for (const std::string& invalid_trigger : {
              std::string(
                  "  on_collision:\n"
-                 "    action_graph: action_apply_health_change\n"
+                 "    action_graph: action_health_change_test\n"
                  "    parameters:\n"
                  "      target: self\n"
                  "      amount: 30\n"),
              std::string(
                  "  on_world_impact:\n"
-                 "    action_graph: action_apply_health_change\n"
+                 "    action_graph: action_health_change_test\n"
                  "    parameters:\n"
                  "      target: self\n"
                  "      amount: 30\n"),
@@ -3316,7 +3376,7 @@ int main() {
             make_gameplay_bundle_zip(
                 read_text_file("game_server/gameplay_catalog/entity_templates/2_sentry_grunt.yaml"),
                 {
-                    {"action_graph_templates/action_apply_health_change.yaml",
+                    {"action_graph_templates/action_health_change_test.yaml",
                      health_change_graph},
                     {"entity_templates/invalid_collision_prop.yaml",
                      invalid_prop},
@@ -3440,8 +3500,8 @@ int main() {
                 legged_locomotion_rule.spawn_entity_template_id);
     require(legged_locomotion_actor != nullptr);
     require(legged_locomotion_actor->name == "quadruped_actor");
-    require(legged_locomotion_actor->sentry.passive_patrol);
-    require(legged_locomotion_actor->sentry.patrol_input_magnitude == 1.0f);
+    require(legged_locomotion_actor->default_controller_role ==
+            network_example::game_server::AgentControllerRole::kGarrison);
     require(legged_locomotion_actor->movement_controller_type ==
             KernelMovementControllerType_Character);
     require(
@@ -3854,14 +3914,49 @@ int main() {
     invalid = config;
     invalid.actor_templates[player_index].inventory_slots[0].quantity = 0;
     require(!network_example::game_server::validate_gameplay_config(invalid).empty());
-    invalid = config;
-    // Slot 0 is fungible_shockwave_bottle, max_stack 3.
-    invalid.actor_templates[player_index].inventory_slots[0].quantity = 4;
-    require(!network_example::game_server::validate_gameplay_config(invalid).empty());
-    invalid = config;
-    // Slot 2 is stateful_magic_bottle: a stateful item never stacks.
-    invalid.actor_templates[player_index].inventory_slots[2].quantity = 2;
-    require(!network_example::game_server::validate_gameplay_config(invalid).empty());
+    // The slots below are picked by what their item is, not by position: the
+    // shipped backpack is tuning and gets reordered.
+    const auto player_item = [&config, player_index](std::size_t slot)
+        -> const KernelItemTemplateDefinition* {
+        const std::uint32_t id =
+            config.actor_templates[player_index].inventory_slots[slot].item_template_id;
+        for (const network_example::game_server::ItemTemplateConfig& item :
+             config.item_templates) {
+            if (item.definition.item_template_id == id) return &item.definition;
+        }
+        return nullptr;
+    };
+    const auto first_player_slot = [&](auto&& matches) {
+        const std::size_t count =
+            config.actor_templates[player_index].inventory_slots.size();
+        for (std::size_t slot = 0; slot < count; ++slot) {
+            const KernelItemTemplateDefinition* item = player_item(slot);
+            if (item != nullptr && matches(*item)) return slot;
+        }
+        require(false);
+        return std::size_t{0};
+    };
+    {
+        // One past a fungible item's max_stack.
+        const std::size_t slot = first_player_slot(
+            [](const KernelItemTemplateDefinition& item) {
+                return item.item_mode == KernelItemMode_Fungible;
+            });
+        invalid = config;
+        invalid.actor_templates[player_index].inventory_slots[slot].quantity =
+            player_item(slot)->max_stack + 1u;
+        require(!network_example::game_server::validate_gameplay_config(invalid).empty());
+    }
+    {
+        // A stateful item never stacks.
+        const std::size_t slot = first_player_slot(
+            [](const KernelItemTemplateDefinition& item) {
+                return item.item_mode == KernelItemMode_Stateful;
+            });
+        invalid = config;
+        invalid.actor_templates[player_index].inventory_slots[slot].quantity = 2;
+        require(!network_example::game_server::validate_gameplay_config(invalid).empty());
+    }
     invalid = config;
     invalid.actor_templates[player_index].inventory_slots[0].item_template_id = 999999;
     require(!network_example::game_server::validate_gameplay_config(invalid).empty());
@@ -4329,25 +4424,52 @@ int main() {
         observer_load_result.status ==
         KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS);
     require(Kernel_StartListenServer(observer_kernel, 7897));
+    // The kill floor out of reach: the host player is parked out of sight
+    // below, falling, so the garrison has no one to fight on its walk.
+    network_example::game_server::GameServerGameplayConfig observer_config =
+        legged_locomotion_config;
+    observer_config.player.fall_death_height_meters = -1.0e6f;
     network_example::game_server::GameServer observer_server(
         observer_kernel,
-        legged_locomotion_config);
-    // Created explicitly rather than left to a preloaded director: preloading is
-    // the app's job, not the catalog loader's, so nothing in this test would
-    // ever bring the director online. The agent runtime still adopts the entity
-    // and drives its patrol, which is what the run below measures.
-    KernelServerEntityCreateInfo observer_create{};
-    observer_create.struct_size = sizeof(observer_create);
-    observer_create.entity_type = network_example::game_server::kEntityTypeActor;
-    observer_create.actor_type = KernelActorType_Agent;
-    observer_create.entity_template_id = 21u;
-    observer_create.actor_template_id = 21u;
-    observer_create.position = KernelVec3{0.0f, 10.0f, 0.0f};
-    observer_create.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
-    std::uint32_t observer_created_net_id = 0u;
-    require(Kernel_ServerCreateEntity(
-        observer_kernel, &observer_create, &observer_created_net_id));
-    require(observer_created_net_id != 0u);
+        observer_config);
+    // Spawned by the catalog's preloaded world rule, not created here: the
+    // rule is the spawn source, and since AI plan P1c it is what hands the
+    // garrison the route it walks (102_director_legged_locomotion_world_rule:
+    // 30 m either side of the spawn, along x). An entity created directly has
+    // no route and stands.
+    require(observer_server.preload_directors());
+    // A garrison fights what it sees (AI plan P1c), and the listen host would
+    // be in sight at the origin. Held 30 m off the route instead: past the
+    // 12 m cone and the 10 m beyond it that vision looks at all, but inside
+    // relevance, so the host's render states still carry the walker. Held
+    // there every frame, since nothing below it is ground.
+    std::uint32_t observer_host_net_id = 0u;
+    const auto hold_observer_host = [&]() {
+        if (observer_host_net_id == 0u) {
+            std::array<KernelServerEntityState, 4> players{};
+            for (KernelServerEntityState& state : players) {
+                state.struct_size = sizeof(KernelServerEntityState);
+            }
+            const std::uint32_t player_count = Kernel_ServerQueryEntities(
+                observer_kernel,
+                network_example::game_server::kEntityTypeActor,
+                players.data(),
+                static_cast<std::uint32_t>(players.size()));
+            for (std::uint32_t index = 0u; index < player_count; ++index) {
+                if (players[index].actor_type ==
+                    network_example::game_server::kActorTypePlayer) {
+                    observer_host_net_id = players[index].net_id;
+                }
+            }
+        }
+        require(observer_host_net_id != 0u);
+        const KernelVec3 aside{0.0f, 0.0f, 30.0f};
+        const KernelQuat upright{0.0f, 0.0f, 0.0f, 1.0f};
+        require(Kernel_ServerSetEntityTransform(
+            observer_kernel, observer_host_net_id, &aside, &upright));
+    };
+    Kernel_Update(observer_kernel, 1.0f / 30.0f);
+    hold_observer_host();
 
     std::uint32_t observer_actor_net_id = 0u;
     float observer_actor_min_x = std::numeric_limits<float>::infinity();
@@ -4361,6 +4483,7 @@ int main() {
     std::uint32_t observer_actor_observed_frames = 0u;
     std::uint16_t observer_player_hp = 0u;
     for (std::uint32_t frame = 0u; frame < 720u; ++frame) {
+        hold_observer_host();
         Kernel_Update(observer_kernel, 1.0f / 30.0f);
 
         std::array<KernelEvent, 128> events{};
@@ -4423,9 +4546,11 @@ int main() {
 
     require(observer_actor_net_id != 0u);
     require(observer_actor_observed_frames > 300u);
-    const float observer_actor_300_tick_distance =
+    // Along x either way: the route's first corner is -30 m, where the old
+    // passive sweep went +x first.
+    const float observer_actor_300_tick_distance = std::abs(
         observer_actor_position_after_300_ticks.x -
-        observer_actor_start_position.x;
+        observer_actor_start_position.x);
     if (observer_actor_300_tick_distance <= 23.75f ||
         observer_actor_300_tick_distance >= 25.5f) {
         std::fprintf(
@@ -4665,18 +4790,30 @@ int main() {
     require(observer_pose_moved_within_tick);
     const auto patrol_velocity_from_synthetic_position =
         [&](float position_x) {
-            KernelVec3 position{
-                position_x,
-                observer_actor_last_position.y,
-                observer_actor_last_position.z,
-            };
+            // On the route's line (z 0) and at the rule's spawn height: a
+            // garrison turns at a corner it arrives within a metre of, where the
+            // passive sweep turned on x alone, and the old position's height is
+            // inside the slope at the corners -- depenetration shoves it metres
+            // off the line in a tick.
+            KernelVec3 position{position_x, 10.0f, 0.0f};
             KernelQuat rotation{0.0f, 0.0f, 0.0f, 1.0f};
+            // Drained first: the AI's last re-aim is still queued with the
+            // position it read (the 1/90 s update above ran no tick), and
+            // draining it after the move would put the walker straight back.
+            Kernel_Update(observer_kernel, 1.0f / 30.0f);
             require(Kernel_ServerSetEntityTransform(
                 observer_kernel,
                 observer_actor_net_id,
                 &position,
                 &rotation));
             Kernel_Update(observer_kernel, 1.0f / 30.0f);
+            // It has to have arrived, or the velocity says nothing about it.
+            KernelServerEntityState moved{};
+            moved.struct_size = sizeof(moved);
+            require(Kernel_ServerGetEntityState(
+                observer_kernel, observer_actor_net_id, &moved));
+            require(std::abs(moved.position.x - position_x) < 1.0f);
+            require(std::abs(moved.position.z) < 1.0f);
             observer_server.tick(1.0f / 30.0f);
             Kernel_Update(observer_kernel, 1.0f / 30.0f);
             KernelServerEntityState state{};
@@ -4714,20 +4851,31 @@ int main() {
     for (KernelInventoryContainerView& container : containers) {
         container.struct_size = sizeof(KernelInventoryContainerView);
     }
-    require(Kernel_CopyOwnedInventoryContainers(
-               inventory_kernel,
-               inventory_player,
-               containers.data(),
-               static_cast<std::uint32_t>(containers.size())) == 1);
-    require(containers[0].slot_capacity == 8);
-    require(containers[0].occupied_slot_count == 3);
+    // Two containers since weapons became items: the backpack and the weapon
+    // container. The backpack is the one these slots fill.
+    const auto backpack = [&]() -> const KernelInventoryContainerView& {
+        require(Kernel_CopyOwnedInventoryContainers(
+                   inventory_kernel,
+                   inventory_player,
+                   containers.data(),
+                   static_cast<std::uint32_t>(containers.size())) == 2);
+        for (const KernelInventoryContainerView& container : containers) {
+            if (container.container_kind == KernelInventoryContainerKind_Items) {
+                return container;
+            }
+        }
+        require(false);
+        return containers[0];
+    };
+    require(backpack().slot_capacity == 8);
+    require(backpack().occupied_slot_count == 3);
     std::array<KernelItemInstanceView, 8> items{};
     for (KernelItemInstanceView& item : items) {
         item.struct_size = sizeof(KernelItemInstanceView);
     }
     require(Kernel_CopyInventorySlots(
                inventory_kernel,
-               containers[0].inventory_container_id,
+               backpack().inventory_container_id,
                items.data(),
                static_cast<std::uint32_t>(items.size())) == 3);
     require(items[0].slot == 0 && items[0].item_template_id == 3002 &&
@@ -4741,14 +4889,9 @@ int main() {
     require(items[2].portable_state_field_count == 1);
     require(items[2].portable_state_fields[0].uint32_default == 1);
     inventory_server.handle_event(player_joined);
-    require(Kernel_CopyOwnedInventoryContainers(
-               inventory_kernel,
-               inventory_player,
-               containers.data(),
-               static_cast<std::uint32_t>(containers.size())) == 1);
     require(Kernel_CopyInventorySlots(
                inventory_kernel,
-               containers[0].inventory_container_id,
+               backpack().inventory_container_id,
                items.data(),
                static_cast<std::uint32_t>(items.size())) == 3);
     Kernel_Destroy(inventory_kernel);
@@ -4772,11 +4915,18 @@ int main() {
         create_player_entity(no_inventory_kernel);
     player_joined.net_id = no_inventory_player;
     no_inventory_server.handle_event(player_joined);
+    // No backpack: the weapon container is all it owns.
+    std::array<KernelInventoryContainerView, 2> no_inventory_containers{};
+    for (KernelInventoryContainerView& container : no_inventory_containers) {
+        container.struct_size = sizeof(KernelInventoryContainerView);
+    }
     require(Kernel_CopyOwnedInventoryContainers(
                no_inventory_kernel,
                no_inventory_player,
-               nullptr,
-               0) == 0);
+               no_inventory_containers.data(),
+               static_cast<std::uint32_t>(no_inventory_containers.size())) == 1);
+    require(no_inventory_containers[0].container_kind ==
+            KernelInventoryContainerKind_Weapons);
     Kernel_Destroy(no_inventory_kernel);
 
     return 0;

@@ -13,6 +13,7 @@
 // through the kernel's in-process queues; the network path is
 // game_message_test's.
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -345,13 +346,22 @@ int main() {
     require(camp != 0u);
 
     // The default loadout before any pick: the template's items, and its
-    // weapons as weapon items, packed in category order (rifle 0, meteor
-    // staff 1, sky laser 2, meteor storm staff 3).
+    // weapons as weapon items, packed in category order. The weapons are
+    // tuning, so they come from the template rather than being restated.
     const std::map<std::uint32_t, std::uint32_t> defaults = harness.inventory();
     require(defaults.count(tornado) == 1u);
     require(defaults.count(potion) == 0u);
+    std::vector<std::uint32_t> expected_weapons(
+        player_template->weapon_ids.begin(),
+        player_template->weapon_ids.begin() + player_template->weapon_slot_count);
+    std::stable_sort(
+        expected_weapons.begin(),
+        expected_weapons.end(),
+        [&config](std::uint32_t left, std::uint32_t right) {
+            return config.weapons.categories[left] < config.weapons.categories[right];
+        });
     const std::vector<std::uint32_t> default_weapons = harness.weapons();
-    require((default_weapons == std::vector<std::uint32_t>{0u, 13u, 15u, 14u}));
+    require(default_weapons == expected_weapons);
 
     // Going in sends the offer: every option, the slot cap, no pick yet.
     harness.stand_near(camp, 2.0f);

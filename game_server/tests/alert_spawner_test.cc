@@ -118,7 +118,7 @@ public:
         // out, so it goes too -- its file as well as its listing, since every
         // patrol file is validated whether it is listed or not.
         // The shipping case puts it back with the callers.
-        catalog_ = replace(catalog_, "  - ids: [1, 2]\n", "  - ids: [1]\n");
+        catalog_ = with_patrol_ids(catalog_, "  - ids: [1]\n");
         shipped_callers_.emplace_back(
             kAirforcePatrolFile, read_file(root_ / kAirforcePatrolFile));
         fs::remove(root_ / kAirforcePatrolFile);
@@ -195,10 +195,26 @@ public:
     }
 
 private:
+    // The line after `patrols:` replaced by `ids_line`. Found by position, not
+    // by content: which ids ship is tuning, and changes.
+    static std::string with_patrol_ids(const std::string& text, const std::string& ids_line) {
+        const std::string key = "\npatrols:\n";
+        const std::size_t key_at = text.find(key);
+        require(key_at != std::string::npos);
+        const std::size_t line_at = key_at + key.size();
+        const std::size_t line_end = text.find('\n', line_at);
+        require(line_end != std::string::npos);
+        require(text.compare(line_at, 8, "  - ids:") == 0);
+        return text.substr(0, line_at) + ids_line + text.substr(line_end + 1);
+    }
+
     // `from` replaced by `to`; it has to be there, for the same reason as cut.
     static std::string replace(
         const std::string& text, const std::string& from, const std::string& to) {
         const std::size_t start = text.find(from);
+        if (start == std::string::npos) {
+            std::fprintf(stderr, "needle not found: %s\n", from.c_str());
+        }
         require(start != std::string::npos);
         return text.substr(0, start) + to + text.substr(start + from.size());
     }
@@ -209,6 +225,9 @@ private:
     static std::string cut(
         const std::string& text, const std::string& from, const std::string& through) {
         const std::size_t start = text.find(from);
+        if (start == std::string::npos) {
+            std::fprintf(stderr, "needle not found: %s\n", from.c_str());
+        }
         require(start != std::string::npos);
         if (through.empty()) {
             return text.substr(0, start);

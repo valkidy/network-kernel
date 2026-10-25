@@ -375,6 +375,8 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip() {
         "status_effect_templates",
         "item_templates",
         "projectile_templates",
+        "sp_attack_templates",
+        "patrol_templates",
     };
     for (const std::string& directory : template_dirs) {
         const std::filesystem::path source =
