@@ -1,0 +1,13 @@
+id: 58
+name: gingerbread_giant_vision_cone
+# The giant's own eyes. It used sentry_grunt_vision_cone's 12 m, measured flat
+# from its feet, while its own body is 8 m either side of them: a player had to
+# stand within ~4 m of its edge, inside +/-45 degrees of where it walked, to be
+# seen at all, and one walking past in front of it never was. A 20 m body sees
+# over what a grunt cannot, so this reaches further and wider.
+shape: cone
+center: {x: 0.0, y: 0.0, z: 0.0}
+range: 35.0
+fov_degrees: 140.0
+purpose: vision
+layer: agent_vision
