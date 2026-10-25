@@ -1,0 +1,13 @@
+id: 59
+name: gingerbread_giant_sweep_cone
+# The giant's arm sweep. Resolved as a sphere query of `range` around the
+# launch position (about a metre above its feet) and a horizontal angle test,
+# like grunt_claw_cone. Its bounds run 8 m out to where the client draws the
+# arms, so 7 m is a reach that stays inside what a player sees swing at them.
+# Wide, because it turns at 45 degrees a second and a sweep should not need it
+# squared up.
+shape: cone
+range: 7.0
+fov_degrees: 120.0
+purpose: damage
+layer: projectile

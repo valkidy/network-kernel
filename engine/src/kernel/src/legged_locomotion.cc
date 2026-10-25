@@ -557,6 +557,40 @@ bool initialize_locomotion_state(
     return true;
 }
 
+bool turn_locomotion_toward_heading(
+    const KernelSkeletonBindingDefinition& definition,
+    const KernelVec2& move_input,
+    float target_yaw_radians,
+    float max_yaw_degrees_per_second,
+    float fixed_delta_seconds,
+    LocomotionState* state) {
+    if (state == nullptr || !std::isfinite(move_input.x) ||
+        !std::isfinite(move_input.y) || !std::isfinite(target_yaw_radians) ||
+        !std::isfinite(max_yaw_degrees_per_second) ||
+        max_yaw_degrees_per_second <= 0.0f ||
+        !std::isfinite(fixed_delta_seconds) || fixed_delta_seconds <= 0.0f) {
+        return false;
+    }
+    const float move_magnitude_squared =
+        move_input.x * move_input.x + move_input.y * move_input.y;
+    if (move_magnitude_squared >=
+        definition.input_deadzone * definition.input_deadzone) {
+        return false;
+    }
+    const float remaining =
+        shortest_angle_delta(state->root_yaw_radians, target_yaw_radians);
+    if (std::abs(remaining) <= 1e-6f) {
+        return false;
+    }
+    const float max_yaw_step = max_yaw_degrees_per_second *
+        std::numbers::pi_v<float> / 180.0f * fixed_delta_seconds;
+    state->root_yaw_radians = std::remainder(
+        state->root_yaw_radians +
+            std::clamp(remaining, -max_yaw_step, max_yaw_step),
+        2.0f * std::numbers::pi_v<float>);
+    return true;
+}
+
 bool advance_locomotion_state(
     const KernelSkeletonBindingDefinition& definition,
     const KernelVec2& move_input,

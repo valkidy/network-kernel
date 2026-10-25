@@ -13933,6 +13933,22 @@ void KernelEngine::update_legged_locomotion(
         const KernelVec2 move_input = entity_input == nullptr
             ? KernelVec2{}
             : entity_input->input.move;
+        // The rotation below is rewritten from root_yaw_radians every tick, so
+        // one that differs from it was set from outside since -- the AI facing
+        // a target it stands next to. Standing still, that is the heading to
+        // turn to; without this the overwrite discarded it and a legged agent
+        // never turned in place.
+        {
+            const glm::vec3 forward =
+                transform.rotation * glm::vec3{0.0f, 0.0f, 1.0f};
+            (void)turn_locomotion_toward_heading(
+                entity_template->skeleton,
+                move_input,
+                std::atan2(forward.x, forward.z),
+                entity_template->movement.max_yaw_degrees_per_second,
+                fixed_delta_seconds,
+                &state->second);
+        }
         if (!advance_locomotion_state(
                 entity_template->skeleton,
                 move_input,

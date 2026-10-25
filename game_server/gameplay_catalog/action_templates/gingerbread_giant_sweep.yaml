@@ -1,0 +1,13 @@
+id: 4133
+name: gingerbread_giant_sweep
+trigger_mode: press
+flags: [cancel_on_death, cancel_on_weapon_change, cancel_before_first_commit]
+ammo_cost_per_commit: 1
+# The wind-up: the overlap runs on the commit, so this is where the arm has to
+# be out in front in the clip. A giant's swing is slower than a grunt's claw (8);
+# retune these three to the animation once it exists.
+commit_offset_ticks: 18
+commit_interval_ticks: 60
+max_commit_count: 1
+recovery_ticks: 30
+hold_input_timeout_ticks: 0
