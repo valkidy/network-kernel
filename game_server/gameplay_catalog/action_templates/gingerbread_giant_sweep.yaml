@@ -3,11 +3,15 @@ name: gingerbread_giant_sweep
 trigger_mode: press
 flags: [cancel_on_death, cancel_on_weapon_change, cancel_before_first_commit]
 ammo_cost_per_commit: 1
-# The wind-up: the overlap runs on the commit, so this is where the arm has to
-# be out in front in the clip. A giant's swing is slower than a grunt's claw (8);
-# retune these three to the animation once it exists.
-commit_offset_ticks: 18
+# Timed to gingerbread-giant@standing-melee-attack-downward (2.27 s, 68 frames
+# at 30 fps), which the client's Fire state starts at the windup. Read off the
+# clip's arm and spine rotation speed: the arms come up over 0-0.30 s, hold,
+# strike down over 0.55-0.90 s, and stop dead on frame 28 (0.93 s) -- the
+# moment the fists reach the ground, so the overlap runs then.
+commit_offset_ticks: 28
 commit_interval_ticks: 60
 max_commit_count: 1
-recovery_ticks: 30
+# The rest of the clip, so the action ends as it does: 28 + 40 = 68 ticks.
+# Shorter and the client cuts the Fire state off mid-recovery.
+recovery_ticks: 40
 hold_input_timeout_ticks: 0
