@@ -221,7 +221,7 @@ void squad_members_run_as_patrol(const gs::GameServerGameplayConfig& config) {
     scene_config.collider_id = config.static_collision_scene.collider_id;
     scene_config.collision_layer = config.static_collision_scene.collision_layer;
     require(Kernel_SetStaticCollisionScene(kernel, &scene_config));
-    require(Kernel_StartDedicatedServer(kernel, 8473));
+    require(Kernel_StartDedicatedServer(kernel, 8481));
     require(Kernel_LoadGameplayCatalog(kernel, &storage.definition, nullptr));
 
     // A player, so the game rule opens and nothing is retired for want of one.
@@ -330,13 +330,21 @@ void a_garrison_leaves_its_route_to_fight_and_returns(gs::GameServerGameplayConf
     run(90);
     require(tripod().controller_role == gs::AgentControllerRole::kGarrison);
     require(tripod().route_patrol.path.size() >= 2u);
-    const KernelVec3 walked_from = tripod().position;
-    run(30);
+    // The path walked, tick by tick, not the net displacement: at full speed
+    // the tripod reaches its route's corner inside this second and turns back.
+    float walked = 0.0f;
+    for (int tick = 0; tick < 30; ++tick) {
+        const KernelVec3 from = tripod().position;
+        run(1);
+        const KernelVec3 to = tripod().position;
+        walked += std::hypot(to.x - from.x, to.z - from.z);
+    }
     const KernelVec3 walked_to = tripod().position;
-    const float walked = std::hypot(walked_to.x - walked_from.x, walked_to.z - walked_from.z);
     std::printf("[garrison] route walk: %.2f m in 1 s, state %d\n", walked,
                 static_cast<int>(tripod().sentry.state));
-    require(walked > 1.0f);
+    // At its 2.5 m/s. 1.35 m/s while every re-aim dropped the controller's
+    // anchor and seated the capsule at the tripod's body height.
+    require(walked > 2.0f);
     require(tripod().sentry.state == gs::AgentSentryState::kIdle);
 
     // Players on every side 5 m off, so one is in the cone whichever way it

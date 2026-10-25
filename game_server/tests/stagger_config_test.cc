@@ -69,7 +69,7 @@ KernelEntityTemplateDefinition* compiled_entity(
     return &*found;
 }
 
-const KernelActionTriggerDefinition& projectile_trigger(
+const KernelProjectileMechanicsDefinition& projectile_mechanics(
     const GameServerGameplayConfig& config,
     const KernelGameplayCatalogStorage& catalog,
     const char* name) {
@@ -84,18 +84,7 @@ const KernelActionTriggerDefinition& projectile_trigger(
         catalog.projectile_templates.end(),
         [id](const auto& projectile) { return projectile.projectile_template_id == id; });
     require(found != catalog.projectile_templates.end());
-    return found->mechanics.projectile_impact_trigger;
-}
-
-const KernelActionDefinition* first_damage_action(
-    const KernelActionTriggerDefinition& trigger) {
-    for (std::uint32_t index = 0; index < trigger.action_count; ++index) {
-        if (trigger.actions[index].action_type ==
-            KernelEntityTriggerActionType_ApplyDamage) {
-            return &trigger.actions[index];
-        }
-    }
-    return nullptr;
+    return found->mechanics;
 }
 
 bool kernel_accepts(const KernelGameplayCatalogStorage& catalog) {
@@ -139,17 +128,16 @@ int main() {
     require(compiled_entity(catalog, template_id(config, "sentry_grunt"))
                 ->stagger_threshold == 0.0f);
 
-    // The slam's authored stagger rides its projectile's impact trigger...
-    const KernelActionDefinition* slam =
-        first_damage_action(projectile_trigger(config, catalog, "grunt_slam_hit"));
-    require(slam != nullptr);
-    require(slam->damage_stagger_authored == 1u);
-    require(slam->damage_stagger == 120.0f);
-    // ...and a graph that authors none stays derived.
-    const KernelActionDefinition* rocket =
-        first_damage_action(projectile_trigger(config, catalog, "rocket_explosion"));
-    require(rocket != nullptr);
-    require(rocket->damage_stagger_authored == 0u);
+    // The slam's authored stagger rides its projectile (ABI 105: a hit's
+    // damage and stagger are the projectile's, graphs only add effects)...
+    const KernelProjectileMechanicsDefinition& slam =
+        projectile_mechanics(config, catalog, "grunt_slam_hit");
+    require(slam.stagger_authored == 1u);
+    require(slam.stagger == 120.0f);
+    // ...and a projectile that authors none stays derived.
+    const KernelProjectileMechanicsDefinition& rocket =
+        projectile_mechanics(config, catalog, "rocket_explosion");
+    require(rocket.stagger_authored == 0u);
 
     // The death policy rides the same template: authored on the player, left to
     // the kernel's by-kind default everywhere else.

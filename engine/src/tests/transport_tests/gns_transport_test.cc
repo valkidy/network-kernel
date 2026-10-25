@@ -1,6 +1,10 @@
 #include <array>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <initializer_list>
+#include <thread>
+#include <utility>
 #include <vector>
 
 #include "transport/public/gns_transport.h"
@@ -36,6 +40,93 @@ void fake_network_conditions_parse_or_stay_off() {
     const auto junk = parse_gns_fake_network_conditions("100ms", "-5", "", "101");
     require(!junk.any());
     require(parse_gns_fake_network_conditions("", nullptr, nullptr, nullptr).lag_ms == 0);
+}
+
+using network_example::GnsTransport;
+using network_example::TransportEvent;
+using network_example::TransportEventType;
+
+struct EventCounts {
+    int connected = 0;
+    int disconnected = 0;
+};
+
+void drain(GnsTransport* transport, EventCounts* counts) {
+    TransportEvent event;
+    while (transport->PollEvent(event)) {
+        if (event.type == TransportEventType::kConnected) {
+            ++counts->connected;
+        } else if (event.type == TransportEventType::kDisconnected) {
+            ++counts->disconnected;
+        }
+    }
+}
+
+// Pumps every transport until `done` holds, over real loopback UDP. Five
+// seconds is far past a loopback handshake; hitting it is the failure.
+template <typename Done>
+bool pump_until(
+    GnsTransport* server,
+    EventCounts* server_counts,
+    std::initializer_list<std::pair<GnsTransport*, EventCounts*>> clients,
+    Done done) {
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (std::chrono::steady_clock::now() < deadline) {
+        drain(server, server_counts);
+        for (const auto& client : clients) {
+            drain(client.first, client.second);
+        }
+        if (done()) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    return false;
+}
+
+void max_connections_refuses_the_next_and_frees_on_leave() {
+    constexpr std::uint16_t kPort = 7783;
+    GnsTransport server;
+    server.set_max_connections(1);
+    require(server.StartServer(kPort));
+    EventCounts server_counts;
+
+    GnsTransport first;
+    EventCounts first_counts;
+    require(first.StartClient("127.0.0.1:7783"));
+    require(pump_until(&server, &server_counts, {{&first, &first_counts}}, [&] {
+        return first_counts.connected == 1 && server_counts.connected == 1;
+    }));
+
+    // Full: the second is closed while connecting and never becomes a peer.
+    GnsTransport second;
+    EventCounts second_counts;
+    require(second.StartClient("127.0.0.1:7783"));
+    require(pump_until(
+        &server,
+        &server_counts,
+        {{&first, &first_counts}, {&second, &second_counts}},
+        [&] { return second_counts.disconnected == 1; }));
+    require(second_counts.connected == 0);
+    require(server_counts.connected == 1);
+    require(first_counts.disconnected == 0);
+    second.Stop();
+
+    // The first leaving frees its slot for a newcomer.
+    first.Stop();
+    require(pump_until(&server, &server_counts, {}, [&] {
+        return server_counts.disconnected == 1;
+    }));
+    GnsTransport third;
+    EventCounts third_counts;
+    require(third.StartClient("127.0.0.1:7783"));
+    require(pump_until(&server, &server_counts, {{&third, &third_counts}}, [&] {
+        return third_counts.connected == 1 && server_counts.connected == 2;
+    }));
+
+    third.Stop();
+    server.Stop();
 }
 
 }  // namespace
@@ -124,5 +215,7 @@ int main() {
     require(server.StartServer(7797));
     require(server.running());
     server.Stop();
+
+    max_connections_refuses_the_next_and_frees_on_leave();
     return 0;
 }

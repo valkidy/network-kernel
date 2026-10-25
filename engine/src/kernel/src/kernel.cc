@@ -2609,6 +2609,7 @@ bool KernelEngine::start_dedicated_server(std::uint16_t port) {
     }
     auto gns_transport = std::make_unique<GnsTransport>();
     listen_server_transport_ = nullptr;
+    gns_transport->set_max_connections(session_rules_.max_connected_peers);
     if (!gns_transport->StartServer(port)) {
         push_event(KernelEventType_Error, 0, 0, 3);
         return false;
@@ -14404,8 +14405,20 @@ void KernelEngine::simulate_tick() {
     }
     for (auto pending = pending_first_physics_actors_.begin();
          pending != pending_first_physics_actors_.end();) {
-        if (!world_.find_entity(pending->first).has_value()) {
+        const std::optional<entt::entity> pending_entity =
+            world_.find_entity(pending->first);
+        if (!pending_entity.has_value()) {
             pending = pending_first_physics_actors_.erase(pending);
+            continue;
+        }
+        // The movement pass skips kNone actors, so they never report a
+        // finalization; their spawn transform is already the final one.
+        if (const MovementState* movement =
+                world_.registry().try_get<MovementState>(*pending_entity);
+            movement == nullptr ||
+            movement->controller_type == MovementState::ControllerType::kNone) {
+            pending = pending_first_physics_actors_.erase(pending);
+            released_first_physics_actor = true;
             continue;
         }
         if (!pending->second.warning_reported &&

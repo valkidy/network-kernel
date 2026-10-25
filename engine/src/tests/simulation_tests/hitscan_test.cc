@@ -75,6 +75,8 @@ int main() {
     const network_example::Health& health =
         world.registry().get<network_example::Health>(*enemy_entity);
     require(health.hp == 25);
-    require(events.size() == 3);
+    // The shot, then HitConfirmed, DamageApplied and HealthChanged.
+    require(events.size() == 4);
+    require(events[3].type == KernelEventType_HealthChanged);
     return 0;
 }

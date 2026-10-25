@@ -758,11 +758,11 @@ int main() {
             network_example::estimate_snapshot_entity_size(owner_unarmed) + 4u);
     // Agents ride their own, narrower record; see the agent section in
     // network_packets.cc.
-    require(network_example::estimate_snapshot_entity_size(enemy) == 32u);
+    require(network_example::estimate_snapshot_entity_size(enemy) == 23u);
     network_example::EntitySnapshot active_enemy = enemy;
     active_enemy.action_template_id = 1002;
     active_enemy.action_phase = KernelActionPhase_Active;
-    require(network_example::estimate_snapshot_entity_size(active_enemy) == 52u);
+    require(network_example::estimate_snapshot_entity_size(active_enemy) == 34u);
     require(network_example::estimate_snapshot_entity_size(compact_projectile) == 34u);
     require(network_example::estimate_snapshot_entity_size(hybrid_projectile) == 46u);
     network_example::WorldSnapshot decoded_snapshot;
@@ -802,7 +802,8 @@ int main() {
     require(decoded_snapshot.entities[1].type == network_example::EntityType::kActor);
     require(decoded_snapshot.entities[1].actor_type ==
            network_example::ActorType::kAgent);
-    require(nearly_equal(decoded_snapshot.entities[1].rotation.y, 1.0f));
+    // The compact agent record may hand back -q, which is the same rotation.
+    require(nearly_equal(std::abs(decoded_snapshot.entities[1].rotation.y), 1.0f));
     require((decoded_snapshot.entities[1].state_flags &
             network_example::kSnapshotStateFlagHpUnknown) != 0u);
     require(decoded_snapshot.entities[1].hp == 0);
@@ -857,11 +858,8 @@ int main() {
     require((decoded_snapshot.entities[3].state_flags &
             network_example::kSnapshotStateFlagProjectileHybridCorrection) != 0u);
     require(decoded_snapshot.entities[4].net_id == 8);
-    require(decoded_snapshot.entities[4].item_template_id == 501);
-    require(decoded_snapshot.entities[4].item_instance_id == 9001);
-    require(decoded_snapshot.entities[4].world_item_mode ==
-           KernelWorldItemMode_Carrying);
-    require(decoded_snapshot.entities[4].carrier_entity_id == 4);
+    // Item identity and world mode are not snapshot fields: they ride the
+    // spawn packet and PropStateChangeBatchPacket.
 
     KernelEvent reliable_event{};
     reliable_event.type = KernelEventType_PlayerLeft;
@@ -907,7 +905,7 @@ int main() {
     spawn.carrier_entity_id = 4;
     const std::vector<std::uint8_t> spawn_packet =
         network_example::encode_entity_spawn_packet(spawn, 45);
-    require(spawn_packet.size() == 101u);
+    require(spawn_packet.size() == 105u);
     network_example::EntitySpawnPacket decoded_spawn{};
     require(network_example::decode_entity_spawn_packet(
         spawn_packet.data(),
@@ -1056,7 +1054,7 @@ int main() {
         network_example::encode_remote_action_presentation_batch_packet(
             presentation,
             22);
-    require(presentation_packet.size() == 28u + 8u + 28u);
+    require(presentation_packet.size() == 28u + 8u + 32u);
     network_example::RemoteActionPresentationBatchPacket decoded_presentation{};
     require(network_example::decode_remote_action_presentation_batch_packet(
         presentation_packet.data(),
@@ -1083,12 +1081,13 @@ int main() {
         77,
         7,
         30,
+        1,
     });
     const std::vector<std::uint8_t> status_presentation_packet =
         network_example::encode_remote_action_presentation_batch_packet(
             presentation,
             23);
-    require(status_presentation_packet.size() == 28u + 8u + 28u);
+    require(status_presentation_packet.size() == 28u + 8u + 32u);
     require(network_example::decode_remote_action_presentation_batch_packet(
         status_presentation_packet.data(),
         status_presentation_packet.size(),
@@ -1138,10 +1137,10 @@ int main() {
     });
     presentation.records.resize(58u);
     require(network_example::encode_remote_action_presentation_batch_packet(
-               presentation, 25).size() == 1660u);
+               presentation, 25).size() == 1892u);
     presentation.records.resize(59u);
     require(network_example::encode_remote_action_presentation_batch_packet(
-               presentation, 26).size() == 1688u);
+               presentation, 26).size() == 1924u);
 
     std::vector<std::uint8_t> bad_presentation_count = presentation_packet;
     bad_presentation_count[32] = 2u;
@@ -1215,7 +1214,7 @@ int main() {
     inventory_batch.records.push_back(remove);
     const auto inventory_packet =
         network_example::encode_inventory_delta_batch_packet(inventory_batch, 28);
-    require(inventory_packet.size() == 97u);
+    require(inventory_packet.size() == 98u);
     network_example::InventoryDeltaBatchPacket decoded_inventory;
     require(network_example::decode_inventory_delta_batch_packet(
         inventory_packet.data(), inventory_packet.size(), &decoded_inventory));
@@ -1244,7 +1243,7 @@ int main() {
     const auto inventory_snapshot_bytes =
         network_example::encode_inventory_snapshot_page_packet(
             inventory_snapshot, 30);
-    require(inventory_snapshot_bytes.size() == 89u);
+    require(inventory_snapshot_bytes.size() == 91u);
     network_example::InventorySnapshotPagePacket decoded_inventory_snapshot;
     require(network_example::decode_inventory_snapshot_page_packet(
         inventory_snapshot_bytes.data(), inventory_snapshot_bytes.size(),

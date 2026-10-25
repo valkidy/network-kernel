@@ -3679,12 +3679,18 @@ bool EntityStateSystem::set_transform(
         return false;
     }
     Transform& transform = engine.world_.registry().get<Transform>(*entity);
+    const glm::vec3 previous_position = transform.position;
     transform.position = from_kernel_vec3(position);
     transform.rotation = from_kernel_quat(rotation);
     // An authoritative teleport is the one mover the character controller does
     // not perform itself, so its remembered vertical anchor now describes the
     // position the entity just left. Drop it and let the next step re-resolve.
-    if (engine.world_.registry().all_of<MovementState>(*entity)) {
+    // Only if it moved: the AI re-aims an agent every tick by writing back the
+    // position it read with a new rotation, and dropping the anchor for that
+    // seated a legged rig's capsule at its body height -- buried, and stalled
+    // against its own depenetration a few metres into a route.
+    if (transform.position != previous_position &&
+        engine.world_.registry().all_of<MovementState>(*entity)) {
         engine.world_.registry().get<MovementState>(*entity)
             .has_controller_height = false;
     }

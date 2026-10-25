@@ -134,7 +134,41 @@ void server_set_entity_health_updates_hp_only() {
 
 }  // namespace
 
+// max_connected_peers was appended to the session rules; a caller built before
+// it passes the original two-field size and must still be taken. Reading the
+// full struct from a real 8-byte object is the case that would overrun.
+void session_rules_accept_the_original_size() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    KernelHandle* kernel = Kernel_Create(&config);
+    require(kernel != nullptr);
+
+    struct OriginalSessionRules {
+        std::uint32_t struct_size;
+        std::uint32_t actor_blocking_mode;
+    };
+    const OriginalSessionRules original_rules{
+        sizeof(OriginalSessionRules),
+        KernelActorBlockingMode_Predicted};
+    require(Kernel_SetSessionRules(
+        kernel,
+        reinterpret_cast<const KernelSessionRulesConfig*>(&original_rules)));
+
+    KernelSessionRulesConfig short_rules{};
+    short_rules.struct_size = sizeof(OriginalSessionRules) - 1;
+    require(!Kernel_SetSessionRules(kernel, &short_rules));
+
+    KernelSessionRulesConfig capped_rules{};
+    capped_rules.struct_size = sizeof(capped_rules);
+    capped_rules.max_connected_peers = 4;
+    require(Kernel_SetSessionRules(kernel, &capped_rules));
+    Kernel_Destroy(kernel);
+}
+
 int main() {
+    session_rules_accept_the_original_size();
     KernelAbiInfo abi_info{};
     require(Kernel_GetAbiInfo(&abi_info, sizeof(abi_info)));
     require(abi_info.struct_size == sizeof(KernelAbiInfo));
@@ -283,7 +317,7 @@ int main() {
     // Rejected before it can reach a world: an unknown movement layer bit, and
     // a null handle.
     require(!Kernel_ServerSetEntityMovementCollisionMask(nullptr, 1u, 0u));
-    require(KERNEL_ABI_VERSION == 72u);
+    require(KERNEL_ABI_VERSION == 109u);
     require(Kernel_QueryStatusEffects(nullptr, 1u, nullptr, 0u) == 0u);
     require((abi_info.capability_flags &
             KERNEL_CAPABILITY_SKELETON_RENDER_STATES) != 0u);
@@ -301,7 +335,7 @@ int main() {
     require(sizeof(KernelActionIntent) == 8u);
     require(sizeof(KernelActionInput) == 8u);
     require(sizeof(KernelLocalActionResult) == 12u);
-    require(sizeof(KernelRemoteActionPresentationEvent) == 36u);
+    require(sizeof(KernelRemoteActionPresentationEvent) == 40u);
     require(sizeof(KernelVec4) == 16u);
     require((abi_info.capability_flags & KERNEL_CAPABILITY_ENTITY_LIFECYCLE_EVENTS) != 0);
     require(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
@@ -351,7 +385,7 @@ int main() {
            offsetof(KernelServerEntityState, reload_remaining_ticks));
     require(offsetof(RenderEntityState, action) >
            offsetof(RenderEntityState, collider_template_id));
-    require(sizeof(RenderEntityState) == 144u);
+    require(sizeof(RenderEntityState) == 168u);
     require(offsetof(KernelWeaponMechanicsDefinition, reserve_magazines) >
            offsetof(KernelWeaponMechanicsDefinition, magazine_size));
     require(offsetof(KernelWeaponMechanicsDefinition, damage) >

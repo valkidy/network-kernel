@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <optional>
 
 #include <entt/entt.hpp>
 
@@ -82,6 +83,45 @@ void queued_transform_applies_on_next_tick() {
     Kernel_Destroy(kernel);
 }
 
+// The AI re-aims an agent every tick by queueing the position it read with a
+// new rotation. That is not a teleport, so the character controller's
+// vertical anchor survives it; a real move still drops it. Dropping it on the
+// re-aim seated a legged rig's capsule at its body height, buried, and the
+// garrison quadruped stalled a few metres into its route.
+void queued_rotation_keeps_the_controller_anchor() {
+    network_example::KernelEngine engine(server_config());
+    require(engine.start_dedicated_server(7795));
+
+    std::uint32_t net_id = 0;
+    require(engine.server_create_entity(player_create_info(), &net_id));
+    const std::optional<entt::entity> entity = engine.world_.find_entity(net_id);
+    require(entity.has_value());
+    // A template-less player is kNone: the movement pass leaves its anchor
+    // alone, so only the transform command can change it here.
+    auto& movement =
+        engine.world_.registry().get<network_example::MovementState>(*entity);
+    movement.controller_height = 0.5f;
+    movement.has_controller_height = true;
+
+    const KernelVec3 same_position{1.0f, 0.0f, 2.0f};
+    const KernelQuat turned{0.0f, 0.7071068f, 0.0f, 0.7071068f};
+    require(engine.server_enqueue_entity_transform(
+        KernelCommandSource_AI, net_id, same_position, turned));
+    engine.update(1.0f / 30.0f);
+    const network_example::Transform& transform =
+        engine.world_.registry().get<network_example::Transform>(*entity);
+    require(transform.rotation.y > 0.7f);
+    require(movement.has_controller_height);
+    require(movement.controller_height == 0.5f);
+
+    const KernelVec3 elsewhere{4.0f, 0.0f, 2.0f};
+    require(engine.server_enqueue_entity_transform(
+        KernelCommandSource_Test, net_id, elsewhere, turned));
+    engine.update(1.0f / 30.0f);
+    require(transform.position.x == 4.0f);
+    require(!movement.has_controller_height);
+}
+
 void queued_lifecycle_destroy_applies_on_next_tick() {
     KernelConfig config = server_config();
     KernelHandle* kernel = Kernel_Create(&config);
@@ -127,6 +167,7 @@ void queued_submit_player_input_drains_before_movement() {
     KernelPlayerInput input{};
     input.input_seq = 11;
     input.move = KernelVec2{1.0f, 0.0f};
+    input.aim_dir = KernelVec3{0.0f, 0.0f, 1.0f};
     require(Kernel_ServerEnqueueEntityInput(
         kernel,
         KernelCommandSource_Test,
@@ -136,13 +177,15 @@ void queued_submit_player_input_drains_before_movement() {
     KernelServerEntityState state{};
     state.struct_size = sizeof(state);
     require(Kernel_ServerGetEntityState(kernel, net_id, &state));
-    require(state.position.x == 1.0f);
+    require(state.aim_direction.z != 1.0f);
 
     Kernel_Update(kernel, 1.0f / 30.0f);
     state = KernelServerEntityState{};
     state.struct_size = sizeof(state);
     require(Kernel_ServerGetEntityState(kernel, net_id, &state));
-    require(state.position.x > 1.0f);
+    // A template-less player is kNone and never moves, so the aim is what
+    // shows the queued input reached the entity on this tick.
+    require(state.aim_direction.z == 1.0f);
 
     Kernel_Destroy(kernel);
 }
@@ -231,6 +274,7 @@ void tick_monitor_records_warning_when_threshold_is_low() {
 int main() {
     queued_transform_applies_on_next_tick();
     queued_lifecycle_destroy_applies_on_next_tick();
+    queued_rotation_keeps_the_controller_anchor();
     queued_submit_player_input_drains_before_movement();
     queue_capacity_rejects_after_capacity();
     queue_warning_threshold_records_warning_once();

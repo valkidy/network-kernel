@@ -1,5 +1,7 @@
 #include "kernel/src/kernel_api_internal.h"
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <exception>
@@ -81,11 +83,23 @@ bool Kernel_SetPhysicsConfig(
 bool Kernel_SetSessionRules(
     KernelHandle* kernel,
     const KernelSessionRulesConfig* config) {
+    // The struct grew by appending max_connected_peers. Callers built against
+    // the original two fields still pass struct_size 8, and reading the full
+    // struct from them would run past their allocation, so copy only what
+    // they declared and leave the rest at its zero default.
+    constexpr std::uint32_t kOriginalSize =
+        offsetof(KernelSessionRulesConfig, max_connected_peers);
     return abi_call("Kernel_SetSessionRules", false, [&]() {
-        return kernel != nullptr && kernel->engine != nullptr &&
-               config != nullptr &&
-               config->struct_size >= sizeof(KernelSessionRulesConfig) &&
-               kernel->engine->set_session_rules(*config);
+        if (kernel == nullptr || kernel->engine == nullptr || config == nullptr ||
+            config->struct_size < kOriginalSize) {
+            return false;
+        }
+        KernelSessionRulesConfig copy{};
+        std::memcpy(
+            &copy,
+            config,
+            std::min<std::size_t>(config->struct_size, sizeof(copy)));
+        return kernel->engine->set_session_rules(copy);
     });
 }
 

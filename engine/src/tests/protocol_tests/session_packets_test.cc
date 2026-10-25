@@ -171,7 +171,7 @@ int main() {
     welcome.actor_blocking_mode = KernelActorBlockingMode_Predicted;
     const std::vector<std::uint8_t> welcome_packet =
         network_example::encode_welcome_packet(welcome, 2);
-    require(welcome_packet.size() == 60);
+    require(welcome_packet.size() == 64);
     network_example::WelcomePacket decoded_welcome;
     require(network_example::decode_welcome_packet(
         welcome_packet.data(),

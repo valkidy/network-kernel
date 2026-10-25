@@ -380,6 +380,10 @@ bool GnsTransport::running() const {
     return role_ != Role::kStopped && interface_ != nullptr;
 }
 
+void GnsTransport::set_max_connections(std::uint32_t max_connections) {
+    max_connections_ = max_connections;
+}
+
 bool GnsTransport::initialize_gns() {
     if (initialized_) {
         return true;
@@ -477,6 +481,15 @@ void GnsTransport::handle_connection_status_changed(void* callback_info) {
     switch (info->m_info.m_eState) {
         case k_ESteamNetworkingConnectionState_Connecting: {
             if (role_ != Role::kServer) {
+                break;
+            }
+            if (max_connections_ != 0 &&
+                peer_to_connection_.size() >= max_connections_) {
+                interface_->CloseConnection(
+                    info->m_hConn,
+                    k_ESteamNetConnectionEnd_App_Min + 1,
+                    "server full",
+                    false);
                 break;
             }
             if (interface_->AcceptConnection(info->m_hConn) != k_EResultOK) {

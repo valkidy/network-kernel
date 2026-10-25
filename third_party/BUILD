@@ -25,5 +25,6 @@ alias(
     actual = select({
         "//engine:macos": "@openssl_macos//:openssl",
         "//engine:windows": "@openssl_mingw//:openssl",
+        "//engine:linux": "@openssl_linux//:openssl",
     }),
 )

@@ -589,7 +589,7 @@ int main(void) {
            offsetof(RenderEntityState, status));
     require(offsetof(RenderEntityState, collider_template_id) >
            offsetof(RenderEntityState, template_id));
-    require(sizeof(RenderEntityState) == 160u);
+    require(sizeof(RenderEntityState) == 168u);
     require(offsetof(KernelCombatStateDefinition, collider_template_id) >
            offsetof(KernelCombatStateDefinition, active_weapon_slot));
     require(offsetof(KernelServerEntityCreateInfo, entity_template_id) >
