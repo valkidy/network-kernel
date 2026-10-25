@@ -5417,6 +5417,11 @@ ActorTemplateConfig actor_template_from_yaml(
                 "unsupported or invalid skeleton locomotion: " +
                 actor_template.name);
         }
+        // Legged locomotion turns the rig's forward axis to the direction of
+        // travel, so the eyes look that way too. Left at the default -x, a
+        // legged agent saw 90 degrees off its walk: it turned away from what it
+        // walked to and lost sight of it.
+        actor_template.vision.local_forward = KernelVec3{0.0f, 0.0f, 1.0f};
         // Per-leg tuning laid over the rig's legs. Defaults first, because all
         // three base rigs use one step height and reach ratio for every leg.
         float default_step_height = 0.0f;

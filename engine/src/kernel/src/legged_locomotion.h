@@ -270,6 +270,20 @@ bool advance_locomotion_state(
     float fixed_delta_seconds,
     LocomotionState* state);
 
+// A turn in place asked for from outside -- the actor's rotation set by a
+// transform command -- while there is no move input to take the heading from.
+// Turns root_yaw_radians toward target_yaw_radians at the same capped rate a
+// turn while walking gets; advance_locomotion_state then wakes the legs for
+// it. Does nothing, and returns false, while move_input is past the deadzone:
+// walking, the heading is the direction of travel.
+bool turn_locomotion_toward_heading(
+    const KernelSkeletonBindingDefinition& definition,
+    const KernelVec2& move_input,
+    float target_yaw_radians,
+    float max_yaw_degrees_per_second,
+    float fixed_delta_seconds,
+    LocomotionState* state);
+
 bool solve_legged_locomotion_pose(
     const ozz::animation::Skeleton& skeleton,
     std::span<const KernelBoneLocalTransform> bind_pose,
