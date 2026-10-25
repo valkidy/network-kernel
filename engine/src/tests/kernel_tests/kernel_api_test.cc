@@ -137,7 +137,6 @@ void server_set_entity_health_updates_hp_only() {
 // max_connected_peers was appended to the session rules; a caller built before
 // it passes the original two-field size and must still be taken. Reading the
 // full struct from a real 8-byte object is the case that would overrun.
-// Runs first: main() still asserts a stale KERNEL_ABI_VERSION further down.
 void session_rules_accept_the_original_size() {
     KernelConfig config{};
     config.mode = KernelMode_DedicatedServer;
