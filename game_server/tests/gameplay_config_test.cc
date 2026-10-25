@@ -3914,14 +3914,49 @@ int main() {
     invalid = config;
     invalid.actor_templates[player_index].inventory_slots[0].quantity = 0;
     require(!network_example::game_server::validate_gameplay_config(invalid).empty());
-    invalid = config;
-    // Slot 0 is fungible_shockwave_bottle, max_stack 3.
-    invalid.actor_templates[player_index].inventory_slots[0].quantity = 4;
-    require(!network_example::game_server::validate_gameplay_config(invalid).empty());
-    invalid = config;
-    // Slot 2 is stateful_magic_bottle: a stateful item never stacks.
-    invalid.actor_templates[player_index].inventory_slots[2].quantity = 2;
-    require(!network_example::game_server::validate_gameplay_config(invalid).empty());
+    // The slots below are picked by what their item is, not by position: the
+    // shipped backpack is tuning and gets reordered.
+    const auto player_item = [&config, player_index](std::size_t slot)
+        -> const KernelItemTemplateDefinition* {
+        const std::uint32_t id =
+            config.actor_templates[player_index].inventory_slots[slot].item_template_id;
+        for (const network_example::game_server::ItemTemplateConfig& item :
+             config.item_templates) {
+            if (item.definition.item_template_id == id) return &item.definition;
+        }
+        return nullptr;
+    };
+    const auto first_player_slot = [&](auto&& matches) {
+        const std::size_t count =
+            config.actor_templates[player_index].inventory_slots.size();
+        for (std::size_t slot = 0; slot < count; ++slot) {
+            const KernelItemTemplateDefinition* item = player_item(slot);
+            if (item != nullptr && matches(*item)) return slot;
+        }
+        require(false);
+        return std::size_t{0};
+    };
+    {
+        // One past a fungible item's max_stack.
+        const std::size_t slot = first_player_slot(
+            [](const KernelItemTemplateDefinition& item) {
+                return item.item_mode == KernelItemMode_Fungible;
+            });
+        invalid = config;
+        invalid.actor_templates[player_index].inventory_slots[slot].quantity =
+            player_item(slot)->max_stack + 1u;
+        require(!network_example::game_server::validate_gameplay_config(invalid).empty());
+    }
+    {
+        // A stateful item never stacks.
+        const std::size_t slot = first_player_slot(
+            [](const KernelItemTemplateDefinition& item) {
+                return item.item_mode == KernelItemMode_Stateful;
+            });
+        invalid = config;
+        invalid.actor_templates[player_index].inventory_slots[slot].quantity = 2;
+        require(!network_example::game_server::validate_gameplay_config(invalid).empty());
+    }
     invalid = config;
     invalid.actor_templates[player_index].inventory_slots[0].item_template_id = 999999;
     require(!network_example::game_server::validate_gameplay_config(invalid).empty());
@@ -4389,25 +4424,52 @@ int main() {
         observer_load_result.status ==
         KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS);
     require(Kernel_StartListenServer(observer_kernel, 7897));
+    // The kill floor out of reach: the host player is parked out of sight
+    // below, falling, so the garrison has no one to fight on its walk.
+    network_example::game_server::GameServerGameplayConfig observer_config =
+        legged_locomotion_config;
+    observer_config.player.fall_death_height_meters = -1.0e6f;
     network_example::game_server::GameServer observer_server(
         observer_kernel,
-        legged_locomotion_config);
-    // Created explicitly rather than left to a preloaded director: preloading is
-    // the app's job, not the catalog loader's, so nothing in this test would
-    // ever bring the director online. The agent runtime still adopts the entity
-    // and drives its patrol, which is what the run below measures.
-    KernelServerEntityCreateInfo observer_create{};
-    observer_create.struct_size = sizeof(observer_create);
-    observer_create.entity_type = network_example::game_server::kEntityTypeActor;
-    observer_create.actor_type = KernelActorType_Agent;
-    observer_create.entity_template_id = 21u;
-    observer_create.actor_template_id = 21u;
-    observer_create.position = KernelVec3{0.0f, 10.0f, 0.0f};
-    observer_create.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
-    std::uint32_t observer_created_net_id = 0u;
-    require(Kernel_ServerCreateEntity(
-        observer_kernel, &observer_create, &observer_created_net_id));
-    require(observer_created_net_id != 0u);
+        observer_config);
+    // Spawned by the catalog's preloaded world rule, not created here: the
+    // rule is the spawn source, and since AI plan P1c it is what hands the
+    // garrison the route it walks (102_director_legged_locomotion_world_rule:
+    // 30 m either side of the spawn, along x). An entity created directly has
+    // no route and stands.
+    require(observer_server.preload_directors());
+    // A garrison fights what it sees (AI plan P1c), and the listen host would
+    // be in sight at the origin. Held 30 m off the route instead: past the
+    // 12 m cone and the 10 m beyond it that vision looks at all, but inside
+    // relevance, so the host's render states still carry the walker. Held
+    // there every frame, since nothing below it is ground.
+    std::uint32_t observer_host_net_id = 0u;
+    const auto hold_observer_host = [&]() {
+        if (observer_host_net_id == 0u) {
+            std::array<KernelServerEntityState, 4> players{};
+            for (KernelServerEntityState& state : players) {
+                state.struct_size = sizeof(KernelServerEntityState);
+            }
+            const std::uint32_t player_count = Kernel_ServerQueryEntities(
+                observer_kernel,
+                network_example::game_server::kEntityTypeActor,
+                players.data(),
+                static_cast<std::uint32_t>(players.size()));
+            for (std::uint32_t index = 0u; index < player_count; ++index) {
+                if (players[index].actor_type ==
+                    network_example::game_server::kActorTypePlayer) {
+                    observer_host_net_id = players[index].net_id;
+                }
+            }
+        }
+        require(observer_host_net_id != 0u);
+        const KernelVec3 aside{0.0f, 0.0f, 30.0f};
+        const KernelQuat upright{0.0f, 0.0f, 0.0f, 1.0f};
+        require(Kernel_ServerSetEntityTransform(
+            observer_kernel, observer_host_net_id, &aside, &upright));
+    };
+    Kernel_Update(observer_kernel, 1.0f / 30.0f);
+    hold_observer_host();
 
     std::uint32_t observer_actor_net_id = 0u;
     float observer_actor_min_x = std::numeric_limits<float>::infinity();
@@ -4421,6 +4483,7 @@ int main() {
     std::uint32_t observer_actor_observed_frames = 0u;
     std::uint16_t observer_player_hp = 0u;
     for (std::uint32_t frame = 0u; frame < 720u; ++frame) {
+        hold_observer_host();
         Kernel_Update(observer_kernel, 1.0f / 30.0f);
 
         std::array<KernelEvent, 128> events{};
@@ -4483,9 +4546,11 @@ int main() {
 
     require(observer_actor_net_id != 0u);
     require(observer_actor_observed_frames > 300u);
-    const float observer_actor_300_tick_distance =
+    // Along x either way: the route's first corner is -30 m, where the old
+    // passive sweep went +x first.
+    const float observer_actor_300_tick_distance = std::abs(
         observer_actor_position_after_300_ticks.x -
-        observer_actor_start_position.x;
+        observer_actor_start_position.x);
     if (observer_actor_300_tick_distance <= 23.75f ||
         observer_actor_300_tick_distance >= 25.5f) {
         std::fprintf(
@@ -4774,20 +4839,31 @@ int main() {
     for (KernelInventoryContainerView& container : containers) {
         container.struct_size = sizeof(KernelInventoryContainerView);
     }
-    require(Kernel_CopyOwnedInventoryContainers(
-               inventory_kernel,
-               inventory_player,
-               containers.data(),
-               static_cast<std::uint32_t>(containers.size())) == 1);
-    require(containers[0].slot_capacity == 8);
-    require(containers[0].occupied_slot_count == 3);
+    // Two containers since weapons became items: the backpack and the weapon
+    // container. The backpack is the one these slots fill.
+    const auto backpack = [&]() -> const KernelInventoryContainerView& {
+        require(Kernel_CopyOwnedInventoryContainers(
+                   inventory_kernel,
+                   inventory_player,
+                   containers.data(),
+                   static_cast<std::uint32_t>(containers.size())) == 2);
+        for (const KernelInventoryContainerView& container : containers) {
+            if (container.container_kind == KernelInventoryContainerKind_Items) {
+                return container;
+            }
+        }
+        require(false);
+        return containers[0];
+    };
+    require(backpack().slot_capacity == 8);
+    require(backpack().occupied_slot_count == 3);
     std::array<KernelItemInstanceView, 8> items{};
     for (KernelItemInstanceView& item : items) {
         item.struct_size = sizeof(KernelItemInstanceView);
     }
     require(Kernel_CopyInventorySlots(
                inventory_kernel,
-               containers[0].inventory_container_id,
+               backpack().inventory_container_id,
                items.data(),
                static_cast<std::uint32_t>(items.size())) == 3);
     require(items[0].slot == 0 && items[0].item_template_id == 3002 &&
@@ -4801,14 +4877,9 @@ int main() {
     require(items[2].portable_state_field_count == 1);
     require(items[2].portable_state_fields[0].uint32_default == 1);
     inventory_server.handle_event(player_joined);
-    require(Kernel_CopyOwnedInventoryContainers(
-               inventory_kernel,
-               inventory_player,
-               containers.data(),
-               static_cast<std::uint32_t>(containers.size())) == 1);
     require(Kernel_CopyInventorySlots(
                inventory_kernel,
-               containers[0].inventory_container_id,
+               backpack().inventory_container_id,
                items.data(),
                static_cast<std::uint32_t>(items.size())) == 3);
     Kernel_Destroy(inventory_kernel);
@@ -4832,11 +4903,18 @@ int main() {
         create_player_entity(no_inventory_kernel);
     player_joined.net_id = no_inventory_player;
     no_inventory_server.handle_event(player_joined);
+    // No backpack: the weapon container is all it owns.
+    std::array<KernelInventoryContainerView, 2> no_inventory_containers{};
+    for (KernelInventoryContainerView& container : no_inventory_containers) {
+        container.struct_size = sizeof(KernelInventoryContainerView);
+    }
     require(Kernel_CopyOwnedInventoryContainers(
                no_inventory_kernel,
                no_inventory_player,
-               nullptr,
-               0) == 0);
+               no_inventory_containers.data(),
+               static_cast<std::uint32_t>(no_inventory_containers.size())) == 1);
+    require(no_inventory_containers[0].container_kind ==
+            KernelInventoryContainerKind_Weapons);
     Kernel_Destroy(no_inventory_kernel);
 
     return 0;
