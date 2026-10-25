@@ -157,6 +157,15 @@ namespace NetworkExample.Kernel
             {
                 return false;
             }
+            // Left at 0, the binding takes the hash of the skeleton the loaded
+            // catalog carries -- the one the server loaded and synced, whichever
+            // platform built it. Resolved here and not only in TryAutoMap: a
+            // prefab whose bones are already serialized never auto-maps, and
+            // would go on comparing 0 against every pose's hash.
+            if (SkeletonContentHash == 0ul)
+            {
+                SkeletonContentHash = manifest.ContentHash;
+            }
             if (AutoMapKnownSkeleton && !HasCompleteBoneArray())
             {
                 if (!TryAutoMap(out error))
