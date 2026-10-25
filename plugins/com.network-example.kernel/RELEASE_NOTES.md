@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- adds gingerbread giant vision and arm sweep and fixes legged agents facing their travel direction and turning in place
+
+
+0.7.0 release notes:
+
 - adds server damage-record and peer-limit bindings, resolves skeleton manifest hashes and refreshes native plugins and the gameplay catalog
 
 
