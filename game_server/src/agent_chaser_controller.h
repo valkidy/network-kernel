@@ -97,6 +97,18 @@ struct AgentChaseTuning {
     // edge, so a value equal to the weapon's reach is deliberately on the
     // conservative side of it.
     float attack_range_meters = 0.0f;
+    // How far apart, origin to origin, agents of this template keep while
+    // they pursue. Their movement capsules do not see one another (a giant's
+    // mask is terrain only, and a capsule wide enough for its body cannot
+    // walk), so nothing else keeps two that close on one target from standing
+    // in each other. While pursuing, each one is pushed away from any other
+    // inside this distance; when several pursue the same target the nearest
+    // spread round it on a ring between the stop and resume distances, and
+    // those that do not fit wait on rings further out. Zero turns both off,
+    // which is every chaser authored before this existed. The cost is
+    // quadratic in the template's population, so only a template that is
+    // never many uses it.
+    float spacing_meters = 0.0f;
     AgentLeapTuning leap;
     AgentChargeTuning charge;
 };

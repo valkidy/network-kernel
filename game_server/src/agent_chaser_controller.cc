@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <utility>
+#include <vector>
 
 #include "ai_intent.h"
 #include "game_server/src/actor_intent_executor.h"
@@ -310,28 +312,279 @@ void release_charge(
     agent->charge_cooldown_ticks = duration + charge.cooldown_ticks;
 }
 
+// Where one agent of a spaced template stands this tick (chase.spacing_meters):
+// its spot on the ring round a target it shares, and the push away from the
+// others of its template that are too close.
+struct ChaseSpacing {
+    bool has_slot = false;
+    KernelVec3 slot{0.0f, 0.0f, 0.0f};
+    KernelVec2 push{0.0f, 0.0f};
+};
+
+// A push weaker than this is left out of the move: two agents parked in their
+// slots sit a little inside the spacing whenever they stopped short of them,
+// and acting on that would walk them on and off the spot every tick.
+constexpr float kSpacingPushDeadzone = 0.15f;
+
+// How far off the line to its target a spaced agent may walk. A legged body
+// turns to where it walks and its eyes turn with it, so a giant sent round
+// the target to its slot looked away (its cone is 140 degrees), lost sight,
+// fell back to Search and walked straight in to where it last saw it. Inside
+// the giant's half-cone of 70, with room for the body's turn lagging behind.
+constexpr float kSpacingMaxOffTargetDegrees = 65.0f;
+
+// The ring's spots and every agent's push, worked out once for the batch
+// before any agent moves, from where they all stood at the start of the tick.
+// Who is pursuing what is last tick's answer: this tick's is only known once
+// each agent has run.
+std::vector<ChaseSpacing> plan_chase_spacing(
+    const AgentChaseTuning& chase,
+    const PerceptionFrame& frame,
+    const AgentBatch& agents) {
+    std::vector<ChaseSpacing> spacing(agents.size());
+    const float spacing_meters = chase.spacing_meters;
+    if (spacing_meters <= 0.0f || agents.size() < 2u) {
+        return spacing;
+    }
+    constexpr float kPi = 3.14159265358979f;
+    struct Member {
+        std::size_t index = 0;
+        std::uint32_t net_id = 0;
+        KernelVec3 position{0.0f, 0.0f, 0.0f};
+        // Zero unless it is engaging something.
+        std::uint32_t target = 0;
+        float bearing = 0.0f;
+        float rank = 0.0f;
+    };
+    std::vector<Member> members;
+    members.reserve(agents.size());
+    for (std::size_t index = 0; index < agents.size(); ++index) {
+        const AgentRuntimeState& agent = *agents[index];
+        const KernelServerEntityState* state = frame.actor_state(agent.net_id);
+        if (state == nullptr) {
+            continue;
+        }
+        Member member;
+        member.index = index;
+        member.net_id = agent.net_id;
+        member.position = state->position;
+        if (agent.sentry.target != 0u &&
+            (agent.sentry.state == AgentSentryState::kAlert ||
+             is_pursuing(agent.sentry.state))) {
+            member.target = agent.sentry.target;
+        }
+        members.push_back(member);
+    }
+
+    // The push, from every other agent of the template, engaged or not.
+    for (const Member& self : members) {
+        if (self.target == 0u) {
+            continue;
+        }
+        KernelVec2 push{0.0f, 0.0f};
+        for (const Member& other : members) {
+            if (other.net_id == self.net_id) {
+                continue;
+            }
+            const float dx = self.position.x - other.position.x;
+            const float dz = self.position.z - other.position.z;
+            const float distance = std::sqrt(dx * dx + dz * dz);
+            if (distance >= spacing_meters) {
+                continue;
+            }
+            const float weight = 1.0f - distance / spacing_meters;
+            if (distance > 1e-4f) {
+                push.x += dx / distance * weight;
+                push.y += dz / distance * weight;
+            } else {
+                // Standing on the same spot: split them by net id, so each
+                // goes its own way and a replay goes the same way.
+                push.x += self.net_id < other.net_id ? -weight : weight;
+            }
+        }
+        if (std::sqrt(push.x * push.x + push.y * push.y) >= kSpacingPushDeadzone) {
+            spacing[self.index].push = push;
+        }
+    }
+
+    // The rings, for each target more than one of them is after. The nearest
+    // fill the inner ring, between stop and resume so a member in its spot is
+    // already holding and in reach; who does not fit waits on the next ring
+    // out, a spacing further, and so on. Each ring's spots are a spacing apart
+    // and spread round its members' own bearing by at most
+    // kSpacingMaxOffTargetDegrees either way: a spot further round than that
+    // cannot be walked to while keeping the target in sight.
+    const float max_arc = kSpacingMaxOffTargetDegrees * kPi / 180.0f;
+    const float inner_radius =
+        0.5f * (chase.stop_distance_meters + chase.resume_distance_meters);
+    std::vector<Member*> group;
+    std::vector<Member*> ring;
+    for (std::size_t first = 0; first < members.size(); ++first) {
+        const std::uint32_t target = members[first].target;
+        const KernelServerEntityState* target_state =
+            target != 0u ? frame.actor_state(target) : nullptr;
+        if (target_state == nullptr) {
+            continue;
+        }
+        // Each group once: from its first member only.
+        bool seen_before = false;
+        for (std::size_t earlier = 0; earlier < first; ++earlier) {
+            seen_before = seen_before || members[earlier].target == target;
+        }
+        if (seen_before) {
+            continue;
+        }
+        group.clear();
+        for (Member& member : members) {
+            if (member.target == target) {
+                const float dx = member.position.x - target_state->position.x;
+                const float dz = member.position.z - target_state->position.z;
+                member.bearing = std::atan2(dz, dx);
+                // Who is nearer gets the inner ring. One already parked counts
+                // a spacing nearer, so two closing at about the same range do
+                // not trade rings every tick.
+                member.rank = std::sqrt(dx * dx + dz * dz) -
+                    (agents[member.index]->chase_holding ? spacing_meters : 0.0f);
+                group.push_back(&member);
+            }
+        }
+        if (group.size() < 2u) {
+            continue;
+        }
+        std::sort(group.begin(), group.end(), [](const Member* lhs, const Member* rhs) {
+            return lhs->rank != rhs->rank ? lhs->rank < rhs->rank
+                                          : lhs->net_id < rhs->net_id;
+        });
+        std::size_t placed = 0;
+        for (float radius = inner_radius; placed < group.size();
+             radius += spacing_meters) {
+            const float gap = spacing_meters < 2.0f * radius
+                ? 2.0f * std::asin(spacing_meters / (2.0f * radius))
+                : 2.0f * kPi;
+            const std::size_t capacity = gap > 2.0f * max_arc
+                ? 1u
+                : static_cast<std::size_t>(2.0f * max_arc / gap) + 1u;
+            ring.assign(
+                group.begin() + static_cast<std::ptrdiff_t>(placed),
+                group.begin() + static_cast<std::ptrdiff_t>(
+                    std::min(group.size(), placed + capacity)));
+            placed += ring.size();
+            // Round the ring in bearing order, about its members' mean bearing:
+            // unwrapped from the widest gap between them, so a ring straddling
+            // +-180 degrees reads as one run, not two ends.
+            std::sort(ring.begin(), ring.end(), [](const Member* lhs, const Member* rhs) {
+                return lhs->bearing != rhs->bearing ? lhs->bearing < rhs->bearing
+                                                    : lhs->net_id < rhs->net_id;
+            });
+            const std::size_t count = ring.size();
+            std::size_t start = 0;
+            float widest = -1.0f;
+            for (std::size_t k = 0; k < count; ++k) {
+                const float next = k + 1u < count ? ring[k + 1u]->bearing
+                                                  : ring[0]->bearing + 2.0f * kPi;
+                if (next - ring[k]->bearing > widest) {
+                    widest = next - ring[k]->bearing;
+                    start = (k + 1u) % count;
+                }
+            }
+            float mean = 0.0f;
+            for (std::size_t k = 0; k < count; ++k) {
+                mean += ring[(start + k) % count]->bearing +
+                    (start + k >= count ? 2.0f * kPi : 0.0f);
+            }
+            mean /= static_cast<float>(count);
+            for (std::size_t k = 0; k < count; ++k) {
+                const float angle = mean +
+                    (static_cast<float>(k) - 0.5f * static_cast<float>(count - 1u)) * gap;
+                ChaseSpacing& entry = spacing[ring[(start + k) % count]->index];
+                entry.has_slot = true;
+                entry.slot = KernelVec3{
+                    target_state->position.x + radius * std::cos(angle),
+                    target_state->position.y,
+                    target_state->position.z + radius * std::sin(angle),
+                };
+            }
+        }
+    }
+    return spacing;
+}
+
 // Hysteresis around the stop distance. Without the separate resume threshold an
 // agent parked exactly on the boundary would start and stop every tick.
+//
+// With a ring slot it walks to the slot instead and holds there, on the same
+// width of hysteresis measured from the slot; either way the push of
+// `spacing` rides on top.
 KernelVec2 chase_move(
     const AgentChaseTuning& chase,
     AgentRuntimeState* agent,
-    const KernelVec3& target_position) {
-    const float distance =
-        agent_steering::horizontal_distance(agent->position, target_position);
-    if (agent->chase_holding) {
-        if (distance >= chase.resume_distance_meters) {
-            agent->chase_holding = false;
+    const KernelVec3& target_position,
+    const ChaseSpacing& spacing) {
+    KernelVec2 move{0.0f, 0.0f};
+    if (spacing.has_slot) {
+        const float band = chase.resume_distance_meters - chase.stop_distance_meters;
+        const float distance =
+            agent_steering::horizontal_distance(agent->position, spacing.slot);
+        if (agent->chase_holding) {
+            if (distance >= band) {
+                agent->chase_holding = false;
+            }
+        } else if (distance <= 0.5f * band) {
+            agent->chase_holding = true;
         }
-    } else if (distance <= chase.stop_distance_meters) {
-        agent->chase_holding = true;
+        if (!agent->chase_holding) {
+            move = agent_steering::horizontal_move_toward(
+                agent->position, spacing.slot, chase.input_magnitude);
+        }
+    } else {
+        const float distance =
+            agent_steering::horizontal_distance(agent->position, target_position);
+        if (agent->chase_holding) {
+            if (distance >= chase.resume_distance_meters) {
+                agent->chase_holding = false;
+            }
+        } else if (distance <= chase.stop_distance_meters) {
+            agent->chase_holding = true;
+        }
+        if (!agent->chase_holding) {
+            move = agent_steering::horizontal_move_toward(
+                agent->position, target_position, chase.input_magnitude);
+        }
     }
-    if (agent->chase_holding) {
+    if (!spacing.has_slot && is_zero_move(spacing.push)) {
+        return move;
+    }
+    move.x += spacing.push.x * chase.input_magnitude;
+    move.y += spacing.push.y * chase.input_magnitude;
+    float length = std::sqrt(move.x * move.x + move.y * move.y);
+    if (length <= 1e-4f) {
         return KernelVec2{0.0f, 0.0f};
     }
-    return agent_steering::horizontal_move_toward(
-        agent->position,
-        target_position,
-        chase.input_magnitude);
+    if (length > chase.input_magnitude) {
+        move.x *= chase.input_magnitude / length;
+        move.y *= chase.input_magnitude / length;
+        length = chase.input_magnitude;
+    }
+    // Kept within sight of the target (kSpacingMaxOffTargetDegrees). A move
+    // turned back to the edge of that closes on the target, so only one
+    // heading off to the side, with room left to close, is turned back; one
+    // heading away (the push, mostly) or inside the stop distance stands
+    // instead. A legged agent cannot back off without turning its back.
+    const float to_x = target_position.x - agent->position.x;
+    const float to_z = target_position.z - agent->position.z;
+    const float to_target = std::atan2(to_z, to_x);
+    const float off_target = std::remainder(
+        std::atan2(move.y, move.x) - to_target, 2.0f * 3.14159265358979f);
+    const float max_off = kSpacingMaxOffTargetDegrees * 3.14159265358979f / 180.0f;
+    if (std::abs(off_target) <= max_off) {
+        return move;
+    }
+    if (std::abs(off_target) > 0.5f * 3.14159265358979f ||
+        std::sqrt(to_x * to_x + to_z * to_z) <= chase.stop_distance_meters) {
+        return KernelVec2{0.0f, 0.0f};
+    }
+    const float heading = to_target + (off_target > 0.0f ? max_off : -max_off);
+    return KernelVec2{length * std::cos(heading), length * std::sin(heading)};
 }
 
 }  // namespace
@@ -365,9 +618,11 @@ void AgentChaserController::tick(
     }
 
     const AgentSentryConfig& sentry_config = config_.sentry;
+    const std::vector<ChaseSpacing> spacing =
+        plan_chase_spacing(config_.chase, frame, agents);
 
-    for (AgentRuntimeState* agent_pointer : agents) {
-        AgentRuntimeState& agent = *agent_pointer;
+    for (std::size_t agent_index = 0; agent_index < agents.size(); ++agent_index) {
+        AgentRuntimeState& agent = *agents[agent_index];
         for (std::uint32_t& cooldown : agent.skill_cooldown_ticks) {
             if (cooldown > 0u) --cooldown;
         }
@@ -646,7 +901,8 @@ void AgentChaserController::tick(
                         &desired_rotation) ||
                     should_update_rotation;
                 move = chase_move(
-                    config_.chase, &agent, perception.target_position);
+                    config_.chase, &agent, perception.target_position,
+                    spacing[agent_index]);
                 ++agent.sentry.state_ticks;
                 if (agent.sentry.state_ticks >=
                     (agent.sentry.alerted_by_damage ? sentry_config.alert_on_damage_ticks
@@ -736,7 +992,8 @@ void AgentChaserController::tick(
                         &desired_rotation) ||
                     should_update_rotation;
                 move = chase_move(
-                    config_.chase, &agent, perception.target_position);
+                    config_.chase, &agent, perception.target_position,
+                    spacing[agent_index]);
                 // A charge is tried ahead of a leap: winding one up roots the
                 // agent from this tick, and a leap must not carry it off.
                 if (target_state != nullptr &&

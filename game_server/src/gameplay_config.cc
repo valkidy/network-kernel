@@ -440,6 +440,7 @@ void hash_actor_template(
     hash_float(hash, actor_template.chaser.resume_distance_meters);
     hash_float(hash, actor_template.chaser.input_magnitude);
     hash_float(hash, actor_template.chaser.attack_range_meters);
+    hash_float(hash, actor_template.chaser.spacing_meters);
     hash_float(hash, actor_template.chaser.leap.min_distance_meters);
     hash_float(hash, actor_template.chaser.leap.max_distance_meters);
     hash_float(hash, actor_template.chaser.leap.landing_distance_meters);
@@ -4369,6 +4370,7 @@ AgentChaseTuning chaser_config_from_yaml(
             "stop_distance_meters",
             "resume_distance_meters",
             "input_magnitude",
+            "spacing_meters",
         },
         path,
         source_kind,
@@ -4384,6 +4386,9 @@ AgentChaseTuning chaser_config_from_yaml(
     }
     if (chaser_node["input_magnitude"]) {
         chaser.input_magnitude = chaser_node["input_magnitude"].as<float>();
+    }
+    if (chaser_node["spacing_meters"]) {
+        chaser.spacing_meters = chaser_node["spacing_meters"].as<float>();
     }
     return chaser;
 }
@@ -12411,6 +12416,8 @@ std::vector<std::string> validate_gameplay_config(
                  actor_template.chaser.stop_distance_meters ||
              actor_template.chaser.input_magnitude <= 0.0f ||
              actor_template.chaser.input_magnitude > 1.0f ||
+             !std::isfinite(actor_template.chaser.spacing_meters) ||
+             actor_template.chaser.spacing_meters < 0.0f ||
              !std::isfinite(actor_template.chaser.attack_range_meters) ||
              // Zero is the no-gate default, so only a negative one is wrong.
              actor_template.chaser.attack_range_meters < 0.0f ||

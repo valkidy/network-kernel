@@ -48,6 +48,14 @@ ai:
     stop_distance_meters: 5.0
     resume_distance_meters: 6.0
     input_magnitude: 1.0
+    # Origin to origin between giants, which nothing else keeps apart: their
+    # movement capsules see only terrain. The body spans 4.8 m either side of
+    # the origin, so 9.5 m leaves them all but clear. Two on one target stand
+    # 119 degrees apart on the 5.5 m inner ring, inside the 130 a giant can
+    # walk round while keeping its target in sight (the controller's
+    # kSpacingMaxOffTargetDegrees). At 10 m that would take 131, so a second
+    # giant would wait on the next ring out, 15 m off and out of reach.
+    spacing_meters: 9.5
   skills:
     # Origin to origin, against the sweep cone's 7 m that reaches a target's
     # near edge: whatever this lets it swing at, it can hit.
