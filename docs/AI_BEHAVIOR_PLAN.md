@@ -337,8 +337,8 @@ DllImport）、entity 40 的 view、指令 UI 都還沒做，由使用者處理�
   （guard 或 hunter）。
 - `behaviors.lock_target.target_relations` 本輪只接受 `[hostile]`（B9）。其他行為收到帶
   `target_net_id` 的 spec 會拒絕。
-- **未做（與 §5.2 不同）**：看到目標後仍會先經過 90 ticks 的 Alert 才追擊，沒有跳過 Idle / Alert。
-  對「指揮攻擊」可能嫌慢，是否改由使用者決定。
+- **與 §5.2 不同，且維持如此（使用者決定，2026-10-29）**：看到目標後仍先經過 Alert（`alert_ticks`，
+  巨人與 gingerbread 是 90 ticks）才追擊，不跳過。lock_target 與其他行為共用同一個狀態機，行為一致。
 
 ### 12.5 C4：camp 敵人表與友軍巨人
 
@@ -360,8 +360,8 @@ DllImport）、entity 40 的 view、指令 UI 都還沒做，由使用者處理�
   packet 34 / 35。
 - **指令 struct 與 §8.2 草案不同**：沒有 `position`（guard 的 anchor 沒做，見 §12.7）；多了 server 填的
   `requester_net_id`。
-- **檢查順序與 §8.3 不同**：頻率限制改為第一步，避免洗封包時還做其他檢查。數值暫定每個 peer 每 30 ticks
-  16 個，未量測；peer 斷線時清掉它的計數。
+- **檢查順序與 §8.3 不同**：頻率限制改為第一步，避免洗封包時還做其他檢查。peer 斷線時清掉它的紀錄。
+  頻率限制後來分成兩層，見 §12.9。
 - 間隔寫在 template 的 `ai.remote_command.min_switch_interval_ticks`（預設 10），只有 `player_side`
   template 能寫。只有指令成功的切換會重新計時；內部事件的切換不受影響。
 - **route catalog 與 §8 不同**：沒有開新的 catalog 目錄，改成 `gameplay_catalog.yaml` 裡的
@@ -385,10 +385,43 @@ DllImport）、entity 40 的 view、指令 UI 都還沒做，由使用者處理�
 
 ### 12.8 仍待決定 / 未做
 
-- guard 的 anchor（指令指定站崗位置）：沒做；guard 目前站在被切換時的位置。
-- lock_target 是否跳過 Alert 直接追擊（§12.4）。
-- 每個 peer 的指令頻率上限要實測後再定。
+- guard 的 anchor（指令指定站崗位置）：沒做，現況見 §12.10。
 - 允許 lock_target 鎖定友軍（補血）：格式已預留（B9），需要 skill 依目標關係挑選、item / weapon 能對友軍出手。
 - `follow`（跟隨玩家）：介面可以承載，本輪沒做。
 - `weapon_template_loader_test` 的允許清單要加上 22 和 23。
 - Unity 端（C# mirror、entity 40 的 view、指令 UI）由使用者處理。
+
+### 12.9 指令冷卻（2026-10-29，`claude/ai-behavior-command-cooldown` `2649ba15`，疊在 C5 上）
+
+使用者的意圖：讓玩家感覺 AI agent 接指令比較遲緩，避免短時間內頻繁切換狀態，讓每個指令都是慎重的決定。
+
+- **每個玩家的冷卻**：玩家的指令被執行後，`agent_commands.peer_cooldown_ticks`（`gameplay_catalog.yaml`，
+  預設 150 = 5 秒）內他送的所有指令都以 `RateLimited` 拒絕。只有**被執行**的指令才開始冷卻，被拒絕的
+  （打錯目標、不是友軍）不算。設為 0 就沒有冷卻。
+- **洗封包防護**：每個 peer 每秒 16 個，所有指令都算，與冷卻分開。實作時發現防護窗口每秒重設時把冷卻紀錄
+  一起清掉（冷卻實際只有 1 秒），已修正並由測試涵蓋。
+- **不延遲執行**：被接受的指令立刻生效（與 B10 一致），遲緩感只來自下一個指令要等。client UI 可以顯示冷卻。
+- **每隻 agent 的間隔**維持 10 ticks（B11）：主要的限制是玩家冷卻；agent 的間隔只在多個玩家指揮同一隻
+  agent 時有作用。
+- 測試（`ai_agent_command_test`）：第 0 和第 149 tick 被拒、第 150 tick 執行（跨過多個防護窗口）；另一個
+  玩家不受影響，只受 agent 的 10 ticks 限制；被拒絕的指令之後馬上送正確的指令會被執行；20 個洗封包中
+  4 個被擋。
+
+### 12.10 guard 的站崗位置（anchor）：現況
+
+- guard 沒有固定的站崗位置。它的 leash anchor（`agent.patrol.leash_anchor`）是**開始追擊時站的位置**：
+  從 Idle 看到目標進入 Alert、從 Idle / Seek 被打、從 Seek 看到目標時寫入。
+- leash 只在 `behaviors.guard.leash_meters` > 0 時作用：追出這個距離就進 Return，直線走回 anchor，到
+  `leash_resume_meters` 內再回 Idle。目前**沒有任何 template 設 guard 的 leash**，所以 guard 會一直追到
+  看不到目標為止。
+- 失去目標（Search 超過 `forget_ticks`）後 guard 直接在當下位置回到 Idle，**不會走回 anchor**；只有超過
+  leash 才會回去。所以打完一場後 guard 會停在戰鬥結束的地方。
+- 舊計劃 D5 寫「garrison 的 anchor 為蟲巢或路線上最近的點」，P2b 實作時改成「開始追擊的位置」，蟲巢的
+  位置從沒有傳給 agent。
+- 蟲巢（`208_prop_gingerbread_nest.yaml`）的 `spawner:` 沒有 `behavior:` 區塊，生出的 gingerbread 用
+  template 預設的 `default_behavior: guard`；`28_gingerbread.yaml` 只有 `behaviors.squad`（巡邏隊用），
+  沒有 `behaviors.guard`，所以 leash 為 0。生出來後先走 `entry` 的出口路線（`exit` 在蟲巢外 3 m），走完
+  在出口原地 guard，四處張望。spawner 的 `behavior:` 只能寫 `type`（和 hunter 的參數），不能寫 route。
+- 要做「指定站崗位置」需要：guard 的資料多一個 anchor（預設為當下位置，B4）；失去目標後走回 anchor（目前
+  不會）；生成來源可以給 anchor（例如蟲巢給自己的位置）；remote command 的 struct 加上 position（append
+  在 struct 尾端，struct_size 判斷新舊）。
