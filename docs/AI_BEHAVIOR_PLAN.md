@@ -3,6 +3,10 @@
 基準：main 4f295edc。前一份計劃：`docs/AI_CONTROLLER_PLAN.md`（D1–D19，P0–P6 已完成）。
 本文件的決策編號用 B1…。D1–D4（行為）與 E1–E4（remote command）已於 2026-10-29 決定，見 §10 與 B8–B16。
 
+**狀態（2026-10-29）：C1–C5 全部完成**，在疊起來的五個分支上，尚未 merge：
+`claude/ai-behavior-c1` → `c2` → `c3` → `c4` → `c5`（`58568555`）。§4–§8 是計劃當時的設計；
+實際做法與計劃不同的地方見 **§12 實作紀錄**，以 §12 為準。
+
 ---
 
 ## 1. 目標與範圍
@@ -249,6 +253,8 @@ C5 只是另一個觸發來源，依賴 C2 的 `set_behavior`。
 
 schema bump 時記得更新寫死版本號的三個測試（見 memory：schema bump touch points）。
 
+各階段的分支、commit 與實際結果見 §12。
+
 ---
 
 ## 10. 已決事項（2026-10-29）
@@ -264,8 +270,8 @@ schema bump 時記得更新寫死版本號的三個測試（見 memory：schema 
 | E3 | patrol route 來源 | 只能選 catalog 的具名 route | B15 |
 | E4 | 結果回報 | 做 outcome | B16 |
 
-仍待查證（實作時處理）：kernel vision 能否查指定目標是否可見（§5.1）；玩家與敵方武器 mask 是否只打對面（§7）；
-每個 peer 的指令頻率上限數值（§8.3）。
+當時待查證的三件事，結果見 §12.6：kernel vision 能否查指定目標是否可見（可以）；玩家與敵方武器 mask
+是否只打對面（友軍巨人的部分已用測試確認）；每個 peer 的指令頻率上限（暫定 16 / 秒，未量測）。
 
 ---
 
@@ -278,3 +284,111 @@ schema bump 時記得更新寫死版本號的三個測試（見 memory：schema 
 - `bundle.bytes` 是否需要更新（C4 會）。
 
 C# mirror、Unity UI、package 的 build 與 merge 由使用者處理。
+
+---
+
+## 12. 實作紀錄（2026-10-29）
+
+### 12.1 分支與 commit
+
+| 階段 | 分支 | commit | ABI / schema | `bundle.bytes` |
+|---|---|---|---|---|
+| C1 | `claude/ai-behavior-c1`（從 main 4f295edc） | `92290225` | 不變 | 不需更新 |
+| C2 | `claude/ai-behavior-c2`（疊在 C1 上） | `1e348115` | 不變 | **要更新**（catalog key 改名） |
+| C3 | `claude/ai-behavior-c3`（疊在 C2 上） | `d1253ca3` | 不變 | **要更新**（catalog hash 納入 lock_target 設定） |
+| C4 | `claude/ai-behavior-c4`（疊在 C3 上） | `191caa14` | 不變 | **要更新**（新 template） |
+| C5 | `claude/ai-behavior-c5`（疊在 C4 上） | `58568555` | ABI 不變（新增 export，capability bit 53）；**packet schema 33 → 34** | **要更新**（`agent_routes` 納入 hash） |
+
+client 和 server 必須一起升到 packet schema 34。Unity 端的 C# mirror（bit 53、兩個 struct、4 個
+DllImport）、entity 40 的 view、指令 UI 都還沒做，由使用者處理。
+
+### 12.2 C1：behavior class
+
+- 新檔 `game_server/src/agent_behavior.h/.cc`。chaser 原本依 role 分支的地方（沒看到目標時、遺忘目標後兩份、
+  leash、Return）改成呼叫 hook；Alert / 追擊 / Search / Seek 仍是 chaser 共用的一份。
+- 選行為的順序：`has_slot` → squad，其次 hunter，其餘 guard，與原本的 if 順序一致。唯一的差異是「既是
+  hunter 又有 slot」的 agent，正式環境不會出現（巡邏隊成員一定是 squad）。
+
+### 12.3 C2：改名與 runtime 切換
+
+與計劃不同、或計劃沒寫到的部分：
+
+- **YAML 的 key 也改名**（使用者決定）：`default_controller` → `default_behavior`，`controllers` →
+  `behaviors`，生成來源的 `controller:` → `behavior:`。舊 key 與舊名（`garrison`、指巡邏隊成員的
+  `patrol`）在載入時拒絕，錯誤訊息會指出新名稱。導演 template 的 `ai.controller: director` 不變。
+- **有 route 就是 patrol**（使用者決定），`type: patrol` 可省略；patrol 必須有 route；template 不能預設
+  patrol（template 沒有 route）。runtime 和載入驗證也會推斷：程式碼組出來、只有 route 沒有 role 的 spec
+  一樣視為 patrol，避免 route 被默默丟掉。
+- **guard 與 patrol 各有自己的 leash**（使用者決定）：`behaviors.guard`、`behaviors.patrol`；hunter 用
+  guard 的 leash。C++ 的 tuning 型別改為 `AgentSquadTuning`（巡邏隊）與 `AgentLeashTuning`。
+- 實際的 hook：`validate`、`enter`、`exit`、`leash_meters`、`on_idle`、`on_return`、
+  `on_target_forgotten`；C3 再加上 `locked_target`、`after_perception`（取代 §4 草案的 `pick_target`）。
+  guard / patrol 的資料（route 的 navmesh 展開）由 runtime 套用，behavior 只負責檢查與清掉自己的狀態。
+- `set_behavior` 不允許：sentry 跨到其他行為（或反過來）、切進 squad、巡邏隊成員切出去。
+- 生成來源的 spec、hunter 的 `on_target_lost: guard` 都走同一個 `apply_behavior`；這兩條不經過
+  `set_behavior` 的檢查，也不放手正在打的目標（與原本行為一致）。
+
+### 12.4 C3：lock_target
+
+- 只能由 `set_behavior` 建立；`default_behavior` 和生成來源寫 `lock_target` 會被拒絕（沒有目標 id）。
+- 看得到 = 目標在 agent 的 vision 三份清單（hostile / ally / neutral，各最多 16）裡。只看鎖定的目標，
+  不理會其他敵人；看不到時沿用 hunter 的路徑欄位走 Seek，每 `repath_ticks` 重新尋路；沒有 leash。
+- 結束條件：目標消失或死亡，或連續 `give_up_ticks`（預設 600）tick 沒看到 → 切到 `on_target_lost`
+  （guard 或 hunter）。
+- `behaviors.lock_target.target_relations` 本輪只接受 `[hostile]`（B9）。其他行為收到帶
+  `target_net_id` 的 spec 會拒絕。
+- **未做（與 §5.2 不同）**：看到目標後仍會先經過 90 ticks 的 Alert 才追擊，沒有跳過 Idle / Alert。
+  對「指揮攻擊」可能嫌慢，是否改由使用者決定。
+
+### 12.5 C4：camp 敵人表與友軍巨人
+
+- hunter 的敵人表依 camp 分兩份：敵方 hunter 看玩家 + `player_side` agent；友方 hunter 看敵方 agent，
+  只在場上有友方 hunter 時才建。**行為改變**：敵方 hunter 現在也會追 `player_side` agent（例如
+  `allied_beam_sentry` 27）。template → camp 用 hash map 快取。1 km bench 沒有重新量。
+- 友軍巨人：entity 40 `allied_gingerbread_giant`、collider 60、projectile 40、weapon 23，與 39 只差
+  camp、身體 layer、骨架 layer、揮擊 mask 這幾處。沒有任何生成來源會生出它。id 在 main 4f295edc 上是空的，
+  merge 時要和其他分支對一次號碼。
+
+### 12.6 C5：remote command
+
+- **傳送方式**：實作時發現 kernel 已有通用的 game message channel（ABI 101，loadout 在用），可以不改
+  kernel 就做完；**使用者決定維持 R3 專用 packet**。
+- kernel：`Kernel_SubmitAgentCommand` / `Kernel_PollAgentCommandOutcomes`（client 或 listen host）、
+  `Kernel_ServerPollAgentCommands` / `Kernel_ServerSendAgentCommandOutcome`（server），capability bit 53
+  （`0x0020000000000000`）。`KernelAgentCommand` 32 bytes、`KernelAgentCommandOutcome` 24 bytes，
+  KernelAbiInfo 不變。requester 由 server 從 session 填入。queue 上限 256，超過發 Error event 36。
+  packet 34 / 35。
+- **指令 struct 與 §8.2 草案不同**：沒有 `position`（guard 的 anchor 沒做，見 §12.7）；多了 server 填的
+  `requester_net_id`。
+- **檢查順序與 §8.3 不同**：頻率限制改為第一步，避免洗封包時還做其他檢查。數值暫定每個 peer 每 30 ticks
+  16 個，未量測；peer 斷線時清掉它的計數。
+- 間隔寫在 template 的 `ai.remote_command.min_switch_interval_ticks`（預設 10），只有 `player_side`
+  template 能寫。只有指令成功的切換會重新計時；內部事件的切換不受影響。
+- **route catalog 與 §8 不同**：沒有開新的 catalog 目錄，改成 `gameplay_catalog.yaml` 裡的
+  `agent_routes:` 清單（id、name、waypoints，世界座標），不用改 52 個測試 glob。附了一條 route 1
+  `camp_perimeter`，座標綁在 4zones v2 地圖上，換地圖要跟著改。
+
+### 12.7 測試
+
+| 測試 | 涵蓋 |
+|---|---|
+| `ai_behavior_switch_test`（新） | 每種拒絕、guard ↔ patrol（patrol 2 秒走 9.83 m、guard 0.00 m）、交戰中切換立刻放手、hunter 進出、各行為讀自己的 leash；lock_target 的每種拒絕、忽略身旁敵人、追到 2.9 m、目標消失轉 guard、`give_up_ticks` 後放棄 |
+| `ai_allied_agent_test`（新） | 友軍巨人揮擊打到敵人、不傷在揮擊範圍內的玩家；敵人打得傷它；友方 hunter 追敵人而不是較近的玩家；敵方 hunter 追友軍巨人 |
+| `ai_agent_command_test`（新） | §8.3 每種拒絕；第 9 tick `too_soon`、第 10 tick 接受；20 個裡 4 個被限流、下一秒恢復；listen host 上 submit → GameServer → outcome 的完整來回 |
+| `agent_command_test`（kernel，新） | codec、偽造的 requester 被換掉、無 session 的 peer 不被聽到、256 上限、listen host 路徑、capability |
+| 既有測試 | 7 個依新名稱更新期待值，並加上舊 key、舊名、guard 帶 route、patrol 沒 route 的拒絕案例 |
+
+最後一次全跑（C5，`//engine/...` + `//game_server/...`）：213 個中 212 個通過。
+`weapon_template_loader_test` 在 main 4f295edc 上本來就紅（weapon 22 用了 `shared_reload`，測試只允許
+10/11/20；友軍的 weapon 23 也一樣）。`world_rule_director_test` 在平行全跑時曾一次 bind port 失敗，
+序列跑 5/5 通過。`terrain_scaling_bench` 的原始檔不存在，build 不起來，與本計劃無關。
+
+### 12.8 仍待決定 / 未做
+
+- guard 的 anchor（指令指定站崗位置）：沒做；guard 目前站在被切換時的位置。
+- lock_target 是否跳過 Alert 直接追擊（§12.4）。
+- 每個 peer 的指令頻率上限要實測後再定。
+- 允許 lock_target 鎖定友軍（補血）：格式已預留（B9），需要 skill 依目標關係挑選、item / weapon 能對友軍出手。
+- `follow`（跟隨玩家）：介面可以承載，本輪沒做。
+- `weapon_template_loader_test` 的允許清單要加上 22 和 23。
+- Unity 端（C# mirror、entity 40 的 view、指令 UI）由使用者處理。
