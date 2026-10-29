@@ -160,9 +160,11 @@ _Static_assert(
           KERNEL_CAPABILITY_GAME_MESSAGES |
           KERNEL_CAPABILITY_SERVER_FALL_DEATH_HEIGHT |
           KERNEL_CAPABILITY_SERVER_DAMAGE_RECORDS)) == 0 &&
-        sizeof(KernelAgentCommand) == 32u &&
+        sizeof(KernelAgentCommand) == 48u &&
         offsetof(KernelAgentCommand, request_id) == 16u &&
         offsetof(KernelAgentCommand, behavior) == 30u &&
+        offsetof(KernelAgentCommand, flags) == 31u &&
+        offsetof(KernelAgentCommand, position) == 32u &&
         sizeof(KernelAgentCommandOutcome) == 24u &&
         offsetof(KernelAgentCommandOutcome, status) == 20u,
     "agent commands are additive within ABI 109, on a bit of their own; a "

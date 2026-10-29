@@ -270,6 +270,31 @@ void the_manager_decides() {
     run(30);
     require(answer(manager, order(kFlooder, 0u, giant, Behavior::KernelAgentCommandBehavior_Guard,
                                   request++)) == Rejection::KernelAgentCommandRejection_RequesterDead);
+
+    // A guard posted by command (§12.11): within 30 m of the agent, and only
+    // a guard takes a position.
+    run(10);
+    const KernelVec3 at = agent_of(manager, giant).position;
+    constexpr std::uint32_t kPoster = 7;
+    KernelAgentCommand post = order(kPoster, player, giant, Behavior::KernelAgentCommandBehavior_Guard, request++);
+    post.flags = KERNEL_AGENT_COMMAND_FLAG_POSITION;
+    post.position = KernelVec3{at.x + 40.0f, at.y, at.z};
+    require(answer(manager, post) == Rejection::KernelAgentCommandRejection_InvalidData);
+    post.flags = 0x80u;  // not a flag
+    post.request_id = request++;
+    require(answer(manager, post) == Rejection::KernelAgentCommandRejection_InvalidData);
+    KernelAgentCommand posted_patrol = order(kPoster, player, giant, Behavior::KernelAgentCommandBehavior_Patrol, request++);
+    posted_patrol.route_id = 1u;
+    posted_patrol.flags = KERNEL_AGENT_COMMAND_FLAG_POSITION;
+    require(answer(manager, posted_patrol) == Rejection::KernelAgentCommandRejection_InvalidData);
+    post.flags = KERNEL_AGENT_COMMAND_FLAG_POSITION;
+    post.position = KernelVec3{at.x + 20.0f, at.y, at.z};
+    post.request_id = request++;
+    require(answer(manager, post) == Rejection::KernelAgentCommandRejection_None);
+    require(agent_of(manager, giant).controller_role == gs::AgentControllerRole::kGuard);
+    require(agent_of(manager, giant).has_guard_anchor);
+    require(agent_of(manager, giant).guard_anchor.x == at.x + 20.0f);
+    std::printf("[command] guard posted 20 m off obeyed, 40 m off refused\n");
     Kernel_Destroy(kernel);
 }
 

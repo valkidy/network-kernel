@@ -3239,7 +3239,8 @@ typedef struct KernelDamageRecord {
  * (docs/AI_BEHAVIOR_PLAN.md §8). */
 typedef enum KernelAgentCommandBehavior {
     KernelAgentCommandBehavior_None = 0,
-    /* Stand its ground where it is. */
+    /* Stand guard where it is, or at `position` with
+     * KERNEL_AGENT_COMMAND_FLAG_POSITION. */
     KernelAgentCommandBehavior_Guard = 1,
     /* Walk the catalog route named by route_id. */
     KernelAgentCommandBehavior_Patrol = 2,
@@ -3256,6 +3257,9 @@ typedef enum KernelAgentCommandBehavior {
  * requester_net_id are filled in by the kernel from the session -- never from
  * anything the client wrote; a client leaves them 0.
  */
+/* KernelAgentCommand::flags. A Guard command carries a post in `position`. */
+#define KERNEL_AGENT_COMMAND_FLAG_POSITION 0x01u
+
 typedef struct KernelAgentCommand {
     uint32_t struct_size;
     uint32_t requester_peer;
@@ -3269,7 +3273,12 @@ typedef struct KernelAgentCommand {
     uint16_t route_id;
     /* KernelAgentCommandBehavior. */
     uint8_t behavior;
-    uint8_t reserved0;
+    /* KERNEL_AGENT_COMMAND_FLAG_*. */
+    uint8_t flags;
+    /* Guard with KERNEL_AGENT_COMMAND_FLAG_POSITION only: where to stand
+     * guard, world space. */
+    KernelVec3 position;
+    uint32_t reserved0;
 } KernelAgentCommand;
 
 typedef enum KernelAgentCommandStatus {

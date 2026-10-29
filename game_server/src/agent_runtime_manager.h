@@ -114,6 +114,9 @@ private:
     // Whether a building that hides its occupants holds `net_id` now.
     bool hidden_in_shelter(std::uint32_t net_id) const;
     void update_hunters(const ActorStateView& actors);
+    // Paths every idle guard away from its post back to it, once per time it
+    // goes idle there; the path is dropped whenever it is doing anything else.
+    void update_guard_homes();
     // Ends a lock_target whose target is gone or that has given up, and paths
     // the rest towards where their targets are now.
     void update_lock_targets(const ActorStateView& actors);

@@ -171,10 +171,14 @@ struct AgentControllerSpec {
     AgentHunterTuning hunter;
     // kLockTarget only, and required there: who to go after.
     std::uint32_t target_net_id = 0;
+    // kGuard only: where it stands guard, world space. Without one a guard
+    // takes where it first goes idle (B4).
+    bool has_anchor = false;
+    KernelVec3 anchor{0.0f, 0.0f, 0.0f};
 
     bool empty() const {
         return role == AgentControllerRole::kNone && route.empty() && !has_hunter &&
-            target_net_id == 0u;
+            target_net_id == 0u && !has_anchor;
     }
 
 };
@@ -338,10 +342,16 @@ struct AgentRuntimeState {
     // manager last found towards it, with the ticks until it looks again.
     AgentHunterTuning hunter{};
     std::uint32_t hunt_target = 0;
-    // A lock_target walks these too, towards its own target.
+    // A lock_target walks these too, towards its own target, and a guard
+    // walks them home to its post.
     std::vector<KernelVec3> seek_path;
     std::size_t seek_next = 0;
     std::uint32_t seek_repath_in = 0;
+    // Guard only: its post (docs/AI_BEHAVIOR_PLAN.md §12.11), where it goes
+    // back to whenever it has nothing to fight. Unset until it first goes
+    // idle, which then sets it to where it stands.
+    bool has_guard_anchor = false;
+    KernelVec3 guard_anchor{0.0f, 0.0f, 0.0f};
     // Lock_target only: its tuning, who it is after, and how long it has gone
     // without seeing them.
     AgentLockTargetTuning lock_tuning{};

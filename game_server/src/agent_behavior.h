@@ -70,6 +70,9 @@ public:
 // (none, sentry).
 const AgentBehavior* agent_behavior_for_role(AgentControllerRole role);
 
+// How close a guard comes to its post before it counts as back on it.
+inline constexpr float kGuardAnchorArrivalMeters = 1.0f;
+
 // Which behavior an agent runs this tick. A squad slot decides before the
 // role does: whatever its role, an agent the squad placed answers to the squad.
 const AgentBehavior& agent_behavior_for(const AgentRuntimeState& agent);

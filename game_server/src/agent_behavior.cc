@@ -180,17 +180,60 @@ protected:
     virtual const AgentLeashTuning& leash(const AgentChaserConfig& config) const = 0;
 };
 
-// Stands its ground and looks around.
+// Stands guard at its post and looks around; with nothing to fight and away
+// from it, walks back along the path the runtime found (§12.11). Seeing
+// anything on the way engages as from any Idle.
 class GuardBehavior : public LeashedBehavior {
 public:
     BehaviorSwitchResult validate(const AgentControllerSpec& spec) const override {
-        return spec.route.empty() && !spec.has_hunter && spec.target_net_id == 0u
-            ? BehaviorSwitchResult::kAccepted
-            : BehaviorSwitchResult::kInvalidData;
+        if (!spec.route.empty() || spec.has_hunter || spec.target_net_id != 0u) {
+            return BehaviorSwitchResult::kInvalidData;
+        }
+        if (spec.has_anchor &&
+            (!std::isfinite(spec.anchor.x) || !std::isfinite(spec.anchor.y) ||
+             !std::isfinite(spec.anchor.z))) {
+            return BehaviorSwitchResult::kInvalidData;
+        }
+        return BehaviorSwitchResult::kAccepted;
+    }
+
+    void enter(AgentRuntimeState& agent) const override {
+        // Its post is where it next goes idle, unless the spec gives one.
+        agent.has_guard_anchor = false;
+        agent.seek_path.clear();
+        agent.seek_next = 0;
+    }
+
+    void exit(AgentRuntimeState& agent) const override {
+        agent.has_guard_anchor = false;
+        agent.seek_path.clear();
+        agent.seek_next = 0;
     }
 
     void on_idle(AgentRuntimeState& agent, AgentBehaviorStep& step) const override {
-        look_around(agent, step);
+        if (!agent.has_guard_anchor) {
+            agent.has_guard_anchor = true;
+            agent.guard_anchor = agent.position;
+        }
+        if (agent_steering::horizontal_distance(agent.position, agent.guard_anchor) <=
+            kGuardAnchorArrivalMeters) {
+            look_around(agent, step);
+            return;
+        }
+        while (agent.seek_next < agent.seek_path.size() &&
+               agent_steering::horizontal_distance(
+                   agent.position, agent.seek_path[agent.seek_next]) <=
+                   kGuardAnchorArrivalMeters) {
+            ++agent.seek_next;
+        }
+        // Past the path's last corner and still short: the last stretch
+        // straight.
+        const KernelVec3& toward = agent.seek_next < agent.seek_path.size()
+            ? agent.seek_path[agent.seek_next]
+            : agent.guard_anchor;
+        step.move = agent_steering::horizontal_move_toward(
+            agent.position, toward, step.config.chase.input_magnitude);
+        face_toward(agent, toward, step);
     }
 
 protected:
@@ -203,7 +246,8 @@ protected:
 class PatrolBehavior final : public LeashedBehavior {
 public:
     BehaviorSwitchResult validate(const AgentControllerSpec& spec) const override {
-        if (spec.route.size() < 2u || spec.has_hunter || spec.target_net_id != 0u) {
+        if (spec.route.size() < 2u || spec.has_hunter || spec.target_net_id != 0u ||
+            spec.has_anchor) {
             return BehaviorSwitchResult::kInvalidData;
         }
         for (const KernelVec3& point : spec.route) {
@@ -242,7 +286,7 @@ protected:
 class HunterBehavior final : public GuardBehavior {
 public:
     BehaviorSwitchResult validate(const AgentControllerSpec& spec) const override {
-        return spec.route.empty() && spec.target_net_id == 0u
+        return spec.route.empty() && spec.target_net_id == 0u && !spec.has_anchor
             ? BehaviorSwitchResult::kAccepted
             : BehaviorSwitchResult::kInvalidData;
     }
@@ -280,7 +324,8 @@ public:
     BehaviorSwitchResult validate(const AgentControllerSpec& spec) const override {
         // Whether the target exists, lives and may be locked is the runtime's
         // to check: it is the one that can see the world.
-        return spec.target_net_id != 0u && spec.route.empty() && !spec.has_hunter
+        return spec.target_net_id != 0u && spec.route.empty() && !spec.has_hunter &&
+                !spec.has_anchor
             ? BehaviorSwitchResult::kAccepted
             : BehaviorSwitchResult::kInvalidData;
     }

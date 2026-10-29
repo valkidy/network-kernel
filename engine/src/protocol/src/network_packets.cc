@@ -97,8 +97,8 @@ constexpr std::size_t kStatusEffectStateHeaderPayloadSize = 16;
 constexpr std::size_t kStatusEffectStateRecordPayloadSize = 24;
 constexpr std::size_t kGameplayRequestPayloadSize = 60;
 constexpr std::size_t kGameplayRequestOutcomePayloadSize = 32;
-// request_id, agent, target, route, behavior, reserved.
-constexpr std::size_t kAgentCommandPayloadSize = 20;
+// request_id, agent, target, route, behavior, flags, position.
+constexpr std::size_t kAgentCommandPayloadSize = 32;
 // request_id, agent, status, rejection, reserved.
 constexpr std::size_t kAgentCommandOutcomePayloadSize = 16;
 constexpr std::size_t kInventorySnapshotRequestPayloadSize = 16;
@@ -2132,7 +2132,10 @@ std::vector<std::uint8_t> encode_agent_command_packet(
     payload.write_u32(command.target_net_id);
     payload.write_u16(command.route_id);
     payload.write_u8(command.behavior);
-    payload.write_u8(0u);
+    payload.write_u8(command.flags);
+    payload.write_float(command.position.x);
+    payload.write_float(command.position.y);
+    payload.write_float(command.position.z);
     return protocol_internal::wrap_packet(
         MessageType::kAgentCommand, payload.bytes(), sequence);
 }
@@ -2151,15 +2154,17 @@ bool decode_agent_command_packet(
     }
     KernelAgentCommand command{};
     command.struct_size = sizeof(command);
-    std::uint8_t reserved0 = 0;
     protocol_internal::PacketReader reader(payload, payload_size);
     if (!reader.read_u64(&command.request_id) ||
         !reader.read_u32(&command.agent_net_id) ||
         !reader.read_u32(&command.target_net_id) ||
         !reader.read_u16(&command.route_id) ||
         !reader.read_u8(&command.behavior) ||
-        !reader.read_u8(&reserved0) ||
-        reserved0 != 0u || !reader.done()) {
+        !reader.read_u8(&command.flags) ||
+        !reader.read_float(&command.position.x) ||
+        !reader.read_float(&command.position.y) ||
+        !reader.read_float(&command.position.z) ||
+        !reader.done()) {
         return false;
     }
     *out_command = command;

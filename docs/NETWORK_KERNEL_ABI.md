@@ -76,8 +76,9 @@ Agent commands are additive within ABI 109 behind
 `Kernel_SubmitAgentCommand` / `Kernel_PollAgentCommandOutcomes` on a client or
 a listen host's own player, `Kernel_ServerPollAgentCommands` /
 `Kernel_ServerSendAgentCommandOutcome` on a server. A `KernelAgentCommand`
-(32 bytes) is a player's order to one agent on its side -- guard, patrol along
-a catalog route by id, or lock onto a target -- and a
+(48 bytes) is a player's order to one agent on its side -- guard (optionally at
+a position, `KERNEL_AGENT_COMMAND_FLAG_POSITION`), patrol along a catalog route
+by id, or lock onto a target -- and a
 `KernelAgentCommandOutcome` (24 bytes) is game_server's answer, accepted or
 rejected with a reason. The kernel carries both and decides nothing; a server
 fills the requester's peer and player from the session. Each queue holds 256;

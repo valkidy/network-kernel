@@ -636,6 +636,37 @@ void AgentRuntimeManager::update_hunters(const ActorStateView& actors) {
     }
 }
 
+void AgentRuntimeManager::update_guard_homes() {
+    for (AgentRuntimeState& agent : agents_) {
+        if (agent.controller_role != AgentControllerRole::kGuard || agent.patrol.has_slot ||
+            agent.entry.active) {
+            continue;
+        }
+        // A path is for one walk home from where a fight left it; anything
+        // else -- the fight, a Return on the leash -- makes it stale.
+        if (agent.sentry.state != AgentSentryState::kIdle || !agent.has_guard_anchor ||
+            agent_steering::horizontal_distance(agent.position, agent.guard_anchor) <=
+                kGuardAnchorArrivalMeters) {
+            agent.seek_path.clear();
+            agent.seek_next = 0;
+            continue;
+        }
+        if (!agent.seek_path.empty()) {
+            continue;
+        }
+        PatrolRouteRequest request;
+        request.start = agent.position;
+        request.end = agent.guard_anchor;
+        request.snap_half_extent_meters = 2.0f;
+        agent.seek_next = 0;
+        if (!patrol_navigation_.valid() ||
+            !patrol_navigation_.find_route(request, &agent.seek_path) ||
+            agent.seek_path.empty()) {
+            agent.seek_path.assign(1, agent.guard_anchor);
+        }
+    }
+}
+
 void AgentRuntimeManager::update_lock_targets(const ActorStateView& actors) {
     for (AgentRuntimeState& agent : agents_) {
         if (agent.controller_role != AgentControllerRole::kLockTarget || agent.entry.active) {
@@ -770,6 +801,9 @@ namespace {
 // the cooldown after an obeyed one -- which is what a player feels.
 constexpr std::uint32_t kAgentCommandsPerPeerPerWindow = 16;
 constexpr std::uint64_t kAgentCommandWindowTicks = 30;
+// How far from the agent a command may post it (§12.11): one order moves it
+// across a fight, not across the map -- a patrol route does that.
+constexpr float kAgentCommandMaxAnchorMeters = 30.0f;
 
 }  // namespace
 
@@ -823,6 +857,10 @@ KernelAgentCommandOutcome AgentRuntimeManager::handle_agent_command(
     }
 
     // What the command asks for, and nothing a behavior would ignore (B3).
+    const bool has_position = (command.flags & KERNEL_AGENT_COMMAND_FLAG_POSITION) != 0u;
+    if ((command.flags & ~KERNEL_AGENT_COMMAND_FLAG_POSITION) != 0u) {
+        return reject(KernelAgentCommandRejection_InvalidData);
+    }
     AgentControllerSpec spec;
     switch (command.behavior) {
         case KernelAgentCommandBehavior_Guard:
@@ -830,10 +868,20 @@ KernelAgentCommandOutcome AgentRuntimeManager::handle_agent_command(
                 return reject(KernelAgentCommandRejection_InvalidData);
             }
             spec.role = AgentControllerRole::kGuard;
+            if (has_position) {
+                if (!std::isfinite(command.position.x) || !std::isfinite(command.position.y) ||
+                    !std::isfinite(command.position.z) ||
+                    agent_steering::horizontal_distance(agent.position, command.position) >
+                        kAgentCommandMaxAnchorMeters) {
+                    return reject(KernelAgentCommandRejection_InvalidData);
+                }
+                spec.has_anchor = true;
+                spec.anchor = command.position;
+            }
             break;
         case KernelAgentCommandBehavior_Patrol: {
             const AgentRouteConfig* route = find_agent_route(config_, command.route_id);
-            if (route == nullptr || command.target_net_id != 0u) {
+            if (route == nullptr || command.target_net_id != 0u || has_position) {
                 return reject(KernelAgentCommandRejection_InvalidData);
             }
             spec.role = AgentControllerRole::kPatrol;
@@ -841,7 +889,7 @@ KernelAgentCommandOutcome AgentRuntimeManager::handle_agent_command(
             break;
         }
         case KernelAgentCommandBehavior_LockTarget:
-            if (command.route_id != 0u) {
+            if (command.route_id != 0u || has_position) {
                 return reject(KernelAgentCommandRejection_InvalidData);
             }
             spec.role = AgentControllerRole::kLockTarget;
@@ -964,6 +1012,10 @@ void AgentRuntimeManager::apply_behavior(
     }
     if (const AgentBehavior* now = agent_behavior_for_role(agent.controller_role)) {
         now->enter(agent);
+    }
+    if (spec.has_anchor) {
+        agent.has_guard_anchor = true;
+        agent.guard_anchor = spec.anchor;
     }
     // Reinforcements go after what called them: the spawning agent's target
     // as it stands now. Nothing to inherit leaves it 0, which the hunter pass
@@ -1188,6 +1240,7 @@ void AgentRuntimeManager::tick(float delta_seconds) {
     // Before the controllers, so a hunter seeks along this tick's path.
     update_hunters(actors);
     update_lock_targets(actors);
+    update_guard_homes();
     // Still on the post-director snapshot: nothing between it and here creates,
     // destroys or moves an entity, so it is what a per-agent query would return.
     dispatch_controllers(actors, delta_seconds);

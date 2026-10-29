@@ -7,9 +7,12 @@
 // template now authors `knockdown: recovery_ticks`, and a landed knockback
 // holds it rooted for that long.
 //
-// The shipped game, headless, as the dedicated server runs it; the unit is one
-// its nest put out, driven by its own AI, knocked off its feet by a shockwave
-// bottle thrown at the ground in front of it.
+// The shipped catalog, headless, on open ground: one gingerbread the test puts
+// down itself, driven by its own AI, knocked off its feet by a shockwave
+// bottle thrown at the ground in front of it. Not one a nest put out: those
+// stand guard at the nest's exit (docs/AI_BEHAVIOR_PLAN.md §12.11), crowded
+// together and with the nest at their back, so which of them has open ground
+// between it and the player is down to the crowd.
 
 #include <algorithm>
 #include <array>
@@ -67,7 +70,15 @@ std::uint32_t template_id_of(
 }  // namespace
 
 int main() {
-    const auto config = network_example::game_server::default_game_server_gameplay_config();
+    auto config = network_example::game_server::default_game_server_gameplay_config();
+    // Nothing but the test's own unit and the player.
+    config.preload_director_template_ids.clear();
+    config.game_rules.clear();
+    config.world_rule_spawns.clear();
+    config.patrols.clear();
+    config.spawner_carriers.clear();
+    config.scene_props.clear();
+    config.scene_items.clear();
     const std::uint32_t gingerbread = template_id_of(config, "gingerbread");
     require(gingerbread != 0u);
     const std::vector<std::uint8_t> scene = read_ground_scene();
@@ -104,20 +115,23 @@ int main() {
         for (std::uint32_t i = 0; i < n; ++i) game_server.handle_event(events[i]);
         game_server.tick(kTickSeconds);
     };
-    std::vector<KernelServerEntityState> states(1024);
-    for (int tick = 0; tick < 30 * 20; ++tick) step();
+    // The gingerbread, standing guard on open ground once it has settled.
+    KernelServerEntityCreateInfo create{};
+    create.struct_size = sizeof(create);
+    create.entity_template_id = gingerbread;
+    create.position = KernelVec3{30.0f, 0.0f, 12.0f};
+    create.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+    std::uint32_t unit = 0;
+    require(Kernel_ServerCreateEntity(kernel, &create, &unit));
+    require(unit != 0u);
+    for (int tick = 0; tick < 60; ++tick) step();
     KernelLocalPlayerInfo local{};
     require(Kernel_GetLocalPlayerInfo(kernel, &local));
     const std::uint32_t player = local.player_net_id;
-    // A gingerbread standing at a door: the last one found.
-    for (KernelServerEntityState& st : states) st.struct_size = sizeof(KernelServerEntityState);
-    const std::uint32_t count = Kernel_ServerQueryEntities(kernel, 0u, states.data(), 1024u);
-    std::uint32_t unit = 0;
-    KernelVec3 unit_at{};
-    for (std::uint32_t i = 0; i < count; ++i) {
-        if (states[i].actor_template_id == gingerbread) { unit = states[i].net_id; unit_at = states[i].position; }
-    }
-    require(unit != 0u);
+    KernelServerEntityState settled{};
+    settled.struct_size = sizeof(settled);
+    require(Kernel_ServerGetEntityState(kernel, unit, &settled));
+    const KernelVec3 unit_at = settled.position;
     // The player 8 m out on -x from it, throwing at the ground 2 m in front of it.
     const KernelQuat identity{0.0f, 0.0f, 0.0f, 1.0f};
     const KernelVec3 player_at{unit_at.x - 8.0f, 0.0f, unit_at.z};
@@ -144,7 +158,9 @@ int main() {
         std::uint32_t flags;
     };
     std::vector<Sample> samples;
-    for (int tick = 0; tick < 100; ++tick) {
+    // Long enough for the flight, the recovery and the walk after it, with
+    // room for a flight a few ticks longer than the 37-40 seen so far.
+    for (int tick = 0; tick < 150; ++tick) {
         step();
         KernelServerEntityState state{};
         state.struct_size = sizeof(state);

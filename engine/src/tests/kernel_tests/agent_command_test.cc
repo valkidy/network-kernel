@@ -90,6 +90,8 @@ KernelAgentCommand command(std::uint64_t request_id, std::uint8_t behavior) {
     out.target_net_id = 88u;
     out.route_id = 5u;
     out.behavior = behavior;
+    out.flags = KERNEL_AGENT_COMMAND_FLAG_POSITION;
+    out.position = KernelVec3{1.5f, -2.0f, 30.25f};
     return out;
 }
 
@@ -107,6 +109,9 @@ void the_codec_round_trips() {
     require(decoded.target_net_id == 88u);
     require(decoded.route_id == 5u);
     require(decoded.behavior == KernelAgentCommandBehavior_LockTarget);
+    require(decoded.flags == KERNEL_AGENT_COMMAND_FLAG_POSITION);
+    require(decoded.position.x == 1.5f && decoded.position.y == -2.0f &&
+            decoded.position.z == 30.25f);
     require(decoded.requester_peer == 0u && decoded.requester_net_id == 0u);
     // Short, or someone else's packet, is not a command.
     require(!ne::decode_agent_command_packet(encoded.data(), encoded.size() - 1u, &decoded));
