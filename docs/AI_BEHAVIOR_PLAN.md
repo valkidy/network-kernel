@@ -385,7 +385,7 @@ DllImport）、entity 40 的 view、指令 UI 都還沒做，由使用者處理�
 
 ### 12.8 仍待決定 / 未做
 
-- guard 的 anchor（指令指定站崗位置）：沒做，現況見 §12.10。
+- guard 的 anchor：已做，見 §12.11。
 - 允許 lock_target 鎖定友軍（補血）：格式已預留（B9），需要 skill 依目標關係挑選、item / weapon 能對友軍出手。
 - `follow`（跟隨玩家）：介面可以承載，本輪沒做。
 - `weapon_template_loader_test` 的允許清單要加上 22 和 23。
@@ -407,7 +407,7 @@ DllImport）、entity 40 的 view、指令 UI 都還沒做，由使用者處理�
   玩家不受影響，只受 agent 的 10 ticks 限制；被拒絕的指令之後馬上送正確的指令會被執行；20 個洗封包中
   4 個被擋。
 
-### 12.10 guard 的站崗位置（anchor）：現況
+### 12.10 guard 的站崗位置（anchor）：做之前的現況（2026-10-29，已由 §12.11 取代）
 
 - guard 沒有固定的站崗位置。它的 leash anchor（`agent.patrol.leash_anchor`）是**開始追擊時站的位置**：
   從 Idle 看到目標進入 Alert、從 Idle / Seek 被打、從 Seek 看到目標時寫入。
@@ -425,3 +425,31 @@ DllImport）、entity 40 的 view、指令 UI 都還沒做，由使用者處理�
 - 要做「指定站崗位置」需要：guard 的資料多一個 anchor（預設為當下位置，B4）；失去目標後走回 anchor（目前
   不會）；生成來源可以給 anchor（例如蟲巢給自己的位置）；remote command 的 struct 加上 position（append
   在 struct 尾端，struct_size 判斷新舊）。
+
+### 12.11 guard 的站崗位置（anchor）：實作（`claude/ai-behavior-guard-anchor` `ade284ce`，疊在冷卻上）
+
+使用者決定（2026-10-29）：走回崗位用 navmesh 路徑；回去的路上照常接戰；remote command 指定的位置限制在
+agent 30 m 內；蟲巢的守軍以走出蟲巢的位置為崗位，不需要 YAML。
+
+- **崗位**：guard 第一次進入 Idle 時把當下位置記為崗位（B4）；`set_behavior` 的 spec 可以帶
+  `has_anchor` / `anchor` 指定。切成 guard 時清掉舊崗位，沒指定就再取當下位置。只有 guard 收 anchor，
+  其他行為收到會拒絕；非有限值拒絕。
+- **走回去**：Idle、離崗位超過 1 m 時，runtime 用 navmesh 規劃一次路徑（借用 `seek_path`，沒有 navmesh
+  就直線），guard 沿路走回去；離開 Idle（接戰、因 leash 進 Return）就丟掉路徑，下次回到 Idle 再規劃。
+  路上看到敵人照常進入 Alert。到崗位後照舊四處張望。**行為改變**：所有 guard 打完都會回到崗位，以前會停在
+  戰鬥結束的地方。leash 的語意不變（仍從開始追擊的位置算）。
+- **蟲巢守軍**：走完 `entry` 出口路線後第一次 Idle 的位置，即蟲巢外 3 m 的出口附近。同一個蟲巢的守軍
+  崗位都在出口附近，會擠在一起。
+- **remote command**：`KernelAgentCommand` 的 `reserved0` 改成 `flags`（`KERNEL_AGENT_COMMAND_FLAG_POSITION`），
+  並在尾端加上 `position`：struct 48 bytes、AgentCommand packet payload 32 bytes。C5 的格式尚未 merge，
+  所以仍是 packet schema 34（沒有再 bump）。game_server 只在 Guard 上接受位置，且必須在 agent 30 m 內；
+  其他行為帶這個 flag、或有不認得的 flag bit，都以 InvalidData 拒絕。
+- **測試**：新的 `ai_guard_anchor_test`（被拉開 8.2 m，目標消失後 195 ticks 回到崗位並留在那裡；
+  `set_behavior` 指定的崗位走得到；沒指定時取當下位置；hunter / patrol 帶 anchor、非有限值都被拒絕）；
+  `ai_agent_command_test` 加上 20 m 接受、40 m 與錯誤 flag 拒絕；kernel codec 測試涵蓋 flags 與 position。
+- **`knockdown_recovery_test` 的修正**：它原本挑「最後找到的蟲巢守軍」，從 -x 丟瓶子。守軍守在蟲巢出口後，
+  蟲巢正好擋在那隻 agent 和玩家之間，恢復後走不過去（另一次則是被另一隻守軍擋到瓶子）。改成測試自己在空地
+  放一隻 gingerbread，取樣從 100 ticks 加長到 150（飛行在第 40 tick 落地，原本的窗口剛好不夠）；斷言不變。
+- 全跑：214 個中 213 個通過，只剩原本就紅的 `weapon_template_loader_test`。
+- **觀察到、尚未處理**：追擊時 agent 直線走向目標，遇到蟲巢這類障礙物會卡住（不是 anchor 造成的，但守軍
+  守在蟲巢旁邊讓它更常發生）。
