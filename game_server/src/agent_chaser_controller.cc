@@ -8,6 +8,7 @@
 
 #include "ai_intent.h"
 #include "game_server/src/actor_intent_executor.h"
+#include "game_server/src/agent_behavior.h"
 #include "game_server/src/agent_steering.h"
 #include "game_server/src/ai_perception_adapter.h"
 #include "kernel/src/kernel_api_internal.h"
@@ -88,18 +89,11 @@ void choose_weapon_skill(
 }
 
 // How close Search comes to where the target was last seen before it stops
-// and looks around, and a returning garrison to where it broke off. The same
-// allowance a route corner gets.
+// and looks around. The same allowance a route corner gets.
 constexpr float kSearchArrivalMeters = 1.0f;
-constexpr float kReturnArrivalMeters = 1.0f;
 
 bool is_zero_move(const KernelVec2& move) {
     return move.x == 0.0f && move.y == 0.0f;
-}
-
-// A slot to stand in, which is what being in a squad amounts to from here.
-bool has_slot(const AgentRuntimeState& agent) {
-    return agent.patrol.has_slot;
 }
 
 // Distance from where the agent broke off, which is what the leash bounds. A
@@ -108,61 +102,6 @@ bool leash_exceeded(float leash_meters, const AgentRuntimeState& agent) {
     return leash_meters > 0.0f &&
         agent_steering::horizontal_distance(
             agent.position, agent.patrol.leash_anchor) > leash_meters;
-}
-
-// A squad member answers to its squad's leash, anyone else to its garrison's.
-float leash_meters(const AgentChaserConfig& config, const AgentRuntimeState& agent) {
-    return has_slot(agent) ? config.patrol.leash_meters : config.garrison.leash_meters;
-}
-
-bool inside_leash_resume(
-    const AgentPatrolTuning& patrol,
-    const AgentRuntimeState& agent) {
-    return agent_steering::horizontal_distance(
-               agent.position, agent.patrol.leash_anchor) <=
-        patrol.leash_resume_meters;
-}
-
-bool standing_in_slot(
-    const AgentPatrolTuning& patrol,
-    const AgentRuntimeState& agent) {
-    return agent_steering::horizontal_distance(
-               agent.position, agent.patrol.slot) <= patrol.slot_radius_meters;
-}
-
-KernelVec2 patrol_move(
-    const AgentPatrolTuning& patrol,
-    const AgentRuntimeState& agent,
-    float max_speed) {
-    const KernelVec3& travel = agent.patrol.travel_velocity;
-    const float speed = std::hypot(travel.x, travel.z);
-    if (speed <= 0.0001f) {
-        return standing_in_slot(patrol, agent)
-            ? KernelVec2{0.0f, 0.0f}
-            : agent_steering::horizontal_move_toward(
-                  agent.position, agent.patrol.slot, patrol.input_magnitude);
-    }
-    if (max_speed <= 0.0f) {
-        return KernelVec2{0.0f, 0.0f};
-    }
-
-    const float forward_x = travel.x / speed;
-    const float forward_z = travel.z / speed;
-    // Correct position error over roughly one second, while feeding through
-    // the squad velocity. Ahead members slow down without stopping or backing
-    // up; lagging members may use the template's full movement speed.
-    constexpr float kCorrectionPerSecond = 1.0f;
-    const float error_x = agent.patrol.slot.x - agent.position.x;
-    const float error_z = agent.patrol.slot.z - agent.position.z;
-    const float along = error_x * forward_x + error_z * forward_z;
-    const float forward_speed = std::max(
-        speed * 0.25f, speed + along * kCorrectionPerSecond);
-    const float velocity_x = forward_x * forward_speed +
-        (error_x - along * forward_x) * kCorrectionPerSecond;
-    const float velocity_z = forward_z * forward_speed +
-        (error_z - along * forward_z) * kCorrectionPerSecond;
-    const float scale = std::max(max_speed, std::hypot(velocity_x, velocity_z));
-    return KernelVec2{velocity_x / scale, velocity_z / scale};
 }
 
 // Mirrors leap_airtime_ticks in simulation/public/simulation.h, which
@@ -679,9 +618,12 @@ void AgentChaserController::tick(
             --agent.charge_cooldown_ticks;
         }
 
-        KernelQuat desired_rotation = entity_state.rotation;
-        bool should_update_rotation = false;
-        KernelVec2 move{0.0f, 0.0f};
+        const AgentBehavior& behavior = agent_behavior_for(agent);
+        AgentBehaviorStep step{config_, perception, entity_state};
+        step.desired_rotation = entity_state.rotation;
+        KernelQuat& desired_rotation = step.desired_rotation;
+        bool& should_update_rotation = step.should_update_rotation;
+        KernelVec2& move = step.move;
         bool submitted_input = false;
 
         const bool has_visible_target = perception.has_visible_target;
@@ -734,7 +676,7 @@ void AgentChaserController::tick(
         // it is made before the pursuit states get to look at what they can
         // see. Without it the leash could only be enforced on a tick where
         // vision happened to break.
-        if (leash_exceeded(leash_meters(config_, agent), agent) &&
+        if (leash_exceeded(behavior.leash_meters(config_, agent), agent) &&
             is_engaged(agent.sentry.state)) {
             agent.sentry.target = 0;
             agent.sentry.has_attention_point = false;
@@ -746,54 +688,7 @@ void AgentChaserController::tick(
         // route resumes walking it on the same tick, the way kIdle -> kAlert
         // already reaches the alert branch in the tick it transitions.
         if (agent.sentry.state == AgentSentryState::kReturn) {
-            if (!has_slot(agent)) {
-                // A garrison walks back to where it broke off, then goes idle
-                // there -- which puts one on a route back onto it.
-                const float back = agent_steering::horizontal_distance(
-                    agent.position, agent.patrol.leash_anchor);
-                if (back <= std::max(config_.garrison.leash_resume_meters,
-                                     kReturnArrivalMeters)) {
-                    agent_steering::transition_to(&agent, AgentSentryState::kIdle);
-                } else {
-                    move = agent_steering::horizontal_move_toward(
-                        agent.position,
-                        agent.patrol.leash_anchor,
-                        config_.chase.input_magnitude);
-                    should_update_rotation =
-                        agent_steering::facing_rotation_from_vision_toward(
-                            agent.position,
-                            agent.patrol.leash_anchor,
-                            perception.vision_forward,
-                            entity_state.rotation,
-                            &desired_rotation) ||
-                        should_update_rotation;
-                }
-            } else if (
-                standing_in_slot(config_.patrol, agent) ||
-                inside_leash_resume(config_.patrol, agent)) {
-                // Two ways to be back: standing in the slot, or having returned
-                // to where it broke formation. The second is what ends a short
-                // chase, where the squad may have moved on and waiting to reach
-                // the slot would leave the agent refusing to engage for the
-                // rest of the leg.
-                //
-                // Any re-engagement happens in the kIdle branch below on this
-                // same tick, which is also what re-anchors the leash to where
-                // the next chase starts.
-                agent_steering::transition_to(&agent, AgentSentryState::kIdle);
-            } else {
-                move = patrol_move(
-                    config_.patrol, agent, sentry_config.move_speed_meters_per_second);
-                should_update_rotation =
-                    agent_steering::facing_rotation_from_vision_toward(
-                        agent.position,
-                        KernelVec3{agent.position.x + move.x, agent.position.y,
-                                   agent.position.z + move.y},
-                        perception.vision_forward,
-                        entity_state.rotation,
-                        &desired_rotation) ||
-                    should_update_rotation;
-            }
+            behavior.on_return(agent, step);
         }
 
         if (agent.sentry.state == AgentSentryState::kIdle) {
@@ -803,49 +698,8 @@ void AgentChaserController::tick(
                 agent.patrol.leash_anchor = agent.position;
                 agent.sentry.alerted_by_damage = false;
                 agent_steering::transition_to(&agent, AgentSentryState::kAlert);
-            } else if (agent.controller_role == AgentControllerRole::kHunter) {
-                // Nothing in sight: a hunter goes looking (D10). The Seek
-                // below starts walking on this same tick.
-                agent_steering::transition_to(&agent, AgentSentryState::kSeek);
-            } else if (has_slot(agent) &&
-                       (!standing_in_slot(config_.patrol, agent) ||
-                        std::hypot(agent.patrol.travel_velocity.x,
-                                   agent.patrol.travel_velocity.z) > 0.0001f)) {
-                move = patrol_move(
-                    config_.patrol, agent, sentry_config.move_speed_meters_per_second);
-                should_update_rotation =
-                    agent_steering::facing_rotation_from_vision_toward(
-                        agent.position,
-                        KernelVec3{agent.position.x + move.x, agent.position.y,
-                                   agent.position.z + move.y},
-                        perception.vision_forward,
-                        entity_state.rotation,
-                        &desired_rotation) ||
-                    should_update_rotation;
-            } else if (!has_slot(agent) && !agent.route_patrol.path.empty()) {
-                // A garrison on a route walks it whenever it has nothing to
-                // fight, and after a fight carries on to the corner it was
-                // heading for from wherever the fight left it. Pathing back
-                // and a leash on the route are P2's.
-                move = agent_steering::route_patrol_move(
-                    &agent.route_patrol, agent.position, config_.chase.input_magnitude);
-                should_update_rotation =
-                    agent_steering::facing_rotation_from_vision_toward(
-                        agent.position,
-                        KernelVec3{agent.position.x + move.x, agent.position.y,
-                                   agent.position.z + move.y},
-                        perception.vision_forward,
-                        entity_state.rotation,
-                        &desired_rotation) ||
-                    should_update_rotation;
             } else {
-                should_update_rotation = agent_steering::update_patrol_facing(
-                    sentry_config.patrol_rotation_interval_ticks,
-                    sentry_config.patrol_rotation_min_degrees,
-                    sentry_config.patrol_rotation_max_degrees,
-                    &agent,
-                    entity_state.rotation,
-                    &desired_rotation);
+                behavior.on_idle(agent, step);
             }
         }
 
@@ -918,20 +772,8 @@ void AgentChaserController::tick(
                 // here, as it always has, and gives up.
                 agent.sentry.target = 0;
                 agent.sentry.has_attention_point = false;
-                // A squad member goes back to its formation rather than idling
-                // wherever the chase ended. kIdle would let it re-acquire from
-                // there, which is the runaway the leash exists to prevent.
-                // A hunter goes straight back to looking, re-reading where its
-                // target is now rather than when the chase began.
-                if (agent.controller_role == AgentControllerRole::kHunter) {
-                    agent.seek_repath_in = 0;
-                }
                 agent_steering::transition_to(
-                    &agent,
-                    has_slot(agent) ? AgentSentryState::kReturn
-                    : agent.controller_role == AgentControllerRole::kHunter
-                        ? AgentSentryState::kSeek
-                        : AgentSentryState::kIdle);
+                    &agent, behavior.on_target_forgotten(agent));
             } else if (agent.sentry.has_attention_point) {
                 // Nothing in sight: stop and face where its attention is --
                 // the last place it saw something, or where a hit came from.
@@ -1091,18 +933,8 @@ void AgentChaserController::tick(
                        !agent.sentry.has_attention_point) {
                 agent.sentry.target = 0;
                 agent.sentry.has_attention_point = false;
-                // A squad member goes back to its formation, as from Alert.
-                // A hunter goes straight back to looking, re-reading where its
-                // target is now rather than when the chase began.
-                if (agent.controller_role == AgentControllerRole::kHunter) {
-                    agent.seek_repath_in = 0;
-                }
                 agent_steering::transition_to(
-                    &agent,
-                    has_slot(agent) ? AgentSentryState::kReturn
-                    : agent.controller_role == AgentControllerRole::kHunter
-                        ? AgentSentryState::kSeek
-                        : AgentSentryState::kIdle);
+                    &agent, behavior.on_target_forgotten(agent));
             } else if (agent_steering::horizontal_distance(
                            agent.position, agent.sentry.attention_point) >
                        kSearchArrivalMeters) {

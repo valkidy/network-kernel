@@ -30,6 +30,7 @@ cc_library(
     srcs = [
         "src/actor_intent_executor.cc",
         "src/ai_perception_adapter.cc",
+        "src/agent_behavior.cc",
         "src/agent_chaser_controller.cc",
         "src/agent_sentry_controller.cc",
         "src/agent_steering.cc",
@@ -51,6 +52,7 @@ cc_library(
     hdrs = [
         "src/actor_intent_executor.h",
         "src/ai_perception_adapter.h",
+        "src/agent_behavior.h",
         "src/agent_chaser_controller.h",
         "src/agent_runtime.h",
         "src/agent_runtime_manager.h",
