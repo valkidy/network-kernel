@@ -1,0 +1,116 @@
+# The gingerbread giant on the player's side (docs/AI_BEHAVIOR_PLAN.md §7):
+# 39 in every respect but which side it is on. camp picks what its vision and
+# the hunters' table count as hostile; the bounds layer, the bones' layer and
+# its sweep's mask are what actually decide who hits whom -- a camp alone
+# leaves it chasing enemies it cannot hurt and sweeping players it can.
+id: 40
+name: allied_gingerbread_giant
+entity_type: actor
+actor_type: agent
+camp: player_side
+collider_template: allied_gingerbread_giant_bounds_aabb
+health:
+  hp: 500
+  max_hp: 500
+movement:
+  controller: character
+  move_speed_meters_per_second: 2.5
+  collider_template: monster_sim_movement_capsule
+  gravity: {x: 0.0, y: -9.81, z: 0.0}
+  max_slope_degrees: 50.0
+  step_height: 0.4
+  ground_probe_distance: 0.25
+  ground_snap_distance: 0.5
+  max_yaw_degrees_per_second: 45.0
+  collision_mask: terrain
+# The entity origin is the lowest bind foot, not the root bone: this rig's root sits
+# at the body, 8.92 m above the feet, and locomotion seats the pose by the bind
+# foot height. The GEO_* boxes span -2.0 m (the foot boxes) to 19.5 m above it
+# and 4.8 m either side: the arms carry no collider (the client animates them,
+# the server never sees where they are), so this AABB still reaches 8 m out to
+# cover where they are drawn.
+weapon_slots: [23]
+active_weapon_slot: 0
+vision:
+  # 35 m and 140 degrees, not the grunts' 12 m and 90: see the cone's own file.
+  collider_template: gingerbread_giant_vision_cone
+ai:
+  # A guard (AI behavior plan B8); a spawn source that gives it a route makes
+  # it a patrol, which walks the route. Either way it
+  # fights whatever it sees with an arm sweep. Without a route it stands and
+  # looks around. Melee, so it closes to 5 m and holds there.
+  default_behavior: guard
+  profile: monster_sim
+  perception:
+    alert_ticks: 90
+    forget_ticks: 150
+    idle_rotation_interval_ticks: 30
+    idle_rotation_degrees: {min: 15.0, max: 30.0}
+    animation_idle: idle
+    animation_attack: chasing
+  locomotion:
+    # Origin to origin. Both inside the skill's 6.5 m, so it never parks where
+    # it cannot swing.
+    stop_distance_meters: 5.0
+    resume_distance_meters: 6.0
+    input_magnitude: 1.0
+    # Origin to origin between giants, which nothing else keeps apart: their
+    # movement capsules see only terrain. The body spans 4.8 m either side of
+    # the origin, so 9.5 m leaves them all but clear. Two on one target stand
+    # 119 degrees apart on the 5.5 m inner ring, inside the 130 a giant can
+    # walk round while keeping its target in sight (the controller's
+    # kSpacingMaxOffTargetDegrees). At 10 m that would take 131, so a second
+    # giant would wait on the next ring out, 15 m off and out of reach.
+    spacing_meters: 9.5
+  skills:
+    # Origin to origin, against the sweep cone's 7 m that reaches a target's
+    # near edge: whatever this lets it swing at, it can hit.
+    - use: {type: weapon, value: 23}
+      when: {range_meters: {max: 6.5}}
+animations:
+  idle: 0
+  chasing: 1
+skeleton:
+  runtime_asset: skeleton_assets/generated/simplified_gingerbread_giant.ozz
+  source_manifest: skeleton_assets/generated/simplified_gingerbread_giant.skeleton_manifest.json
+  collision_flags: {purpose: limb | hit, layer: player_side}
+locomotion:
+  type: procedural_legged
+  input_deadzone: 0.01
+  gait:
+    type: displacement_threshold
+    # Same 1.95/18 as the other rigs: the timing follows move_speed, not leg
+    # length. See 21_quadruped_actor.yaml.
+    step_threshold_meters: 1.95
+    step_duration_ticks: 18
+    # Two legs, alternating, as on biped_actor. The arms are in the skeleton,
+    # not in this leg list, so they are not driven.
+    max_swinging_legs: 1
+    processing_order: [leg0, leg1]
+  foothold:
+    query: raycast
+    # The authored 30/90 baseline scaled from the ~18.2 m legs it was sized
+    # against to this rig's 6.26 m: 0.344x. See docs/LOCOMOTION_GAIT_TUNING.md.
+    query_start_height_meters: 10.3
+    query_distance_meters: 31.0
+    candidate_offsets_meters:
+      - {x: 0.0, z: 0.0}
+      - {x: 0.2, z: 0.0}
+      - {x: -0.2, z: 0.0}
+      - {x: 0.0, z: 0.2}
+      - {x: 0.0, z: -0.2}
+  body:
+    follow_speed: 10.0
+    slope_alignment: 0.0
+    # The rest pose bends the knees 30 degrees forward (96.5% rest extension;
+    # see the rig.yaml). 0.64 m of crouch takes them on to ~86%, where
+    # biped_actor and quadruped_actor walk after their own crouch.
+    stance_crouch_meters: 0.64
+  leg_defaults:
+    step_height_meters: 3.18
+    max_reach_ratio: 0.99
+  legs:
+    - id: leg0
+      gait_group: 0
+    - id: leg1
+      gait_group: 1

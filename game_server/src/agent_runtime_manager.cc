@@ -467,28 +467,49 @@ void AgentRuntimeManager::use_item_skills() {
 // the snapshot the manager already has and shared by every hunter, which
 // cheats its way to its target through it. Seeing that target -- the narrow
 // phase -- is still vision's. Only the living: a dead player is not hunted.
+// Each hunter reads the table of what is hostile to its own side, by the same
+// rule vision uses (kernel classify_agent_relation).
 void AgentRuntimeManager::update_hunters(const ActorStateView& actors) {
-    hostiles_.clear();
+    hostiles_of_enemy_side_.clear();
+    hostiles_of_player_side_.clear();
     hidden_hostiles_.clear();
+    bool player_side_hunters = false;
+    for (const AgentRuntimeState& agent : agents_) {
+        player_side_hunters = player_side_hunters ||
+            (agent.controller_role == AgentControllerRole::kHunter &&
+             camp_of(agent.actor_template_id) == KernelAgentCamp_PlayerSide);
+    }
     for (std::uint32_t index = 0; index < actors.count; ++index) {
         const KernelServerEntityState& state = actors.states[index];
-        if (state.valid != 0u && state.actor_type == kActorTypePlayer && state.hp > 0u &&
-            (state.visual_flags & KERNEL_VISUAL_FLAG_DEAD) == 0u) {
+        if (state.valid == 0u || state.hp == 0u ||
+            (state.visual_flags & KERNEL_VISUAL_FLAG_DEAD) != 0u) {
+            continue;
+        }
+        if (state.actor_type == kActorTypePlayer) {
             // A tent that hides its occupants hides them from the cheat too,
             // as it does from every cone (Q3).
             if (hidden_in_shelter(state.net_id)) {
                 hidden_hostiles_.push_back(state.net_id);
             } else {
-                hostiles_.push_back(Hostile{state.net_id, state.position});
+                hostiles_of_enemy_side_.push_back(Hostile{state.net_id, state.position});
+            }
+        } else if (state.actor_type == kActorTypeAgent) {
+            const std::uint8_t camp = camp_of(state.actor_template_id);
+            if (camp == KernelAgentCamp_PlayerSide) {
+                hostiles_of_enemy_side_.push_back(Hostile{state.net_id, state.position});
+            } else if (camp == KernelAgentCamp_EnemySide && player_side_hunters) {
+                hostiles_of_player_side_.push_back(Hostile{state.net_id, state.position});
             }
         }
     }
     const auto distance = [](const KernelVec3& a, const KernelVec3& b) {
         return std::hypot(a.x - b.x, a.z - b.z);
     };
+    // Set per hunter, to the table of its own side.
+    const std::vector<Hostile>* hostiles = &hostiles_of_enemy_side_;
     const auto nearest = [&](const KernelVec3& from) -> const Hostile* {
         const Hostile* best = nullptr;
-        for (const Hostile& hostile : hostiles_) {
+        for (const Hostile& hostile : *hostiles) {
             if (best == nullptr ||
                 distance(from, hostile.position) < distance(from, best->position)) {
                 best = &hostile;
@@ -522,6 +543,9 @@ void AgentRuntimeManager::update_hunters(const ActorStateView& actors) {
             if (agent.vision_off) set_vision(agent, true);
             continue;
         }
+        hostiles = camp_of(agent.actor_template_id) == KernelAgentCamp_PlayerSide
+            ? &hostiles_of_player_side_
+            : &hostiles_of_enemy_side_;
         if (agent.vision_reach_meters > 0.0f) {
             const Hostile* closest = nearest(agent.position);
             set_vision(agent, closest != nullptr &&
@@ -529,7 +553,7 @@ void AgentRuntimeManager::update_hunters(const ActorStateView& actors) {
                                       agent.vision_reach_meters + kVisionMarginMeters);
         }
         const Hostile* target = nullptr;
-        for (const Hostile& hostile : hostiles_) {
+        for (const Hostile& hostile : *hostiles) {
             if (hostile.net_id == agent.hunt_target) target = &hostile;
         }
         // Hidden is not gone: a player who ducks into a tent is still its
@@ -652,6 +676,19 @@ void AgentRuntimeManager::update_lock_targets(const ActorStateView& actors) {
             agent.seek_path.assign(1, target->position);
         }
     }
+}
+
+std::uint8_t AgentRuntimeManager::camp_of(std::uint32_t actor_template_id) const {
+    const auto cached = camp_cache_.find(actor_template_id);
+    if (cached != camp_cache_.end()) {
+        return cached->second;
+    }
+    const ActorTemplateConfig* actor_template = find_actor_template(config_, actor_template_id);
+    const std::uint8_t camp = actor_template != nullptr
+        ? actor_template->vision.camp
+        : static_cast<std::uint8_t>(KernelAgentCamp_Unknown);
+    camp_cache_.emplace(actor_template_id, camp);
+    return camp;
 }
 
 bool AgentRuntimeManager::hidden_in_shelter(std::uint32_t net_id) const {

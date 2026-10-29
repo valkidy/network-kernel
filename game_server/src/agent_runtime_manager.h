@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <unordered_map>
 #include <vector>
 
 #include "game_server/src/agent_behavior.h"
@@ -166,9 +167,17 @@ private:
         std::uint32_t net_id = 0;
         KernelVec3 position{0.0f, 0.0f, 0.0f};
     };
-    std::vector<Hostile> hostiles_;
+    // One table per side a hunter can be on (docs/AI_BEHAVIOR_PLAN.md §6):
+    // what an enemy-side hunter goes after -- players and player-side agents --
+    // and what a player-side one does. The second is only built while a
+    // player-side hunter exists.
+    std::vector<Hostile> hostiles_of_enemy_side_;
+    std::vector<Hostile> hostiles_of_player_side_;
     // Players a tent hides this tick: out of the table, but not gone.
     std::vector<std::uint32_t> hidden_hostiles_;
+    // An actor template's camp, looked up once per template.
+    std::uint8_t camp_of(std::uint32_t actor_template_id) const;
+    mutable std::unordered_map<std::uint32_t, std::uint8_t> camp_cache_;
     const ShelterDirector* shelter_ = nullptr;
     SpawnerDirector spawner_director_;
     // Templates whose spawner calls on alert. A handful at most, so a scan
