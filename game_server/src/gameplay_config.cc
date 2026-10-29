@@ -484,6 +484,10 @@ void hash_actor_template(
     hash_scalar(hash, static_cast<std::uint32_t>(actor_template.hunter.target_source));
     hash_scalar(hash, static_cast<std::uint32_t>(actor_template.hunter.on_target_lost));
     hash_scalar(hash, actor_template.hunter.repath_ticks);
+    hash_scalar(hash, static_cast<std::uint32_t>(actor_template.lock_target.on_target_lost));
+    hash_scalar(hash, actor_template.lock_target.give_up_ticks);
+    hash_scalar(hash, actor_template.lock_target.repath_ticks);
+    hash_scalar(hash, static_cast<std::uint32_t>(actor_template.lock_target.target_relations));
     hash_float(hash, actor_template.guard.leash_meters);
     hash_float(hash, actor_template.guard.leash_resume_meters);
     hash_float(hash, actor_template.patrol.leash_meters);
@@ -3791,6 +3795,10 @@ AgentControllerSpec controller_spec_from_yaml(
                 "makes squad members");
         } else if (type == "hunter") {
             spec.role = AgentControllerRole::kHunter;
+        } else if (type == "lock_target") {
+            throw std::runtime_error(
+                where + " behavior.type lock_target: a spawn source has no target "
+                "to give it; set_behavior makes one");
         } else if (type == "garrison") {
             throw std::runtime_error(
                 where + " behavior.type garrison was renamed (AI behavior plan B8): "
@@ -4078,6 +4086,9 @@ void ai_role_from_yaml(
         } else if (behavior == "patrol") {
             fail("default_behavior patrol: a template has no route; default to "
                  "guard and give the route where it is spawned");
+        } else if (behavior == "lock_target") {
+            fail("default_behavior lock_target: a template has no target; "
+                 "set_behavior makes one");
         } else if (behavior == "garrison") {
             fail("default_behavior garrison was renamed (AI behavior plan B8): guard");
         } else {
@@ -4110,7 +4121,48 @@ void ai_role_from_yaml(
             if (sentry) {
                 fail("sentry takes no behaviors block");
             }
-            reject(behaviors, {"squad", "guard", "patrol", "hunter"});
+            reject(behaviors, {"squad", "guard", "patrol", "hunter", "lock_target"});
+            if (const YAML::Node lock = behaviors["lock_target"]) {
+                reject(lock, {"on_target_lost", "give_up_ticks", "repath_ticks",
+                              "target_relations"});
+                AgentLockTargetTuning& tuning = actor_template->lock_target;
+                if (lock["on_target_lost"]) {
+                    const std::string lost = lock["on_target_lost"].as<std::string>();
+                    if (lost == "guard") {
+                        tuning.on_target_lost = LockTargetOnLost::kGuard;
+                    } else if (lost == "hunter") {
+                        tuning.on_target_lost = LockTargetOnLost::kHunter;
+                    } else {
+                        fail("behaviors.lock_target on_target_lost is unsupported: " + lost);
+                    }
+                }
+                if (lock["give_up_ticks"]) {
+                    tuning.give_up_ticks = lock["give_up_ticks"].as<std::uint32_t>();
+                }
+                if (lock["repath_ticks"]) {
+                    tuning.repath_ticks = lock["repath_ticks"].as<std::uint32_t>();
+                    if (tuning.repath_ticks == 0u) {
+                        fail("behaviors.lock_target repath_ticks must be positive");
+                    }
+                }
+                if (const YAML::Node relations = lock["target_relations"]) {
+                    // Hostile only this round (B9); the list is the format the
+                    // other relations will join.
+                    if (!relations.IsSequence() || relations.size() == 0u) {
+                        fail("behaviors.lock_target target_relations must be a "
+                             "non-empty list");
+                    }
+                    tuning.target_relations = 0u;
+                    for (const YAML::Node& relation : relations) {
+                        const std::string name = relation.as<std::string>();
+                        if (name != "hostile") {
+                            fail("behaviors.lock_target target_relations: only "
+                                 "hostile is supported, not " + name);
+                        }
+                        tuning.target_relations |= kLockTargetRelationHostile;
+                    }
+                }
+            }
             if (const YAML::Node hunter = behaviors["hunter"]) {
                 reject(hunter, {"target_source", "on_target_lost", "repath_ticks"});
                 hunter_tuning_from_yaml(hunter, "actor template " + actor_template->name,

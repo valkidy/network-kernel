@@ -37,7 +37,8 @@ bool runs_chaser(AgentControllerRole role) {
     return role == AgentControllerRole::kGuard ||
            role == AgentControllerRole::kPatrol ||
            role == AgentControllerRole::kSquad ||
-           role == AgentControllerRole::kHunter;
+           role == AgentControllerRole::kHunter ||
+           role == AgentControllerRole::kLockTarget;
 }
 
 // How to fire one weapon: its own ballistic aim when its projectile arcs, and
@@ -606,6 +607,53 @@ void AgentRuntimeManager::update_hunters(const ActorStateView& actors) {
     }
 }
 
+void AgentRuntimeManager::update_lock_targets(const ActorStateView& actors) {
+    for (AgentRuntimeState& agent : agents_) {
+        if (agent.controller_role != AgentControllerRole::kLockTarget || agent.entry.active) {
+            continue;
+        }
+        const KernelServerEntityState* target = nullptr;
+        for (std::uint32_t index = 0; index < actors.count; ++index) {
+            if (actors.states[index].net_id == agent.lock_target) {
+                target = &actors.states[index];
+                break;
+            }
+        }
+        const bool gone = target == nullptr || target->valid == 0u || target->hp == 0u ||
+            (target->visual_flags & KERNEL_VISUAL_FLAG_DEAD) != 0u;
+        const bool given_up = agent.lock_tuning.give_up_ticks > 0u &&
+            agent.lock_unseen_ticks >= agent.lock_tuning.give_up_ticks;
+        if (gone || given_up) {
+            // Unchecked and without dropping the fight, as a hunter turning
+            // guard is: whatever it can see now, what it becomes fights too.
+            AgentControllerSpec next;
+            next.role = agent.lock_tuning.on_target_lost == LockTargetOnLost::kHunter
+                ? AgentControllerRole::kHunter
+                : AgentControllerRole::kGuard;
+            apply_behavior(&agent, next, 0u);
+            continue;
+        }
+        if (agent.seek_repath_in > 0u) {
+            --agent.seek_repath_in;
+            continue;
+        }
+        const std::uint32_t repath = agent.lock_tuning.repath_ticks;
+        agent.seek_repath_in =
+            repath + agent.net_id % std::max<std::uint32_t>(1u, repath / 4u);
+        agent.seek_path.clear();
+        agent.seek_next = 0;
+        PatrolRouteRequest request;
+        request.start = agent.position;
+        request.end = target->position;
+        request.snap_half_extent_meters = 2.0f;
+        if (!patrol_navigation_.valid() ||
+            !patrol_navigation_.find_route(request, &agent.seek_path) ||
+            agent.seek_path.empty()) {
+            agent.seek_path.assign(1, target->position);
+        }
+    }
+}
+
 bool AgentRuntimeManager::hidden_in_shelter(std::uint32_t net_id) const {
     if (shelter_ == nullptr) {
         return false;
@@ -688,8 +736,46 @@ BehaviorSwitchResult AgentRuntimeManager::check_behavior(
         return BehaviorSwitchResult::kNotAllowed;
     }
     const AgentBehavior* behavior = agent_behavior_for_role(spec.role);
-    return behavior != nullptr ? behavior->validate(spec)
-                               : BehaviorSwitchResult::kNotAllowed;
+    if (behavior == nullptr) {
+        return BehaviorSwitchResult::kNotAllowed;
+    }
+    const BehaviorSwitchResult result = behavior->validate(spec);
+    if (result == BehaviorSwitchResult::kAccepted &&
+        spec.role == AgentControllerRole::kLockTarget &&
+        !lockable(agent, spec.target_net_id)) {
+        return BehaviorSwitchResult::kInvalidData;
+    }
+    return result;
+}
+
+bool AgentRuntimeManager::lockable(
+    const AgentRuntimeState& agent,
+    std::uint32_t target) const {
+    if (target == 0u || target == agent.net_id) {
+        return false;
+    }
+    KernelServerEntityState state{};
+    state.struct_size = sizeof(state);
+    if (!Kernel_ServerGetEntityState(kernel_, target, &state) || state.valid == 0u ||
+        state.hp == 0u || (state.visual_flags & KERNEL_VISUAL_FLAG_DEAD) != 0u) {
+        return false;
+    }
+    const ActorTemplateConfig* self_template =
+        find_actor_template(config_, agent.actor_template_id);
+    const ActorTemplateConfig* target_template =
+        find_actor_template(config_, state.actor_template_id);
+    if (self_template == nullptr || target_template == nullptr) {
+        return false;
+    }
+    // The kernel's vision rule (classify_agent_relation): the two sides are
+    // hostile to each other, and nothing else is.
+    const std::uint8_t self_camp = self_template->vision.camp;
+    const std::uint8_t target_camp = target_template->vision.camp;
+    const bool hostile =
+        (self_camp == KernelAgentCamp_PlayerSide && target_camp == KernelAgentCamp_EnemySide) ||
+        (self_camp == KernelAgentCamp_EnemySide && target_camp == KernelAgentCamp_PlayerSide);
+    return hostile &&
+        (self_template->lock_target.target_relations & kLockTargetRelationHostile) != 0u;
 }
 
 void AgentRuntimeManager::apply_behavior(
@@ -710,6 +796,13 @@ void AgentRuntimeManager::apply_behavior(
         if (actor_template != nullptr) {
             agent.hunter = actor_template->hunter;
         }
+    }
+    if (spec.role == AgentControllerRole::kLockTarget) {
+        const ActorTemplateConfig* actor_template =
+            find_actor_template(config_, agent.actor_template_id);
+        agent.lock_tuning = actor_template != nullptr ? actor_template->lock_target
+                                                      : AgentLockTargetTuning{};
+        agent.lock_target = spec.target_net_id;
     }
     if (const AgentBehavior* now = agent_behavior_for_role(agent.controller_role)) {
         now->enter(agent);
@@ -935,6 +1028,7 @@ void AgentRuntimeManager::tick(float delta_seconds) {
     patrol_groups_.tick(&agents_, agent_index_, delta_seconds);
     // Before the controllers, so a hunter seeks along this tick's path.
     update_hunters(actors);
+    update_lock_targets(actors);
     // Still on the post-director snapshot: nothing between it and here creates,
     // destroys or moves an entity, so it is what a per-agent query would return.
     dispatch_controllers(actors, delta_seconds);

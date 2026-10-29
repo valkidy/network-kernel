@@ -105,6 +105,10 @@ enum class AgentControllerRole : std::uint8_t {
     // Goes looking for a target it has not seen (AI plan D2, D10): the chaser,
     // with a shared table of every hostile's position to walk towards.
     kHunter,
+    // Goes after one target it was given, and nothing else, until that target
+    // is gone or it gives up (docs/AI_BEHAVIOR_PLAN.md §5.1). Only
+    // set_behavior makes one: nothing authored knows a target's net id.
+    kLockTarget,
 };
 
 // Who a hunter goes after (D10).
@@ -131,6 +135,28 @@ struct AgentHunterTuning {
     std::uint32_t repath_ticks = 60;
 };
 
+// What a lock_target becomes once its target is gone or it gives up (B5).
+enum class LockTargetOnLost : std::uint8_t {
+    kGuard = 0,
+    kHunter = 1,
+};
+
+// Bit per relation a lock_target may be pointed at (B9). Only hostile is
+// accepted this round; the field is there so allowing an ally (a heal) is a
+// load-check change, not a format change.
+inline constexpr std::uint8_t kLockTargetRelationHostile = 1u << 0;
+
+// `behaviors.lock_target` (docs/AI_BEHAVIOR_PLAN.md §5.1).
+struct AgentLockTargetTuning {
+    LockTargetOnLost on_target_lost = LockTargetOnLost::kGuard;
+    // Ticks in a row without seeing its target before it gives up. Zero never
+    // gives up while the target lives.
+    std::uint32_t give_up_ticks = 600;
+    // How often it re-paths to where its target is while it cannot see it.
+    std::uint32_t repath_ticks = 60;
+    std::uint8_t target_relations = kLockTargetRelationHostile;
+};
+
 // What a spawn source asks of the agents it makes (plan D1): authored as a
 // `controller:` block on a spawn_group, a spawner or a world rule, and set to
 // patrol by a squad for its own members. Empty means the template's default
@@ -140,12 +166,15 @@ struct AgentControllerSpec {
     AgentControllerRole role = AgentControllerRole::kNone;
     // World space. Only a patrol follows one, and a patrol needs one.
     std::vector<KernelVec3> route;
-    // kHunter only: overrides the template's controllers.hunter when set.
+    // kHunter only: overrides the template's behaviors.hunter when set.
     bool has_hunter = false;
     AgentHunterTuning hunter;
+    // kLockTarget only, and required there: who to go after.
+    std::uint32_t target_net_id = 0;
 
     bool empty() const {
-        return role == AgentControllerRole::kNone && route.empty() && !has_hunter;
+        return role == AgentControllerRole::kNone && route.empty() && !has_hunter &&
+            target_net_id == 0u;
     }
 
 };
@@ -309,9 +338,15 @@ struct AgentRuntimeState {
     // manager last found towards it, with the ticks until it looks again.
     AgentHunterTuning hunter{};
     std::uint32_t hunt_target = 0;
+    // A lock_target walks these too, towards its own target.
     std::vector<KernelVec3> seek_path;
     std::size_t seek_next = 0;
     std::uint32_t seek_repath_in = 0;
+    // Lock_target only: its tuning, who it is after, and how long it has gone
+    // without seeing them.
+    AgentLockTargetTuning lock_tuning{};
+    std::uint32_t lock_target = 0;
+    std::uint32_t lock_unseen_ticks = 0;
     // Its vision cone is switched off while nothing hostile is near enough to
     // see (D11). The cone's range, read once when the agent is discovered; 0
     // when it has none, which leaves vision alone.

@@ -184,7 +184,7 @@ protected:
 class GuardBehavior : public LeashedBehavior {
 public:
     BehaviorSwitchResult validate(const AgentControllerSpec& spec) const override {
-        return spec.route.empty() && !spec.has_hunter
+        return spec.route.empty() && !spec.has_hunter && spec.target_net_id == 0u
             ? BehaviorSwitchResult::kAccepted
             : BehaviorSwitchResult::kInvalidData;
     }
@@ -203,7 +203,7 @@ protected:
 class PatrolBehavior final : public LeashedBehavior {
 public:
     BehaviorSwitchResult validate(const AgentControllerSpec& spec) const override {
-        if (spec.route.size() < 2u || spec.has_hunter) {
+        if (spec.route.size() < 2u || spec.has_hunter || spec.target_net_id != 0u) {
             return BehaviorSwitchResult::kInvalidData;
         }
         for (const KernelVec3& point : spec.route) {
@@ -242,8 +242,9 @@ protected:
 class HunterBehavior final : public GuardBehavior {
 public:
     BehaviorSwitchResult validate(const AgentControllerSpec& spec) const override {
-        return spec.route.empty() ? BehaviorSwitchResult::kAccepted
-                                  : BehaviorSwitchResult::kInvalidData;
+        return spec.route.empty() && spec.target_net_id == 0u
+            ? BehaviorSwitchResult::kAccepted
+            : BehaviorSwitchResult::kInvalidData;
     }
 
     void enter(AgentRuntimeState& agent) const override {
@@ -270,10 +271,63 @@ public:
     }
 };
 
+// Goes after the one target it was given (docs/AI_BEHAVIOR_PLAN.md §5.1):
+// sees nothing else, walks to where that target is while it cannot see it,
+// and is not leashed -- being sent after something is the point. The runtime
+// ends it once the target is gone or it has gone give_up_ticks unseen.
+class LockTargetBehavior final : public GuardBehavior {
+public:
+    BehaviorSwitchResult validate(const AgentControllerSpec& spec) const override {
+        // Whether the target exists, lives and may be locked is the runtime's
+        // to check: it is the one that can see the world.
+        return spec.target_net_id != 0u && spec.route.empty() && !spec.has_hunter
+            ? BehaviorSwitchResult::kAccepted
+            : BehaviorSwitchResult::kInvalidData;
+    }
+
+    void enter(AgentRuntimeState& agent) const override {
+        agent.lock_unseen_ticks = 0;
+        agent.seek_path.clear();
+        agent.seek_next = 0;
+        agent.seek_repath_in = 0;
+    }
+
+    void exit(AgentRuntimeState& agent) const override {
+        agent.lock_target = 0u;
+        agent.lock_unseen_ticks = 0;
+        agent.seek_path.clear();
+        agent.seek_next = 0;
+    }
+
+    std::uint32_t locked_target(const AgentRuntimeState& agent) const override {
+        return agent.lock_target;
+    }
+
+    void after_perception(AgentRuntimeState& agent, bool sees_target) const override {
+        agent.lock_unseen_ticks = sees_target ? 0u : agent.lock_unseen_ticks + 1u;
+    }
+
+    float leash_meters(const AgentChaserConfig&) const override {
+        return 0.0f;
+    }
+
+    void on_idle(AgentRuntimeState& agent, AgentBehaviorStep&) const override {
+        // The chaser's Seek starts walking on this same tick.
+        agent_steering::transition_to(&agent, AgentSentryState::kSeek);
+    }
+
+    AgentSentryState on_target_forgotten(AgentRuntimeState& agent) const override {
+        // Out of sight is not given up: back to walking to where it is now.
+        agent.seek_repath_in = 0;
+        return AgentSentryState::kSeek;
+    }
+};
+
 const SquadBehavior kSquad;
 const GuardBehavior kGuard;
 const PatrolBehavior kPatrol;
 const HunterBehavior kHunter;
+const LockTargetBehavior kLockTarget;
 
 }  // namespace
 
@@ -287,6 +341,8 @@ const AgentBehavior* agent_behavior_for_role(AgentControllerRole role) {
             return &kSquad;
         case AgentControllerRole::kHunter:
             return &kHunter;
+        case AgentControllerRole::kLockTarget:
+            return &kLockTarget;
         case AgentControllerRole::kNone:
         case AgentControllerRole::kSentry:
             break;

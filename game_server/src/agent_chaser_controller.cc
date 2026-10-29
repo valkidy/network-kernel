@@ -568,12 +568,18 @@ void AgentChaserController::tick(
         if (agent.weapon_skill >= config_.weapon_skills.size()) {
             agent.weapon_skill = 0;
         }
-        const SentryPerceptionSnapshot perception =
+        SentryPerceptionSnapshot perception =
             AiPerceptionAdapter::build_sentry_snapshot(
                 kernel, frame, agent.net_id);
         if (!perception.has_self_state) {
             continue;
         }
+        const AgentBehavior& behavior = agent_behavior_for(agent);
+        if (const std::uint32_t locked = behavior.locked_target(agent)) {
+            AiPerceptionAdapter::focus_on_target(
+                kernel, frame, agent.net_id, locked, &perception);
+        }
+        behavior.after_perception(agent, perception.has_visible_target);
         const KernelServerEntityState& entity_state = perception.self_state;
         // The weapon in hand went off (D14): its cooldown runs from here, and
         // the next shot is drawn afresh.
@@ -618,7 +624,6 @@ void AgentChaserController::tick(
             --agent.charge_cooldown_ticks;
         }
 
-        const AgentBehavior& behavior = agent_behavior_for(agent);
         AgentBehaviorStep step{config_, perception, entity_state};
         step.desired_rotation = entity_state.rotation;
         KernelQuat& desired_rotation = step.desired_rotation;

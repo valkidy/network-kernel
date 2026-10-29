@@ -49,6 +49,12 @@ public:
     virtual void enter(AgentRuntimeState&) const {}
     virtual void exit(AgentRuntimeState&) const {}
 
+    // The one target it goes after, or 0 for whatever vision offers. With one,
+    // the chaser sees only that target and pursues nothing else.
+    virtual std::uint32_t locked_target(const AgentRuntimeState&) const { return 0; }
+    // After the chaser has worked out whether it sees its target this tick.
+    virtual void after_perception(AgentRuntimeState&, bool /*sees_target*/) const {}
+
     // How far a pursuit may drag it from where it broke off. Zero is no leash.
     virtual float leash_meters(const AgentChaserConfig& config) const = 0;
     // Idle with nothing in sight.

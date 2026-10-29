@@ -343,6 +343,8 @@ struct ActorTemplateConfig {
     AgentLeashTuning patrol{};
     // behaviors.hunter (AI plan P6).
     AgentHunterTuning hunter{};
+    // behaviors.lock_target (docs/AI_BEHAVIOR_PLAN.md §5.1).
+    AgentLockTargetTuning lock_target{};
     // ai.skills, as authored. Resolved into the weapon, attack range, leap and
     // charge above once every sp_attack template is known.
     std::vector<AgentSkillConfig> skills;

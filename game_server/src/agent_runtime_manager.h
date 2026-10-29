@@ -107,6 +107,12 @@ private:
     // Whether a building that hides its occupants holds `net_id` now.
     bool hidden_in_shelter(std::uint32_t net_id) const;
     void update_hunters(const ActorStateView& actors);
+    // Ends a lock_target whose target is gone or that has given up, and paths
+    // the rest towards where their targets are now.
+    void update_lock_targets(const ActorStateView& actors);
+    // Whether `target` may be locked by `agent` (B9): alive, not itself, and in
+    // a relation its lock_target tuning allows.
+    bool lockable(const AgentRuntimeState& agent, std::uint32_t target) const;
     BehaviorSwitchResult check_behavior(
         const AgentRuntimeState& agent,
         const AgentControllerSpec& spec) const;

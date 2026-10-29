@@ -216,6 +216,45 @@ SentryPerceptionSnapshot AiPerceptionAdapter::build_sentry_snapshot(
     return snapshot;
 }
 
+void AiPerceptionAdapter::focus_on_target(
+    KernelHandle* kernel,
+    const PerceptionFrame& frame,
+    std::uint32_t agent_net_id,
+    std::uint32_t target_net_id,
+    SentryPerceptionSnapshot* snapshot) {
+    snapshot->has_visible_target = false;
+    snapshot->target_id = 0;
+    snapshot->has_target_position = false;
+    const KernelVisionStateView* vision = frame.vision_state(agent_net_id);
+    if (vision == nullptr || vision->valid == 0u) {
+        return;
+    }
+    // Each list holds the nearest few of its kind, so a locked target lost in
+    // a crowd past that many reads as out of sight until it comes nearer.
+    const auto listed = [target_net_id](const std::uint32_t* ids, std::uint32_t count,
+                                        std::uint32_t capacity) {
+        return std::find(ids, ids + std::min(count, capacity), target_net_id) !=
+            ids + std::min(count, capacity);
+    };
+    if (!listed(vision->visible_hostiles, vision->visible_hostile_count,
+                KERNEL_MAX_VISIBLE_HOSTILES) &&
+        !listed(vision->visible_allies, vision->visible_ally_count,
+                KERNEL_MAX_VISIBLE_ALLIES) &&
+        !listed(vision->visible_neutrals, vision->visible_neutral_count,
+                KERNEL_MAX_VISIBLE_NEUTRALS)) {
+        return;
+    }
+    const KernelServerEntityState* target = frame.actor_state(target_net_id);
+    if (target == nullptr || target->valid == 0u) {
+        return;
+    }
+    snapshot->has_visible_target = true;
+    snapshot->target_id = target_net_id;
+    snapshot->target_position = target->position;
+    get_entity_aim_point(kernel, target_net_id, &snapshot->target_position);
+    snapshot->has_target_position = true;
+}
+
 ai::AIContext AiPerceptionAdapter::build_sentry_context(
     const SentryPerceptionSnapshot& snapshot,
     std::uint8_t weapon_id) {
