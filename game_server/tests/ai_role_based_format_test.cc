@@ -1,6 +1,6 @@
-// The role-based `ai:` block (docs/AI_CONTROLLER_PLAN.md §6.1, P1d):
-// default_controller / perception / locomotion / controllers is the only shape
-// an agent template may use. The legacy keys it replaced (controller / sentry /
+// The role-based `ai:` block (docs/AI_CONTROLLER_PLAN.md §6.1, P1d; keys
+// renamed by docs/AI_BEHAVIOR_PLAN.md B8): default_behavior / perception /
+// locomotion / behaviors is the only shape an agent template may use. The legacy keys it replaced (controller / sentry /
 // chaser / patrol) are refused with a pointer to their replacements; a
 // director may still say `controller: director`.
 //
@@ -65,7 +65,7 @@ void every_agent_template_is_role_based() {
             require(ai["controller"].as<std::string>() == "director");
             continue;
         }
-        require(ai["default_controller"]);
+        require(ai["default_behavior"]);
         ++agents;
     }
     std::printf("[format] %d role-based agent templates\n", agents);
@@ -81,13 +81,13 @@ void roles_are_what_the_plan_says(const gs::GameServerGameplayConfig& config) {
     require(find(2)->default_controller_role == gs::AgentControllerRole::kSentry);
     require(find(2)->ai_stationary);
     require(find(2)->ai_controller_type == KernelAiControllerType_Sentry);
-    require(find(21)->default_controller_role == gs::AgentControllerRole::kGarrison);
+    require(find(21)->default_controller_role == gs::AgentControllerRole::kGuard);
     require(!find(21)->ai_stationary);
-    require(find(28)->default_controller_role == gs::AgentControllerRole::kGarrison);
+    require(find(28)->default_controller_role == gs::AgentControllerRole::kGuard);
     require(find(28)->ai_controller_type == KernelAiControllerType_Chaser);
-    // gingerbread's controllers.patrol and perception's idle rotation, read
+    // gingerbread's behaviors.squad and perception's idle rotation, read
     // through their new names.
-    require(find(28)->patrol.input_magnitude == 0.45f);
+    require(find(28)->squad.input_magnitude == 0.45f);
     require(find(28)->sentry.patrol_rotation_min_degrees == 15.0f);
     require(find(28)->sentry.patrol_rotation_max_degrees == 30.0f);
 }
@@ -117,8 +117,24 @@ bool loads_after(const char* label, const std::function<void(YAML::Node&)>& edit
 void malformed_blocks_are_refused() {
     // Control: an edit that keeps it valid loads, so each refusal below is the
     // edit's and not the copy's.
-    require(loads_after("default patrol", [](YAML::Node& ai) {
-        ai["default_controller"] = "patrol";
+    require(loads_after("default squad", [](YAML::Node& ai) {
+        ai["default_behavior"] = "squad";
+    }));
+    // The rename (B8): the old keys and names are refused, not read; and a
+    // template has no route to be a patrol on.
+    require(!loads_after("renamed key default_controller", [](YAML::Node& ai) {
+        ai["default_controller"] = ai["default_behavior"].as<std::string>();
+        ai.remove("default_behavior");
+    }));
+    require(!loads_after("renamed key controllers", [](YAML::Node& ai) {
+        ai["controllers"] = ai["behaviors"];
+        ai.remove("behaviors");
+    }));
+    require(!loads_after("renamed default garrison", [](YAML::Node& ai) {
+        ai["default_behavior"] = "garrison";
+    }));
+    require(!loads_after("default patrol", [](YAML::Node& ai) {
+        ai["default_behavior"] = "patrol";
     }));
     for (const char* legacy : {"controller", "sentry", "chaser", "patrol"}) {
         const std::string label = std::string("legacy key ") + legacy;
@@ -130,24 +146,24 @@ void malformed_blocks_are_refused() {
             }
         }));
     }
-    require(!loads_after("missing", [](YAML::Node& ai) { ai.remove("default_controller"); }));
-    // A hunter since P6a, tuned under controllers.hunter.
+    require(!loads_after("missing", [](YAML::Node& ai) { ai.remove("default_behavior"); }));
+    // A hunter since P6a, tuned under behaviors.hunter.
     require(loads_after("hunter", [](YAML::Node& ai) {
-        ai["default_controller"] = "hunter";
-        ai["controllers"]["hunter"]["target_source"] = "nearest_hostile";
-        ai["controllers"]["hunter"]["on_target_lost"] = "garrison";
-        ai["controllers"]["hunter"]["repath_ticks"] = 45;
+        ai["default_behavior"] = "hunter";
+        ai["behaviors"]["hunter"]["target_source"] = "nearest_hostile";
+        ai["behaviors"]["hunter"]["on_target_lost"] = "guard";
+        ai["behaviors"]["hunter"]["repath_ticks"] = 45;
     }));
     require(!loads_after("unknown hunter target_source", [](YAML::Node& ai) {
-        ai["controllers"]["hunter"]["target_source"] = "loudest";
+        ai["behaviors"]["hunter"]["target_source"] = "loudest";
     }));
-    require(!loads_after("unknown role", [](YAML::Node& ai) { ai["default_controller"] = "chaser"; }));
+    require(!loads_after("unknown role", [](YAML::Node& ai) { ai["default_behavior"] = "chaser"; }));
     require(!loads_after("moving stationary", [](YAML::Node& ai) {
         ai["locomotion"]["stationary"] = true;
     }));
     require(!loads_after("sentry with chase", [](YAML::Node& ai) {
-        ai["default_controller"] = "sentry";
-        ai.remove("controllers");
+        ai["default_behavior"] = "sentry";
+        ai.remove("behaviors");
     }));
     require(!loads_after("old perception key", [](YAML::Node& ai) {
         ai["perception"]["patrol_rotation_interval_ticks"] = 30;
@@ -155,17 +171,21 @@ void malformed_blocks_are_refused() {
     require(!loads_after("unknown rotation key", [](YAML::Node& ai) {
         ai["perception"]["idle_rotation_degrees"]["step"] = 5.0;
     }));
-    require(loads_after("garrison leash", [](YAML::Node& ai) {
-        ai["controllers"]["garrison"]["leash_meters"] = 10.0;
-        ai["controllers"]["garrison"]["leash_resume_meters"] = 3.0;
-    }));
-    require(!loads_after("garrison resume past leash", [](YAML::Node& ai) {
-        ai["controllers"]["garrison"]["leash_meters"] = 10.0;
-        ai["controllers"]["garrison"]["leash_resume_meters"] = 10.0;
-    }));
-    require(!loads_after("unknown garrison key", [](YAML::Node& ai) {
-        ai["controllers"]["garrison"]["slot_radius_meters"] = 1.0;
-    }));
+    // Guard and patrol each have their own leash.
+    for (const char* leashed : {"guard", "patrol"}) {
+        const std::string name(leashed);
+        require(loads_after((name + " leash").c_str(), [leashed](YAML::Node& ai) {
+            ai["behaviors"][leashed]["leash_meters"] = 10.0;
+            ai["behaviors"][leashed]["leash_resume_meters"] = 3.0;
+        }));
+        require(!loads_after((name + " resume past leash").c_str(), [leashed](YAML::Node& ai) {
+            ai["behaviors"][leashed]["leash_meters"] = 10.0;
+            ai["behaviors"][leashed]["leash_resume_meters"] = 10.0;
+        }));
+        require(!loads_after((name + " unknown key").c_str(), [leashed](YAML::Node& ai) {
+            ai["behaviors"][leashed]["slot_radius_meters"] = 1.0;
+        }));
+    }
 }
 
 }  // namespace

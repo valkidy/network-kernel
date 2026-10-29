@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "game_server/src/agent_behavior.h"
 #include "game_server/src/agent_chaser_controller.h"
 #include "game_server/src/agent_sentry_controller.h"
 #include "game_server/src/ai_perception_adapter.h"
@@ -38,6 +39,13 @@ public:
 
     std::size_t agent_count() const;
     const std::vector<AgentRuntimeState>& agents() const;
+    // Switches an agent to another behavior at runtime (docs/AI_BEHAVIOR_PLAN.md
+    // B3, B10): checked against what the behavior needs first, then applied at
+    // once -- whatever it was fighting is dropped. The chaser runs it from the
+    // next tick. A sentry, and a squad member, keep what they are.
+    BehaviorSwitchResult set_behavior(
+        std::uint32_t net_id,
+        const AgentControllerSpec& spec);
     // Who is inside which building, so hunters can leave alone a player a
     // tent hides (AI plan Q3). Not owned; null leaves every player huntable.
     void set_shelter_director(const ShelterDirector* shelter) { shelter_ = shelter; }
@@ -99,6 +107,17 @@ private:
     // Whether a building that hides its occupants holds `net_id` now.
     bool hidden_in_shelter(std::uint32_t net_id) const;
     void update_hunters(const ActorStateView& actors);
+    BehaviorSwitchResult check_behavior(
+        const AgentRuntimeState& agent,
+        const AgentControllerSpec& spec) const;
+    // Leaves the old behavior, enters the new one and applies the spec's data.
+    // Unchecked: a spawn source's spec was checked by the catalog. A spawner's
+    // agent passes its carrier as `source_net_id`, whose target an inherited
+    // hunter takes.
+    void apply_behavior(
+        AgentRuntimeState* agent,
+        const AgentControllerSpec& spec,
+        std::uint32_t source_net_id);
     void attach_route(
         AgentRuntimeState* agent,
         const std::vector<KernelVec3>& waypoints);

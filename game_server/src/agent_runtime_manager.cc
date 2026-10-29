@@ -6,6 +6,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include "game_server/src/agent_steering.h"
 #include "kernel/src/kernel_api_internal.h"
 
 namespace network_example::game_server {
@@ -30,11 +31,12 @@ void take_controllers(
         std::make_move_iterator(taken.end()));
 }
 
-// Garrison and patrol are both the chaser; everything else, including an agent
+// Guard, patrol, squad and hunter are all the chaser; everything else, including an agent
 // whose template has no ai block, is the sentry, as it always was.
 bool runs_chaser(AgentControllerRole role) {
-    return role == AgentControllerRole::kGarrison ||
+    return role == AgentControllerRole::kGuard ||
            role == AgentControllerRole::kPatrol ||
+           role == AgentControllerRole::kSquad ||
            role == AgentControllerRole::kHunter;
 }
 
@@ -183,8 +185,9 @@ AgentRuntimeManager::AgentControllerBinding AgentRuntimeManager::make_binding(
             chaser.sentry =
                 agent_sentry_config(config_, actor_template.actor_template_id);
             chaser.chase = actor_template.chaser;
+            chaser.squad = actor_template.squad;
+            chaser.guard = actor_template.guard;
             chaser.patrol = actor_template.patrol;
-            chaser.garrison = actor_template.garrison;
             for (const AgentSkillConfig& skill : actor_template.skills) {
                 if (skill.type != AgentSkillType::kWeapon) {
                     continue;
@@ -531,7 +534,7 @@ void AgentRuntimeManager::update_hunters(const ActorStateView& actors) {
         // Hidden is not gone: a player who ducks into a tent is still its
         // target. It goes after another it can find, or waits where it is
         // until this one comes out -- never on_target_lost, which would turn
-        // a garrison for good over a player stepping inside for a moment.
+        // a guard for good over a player stepping inside for a moment.
         if (target == nullptr &&
             std::find(hidden_hostiles_.begin(), hidden_hostiles_.end(), agent.hunt_target) !=
                 hidden_hostiles_.end()) {
@@ -552,10 +555,12 @@ void AgentRuntimeManager::update_hunters(const ActorStateView& actors) {
             const bool lost = agent.hunt_target != 0u ||
                 agent.hunter.target_source == HunterTargetSource::kInherited;
             agent.hunt_target = 0u;
-            if (lost && agent.hunter.on_target_lost == HunterOnTargetLost::kGarrison) {
-                agent.controller_role = AgentControllerRole::kGarrison;
-                agent.seek_path.clear();
-                agent.seek_next = 0;
+            if (lost && agent.hunter.on_target_lost == HunterOnTargetLost::kGuard) {
+                // Unchecked and without dropping the fight: whatever it can
+                // see now, a guard fights as well.
+                AgentControllerSpec guard;
+                guard.role = AgentControllerRole::kGuard;
+                apply_behavior(&agent, guard, 0u);
                 continue;
             }
             agent.hunter.target_source = HunterTargetSource::kNearestHostile;
@@ -632,28 +637,96 @@ void AgentRuntimeManager::attach_pending_controllers() {
             spdlog::warn("controller spec has no agent net_id={}", spawned.net_id);
             continue;
         }
-        AgentRuntimeState& agent = agents_[index];
-        // The catalog has already checked the role suits the template.
-        if (spawned.spec.role != AgentControllerRole::kNone) {
-            agent.controller_role = spawned.spec.role;
+        // The catalog has already checked the role suits the template. A
+        // route makes a patrol (B8) however the spec was built; the parser
+        // says so too, but a spec built in code may leave the role out.
+        AgentControllerSpec spec = spawned.spec;
+        if (spec.role == AgentControllerRole::kNone && !spec.route.empty()) {
+            spec.role = AgentControllerRole::kPatrol;
         }
-        if (spawned.spec.has_hunter) {
-            agent.hunter = spawned.spec.hunter;
+        if (spec.role != AgentControllerRole::kNone) {
+            apply_behavior(&agents_[index], spec, spawned.source_net_id);
         }
-        // Reinforcements go after what called them: the spawning agent's
-        // target as it stands now. Nothing to inherit leaves it 0, which the
-        // hunter pass reads as already lost.
-        if (agent.controller_role == AgentControllerRole::kHunter &&
-            agent.hunter.target_source == HunterTargetSource::kInherited &&
-            spawned.source_net_id != 0u) {
-            const std::size_t source = agent_index_.find(spawned.source_net_id);
-            if (source != AgentIndex::kNotFound) {
-                agent.hunt_target = agents_[source].sentry.target;
-            }
+    }
+}
+
+BehaviorSwitchResult AgentRuntimeManager::set_behavior(
+    std::uint32_t net_id,
+    const AgentControllerSpec& spec) {
+    const std::size_t index = agent_index_.find(net_id);
+    if (index == AgentIndex::kNotFound) {
+        return BehaviorSwitchResult::kAgentMissing;
+    }
+    AgentRuntimeState& agent = agents_[index];
+    const BehaviorSwitchResult result = check_behavior(agent, spec);
+    if (result != BehaviorSwitchResult::kAccepted) {
+        return result;
+    }
+    // Lets go at once (B10). An action already under way finishes on its own;
+    // a wind-up the chaser drops itself once the agent is not pursuing.
+    agent.sentry.target = 0;
+    agent.sentry.has_attention_point = false;
+    agent.sentry.alerted_by_damage = false;
+    agent.chase_holding = false;
+    agent_steering::transition_to(&agent, AgentSentryState::kIdle);
+    apply_behavior(&agent, spec, 0u);
+    return BehaviorSwitchResult::kAccepted;
+}
+
+BehaviorSwitchResult AgentRuntimeManager::check_behavior(
+    const AgentRuntimeState& agent,
+    const AgentControllerSpec& spec) const {
+    if (spec.role == AgentControllerRole::kNone) {
+        return BehaviorSwitchResult::kInvalidData;
+    }
+    // A sentry cannot walk and nothing else can stand still, so neither side
+    // switches across; and a squad keeps its members.
+    if (spec.role == AgentControllerRole::kSentry ||
+        agent.controller_role == AgentControllerRole::kSentry ||
+        agent.controller_role == AgentControllerRole::kNone ||
+        agent.patrol.has_slot) {
+        return BehaviorSwitchResult::kNotAllowed;
+    }
+    const AgentBehavior* behavior = agent_behavior_for_role(spec.role);
+    return behavior != nullptr ? behavior->validate(spec)
+                               : BehaviorSwitchResult::kNotAllowed;
+}
+
+void AgentRuntimeManager::apply_behavior(
+    AgentRuntimeState* agent_state,
+    const AgentControllerSpec& spec,
+    std::uint32_t source_net_id) {
+    AgentRuntimeState& agent = *agent_state;
+    if (const AgentBehavior* old = agent_behavior_for_role(agent.controller_role)) {
+        old->exit(agent);
+    }
+    agent.controller_role = spec.role;
+    if (spec.has_hunter) {
+        agent.hunter = spec.hunter;
+    } else if (spec.role == AgentControllerRole::kHunter) {
+        // Its template's own hunter tuning, not whatever an earlier spec left.
+        const ActorTemplateConfig* actor_template =
+            find_actor_template(config_, agent.actor_template_id);
+        if (actor_template != nullptr) {
+            agent.hunter = actor_template->hunter;
         }
-        if (!spawned.spec.route.empty()) {
-            attach_route(&agent, spawned.spec.route);
+    }
+    if (const AgentBehavior* now = agent_behavior_for_role(agent.controller_role)) {
+        now->enter(agent);
+    }
+    // Reinforcements go after what called them: the spawning agent's target
+    // as it stands now. Nothing to inherit leaves it 0, which the hunter pass
+    // reads as already lost.
+    if (agent.controller_role == AgentControllerRole::kHunter &&
+        agent.hunter.target_source == HunterTargetSource::kInherited &&
+        source_net_id != 0u) {
+        const std::size_t source = agent_index_.find(source_net_id);
+        if (source != AgentIndex::kNotFound) {
+            agent.hunt_target = agents_[source].sentry.target;
         }
+    }
+    if (!spec.route.empty()) {
+        attach_route(&agent, spec.route);
     }
 }
 
@@ -662,12 +735,12 @@ void AgentRuntimeManager::attach_route(
     const std::vector<KernelVec3>& waypoints) {
     AgentRuntimeState& agent = *agent_state;
     {
-        if (agent.controller_role != AgentControllerRole::kGarrison) {
-            // Only a garrison walks a route; anything else decides its own
-            // movement and would silently ignore one. The catalog refuses
-            // this, so it is a bug if seen.
+        if (agent.controller_role != AgentControllerRole::kPatrol) {
+            // Only a patrol walks a route; anything else decides its own
+            // movement and would silently ignore one. The catalog and
+            // set_behavior refuse this, so it is a bug if seen.
             spdlog::warn(
-                "patrol route on an agent that is not a garrison net_id={} template_id={}",
+                "route on an agent that is not a patrol net_id={} template_id={}",
                 agent.net_id,
                 agent.actor_template_id);
             return;

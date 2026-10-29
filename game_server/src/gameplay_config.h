@@ -338,9 +338,10 @@ struct ActorTemplateConfig {
     // Only read when ai_controller_type is Chaser; the perception and attack
     // half of a chaser comes from `sentry`.
     AgentChaseTuning chaser{};
-    AgentPatrolTuning patrol{};
-    AgentGarrisonTuning garrison{};
-    // controllers.hunter (AI plan P6).
+    AgentSquadTuning squad{};
+    AgentLeashTuning guard{};
+    AgentLeashTuning patrol{};
+    // behaviors.hunter (AI plan P6).
     AgentHunterTuning hunter{};
     // ai.skills, as authored. Resolved into the weapon, attack range, leap and
     // charge above once every sp_attack template is known.
@@ -350,8 +351,7 @@ struct ActorTemplateConfig {
     SpawnerConfig spawner{};
     KernelAgentVisionConfig vision{};
     std::uint32_t ai_controller_type = KernelAiControllerType_None;
-    // ai.default_controller, or what a legacy ai.controller amounts to:
-    // sentry -> kSentry, chaser -> kGarrison.
+    // ai.default_behavior (docs/AI_BEHAVIOR_PLAN.md B8).
     AgentControllerRole default_controller_role = AgentControllerRole::kNone;
     // Never moves on its own: exactly the sentries.
     bool ai_stationary = false;
@@ -381,8 +381,8 @@ struct ActorTemplateConfig {
         KernelVec3 spawn_position{};
         float spawn_radius = 0.0f;
         std::uint32_t spawn_seed = 1;
-        // spawn_group.controller: a role and/or a world-space route, which a
-        // garrison walks pathed over the navmesh and ping-ponged.
+        // spawn_group.behavior: a role and/or a world-space route, which a
+        // patrol walks pathed over the navmesh and ping-ponged.
         AgentControllerSpec spawn_controller;
         std::vector<std::string> next_refs;
         std::vector<std::uint32_t> next_node_ids;

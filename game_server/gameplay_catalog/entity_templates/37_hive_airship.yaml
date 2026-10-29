@@ -44,7 +44,7 @@ animations:
 vision:
   collider_template: hive_airship_vision_cone
 ai:
-  default_controller: garrison
+  default_behavior: guard
   profile: default
   perception:
     alert_ticks: 60
@@ -60,8 +60,8 @@ ai:
     stop_distance_meters: 4.0
     resume_distance_meters: 6.0
     input_magnitude: 1.0
-  controllers:
-    patrol:
+  behaviors:
+    squad:
       slot_radius_meters: 2.0
       input_magnitude: 0.6
       leash_meters: 30.0
@@ -88,8 +88,8 @@ spawner:
       min: 2
       max: 3
   # What it drops goes after what it is fighting (AI plan D10), however far
-  # that has run, and stands as a garrison wherever it is once that is gone.
-  controller:
+  # that has run, and stands as a guard wherever it is once that is gone.
+  behavior:
     type: hunter
     target_source: inherited
-    on_target_lost: garrison
+    on_target_lost: guard

@@ -408,12 +408,12 @@ float horizontal_alignment(const KernelVec3& lhs, const KernelVec3& rhs) {
 // a difference in behaviour below is the squad and not a retuned chase.
 network_example::game_server::AgentChaserConfig patrol_config() {
     network_example::game_server::AgentChaserConfig config = chaser_config();
-    config.patrol.slot_radius_meters = 1.0f;
+    config.squad.slot_radius_meters = 1.0f;
     // Full speed: patrolling at half speed is the shipping default but it only
     // doubles how many ticks these cases have to run for.
-    config.patrol.input_magnitude = 1.0f;
-    config.patrol.leash_meters = 6.0f;
-    config.patrol.leash_resume_meters = 2.0f;
+    config.squad.input_magnitude = 1.0f;
+    config.squad.leash_meters = 6.0f;
+    config.squad.leash_resume_meters = 2.0f;
     return config;
 }
 
@@ -483,7 +483,7 @@ void a_moving_squad_member_keeps_walking_and_catches_up(
     auto config = patrol_config();
     // Like the mage, the old patrol input only matches the squad's pace.
     // Catch-up must be allowed to exceed it.
-    config.patrol.input_magnitude = 0.9f / kAgentMoveSpeed;
+    config.squad.input_magnitude = 0.9f / kAgentMoveSpeed;
     const network_example::game_server::AgentChaserController controller(config);
     for (float offset : {0.0f, 1.2f, 6.0f, -4.0f}) {
         reset_patrol_agent(
@@ -679,7 +679,7 @@ void a_leash_breaks_off_a_pursuit_that_drags_too_far(
     // half the assertion above would also pass for an agent that had merely
     // lost sight of what it was chasing.
     network_example::game_server::AgentChaserConfig unleashed = patrol_config();
-    unleashed.patrol.leash_meters = 0.0f;
+    unleashed.squad.leash_meters = 0.0f;
     const network_example::game_server::AgentChaserController free_chaser(
         unleashed);
     reset_patrol_agent(
@@ -700,21 +700,21 @@ void a_leash_breaks_off_a_pursuit_that_drags_too_far(
     require((*agents)[0].sentry.target == player_net_id);
 }
 
-// A garrison's leash (AI plan P2b): the same break-off as a squad's, measured
+// A guard's leash (AI plan P2b): the same break-off as a squad's, measured
 // from where the chase began, but it walks back to that point rather than to
 // a slot, and refuses to engage on the way.
-void a_garrison_leash_walks_it_back_to_where_it_broke_off(
+void a_guard_leash_walks_it_back_to_where_it_broke_off(
     KernelHandle* kernel,
     std::uint32_t agent_net_id,
     std::uint32_t player_net_id,
     std::vector<network_example::game_server::AgentRuntimeState>* agents) {
     network_example::game_server::AgentChaserConfig config = chaser_config();
-    config.garrison.leash_meters = 8.0f;
-    config.garrison.leash_resume_meters = 2.0f;
+    config.guard.leash_meters = 8.0f;
+    config.guard.leash_resume_meters = 2.0f;
     const network_example::game_server::AgentChaserController leashed(config);
     reset_patrol_agent(
         kernel, agent_net_id, player_net_id, agents, {0.0f, 0.0f, 0.0f});
-    (*agents)[0].patrol = {};  // no squad: a garrison
+    (*agents)[0].patrol = {};  // no squad: a guard
     set_position(kernel, player_net_id, {10.0f, 0.0f, 0.0f});
     Kernel_Update(kernel, kFixedDelta);
     run_frame(kernel, leashed, agents);
@@ -750,7 +750,7 @@ void a_garrison_leash_walks_it_back_to_where_it_broke_off(
         (*agents)[0].sentry.state !=
         network_example::game_server::AgentSentryState::kReturn);
 
-    // Control: the same drag with no garrison leash keeps the pursuit.
+    // Control: the same drag with no guard leash keeps the pursuit.
     const network_example::game_server::AgentChaserController free_chaser(
         chaser_config());
     reset_patrol_agent(
@@ -1173,7 +1173,7 @@ int main() {
         kernel, agent_net_id, player_net_id, &agents);
     a_returning_member_walks_to_the_squad_not_to_where_it_left(
         kernel, agent_net_id, player_net_id, &agents);
-    a_garrison_leash_walks_it_back_to_where_it_broke_off(
+    a_guard_leash_walks_it_back_to_where_it_broke_off(
         kernel, agent_net_id, player_net_id, &agents);
     a_leash_breaks_off_a_pursuit_that_drags_too_far(
         kernel, agent_net_id, player_net_id, &agents);

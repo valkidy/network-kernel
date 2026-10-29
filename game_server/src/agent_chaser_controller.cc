@@ -676,7 +676,7 @@ void AgentChaserController::tick(
         // it is made before the pursuit states get to look at what they can
         // see. Without it the leash could only be enforced on a tick where
         // vision happened to break.
-        if (leash_exceeded(behavior.leash_meters(config_, agent), agent) &&
+        if (leash_exceeded(behavior.leash_meters(config_), agent) &&
             is_engaged(agent.sentry.state)) {
             agent.sentry.target = 0;
             agent.sentry.has_attention_point = false;

@@ -44,7 +44,7 @@ animations:
 vision:
   collider_template: drone_vision_cone
 ai:
-  default_controller: garrison
+  default_behavior: guard
   profile: default
   perception:
     # A second of tracking before it fires, against a grunt's three: it saw
@@ -62,8 +62,8 @@ ai:
     stop_distance_meters: 8.0
     resume_distance_meters: 10.0
     input_magnitude: 1.0
-  controllers:
-    patrol:
+  behaviors:
+    squad:
       slot_radius_meters: 1.2
       input_magnitude: 0.5
       leash_meters: 24.0

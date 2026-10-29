@@ -458,10 +458,10 @@ void hash_actor_template(
     hash_scalar(hash, actor_template.chaser.charge.weapon_id);
     hash_scalar(hash, actor_template.chaser.charge.windup_animation);
     hash_scalar(hash, actor_template.chaser.charge.has_windup_animation);
-    hash_float(hash, actor_template.patrol.slot_radius_meters);
-    hash_float(hash, actor_template.patrol.input_magnitude);
-    hash_float(hash, actor_template.patrol.leash_meters);
-    hash_float(hash, actor_template.patrol.leash_resume_meters);
+    hash_float(hash, actor_template.squad.slot_radius_meters);
+    hash_float(hash, actor_template.squad.input_magnitude);
+    hash_float(hash, actor_template.squad.leash_meters);
+    hash_float(hash, actor_template.squad.leash_resume_meters);
     hash_scalar(hash, static_cast<std::uint32_t>(actor_template.skills.size()));
     for (const AgentSkillConfig& skill : actor_template.skills) {
         hash_scalar(hash, static_cast<std::uint32_t>(skill.type));
@@ -484,8 +484,10 @@ void hash_actor_template(
     hash_scalar(hash, static_cast<std::uint32_t>(actor_template.hunter.target_source));
     hash_scalar(hash, static_cast<std::uint32_t>(actor_template.hunter.on_target_lost));
     hash_scalar(hash, actor_template.hunter.repath_ticks);
-    hash_float(hash, actor_template.garrison.leash_meters);
-    hash_float(hash, actor_template.garrison.leash_resume_meters);
+    hash_float(hash, actor_template.guard.leash_meters);
+    hash_float(hash, actor_template.guard.leash_resume_meters);
+    hash_float(hash, actor_template.patrol.leash_meters);
+    hash_float(hash, actor_template.patrol.leash_resume_meters);
     hash_scalar(hash, actor_template.spawner.authored ? 1u : 0u);
     hash_scalar(
         hash, static_cast<std::uint32_t>(actor_template.spawner.trigger));
@@ -3713,7 +3715,7 @@ SpawnerConfig spawner_from_yaml(
     std::uint32_t template_id);
 
 // target_source / on_target_lost / repath_ticks, wherever a hunter is tuned:
-// a template's controllers.hunter, or a spawn source's controller block.
+// a template's behaviors.hunter, or a spawn source's behavior block.
 void hunter_tuning_from_yaml(
     const YAML::Node& node,
     const std::string& where,
@@ -3732,8 +3734,8 @@ void hunter_tuning_from_yaml(
         const std::string lost = node["on_target_lost"].as<std::string>();
         if (lost == "nearest_hostile") {
             hunter->on_target_lost = HunterOnTargetLost::kNearestHostile;
-        } else if (lost == "garrison") {
-            hunter->on_target_lost = HunterOnTargetLost::kGarrison;
+        } else if (lost == "guard") {
+            hunter->on_target_lost = HunterOnTargetLost::kGuard;
         } else {
             throw std::runtime_error(where + " hunter on_target_lost is unsupported: " + lost);
         }
@@ -3746,11 +3748,13 @@ void hunter_tuning_from_yaml(
     }
 }
 
-// A spawn source's `controller:` block (plan D1): `type` picks the role its
-// agents run as instead of their template's default; `route`, where the
-// source allows one, is waypoints in the source's own frame (world space on a
-// spawn_group, offsets from the spawn point on a world rule). Whether the role suits the
-// template it spawns is checked once every template is known, in
+// A spawn source's `behavior:` block (plan D1; names from
+// docs/AI_BEHAVIOR_PLAN.md B8): `type` picks the role its agents run as
+// instead of their template's default; `route`, where the source allows one,
+// is waypoints in the source's own frame (world space on a spawn_group,
+// offsets from the spawn point on a world rule). A route makes them patrol,
+// with or without `type: patrol`, and a patrol needs one. Whether the role
+// suits the template it spawns is checked once every template is known, in
 // validate_gameplay_config.
 AgentControllerSpec controller_spec_from_yaml(
     const YAML::Node& node,
@@ -3777,42 +3781,56 @@ AgentControllerSpec controller_spec_from_yaml(
         const std::string type = node["type"].as<std::string>();
         if (type == "sentry") {
             spec.role = AgentControllerRole::kSentry;
-        } else if (type == "garrison") {
-            spec.role = AgentControllerRole::kGarrison;
+        } else if (type == "guard") {
+            spec.role = AgentControllerRole::kGuard;
         } else if (type == "patrol") {
+            spec.role = AgentControllerRole::kPatrol;
+        } else if (type == "squad") {
             throw std::runtime_error(
-                where + " controller.type patrol: only a patrol template's squad "
-                "makes patrol members");
+                where + " behavior.type squad: only a patrol template's squad "
+                "makes squad members");
         } else if (type == "hunter") {
             spec.role = AgentControllerRole::kHunter;
+        } else if (type == "garrison") {
+            throw std::runtime_error(
+                where + " behavior.type garrison was renamed (AI behavior plan B8): "
+                "guard, or patrol with a route");
         } else {
             throw std::runtime_error(
-                where + " controller.type is unsupported: " + type);
+                where + " behavior.type is unsupported: " + type);
         }
     }
     if (node["target_source"] || node["on_target_lost"] || node["repath_ticks"]) {
         if (spec.role != AgentControllerRole::kHunter) {
             throw std::runtime_error(
-                where + " controller target_source / on_target_lost / repath_ticks "
+                where + " behavior target_source / on_target_lost / repath_ticks "
                 "need type: hunter");
         }
         spec.has_hunter = true;
-        hunter_tuning_from_yaml(node, where + " controller", &spec.hunter);
+        hunter_tuning_from_yaml(node, where + " behavior", &spec.hunter);
     }
     if (const YAML::Node route = node["route"]) {
         if (!route.IsSequence() || route.size() < 2u) {
             throw std::runtime_error(
-                where + " controller.route needs at least two waypoints");
+                where + " behavior.route needs at least two waypoints");
         }
         for (const YAML::Node& waypoint : route) {
             const KernelVec3 point = vec3_from_yaml(waypoint);
             if (!std::isfinite(point.x) || !std::isfinite(point.y) ||
                 !std::isfinite(point.z)) {
                 throw std::runtime_error(
-                    where + " controller.route has an invalid waypoint");
+                    where + " behavior.route has an invalid waypoint");
             }
             spec.route.push_back(point);
         }
+        if (spec.role == AgentControllerRole::kNone) {
+            spec.role = AgentControllerRole::kPatrol;
+        } else if (spec.role != AgentControllerRole::kPatrol) {
+            throw std::runtime_error(where + " behavior.route needs type patrol");
+        }
+    }
+    if (spec.role == AgentControllerRole::kPatrol && spec.route.empty()) {
+        throw std::runtime_error(where + " behavior.type patrol needs a route");
     }
     return spec;
 }
@@ -3990,9 +4008,10 @@ bool actor_template_has_weapon(
     return false;
 }
 
-// The `ai:` block's own keys (docs/AI_CONTROLLER_PLAN.md §6.1): the role, and
-// the checks that tie it to locomotion and controllers. perception,
-// locomotion and controllers.patrol are read by the parsers below. An entity
+// The `ai:` block's own keys (docs/AI_CONTROLLER_PLAN.md §6.1, renamed by
+// docs/AI_BEHAVIOR_PLAN.md B8): the role, and the checks that tie it to
+// locomotion and behaviors. perception, locomotion and behaviors.squad are
+// read by the parsers below. An entity
 // that is not an agent may still say `controller: director`; the agent keys
 // that went with `controller:` (sentry / chaser / patrol) are refused with a
 // pointer to what replaced them.
@@ -4025,32 +4044,44 @@ void ai_role_from_yaml(
                 fail(std::string(legacy_key) +
                      " was replaced (AI plan P1d): controller -> "
                      "default_controller, sentry -> perception, chaser -> "
-                     "locomotion, patrol -> controllers.patrol");
+                     "locomotion, patrol -> behaviors.squad");
+            }
+        }
+        for (const char* renamed_key : {"default_controller", "controllers"}) {
+            if (ai[renamed_key]) {
+                fail(std::string(renamed_key) +
+                     " was renamed (AI behavior plan B8): default_controller -> "
+                     "default_behavior, controllers -> behaviors");
             }
         }
         reject(ai, {
-            "default_controller",
+            "default_behavior",
             "profile",
             "tick_interval",
             "perception",
             "locomotion",
-            "controllers",
+            "behaviors",
             "skills",
         });
-        if (!ai["default_controller"]) {
-            fail("requires default_controller");
+        if (!ai["default_behavior"]) {
+            fail("requires default_behavior");
         }
-        const std::string controller = ai["default_controller"].as<std::string>();
-        if (controller == "sentry") {
+        const std::string behavior = ai["default_behavior"].as<std::string>();
+        if (behavior == "sentry") {
             actor_template->default_controller_role = AgentControllerRole::kSentry;
-        } else if (controller == "garrison") {
-            actor_template->default_controller_role = AgentControllerRole::kGarrison;
-        } else if (controller == "patrol") {
-            actor_template->default_controller_role = AgentControllerRole::kPatrol;
-        } else if (controller == "hunter") {
+        } else if (behavior == "guard") {
+            actor_template->default_controller_role = AgentControllerRole::kGuard;
+        } else if (behavior == "squad") {
+            actor_template->default_controller_role = AgentControllerRole::kSquad;
+        } else if (behavior == "hunter") {
             actor_template->default_controller_role = AgentControllerRole::kHunter;
+        } else if (behavior == "patrol") {
+            fail("default_behavior patrol: a template has no route; default to "
+                 "guard and give the route where it is spawned");
+        } else if (behavior == "garrison") {
+            fail("default_behavior garrison was renamed (AI behavior plan B8): guard");
         } else {
-            fail("default_controller is unsupported: " + controller);
+            fail("default_behavior is unsupported: " + behavior);
         }
         const bool sentry =
             actor_template->default_controller_role == AgentControllerRole::kSentry;
@@ -4075,36 +4106,40 @@ void ai_role_from_yaml(
             fail(sentry ? "sentry must be stationary"
                         : "only a sentry may be stationary");
         }
-        if (const YAML::Node controllers = ai["controllers"]) {
+        if (const YAML::Node behaviors = ai["behaviors"]) {
             if (sentry) {
-                fail("sentry takes no controllers block");
+                fail("sentry takes no behaviors block");
             }
-            reject(controllers, {"patrol", "garrison", "hunter"});
-            if (const YAML::Node hunter = controllers["hunter"]) {
+            reject(behaviors, {"squad", "guard", "patrol", "hunter"});
+            if (const YAML::Node hunter = behaviors["hunter"]) {
                 reject(hunter, {"target_source", "on_target_lost", "repath_ticks"});
                 hunter_tuning_from_yaml(hunter, "actor template " + actor_template->name,
                                         &actor_template->hunter);
             }
-            if (const YAML::Node garrison = controllers["garrison"]) {
-                reject(garrison, {"leash_meters", "leash_resume_meters"});
-                if (garrison["leash_meters"]) {
-                    actor_template->garrison.leash_meters =
-                        garrison["leash_meters"].as<float>();
+            const auto leash_from_yaml = [&](const char* key, AgentLeashTuning* leash) {
+                const YAML::Node node = behaviors[key];
+                if (!node) {
+                    return;
                 }
-                if (garrison["leash_resume_meters"]) {
-                    actor_template->garrison.leash_resume_meters =
-                        garrison["leash_resume_meters"].as<float>();
+                reject(node, {"leash_meters", "leash_resume_meters"});
+                if (node["leash_meters"]) {
+                    leash->leash_meters = node["leash_meters"].as<float>();
                 }
-                const AgentGarrisonTuning& leash = actor_template->garrison;
-                if (!std::isfinite(leash.leash_meters) ||
-                    !std::isfinite(leash.leash_resume_meters) ||
-                    leash.leash_meters < 0.0f || leash.leash_resume_meters < 0.0f ||
-                    (leash.leash_meters > 0.0f &&
-                     leash.leash_resume_meters >= leash.leash_meters)) {
-                    fail("controllers.garrison leash must be non-negative with "
-                         "leash_resume_meters below leash_meters");
+                if (node["leash_resume_meters"]) {
+                    leash->leash_resume_meters = node["leash_resume_meters"].as<float>();
                 }
-            }
+                if (!std::isfinite(leash->leash_meters) ||
+                    !std::isfinite(leash->leash_resume_meters) ||
+                    leash->leash_meters < 0.0f || leash->leash_resume_meters < 0.0f ||
+                    (leash->leash_meters > 0.0f &&
+                     leash->leash_resume_meters >= leash->leash_meters)) {
+                    fail(std::string("behaviors.") + key +
+                         " leash must be non-negative with leash_resume_meters "
+                         "below leash_meters");
+                }
+            };
+            leash_from_yaml("guard", &actor_template->guard);
+            leash_from_yaml("patrol", &actor_template->patrol);
         }
     }
     if (const YAML::Node skills = ai["skills"]) {
@@ -4305,14 +4340,14 @@ AgentSentryConfig sentry_config_from_yaml(
     return sentry;
 }
 
-AgentPatrolTuning patrol_tuning_from_yaml(
+AgentSquadTuning squad_tuning_from_yaml(
     const YAML::Node& node,
     const ActorTemplateConfig& actor_template,
     const std::string& path,
     std::uint32_t source_kind) {
-    AgentPatrolTuning patrol = actor_template.patrol;
+    AgentSquadTuning patrol = actor_template.squad;
     const YAML::Node patrol_node =
-        node && node["controllers"] ? node["controllers"]["patrol"] : YAML::Node{};
+        node && node["behaviors"] ? node["behaviors"]["squad"] : YAML::Node{};
     if (!patrol_node) {
         return patrol;
     }
@@ -5303,8 +5338,8 @@ ActorTemplateConfig actor_template_from_yaml(
         sentry_config_from_yaml(ai, actor_template, weapons, path, source_kind);
     actor_template.chaser =
         chaser_config_from_yaml(ai, actor_template, path, source_kind);
-    actor_template.patrol =
-        patrol_tuning_from_yaml(ai, actor_template, path, source_kind);
+    actor_template.squad =
+        squad_tuning_from_yaml(ai, actor_template, path, source_kind);
     actor_template.vision = vision_config_from_yaml(
         node["vision"],
         actor_template,
@@ -6492,7 +6527,7 @@ EntityTemplateConfig entity_template_from_yaml(
                 reject_unknown_keys(
                     effect,
                     {"type", "group", "count", "entity_template", "position", "radius", "seed",
-                     "controller", "patrol_route"},
+                     "behavior", "patrol_route"},
                     path,
                     source_kind,
                     KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_GAME_RULE,
@@ -6519,10 +6554,10 @@ EntityTemplateConfig entity_template_from_yaml(
                 if (effect["patrol_route"]) {
                     throw std::runtime_error(
                         "game_rule spawn_group patrol_route moved to "
-                        "controller.route: " + entity_template.name);
+                        "behavior.route: " + entity_template.name);
                 }
                 node_config.spawn_controller = controller_spec_from_yaml(
-                    effect["controller"],
+                    effect["behavior"],
                     true,
                     "game_rule spawn_group",
                     path,
@@ -6615,7 +6650,7 @@ EntityTemplateConfig entity_template_from_yaml(
             "radius",
             "seed",
             "position",
-            "controller",
+            "behavior",
         },
         path,
         source_kind,
@@ -6637,7 +6672,7 @@ EntityTemplateConfig entity_template_from_yaml(
         entity_template.director_spawn_position = vec3_from_yaml(spawn["position"]);
     }
     entity_template.director_spawn_controller = controller_spec_from_yaml(
-        spawn["controller"],
+        spawn["behavior"],
         true,
         "world_rule director.spawn",
         path,
@@ -10564,7 +10599,7 @@ SpawnerConfig spawner_from_yaml(
             "count",
             "composition",
             "entry",
-            "controller",
+            "behavior",
         },
         path,
         source_kind,
@@ -10572,7 +10607,7 @@ SpawnerConfig spawner_from_yaml(
         template_id);
     spawner.authored = true;
     spawner.controller = controller_spec_from_yaml(
-        node["controller"],
+        node["behavior"],
         false,
         "spawner",
         path,
@@ -11900,10 +11935,9 @@ void validate_derived_projectiles(
     }
 }
 
-// Whether a spawn source's controller suits the template it spawns (plan
-// D1, §6.4). A sentry is for a stationary template, garrison and patrol for
-// one that moves; only a garrison walks a route, so a route on anything else
-// would be dropped silently.
+// Whether a spawn source's behavior suits the template it spawns (plan
+// D1, §6.4). A sentry is for a stationary template, everything else for one
+// that moves. The parser has already tied routes to patrol.
 void validate_controller_spec(
     const GameServerGameplayConfig& config,
     const AgentControllerSpec& spec,
@@ -11917,30 +11951,32 @@ void validate_controller_spec(
         find_actor_template(config, template_id);
     if (actor_template == nullptr ||
         actor_template->default_controller_role == AgentControllerRole::kNone) {
-        errors->push_back(where + " controller names a template with no ai");
+        errors->push_back(where + " behavior names a template with no ai");
         return;
     }
-    const AgentControllerRole role = spec.role == AgentControllerRole::kNone
-        ? actor_template->default_controller_role
-        : spec.role;
+    const AgentControllerRole role = spec.role != AgentControllerRole::kNone
+        ? spec.role
+        : !spec.route.empty() ? AgentControllerRole::kPatrol
+                              : actor_template->default_controller_role;
     const bool sentry_template =
         actor_template->default_controller_role == AgentControllerRole::kSentry;
     if (role == AgentControllerRole::kSentry && !sentry_template) {
         errors->push_back(
-            where + " controller sentry on a template that moves: " +
+            where + " behavior sentry on a template that moves: " +
             actor_template->name);
     }
     if (role != AgentControllerRole::kSentry && sentry_template) {
         errors->push_back(
-            where + " controller " +
+            where + " behavior " +
             (role == AgentControllerRole::kPatrol   ? "patrol"
+             : role == AgentControllerRole::kSquad  ? "squad"
              : role == AgentControllerRole::kHunter ? "hunter"
-                                                    : "garrison") +
+                                                    : "guard") +
             " on a sentry template: " + actor_template->name);
     }
-    if (!spec.route.empty() && role != AgentControllerRole::kGarrison) {
+    if (!spec.route.empty() && role != AgentControllerRole::kPatrol) {
         errors->push_back(
-            where + " controller.route needs a garrison: " + actor_template->name);
+            where + " behavior.route needs a patrol: " + actor_template->name);
     }
 }
 
@@ -11968,8 +12004,8 @@ std::vector<std::string> validate_gameplay_config(
                 "spawner on " + carrier.name, &errors);
         }
     }
-    // A squad makes every member patrol; the definition names no controller.
-    const AgentControllerSpec patrol_member{AgentControllerRole::kPatrol, {}};
+    // A squad makes every member squad; the definition names no behavior.
+    const AgentControllerSpec patrol_member{AgentControllerRole::kSquad, {}};
     for (const PatrolDefinitionConfig& patrol : config.patrols) {
         for (const SpawnCompositionEntry& entry : patrol.composition) {
             validate_controller_spec(

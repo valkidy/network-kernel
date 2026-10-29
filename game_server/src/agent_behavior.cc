@@ -8,7 +8,7 @@
 namespace network_example::game_server {
 namespace {
 
-// How close a returning garrison comes to where it broke off. The same
+// How close a returning guard or patrol comes to where it broke off. The same
 // allowance a route corner gets.
 constexpr float kReturnArrivalMeters = 1.0f;
 
@@ -47,31 +47,31 @@ void look_around(AgentRuntimeState& agent, AgentBehaviorStep& step) {
 }
 
 bool inside_leash_resume(
-    const AgentPatrolTuning& patrol,
+    const AgentSquadTuning& squad,
     const AgentRuntimeState& agent) {
     return agent_steering::horizontal_distance(
                agent.position, agent.patrol.leash_anchor) <=
-        patrol.leash_resume_meters;
+        squad.leash_resume_meters;
 }
 
 bool standing_in_slot(
-    const AgentPatrolTuning& patrol,
+    const AgentSquadTuning& squad,
     const AgentRuntimeState& agent) {
     return agent_steering::horizontal_distance(
-               agent.position, agent.patrol.slot) <= patrol.slot_radius_meters;
+               agent.position, agent.patrol.slot) <= squad.slot_radius_meters;
 }
 
 KernelVec2 patrol_move(
-    const AgentPatrolTuning& patrol,
+    const AgentSquadTuning& squad,
     const AgentRuntimeState& agent,
     float max_speed) {
     const KernelVec3& travel = agent.patrol.travel_velocity;
     const float speed = std::hypot(travel.x, travel.z);
     if (speed <= 0.0001f) {
-        return standing_in_slot(patrol, agent)
+        return standing_in_slot(squad, agent)
             ? KernelVec2{0.0f, 0.0f}
             : agent_steering::horizontal_move_toward(
-                  agent.position, agent.patrol.slot, patrol.input_magnitude);
+                  agent.position, agent.patrol.slot, squad.input_magnitude);
     }
     if (max_speed <= 0.0f) {
         return KernelVec2{0.0f, 0.0f};
@@ -97,22 +97,25 @@ KernelVec2 patrol_move(
 }
 
 // A squad member: holds its slot in the formation while nothing is in sight,
-// and goes back to it after a fight.
+// and goes back to it after a fight. Only the squad makes one, and a member
+// stays one.
 class SquadBehavior final : public AgentBehavior {
 public:
-    float leash_meters(
-        const AgentChaserConfig& config,
-        const AgentRuntimeState&) const override {
-        return config.patrol.leash_meters;
+    BehaviorSwitchResult validate(const AgentControllerSpec&) const override {
+        return BehaviorSwitchResult::kNotAllowed;
+    }
+
+    float leash_meters(const AgentChaserConfig& config) const override {
+        return config.squad.leash_meters;
     }
 
     void on_idle(AgentRuntimeState& agent, AgentBehaviorStep& step) const override {
-        const AgentPatrolTuning& patrol = step.config.patrol;
-        if (!standing_in_slot(patrol, agent) ||
+        const AgentSquadTuning& squad = step.config.squad;
+        if (!standing_in_slot(squad, agent) ||
             std::hypot(agent.patrol.travel_velocity.x,
                        agent.patrol.travel_velocity.z) > 0.0001f) {
             step.move = patrol_move(
-                patrol, agent, step.config.sentry.move_speed_meters_per_second);
+                squad, agent, step.config.sentry.move_speed_meters_per_second);
             face_move(agent, step);
         } else {
             look_around(agent, step);
@@ -120,8 +123,8 @@ public:
     }
 
     void on_return(AgentRuntimeState& agent, AgentBehaviorStep& step) const override {
-        const AgentPatrolTuning& patrol = step.config.patrol;
-        if (standing_in_slot(patrol, agent) || inside_leash_resume(patrol, agent)) {
+        const AgentSquadTuning& squad = step.config.squad;
+        if (standing_in_slot(squad, agent) || inside_leash_resume(squad, agent)) {
             // Two ways to be back: standing in the slot, or having returned
             // to where it broke formation. The second is what ends a short
             // chase, where the squad may have moved on and waiting to reach
@@ -135,7 +138,7 @@ public:
             return;
         }
         step.move = patrol_move(
-            patrol, agent, step.config.sentry.move_speed_meters_per_second);
+            squad, agent, step.config.sentry.move_speed_meters_per_second);
         face_move(agent, step);
     }
 
@@ -147,34 +150,19 @@ public:
     }
 };
 
-// Stands its ground, or walks the route its spawn source gave it.
-class GarrisonBehavior : public AgentBehavior {
+// Leashed, and walks back to where it broke off: a guard, a patrol, a hunter.
+class LeashedBehavior : public AgentBehavior {
 public:
-    float leash_meters(
-        const AgentChaserConfig& config,
-        const AgentRuntimeState&) const override {
-        return config.garrison.leash_meters;
-    }
-
-    void on_idle(AgentRuntimeState& agent, AgentBehaviorStep& step) const override {
-        if (agent.route_patrol.path.empty()) {
-            look_around(agent, step);
-            return;
-        }
-        // A garrison on a route walks it whenever it has nothing to fight,
-        // and after a fight carries on to the corner it was heading for from
-        // wherever the fight left it.
-        step.move = agent_steering::route_patrol_move(
-            &agent.route_patrol, agent.position, step.config.chase.input_magnitude);
-        face_move(agent, step);
+    float leash_meters(const AgentChaserConfig& config) const override {
+        return leash(config).leash_meters;
     }
 
     void on_return(AgentRuntimeState& agent, AgentBehaviorStep& step) const override {
         // Walks back to where it broke off, then goes idle there -- which puts
-        // one on a route back onto it.
+        // a patrol back onto its route.
         const float back = agent_steering::horizontal_distance(
             agent.position, agent.patrol.leash_anchor);
-        if (back <= std::max(step.config.garrison.leash_resume_meters,
+        if (back <= std::max(leash(step.config).leash_resume_meters,
                              kReturnArrivalMeters)) {
             agent_steering::transition_to(&agent, AgentSentryState::kIdle);
             return;
@@ -187,12 +175,88 @@ public:
     AgentSentryState on_target_forgotten(AgentRuntimeState&) const override {
         return AgentSentryState::kIdle;
     }
+
+protected:
+    virtual const AgentLeashTuning& leash(const AgentChaserConfig& config) const = 0;
+};
+
+// Stands its ground and looks around.
+class GuardBehavior : public LeashedBehavior {
+public:
+    BehaviorSwitchResult validate(const AgentControllerSpec& spec) const override {
+        return spec.route.empty() && !spec.has_hunter
+            ? BehaviorSwitchResult::kAccepted
+            : BehaviorSwitchResult::kInvalidData;
+    }
+
+    void on_idle(AgentRuntimeState& agent, AgentBehaviorStep& step) const override {
+        look_around(agent, step);
+    }
+
+protected:
+    const AgentLeashTuning& leash(const AgentChaserConfig& config) const override {
+        return config.guard;
+    }
+};
+
+// Walks the route it was given whenever it has nothing to fight.
+class PatrolBehavior final : public LeashedBehavior {
+public:
+    BehaviorSwitchResult validate(const AgentControllerSpec& spec) const override {
+        if (spec.route.size() < 2u || spec.has_hunter) {
+            return BehaviorSwitchResult::kInvalidData;
+        }
+        for (const KernelVec3& point : spec.route) {
+            if (!std::isfinite(point.x) || !std::isfinite(point.y) ||
+                !std::isfinite(point.z)) {
+                return BehaviorSwitchResult::kInvalidData;
+            }
+        }
+        return BehaviorSwitchResult::kAccepted;
+    }
+
+    void exit(AgentRuntimeState& agent) const override {
+        agent.route_patrol = AgentRoutePatrolState{};
+    }
+
+    void on_idle(AgentRuntimeState& agent, AgentBehaviorStep& step) const override {
+        if (agent.route_patrol.path.empty()) {
+            look_around(agent, step);
+            return;
+        }
+        // Walks it whenever it has nothing to fight, and after a fight carries
+        // on to the corner it was heading for from wherever the fight left it.
+        step.move = agent_steering::route_patrol_move(
+            &agent.route_patrol, agent.position, step.config.chase.input_magnitude);
+        face_move(agent, step);
+    }
+
+protected:
+    const AgentLeashTuning& leash(const AgentChaserConfig& config) const override {
+        return config.patrol;
+    }
 };
 
 // Goes looking for a target it has not seen (AI plan D10). Leashed and
-// walked back as a garrison is.
-class HunterBehavior final : public GarrisonBehavior {
+// walked back as a guard is.
+class HunterBehavior final : public GuardBehavior {
 public:
+    BehaviorSwitchResult validate(const AgentControllerSpec& spec) const override {
+        return spec.route.empty() ? BehaviorSwitchResult::kAccepted
+                                  : BehaviorSwitchResult::kInvalidData;
+    }
+
+    void enter(AgentRuntimeState& agent) const override {
+        // Looks for a target on its first tick rather than its staggered one.
+        agent.seek_repath_in = 0;
+    }
+
+    void exit(AgentRuntimeState& agent) const override {
+        agent.hunt_target = 0u;
+        agent.seek_path.clear();
+        agent.seek_next = 0;
+    }
+
     void on_idle(AgentRuntimeState& agent, AgentBehaviorStep&) const override {
         // The chaser's Seek starts walking on this same tick.
         agent_steering::transition_to(&agent, AgentSentryState::kSeek);
@@ -206,19 +270,36 @@ public:
     }
 };
 
+const SquadBehavior kSquad;
+const GuardBehavior kGuard;
+const PatrolBehavior kPatrol;
+const HunterBehavior kHunter;
+
 }  // namespace
 
+const AgentBehavior* agent_behavior_for_role(AgentControllerRole role) {
+    switch (role) {
+        case AgentControllerRole::kGuard:
+            return &kGuard;
+        case AgentControllerRole::kPatrol:
+            return &kPatrol;
+        case AgentControllerRole::kSquad:
+            return &kSquad;
+        case AgentControllerRole::kHunter:
+            return &kHunter;
+        case AgentControllerRole::kNone:
+        case AgentControllerRole::kSentry:
+            break;
+    }
+    return nullptr;
+}
+
 const AgentBehavior& agent_behavior_for(const AgentRuntimeState& agent) {
-    static const SquadBehavior squad;
-    static const GarrisonBehavior garrison;
-    static const HunterBehavior hunter;
     if (agent.patrol.has_slot) {
-        return squad;
+        return kSquad;
     }
-    if (agent.controller_role == AgentControllerRole::kHunter) {
-        return hunter;
-    }
-    return garrison;
+    const AgentBehavior* behavior = agent_behavior_for_role(agent.controller_role);
+    return behavior != nullptr ? *behavior : kGuard;
 }
 
 }  // namespace network_example::game_server

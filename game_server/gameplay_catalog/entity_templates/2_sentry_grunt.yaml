@@ -26,7 +26,7 @@ vision:
   collider_template: sentry_grunt_vision_cone
 # Linear-projectile sentry. See 24_grenade_sentry.yaml for ballistic aiming.
 ai:
-  default_controller: sentry
+  default_behavior: sentry
   profile: default
   perception:
     alert_ticks: 90

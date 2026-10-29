@@ -113,10 +113,10 @@ struct AgentChaseTuning {
     AgentChargeTuning charge;
 };
 
-// What walking to a squad slot costs and what it tolerates. Inert unless the
-// agent has a slot, so a chaser that is not part of a patrol reads the same as
-// one authored before any of this existed.
-struct AgentPatrolTuning {
+// What walking to a squad slot costs and what it tolerates (`behaviors.squad`).
+// Inert unless the agent has a slot, so a chaser that is not part of a squad
+// reads the same as one authored before any of this existed.
+struct AgentSquadTuning {
     // Arrival radius while the squad is stopped, also used when rejoining
     // after pursuit. Moving squads do not stop members inside this radius.
     float slot_radius_meters = 1.0f;
@@ -136,11 +136,12 @@ struct AgentPatrolTuning {
     float leash_resume_meters = 0.0f;
 };
 
-// A garrison's leash (AI plan D5, `controllers.garrison`): how far a pursuit
-// may drag it from where it broke off before it gives up and walks back.
-// Measured from that point, like a squad member's, and zero turns it off --
-// the garrison then chases until it loses sight, as it did before P2b.
-struct AgentGarrisonTuning {
+// A guard's or a patrol's leash (AI plan D5; `behaviors.guard`,
+// `behaviors.patrol`): how far a pursuit may drag it from where it broke off
+// before it gives up and walks back. Measured from that point, like a squad
+// member's, and zero turns it off -- it then chases until it loses sight, as
+// a garrison did before P2b.
+struct AgentLeashTuning {
     float leash_meters = 0.0f;
     // Back within this of where it broke off, it may engage again. Must be
     // below leash_meters; at zero it walks all the way back.
@@ -151,8 +152,11 @@ struct AgentChaserConfig {
     // Detection, alert timing, forgetting, and firing are the sentry's.
     AgentSentryConfig sentry;
     AgentChaseTuning chase;
-    AgentPatrolTuning patrol;
-    AgentGarrisonTuning garrison;
+    AgentSquadTuning squad;
+    // Separate, so a switch at runtime takes the leash of the behavior it
+    // switches to (docs/AI_BEHAVIOR_PLAN.md). A hunter is leashed as a guard.
+    AgentLeashTuning guard;
+    AgentLeashTuning patrol;
     // Its weapon skills, in authored order. Left empty, the controller makes
     // one from sentry.weapon_id reaching chase.attack_range_meters -- what a
     // config built in code (the tests) means.

@@ -48,7 +48,7 @@ vision:
 # chaser.attack_range_meters below is for -- visibility alone would have it
 # swinging from across the room.
 ai:
-  default_controller: garrison
+  default_behavior: guard
   profile: default
   perception:
     alert_ticks: 90
@@ -69,8 +69,8 @@ ai:
     input_magnitude: 1.0
   # Only read when this grunt is in a squad; a lone chaser has no slot and none
   # of this applies to it.
-  controllers:
-    patrol:
+  behaviors:
+    squad:
       slot_radius_meters: 1.2
       # Half speed, so a patrol reads as a patrol rather than as a pursuit that
       # has not noticed anyone yet.
