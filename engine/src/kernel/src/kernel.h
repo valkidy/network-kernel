@@ -352,6 +352,15 @@ public:
     std::uint32_t server_poll_game_messages(
         KernelGameMessage* out_messages,
         std::uint32_t max_messages);
+    // Agent commands; see Kernel_SubmitAgentCommand.
+    bool submit_agent_command(const KernelAgentCommand& command);
+    std::uint32_t poll_agent_command_outcomes(
+        KernelAgentCommandOutcome* out_outcomes,
+        std::uint32_t max_outcomes);
+    std::uint32_t server_poll_agent_commands(
+        KernelAgentCommand* out_commands,
+        std::uint32_t max_commands);
+    bool server_send_agent_command_outcome(const KernelAgentCommandOutcome& outcome);
     bool get_item_instance(
         KernelItemInstanceId id,
         KernelItemInstanceView* out_view) const;
@@ -1518,6 +1527,15 @@ private:
     void rebuild_weapon_loadout(const InventoryContainerRecord& container);
     std::deque<KernelGameMessage> server_game_messages_;
     std::deque<KernelGameMessage> client_game_messages_;
+    // Agent commands waiting for game_server, and answers waiting for the
+    // local player. Bounded like the game message queues.
+    std::deque<KernelAgentCommand> server_agent_commands_;
+    std::deque<KernelAgentCommandOutcome> client_agent_command_outcomes_;
+    void enqueue_agent_command(
+        PeerId peer,
+        NetId player_net_id,
+        const KernelAgentCommand& command);
+    void enqueue_agent_command_outcome(const KernelAgentCommandOutcome& outcome);
     void enqueue_game_message(
         std::deque<KernelGameMessage>* queue,
         PeerId peer,

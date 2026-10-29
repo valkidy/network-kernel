@@ -488,6 +488,7 @@ void hash_actor_template(
     hash_scalar(hash, actor_template.lock_target.give_up_ticks);
     hash_scalar(hash, actor_template.lock_target.repath_ticks);
     hash_scalar(hash, static_cast<std::uint32_t>(actor_template.lock_target.target_relations));
+    hash_scalar(hash, actor_template.remote_command_min_switch_interval_ticks);
     hash_float(hash, actor_template.guard.leash_meters);
     hash_float(hash, actor_template.guard.leash_resume_meters);
     hash_float(hash, actor_template.patrol.leash_meters);
@@ -4070,7 +4071,19 @@ void ai_role_from_yaml(
             "locomotion",
             "behaviors",
             "skills",
+            "remote_command",
         });
+        if (const YAML::Node remote = ai["remote_command"]) {
+            // Only what a player can command takes commands (B13).
+            if (actor_template->vision.camp != KernelAgentCamp_PlayerSide) {
+                fail("remote_command is only for a player_side template");
+            }
+            reject(remote, {"min_switch_interval_ticks"});
+            if (remote["min_switch_interval_ticks"]) {
+                actor_template->remote_command_min_switch_interval_ticks =
+                    remote["min_switch_interval_ticks"].as<std::uint32_t>();
+            }
+        }
         if (!ai["default_behavior"]) {
             fail("requires default_behavior");
         }
@@ -9988,6 +10001,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             "navigation_mesh",
             "scene_props",
             "scene_items",
+            "agent_routes",
         },
         path,
         source.source_kind(),
@@ -10092,6 +10106,50 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             source,
             base_path,
             document["skeleton_manifests_dir"]);
+    }
+    if (const YAML::Node routes = document["agent_routes"]) {
+        if (!routes.IsSequence()) {
+            throw std::runtime_error("agent_routes must be a sequence: " + path);
+        }
+        for (const YAML::Node& node : routes) {
+            reject_unknown_keys(
+                node, {"id", "name", "waypoints"}, path, source.source_kind(),
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG, 0u);
+            if (!node["id"] || !node["name"] || !node["waypoints"]) {
+                throw std::runtime_error(
+                    "agent_routes entry requires id, name and waypoints: " + path);
+            }
+            AgentRouteConfig route;
+            const std::uint32_t id = node["id"].as<std::uint32_t>();
+            route.name = node["name"].as<std::string>();
+            // Zero is "no route" on the wire.
+            if (id == 0u || id > UINT16_MAX) {
+                throw std::runtime_error(
+                    "agent_routes " + route.name + " id must be 1..65535");
+            }
+            route.id = static_cast<std::uint16_t>(id);
+            const YAML::Node waypoints = node["waypoints"];
+            if (!waypoints.IsSequence() || waypoints.size() < 2u) {
+                throw std::runtime_error(
+                    "agent_routes " + route.name + " needs at least two waypoints");
+            }
+            for (const YAML::Node& waypoint : waypoints) {
+                const KernelVec3 point = vec3_from_yaml(waypoint);
+                if (!std::isfinite(point.x) || !std::isfinite(point.y) ||
+                    !std::isfinite(point.z)) {
+                    throw std::runtime_error(
+                        "agent_routes " + route.name + " has an invalid waypoint");
+                }
+                route.waypoints.push_back(point);
+            }
+            for (const AgentRouteConfig& other : config.agent_routes) {
+                if (other.id == route.id || other.name == route.name) {
+                    throw std::runtime_error(
+                        "agent_routes id and name must be unique: " + route.name);
+                }
+            }
+            config.agent_routes.push_back(std::move(route));
+        }
     }
     if (document["prop_population_rules"]) {
         config.prop_population_rules = prop_population_rules_from_yaml(
@@ -11564,6 +11622,15 @@ std::uint64_t compute_gameplay_catalog_hash(
          config.preload_director_template_ids) {
         hash_scalar(&hash, template_id);
     }
+    hash_scalar(&hash, static_cast<std::uint32_t>(config.agent_routes.size()));
+    for (const AgentRouteConfig& route : config.agent_routes) {
+        hash_scalar(&hash, static_cast<std::uint32_t>(route.id));
+        hash_string(&hash, route.name);
+        hash_scalar(&hash, static_cast<std::uint32_t>(route.waypoints.size()));
+        for (const KernelVec3& waypoint : route.waypoints) {
+            hash_vec3(&hash, waypoint);
+        }
+    }
     for (const PatrolDefinitionConfig& patrol : config.patrols) {
         hash_scalar(&hash, patrol.id);
         hash_string(&hash, patrol.name);
@@ -11824,6 +11891,15 @@ std::vector<std::uint8_t> load_gameplay_bundle_entry_bytes(
         normalized_entry,
         {},
         KERNEL_GAMEPLAY_CATALOG_LOAD_SOURCE_BUNDLE);
+}
+
+const AgentRouteConfig* find_agent_route(
+    const GameServerGameplayConfig& config,
+    std::uint16_t id) {
+    for (const AgentRouteConfig& route : config.agent_routes) {
+        if (route.id == id) return &route;
+    }
+    return nullptr;
 }
 
 const ActorTemplateConfig* find_actor_template(

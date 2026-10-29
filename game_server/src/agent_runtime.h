@@ -347,6 +347,10 @@ struct AgentRuntimeState {
     AgentLockTargetTuning lock_tuning{};
     std::uint32_t lock_target = 0;
     std::uint32_t lock_unseen_ticks = 0;
+    // When an agent command last changed its behavior (B11), on the manager's
+    // own tick count. Internal switches neither set nor wait for it.
+    bool remote_switched = false;
+    std::uint64_t last_remote_switch_tick = 0;
     // Its vision cone is switched off while nothing hostile is near enough to
     // see (D11). The cone's range, read once when the agent is discovered; 0
     // when it has none, which leaves vision alone.

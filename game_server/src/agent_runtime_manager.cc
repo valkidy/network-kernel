@@ -313,6 +313,11 @@ const std::vector<AlertSignal>& AgentRuntimeManager::alert_signals() const {
 }
 
 void AgentRuntimeManager::handle_event(const KernelEvent& event) {
+    if (event.type == KernelEventType_Disconnected) {
+        // Its command window goes with it; a peer id may be reused.
+        command_windows_.erase(event.peer_id);
+        return;
+    }
     if (event.type != KernelEventType_EntityDestroyed) {
         return;
     }
@@ -758,6 +763,111 @@ BehaviorSwitchResult AgentRuntimeManager::set_behavior(
     return BehaviorSwitchResult::kAccepted;
 }
 
+namespace {
+
+// A peer's agent commands per second before the rest are refused (§8.3 step
+// 7). Not measured yet: a player clicking orders as fast as they can manages
+// a few a second, and this leaves room for a squad's worth at once.
+constexpr std::uint32_t kAgentCommandsPerPeerPerWindow = 16;
+constexpr std::uint64_t kAgentCommandWindowTicks = 30;
+
+}  // namespace
+
+KernelAgentCommandOutcome AgentRuntimeManager::handle_agent_command(
+    const KernelAgentCommand& command) {
+    KernelAgentCommandOutcome outcome{};
+    outcome.struct_size = sizeof(outcome);
+    outcome.requester_peer = command.requester_peer;
+    outcome.request_id = command.request_id;
+    outcome.agent_net_id = command.agent_net_id;
+    const auto reject = [&](std::uint8_t reason) {
+        outcome.status = KernelAgentCommandStatus_Rejected;
+        outcome.rejection_reason = reason;
+        return outcome;
+    };
+
+    CommandWindow& window = command_windows_[command.requester_peer];
+    if (ticks_ >= window.start_tick + kAgentCommandWindowTicks) {
+        window = CommandWindow{ticks_, 0u};
+    }
+    if (++window.count > kAgentCommandsPerPeerPerWindow) {
+        return reject(KernelAgentCommandRejection_RateLimited);
+    }
+
+    KernelServerEntityState requester{};
+    requester.struct_size = sizeof(requester);
+    if (command.requester_net_id == 0u ||
+        !Kernel_ServerGetEntityState(kernel_, command.requester_net_id, &requester) ||
+        requester.valid == 0u || requester.hp == 0u ||
+        (requester.visual_flags & KERNEL_VISUAL_FLAG_DEAD) != 0u) {
+        return reject(KernelAgentCommandRejection_RequesterDead);
+    }
+
+    const std::size_t index = agent_index_.find(command.agent_net_id);
+    if (index == AgentIndex::kNotFound) {
+        return reject(KernelAgentCommandRejection_AgentMissing);
+    }
+    AgentRuntimeState& agent = agents_[index];
+    // Any living player commands any agent of its side (B13).
+    if (camp_of(agent.actor_template_id) != KernelAgentCamp_PlayerSide) {
+        return reject(KernelAgentCommandRejection_NotPlayerSide);
+    }
+
+    // What the command asks for, and nothing a behavior would ignore (B3).
+    AgentControllerSpec spec;
+    switch (command.behavior) {
+        case KernelAgentCommandBehavior_Guard:
+            if (command.route_id != 0u || command.target_net_id != 0u) {
+                return reject(KernelAgentCommandRejection_InvalidData);
+            }
+            spec.role = AgentControllerRole::kGuard;
+            break;
+        case KernelAgentCommandBehavior_Patrol: {
+            const AgentRouteConfig* route = find_agent_route(config_, command.route_id);
+            if (route == nullptr || command.target_net_id != 0u) {
+                return reject(KernelAgentCommandRejection_InvalidData);
+            }
+            spec.role = AgentControllerRole::kPatrol;
+            spec.route = route->waypoints;
+            break;
+        }
+        case KernelAgentCommandBehavior_LockTarget:
+            if (command.route_id != 0u) {
+                return reject(KernelAgentCommandRejection_InvalidData);
+            }
+            spec.role = AgentControllerRole::kLockTarget;
+            spec.target_net_id = command.target_net_id;
+            break;
+        default:
+            return reject(KernelAgentCommandRejection_BehaviorNotAllowed);
+    }
+
+    const ActorTemplateConfig* actor_template =
+        find_actor_template(config_, agent.actor_template_id);
+    const std::uint64_t interval = actor_template != nullptr
+        ? actor_template->remote_command_min_switch_interval_ticks
+        : 0u;
+    if (agent.remote_switched && ticks_ < agent.last_remote_switch_tick + interval) {
+        return reject(KernelAgentCommandRejection_TooSoon);
+    }
+
+    switch (set_behavior(command.agent_net_id, spec)) {
+        case BehaviorSwitchResult::kAccepted:
+            break;
+        case BehaviorSwitchResult::kAgentMissing:
+            return reject(KernelAgentCommandRejection_AgentMissing);
+        case BehaviorSwitchResult::kNotAllowed:
+            return reject(KernelAgentCommandRejection_BehaviorNotAllowed);
+        case BehaviorSwitchResult::kInvalidData:
+            return reject(KernelAgentCommandRejection_InvalidData);
+    }
+    agent.remote_switched = true;
+    agent.last_remote_switch_tick = ticks_;
+    outcome.status = KernelAgentCommandStatus_Accepted;
+    outcome.rejection_reason = KernelAgentCommandRejection_None;
+    return outcome;
+}
+
 BehaviorSwitchResult AgentRuntimeManager::check_behavior(
     const AgentRuntimeState& agent,
     const AgentControllerSpec& spec) const {
@@ -996,6 +1106,7 @@ void AgentRuntimeManager::tick(float delta_seconds) {
     if (kernel_ == nullptr) {
         return;
     }
+    ++ticks_;
     if (despawn_pending_) {
         if (!has_live_agent()) {
             despawn_pending_ = false;

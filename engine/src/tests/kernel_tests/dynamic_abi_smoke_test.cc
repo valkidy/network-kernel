@@ -405,6 +405,22 @@ int main() {
         load_symbol<std::uint32_t(KernelHandle*, KernelDamageRecord*, std::uint32_t)>(
             library,
             "Kernel_ServerQueryDamageRecords");
+    auto* kernel_submit_agent_command =
+        load_symbol<bool(KernelHandle*, const KernelAgentCommand*)>(
+            library,
+            "Kernel_SubmitAgentCommand");
+    auto* kernel_poll_agent_command_outcomes =
+        load_symbol<std::uint32_t(KernelHandle*, KernelAgentCommandOutcome*, std::uint32_t)>(
+            library,
+            "Kernel_PollAgentCommandOutcomes");
+    auto* kernel_server_poll_agent_commands =
+        load_symbol<std::uint32_t(KernelHandle*, KernelAgentCommand*, std::uint32_t)>(
+            library,
+            "Kernel_ServerPollAgentCommands");
+    auto* kernel_server_send_agent_command_outcome =
+        load_symbol<bool(KernelHandle*, const KernelAgentCommandOutcome*)>(
+            library,
+            "Kernel_ServerSendAgentCommandOutcome");
     [[maybe_unused]] auto* kernel_server_revive_entity =
         load_symbol<bool(KernelHandle*, const KernelServerReviveInfo*)>(
             library,
@@ -543,6 +559,12 @@ int main() {
     require(
         (abi_info.capability_flags & KERNEL_CAPABILITY_SERVER_DAMAGE_RECORDS) != 0);
     require(kernel_server_query_damage_records(nullptr, nullptr, 0u) == 0u);
+    require(
+        (abi_info.capability_flags & KERNEL_CAPABILITY_AGENT_COMMANDS) != 0);
+    require(!kernel_submit_agent_command(nullptr, nullptr));
+    require(kernel_poll_agent_command_outcomes(nullptr, nullptr, 0u) == 0u);
+    require(kernel_server_poll_agent_commands(nullptr, nullptr, 0u) == 0u);
+    require(!kernel_server_send_agent_command_outcome(nullptr, nullptr));
     {
         // A null buffer copies nothing but still starts capture.
         require(kernel_poll_log_messages(nullptr, 4u) == 0u);
@@ -690,7 +712,7 @@ int main() {
     require(has_version_revision_suffix(build_info.module_version));
     require(build_info.protocol_version == 3u);
     require(build_info.snapshot_schema_version == 32u);
-    require(build_info.packet_schema_version == 33u);
+    require(build_info.packet_schema_version == 34u);
     require(build_info.git_commit[0] != '\0');
     require(std::string(build_info.git_commit) != "unknown");
     require(std::string(build_info.module_version) != build_info.git_commit);

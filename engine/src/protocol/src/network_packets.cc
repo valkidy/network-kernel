@@ -97,6 +97,10 @@ constexpr std::size_t kStatusEffectStateHeaderPayloadSize = 16;
 constexpr std::size_t kStatusEffectStateRecordPayloadSize = 24;
 constexpr std::size_t kGameplayRequestPayloadSize = 60;
 constexpr std::size_t kGameplayRequestOutcomePayloadSize = 32;
+// request_id, agent, target, route, behavior, reserved.
+constexpr std::size_t kAgentCommandPayloadSize = 20;
+// request_id, agent, status, rejection, reserved.
+constexpr std::size_t kAgentCommandOutcomePayloadSize = 16;
 constexpr std::size_t kInventorySnapshotRequestPayloadSize = 16;
 constexpr std::size_t kInventoryContainerClosedPayloadSize = 8;
 constexpr std::size_t kMaxInventoryPacketPayloadSize = 16u * 1024u;
@@ -2115,6 +2119,92 @@ bool decode_game_message_packet(
         return false;
     }
     *out_message = std::move(message);
+    return true;
+}
+
+std::vector<std::uint8_t> encode_agent_command_packet(
+    const KernelAgentCommand& command,
+    std::uint32_t sequence) {
+    protocol_internal::PacketWriter payload;
+    payload.reserve(kAgentCommandPayloadSize);
+    payload.write_u64(command.request_id);
+    payload.write_u32(command.agent_net_id);
+    payload.write_u32(command.target_net_id);
+    payload.write_u16(command.route_id);
+    payload.write_u8(command.behavior);
+    payload.write_u8(0u);
+    return protocol_internal::wrap_packet(
+        MessageType::kAgentCommand, payload.bytes(), sequence);
+}
+
+bool decode_agent_command_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    KernelAgentCommand* out_command) {
+    const std::uint8_t* payload = nullptr;
+    std::size_t payload_size = 0;
+    if (out_command == nullptr ||
+        !protocol_internal::unwrap_packet(
+            data, size, MessageType::kAgentCommand, &payload, &payload_size) ||
+        payload_size != kAgentCommandPayloadSize) {
+        return false;
+    }
+    KernelAgentCommand command{};
+    command.struct_size = sizeof(command);
+    std::uint8_t reserved0 = 0;
+    protocol_internal::PacketReader reader(payload, payload_size);
+    if (!reader.read_u64(&command.request_id) ||
+        !reader.read_u32(&command.agent_net_id) ||
+        !reader.read_u32(&command.target_net_id) ||
+        !reader.read_u16(&command.route_id) ||
+        !reader.read_u8(&command.behavior) ||
+        !reader.read_u8(&reserved0) ||
+        reserved0 != 0u || !reader.done()) {
+        return false;
+    }
+    *out_command = command;
+    return true;
+}
+
+std::vector<std::uint8_t> encode_agent_command_outcome_packet(
+    const KernelAgentCommandOutcome& outcome,
+    std::uint32_t sequence) {
+    protocol_internal::PacketWriter payload;
+    payload.reserve(kAgentCommandOutcomePayloadSize);
+    payload.write_u64(outcome.request_id);
+    payload.write_u32(outcome.agent_net_id);
+    payload.write_u8(outcome.status);
+    payload.write_u8(outcome.rejection_reason);
+    payload.write_u16(0u);
+    return protocol_internal::wrap_packet(
+        MessageType::kAgentCommandOutcome, payload.bytes(), sequence);
+}
+
+bool decode_agent_command_outcome_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    KernelAgentCommandOutcome* out_outcome) {
+    const std::uint8_t* payload = nullptr;
+    std::size_t payload_size = 0;
+    if (out_outcome == nullptr ||
+        !protocol_internal::unwrap_packet(
+            data, size, MessageType::kAgentCommandOutcome, &payload, &payload_size) ||
+        payload_size != kAgentCommandOutcomePayloadSize) {
+        return false;
+    }
+    KernelAgentCommandOutcome outcome{};
+    outcome.struct_size = sizeof(outcome);
+    std::uint16_t reserved0 = 0;
+    protocol_internal::PacketReader reader(payload, payload_size);
+    if (!reader.read_u64(&outcome.request_id) ||
+        !reader.read_u32(&outcome.agent_net_id) ||
+        !reader.read_u8(&outcome.status) ||
+        !reader.read_u8(&outcome.rejection_reason) ||
+        !reader.read_u16(&reserved0) ||
+        reserved0 != 0u || !reader.done()) {
+        return false;
+    }
+    *out_outcome = outcome;
     return true;
 }
 

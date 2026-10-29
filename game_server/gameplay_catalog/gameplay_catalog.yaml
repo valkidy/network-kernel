@@ -110,6 +110,19 @@ player:
 #
 # A ceiling across every definition, which is the one thing the per-definition
 # ceilings cannot express.
+# Routes an agent command may send a player-side patrol along, by id
+# (docs/AI_BEHAVIOR_PLAN.md B15): a client names one of these and never sends
+# waypoints of its own. World space, on plane_200x200_4zones_v2 -- move them
+# with the map.
+agent_routes:
+  # A loop just outside the initial camp (-90, -90).
+  - id: 1
+    name: camp_perimeter
+    waypoints:
+      - {x: -80.0, y: 5.0, z: -80.0}
+      - {x: -60.0, y: 5.0, z: -80.0}
+      - {x: -60.0, y: 5.0, z: -60.0}
+      - {x: -80.0, y: 5.0, z: -60.0}
 patrol_budget:
   max_live_agents: 48
 # Every unit an on_alert spawner has put out, server-wide, alive at once. Each
