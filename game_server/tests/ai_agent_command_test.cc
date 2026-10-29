@@ -1,7 +1,8 @@
 // C5 of docs/AI_BEHAVIOR_PLAN.md: a player's agent command (§8).
 //
 // AgentRuntimeManager::handle_agent_command, every way it refuses -- a peer
-// sending too fast, a dead requester, a missing or enemy agent, a behavior a
+// flooding the server or still cooling down from its last obeyed order
+// (§12.9), a dead requester, a missing or enemy agent, a behavior a
 // command may not ask for, data the behavior cannot use, an agent switched by
 // command too recently -- and what it applies when it obeys. Then the whole
 // trip on a listen host: Kernel_SubmitAgentCommand, GameServer, and the
@@ -206,43 +207,65 @@ void the_manager_decides() {
     require(!agent_of(manager, giant).remote_switched);
 
     // Obeyed: sent along the catalog route.
+    require(config.agent_command_peer_cooldown_ticks == 150u);
     KernelAgentCommand patrol = order(kPeer, player, giant, Behavior::KernelAgentCommandBehavior_Patrol, request++);
     patrol.route_id = 1u;
     require(answer(manager, patrol) == Rejection::KernelAgentCommandRejection_None);
     require(agent_of(manager, giant).controller_role == gs::AgentControllerRole::kPatrol);
     require(agent_of(manager, giant).route_patrol.path.size() >= 4u);
 
-    // Again within 10 ticks: too soon (B11). At 10: obeyed.
+    // The player who gave it now waits out its cooldown (§12.9): anything it
+    // sends is refused, valid or not, until 150 ticks have passed.
     KernelAgentCommand lock = order(kPeer, player, giant, Behavior::KernelAgentCommandBehavior_LockTarget, request++);
     lock.target_net_id = enemy;
+    require(answer(manager, lock) == Rejection::KernelAgentCommandRejection_RateLimited);
+    // Another player is not held by it, only by the agent's own 10 ticks
+    // (B11): too soon at 9, obeyed at 10.
+    constexpr std::uint32_t kOtherPeer = 5;
+    KernelAgentCommand guard = order(kOtherPeer, player, giant, Behavior::KernelAgentCommandBehavior_Guard, request++);
     run(9);
-    require(answer(manager, lock) == Rejection::KernelAgentCommandRejection_TooSoon);
-    require(agent_of(manager, giant).controller_role == gs::AgentControllerRole::kPatrol);
+    require(answer(manager, guard) == Rejection::KernelAgentCommandRejection_TooSoon);
+    run(1);
+    guard.request_id = request++;
+    require(answer(manager, guard) == Rejection::KernelAgentCommandRejection_None);
+    require(agent_of(manager, giant).controller_role == gs::AgentControllerRole::kGuard);
+    // The first player: still refused at 149 ticks, obeyed at 150.
+    run(139);
+    lock.request_id = request++;
+    // Across several one-second flood windows: the cooldown is not theirs.
+    require(answer(manager, lock) == Rejection::KernelAgentCommandRejection_RateLimited);
     run(1);
     lock.request_id = request++;
     require(answer(manager, lock) == Rejection::KernelAgentCommandRejection_None);
     require(agent_of(manager, giant).controller_role == gs::AgentControllerRole::kLockTarget);
     require(agent_of(manager, giant).lock_target == enemy);
-    std::printf("[command] patrol, too soon at 9 ticks, lock_target at 10\n");
+    std::printf("[command] cooldown: refused at 0 and 149 ticks, obeyed at 150; "
+                "other player too soon at 9, obeyed at 10\n");
 
-    // The interval runs from the last command obeyed: 10 ticks on, obeyed.
+    // A refused order starts no cooldown: a third player's mistake, then its
+    // corrected order straight after, is obeyed.
+    constexpr std::uint32_t kCarefulPeer = 6;
     run(10);
-    KernelAgentCommand guard = order(kPeer, player, giant, Behavior::KernelAgentCommandBehavior_Guard, request++);
-    require(answer(manager, guard) == Rejection::KernelAgentCommandRejection_None);
-    require(agent_of(manager, giant).controller_role == gs::AgentControllerRole::kGuard);
+    KernelAgentCommand wrong = order(kCarefulPeer, player, giant, Behavior::KernelAgentCommandBehavior_Patrol, request++);
+    wrong.route_id = 77u;
+    require(answer(manager, wrong) == Rejection::KernelAgentCommandRejection_InvalidData);
+    wrong.route_id = 1u;
+    wrong.request_id = request++;
+    require(answer(manager, wrong) == Rejection::KernelAgentCommandRejection_None);
+    require(agent_of(manager, giant).controller_role == gs::AgentControllerRole::kPatrol);
 
-    // A peer sending too fast: past 16 in a second the rest are refused, and
-    // the next second it is heard again.
+    // A peer flooding the server: past 16 in a second the rest are refused
+    // whatever they say, and the next second it is heard again.
     constexpr std::uint32_t kFlooder = 4;
     std::uint32_t limited = 0;
     for (int index = 0; index < 20; ++index) {
-        // Refused for a dead requester when heard, which costs nothing.
+        // Refused for a dead requester when heard, which starts no cooldown.
         if (answer(manager, order(kFlooder, 0u, giant, Behavior::KernelAgentCommandBehavior_Guard,
                                   request++)) == Rejection::KernelAgentCommandRejection_RateLimited) {
             ++limited;
         }
     }
-    std::printf("[command] rate limited %u of 20\n", limited);
+    std::printf("[command] flood guard limited %u of 20\n", limited);
     require(limited == 4u);
     run(30);
     require(answer(manager, order(kFlooder, 0u, giant, Behavior::KernelAgentCommandBehavior_Guard,

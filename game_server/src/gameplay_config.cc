@@ -10002,6 +10002,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             "scene_props",
             "scene_items",
             "agent_routes",
+            "agent_commands",
         },
         path,
         source.source_kind(),
@@ -10106,6 +10107,15 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             source,
             base_path,
             document["skeleton_manifests_dir"]);
+    }
+    if (const YAML::Node commands = document["agent_commands"]) {
+        reject_unknown_keys(
+            commands, {"peer_cooldown_ticks"}, path, source.source_kind(),
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG, 0u);
+        if (commands["peer_cooldown_ticks"]) {
+            config.agent_command_peer_cooldown_ticks =
+                commands["peer_cooldown_ticks"].as<std::uint32_t>();
+        }
     }
     if (const YAML::Node routes = document["agent_routes"]) {
         if (!routes.IsSequence()) {
@@ -11622,6 +11632,7 @@ std::uint64_t compute_gameplay_catalog_hash(
          config.preload_director_template_ids) {
         hash_scalar(&hash, template_id);
     }
+    hash_scalar(&hash, config.agent_command_peer_cooldown_ticks);
     hash_scalar(&hash, static_cast<std::uint32_t>(config.agent_routes.size()));
     for (const AgentRouteConfig& route : config.agent_routes) {
         hash_scalar(&hash, static_cast<std::uint32_t>(route.id));

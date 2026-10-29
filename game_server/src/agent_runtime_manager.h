@@ -47,11 +47,11 @@ public:
     BehaviorSwitchResult set_behavior(
         std::uint32_t net_id,
         const AgentControllerSpec& spec);
-    // A player's agent command (docs/AI_BEHAVIOR_PLAN.md §8.3), checked in
-    // order -- the peer's rate, a living requester, a player-side agent, a
-    // behavior a command may ask for, the agent's own interval, then the
-    // behavior's data -- and applied through set_behavior. The answer is
-    // addressed back to the requester.
+    // A player's agent command (docs/AI_BEHAVIOR_PLAN.md §8.3, §12.9), checked
+    // in order -- the peer's flood guard and cooldown, a living requester, a
+    // player-side agent, a behavior a command may ask for, the agent's own
+    // interval, then the behavior's data -- and applied through set_behavior.
+    // The answer is addressed back to the requester.
     KernelAgentCommandOutcome handle_agent_command(const KernelAgentCommand& command);
     // Who is inside which building, so hunters can leave alone a player a
     // tent hides (AI plan Q3). Not owned; null leaves every player huntable.
@@ -158,10 +158,14 @@ private:
     GameServerGameplayConfig config_;
     // Ticks this manager has run: the clock agent command intervals are kept on.
     std::uint64_t ticks_ = 0;
-    // Each peer's agent commands in its current one-second window.
+    // Each peer's agent commands: how many in its current one-second window
+    // (a flood guard, every command counted), and when one was last obeyed
+    // (the cooldown, agent_command_peer_cooldown_ticks).
     struct CommandWindow {
         std::uint64_t start_tick = 0;
         std::uint32_t count = 0;
+        bool obeyed = false;
+        std::uint64_t last_obeyed_tick = 0;
     };
     std::unordered_map<std::uint32_t, CommandWindow> command_windows_;
     std::vector<AgentControllerBinding> controllers_;

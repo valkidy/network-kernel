@@ -765,9 +765,9 @@ BehaviorSwitchResult AgentRuntimeManager::set_behavior(
 
 namespace {
 
-// A peer's agent commands per second before the rest are refused (§8.3 step
-// 7). Not measured yet: a player clicking orders as fast as they can manages
-// a few a second, and this leaves room for a squad's worth at once.
+// A peer's agent commands per second before the rest are refused: a guard
+// against a client flooding the server, counting every command, apart from
+// the cooldown after an obeyed one -- which is what a player feels.
 constexpr std::uint32_t kAgentCommandsPerPeerPerWindow = 16;
 constexpr std::uint64_t kAgentCommandWindowTicks = 30;
 
@@ -787,10 +787,19 @@ KernelAgentCommandOutcome AgentRuntimeManager::handle_agent_command(
     };
 
     CommandWindow& window = command_windows_[command.requester_peer];
+    // A new flood window; the cooldown carries across it.
     if (ticks_ >= window.start_tick + kAgentCommandWindowTicks) {
-        window = CommandWindow{ticks_, 0u};
+        window.start_tick = ticks_;
+        window.count = 0u;
     }
     if (++window.count > kAgentCommandsPerPeerPerWindow) {
+        return reject(KernelAgentCommandRejection_RateLimited);
+    }
+    // Still cooling down from the last order obeyed: whatever this one asks,
+    // it waits. Only an obeyed order starts the cooldown, so a mistaken one
+    // costs nothing.
+    if (window.obeyed &&
+        ticks_ < window.last_obeyed_tick + config_.agent_command_peer_cooldown_ticks) {
         return reject(KernelAgentCommandRejection_RateLimited);
     }
 
@@ -863,6 +872,8 @@ KernelAgentCommandOutcome AgentRuntimeManager::handle_agent_command(
     }
     agent.remote_switched = true;
     agent.last_remote_switch_tick = ticks_;
+    window.obeyed = true;
+    window.last_obeyed_tick = ticks_;
     outcome.status = KernelAgentCommandStatus_Accepted;
     outcome.rejection_reason = KernelAgentCommandRejection_None;
     return outcome;

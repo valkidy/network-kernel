@@ -673,6 +673,11 @@ struct GameServerGameplayConfig {
     AgentBudgetConfig agent_budget;
     // `agent_routes:` -- what an agent command's route_id names.
     std::vector<AgentRouteConfig> agent_routes;
+    // `agent_commands.peer_cooldown_ticks`: after a player's command is
+    // obeyed, how long every further command of theirs is refused
+    // (docs/AI_BEHAVIOR_PLAN.md §12.9). Slow on purpose, so each order is a
+    // considered one. Zero is no cooldown.
+    std::uint32_t agent_command_peer_cooldown_ticks = 150;
     // The baked navmesh, carried whole rather than by path: game_server loads
     // it itself -- Detour never reaches the kernel -- so nothing downstream has
     // the archive open any more by the time it is needed.

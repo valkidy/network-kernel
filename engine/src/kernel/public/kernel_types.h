@@ -3288,7 +3288,8 @@ typedef enum KernelAgentCommandRejection {
     KernelAgentCommandRejection_TooSoon = 5,
     /* The route or the target the behavior needs is missing or wrong. */
     KernelAgentCommandRejection_InvalidData = 6,
-    /* This peer is sending commands too fast. */
+    /* This peer is sending commands too fast, or is still cooling down from
+     * its last obeyed one. */
     KernelAgentCommandRejection_RateLimited = 7,
 } KernelAgentCommandRejection;
 
