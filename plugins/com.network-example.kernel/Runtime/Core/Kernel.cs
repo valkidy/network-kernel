@@ -1092,6 +1092,54 @@ namespace NetworkExample.Kernel
             return KernelNative.Kernel_ServerReviveEntity(handle, ref info);
         }
 
+        /// <summary>Sends the local player's order to game_server for validation.</summary>
+        public bool SubmitAgentCommand(KernelAgentCommand command)
+        {
+            ThrowIfDisposed();
+            command.struct_size = KernelAgentCommand.StructSize;
+            return KernelNative.Kernel_SubmitAgentCommand(handle, ref command);
+        }
+
+        /// <summary>Drains answers to the local player's orders.</summary>
+        public uint PollAgentCommandOutcomes(KernelAgentCommandOutcome[] outcomes)
+        {
+            ThrowIfDisposed();
+            if (outcomes == null || outcomes.Length == 0)
+            {
+                return 0;
+            }
+            for (int index = 0; index < outcomes.Length; ++index)
+            {
+                outcomes[index].struct_size = KernelAgentCommandOutcome.StructSize;
+            }
+            return KernelNative.Kernel_PollAgentCommandOutcomes(
+                handle, outcomes, (uint)outcomes.Length);
+        }
+
+        /// <summary>Drains player orders with authenticated requester identities.</summary>
+        public uint ServerPollAgentCommands(KernelAgentCommand[] commands)
+        {
+            ThrowIfDisposed();
+            if (commands == null || commands.Length == 0)
+            {
+                return 0;
+            }
+            for (int index = 0; index < commands.Length; ++index)
+            {
+                commands[index].struct_size = KernelAgentCommand.StructSize;
+            }
+            return KernelNative.Kernel_ServerPollAgentCommands(
+                handle, commands, (uint)commands.Length);
+        }
+
+        /// <summary>Sends an answer to the welcomed session named by requester_peer.</summary>
+        public bool ServerSendAgentCommandOutcome(KernelAgentCommandOutcome outcome)
+        {
+            ThrowIfDisposed();
+            outcome.struct_size = KernelAgentCommandOutcome.StructSize;
+            return KernelNative.Kernel_ServerSendAgentCommandOutcome(handle, ref outcome);
+        }
+
         /// <summary>
         /// Copies the latest update's server hits without draining them. Returns the total
         /// available count, which may exceed the buffer length; null queries the count.

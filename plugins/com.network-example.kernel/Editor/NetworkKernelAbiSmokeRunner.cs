@@ -298,6 +298,16 @@ namespace NetworkExample.Kernel.Editor
                 KernelConstants.MaxHoverHeight == 20.0f &&
                 KernelConstants.FallDeathHeightMeters == -10.0f &&
                 KernelDamageRecord.StructSize == 32 &&
+                KernelAgentCommand.StructSize == 48 &&
+                KernelAgentCommandOutcome.StructSize == 24 &&
+                (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelAgentCommand>("request_id") == 16 &&
+                (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelAgentCommand>("position") == 32 &&
+                (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelAgentCommandOutcome>("request_id") == 8 &&
+                KernelAgentCommandBehavior.LockTarget == (KernelAgentCommandBehavior)3 &&
+                KernelAgentCommandStatus.Rejected == (KernelAgentCommandStatus)1 &&
+                KernelAgentCommandRejection.RateLimited == (KernelAgentCommandRejection)7 &&
+                KernelConstants.AgentCommandFlagPosition == 1 &&
+                (info.capability_flags & KernelConstants.CapabilityAgentCommands) != 0UL &&
                 (info.capability_flags & KernelConstants.CapabilityServerDamageRecords) != 0UL &&
                 (info.capability_flags & KernelConstants.CapabilityServerFallDeathHeight) != 0UL &&
                 KernelActionDefinition.StructSize == 172 &&

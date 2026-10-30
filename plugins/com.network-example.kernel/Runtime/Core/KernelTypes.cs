@@ -139,6 +139,8 @@ namespace NetworkExample.Kernel
         // Additive within ABI 108: configurable server kill floor.
         public const ulong CapabilityServerFallDeathHeight = 0x0008000000000000UL;
         public const ulong CapabilityServerDamageRecords = 0x0010000000000000UL;
+        public const ulong CapabilityAgentCommands = 0x0020000000000000UL;
+        public const byte AgentCommandFlagPosition = 0x01;
         public const float FallDeathHeightMeters = -10.0f;
 
         // Largest KernelGameMessage body (ABI 101).
@@ -1767,6 +1769,65 @@ namespace NetworkExample.Kernel
         Items = 0,
         Weapons = 1,
         Stock = 2,
+    }
+
+    public enum KernelAgentCommandBehavior : byte
+    {
+        None = 0,
+        Guard = 1,
+        Patrol = 2,
+        LockTarget = 3,
+    }
+
+    public enum KernelAgentCommandStatus : byte
+    {
+        Accepted = 0,
+        Rejected = 1,
+    }
+
+    public enum KernelAgentCommandRejection : byte
+    {
+        None = 0,
+        RequesterDead = 1,
+        AgentMissing = 2,
+        NotPlayerSide = 3,
+        BehaviorNotAllowed = 4,
+        TooSoon = 5,
+        InvalidData = 6,
+        RateLimited = 7,
+    }
+
+    /// <summary>A player's order; the server fills requester identity from its session.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelAgentCommand
+    {
+        public uint struct_size;
+        public uint requester_peer;
+        public uint requester_net_id;
+        public uint agent_net_id;
+        public ulong request_id;
+        public uint target_net_id;
+        public ushort route_id;
+        public byte behavior;
+        public byte flags;
+        public KernelVec3 position;
+        public uint reserved0;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelAgentCommand>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelAgentCommandOutcome
+    {
+        public uint struct_size;
+        public uint requester_peer;
+        public ulong request_id;
+        public uint agent_net_id;
+        public byte status;
+        public byte rejection_reason;
+        public ushort reserved0;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelAgentCommandOutcome>();
     }
 
     /// <summary>One hit applied during the server's most recent update.</summary>

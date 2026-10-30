@@ -550,6 +550,24 @@ namespace NetworkExample.Kernel
             ref KernelServerReviveInfo info);
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_SubmitAgentCommand(
+            IntPtr kernel, ref KernelAgentCommand command);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern uint Kernel_PollAgentCommandOutcomes(
+            IntPtr kernel, [Out] KernelAgentCommandOutcome[] outcomes, uint maxOutcomes);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern uint Kernel_ServerPollAgentCommands(
+            IntPtr kernel, [Out] KernelAgentCommand[] commands, uint maxCommands);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_ServerSendAgentCommandOutcome(
+            IntPtr kernel, ref KernelAgentCommandOutcome outcome);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern uint Kernel_ServerQueryDamageRecords(
             IntPtr kernel, [Out] KernelDamageRecord[] records, uint maxRecords);
 

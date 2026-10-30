@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- adds agent command bindings and updates ranged retreats, squad spacing and turn-and-run behavior
+
+
+0.7.0 release notes:
+
 - adds gingerbread giant vision and arm sweep and fixes legged agents facing their travel direction and turning in place
 
 
