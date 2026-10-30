@@ -152,6 +152,34 @@ void catalog_checks() {
         retreat("{trigger_distance_meters: 8, input_magnitude: 0}")));
     require(!load_after("max_ticks 0", kMage,
         retreat("{trigger_distance_meters: 8, max_ticks: 0}")));
+    // turn_and_run (§13): a fixed run_ticks, nothing of backpedal's.
+    const auto runs = load_after("mage turn_and_run", kMage,
+        retreat("{style: turn_and_run, trigger_distance_meters: 8, run_ticks: 60}"));
+    require(runs.has_value());
+    {
+        const gs::AgentRetreatTuning& tuning = gs::find_actor_template(*runs, 31u)->chaser.retreat;
+        require(tuning.style == gs::AgentRetreatStyle::kTurnAndRun);
+        require(tuning.run_ticks == 60u && !tuning.fire_while_retreating);
+    }
+    require(!load_after("turn_and_run, no run_ticks", kMage,
+        retreat("{style: turn_and_run, trigger_distance_meters: 8}")));
+    require(!load_after("turn_and_run with a target distance", kMage,
+        retreat("{style: turn_and_run, trigger_distance_meters: 8, run_ticks: 60, "
+                "target_distance_meters: 19}")));
+    require(!load_after("turn_and_run with max_ticks", kMage,
+        retreat("{style: turn_and_run, trigger_distance_meters: 8, run_ticks: 60, max_ticks: 90}")));
+    require(!load_after("turn_and_run firing", kMage,
+        retreat("{style: turn_and_run, trigger_distance_meters: 8, run_ticks: 60, "
+                "fire_while_retreating: true}")));
+    require(!load_after("turn_and_run trigger at the stop distance", kMage,
+        retreat("{style: turn_and_run, trigger_distance_meters: 16, run_ticks: 60}")));
+    require(!load_after("backpedal with run_ticks", kMage,
+        retreat("{trigger_distance_meters: 8, run_ticks: 60}")));
+    require(!load_after("unknown style", kMage,
+        retreat("{style: flee, trigger_distance_meters: 8}")));
+    // A legged rig may turn and run; it is a backpedal it cannot do.
+    require(load_after("legged giant turn_and_run", "entity_templates/39_gingerbread_giant.yaml",
+        retreat("{style: turn_and_run, trigger_distance_meters: 3, run_ticks: 90}")).has_value());
     // A sentry takes no locomotion at all, so no retreat either.
     require(!load_after("sentry", "entity_templates/2_sentry_grunt.yaml",
         retreat("{trigger_distance_meters: 1}")));
@@ -215,6 +243,12 @@ struct Outcome {
     bool returned = false;
     float partner_separation_final = 0.0f;
     float partner_separation_min = 1e9f;
+    // turn_and_run (§13): ticks it spent moving away with its eyes turned
+    // from the target, the longest it took turning back, and whether it fell
+    // into Search while retreating.
+    std::uint32_t facing_away_ticks = 0;
+    std::uint32_t longest_turn = 0;
+    bool searched_while_retreating = false;
 };
 
 // `follow_speed` zero pins the player where it starts; otherwise it walks
@@ -313,7 +347,25 @@ Outcome run(const char* label, const std::string& unit, const gs::AgentRetreatTu
     for (int i = 0; i < 20; ++i) step();
     // In front of it: an agent looks down its local -x.
     const KernelVec3 agent_start = state_of(agent_id).position;
-    KernelVec3 player_at{agent_start.x - start_distance, agent_start.y + 0.5f, agent_start.z};
+    // In front of it, where the kernel says its eyes look: an agent's local -x,
+    // a legged one's +z. A hunter with nobody near has its eyes switched off
+    // (AI plan D11); it was created facing world -x, so that is in front.
+    const auto eyes_of = [&](std::uint32_t net_id) -> std::optional<KernelVec2> {
+        KernelVisionStateQuery query{};
+        query.struct_size = sizeof(query);
+        query.agent_net_id = net_id;
+        KernelVisionStateView view{};
+        view.struct_size = sizeof(view);
+        if (Kernel_QueryVisionState(kernel, &query, &view, 1u) != 1u || !view.valid) {
+            return std::nullopt;
+        }
+        const float length = std::hypot(view.vision_forward.x, view.vision_forward.z);
+        if (length <= 0.5f) return std::nullopt;
+        return KernelVec2{view.vision_forward.x / length, view.vision_forward.z / length};
+    };
+    const KernelVec2 ahead = eyes_of(agent_id).value_or(KernelVec2{-1.0f, 0.0f});
+    KernelVec3 player_at{agent_start.x + ahead.x * start_distance, agent_start.y + 0.5f,
+                         agent_start.z + ahead.y * start_distance};
     const std::uint32_t player = create(template_id_of(config, "player"), player_at);
     KernelAgentVisionConfig vision{};
     vision.struct_size = sizeof(vision);
@@ -371,6 +423,17 @@ Outcome run(const char* label, const std::string& unit, const gs::AgentRetreatTu
             }
         }
         if (agent->retreating) {
+            if (agent->sentry.state == gs::AgentSentryState::kSearch) {
+                outcome.searched_while_retreating = true;
+            }
+            outcome.longest_turn = std::max(outcome.longest_turn, agent->retreat_turn_ticks);
+            if (!agent->retreat_turning) {
+                if (const std::optional<KernelVec2> eyes = eyes_of(agent_id)) {
+                    const float to_x = player_at.x - after.position.x;
+                    const float to_z = player_at.z - after.position.z;
+                    if (eyes->x * to_x + eyes->y * to_z < 0.0f) ++outcome.facing_away_ticks;
+                }
+            }
             ++outcome.retreat_ticks;
             outcome.longest_retreat = std::max(outcome.longest_retreat, ++run_length);
             if (!was_retreating) ++outcome.retreats;
@@ -414,9 +477,11 @@ Outcome run(const char* label, const std::string& unit, const gs::AgentRetreatTu
         outcome.retreats, outcome.retreat_ticks, outcome.longest_retreat, outcome.shots,
         outcome.shots_while_retreating, outcome.lowest_drop, outcome.off_navmesh_ticks,
         outcome.headings_used, outcome.final_distance_from_start, outcome.lost ? ", LOST" : "");
-    std::printf("    furthest from start %.2f m, returned %d, partner apart %.2f m at the end (min %.2f)\n",
+    std::printf("    furthest from start %.2f m, returned %d, partner apart %.2f m at the end (min %.2f)"
+                " | facing away %u ticks, longest turn %u, searched %d\n",
                 outcome.furthest_from_start, outcome.returned, outcome.partner_separation_final,
-                outcome.partner_separation_min);
+                outcome.partner_separation_min, outcome.facing_away_ticks, outcome.longest_turn,
+                outcome.searched_while_retreating);
     Kernel_Destroy(kernel);
     return outcome;
 }
@@ -707,6 +772,45 @@ int main() {
                     k.partner_separation_final, k0.partner_separation_final);
         require(k.retreats >= 1u && k0.retreats >= 1u);
         require(k.partner_separation_final >= k0.partner_separation_final + 0.5f);
+    }
+
+    // L (§13): the mage turns its back and runs for 3 s, firing nothing, then
+    // turns back -- at once, not being legged -- and fights from there.
+    {
+        gs::AgentRetreatTuning run_away;
+        run_away.style = gs::AgentRetreatStyle::kTurnAndRun;
+        run_away.trigger_distance_meters = 8.0f;
+        run_away.run_ticks = 90u;
+        run_away.fire_while_retreating = false;
+        const Outcome l = run("L mage turn_and_run", "gingerbread_mage", run_away, 5.0f, 0.0f, 300,
+                              8107);
+        require(l.retreats == 1u);
+        require(l.facing_away_ticks >= 60u);
+        require(l.shots_while_retreating == 0u);
+        require(l.shots > 0u);
+        require(!l.searched_while_retreating);
+        require(l.longest_turn <= 5u);
+        // 3 s at 1.8 m/s from 5 m.
+        require(l.final_distance >= 9.5f);
+    }
+
+    // M (§13): the legged giant, which can only turn and run. Its body turns
+    // with the way it walks, and back again at 45 degrees a second.
+    {
+        gs::AgentRetreatTuning run_away;
+        run_away.style = gs::AgentRetreatStyle::kTurnAndRun;
+        run_away.trigger_distance_meters = 3.0f;
+        run_away.run_ticks = 90u;
+        run_away.fire_while_retreating = false;
+        const Outcome m = run("M giant turn_and_run", "gingerbread_giant", run_away, 2.5f, 0.0f, 450,
+                              8108);
+        require(m.retreats >= 1u);
+        require(m.facing_away_ticks >= 30u);
+        require(m.shots_while_retreating == 0u);
+        require(!m.searched_while_retreating);
+        // It turned back and saw it again rather than running out the limit.
+        require(m.longest_turn > 5u && m.longest_turn < 180u);
+        require(m.final_distance > 2.5f);
     }
 
     // E: on the plateau with the cliff behind it. Long retreats, so it would

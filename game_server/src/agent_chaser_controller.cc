@@ -573,8 +573,15 @@ bool retreat_heading_clear(
         .value_or(true);
 }
 
+// How long a turn_and_run may spend turning back before it gives the target
+// up as out of sight: a legged giant at 45 degrees a second needs four
+// seconds for the half turn.
+constexpr std::uint32_t kRetreatTurnLimitTicks = 180u;
+
 void end_retreat(const AgentRetreatTuning& retreat, AgentRuntimeState* agent) {
     agent->retreating = false;
+    agent->retreat_turning = false;
+    agent->retreat_turn_ticks = 0u;
     agent->retreat_ticks = 0u;
     agent->retreat_window_ticks = 0u;
     agent->retreat_cooldown_ticks = retreat.cooldown_ticks;
@@ -583,12 +590,24 @@ void end_retreat(const AgentRetreatTuning& retreat, AgentRuntimeState* agent) {
     agent->chase_holding = true;
 }
 
+// The end of the moving-away part of a retreat: a backpedal is over; a
+// turn_and_run stops and turns back to face the target, which the caller does.
+void finish_moving_away(const AgentRetreatTuning& retreat, AgentRuntimeState* agent) {
+    if (retreat.style == AgentRetreatStyle::kTurnAndRun) {
+        agent->retreat_turning = true;
+        agent->retreat_turn_ticks = 0u;
+        return;
+    }
+    end_retreat(retreat, agent);
+}
+
 // Backing off from a target that has come too close (chase.retreat,
-// docs/AI_RANGED_RETREAT_PLAN.md). Called while pursuing a target in sight,
-// after chase_move: while retreating it replaces `move` with one straight
-// away from the target, and the caller keeps facing the target. Never once a
-// leap or charge is under way. A squad member backs off too, held to its
-// squad's leash.
+// docs/AI_RANGED_RETREAT_PLAN.md). Called while pursuing, after chase_move:
+// while moving away it replaces `move` with one away from the target. A
+// backpedal keeps facing the target, which the caller does; a turn_and_run
+// faces the way it goes, and once run_ticks are up turns back (the caller
+// again). Never once a leap or charge is under way. A squad member backs off
+// too, held to its squad's leash.
 void update_retreat(
     const AgentRetreatTuning& retreat,
     float leash_meters,
@@ -614,13 +633,21 @@ void update_retreat(
             return;
         }
         agent->retreating = true;
+        agent->retreat_turning = false;
+        agent->retreat_turn_ticks = 0u;
         agent->retreat_ticks = 0u;
         agent->retreat_window_start = agent->position;
         agent->retreat_window_ticks = 0u;
         agent->retreat_heading = 0u;
     }
-    bool done = distance >= retreat.target_distance_meters ||
-        agent->retreat_ticks >= retreat.max_ticks ||
+    if (agent->retreat_turning) {
+        *move = KernelVec2{0.0f, 0.0f};
+        return;
+    }
+    const bool run = retreat.style == AgentRetreatStyle::kTurnAndRun;
+    bool done = (run ? agent->retreat_ticks >= retreat.run_ticks
+                     : distance >= retreat.target_distance_meters ||
+                           agent->retreat_ticks >= retreat.max_ticks) ||
         (leash_meters > 0.0f &&
          agent_steering::horizontal_distance(agent->position, agent->patrol.leash_anchor) >=
              leash_meters - kRetreatLeashMarginMeters);
@@ -634,7 +661,7 @@ void update_retreat(
         agent->retreat_window_ticks = 0u;
     }
     if (done) {
-        end_retreat(retreat, agent);
+        finish_moving_away(retreat, agent);
         *move = KernelVec2{0.0f, 0.0f};
         return;
     }
@@ -660,7 +687,7 @@ void update_retreat(
         }
     }
     if (heading == kRetreatHeadingDegrees.size()) {
-        end_retreat(retreat, agent);
+        finish_moving_away(retreat, agent);
         *move = KernelVec2{0.0f, 0.0f};
         return;
     }
@@ -995,6 +1022,59 @@ void AgentChaserController::tick(
                 should_update_rotation;
             if (--agent.charge_windup_ticks == 0u && target_state != nullptr) {
                 release_charge(kernel, config_, &agent, target_state->position);
+            }
+        } else if (is_pursuing(agent.sentry.state) && agent.retreating &&
+                   config_.chase.retreat.style == AgentRetreatStyle::kTurnAndRun) {
+            // Running from the target with its back to it, then turning back
+            // (§13). Out of sight is expected here, so the target is followed
+            // by id rather than dropped into Search; a hit only moves its
+            // attention, and it keeps running (§13 decision 1). It holds its
+            // fire throughout.
+            retreat_ran = true;
+            agent.sentry.lost_target_ticks = 0;
+            const KernelServerEntityState* fled_from = frame.actor_state(agent.sentry.target);
+            if (fled_from == nullptr) {
+                end_retreat(config_.chase.retreat, &agent);
+                agent_steering::transition_to(&agent, AgentSentryState::kSearch);
+            } else {
+                const KernelVec3 from = has_visible_target
+                    ? perception.target_position
+                    : fled_from->position;
+                update_retreat(
+                    config_.chase.retreat,
+                    behavior.leash_meters(config_),
+                    sentry_config.move_speed_meters_per_second * delta_seconds,
+                    config_.hovers ? nullptr : navigation,
+                    from,
+                    spacing[agent_index].push,
+                    &agent,
+                    &move);
+                if (agent.retreating && agent.retreat_turning) {
+                    move = KernelVec2{0.0f, 0.0f};
+                    should_update_rotation =
+                        agent_steering::facing_rotation_from_vision_toward(
+                            agent.position, from, perception.vision_forward,
+                            entity_state.rotation, &desired_rotation) ||
+                        should_update_rotation;
+                    ++agent.retreat_turn_ticks;
+                    // Facing it again: the pursuit takes over from the next
+                    // tick. Still not, past the limit: lost, as any target
+                    // that is out of sight is.
+                    if (has_visible_target ||
+                        agent.retreat_turn_ticks >= kRetreatTurnLimitTicks) {
+                        end_retreat(config_.chase.retreat, &agent);
+                    }
+                } else if (agent.retreating && !is_zero_move(move)) {
+                    should_update_rotation =
+                        agent_steering::facing_rotation_from_vision_toward(
+                            agent.position,
+                            KernelVec3{agent.position.x + move.x, agent.position.y,
+                                       agent.position.z + move.y},
+                            perception.vision_forward, entity_state.rotation,
+                            &desired_rotation) ||
+                        should_update_rotation;
+                }
+                agent.sentry.state = AgentSentryState::kChasing;
             }
         } else if (is_pursuing(agent.sentry.state)) {
             if (has_visible_target) {

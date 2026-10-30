@@ -2,7 +2,7 @@
 
 需求：玩家逼近遠程單位時，遠程單位先後退，拉開到自身武器射程的最大距離附近，再攻擊玩家。
 
-狀態：R0–R4 全部完成（2026-10-30，見 §7–§12）。巡邏隊成員也會後退（Q4 已推翻，見 §11）。airforce 巡邏隊由使用者自行設定。量測基準：main 4f295edc；實作基準：main 351993a2（已合併 `claude/ai-behavior-*`）。
+狀態：R0–R4 全部完成（2026-10-30，見 §7–§12）；新增 turn_and_run 後退方式（§13）。巡邏隊成員也會後退（Q4 已推翻，見 §11）。airforce 巡邏隊由使用者自行設定。量測基準：main 4f295edc；實作基準：main 351993a2（已合併 `claude/ai-behavior-*`）。
 
 ---
 
@@ -387,3 +387,74 @@ K' 證明 K 的間距確實來自 spacing push，而不只是從同一點往外�
 
 - 出貨 template 裡只有巨人設定了 spacing，而巨人是有腳單位，不能後退。所以 spacing 的整合目前只會影響之後自行設定 spacing 的遠程單位。
 - 法師與無人機的巡邏隊 leash 是 30 m、24 m，從離隊的位置算起。單次後退的位移最多約 19 m、9.5 m（玩家貼在面前時），所以只有在離隊後已經追了一段距離時，leash 才會提早結束後退。
+
+---
+
+## 13. 第二種後退方式：turn_and_run（2026-10-30）
+
+**使用者的決定：**
+
+1. 背對時被打：**繼續跑，不回頭**。被打只會更新注意點，和 Return 中被打只轉頭（D8）的原則一致：停下來轉身，逃跑就沒有意義了。
+2. 跑多久：**固定時間**（`run_ticks`）。
+3. 有腳單位**只能用 turn_and_run**；沒有腳的單位兩種都可以選。
+
+**兩種方式的比較：**
+
+| | backpedal（預設） | turn_and_run |
+|---|---|---|
+| 朝向 | 面向 target | 面向移動方向 |
+| 後退中開火 | 可以（`fire_while_retreating`） | 不行（背對 target） |
+| 結束條件 | 退到 `target_distance_meters`，或 `max_ticks` | 跑滿 `run_ticks` 後轉身，看到 target 才結束 |
+| 有腳單位 | 載入時拒絕 | 唯一的選項 |
+
+**設定：**
+
+```yaml
+retreat:
+  style: turn_and_run        # 預設 backpedal
+  trigger_distance_meters: 3
+  run_ticks: 90              # 必填
+  cooldown_ticks: 150        # 選填，和 backpedal 相同
+  input_magnitude: 1.0       # 選填
+```
+
+**載入檢查：**
+
+- turn_and_run 必須有 `run_ticks`（大於 0）。
+- turn_and_run 不接受 `target_distance_meters`、`max_ticks`，也不接受 `fire_while_retreating: true`。
+- backpedal 不接受 `run_ticks`。
+- `style` 只能是 backpedal 或 turn_and_run。
+- trigger 必須小於 stop distance。
+- 有腳單位只能用 turn_and_run。
+- 這些設定都納入 catalog hash。
+
+**執行流程（`agent_chaser_controller.cc`）：**
+
+- **開始條件和 backpedal 相同**：在追擊中、看得到目標、距離小於 trigger、不在冷卻中。
+- **跑開階段：**
+  - 移動方向的選擇和 backpedal 共用：navmesh 檢查、±45° / ±90° 的替代方向、spacing push。
+  - 朝向改為面向移動方向。有腳單位的身體本來就會轉向移動方向，轉向速度受 `max_yaw` 限制。
+  - 不開火。
+- **看不到目標也不會進 Search。** 目標位置從 actor state 依 id 讀取（D12 的做法），並把遺忘計時歸零。目標從世界上消失時，結束後退並進入 Search。
+- **跑滿 `run_ticks` 後轉身**（被 leash 擋住、卡住、或被逼到角落時，也會直接轉身）：停下並面向目標。
+  - 看到目標就結束後退，下一 tick 回到正常的追擊與攻擊。
+  - 轉身超過 180 ticks 仍看不到，就結束後退，交給一般的「看不到目標」流程。
+- **後退結束後**，和 backpedal 一樣進入冷卻，並設定 `chase_holding`。
+
+**測試 `ai_retreat_test` 新增（通過）：**
+
+- 載入：上面 8 種錯誤寫法都被拒絕；法師用 turn_and_run、巨人用 turn_and_run 都可以載入；巨人用 backpedal 被拒絕。
+- 行為：
+
+| 情境 | 結果 |
+|---|---|
+| L 法師 turn_and_run，trigger 8 m，run_ticks 90，玩家在 5 m | 跑 91 ticks，其中 89 ticks 背對玩家；後退中 0 發；1 tick 就轉回來；之後開火 8 發；最後距離 10.40 m；沒有進入 Search |
+| M 巨人 turn_and_run，trigger 3 m，run_ticks 90，玩家在 2.5 m | 跑 90 ticks，最遠離起點 7.5 m；轉身 44 ticks（約 1.5 秒）後重新看到玩家；沒有進入 Search |
+
+**觀察到的行為：**
+
+- **巨人轉身慢**：每秒 45°，跑開時大約 2 秒後才完全背對玩家（測試中有 30 ticks 是背對的）。它的視野是 140°，所以轉回約 110° 就能重新看到玩家。
+- **固定時間就代表不控制最後的距離**：巨人跑了 7.5 m，超過它的 resume（6 m），轉身後會再走回 stop distance（5 m）。如果希望它停在比較遠的地方，需要縮短 run_ticks，或調整 stop / resume。
+- **測試的改動**：玩家的位置改用 kernel 回報的 `vision_forward` 決定，因為有腳單位的前方是 +z。hunter 在附近沒有敵人時會關掉視野（D11），這時退回用生成時的 −x。
+
+**出貨內容：** 法師與無人機仍然使用 backpedal。目前沒有任何出貨 template 使用 turn_and_run，要不要給巨人或其他有腳單位使用，由使用者決定。

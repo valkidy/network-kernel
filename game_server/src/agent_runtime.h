@@ -314,6 +314,10 @@ struct AgentRuntimeState {
     // (straight away, then 45 and 90 degrees either side), kept while it
     // stays clear so the agent does not flick between two.
     std::uint8_t retreat_heading = 0;
+    // turn_and_run: done running and turning back to face the target, for
+    // how many ticks so far.
+    bool retreat_turning = false;
+    std::uint32_t retreat_turn_ticks = 0;
     // Chaser only. Ticks until a leap it started lands, counted down once per
     // controller tick; zero when it is not leaping. And ticks until it may
     // start another.

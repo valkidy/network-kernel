@@ -78,14 +78,25 @@ struct AgentChargeTuning {
     bool has_windup_animation = false;
 };
 
+// How a retreat gets away (docs/AI_RANGED_RETREAT_PLAN.md §13).
+enum class AgentRetreatStyle : std::uint8_t {
+    // Facing the target, walking backwards, still able to fire.
+    kBackpedal = 0,
+    // Turned away, running for run_ticks, then turning back to face it. Holds
+    // its fire throughout. The only style for a legged rig, whose body turns
+    // to the way it walks anyway.
+    kTurnAndRun = 1,
+};
+
 // Backing off from a target that has come too close
 // (`ai.locomotion.retreat`, docs/AI_RANGED_RETREAT_PLAN.md). Opt-in:
 // trigger_distance_meters zero leaves the rest unread, which is every chaser
-// authored before this existed. Only while pursuing, never on a legged rig
-// (its body turns to the way it walks, and with it its eyes). A squad member
-// backs off like anyone else; its squad leash still bounds how far, and it
-// walks back to its slot once the fight is over.
+// authored before this existed. Only while pursuing. A legged rig may only
+// turn_and_run: its body turns to the way it walks, and with it its eyes. A
+// squad member backs off like anyone else; its squad leash still bounds how
+// far, and it walks back to its slot once the fight is over.
 struct AgentRetreatTuning {
+    AgentRetreatStyle style = AgentRetreatStyle::kBackpedal;
     // Closer than this, origin to origin, and it starts backing off.
     float trigger_distance_meters = 0.0f;
     // Backed off this far, it stops. Inside the hold band, so it does not
@@ -99,8 +110,12 @@ struct AgentRetreatTuning {
     std::uint32_t max_ticks = 90;
     // After a retreat ends, however it ended, how long before another.
     std::uint32_t cooldown_ticks = 150;
-    // Whether it keeps shooting while it backs off.
+    // Whether it keeps shooting while it backs off. Always false for
+    // turn_and_run: its back is to the target.
     bool fire_while_retreating = true;
+    // turn_and_run only: how long it runs before it turns back. A fixed time,
+    // not a distance; target_distance_meters and max_ticks are backpedal's.
+    std::uint32_t run_ticks = 0;
 };
 
 // Movement tuning layered on top of the sentry's perception and attack tuning.

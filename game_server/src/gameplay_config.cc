@@ -447,6 +447,8 @@ void hash_actor_template(
     hash_scalar(hash, actor_template.chaser.retreat.max_ticks);
     hash_scalar(hash, actor_template.chaser.retreat.cooldown_ticks);
     hash_scalar(hash, actor_template.chaser.retreat.fire_while_retreating);
+    hash_scalar(hash, static_cast<std::uint32_t>(actor_template.chaser.retreat.style));
+    hash_scalar(hash, actor_template.chaser.retreat.run_ticks);
     hash_float(hash, actor_template.chaser.leap.min_distance_meters);
     hash_float(hash, actor_template.chaser.leap.max_distance_meters);
     hash_float(hash, actor_template.chaser.leap.landing_distance_meters);
@@ -4501,12 +4503,14 @@ AgentChaseTuning chaser_config_from_yaml(
         reject_unknown_keys(
             retreat,
             {
+                "style",
                 "trigger_distance_meters",
                 "target_distance_meters",
                 "input_magnitude",
                 "max_ticks",
                 "cooldown_ticks",
                 "fire_while_retreating",
+                "run_ticks",
             },
             path,
             source_kind,
@@ -4537,6 +4541,31 @@ AgentChaseTuning chaser_config_from_yaml(
         if (retreat["fire_while_retreating"]) {
             tuning.fire_while_retreating =
                 retreat["fire_while_retreating"].as<bool>();
+        }
+        const std::string style =
+            retreat["style"] ? retreat["style"].as<std::string>() : "backpedal";
+        const auto refuse = [&](const std::string& what) {
+            throw std::runtime_error(
+                "actor template ai.locomotion.retreat " + what + ": " + actor_template.name);
+        };
+        if (style == "turn_and_run") {
+            tuning.style = AgentRetreatStyle::kTurnAndRun;
+            // It runs for a fixed time, then turns back: no distance to back
+            // off to, no limit on a retreat that cannot get there, and its
+            // back is to whatever it would shoot at.
+            for (const char* key : {"target_distance_meters", "max_ticks"}) {
+                if (retreat[key]) refuse(std::string("turn_and_run takes no ") + key);
+            }
+            if (retreat["fire_while_retreating"] && tuning.fire_while_retreating) {
+                refuse("turn_and_run cannot fire while retreating: its back is to the target");
+            }
+            tuning.fire_while_retreating = false;
+            if (!retreat["run_ticks"]) refuse("turn_and_run requires run_ticks");
+            tuning.run_ticks = retreat["run_ticks"].as<std::uint32_t>();
+        } else if (style == "backpedal") {
+            if (retreat["run_ticks"]) refuse("run_ticks is turn_and_run's");
+        } else {
+            refuse("style must be backpedal or turn_and_run, not " + style);
         }
     }
     return chaser;
@@ -10579,9 +10608,10 @@ void resolve_agent_skills(GameServerGameplayConfig* config) {
             if (sentry) {
                 fail("on a sentry: it does not move");
             }
-            if (agent.skeleton.locomotion_type == "procedural_legged") {
-                fail("on a legged template: its body turns to the way it walks, so "
-                     "backing off turns its back on the target");
+            const bool run = retreat.style == AgentRetreatStyle::kTurnAndRun;
+            if (agent.skeleton.locomotion_type == "procedural_legged" && !run) {
+                fail("on a legged template must be turn_and_run: its body turns to the "
+                     "way it walks, so a backpedal turns its back on the target anyway");
             }
             // The furthest any weapon reaches; zero when one is unbounded.
             float weapon_reach = -1.0f;
@@ -10592,33 +10622,50 @@ void resolve_agent_skills(GameServerGameplayConfig* config) {
                     : std::max(weapon_reach, skill.range_max_meters);
             }
             const float resume = agent.chaser.resume_distance_meters;
-            if (retreat.target_distance_meters == 0.0f) {
+            if (run) {
+                const float trigger = retreat.trigger_distance_meters;
+                if (!std::isfinite(trigger) || !(trigger > 0.0f) ||
+                    !(trigger < agent.chaser.stop_distance_meters)) {
+                    fail("trigger " + std::to_string(trigger) + " m must be above 0 and "
+                         "inside the stop distance (" +
+                         std::to_string(agent.chaser.stop_distance_meters) + " m)");
+                }
+                if (!std::isfinite(retreat.input_magnitude) ||
+                    !(retreat.input_magnitude > 0.0f) || retreat.input_magnitude > 1.0f ||
+                    retreat.run_ticks == 0u) {
+                    fail("needs input_magnitude in (0, 1] and run_ticks above 0");
+                }
+            } else if (retreat.target_distance_meters == 0.0f) {
                 retreat.target_distance_meters = weapon_reach > 0.0f
                     ? std::min(0.9f * weapon_reach, resume)
                     : resume;
             }
-            const float trigger = retreat.trigger_distance_meters;
-            const float target = retreat.target_distance_meters;
-            if (!std::isfinite(trigger) || !std::isfinite(target) ||
-                !std::isfinite(retreat.input_magnitude) || !(trigger > 0.0f) ||
-                !(trigger < agent.chaser.stop_distance_meters) ||
-                !(target >= agent.chaser.stop_distance_meters) || !(target <= resume)) {
-                fail("trigger " + std::to_string(trigger) + " m and target " +
-                     std::to_string(target) + " m: they must satisfy trigger < stop (" +
-                     std::to_string(agent.chaser.stop_distance_meters) + " m) <= target <= "
-                     "resume (" + std::to_string(resume) + " m)");
-            }
-            if (weapon_reach > 0.0f && target > weapon_reach) {
-                fail("backs off to " + std::to_string(target) + " m, past its furthest "
-                     "weapon (" + std::to_string(weapon_reach) + " m)");
-            }
-            if (vision_reach > 0.0f && target >= vision_reach) {
-                fail("backs off to " + std::to_string(target) + " m, out of its " +
-                     std::to_string(vision_reach) + " m vision");
-            }
-            if (!(retreat.input_magnitude > 0.0f) || retreat.input_magnitude > 1.0f ||
-                retreat.max_ticks == 0u) {
-                fail("needs input_magnitude in (0, 1] and max_ticks above 0");
+            // The rest is a backpedal's: the band it backs off through, and that
+            // it ends somewhere it can still see and shoot from.
+            if (!run) {
+                const float trigger = retreat.trigger_distance_meters;
+                const float target = retreat.target_distance_meters;
+                if (!std::isfinite(trigger) || !std::isfinite(target) ||
+                    !std::isfinite(retreat.input_magnitude) || !(trigger > 0.0f) ||
+                    !(trigger < agent.chaser.stop_distance_meters) ||
+                    !(target >= agent.chaser.stop_distance_meters) || !(target <= resume)) {
+                    fail("trigger " + std::to_string(trigger) + " m and target " +
+                         std::to_string(target) + " m: they must satisfy trigger < stop (" +
+                         std::to_string(agent.chaser.stop_distance_meters) + " m) <= target <= "
+                         "resume (" + std::to_string(resume) + " m)");
+                }
+                if (weapon_reach > 0.0f && target > weapon_reach) {
+                    fail("backs off to " + std::to_string(target) + " m, past its furthest "
+                         "weapon (" + std::to_string(weapon_reach) + " m)");
+                }
+                if (vision_reach > 0.0f && target >= vision_reach) {
+                    fail("backs off to " + std::to_string(target) + " m, out of its " +
+                         std::to_string(vision_reach) + " m vision");
+                }
+                if (!(retreat.input_magnitude > 0.0f) || retreat.input_magnitude > 1.0f ||
+                    retreat.max_ticks == 0u) {
+                    fail("needs input_magnitude in (0, 1] and max_ticks above 0");
+                }
             }
         }
         agent.sentry.weapon_id = static_cast<std::uint16_t>(weapon->weapon_id);
