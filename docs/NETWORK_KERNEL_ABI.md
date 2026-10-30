@@ -71,6 +71,21 @@ appended the tornado shape and motion fields to
 and `hover_vertical_speed_meters_per_second` to `KernelMovementDefinition` and
 added `KernelMovementControllerType_Hover`.
 
+Agent commands are additive within ABI 109 behind
+`KERNEL_CAPABILITY_AGENT_COMMANDS` (bit 53, `0x0020000000000000`):
+`Kernel_SubmitAgentCommand` / `Kernel_PollAgentCommandOutcomes` on a client or
+a listen host's own player, `Kernel_ServerPollAgentCommands` /
+`Kernel_ServerSendAgentCommandOutcome` on a server. A `KernelAgentCommand`
+(48 bytes) is a player's order to one agent on its side -- guard (optionally at
+a position, `KERNEL_AGENT_COMMAND_FLAG_POSITION`), patrol along a catalog route
+by id, or lock onto a target -- and a
+`KernelAgentCommandOutcome` (24 bytes) is game_server's answer, accepted or
+rejected with a reason. The kernel carries both and decides nothing; a server
+fills the requester's peer and player from the session. Each queue holds 256;
+one past that is dropped with Error event code 36. Packet schema 34 adds the
+AgentCommand (34) and AgentCommandOutcome (35) packets. See
+`docs/AI_BEHAVIOR_PLAN.md` §8.
+
 `KERNEL_CAPABILITY_LOCAL_SHELTER_STATE` uses bit 49
 (`0x0002000000000000`), separate from `KERNEL_CAPABILITY_LOG_CAPTURE` at
 bit 48 (`0x0001000000000000`). This corrects their accidental overlap within

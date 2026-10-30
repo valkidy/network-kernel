@@ -7,7 +7,7 @@
 // catalog whose `enemy:` named grenade_sentry (no passive_patrol) produced a
 // tripod that never patrolled -- it ran the artillery sentry's config, and its
 // own ai.sentry block was parsed, validated, and then never read. (The tripod
-// is a garrison walking a controller.route now, AI plan D19; the bug this
+// is a patrol walking a behavior.route now, AI plan D19; the bug this
 // guards against is the same.)
 //
 // Two layers, one test each:
@@ -139,10 +139,10 @@ void manager_resolves_config_from_the_spawned_template() {
         find_actor_template(gameplay_config, kTripodTemplateId);
     require(tripod != nullptr);
     require(tripod->default_controller_role ==
-            network_example::game_server::AgentControllerRole::kGarrison);
+            network_example::game_server::AgentControllerRole::kGuard);
 
     // The divergence this test is built on: the grunt is a stationary sentry
-    // and the tripod a garrison, so an agent reading anyone's config but its
+    // and the tripod a guard, so an agent reading anyone's config but its
     // own is visible in whether it walks the route below.
     const network_example::game_server::ActorTemplateConfig* grunt =
         find_actor_template(gameplay_config, kSentryGruntTemplateId);
@@ -210,9 +210,10 @@ void manager_resolves_config_from_the_spawned_template() {
     const std::vector<network_example::game_server::AgentRuntimeState>& agents =
         game_server.agent_runtime_manager().agents();
     require(agents.size() == 1);
-    // The tripod's own template, not the grunt's.
+    // The tripod's own template, not the grunt's: a patrol, by the route its
+    // world rule gave it.
     require(agents[0].controller_role ==
-            network_example::game_server::AgentControllerRole::kGarrison);
+            network_example::game_server::AgentControllerRole::kPatrol);
     require(!agents[0].route_patrol.path.empty());
     require(
         agents[0].sentry_config.move_speed_meters_per_second ==

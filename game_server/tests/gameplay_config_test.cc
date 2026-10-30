@@ -597,7 +597,7 @@ std::string sentry_grunt_entity_template_yaml(std::string entity_type) {
         "vision:\n"
         "  collider_template: sentry_grunt_vision_cone\n"
         "ai:\n"
-        "  default_controller: sentry\n"
+        "  default_behavior: sentry\n"
         "  profile: default\n"
         // Every agent names its skills (AI plan P4); a sentry exactly one
         // weapon, which is what it fires.
@@ -1300,13 +1300,13 @@ int main() {
 
     // The keys the role-based block replaced (AI plan P1c, P1d) are refused
     // rather than ignored: passive patrol is gone, sentry: is perception:,
-    // controller: is default_controller:, and a weapon is a skill, never a
+    // controller: is default_behavior:, and a weapon is a skill, never a
     // perception key.
     for (const std::pair<std::string, std::string>& retired : {
              std::pair<std::string, std::string>{
                  "  perception:\n", "  sentry:\n"},
              std::pair<std::string, std::string>{
-                 "  default_controller: sentry\n", "  controller: sentry\n"},
+                 "  default_behavior: sentry\n", "  controller: sentry\n"},
              std::pair<std::string, std::string>{
                  "    alert_ticks: 4\n",
                  "    alert_ticks: 4\n    passive_patrol: true\n"},
@@ -1610,16 +1610,28 @@ int main() {
         config.weapons.catalog_hash !=
         network_example::game_server::compute_gameplay_catalog_hash(changed_config));
     changed_config = config;
-    const auto changed_quadruped_sentry = std::find_if(
+    auto changed_quadruped_sentry = std::find_if(
         changed_config.entity_templates.begin(),
         changed_config.entity_templates.end(),
         [](const network_example::game_server::EntityTemplateConfig& entity) {
             return entity.name == "quadruped_actor";
         });
     require(changed_quadruped_sentry != changed_config.entity_templates.end());
-    // A garrison now (AI plan P1c): its leash is the tuning that must move the
-    // hash, where the retired patrol extent used to be.
-    changed_quadruped_sentry->garrison.leash_meters += 1.0f;
+    // A guard now (AI plan P1c, behavior plan B8): its leash is the tuning that
+    // must move the hash, where the retired patrol extent used to be. So must
+    // the patrol leash it switches to with a route.
+    changed_quadruped_sentry->guard.leash_meters += 1.0f;
+    require(
+        config.weapons.catalog_hash !=
+        network_example::game_server::compute_gameplay_catalog_hash(changed_config));
+    changed_config = config;
+    changed_quadruped_sentry = std::find_if(
+        changed_config.entity_templates.begin(),
+        changed_config.entity_templates.end(),
+        [](const network_example::game_server::EntityTemplateConfig& entity) {
+            return entity.name == "quadruped_actor";
+        });
+    changed_quadruped_sentry->patrol.leash_meters += 1.0f;
     require(
         config.weapons.catalog_hash !=
         network_example::game_server::compute_gameplay_catalog_hash(changed_config));
@@ -1721,10 +1733,11 @@ int main() {
         });
     require(quadruped_template != config.entity_templates.end());
     require(quadruped_template->skeleton.enabled);
-    // A garrison that walks its spawn source's route (AI plan P1c), where it
+    // A guard by default, a patrol where its spawn source gives it a route
+    // (AI plan P1c, behavior plan B8), where it
     // used to patrol passively; walkers are never stationary.
     require(quadruped_template->default_controller_role ==
-            network_example::game_server::AgentControllerRole::kGarrison);
+            network_example::game_server::AgentControllerRole::kGuard);
     require(!quadruped_template->ai_stationary);
     require(quadruped_template->movement_controller_type ==
             KernelMovementControllerType_Character);
@@ -3501,7 +3514,7 @@ int main() {
     require(legged_locomotion_actor != nullptr);
     require(legged_locomotion_actor->name == "quadruped_actor");
     require(legged_locomotion_actor->default_controller_role ==
-            network_example::game_server::AgentControllerRole::kGarrison);
+            network_example::game_server::AgentControllerRole::kGuard);
     require(legged_locomotion_actor->movement_controller_type ==
             KernelMovementControllerType_Character);
     require(
@@ -4425,7 +4438,7 @@ int main() {
         KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS);
     require(Kernel_StartListenServer(observer_kernel, 7897));
     // The kill floor out of reach: the host player is parked out of sight
-    // below, falling, so the garrison has no one to fight on its walk.
+    // below, falling, so the patrol has no one to fight on its walk.
     network_example::game_server::GameServerGameplayConfig observer_config =
         legged_locomotion_config;
     observer_config.player.fall_death_height_meters = -1.0e6f;
@@ -4434,11 +4447,11 @@ int main() {
         observer_config);
     // Spawned by the catalog's preloaded world rule, not created here: the
     // rule is the spawn source, and since AI plan P1c it is what hands the
-    // garrison the route it walks (102_director_legged_locomotion_world_rule:
+    // walker the route that makes it a patrol (102_director_legged_locomotion_world_rule:
     // 30 m either side of the spawn, along x). An entity created directly has
     // no route and stands.
     require(observer_server.preload_directors());
-    // A garrison fights what it sees (AI plan P1c), and the listen host would
+    // A patrol fights what it sees (AI plan P1c), and the listen host would
     // be in sight at the origin. Held 30 m off the route instead: past the
     // 12 m cone and the 10 m beyond it that vision looks at all, but inside
     // relevance, so the host's render states still carry the walker. Held
@@ -4791,7 +4804,7 @@ int main() {
     const auto patrol_velocity_from_synthetic_position =
         [&](float position_x) {
             // On the route's line (z 0) and at the rule's spawn height: a
-            // garrison turns at a corner it arrives within a metre of, where the
+            // patrol turns at a corner it arrives within a metre of, where the
             // passive sweep turned on x alone, and the old position's height is
             // inside the slope at the corners -- depenetration shoves it metres
             // off the line in a tick.

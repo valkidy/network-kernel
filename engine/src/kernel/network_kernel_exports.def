@@ -76,6 +76,10 @@ EXPORTS
     Kernel_PollGameMessages
     Kernel_ServerSendGameMessage
     Kernel_ServerPollGameMessages
+    Kernel_SubmitAgentCommand
+    Kernel_PollAgentCommandOutcomes
+    Kernel_ServerPollAgentCommands
+    Kernel_ServerSendAgentCommandOutcome
     Kernel_PollInventoryDeltas
     Kernel_ServerDestroyEntity
     Kernel_ServerSetEntityTransform

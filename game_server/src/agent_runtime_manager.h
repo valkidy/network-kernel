@@ -3,8 +3,10 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <unordered_map>
 #include <vector>
 
+#include "game_server/src/agent_behavior.h"
 #include "game_server/src/agent_chaser_controller.h"
 #include "game_server/src/agent_sentry_controller.h"
 #include "game_server/src/ai_perception_adapter.h"
@@ -38,6 +40,19 @@ public:
 
     std::size_t agent_count() const;
     const std::vector<AgentRuntimeState>& agents() const;
+    // Switches an agent to another behavior at runtime (docs/AI_BEHAVIOR_PLAN.md
+    // B3, B10): checked against what the behavior needs first, then applied at
+    // once -- whatever it was fighting is dropped. The chaser runs it from the
+    // next tick. A sentry, and a squad member, keep what they are.
+    BehaviorSwitchResult set_behavior(
+        std::uint32_t net_id,
+        const AgentControllerSpec& spec);
+    // A player's agent command (docs/AI_BEHAVIOR_PLAN.md §8.3, §12.9), checked
+    // in order -- the peer's flood guard and cooldown, a living requester, a
+    // player-side agent, a behavior a command may ask for, the agent's own
+    // interval, then the behavior's data -- and applied through set_behavior.
+    // The answer is addressed back to the requester.
+    KernelAgentCommandOutcome handle_agent_command(const KernelAgentCommand& command);
     // Who is inside which building, so hunters can leave alone a player a
     // tent hides (AI plan Q3). Not owned; null leaves every player huntable.
     void set_shelter_director(const ShelterDirector* shelter) { shelter_ = shelter; }
@@ -99,6 +114,26 @@ private:
     // Whether a building that hides its occupants holds `net_id` now.
     bool hidden_in_shelter(std::uint32_t net_id) const;
     void update_hunters(const ActorStateView& actors);
+    // Paths every idle guard away from its post back to it, once per time it
+    // goes idle there; the path is dropped whenever it is doing anything else.
+    void update_guard_homes();
+    // Ends a lock_target whose target is gone or that has given up, and paths
+    // the rest towards where their targets are now.
+    void update_lock_targets(const ActorStateView& actors);
+    // Whether `target` may be locked by `agent` (B9): alive, not itself, and in
+    // a relation its lock_target tuning allows.
+    bool lockable(const AgentRuntimeState& agent, std::uint32_t target) const;
+    BehaviorSwitchResult check_behavior(
+        const AgentRuntimeState& agent,
+        const AgentControllerSpec& spec) const;
+    // Leaves the old behavior, enters the new one and applies the spec's data.
+    // Unchecked: a spawn source's spec was checked by the catalog. A spawner's
+    // agent passes its carrier as `source_net_id`, whose target an inherited
+    // hunter takes.
+    void apply_behavior(
+        AgentRuntimeState* agent,
+        const AgentControllerSpec& spec,
+        std::uint32_t source_net_id);
     void attach_route(
         AgentRuntimeState* agent,
         const std::vector<KernelVec3>& waypoints);
@@ -124,6 +159,18 @@ private:
 
     KernelHandle* kernel_ = nullptr;
     GameServerGameplayConfig config_;
+    // Ticks this manager has run: the clock agent command intervals are kept on.
+    std::uint64_t ticks_ = 0;
+    // Each peer's agent commands: how many in its current one-second window
+    // (a flood guard, every command counted), and when one was last obeyed
+    // (the cooldown, agent_command_peer_cooldown_ticks).
+    struct CommandWindow {
+        std::uint64_t start_tick = 0;
+        std::uint32_t count = 0;
+        bool obeyed = false;
+        std::uint64_t last_obeyed_tick = 0;
+    };
+    std::unordered_map<std::uint32_t, CommandWindow> command_windows_;
     std::vector<AgentControllerBinding> controllers_;
     std::vector<AgentRuntimeState> agents_;
     // Always describes agents_. Rebuilt wherever that list is replaced,
@@ -141,9 +188,17 @@ private:
         std::uint32_t net_id = 0;
         KernelVec3 position{0.0f, 0.0f, 0.0f};
     };
-    std::vector<Hostile> hostiles_;
+    // One table per side a hunter can be on (docs/AI_BEHAVIOR_PLAN.md §6):
+    // what an enemy-side hunter goes after -- players and player-side agents --
+    // and what a player-side one does. The second is only built while a
+    // player-side hunter exists.
+    std::vector<Hostile> hostiles_of_enemy_side_;
+    std::vector<Hostile> hostiles_of_player_side_;
     // Players a tent hides this tick: out of the table, but not gone.
     std::vector<std::uint32_t> hidden_hostiles_;
+    // An actor template's camp, looked up once per template.
+    std::uint8_t camp_of(std::uint32_t actor_template_id) const;
+    mutable std::unordered_map<std::uint32_t, std::uint8_t> camp_cache_;
     const ShelterDirector* shelter_ = nullptr;
     SpawnerDirector spawner_director_;
     // Templates whose spawner calls on alert. A handful at most, so a scan

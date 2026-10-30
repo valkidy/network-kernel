@@ -94,6 +94,15 @@ public:
         KernelHandle* kernel,
         const PerceptionFrame& frame,
         std::uint32_t agent_net_id);
+    // Narrows `snapshot` to one target (a lock_target's): seen only while it
+    // is in one of the agent's visible lists, whatever vision would have
+    // picked. Everything else in the snapshot is left as it was.
+    static void focus_on_target(
+        KernelHandle* kernel,
+        const PerceptionFrame& frame,
+        std::uint32_t agent_net_id,
+        std::uint32_t target_net_id,
+        SentryPerceptionSnapshot* snapshot);
 
     static ai::AIContext build_sentry_context(
         const SentryPerceptionSnapshot& snapshot,

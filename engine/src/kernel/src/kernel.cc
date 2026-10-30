@@ -6599,6 +6599,132 @@ std::uint32_t KernelEngine::server_poll_game_messages(
     return drain_game_messages(&server_game_messages_, out_messages, max_messages);
 }
 
+namespace {
+
+// As a game message queue: past this, a peer is sending faster than
+// game_server drains, or nobody is draining at all.
+constexpr std::size_t kMaxQueuedAgentCommands = 256;
+
+template <typename Record>
+std::uint32_t drain_records(
+    std::deque<Record>* queue,
+    Record* out_records,
+    std::uint32_t max_records) {
+    if (out_records == nullptr || max_records == 0u) return 0u;
+    std::uint32_t copied = 0;
+    while (copied < max_records && !queue->empty()) {
+        out_records[copied++] = queue->front();
+        queue->pop_front();
+    }
+    return copied;
+}
+
+}  // namespace
+
+void KernelEngine::enqueue_agent_command(
+    PeerId peer,
+    NetId player_net_id,
+    const KernelAgentCommand& authored) {
+    if (server_agent_commands_.size() >= kMaxQueuedAgentCommands) {
+        push_event(KernelEventType_Error, player_net_id, peer, 36);
+        return;
+    }
+    KernelAgentCommand command = authored;
+    command.struct_size = sizeof(command);
+    // Who sent it is the session's word, never the command's.
+    command.requester_peer = peer;
+    command.requester_net_id = player_net_id;
+    command.reserved0 = 0u;
+    server_agent_commands_.push_back(command);
+}
+
+void KernelEngine::enqueue_agent_command_outcome(
+    const KernelAgentCommandOutcome& authored) {
+    if (client_agent_command_outcomes_.size() >= kMaxQueuedAgentCommands) {
+        push_event(KernelEventType_Error, 0u, 0u, 36);
+        return;
+    }
+    KernelAgentCommandOutcome outcome = authored;
+    outcome.struct_size = sizeof(outcome);
+    outcome.requester_peer = 0u;
+    outcome.reserved0 = 0u;
+    client_agent_command_outcomes_.push_back(outcome);
+}
+
+bool KernelEngine::submit_agent_command(const KernelAgentCommand& command) {
+    if (command.struct_size < sizeof(KernelAgentCommand)) return false;
+    if (config_.mode == KernelMode_ListenServer) {
+        // The host's own player: no wire between it and its own server.
+        if (!running_ || local_listen_session_.player == 0u) return false;
+        enqueue_agent_command(
+            kLocalListenPeerId, local_listen_session_.player, command);
+        return true;
+    }
+    if (config_.mode != KernelMode_Client || !has_welcome_ ||
+        transport_ == nullptr) {
+        return false;
+    }
+    const std::vector<std::uint8_t> packet =
+        encode_agent_command_packet(command, next_packet_sequence_++);
+    if (!transport_->Send(
+            kServerPeerId,
+            packet.data(),
+            static_cast<std::uint32_t>(packet.size()),
+            SendMode::kReliable,
+            ChannelId::kReliableEvent)) {
+        return false;
+    }
+    record_sent_packet(
+        static_cast<std::uint32_t>(packet.size()),
+        SendMode::kReliable,
+        ChannelId::kReliableEvent);
+    return true;
+}
+
+std::uint32_t KernelEngine::poll_agent_command_outcomes(
+    KernelAgentCommandOutcome* out_outcomes,
+    std::uint32_t max_outcomes) {
+    return drain_records(&client_agent_command_outcomes_, out_outcomes, max_outcomes);
+}
+
+std::uint32_t KernelEngine::server_poll_agent_commands(
+    KernelAgentCommand* out_commands,
+    std::uint32_t max_commands) {
+    return drain_records(&server_agent_commands_, out_commands, max_commands);
+}
+
+bool KernelEngine::server_send_agent_command_outcome(
+    const KernelAgentCommandOutcome& outcome) {
+    if (!running_ || !is_server_mode(config_.mode) ||
+        outcome.struct_size < sizeof(KernelAgentCommandOutcome)) {
+        return false;
+    }
+    if (config_.mode == KernelMode_ListenServer &&
+        outcome.requester_peer == kLocalListenPeerId) {
+        enqueue_agent_command_outcome(outcome);
+        return true;
+    }
+    const PeerSession* session = find_session(outcome.requester_peer);
+    if (session == nullptr || !session->welcomed || transport_ == nullptr) {
+        return false;
+    }
+    const std::vector<std::uint8_t> packet =
+        encode_agent_command_outcome_packet(outcome, next_packet_sequence_++);
+    if (!transport_->Send(
+            outcome.requester_peer,
+            packet.data(),
+            static_cast<std::uint32_t>(packet.size()),
+            SendMode::kReliable,
+            ChannelId::kReliableEvent)) {
+        return false;
+    }
+    record_sent_packet(
+        static_cast<std::uint32_t>(packet.size()),
+        SendMode::kReliable,
+        ChannelId::kReliableEvent);
+    return true;
+}
+
 bool KernelEngine::get_item_instance(
     KernelItemInstanceId id,
     KernelItemInstanceView* out_view) const {
@@ -7970,6 +8096,8 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     pending_network_gameplay_outcomes_.clear();
     server_game_messages_.clear();
     client_game_messages_.clear();
+    server_agent_commands_.clear();
+    client_agent_command_outcomes_.clear();
     synced_weapon_revisions_.clear();
     physics_entity_colliders_.clear();
     prediction_proxy_collider_ids_.clear();
@@ -8185,6 +8313,18 @@ void KernelEngine::poll_transport() {
                 send_inventory_snapshot(
                     mutable_session,
                     inventory_request.inventory_container_id);
+                continue;
+            }
+            KernelAgentCommand agent_command{};
+            if (decode_agent_command_packet(
+                    transport_event.payload.data(),
+                    transport_event.payload.size(),
+                    &agent_command)) {
+                // A peer with no welcomed session is not heard.
+                if (session != nullptr && session->welcomed) {
+                    enqueue_agent_command(
+                        transport_event.peer, session->player, agent_command);
+                }
                 continue;
             }
             GameMessagePacket game_message;
@@ -8723,6 +8863,16 @@ void KernelEngine::handle_client_reliable_event(const TransportEvent& transport_
             game_message.message_type,
             game_message.payload.data(),
             static_cast<std::uint32_t>(game_message.payload.size()));
+        return;
+    }
+    KernelAgentCommandOutcome agent_command_outcome{};
+    decode_start = std::chrono::steady_clock::now();
+    if (decode_agent_command_outcome_packet(
+            transport_event.payload.data(),
+            transport_event.payload.size(),
+            &agent_command_outcome)) {
+        record_packet_deserialization_cost(elapsed_cost_us(decode_start));
+        enqueue_agent_command_outcome(agent_command_outcome);
         return;
     }
     KernelGameplayRequestOutcome gameplay_outcome{};

@@ -154,6 +154,22 @@ _Static_assert(
     "damage records are additive within ABI 109, on a bit of their own; a "
     "managed mirror must match this layout");
 _Static_assert(
+    KERNEL_CAPABILITY_AGENT_COMMANDS == UINT64_C(0x0020000000000000) &&
+        (KERNEL_CAPABILITY_AGENT_COMMANDS &
+         (KERNEL_CAPABILITY_LOG_CAPTURE | KERNEL_CAPABILITY_LOCAL_SHELTER_STATE |
+          KERNEL_CAPABILITY_GAME_MESSAGES |
+          KERNEL_CAPABILITY_SERVER_FALL_DEATH_HEIGHT |
+          KERNEL_CAPABILITY_SERVER_DAMAGE_RECORDS)) == 0 &&
+        sizeof(KernelAgentCommand) == 48u &&
+        offsetof(KernelAgentCommand, request_id) == 16u &&
+        offsetof(KernelAgentCommand, behavior) == 30u &&
+        offsetof(KernelAgentCommand, flags) == 31u &&
+        offsetof(KernelAgentCommand, position) == 32u &&
+        sizeof(KernelAgentCommandOutcome) == 24u &&
+        offsetof(KernelAgentCommandOutcome, status) == 20u,
+    "agent commands are additive within ABI 109, on a bit of their own; a "
+    "managed mirror must match these layouts");
+_Static_assert(
     offsetof(KernelActionDefinition, pull_mode) >
         offsetof(KernelActionDefinition, repeat_stagger_lifetime_ticks),
     "the pull block is appended after every field that existed before ABI 95");

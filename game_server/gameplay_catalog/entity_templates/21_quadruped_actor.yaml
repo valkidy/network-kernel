@@ -27,10 +27,11 @@ active_weapon_slot: 0
 vision:
   collider_template: sentry_grunt_vision_cone
 ai:
-  # A garrison (AI plan D19): walks the route its spawn source gives it, and
+  # A guard (AI behavior plan B8); a spawn source that gives it a route makes
+  # it a patrol, which walks the route. Either way it
   # fights whatever it sees with its spammer. Without a route it stands and
   # looks around. Ranged, so it closes to 8 m and holds there.
-  default_controller: garrison
+  default_behavior: guard
   profile: monster_sim
   perception:
     alert_ticks: 90

@@ -26,8 +26,8 @@ director:
     radius: 0.0
     seed: 4242
     # Back and forth 30 m either side of where it spawns, along world x: what
-    # passive_patrol's sweep did before walkers became garrisons (AI plan D19).
-    controller:
+    # passive_patrol's sweep did before walkers became patrols (AI plan D19).
+    behavior:
       route:
         - {x: -30.0, y: 0.0, z: 0.0}
         - {x: 30.0, y: 0.0, z: 0.0}

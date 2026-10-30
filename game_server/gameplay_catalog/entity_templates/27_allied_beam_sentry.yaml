@@ -48,7 +48,7 @@ animations:
 vision:
   collider_template: sentry_grunt_vision_cone
 ai:
-  default_controller: sentry
+  default_behavior: sentry
   profile: allied_beam_sentry
   perception:
     # Half the hostile sentry's 90-tick windup. The 3 s telegraph on an enemy

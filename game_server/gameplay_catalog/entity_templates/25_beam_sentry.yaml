@@ -34,7 +34,7 @@ animations:
 vision:
   collider_template: sentry_grunt_vision_cone
 ai:
-  default_controller: sentry
+  default_behavior: sentry
   profile: beam_sentry
   perception:
     # 3 s of tracking before the first shot, against sentry_grunt's 3 s as well:

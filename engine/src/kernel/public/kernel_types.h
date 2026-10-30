@@ -523,6 +523,11 @@
 /* Kernel_ServerQueryDamageRecords. Additive within ABI 109: check this flag,
  * not the version, before calling it. */
 #define KERNEL_CAPABILITY_SERVER_DAMAGE_RECORDS UINT64_C(0x0010000000000000)
+/* Kernel_SubmitAgentCommand, Kernel_PollAgentCommandOutcomes,
+ * Kernel_ServerPollAgentCommands and Kernel_ServerSendAgentCommandOutcome.
+ * Additive within ABI 109: check this flag, not the version, before calling
+ * them. */
+#define KERNEL_CAPABILITY_AGENT_COMMANDS UINT64_C(0x0020000000000000)
 
 #define KERNEL_SKELETON_RENDER_STATUS_SUCCESS UINT32_C(0)
 #define KERNEL_SKELETON_RENDER_STATUS_INSUFFICIENT_CAPACITY UINT32_C(1)
@@ -3229,6 +3234,88 @@ typedef struct KernelDamageRecord {
     uint16_t damage;
     uint16_t reserved0;
 } KernelDamageRecord;
+
+/* What an agent command asks a player-side agent to become
+ * (docs/AI_BEHAVIOR_PLAN.md §8). */
+typedef enum KernelAgentCommandBehavior {
+    KernelAgentCommandBehavior_None = 0,
+    /* Stand guard where it is, or at `position` with
+     * KERNEL_AGENT_COMMAND_FLAG_POSITION. */
+    KernelAgentCommandBehavior_Guard = 1,
+    /* Walk the catalog route named by route_id. */
+    KernelAgentCommandBehavior_Patrol = 2,
+    /* Go after target_net_id and nothing else. */
+    KernelAgentCommandBehavior_LockTarget = 3,
+} KernelAgentCommandBehavior;
+
+/*
+ * A player's order to one agent on its own side (Kernel_SubmitAgentCommand),
+ * carried to game_server, which decides whether to obey and answers with a
+ * KernelAgentCommandOutcome. The kernel never reads past the header fields.
+ *
+ * Read on a server (Kernel_ServerPollAgentCommands), requester_peer and
+ * requester_net_id are filled in by the kernel from the session -- never from
+ * anything the client wrote; a client leaves them 0.
+ */
+/* KernelAgentCommand::flags. A Guard command carries a post in `position`. */
+#define KERNEL_AGENT_COMMAND_FLAG_POSITION 0x01u
+
+typedef struct KernelAgentCommand {
+    uint32_t struct_size;
+    uint32_t requester_peer;
+    uint32_t requester_net_id;
+    uint32_t agent_net_id;
+    /* The client's own number, echoed in the outcome. */
+    uint64_t request_id;
+    /* LockTarget only. */
+    uint32_t target_net_id;
+    /* Patrol only: a route of the server's catalog, never waypoints. */
+    uint16_t route_id;
+    /* KernelAgentCommandBehavior. */
+    uint8_t behavior;
+    /* KERNEL_AGENT_COMMAND_FLAG_*. */
+    uint8_t flags;
+    /* Guard with KERNEL_AGENT_COMMAND_FLAG_POSITION only: where to stand
+     * guard, world space. */
+    KernelVec3 position;
+    uint32_t reserved0;
+} KernelAgentCommand;
+
+typedef enum KernelAgentCommandStatus {
+    KernelAgentCommandStatus_Accepted = 0,
+    KernelAgentCommandStatus_Rejected = 1,
+} KernelAgentCommandStatus;
+
+/* Why game_server refused an agent command. */
+typedef enum KernelAgentCommandRejection {
+    KernelAgentCommandRejection_None = 0,
+    KernelAgentCommandRejection_RequesterDead = 1,
+    KernelAgentCommandRejection_AgentMissing = 2,
+    KernelAgentCommandRejection_NotPlayerSide = 3,
+    KernelAgentCommandRejection_BehaviorNotAllowed = 4,
+    /* The agent changed behavior by command too recently. */
+    KernelAgentCommandRejection_TooSoon = 5,
+    /* The route or the target the behavior needs is missing or wrong. */
+    KernelAgentCommandRejection_InvalidData = 6,
+    /* This peer is sending commands too fast, or is still cooling down from
+     * its last obeyed one. */
+    KernelAgentCommandRejection_RateLimited = 7,
+} KernelAgentCommandRejection;
+
+/* game_server's answer to one KernelAgentCommand. On a server requester_peer
+ * says where Kernel_ServerSendAgentCommandOutcome sends it; on a client it is
+ * 0. */
+typedef struct KernelAgentCommandOutcome {
+    uint32_t struct_size;
+    uint32_t requester_peer;
+    uint64_t request_id;
+    uint32_t agent_net_id;
+    /* KernelAgentCommandStatus. */
+    uint8_t status;
+    /* KernelAgentCommandRejection. */
+    uint8_t rejection_reason;
+    uint16_t reserved0;
+} KernelAgentCommandOutcome;
 
 typedef struct KernelEvent {
     KernelEventType type;

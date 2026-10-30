@@ -1,8 +1,9 @@
-// P1b of docs/AI_CONTROLLER_PLAN.md: spawn sources choose their agents'
-// controller. A spawn_group, a spawner or a world rule may name a `controller:`
-// block; a squad makes every member patrol. The catalog refuses a controller
-// that does not suit the template it spawns, and the runtime applies what a
-// source asked for once it has discovered the agent.
+// P1b of docs/AI_CONTROLLER_PLAN.md, with the names of docs/AI_BEHAVIOR_PLAN.md
+// B8: spawn sources choose their agents' behavior. A spawn_group, a spawner or
+// a world rule may name a `behavior:` block, where a route makes a patrol; a
+// squad makes every member squad. The catalog refuses a behavior that does not
+// suit the template it spawns, and the runtime applies what a source asked for
+// once it has discovered the agent.
 
 #include <cmath>
 #include <cstdint>
@@ -83,7 +84,7 @@ bool loads_after(
 
 const char* kGameRule = "entity_templates/101_director_game_rule.yaml";
 
-// The giant_open_combat node's spawn_group: a garrison with a route.
+// The giant_open_combat node's spawn_group: a patrol, by its route.
 YAML::Node giant_spawn(YAML::Node& root) {
     for (YAML::Node node : root["director"]["graph"]["nodes"]) {
         if (node["id"].as<std::string>() == "giant_open_combat") {
@@ -105,15 +106,16 @@ YAML::Node nest_spawn(YAML::Node& root) {
     return {};
 }
 
-// Four giants, each a garrison on a route: the narrow pass's nine waypoints,
-// and the three strips' two (P1c). The world rules route by offsets.
+// Four giants, each a patrol on a route: the narrow pass's nine waypoints,
+// and the three strips' two (P1c). The world rules route by offsets. None
+// says `type: patrol`; the route does.
 void the_shipped_routes_are_controller_routes(const gs::GameServerGameplayConfig& config) {
     int nine = 0;
     int two = 0;
     for (const gs::GameRuleConfig& rule : config.game_rules) {
         for (const gs::GameRuleNodeConfig& node : rule.nodes) {
             if (node.spawn.controller.route.empty()) continue;
-            require(node.spawn.controller.role == gs::AgentControllerRole::kNone);
+            require(node.spawn.controller.role == gs::AgentControllerRole::kPatrol);
             if (node.spawn.controller.route.size() == 9u) ++nine;
             if (node.spawn.controller.route.size() == 2u) ++two;
         }
@@ -131,64 +133,82 @@ void the_shipped_routes_are_controller_routes(const gs::GameServerGameplayConfig
 void mismatched_controllers_are_refused() {
     // Controls: an edit that keeps the catalog valid loads, so each refusal
     // below is the edit's and not the copy's.
-    require(loads_after("giant route kept, type garrison", kGameRule, [](YAML::Node& root) {
-        giant_spawn(root)["controller"]["type"] = "garrison";
+    require(loads_after("giant route kept, type patrol", kGameRule, [](YAML::Node& root) {
+        giant_spawn(root)["behavior"]["type"] = "patrol";
     }));
-    require(loads_after("nest spawner, type garrison", "entity_templates/208_prop_gingerbread_nest.yaml",
-                        [](YAML::Node& root) { root["spawner"]["controller"]["type"] = "garrison"; }));
+    require(loads_after("nest spawner, type guard", "entity_templates/208_prop_gingerbread_nest.yaml",
+                        [](YAML::Node& root) { root["spawner"]["behavior"]["type"] = "guard"; }));
+
+    // The rename (B8): the old key and the old names are refused, not read.
+    require(!loads_after("legacy controller key", kGameRule, [](YAML::Node& root) {
+        YAML::Node spawn = giant_spawn(root);
+        spawn["controller"] = spawn["behavior"];
+        spawn.remove("behavior");
+    }));
+    require(!loads_after("renamed type garrison", kGameRule, [](YAML::Node& root) {
+        giant_spawn(root)["behavior"]["type"] = "garrison";
+    }));
+    require(!loads_after("guard with a route", kGameRule, [](YAML::Node& root) {
+        giant_spawn(root)["behavior"]["type"] = "guard";
+    }));
+    require(!loads_after("patrol without a route", kGameRule, [](YAML::Node& root) {
+        YAML::Node spawn = giant_spawn(root);
+        spawn["behavior"].remove("route");
+        spawn["behavior"]["type"] = "patrol";
+    }));
 
     require(!loads_after("legacy patrol_route", kGameRule, [](YAML::Node& root) {
         YAML::Node spawn = giant_spawn(root);
         spawn["patrol_route"].push_back(YAML::Load("{x: -60.0, y: 0.0, z: -56.0}"));
         spawn["patrol_route"].push_back(YAML::Load("{x: -40.0, y: 0.0, z: -56.0}"));
     }));
-    require(!loads_after("type patrol", kGameRule, [](YAML::Node& root) {
-        giant_spawn(root)["controller"]["type"] = "patrol";
+    require(!loads_after("type squad", kGameRule, [](YAML::Node& root) {
+        giant_spawn(root)["behavior"]["type"] = "squad";
     }));
     // A hunter since P6a, with its own tuning on the spawn source.
     require(loads_after("type hunter", kGameRule, [](YAML::Node& root) {
         YAML::Node spawn = giant_spawn(root);
-        spawn["controller"].remove("route");
-        spawn["controller"]["type"] = "hunter";
-        spawn["controller"]["on_target_lost"] = "garrison";
+        spawn["behavior"].remove("route");
+        spawn["behavior"]["type"] = "hunter";
+        spawn["behavior"]["on_target_lost"] = "guard";
     }));
     require(!loads_after("hunter tuning without type hunter", kGameRule, [](YAML::Node& root) {
-        giant_spawn(root)["controller"]["target_source"] = "nearest_hostile";
+        giant_spawn(root)["behavior"]["target_source"] = "nearest_hostile";
     }));
     require(!loads_after("hunter on a sentry template", kGameRule, [](YAML::Node& root) {
         YAML::Node spawn = giant_spawn(root);
         spawn["entity_template"] = "sentry_grunt";
-        spawn["controller"].remove("route");
-        spawn["controller"]["type"] = "hunter";
+        spawn["behavior"].remove("route");
+        spawn["behavior"]["type"] = "hunter";
     }));
-    require(!loads_after("garrison on a sentry template", kGameRule, [](YAML::Node& root) {
+    require(!loads_after("guard on a sentry template", kGameRule, [](YAML::Node& root) {
         YAML::Node spawn = giant_spawn(root);
         spawn["entity_template"] = "sentry_grunt";
-        spawn["controller"].remove("route");
-        spawn["controller"]["type"] = "garrison";
+        spawn["behavior"].remove("route");
+        spawn["behavior"]["type"] = "guard";
     }));
     require(!loads_after("route on a sentry", kGameRule, [](YAML::Node& root) {
         giant_spawn(root)["entity_template"] = "sentry_grunt";
     }));
-    require(!loads_after("sentry on a garrison template", kGameRule, [](YAML::Node& root) {
+    require(!loads_after("sentry on a guard template", kGameRule, [](YAML::Node& root) {
         YAML::Node spawn = giant_spawn(root);
-        spawn["controller"].remove("route");
-        spawn["controller"]["type"] = "sentry";
+        spawn["behavior"].remove("route");
+        spawn["behavior"]["type"] = "sentry";
     }));
     require(!loads_after("short route", kGameRule, [](YAML::Node& root) {
-        YAML::Node route = giant_spawn(root)["controller"]["route"];
+        YAML::Node route = giant_spawn(root)["behavior"]["route"];
         route.remove(1);
     }));
-    require(!loads_after("controller on a template with no ai", kGameRule, [](YAML::Node& root) {
-        nest_spawn(root)["controller"]["type"] = "garrison";
+    require(!loads_after("behavior on a template with no ai", kGameRule, [](YAML::Node& root) {
+        nest_spawn(root)["behavior"]["type"] = "guard";
     }));
     require(!loads_after("sentry on a template that moves",
                          "entity_templates/208_prop_gingerbread_nest.yaml",
-                         [](YAML::Node& root) { root["spawner"]["controller"]["type"] = "sentry"; }));
+                         [](YAML::Node& root) { root["spawner"]["behavior"]["type"] = "sentry"; }));
     require(!loads_after("route on a spawner",
                          "entity_templates/208_prop_gingerbread_nest.yaml", [](YAML::Node& root) {
-        root["spawner"]["controller"]["route"].push_back(YAML::Load("{x: 0.0, y: 0.0, z: 0.0}"));
-        root["spawner"]["controller"]["route"].push_back(YAML::Load("{x: 5.0, y: 0.0, z: 0.0}"));
+        root["spawner"]["behavior"]["route"].push_back(YAML::Load("{x: 0.0, y: 0.0, z: 0.0}"));
+        root["spawner"]["behavior"]["route"].push_back(YAML::Load("{x: 5.0, y: 0.0, z: 0.0}"));
     }));
     require(!loads_after("sentry template in a squad",
                          "patrol_templates/1_patrol_gingerbread_warband.yaml", [](YAML::Node& root) {
@@ -196,8 +216,9 @@ void mismatched_controllers_are_refused() {
     }));
 }
 
-// A squad's members run as patrol and everyone else as their template says.
-void squad_members_run_as_patrol(const gs::GameServerGameplayConfig& config) {
+// A squad's members run as squad and everyone else as their template says --
+// or as patrol, where a route spawned them.
+void squad_members_run_as_squad(const gs::GameServerGameplayConfig& config) {
     const gs::KernelGameplayCatalogStorage storage = gs::build_kernel_gameplay_catalog(config);
     std::ifstream scene_file(catalog_root() / config.static_collision_scene.entry_path,
                              std::ios::binary);
@@ -247,31 +268,35 @@ void squad_members_run_as_patrol(const gs::GameServerGameplayConfig& config) {
     }
     require(members > 0u);
 
-    std::size_t patrol = 0;
+    std::size_t squad = 0;
     std::size_t others = 0;
     for (const gs::AgentRuntimeState& agent : manager.agents()) {
         const gs::ActorTemplateConfig* actor_template =
             gs::find_actor_template(config, agent.actor_template_id);
         require(actor_template != nullptr);
         if (agent.patrol.has_slot) {
+            require(agent.controller_role == gs::AgentControllerRole::kSquad);
+            ++squad;
+        } else if (!agent.route_patrol.path.empty()) {
             require(agent.controller_role == gs::AgentControllerRole::kPatrol);
-            ++patrol;
+            ++others;
         } else {
-            // Nothing in the shipped catalog names a controller type, so
-            // every agent outside a squad keeps its template's default.
+            // Nothing in the shipped catalog names a behavior type, so every
+            // agent outside a squad and off a route keeps its template's
+            // default.
             require(agent.controller_role == actor_template->default_controller_role);
             ++others;
         }
     }
-    std::printf("[runtime] patrol members %zu, others %zu\n", patrol, others);
+    std::printf("[runtime] squad members %zu, others %zu\n", squad, others);
     require(others > 0u);
     Kernel_Destroy(kernel);
 }
 
-// The one behaviour P1c adds: a garrison on a route walks it, leaves it to
+// The one behaviour P1c adds: a patrol on a route walks it, leaves it to
 // fight what it sees, and once it has forgotten the target walks back onto it.
-void a_garrison_leaves_its_route_to_fight_and_returns(gs::GameServerGameplayConfig config) {
-    // Only this test's world rule: a tripod (a garrison) on a 2-point route
+void a_patrol_leaves_its_route_to_fight_and_returns(gs::GameServerGameplayConfig config) {
+    // Only this test's world rule: a tripod (a patrol, by its route) on a 2-point route
     // across the camp pad, where the catalog puts players -- flat ground.
     const KernelVec3 pad = config.player.spawn_position;
     config.preload_director_template_ids.clear();
@@ -328,7 +353,7 @@ void a_garrison_leaves_its_route_to_fight_and_returns(gs::GameServerGameplayConf
 
     // Walking the route.
     run(90);
-    require(tripod().controller_role == gs::AgentControllerRole::kGarrison);
+    require(tripod().controller_role == gs::AgentControllerRole::kPatrol);
     require(tripod().route_patrol.path.size() >= 2u);
     // The path walked, tick by tick, not the net displacement: at full speed
     // the tripod reaches its route's corner inside this second and turns back.
@@ -340,7 +365,7 @@ void a_garrison_leaves_its_route_to_fight_and_returns(gs::GameServerGameplayConf
         walked += std::hypot(to.x - from.x, to.z - from.z);
     }
     const KernelVec3 walked_to = tripod().position;
-    std::printf("[garrison] route walk: %.2f m in 1 s, state %d\n", walked,
+    std::printf("[patrol] route walk: %.2f m in 1 s, state %d\n", walked,
                 static_cast<int>(tripod().sentry.state));
     // At its 2.5 m/s. 1.35 m/s while every re-aim dropped the controller's
     // anchor and seated the capsule at the tripod's body height.
@@ -369,7 +394,7 @@ void a_garrison_leaves_its_route_to_fight_and_returns(gs::GameServerGameplayConf
         run(1);
         engaged = gs::is_engaged(tripod().sentry.state);
     }
-    std::printf("[garrison] engaged=%d target=%u\n", engaged ? 1 : 0, tripod().sentry.target);
+    std::printf("[patrol] engaged=%d target=%u\n", engaged ? 1 : 0, tripod().sentry.target);
     require(engaged);
 
     // Gone: it forgets them, goes idle, and walks the route again.
@@ -391,7 +416,7 @@ void a_garrison_leaves_its_route_to_fight_and_returns(gs::GameServerGameplayConf
     run(60);
     const KernelVec3 resumed_to = tripod().position;
     const float resumed = std::hypot(resumed_to.x - resumed_from.x, resumed_to.z - resumed_from.z);
-    std::printf("[garrison] after forgetting: %.2f m in 2 s\n", resumed);
+    std::printf("[patrol] after forgetting: %.2f m in 2 s\n", resumed);
     require(resumed > 1.0f);
     Kernel_Destroy(kernel);
 }
@@ -402,8 +427,8 @@ int main() {
     const gs::GameServerGameplayConfig config = load(catalog_root());
     the_shipped_routes_are_controller_routes(config);
     mismatched_controllers_are_refused();
-    squad_members_run_as_patrol(config);
-    a_garrison_leaves_its_route_to_fight_and_returns(config);
+    squad_members_run_as_squad(config);
+    a_patrol_leaves_its_route_to_fight_and_returns(config);
     std::printf("ai_controller_spec_test passed\n");
     return 0;
 }

@@ -94,6 +94,16 @@ void GameServer::tick(float delta_seconds) {
                 loadout_.handle_message(messages[index]);
             }
         }
+        // Players' orders to their side's agents (docs/AI_BEHAVIOR_PLAN.md
+        // §8), each answered whether or not it was obeyed.
+        KernelAgentCommand commands[8]{};
+        while ((count = Kernel_ServerPollAgentCommands(kernel_, commands, 8u)) != 0u) {
+            for (std::uint32_t index = 0; index < count; ++index) {
+                const KernelAgentCommandOutcome outcome =
+                    agent_runtime_manager_.handle_agent_command(commands[index]);
+                Kernel_ServerSendAgentCommandOutcome(kernel_, &outcome);
+            }
+        }
     }
     for (const std::uint32_t net_id : respawn_.advance(delta_seconds)) {
         revive_player(net_id, delta_seconds);

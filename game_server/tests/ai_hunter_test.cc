@@ -2,7 +2,7 @@
 // has never seen. The gingerbread, made a hunter for this test, starts 60 m
 // from a player -- far outside its 26 m cone, and off to its side. It has to
 // seek towards the player from the shared broad-phase table, see it, and
-// pursue it. Then, told to stand as a garrison when its target is gone, it
+// pursue it. Then, told to stand as a guard when its target is gone, it
 // has to do that once the player is removed from the world.
 
 #include <array>
@@ -90,14 +90,14 @@ int main() {
     config.game_rules.clear();
     config.world_rule_spawns.clear();
     config.patrols.clear();
-    // The gingerbread as a hunter that turns garrison once its target is gone.
+    // The gingerbread as a hunter that turns guard once its target is gone.
     const std::uint32_t gingerbread_id = template_id_of(config, "gingerbread");
     for (auto* templates : {&config.actor_templates, &config.entity_templates}) {
         for (gs::ActorTemplateConfig& actor : *templates) {
             if (actor.actor_template_id != gingerbread_id) continue;
             actor.default_controller_role = gs::AgentControllerRole::kHunter;
             actor.hunter.target_source = gs::HunterTargetSource::kNearestHostile;
-            actor.hunter.on_target_lost = gs::HunterOnTargetLost::kGarrison;
+            actor.hunter.on_target_lost = gs::HunterOnTargetLost::kGuard;
         }
     }
     KernelConfig kernel_config{};
@@ -186,7 +186,7 @@ int main() {
 
     // A tent that hides its occupants hides them from the hunter too (Q3) --
     // but hidden is not gone: it keeps its target and stays a hunter, waiting
-    // with no path, rather than turning garrison.
+    // with no path, rather than turning guard.
     const KernelVec3 player_at = position_of(player);
     const std::uint32_t tent = create(
         kernel, template_id_of(config, "tent"),
@@ -218,7 +218,7 @@ int main() {
     require(game_server.shelter_director().shelter_of(player) == 0u);
     require(after_them);
 
-    // Gone for good: with on_target_lost garrison, it stays where it is.
+    // Gone for good: with on_target_lost guard, it stays where it is.
     KernelEntityLifecycleCommand destroy{};
     destroy.struct_size = sizeof(destroy);
     destroy.command_type = KernelEntityLifecycleCommandType_Destroy;
@@ -229,9 +229,9 @@ int main() {
     require(agent != nullptr);
     std::printf("[hunter] after its target was removed: role %d\n",
                 static_cast<int>(agent->controller_role));
-    require(agent->controller_role == gs::AgentControllerRole::kGarrison);
+    require(agent->controller_role == gs::AgentControllerRole::kGuard);
     require(agent->hunt_target == 0u);
-    // A garrison is never left blind.
+    // A guard is never left blind.
     for (int tick = 0; tick < 2; ++tick) step();
     require(!agent_of(game_server, hunter)->vision_off);
 

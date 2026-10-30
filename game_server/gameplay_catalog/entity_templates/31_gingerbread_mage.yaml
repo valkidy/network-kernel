@@ -58,7 +58,7 @@ vision:
 # walked far enough away to restart the chase. 16 < 20 <= 22 closes that band:
 # everywhere the mage is parked, it shoots.
 ai:
-  default_controller: garrison
+  default_behavior: guard
   profile: grenade_artillery
   perception:
     # 1.5 s of wind-up before the first shell, half the grunt's, and it is spent
@@ -84,8 +84,8 @@ ai:
     input_magnitude: 1.0
   # Only read when this mage is in a squad; a lone one has no slot and none of
   # this applies to it.
-  controllers:
-    patrol:
+  behaviors:
+    squad:
       slot_radius_meters: 1.2
       input_magnitude: 0.5
       # The cone's own reach, measured from where the mage broke formation. A
