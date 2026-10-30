@@ -2,7 +2,7 @@
 
 需求：玩家逼近遠程單位時，遠程單位先後退，拉開到自身武器射程的最大距離附近，再攻擊玩家。
 
-狀態：計劃，尚未實作。基準：main 4f295edc。
+狀態：R0 完成（2026-10-30，見 §7），R1 尚未開始。量測基準：main 4f295edc；實作基準：main 351993a2（已合併 `claude/ai-behavior-*`）。
 
 ---
 
@@ -123,8 +123,8 @@ ai:
 | Q3 | 有腳的單位（21/22/23/211/39）要不要支援？ | **第一版不支援**，載入時拒絕。有腳單位的身體會轉向移動方向，後退會背對玩家而失去視野。另外視野方向的修正（fbf21954）還在 `claude/giant-vision-melee`，沒進 main |
 | Q4 | 巡邏隊成員要不要後退？ | 建議**不要**。巡邏隊成員有隊形位置與巡邏隊 leash，後退會打亂隊形。第一版只給 garrison / hunter |
 | Q5 | 太近的判斷要用目前目標，還是最近的敵人？ | 第一版用**目前目標**。換成最近的敵人時，會和「目標仍看得到就不換」（D8）衝突 |
-| Q6 | 要先套用在哪些出貨單位？ | 這是內容設計的決定，由使用者決定。候選：法師（trigger 8 / target 19）、無人機（trigger 4 / target 12） |
-| Q7 | 要做在哪個基準上？ | `claude/ai-behavior-*` 這條還沒合併的分支串（C1 把 chaser 的角色分支抽成 behavior class）會改到同一個檔案。建議**等它合併進 main 後再從 main 開始**；否則從 main 開始做，合併時會有衝突 |
+| Q6 | 要先套用在哪些出貨單位？ | **已決定（2026-10-30）：只調整 gingerbread_mage 和 beam_drone。** 數值草案：法師 trigger 8 / target 19；無人機 trigger 4 / target 12 |
+| Q7 | 要做在哪個基準上？ | **已決定（2026-10-30）：`claude/ai-behavior-*` 已合併進 main（351993a2），從 main 開始。** 分支 `claude/ranged-retreat` |
 
 ---
 
@@ -148,3 +148,44 @@ ABI：無。snapshot schema：無。`bundle.bytes`：只有 R4 需要。
 - 只讀和該階段直接相關的檔案：`agent_chaser_controller.cc/.h`、`patrol_navigation.cc/.h`、`gameplay_config.cc` 的 `ai.locomotion` 解析段落。
 - 如果 R0 發現 hover 單位或開火期間不能倒退，就先停下來說明，再決定是否需要改 kernel。
 - 每個階段完成時回報：分支與 commit、讀過的檔案、改過的檔案、搜尋、build / test 指令，以及 ABI / snapshot / `bundle.bytes` 是否有變動。
+
+---
+
+## 7. R0 量測結果（2026-10-30，main 351993a2）
+
+用暫時的 probe 在真實地圖上量測，probe 沒有 commit。
+
+**R0-1：kernel 層直接送輸入，不經過 AI。** probe 自己送移動輸入（`Kernel_ServerEnqueueEntityInput`），並固定朝向目標（`Kernel_ServerEnqueueEntityTransform`）。目標在西方，移動往東：
+
+| 項目 | gingerbread_mage（character） | beam_drone（hover） |
+|---|---|---|
+| 往目標前進 | 1.80 m/s | 4.00 m/s |
+| 面向目標後退，每 tick 重送朝向 | 1.80 m/s，朝向不變 | 4.00 m/s，朝向不變，高度維持 |
+| 後退，不重送朝向 | 1.80 m/s，朝向不變 | 4.00 m/s，朝向不變 |
+
+結論：
+
+- 沒有腳的單位後退時，速度和前進一樣。
+- kernel 不會把它們轉向移動方向；朝向完全由 AI 決定。
+- hover 單位後退時高度正常。
+
+**R0-2：後退時開火。** 這部分改用真正的 AI 開火。做法：暫時修改 `chase_move`，讓它在 hold 時改成遠離目標（只在 probe 用，沒有 commit）。玩家站著不動，起點距離：法師 10 m、無人機 5 m。
+
+| 項目 | gingerbread_mage | beam_drone |
+|---|---|---|
+| 有 action 進行時的移動速度 | 1.80 m/s（319 ticks，沒有任何一 tick 停下） | 4.00 m/s（540 ticks，全程都在 action 中，沒有停下） |
+| 沒有 action 時的移動速度 | 1.80 m/s | —（光束是持續按住的武器，一直在 action 中） |
+| 20 秒內開火 | 18 發 | 6 次光束 |
+| 狀態 | 一直維持 Attack（看得到目標） | 一直維持 Attack |
+
+結論：
+
+- 開火的 action 不會讓單位停下。action template 本來就沒有「定身」的 flag。
+- 後退時照常選武器、照常開火（Q1 的建議可行）。
+
+**R0 的附帶發現：**
+
+- 只用 kernel、不 tick `GameServer` 時，probe 送出的開火 input 沒有啟動任何 action，原因沒有追查。改用真正的 AI 量測後就不需要了。R1 的測試應該經過 `GameServer`。
+- 暫時修改的 `chase_move` 只是在 hold 時往後退，會在 stop 與 resume 之間來回（法師 16～20 m、無人機 8～10 m）。這正是 R1 要用 trigger / target 距離帶取代的行為。
+
+**對計劃的影響：** 不需要改 kernel；R1 可以照 §3 進行。
