@@ -526,6 +526,82 @@ KernelVec2 chase_move(
     return KernelVec2{length * std::cos(heading), length * std::sin(heading)};
 }
 
+// A retreat that is getting somewhere covers this share of what its input
+// asks for over each window; one that does not is up against something and
+// fights from where it is.
+constexpr std::uint32_t kRetreatStallWindowTicks = 15u;
+constexpr float kRetreatStallFraction = 0.3f;
+// Stops this short of the leash, so backing off is never what breaks it.
+constexpr float kRetreatLeashMarginMeters = 0.5f;
+
+void end_retreat(const AgentRetreatTuning& retreat, AgentRuntimeState* agent) {
+    agent->retreating = false;
+    agent->retreat_ticks = 0u;
+    agent->retreat_window_ticks = 0u;
+    agent->retreat_cooldown_ticks = retreat.cooldown_ticks;
+    // Hold where it ended: inside the hold band after a retreat that made its
+    // distance, and too close to want to close after one that did not.
+    agent->chase_holding = true;
+}
+
+// Backing off from a target that has come too close (chase.retreat,
+// docs/AI_RANGED_RETREAT_PLAN.md). Called while pursuing a target in sight,
+// after chase_move: while retreating it replaces `move` with one straight
+// away from the target, and the caller keeps facing the target. Never for a
+// squad member, never once a leap or charge is under way.
+void update_retreat(
+    const AgentRetreatTuning& retreat,
+    float leash_meters,
+    float step_meters,
+    const KernelVec3& target_position,
+    AgentRuntimeState* agent,
+    KernelVec2* move) {
+    if (retreat.trigger_distance_meters <= 0.0f) {
+        return;
+    }
+    if (agent->patrol.has_slot || agent->leap_ticks_to_landing > 0u ||
+        agent->charge_windup_ticks > 0u || agent->charge_ticks_left > 0u) {
+        if (agent->retreating) end_retreat(retreat, agent);
+        return;
+    }
+    const float distance =
+        agent_steering::horizontal_distance(agent->position, target_position);
+    if (!agent->retreating) {
+        if (agent->retreat_cooldown_ticks > 0u ||
+            distance >= retreat.trigger_distance_meters) {
+            return;
+        }
+        agent->retreating = true;
+        agent->retreat_ticks = 0u;
+        agent->retreat_window_start = agent->position;
+        agent->retreat_window_ticks = 0u;
+    }
+    bool done = distance >= retreat.target_distance_meters ||
+        agent->retreat_ticks >= retreat.max_ticks ||
+        (leash_meters > 0.0f &&
+         agent_steering::horizontal_distance(agent->position, agent->patrol.leash_anchor) >=
+             leash_meters - kRetreatLeashMarginMeters);
+    if (!done && agent->retreat_window_ticks >= kRetreatStallWindowTicks) {
+        const float made_good = agent_steering::horizontal_distance(
+            agent->position, agent->retreat_window_start);
+        const float asked = step_meters * retreat.input_magnitude *
+            static_cast<float>(agent->retreat_window_ticks);
+        done = made_good < kRetreatStallFraction * asked;
+        agent->retreat_window_start = agent->position;
+        agent->retreat_window_ticks = 0u;
+    }
+    if (done) {
+        end_retreat(retreat, agent);
+        *move = KernelVec2{0.0f, 0.0f};
+        return;
+    }
+    ++agent->retreat_ticks;
+    ++agent->retreat_window_ticks;
+    const KernelVec2 toward = agent_steering::horizontal_move_toward(
+        agent->position, target_position, retreat.input_magnitude);
+    *move = KernelVec2{-toward.x, -toward.y};
+}
+
 }  // namespace
 
 AgentChaserController::AgentChaserController(AgentChaserConfig config)
@@ -551,7 +627,7 @@ void AgentChaserController::tick(
     KernelHandle* kernel,
     const PerceptionFrame& frame,
     const AgentBatch& agents,
-    float) const {
+    float delta_seconds) const {
     if (kernel == nullptr) {
         return;
     }
@@ -565,6 +641,13 @@ void AgentChaserController::tick(
         for (std::uint32_t& cooldown : agent.skill_cooldown_ticks) {
             if (cooldown > 0u) --cooldown;
         }
+        if (agent.retreat_cooldown_ticks > 0u) {
+            --agent.retreat_cooldown_ticks;
+        }
+        // Set where a pursuit with its target in sight runs the retreat; a
+        // retreat that went a tick without one -- the target lost, the pursuit
+        // over -- ends.
+        bool retreat_ran = false;
         if (agent.weapon_skill >= config_.weapon_skills.size()) {
             agent.weapon_skill = 0;
         }
@@ -841,9 +924,19 @@ void AgentChaserController::tick(
                 move = chase_move(
                     config_.chase, &agent, perception.target_position,
                     spacing[agent_index]);
+                update_retreat(
+                    config_.chase.retreat,
+                    behavior.leash_meters(config_),
+                    sentry_config.move_speed_meters_per_second * delta_seconds,
+                    perception.target_position,
+                    &agent,
+                    &move);
+                retreat_ran = true;
                 // A charge is tried ahead of a leap: winding one up roots the
                 // agent from this tick, and a leap must not carry it off.
-                if (target_state != nullptr &&
+                // Neither starts while it backs away.
+                if (agent.retreating) {
+                } else if (target_state != nullptr &&
                     try_start_charge(
                         config_, &agent, entity_state, target_state->position)) {
                     move = KernelVec2{0.0f, 0.0f};
@@ -900,7 +993,9 @@ void AgentChaserController::tick(
                     --agent.sentry.ballistic_retry_ticks;
                 } else if (agent.charge_windup_ticks > 0u) {
                     // Wound up this tick: no swing on top of it.
-                } else if (target_within_attack_range) {
+                } else if (target_within_attack_range &&
+                           (!agent.retreating ||
+                            config_.chase.retreat.fire_while_retreating)) {
                     ai::ScopedIntent intent;
                     intent.scope = ai::IntentScope::kActor;
                     intent.type = "AttackTarget";
@@ -992,6 +1087,10 @@ void AgentChaserController::tick(
                 : sentry_config.animation_idle;
         } else if (agent.charge_ticks_left > 0u) {
             agent.animation_state = sentry_config.animation_attack;
+        }
+
+        if (agent.retreating && !retreat_ran) {
+            end_retreat(config_.chase.retreat, &agent);
         }
 
         // Exactly one input per tick, always. An agent that submits none keeps

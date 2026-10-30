@@ -2,7 +2,7 @@
 
 需求：玩家逼近遠程單位時，遠程單位先後退，拉開到自身武器射程的最大距離附近，再攻擊玩家。
 
-狀態：R0 完成（2026-10-30，見 §7），R1 尚未開始。量測基準：main 4f295edc；實作基準：main 351993a2（已合併 `claude/ai-behavior-*`）。
+狀態：R0、R1 完成（2026-10-30，見 §7、§8），R2 尚未開始。量測基準：main 4f295edc；實作基準：main 351993a2（已合併 `claude/ai-behavior-*`）。
 
 ---
 
@@ -189,3 +189,58 @@ ABI：無。snapshot schema：無。`bundle.bytes`：只有 R4 需要。
 - 暫時修改的 `chase_move` 只是在 hold 時往後退，會在 stop 與 resume 之間來回（法師 16～20 m、無人機 8～10 m）。這正是 R1 要用 trigger / target 距離帶取代的行為。
 
 **對計劃的影響：** 不需要改 kernel；R1 可以照 §3 進行。
+
+---
+
+## 8. R1 實作結果（2026-10-30，分支 `claude/ranged-retreat`）
+
+**Q1–Q5 採用 §4 的建議**：後退時可以開火、超時放棄、不支援有腳單位、巡邏隊成員不後退、只看目前目標。
+
+**改動**（只改 game_server；kernel、ABI、snapshot schema 都沒變）：
+
+- `agent_chaser_controller.h`：新增 `AgentRetreatTuning`，掛在 `AgentChaseTuning::retreat`。
+  - `trigger_distance_meters` 為 0 表示關閉，這是預設值。
+- `agent_runtime.h`：每個 agent 新增後退狀態：
+  - `retreating`、`retreat_ticks`、`retreat_cooldown_ticks`
+  - 卡住偵測用的 `retreat_window_start` / `retreat_window_ticks`
+- `gameplay_config.cc`：
+  - 解析 `ai.locomotion.retreat`；不認得的欄位會被拒絕；`trigger_distance_meters` 必填。
+  - 這些設定都會納入 catalog hash。
+  - 載入檢查放在 `resolve_agent_skills` 的最後，因為那裡同時有武器射程、視野距離和 stop / resume。
+  - `target_distance_meters` 沒寫時 = min(0.9 × 最遠武器射程, resume)。
+  - 錯誤訊息以 `actor template ai.locomotion.retreat` 開頭。
+- `agent_chaser_controller.cc`：
+  - 新增 `update_retreat`，只在 pursuit 分支、而且目標看得到時，接在 `chase_move` 之後執行。後退時：
+    - 取代 `move`，移動方向為遠離目標。
+    - 朝向照舊面向目標。
+    - 不啟動衝撞 / 跳撲。
+    - `fire_while_retreating: false` 時不送攻擊 input。
+  - 結束後退的條件（任何一種結束都會開始 cooldown，並設定 `chase_holding`，所以結束後不會馬上走回去）：
+    - 距離 ≥ target。
+    - 達到 `max_ticks`。
+    - 卡住：每 15 ticks 檢查一次，實際移動距離 < 30% 的預期距離。
+    - 距離 leash 不到 0.5 m。
+    - 該 tick 沒有在追擊、或看不到目標。
+  - 巡邏隊成員（`patrol.has_slot`）以及跳撲 / 衝撞中的單位不會後退。
+
+**和計劃的差異：**
+
+- R1 沒有用 `snap` 探路。chaser controller 拿不到 navmesh，只有 manager 有。改用「實際移動距離」偵測卡住，這擋得住牆和道具，但**擋不住懸崖或 navmesh 邊緣**（單位會掉下去）。懸崖與替代方向（±45° / ±90°）留給 R2，需要把 navmesh raycast 交給 controller。
+- 卡住偵測沒有自動化測試：平地上沒有牆。R2 在真實地圖上測。
+
+**測試 `ai_retreat_test`（新增，通過）：**
+
+- 載入：
+  - 合法設定可載入；target 沒寫時預設為 19.8 m。
+  - 出貨的法師沒有 retreat（`trigger_distance_meters` 為 0）。
+  - 以下 10 種錯誤寫法被拒絕：trigger ≥ stop、target < stop、target > resume、沒有 trigger、不認得的欄位、input_magnitude 為 0、max_ticks 為 0、sentry、有腳的巨人。
+- 行為（平地；設定在程式裡指定，不依賴出貨內容）：
+
+| 情境 | 結果 |
+|---|---|
+| A 法師，玩家站在 5 m | 後退 1 次、234 ticks，停在 19.04 m 不再移動；14 發，其中 11 發在後退中 |
+| B 法師，玩家以 3 m/s 持續逼近（法師 1.8 m/s） | 後退 3 次，最長 90 ticks（= max_ticks）；最後原地應戰在 5 m；22 發，其中 8 發在後退中 |
+| C 法師，`fire_while_retreating: false` | 後退中 0 發，停下後 6 發 |
+| D 無人機，玩家站在 3 m | 後退 1 次、49 ticks，停在 9.53 m；3 次光束 |
+
+**`bundle.bytes`：** 需要重新產生。出貨 template 雖然都沒有加 retreat，但 retreat 欄位已經納入 catalog hash，所有 template 的 hash 都會改變（和 `giant-chase-spacing` 的情況相同）。R4 加上法師與無人機的數值後，需要再產生一次。

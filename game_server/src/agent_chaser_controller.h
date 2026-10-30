@@ -76,6 +76,29 @@ struct AgentChargeTuning {
     bool has_windup_animation = false;
 };
 
+// Backing off from a target that has come too close
+// (`ai.locomotion.retreat`, docs/AI_RANGED_RETREAT_PLAN.md). Opt-in:
+// trigger_distance_meters zero leaves the rest unread, which is every chaser
+// authored before this existed. Only while pursuing, never in a squad, never
+// on a legged rig (its body turns to the way it walks, and with it its eyes).
+struct AgentRetreatTuning {
+    // Closer than this, origin to origin, and it starts backing off.
+    float trigger_distance_meters = 0.0f;
+    // Backed off this far, it stops. Inside the hold band, so it does not
+    // turn round and close again.
+    float target_distance_meters = 0.0f;
+    // Fraction of the template's move speed, 0..1.
+    float input_magnitude = 1.0f;
+    // A target that keeps coming is faster than anything that backs off, so
+    // a retreat that has not opened the gap by now gives up and fights where
+    // it stands.
+    std::uint32_t max_ticks = 90;
+    // After a retreat ends, however it ended, how long before another.
+    std::uint32_t cooldown_ticks = 150;
+    // Whether it keeps shooting while it backs off.
+    bool fire_while_retreating = true;
+};
+
 // Movement tuning layered on top of the sentry's perception and attack tuning.
 struct AgentChaseTuning {
     // Closer than this and the agent holds still instead of walking into the
@@ -111,6 +134,7 @@ struct AgentChaseTuning {
     float spacing_meters = 0.0f;
     AgentLeapTuning leap;
     AgentChargeTuning charge;
+    AgentRetreatTuning retreat;
 };
 
 // What walking to a squad slot costs and what it tolerates (`behaviors.squad`).
