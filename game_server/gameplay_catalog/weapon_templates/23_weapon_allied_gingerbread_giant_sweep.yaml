@@ -1,0 +1,10 @@
+id: 23
+name: Allied Giant Sweep
+weapon_type: melee
+# Bottomless, like every AI weapon here.
+magazine_size: 1
+reserve_magazines: 65535
+fire_action_template: gingerbread_giant_sweep
+reload_action_template: shared_reload
+melee_collider: gingerbread_giant_sweep_cone
+projectile_template: allied_gingerbread_giant_sweep_hit

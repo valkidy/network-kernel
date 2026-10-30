@@ -30,10 +30,11 @@ vision:
   # 35 m and 140 degrees, not the grunts' 12 m and 90: see the cone's own file.
   collider_template: gingerbread_giant_vision_cone
 ai:
-  # A garrison (AI plan D19): walks the route its spawn source gives it, and
+  # A guard (AI behavior plan B8); a spawn source that gives it a route makes
+  # it a patrol, which walks the route. Either way it
   # fights whatever it sees with an arm sweep. Without a route it stands and
   # looks around. Melee, so it closes to 5 m and holds there.
-  default_controller: garrison
+  default_behavior: guard
   profile: monster_sim
   perception:
     alert_ticks: 90
@@ -48,6 +49,14 @@ ai:
     stop_distance_meters: 5.0
     resume_distance_meters: 6.0
     input_magnitude: 1.0
+    # Origin to origin between giants, which nothing else keeps apart: their
+    # movement capsules see only terrain. The body spans 4.8 m either side of
+    # the origin, so 9.5 m leaves them all but clear. Two on one target stand
+    # 119 degrees apart on the 5.5 m inner ring, inside the 130 a giant can
+    # walk round while keeping its target in sight (the controller's
+    # kSpacingMaxOffTargetDegrees). At 10 m that would take 131, so a second
+    # giant would wait on the next ring out, 15 m off and out of reach.
+    spacing_meters: 9.5
   skills:
     # Origin to origin, against the sweep cone's 7 m that reaches a target's
     # near edge: whatever this lets it swing at, it can hit.

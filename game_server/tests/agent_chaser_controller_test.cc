@@ -408,12 +408,12 @@ float horizontal_alignment(const KernelVec3& lhs, const KernelVec3& rhs) {
 // a difference in behaviour below is the squad and not a retuned chase.
 network_example::game_server::AgentChaserConfig patrol_config() {
     network_example::game_server::AgentChaserConfig config = chaser_config();
-    config.patrol.slot_radius_meters = 1.0f;
+    config.squad.slot_radius_meters = 1.0f;
     // Full speed: patrolling at half speed is the shipping default but it only
     // doubles how many ticks these cases have to run for.
-    config.patrol.input_magnitude = 1.0f;
-    config.patrol.leash_meters = 6.0f;
-    config.patrol.leash_resume_meters = 2.0f;
+    config.squad.input_magnitude = 1.0f;
+    config.squad.leash_meters = 6.0f;
+    config.squad.leash_resume_meters = 2.0f;
     return config;
 }
 
@@ -483,7 +483,7 @@ void a_moving_squad_member_keeps_walking_and_catches_up(
     auto config = patrol_config();
     // Like the mage, the old patrol input only matches the squad's pace.
     // Catch-up must be allowed to exceed it.
-    config.patrol.input_magnitude = 0.9f / kAgentMoveSpeed;
+    config.squad.input_magnitude = 0.9f / kAgentMoveSpeed;
     const network_example::game_server::AgentChaserController controller(config);
     for (float offset : {0.0f, 1.2f, 6.0f, -4.0f}) {
         reset_patrol_agent(
@@ -679,7 +679,7 @@ void a_leash_breaks_off_a_pursuit_that_drags_too_far(
     // half the assertion above would also pass for an agent that had merely
     // lost sight of what it was chasing.
     network_example::game_server::AgentChaserConfig unleashed = patrol_config();
-    unleashed.patrol.leash_meters = 0.0f;
+    unleashed.squad.leash_meters = 0.0f;
     const network_example::game_server::AgentChaserController free_chaser(
         unleashed);
     reset_patrol_agent(
@@ -700,21 +700,21 @@ void a_leash_breaks_off_a_pursuit_that_drags_too_far(
     require((*agents)[0].sentry.target == player_net_id);
 }
 
-// A garrison's leash (AI plan P2b): the same break-off as a squad's, measured
+// A guard's leash (AI plan P2b): the same break-off as a squad's, measured
 // from where the chase began, but it walks back to that point rather than to
 // a slot, and refuses to engage on the way.
-void a_garrison_leash_walks_it_back_to_where_it_broke_off(
+void a_guard_leash_walks_it_back_to_where_it_broke_off(
     KernelHandle* kernel,
     std::uint32_t agent_net_id,
     std::uint32_t player_net_id,
     std::vector<network_example::game_server::AgentRuntimeState>* agents) {
     network_example::game_server::AgentChaserConfig config = chaser_config();
-    config.garrison.leash_meters = 8.0f;
-    config.garrison.leash_resume_meters = 2.0f;
+    config.guard.leash_meters = 8.0f;
+    config.guard.leash_resume_meters = 2.0f;
     const network_example::game_server::AgentChaserController leashed(config);
     reset_patrol_agent(
         kernel, agent_net_id, player_net_id, agents, {0.0f, 0.0f, 0.0f});
-    (*agents)[0].patrol = {};  // no squad: a garrison
+    (*agents)[0].patrol = {};  // no squad: a guard
     set_position(kernel, player_net_id, {10.0f, 0.0f, 0.0f});
     Kernel_Update(kernel, kFixedDelta);
     run_frame(kernel, leashed, agents);
@@ -750,7 +750,7 @@ void a_garrison_leash_walks_it_back_to_where_it_broke_off(
         (*agents)[0].sentry.state !=
         network_example::game_server::AgentSentryState::kReturn);
 
-    // Control: the same drag with no garrison leash keeps the pursuit.
+    // Control: the same drag with no guard leash keeps the pursuit.
     const network_example::game_server::AgentChaserController free_chaser(
         chaser_config());
     reset_patrol_agent(
@@ -961,6 +961,77 @@ void an_agents_aim_holds_its_target_through_the_ticks_it_cannot_fire(
 
 }  // namespace
 
+// Two agents of one template on one target. Their capsules see only terrain,
+// as a giant's do, so without spacing they walk into the same spot; with it
+// they stand round the target a spacing apart, each still within reach.
+void agents_sharing_a_target_spread_round_it(
+    KernelHandle* kernel,
+    std::uint32_t agent_net_id,
+    std::uint32_t player_net_id) {
+    // The suite's own agent stays out of it: far off, and not in the batch.
+    set_position(kernel, agent_net_id, {-100.0f, 0.0f, -100.0f});
+    const KernelVec3 target{60.0f, 0.0f, 0.0f};
+    set_position(kernel, player_net_id, target);
+    std::array<std::uint32_t, 2> pair{};
+    for (std::uint32_t& net_id : pair) {
+        net_id = create_agent(kernel, {50.0f, 0.0f, 0.0f});
+        set_combat(kernel, net_id, 30);
+        set_weapon_mechanics(kernel, net_id);
+        set_vision(kernel, net_id, KernelAgentCamp_EnemySide, 2);
+        require(Kernel_ServerSetEntityMovementCollisionMask(
+            kernel, net_id, KERNEL_MOVEMENT_LAYER_TERRAIN));
+    }
+
+    // Side by side 0.6 m apart, 10 m short of the target, which their cones
+    // (+X) see from the first tick.
+    const auto chase_together = [&](float spacing_meters) {
+        auto config = chaser_config();
+        config.chase.spacing_meters = spacing_meters;
+        // Chasing only: side by side, each one's shots at the target hit
+        // the other.
+        config.chase.attack_range_meters = 0.01f;
+        const network_example::game_server::AgentChaserController controller(config);
+        std::vector<network_example::game_server::AgentRuntimeState> agents(2);
+        for (std::size_t index = 0; index < pair.size(); ++index) {
+            agents[index].net_id = pair[index];
+            set_position(
+                kernel, pair[index],
+                {50.0f, 0.0f, index == 0u ? 0.3f : -0.3f});
+            set_combat(kernel, pair[index], 30);
+        }
+        Kernel_Update(kernel, kFixedDelta);
+        for (int tick = 0; tick < 240; ++tick) {
+            run_frame(kernel, controller, &agents);
+        }
+        for (const auto& agent : agents) {
+            require(network_example::game_server::is_pursuing(agent.sentry.state));
+            require(agent.sentry.target == player_net_id);
+            // Parked, not walking on and off the spot.
+            require(agent.chase_holding);
+            require(almost_equal(agent.velocity.x, 0.0f));
+            require(almost_equal(agent.velocity.z, 0.0f));
+        }
+        return std::array<KernelVec3, 2>{
+            query_state(kernel, pair[0]).position,
+            query_state(kernel, pair[1]).position,
+        };
+    };
+
+    // Unspaced, both park at the stop distance on nearly the same line: the
+    // overlap this exists to stop, and what keeps the check below honest.
+    const auto unspaced = chase_together(0.0f);
+    require(horizontal_distance(unspaced[0], unspaced[1]) < 1.0f);
+
+    // Spaced 3 m: a ring of 2.5 m (between stop 2 and resume 3), 74 degrees
+    // apart. Both still close enough to shoot.
+    const auto spaced = chase_together(3.0f);
+    require(horizontal_distance(spaced[0], spaced[1]) >= 2.7f);
+    for (const KernelVec3& position : spaced) {
+        require(horizontal_distance(position, target) <= 3.0f);
+        require(horizontal_distance(position, target) >= 1.5f);
+    }
+}
+
 int main() {
     KernelConfig config = server_config();
     KernelHandle* kernel = Kernel_Create(&config);
@@ -1102,12 +1173,13 @@ int main() {
         kernel, agent_net_id, player_net_id, &agents);
     a_returning_member_walks_to_the_squad_not_to_where_it_left(
         kernel, agent_net_id, player_net_id, &agents);
-    a_garrison_leash_walks_it_back_to_where_it_broke_off(
+    a_guard_leash_walks_it_back_to_where_it_broke_off(
         kernel, agent_net_id, player_net_id, &agents);
     a_leash_breaks_off_a_pursuit_that_drags_too_far(
         kernel, agent_net_id, player_net_id, &agents);
     an_agents_aim_holds_its_target_through_the_ticks_it_cannot_fire(
         kernel, agent_net_id, player_net_id, &agents);
+    agents_sharing_a_target_spread_round_it(kernel, agent_net_id, player_net_id);
 
     Kernel_Destroy(kernel);
     return 0;

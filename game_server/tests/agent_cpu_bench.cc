@@ -726,7 +726,7 @@ void print_composition_table(const Catalog& catalog) {
 // Locomotion steps are their own packet on the snapshot channel, flushed with
 // the snapshot and capped by their own budget rather than by the 1,200 B
 // snapshot one. This measures the rate directly rather than deriving it from the
-// gait. The quadrupeds are garrisons spawned here with no route (AI plan P1c),
+// gait. The quadrupeds are guards spawned here with no route (AI plan P1c),
 // so it is the player at the origin, which they see and close on, that keeps
 // them walking -- before P1c they swept 30 m on their own instead.
 struct LocomotionRow {

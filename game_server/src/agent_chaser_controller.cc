@@ -1,13 +1,18 @@
 #include "game_server/src/agent_chaser_controller.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstddef>
 #include <utility>
+#include <vector>
 
 #include "ai_intent.h"
 #include "game_server/src/actor_intent_executor.h"
+#include "game_server/src/agent_behavior.h"
 #include "game_server/src/agent_steering.h"
 #include "game_server/src/ai_perception_adapter.h"
+#include "game_server/src/patrol_navigation.h"
 #include "kernel/src/kernel_api_internal.h"
 
 namespace network_example::game_server {
@@ -86,18 +91,11 @@ void choose_weapon_skill(
 }
 
 // How close Search comes to where the target was last seen before it stops
-// and looks around, and a returning garrison to where it broke off. The same
-// allowance a route corner gets.
+// and looks around. The same allowance a route corner gets.
 constexpr float kSearchArrivalMeters = 1.0f;
-constexpr float kReturnArrivalMeters = 1.0f;
 
 bool is_zero_move(const KernelVec2& move) {
     return move.x == 0.0f && move.y == 0.0f;
-}
-
-// A slot to stand in, which is what being in a squad amounts to from here.
-bool has_slot(const AgentRuntimeState& agent) {
-    return agent.patrol.has_slot;
 }
 
 // Distance from where the agent broke off, which is what the leash bounds. A
@@ -106,61 +104,6 @@ bool leash_exceeded(float leash_meters, const AgentRuntimeState& agent) {
     return leash_meters > 0.0f &&
         agent_steering::horizontal_distance(
             agent.position, agent.patrol.leash_anchor) > leash_meters;
-}
-
-// A squad member answers to its squad's leash, anyone else to its garrison's.
-float leash_meters(const AgentChaserConfig& config, const AgentRuntimeState& agent) {
-    return has_slot(agent) ? config.patrol.leash_meters : config.garrison.leash_meters;
-}
-
-bool inside_leash_resume(
-    const AgentPatrolTuning& patrol,
-    const AgentRuntimeState& agent) {
-    return agent_steering::horizontal_distance(
-               agent.position, agent.patrol.leash_anchor) <=
-        patrol.leash_resume_meters;
-}
-
-bool standing_in_slot(
-    const AgentPatrolTuning& patrol,
-    const AgentRuntimeState& agent) {
-    return agent_steering::horizontal_distance(
-               agent.position, agent.patrol.slot) <= patrol.slot_radius_meters;
-}
-
-KernelVec2 patrol_move(
-    const AgentPatrolTuning& patrol,
-    const AgentRuntimeState& agent,
-    float max_speed) {
-    const KernelVec3& travel = agent.patrol.travel_velocity;
-    const float speed = std::hypot(travel.x, travel.z);
-    if (speed <= 0.0001f) {
-        return standing_in_slot(patrol, agent)
-            ? KernelVec2{0.0f, 0.0f}
-            : agent_steering::horizontal_move_toward(
-                  agent.position, agent.patrol.slot, patrol.input_magnitude);
-    }
-    if (max_speed <= 0.0f) {
-        return KernelVec2{0.0f, 0.0f};
-    }
-
-    const float forward_x = travel.x / speed;
-    const float forward_z = travel.z / speed;
-    // Correct position error over roughly one second, while feeding through
-    // the squad velocity. Ahead members slow down without stopping or backing
-    // up; lagging members may use the template's full movement speed.
-    constexpr float kCorrectionPerSecond = 1.0f;
-    const float error_x = agent.patrol.slot.x - agent.position.x;
-    const float error_z = agent.patrol.slot.z - agent.position.z;
-    const float along = error_x * forward_x + error_z * forward_z;
-    const float forward_speed = std::max(
-        speed * 0.25f, speed + along * kCorrectionPerSecond);
-    const float velocity_x = forward_x * forward_speed +
-        (error_x - along * forward_x) * kCorrectionPerSecond;
-    const float velocity_z = forward_z * forward_speed +
-        (error_z - along * forward_z) * kCorrectionPerSecond;
-    const float scale = std::max(max_speed, std::hypot(velocity_x, velocity_z));
-    return KernelVec2{velocity_x / scale, velocity_z / scale};
 }
 
 // Mirrors leap_airtime_ticks in simulation/public/simulation.h, which
@@ -310,28 +253,465 @@ void release_charge(
     agent->charge_cooldown_ticks = duration + charge.cooldown_ticks;
 }
 
+// Where one agent of a spaced template stands this tick (chase.spacing_meters):
+// its spot on the ring round a target it shares, and the push away from the
+// others of its template that are too close.
+struct ChaseSpacing {
+    bool has_slot = false;
+    KernelVec3 slot{0.0f, 0.0f, 0.0f};
+    KernelVec2 push{0.0f, 0.0f};
+};
+
+// A push weaker than this is left out of the move: two agents parked in their
+// slots sit a little inside the spacing whenever they stopped short of them,
+// and acting on that would walk them on and off the spot every tick.
+constexpr float kSpacingPushDeadzone = 0.15f;
+
+// How far off the line to its target a spaced agent may walk. A legged body
+// turns to where it walks and its eyes turn with it, so a giant sent round
+// the target to its slot looked away (its cone is 140 degrees), lost sight,
+// fell back to Search and walked straight in to where it last saw it. Inside
+// the giant's half-cone of 70, with room for the body's turn lagging behind.
+constexpr float kSpacingMaxOffTargetDegrees = 65.0f;
+
+// The ring's spots and every agent's push, worked out once for the batch
+// before any agent moves, from where they all stood at the start of the tick.
+// Who is pursuing what is last tick's answer: this tick's is only known once
+// each agent has run.
+std::vector<ChaseSpacing> plan_chase_spacing(
+    const AgentChaseTuning& chase,
+    const PerceptionFrame& frame,
+    const AgentBatch& agents) {
+    std::vector<ChaseSpacing> spacing(agents.size());
+    const float spacing_meters = chase.spacing_meters;
+    if (spacing_meters <= 0.0f || agents.size() < 2u) {
+        return spacing;
+    }
+    constexpr float kPi = 3.14159265358979f;
+    struct Member {
+        std::size_t index = 0;
+        std::uint32_t net_id = 0;
+        KernelVec3 position{0.0f, 0.0f, 0.0f};
+        // Zero unless it is engaging something.
+        std::uint32_t target = 0;
+        float bearing = 0.0f;
+        float rank = 0.0f;
+    };
+    std::vector<Member> members;
+    members.reserve(agents.size());
+    for (std::size_t index = 0; index < agents.size(); ++index) {
+        const AgentRuntimeState& agent = *agents[index];
+        const KernelServerEntityState* state = frame.actor_state(agent.net_id);
+        if (state == nullptr) {
+            continue;
+        }
+        Member member;
+        member.index = index;
+        member.net_id = agent.net_id;
+        member.position = state->position;
+        if (agent.sentry.target != 0u &&
+            (agent.sentry.state == AgentSentryState::kAlert ||
+             is_pursuing(agent.sentry.state))) {
+            member.target = agent.sentry.target;
+        }
+        members.push_back(member);
+    }
+
+    // The push, from every other agent of the template, engaged or not.
+    for (const Member& self : members) {
+        if (self.target == 0u) {
+            continue;
+        }
+        KernelVec2 push{0.0f, 0.0f};
+        for (const Member& other : members) {
+            if (other.net_id == self.net_id) {
+                continue;
+            }
+            const float dx = self.position.x - other.position.x;
+            const float dz = self.position.z - other.position.z;
+            const float distance = std::sqrt(dx * dx + dz * dz);
+            if (distance >= spacing_meters) {
+                continue;
+            }
+            const float weight = 1.0f - distance / spacing_meters;
+            if (distance > 1e-4f) {
+                push.x += dx / distance * weight;
+                push.y += dz / distance * weight;
+            } else {
+                // Standing on the same spot: split them by net id, so each
+                // goes its own way and a replay goes the same way.
+                push.x += self.net_id < other.net_id ? -weight : weight;
+            }
+        }
+        if (std::sqrt(push.x * push.x + push.y * push.y) >= kSpacingPushDeadzone) {
+            spacing[self.index].push = push;
+        }
+    }
+
+    // The rings, for each target more than one of them is after. The nearest
+    // fill the inner ring, between stop and resume so a member in its spot is
+    // already holding and in reach; who does not fit waits on the next ring
+    // out, a spacing further, and so on. Each ring's spots are a spacing apart
+    // and spread round its members' own bearing by at most
+    // kSpacingMaxOffTargetDegrees either way: a spot further round than that
+    // cannot be walked to while keeping the target in sight.
+    const float max_arc = kSpacingMaxOffTargetDegrees * kPi / 180.0f;
+    const float inner_radius =
+        0.5f * (chase.stop_distance_meters + chase.resume_distance_meters);
+    std::vector<Member*> group;
+    std::vector<Member*> ring;
+    for (std::size_t first = 0; first < members.size(); ++first) {
+        const std::uint32_t target = members[first].target;
+        const KernelServerEntityState* target_state =
+            target != 0u ? frame.actor_state(target) : nullptr;
+        if (target_state == nullptr) {
+            continue;
+        }
+        // Each group once: from its first member only.
+        bool seen_before = false;
+        for (std::size_t earlier = 0; earlier < first; ++earlier) {
+            seen_before = seen_before || members[earlier].target == target;
+        }
+        if (seen_before) {
+            continue;
+        }
+        group.clear();
+        for (Member& member : members) {
+            if (member.target == target) {
+                const float dx = member.position.x - target_state->position.x;
+                const float dz = member.position.z - target_state->position.z;
+                member.bearing = std::atan2(dz, dx);
+                // Who is nearer gets the inner ring. One already parked counts
+                // a spacing nearer, so two closing at about the same range do
+                // not trade rings every tick.
+                member.rank = std::sqrt(dx * dx + dz * dz) -
+                    (agents[member.index]->chase_holding ? spacing_meters : 0.0f);
+                group.push_back(&member);
+            }
+        }
+        if (group.size() < 2u) {
+            continue;
+        }
+        std::sort(group.begin(), group.end(), [](const Member* lhs, const Member* rhs) {
+            return lhs->rank != rhs->rank ? lhs->rank < rhs->rank
+                                          : lhs->net_id < rhs->net_id;
+        });
+        std::size_t placed = 0;
+        for (float radius = inner_radius; placed < group.size();
+             radius += spacing_meters) {
+            const float gap = spacing_meters < 2.0f * radius
+                ? 2.0f * std::asin(spacing_meters / (2.0f * radius))
+                : 2.0f * kPi;
+            const std::size_t capacity = gap > 2.0f * max_arc
+                ? 1u
+                : static_cast<std::size_t>(2.0f * max_arc / gap) + 1u;
+            ring.assign(
+                group.begin() + static_cast<std::ptrdiff_t>(placed),
+                group.begin() + static_cast<std::ptrdiff_t>(
+                    std::min(group.size(), placed + capacity)));
+            placed += ring.size();
+            // Round the ring in bearing order, about its members' mean bearing:
+            // unwrapped from the widest gap between them, so a ring straddling
+            // +-180 degrees reads as one run, not two ends.
+            std::sort(ring.begin(), ring.end(), [](const Member* lhs, const Member* rhs) {
+                return lhs->bearing != rhs->bearing ? lhs->bearing < rhs->bearing
+                                                    : lhs->net_id < rhs->net_id;
+            });
+            const std::size_t count = ring.size();
+            std::size_t start = 0;
+            float widest = -1.0f;
+            for (std::size_t k = 0; k < count; ++k) {
+                const float next = k + 1u < count ? ring[k + 1u]->bearing
+                                                  : ring[0]->bearing + 2.0f * kPi;
+                if (next - ring[k]->bearing > widest) {
+                    widest = next - ring[k]->bearing;
+                    start = (k + 1u) % count;
+                }
+            }
+            float mean = 0.0f;
+            for (std::size_t k = 0; k < count; ++k) {
+                mean += ring[(start + k) % count]->bearing +
+                    (start + k >= count ? 2.0f * kPi : 0.0f);
+            }
+            mean /= static_cast<float>(count);
+            for (std::size_t k = 0; k < count; ++k) {
+                const float angle = mean +
+                    (static_cast<float>(k) - 0.5f * static_cast<float>(count - 1u)) * gap;
+                ChaseSpacing& entry = spacing[ring[(start + k) % count]->index];
+                entry.has_slot = true;
+                entry.slot = KernelVec3{
+                    target_state->position.x + radius * std::cos(angle),
+                    target_state->position.y,
+                    target_state->position.z + radius * std::sin(angle),
+                };
+            }
+        }
+    }
+    return spacing;
+}
+
 // Hysteresis around the stop distance. Without the separate resume threshold an
 // agent parked exactly on the boundary would start and stop every tick.
+//
+// With a ring slot it walks to the slot instead and holds there, on the same
+// width of hysteresis measured from the slot; either way the push of
+// `spacing` rides on top.
 KernelVec2 chase_move(
     const AgentChaseTuning& chase,
     AgentRuntimeState* agent,
-    const KernelVec3& target_position) {
-    const float distance =
-        agent_steering::horizontal_distance(agent->position, target_position);
-    if (agent->chase_holding) {
-        if (distance >= chase.resume_distance_meters) {
-            agent->chase_holding = false;
+    const KernelVec3& target_position,
+    const ChaseSpacing& spacing) {
+    KernelVec2 move{0.0f, 0.0f};
+    if (spacing.has_slot) {
+        const float band = chase.resume_distance_meters - chase.stop_distance_meters;
+        const float distance =
+            agent_steering::horizontal_distance(agent->position, spacing.slot);
+        if (agent->chase_holding) {
+            if (distance >= band) {
+                agent->chase_holding = false;
+            }
+        } else if (distance <= 0.5f * band) {
+            agent->chase_holding = true;
         }
-    } else if (distance <= chase.stop_distance_meters) {
-        agent->chase_holding = true;
+        if (!agent->chase_holding) {
+            move = agent_steering::horizontal_move_toward(
+                agent->position, spacing.slot, chase.input_magnitude);
+        }
+    } else {
+        const float distance =
+            agent_steering::horizontal_distance(agent->position, target_position);
+        if (agent->chase_holding) {
+            if (distance >= chase.resume_distance_meters) {
+                agent->chase_holding = false;
+            }
+        } else if (distance <= chase.stop_distance_meters) {
+            agent->chase_holding = true;
+        }
+        if (!agent->chase_holding) {
+            move = agent_steering::horizontal_move_toward(
+                agent->position, target_position, chase.input_magnitude);
+        }
     }
-    if (agent->chase_holding) {
+    if (!spacing.has_slot && is_zero_move(spacing.push)) {
+        return move;
+    }
+    move.x += spacing.push.x * chase.input_magnitude;
+    move.y += spacing.push.y * chase.input_magnitude;
+    float length = std::sqrt(move.x * move.x + move.y * move.y);
+    if (length <= 1e-4f) {
         return KernelVec2{0.0f, 0.0f};
     }
-    return agent_steering::horizontal_move_toward(
-        agent->position,
-        target_position,
-        chase.input_magnitude);
+    if (length > chase.input_magnitude) {
+        move.x *= chase.input_magnitude / length;
+        move.y *= chase.input_magnitude / length;
+        length = chase.input_magnitude;
+    }
+    // Kept within sight of the target (kSpacingMaxOffTargetDegrees). A move
+    // turned back to the edge of that closes on the target, so only one
+    // heading off to the side, with room left to close, is turned back; one
+    // heading away (the push, mostly) or inside the stop distance stands
+    // instead. A legged agent cannot back off without turning its back.
+    const float to_x = target_position.x - agent->position.x;
+    const float to_z = target_position.z - agent->position.z;
+    const float to_target = std::atan2(to_z, to_x);
+    const float off_target = std::remainder(
+        std::atan2(move.y, move.x) - to_target, 2.0f * 3.14159265358979f);
+    const float max_off = kSpacingMaxOffTargetDegrees * 3.14159265358979f / 180.0f;
+    if (std::abs(off_target) <= max_off) {
+        return move;
+    }
+    if (std::abs(off_target) > 0.5f * 3.14159265358979f ||
+        std::sqrt(to_x * to_x + to_z * to_z) <= chase.stop_distance_meters) {
+        return KernelVec2{0.0f, 0.0f};
+    }
+    const float heading = to_target + (off_target > 0.0f ? max_off : -max_off);
+    return KernelVec2{length * std::cos(heading), length * std::sin(heading)};
+}
+
+// A retreat that is getting somewhere covers this share of what its input
+// asks for over each window; one that does not is up against something and
+// fights from where it is.
+constexpr std::uint32_t kRetreatStallWindowTicks = 15u;
+constexpr float kRetreatStallFraction = 0.3f;
+// Stops this short of the leash, so backing off is never what breaks it.
+constexpr float kRetreatLeashMarginMeters = 0.5f;
+// The ways it may back off, tried in order: straight away from the target,
+// then 45 and 90 degrees either side. Past 90 it would be closing again.
+constexpr std::array<float, 5> kRetreatHeadingDegrees{0.0f, 45.0f, -45.0f, 90.0f, -90.0f};
+// How far ahead each heading has to stay on walkable ground.
+constexpr float kRetreatProbeMeters = 2.0f;
+// How far off the navmesh an agent may stand and still be matched to it.
+constexpr float kRetreatNavmeshMatchMeters = 1.0f;
+
+KernelVec2 rotated(const KernelVec2& move, float degrees) {
+    const float radians = degrees * 3.14159265358979f / 180.0f;
+    const float c = std::cos(radians);
+    const float s = std::sin(radians);
+    return KernelVec2{move.x * c - move.y * s, move.x * s + move.y * c};
+}
+
+// Whether backing off along `move` keeps to walkable ground for the next
+// kRetreatProbeMeters; unknown (no navmesh, or the agent off it) counts as
+// clear, which is how R1 behaved before it could look.
+bool retreat_heading_clear(
+    const PatrolNavigation* navigation,
+    const KernelVec3& position,
+    const KernelVec2& move) {
+    if (navigation == nullptr) {
+        return true;
+    }
+    const float length = std::sqrt(move.x * move.x + move.y * move.y);
+    if (length <= 1e-4f) {
+        return true;
+    }
+    const KernelVec3 ahead{
+        position.x + move.x / length * kRetreatProbeMeters,
+        position.y,
+        position.z + move.y / length * kRetreatProbeMeters,
+    };
+    return navigation->walkable_line(position, ahead, kRetreatNavmeshMatchMeters)
+        .value_or(true);
+}
+
+// How long a turn_and_run may spend turning back before it gives the target
+// up as out of sight: a legged giant at 45 degrees a second needs four
+// seconds for the half turn.
+constexpr std::uint32_t kRetreatTurnLimitTicks = 180u;
+
+void end_retreat(const AgentRetreatTuning& retreat, AgentRuntimeState* agent) {
+    agent->retreating = false;
+    agent->retreat_turning = false;
+    agent->retreat_turn_ticks = 0u;
+    agent->retreat_ticks = 0u;
+    agent->retreat_window_ticks = 0u;
+    agent->retreat_cooldown_ticks = retreat.cooldown_ticks;
+    // Hold where it ended: inside the hold band after a retreat that made its
+    // distance, and too close to want to close after one that did not.
+    agent->chase_holding = true;
+}
+
+// The end of the moving-away part of a retreat: a backpedal is over; a
+// turn_and_run stops and turns back to face the target, which the caller does.
+void finish_moving_away(const AgentRetreatTuning& retreat, AgentRuntimeState* agent) {
+    if (retreat.style == AgentRetreatStyle::kTurnAndRun) {
+        agent->retreat_turning = true;
+        agent->retreat_turn_ticks = 0u;
+        return;
+    }
+    end_retreat(retreat, agent);
+}
+
+// Backing off from a target that has come too close (chase.retreat,
+// docs/AI_RANGED_RETREAT_PLAN.md). Called while pursuing, after chase_move:
+// while moving away it replaces `move` with one away from the target. A
+// backpedal keeps facing the target, which the caller does; a turn_and_run
+// faces the way it goes, and once run_ticks are up turns back (the caller
+// again). Never once a leap or charge is under way. A squad member backs off
+// too, held to its squad's leash.
+void update_retreat(
+    const AgentRetreatTuning& retreat,
+    float leash_meters,
+    float step_meters,
+    const PatrolNavigation* navigation,
+    const KernelVec3& target_position,
+    const KernelVec2& spacing_push,
+    AgentRuntimeState* agent,
+    KernelVec2* move) {
+    if (retreat.trigger_distance_meters <= 0.0f) {
+        return;
+    }
+    if (agent->leap_ticks_to_landing > 0u ||
+        agent->charge_windup_ticks > 0u || agent->charge_ticks_left > 0u) {
+        if (agent->retreating) end_retreat(retreat, agent);
+        return;
+    }
+    const float distance =
+        agent_steering::horizontal_distance(agent->position, target_position);
+    if (!agent->retreating) {
+        if (agent->retreat_cooldown_ticks > 0u ||
+            distance >= retreat.trigger_distance_meters) {
+            return;
+        }
+        agent->retreating = true;
+        agent->retreat_turning = false;
+        agent->retreat_turn_ticks = 0u;
+        agent->retreat_ticks = 0u;
+        agent->retreat_window_start = agent->position;
+        agent->retreat_window_ticks = 0u;
+        agent->retreat_heading = 0u;
+    }
+    if (agent->retreat_turning) {
+        *move = KernelVec2{0.0f, 0.0f};
+        return;
+    }
+    const bool run = retreat.style == AgentRetreatStyle::kTurnAndRun;
+    bool done = (run ? agent->retreat_ticks >= retreat.run_ticks
+                     : distance >= retreat.target_distance_meters ||
+                           agent->retreat_ticks >= retreat.max_ticks) ||
+        (leash_meters > 0.0f &&
+         agent_steering::horizontal_distance(agent->position, agent->patrol.leash_anchor) >=
+             leash_meters - kRetreatLeashMarginMeters);
+    if (!done && agent->retreat_window_ticks >= kRetreatStallWindowTicks) {
+        const float made_good = agent_steering::horizontal_distance(
+            agent->position, agent->retreat_window_start);
+        const float asked = step_meters * retreat.input_magnitude *
+            static_cast<float>(agent->retreat_window_ticks);
+        done = made_good < kRetreatStallFraction * asked;
+        agent->retreat_window_start = agent->position;
+        agent->retreat_window_ticks = 0u;
+    }
+    if (done) {
+        finish_moving_away(retreat, agent);
+        *move = KernelVec2{0.0f, 0.0f};
+        return;
+    }
+    const KernelVec2 toward = agent_steering::horizontal_move_toward(
+        agent->position, target_position, retreat.input_magnitude);
+    const KernelVec2 away{-toward.x, -toward.y};
+    // The heading it was on, if that is still clear; otherwise the first
+    // clear one in order; none clear and it is cornered.
+    std::size_t heading = kRetreatHeadingDegrees.size();
+    if (agent->retreat_heading < kRetreatHeadingDegrees.size() &&
+        retreat_heading_clear(
+            navigation, agent->position,
+            rotated(away, kRetreatHeadingDegrees[agent->retreat_heading]))) {
+        heading = agent->retreat_heading;
+    } else {
+        for (std::size_t index = 0; index < kRetreatHeadingDegrees.size(); ++index) {
+            if (retreat_heading_clear(
+                    navigation, agent->position,
+                    rotated(away, kRetreatHeadingDegrees[index]))) {
+                heading = index;
+                break;
+            }
+        }
+    }
+    if (heading == kRetreatHeadingDegrees.size()) {
+        finish_moving_away(retreat, agent);
+        *move = KernelVec2{0.0f, 0.0f};
+        return;
+    }
+    agent->retreat_heading = static_cast<std::uint8_t>(heading);
+    ++agent->retreat_ticks;
+    ++agent->retreat_window_ticks;
+    *move = rotated(away, kRetreatHeadingDegrees[heading]);
+    // Others of its template too close (chase.spacing_meters) push it aside
+    // as it goes, the way they do while it closes -- unless that would take it
+    // somewhere the heading itself was not checked for.
+    if (!is_zero_move(spacing_push)) {
+        KernelVec2 pushed{
+            move->x + spacing_push.x * retreat.input_magnitude,
+            move->y + spacing_push.y * retreat.input_magnitude,
+        };
+        const float length = std::sqrt(pushed.x * pushed.x + pushed.y * pushed.y);
+        if (length > retreat.input_magnitude) {
+            pushed.x *= retreat.input_magnitude / length;
+            pushed.y *= retreat.input_magnitude / length;
+        }
+        if (length > 1e-4f && retreat_heading_clear(navigation, agent->position, pushed)) {
+            *move = pushed;
+        }
+    }
 }
 
 }  // namespace
@@ -359,27 +739,43 @@ void AgentChaserController::tick(
     KernelHandle* kernel,
     const PerceptionFrame& frame,
     const AgentBatch& agents,
-    float) const {
+    float delta_seconds,
+    const PatrolNavigation* navigation) const {
     if (kernel == nullptr) {
         return;
     }
 
     const AgentSentryConfig& sentry_config = config_.sentry;
+    const std::vector<ChaseSpacing> spacing =
+        plan_chase_spacing(config_.chase, frame, agents);
 
-    for (AgentRuntimeState* agent_pointer : agents) {
-        AgentRuntimeState& agent = *agent_pointer;
+    for (std::size_t agent_index = 0; agent_index < agents.size(); ++agent_index) {
+        AgentRuntimeState& agent = *agents[agent_index];
         for (std::uint32_t& cooldown : agent.skill_cooldown_ticks) {
             if (cooldown > 0u) --cooldown;
         }
+        if (agent.retreat_cooldown_ticks > 0u) {
+            --agent.retreat_cooldown_ticks;
+        }
+        // Set where a pursuit with its target in sight runs the retreat; a
+        // retreat that went a tick without one -- the target lost, the pursuit
+        // over -- ends.
+        bool retreat_ran = false;
         if (agent.weapon_skill >= config_.weapon_skills.size()) {
             agent.weapon_skill = 0;
         }
-        const SentryPerceptionSnapshot perception =
+        SentryPerceptionSnapshot perception =
             AiPerceptionAdapter::build_sentry_snapshot(
                 kernel, frame, agent.net_id);
         if (!perception.has_self_state) {
             continue;
         }
+        const AgentBehavior& behavior = agent_behavior_for(agent);
+        if (const std::uint32_t locked = behavior.locked_target(agent)) {
+            AiPerceptionAdapter::focus_on_target(
+                kernel, frame, agent.net_id, locked, &perception);
+        }
+        behavior.after_perception(agent, perception.has_visible_target);
         const KernelServerEntityState& entity_state = perception.self_state;
         // The weapon in hand went off (D14): its cooldown runs from here, and
         // the next shot is drawn afresh.
@@ -424,9 +820,11 @@ void AgentChaserController::tick(
             --agent.charge_cooldown_ticks;
         }
 
-        KernelQuat desired_rotation = entity_state.rotation;
-        bool should_update_rotation = false;
-        KernelVec2 move{0.0f, 0.0f};
+        AgentBehaviorStep step{config_, perception, entity_state};
+        step.desired_rotation = entity_state.rotation;
+        KernelQuat& desired_rotation = step.desired_rotation;
+        bool& should_update_rotation = step.should_update_rotation;
+        KernelVec2& move = step.move;
         bool submitted_input = false;
 
         const bool has_visible_target = perception.has_visible_target;
@@ -479,7 +877,7 @@ void AgentChaserController::tick(
         // it is made before the pursuit states get to look at what they can
         // see. Without it the leash could only be enforced on a tick where
         // vision happened to break.
-        if (leash_exceeded(leash_meters(config_, agent), agent) &&
+        if (leash_exceeded(behavior.leash_meters(config_), agent) &&
             is_engaged(agent.sentry.state)) {
             agent.sentry.target = 0;
             agent.sentry.has_attention_point = false;
@@ -491,54 +889,7 @@ void AgentChaserController::tick(
         // route resumes walking it on the same tick, the way kIdle -> kAlert
         // already reaches the alert branch in the tick it transitions.
         if (agent.sentry.state == AgentSentryState::kReturn) {
-            if (!has_slot(agent)) {
-                // A garrison walks back to where it broke off, then goes idle
-                // there -- which puts one on a route back onto it.
-                const float back = agent_steering::horizontal_distance(
-                    agent.position, agent.patrol.leash_anchor);
-                if (back <= std::max(config_.garrison.leash_resume_meters,
-                                     kReturnArrivalMeters)) {
-                    agent_steering::transition_to(&agent, AgentSentryState::kIdle);
-                } else {
-                    move = agent_steering::horizontal_move_toward(
-                        agent.position,
-                        agent.patrol.leash_anchor,
-                        config_.chase.input_magnitude);
-                    should_update_rotation =
-                        agent_steering::facing_rotation_from_vision_toward(
-                            agent.position,
-                            agent.patrol.leash_anchor,
-                            perception.vision_forward,
-                            entity_state.rotation,
-                            &desired_rotation) ||
-                        should_update_rotation;
-                }
-            } else if (
-                standing_in_slot(config_.patrol, agent) ||
-                inside_leash_resume(config_.patrol, agent)) {
-                // Two ways to be back: standing in the slot, or having returned
-                // to where it broke formation. The second is what ends a short
-                // chase, where the squad may have moved on and waiting to reach
-                // the slot would leave the agent refusing to engage for the
-                // rest of the leg.
-                //
-                // Any re-engagement happens in the kIdle branch below on this
-                // same tick, which is also what re-anchors the leash to where
-                // the next chase starts.
-                agent_steering::transition_to(&agent, AgentSentryState::kIdle);
-            } else {
-                move = patrol_move(
-                    config_.patrol, agent, sentry_config.move_speed_meters_per_second);
-                should_update_rotation =
-                    agent_steering::facing_rotation_from_vision_toward(
-                        agent.position,
-                        KernelVec3{agent.position.x + move.x, agent.position.y,
-                                   agent.position.z + move.y},
-                        perception.vision_forward,
-                        entity_state.rotation,
-                        &desired_rotation) ||
-                    should_update_rotation;
-            }
+            behavior.on_return(agent, step);
         }
 
         if (agent.sentry.state == AgentSentryState::kIdle) {
@@ -548,49 +899,8 @@ void AgentChaserController::tick(
                 agent.patrol.leash_anchor = agent.position;
                 agent.sentry.alerted_by_damage = false;
                 agent_steering::transition_to(&agent, AgentSentryState::kAlert);
-            } else if (agent.controller_role == AgentControllerRole::kHunter) {
-                // Nothing in sight: a hunter goes looking (D10). The Seek
-                // below starts walking on this same tick.
-                agent_steering::transition_to(&agent, AgentSentryState::kSeek);
-            } else if (has_slot(agent) &&
-                       (!standing_in_slot(config_.patrol, agent) ||
-                        std::hypot(agent.patrol.travel_velocity.x,
-                                   agent.patrol.travel_velocity.z) > 0.0001f)) {
-                move = patrol_move(
-                    config_.patrol, agent, sentry_config.move_speed_meters_per_second);
-                should_update_rotation =
-                    agent_steering::facing_rotation_from_vision_toward(
-                        agent.position,
-                        KernelVec3{agent.position.x + move.x, agent.position.y,
-                                   agent.position.z + move.y},
-                        perception.vision_forward,
-                        entity_state.rotation,
-                        &desired_rotation) ||
-                    should_update_rotation;
-            } else if (!has_slot(agent) && !agent.route_patrol.path.empty()) {
-                // A garrison on a route walks it whenever it has nothing to
-                // fight, and after a fight carries on to the corner it was
-                // heading for from wherever the fight left it. Pathing back
-                // and a leash on the route are P2's.
-                move = agent_steering::route_patrol_move(
-                    &agent.route_patrol, agent.position, config_.chase.input_magnitude);
-                should_update_rotation =
-                    agent_steering::facing_rotation_from_vision_toward(
-                        agent.position,
-                        KernelVec3{agent.position.x + move.x, agent.position.y,
-                                   agent.position.z + move.y},
-                        perception.vision_forward,
-                        entity_state.rotation,
-                        &desired_rotation) ||
-                    should_update_rotation;
             } else {
-                should_update_rotation = agent_steering::update_patrol_facing(
-                    sentry_config.patrol_rotation_interval_ticks,
-                    sentry_config.patrol_rotation_min_degrees,
-                    sentry_config.patrol_rotation_max_degrees,
-                    &agent,
-                    entity_state.rotation,
-                    &desired_rotation);
+                behavior.on_idle(agent, step);
             }
         }
 
@@ -646,7 +956,8 @@ void AgentChaserController::tick(
                         &desired_rotation) ||
                     should_update_rotation;
                 move = chase_move(
-                    config_.chase, &agent, perception.target_position);
+                    config_.chase, &agent, perception.target_position,
+                    spacing[agent_index]);
                 ++agent.sentry.state_ticks;
                 if (agent.sentry.state_ticks >=
                     (agent.sentry.alerted_by_damage ? sentry_config.alert_on_damage_ticks
@@ -662,20 +973,8 @@ void AgentChaserController::tick(
                 // here, as it always has, and gives up.
                 agent.sentry.target = 0;
                 agent.sentry.has_attention_point = false;
-                // A squad member goes back to its formation rather than idling
-                // wherever the chase ended. kIdle would let it re-acquire from
-                // there, which is the runaway the leash exists to prevent.
-                // A hunter goes straight back to looking, re-reading where its
-                // target is now rather than when the chase began.
-                if (agent.controller_role == AgentControllerRole::kHunter) {
-                    agent.seek_repath_in = 0;
-                }
                 agent_steering::transition_to(
-                    &agent,
-                    has_slot(agent) ? AgentSentryState::kReturn
-                    : agent.controller_role == AgentControllerRole::kHunter
-                        ? AgentSentryState::kSeek
-                        : AgentSentryState::kIdle);
+                    &agent, behavior.on_target_forgotten(agent));
             } else if (agent.sentry.has_attention_point) {
                 // Nothing in sight: stop and face where its attention is --
                 // the last place it saw something, or where a hit came from.
@@ -724,6 +1023,59 @@ void AgentChaserController::tick(
             if (--agent.charge_windup_ticks == 0u && target_state != nullptr) {
                 release_charge(kernel, config_, &agent, target_state->position);
             }
+        } else if (is_pursuing(agent.sentry.state) && agent.retreating &&
+                   config_.chase.retreat.style == AgentRetreatStyle::kTurnAndRun) {
+            // Running from the target with its back to it, then turning back
+            // (§13). Out of sight is expected here, so the target is followed
+            // by id rather than dropped into Search; a hit only moves its
+            // attention, and it keeps running (§13 decision 1). It holds its
+            // fire throughout.
+            retreat_ran = true;
+            agent.sentry.lost_target_ticks = 0;
+            const KernelServerEntityState* fled_from = frame.actor_state(agent.sentry.target);
+            if (fled_from == nullptr) {
+                end_retreat(config_.chase.retreat, &agent);
+                agent_steering::transition_to(&agent, AgentSentryState::kSearch);
+            } else {
+                const KernelVec3 from = has_visible_target
+                    ? perception.target_position
+                    : fled_from->position;
+                update_retreat(
+                    config_.chase.retreat,
+                    behavior.leash_meters(config_),
+                    sentry_config.move_speed_meters_per_second * delta_seconds,
+                    config_.hovers ? nullptr : navigation,
+                    from,
+                    spacing[agent_index].push,
+                    &agent,
+                    &move);
+                if (agent.retreating && agent.retreat_turning) {
+                    move = KernelVec2{0.0f, 0.0f};
+                    should_update_rotation =
+                        agent_steering::facing_rotation_from_vision_toward(
+                            agent.position, from, perception.vision_forward,
+                            entity_state.rotation, &desired_rotation) ||
+                        should_update_rotation;
+                    ++agent.retreat_turn_ticks;
+                    // Facing it again: the pursuit takes over from the next
+                    // tick. Still not, past the limit: lost, as any target
+                    // that is out of sight is.
+                    if (has_visible_target ||
+                        agent.retreat_turn_ticks >= kRetreatTurnLimitTicks) {
+                        end_retreat(config_.chase.retreat, &agent);
+                    }
+                } else if (agent.retreating && !is_zero_move(move)) {
+                    should_update_rotation =
+                        agent_steering::facing_rotation_from_vision_toward(
+                            agent.position,
+                            KernelVec3{agent.position.x + move.x, agent.position.y,
+                                       agent.position.z + move.y},
+                            perception.vision_forward, entity_state.rotation,
+                            &desired_rotation) ||
+                        should_update_rotation;
+                }
+                agent.sentry.state = AgentSentryState::kChasing;
+            }
         } else if (is_pursuing(agent.sentry.state)) {
             if (has_visible_target) {
                 agent.sentry.lost_target_ticks = 0;
@@ -736,10 +1088,23 @@ void AgentChaserController::tick(
                         &desired_rotation) ||
                     should_update_rotation;
                 move = chase_move(
-                    config_.chase, &agent, perception.target_position);
+                    config_.chase, &agent, perception.target_position,
+                    spacing[agent_index]);
+                update_retreat(
+                    config_.chase.retreat,
+                    behavior.leash_meters(config_),
+                    sentry_config.move_speed_meters_per_second * delta_seconds,
+                    config_.hovers ? nullptr : navigation,
+                    perception.target_position,
+                    spacing[agent_index].push,
+                    &agent,
+                    &move);
+                retreat_ran = true;
                 // A charge is tried ahead of a leap: winding one up roots the
                 // agent from this tick, and a leap must not carry it off.
-                if (target_state != nullptr &&
+                // Neither starts while it backs away.
+                if (agent.retreating) {
+                } else if (target_state != nullptr &&
                     try_start_charge(
                         config_, &agent, entity_state, target_state->position)) {
                     move = KernelVec2{0.0f, 0.0f};
@@ -796,7 +1161,9 @@ void AgentChaserController::tick(
                     --agent.sentry.ballistic_retry_ticks;
                 } else if (agent.charge_windup_ticks > 0u) {
                     // Wound up this tick: no swing on top of it.
-                } else if (target_within_attack_range) {
+                } else if (target_within_attack_range &&
+                           (!agent.retreating ||
+                            config_.chase.retreat.fire_while_retreating)) {
                     ai::ScopedIntent intent;
                     intent.scope = ai::IntentScope::kActor;
                     intent.type = "AttackTarget";
@@ -834,18 +1201,8 @@ void AgentChaserController::tick(
                        !agent.sentry.has_attention_point) {
                 agent.sentry.target = 0;
                 agent.sentry.has_attention_point = false;
-                // A squad member goes back to its formation, as from Alert.
-                // A hunter goes straight back to looking, re-reading where its
-                // target is now rather than when the chase began.
-                if (agent.controller_role == AgentControllerRole::kHunter) {
-                    agent.seek_repath_in = 0;
-                }
                 agent_steering::transition_to(
-                    &agent,
-                    has_slot(agent) ? AgentSentryState::kReturn
-                    : agent.controller_role == AgentControllerRole::kHunter
-                        ? AgentSentryState::kSeek
-                        : AgentSentryState::kIdle);
+                    &agent, behavior.on_target_forgotten(agent));
             } else if (agent_steering::horizontal_distance(
                            agent.position, agent.sentry.attention_point) >
                        kSearchArrivalMeters) {
@@ -898,6 +1255,10 @@ void AgentChaserController::tick(
                 : sentry_config.animation_idle;
         } else if (agent.charge_ticks_left > 0u) {
             agent.animation_state = sentry_config.animation_attack;
+        }
+
+        if (agent.retreating && !retreat_ran) {
+            end_retreat(config_.chase.retreat, &agent);
         }
 
         // Exactly one input per tick, always. An agent that submits none keeps

@@ -354,10 +354,10 @@ bool PatrolDirector::spawn_patrol(
             }
             member_net_ids.push_back(net_id);
             member_offsets.push_back(offsets[member]);
-            // A squad's members are patrol, whatever their template defaults
+            // A squad's members are in it, whatever their template defaults
             // to; the catalog only lets a squad name templates that can be.
             spawned_controllers_.push_back(SpawnedControllerSpec{
-                net_id, AgentControllerSpec{AgentControllerRole::kPatrol, {}}});
+                net_id, AgentControllerSpec{AgentControllerRole::kSquad, {}}});
             ++member;
         }
     }

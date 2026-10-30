@@ -1,0 +1,11 @@
+# allied_gingerbread_giant's bounds: the giant's own box (49), on the player's
+# side. The layer is what puts an actor on a side for every weapon: on
+# player_side it is hit by the enemy's player_side weapons and left alone by
+# the player's hostile_side ones.
+id: 60
+name: allied_gingerbread_giant_bounds_aabb
+shape: aabb
+center: {x: 0.0, y: 9.0, z: 0.0}
+half_extents: {x: 8.0, y: 12.5, z: 9.0}
+purpose: bounds
+layer: player_side

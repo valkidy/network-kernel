@@ -25,7 +25,7 @@ animations:
 vision:
   collider_template: grenade_sentry_vision_cone
 ai:
-  default_controller: sentry
+  default_behavior: sentry
   profile: grenade_artillery
   perception:
     alert_ticks: 90

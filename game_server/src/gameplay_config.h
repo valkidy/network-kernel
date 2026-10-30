@@ -338,10 +338,16 @@ struct ActorTemplateConfig {
     // Only read when ai_controller_type is Chaser; the perception and attack
     // half of a chaser comes from `sentry`.
     AgentChaseTuning chaser{};
-    AgentPatrolTuning patrol{};
-    AgentGarrisonTuning garrison{};
-    // controllers.hunter (AI plan P6).
+    AgentSquadTuning squad{};
+    AgentLeashTuning guard{};
+    AgentLeashTuning patrol{};
+    // behaviors.hunter (AI plan P6).
     AgentHunterTuning hunter{};
+    // behaviors.lock_target (docs/AI_BEHAVIOR_PLAN.md §5.1).
+    AgentLockTargetTuning lock_target{};
+    // ai.remote_command.min_switch_interval_ticks (B11): how soon after one
+    // agent command changed its behavior another may. Player-side only.
+    std::uint32_t remote_command_min_switch_interval_ticks = 10;
     // ai.skills, as authored. Resolved into the weapon, attack range, leap and
     // charge above once every sp_attack template is known.
     std::vector<AgentSkillConfig> skills;
@@ -350,8 +356,7 @@ struct ActorTemplateConfig {
     SpawnerConfig spawner{};
     KernelAgentVisionConfig vision{};
     std::uint32_t ai_controller_type = KernelAiControllerType_None;
-    // ai.default_controller, or what a legacy ai.controller amounts to:
-    // sentry -> kSentry, chaser -> kGarrison.
+    // ai.default_behavior (docs/AI_BEHAVIOR_PLAN.md B8).
     AgentControllerRole default_controller_role = AgentControllerRole::kNone;
     // Never moves on its own: exactly the sentries.
     bool ai_stationary = false;
@@ -381,8 +386,8 @@ struct ActorTemplateConfig {
         KernelVec3 spawn_position{};
         float spawn_radius = 0.0f;
         std::uint32_t spawn_seed = 1;
-        // spawn_group.controller: a role and/or a world-space route, which a
-        // garrison walks pathed over the navmesh and ping-ponged.
+        // spawn_group.behavior: a role and/or a world-space route, which a
+        // patrol walks pathed over the navmesh and ping-ponged.
         AgentControllerSpec spawn_controller;
         std::vector<std::string> next_refs;
         std::vector<std::uint32_t> next_node_ids;
@@ -635,6 +640,15 @@ struct AgentBudgetConfig {
     std::uint32_t max_live_agents = 0;
 };
 
+// A route an agent command may send a patrol along (docs/AI_BEHAVIOR_PLAN.md
+// B15): authored here by name, chosen by id, so a client names a route and
+// never sends waypoints of its own. World space.
+struct AgentRouteConfig {
+    std::uint16_t id = 0;
+    std::string name;
+    std::vector<KernelVec3> waypoints;
+};
+
 struct GameServerGameplayConfig {
     WeaponCatalogConfig weapons;
     std::vector<ActionTemplateConfig> action_templates;
@@ -657,6 +671,13 @@ struct GameServerGameplayConfig {
     // action-graph spawns count toward it but are never refused, so it is a
     // hard ceiling only for the former. Zero is unbounded.
     AgentBudgetConfig agent_budget;
+    // `agent_routes:` -- what an agent command's route_id names.
+    std::vector<AgentRouteConfig> agent_routes;
+    // `agent_commands.peer_cooldown_ticks`: after a player's command is
+    // obeyed, how long every further command of theirs is refused
+    // (docs/AI_BEHAVIOR_PLAN.md §12.9). Slow on purpose, so each order is a
+    // considered one. Zero is no cooldown.
+    std::uint32_t agent_command_peer_cooldown_ticks = 150;
     // The baked navmesh, carried whole rather than by path: game_server loads
     // it itself -- Detour never reaches the kernel -- so nothing downstream has
     // the archive open any more by the time it is needed.
@@ -752,6 +773,11 @@ bool load_kernel_gameplay_catalog(
     const GameServerGameplayConfig& config);
 std::vector<std::string> validate_gameplay_config(
     const GameServerGameplayConfig& config);
+// The route `id` names in the catalog's agent_routes, or null.
+const AgentRouteConfig* find_agent_route(
+    const GameServerGameplayConfig& config,
+    std::uint16_t id);
+
 const ActorTemplateConfig* find_actor_template(
     const GameServerGameplayConfig& config,
     std::uint32_t actor_template_id);

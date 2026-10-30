@@ -87,18 +87,28 @@ struct AgentPatrolRuntimeState {
 };
 
 // What an agent is there to do, which picks the controller that runs it
-// (docs/AI_CONTROLLER_PLAN.md D1, D2). A template names a default; P1b lets
-// whatever spawned the agent choose instead. Sentry runs the sentry
-// controller; garrison and patrol both run the chaser, which tells them apart
-// by whether the squad gave the agent a slot.
+// (docs/AI_CONTROLLER_PLAN.md D1, D2; names from docs/AI_BEHAVIOR_PLAN.md B8).
+// A template names a default; whatever spawned the agent may choose instead,
+// and set_behavior may change it at runtime. Sentry runs the sentry
+// controller; every other role runs the chaser, which asks agent_behavior_for
+// what the role does differently.
 enum class AgentControllerRole : std::uint8_t {
     kNone = 0,
     kSentry,
-    kGarrison,
+    // Stands its ground and fights what it sees.
+    kGuard,
+    // Walks the route it was given whenever it has nothing to fight.
     kPatrol,
+    // A member of a patrol template's squad: holds its slot in the formation.
+    // Only the squad makes these.
+    kSquad,
     // Goes looking for a target it has not seen (AI plan D2, D10): the chaser,
     // with a shared table of every hostile's position to walk towards.
     kHunter,
+    // Goes after one target it was given, and nothing else, until that target
+    // is gone or it gives up (docs/AI_BEHAVIOR_PLAN.md §5.1). Only
+    // set_behavior makes one: nothing authored knows a target's net id.
+    kLockTarget,
 };
 
 // Who a hunter goes after (D10).
@@ -113,8 +123,8 @@ enum class HunterTargetSource : std::uint8_t {
 // world -- rather than merely out of sight.
 enum class HunterOnTargetLost : std::uint8_t {
     kNearestHostile = 0,
-    // Stays where it is as a garrison.
-    kGarrison = 1,
+    // Stays where it is as a guard.
+    kGuard = 1,
 };
 
 struct AgentHunterTuning {
@@ -125,6 +135,28 @@ struct AgentHunterTuning {
     std::uint32_t repath_ticks = 60;
 };
 
+// What a lock_target becomes once its target is gone or it gives up (B5).
+enum class LockTargetOnLost : std::uint8_t {
+    kGuard = 0,
+    kHunter = 1,
+};
+
+// Bit per relation a lock_target may be pointed at (B9). Only hostile is
+// accepted this round; the field is there so allowing an ally (a heal) is a
+// load-check change, not a format change.
+inline constexpr std::uint8_t kLockTargetRelationHostile = 1u << 0;
+
+// `behaviors.lock_target` (docs/AI_BEHAVIOR_PLAN.md §5.1).
+struct AgentLockTargetTuning {
+    LockTargetOnLost on_target_lost = LockTargetOnLost::kGuard;
+    // Ticks in a row without seeing its target before it gives up. Zero never
+    // gives up while the target lives.
+    std::uint32_t give_up_ticks = 600;
+    // How often it re-paths to where its target is while it cannot see it.
+    std::uint32_t repath_ticks = 60;
+    std::uint8_t target_relations = kLockTargetRelationHostile;
+};
+
 // What a spawn source asks of the agents it makes (plan D1): authored as a
 // `controller:` block on a spawn_group, a spawner or a world rule, and set to
 // patrol by a squad for its own members. Empty means the template's default
@@ -132,14 +164,21 @@ struct AgentHunterTuning {
 struct AgentControllerSpec {
     // kNone keeps the template's default_controller_role.
     AgentControllerRole role = AgentControllerRole::kNone;
-    // World space. Only a garrison follows one.
+    // World space. Only a patrol follows one, and a patrol needs one.
     std::vector<KernelVec3> route;
-    // kHunter only: overrides the template's controllers.hunter when set.
+    // kHunter only: overrides the template's behaviors.hunter when set.
     bool has_hunter = false;
     AgentHunterTuning hunter;
+    // kLockTarget only, and required there: who to go after.
+    std::uint32_t target_net_id = 0;
+    // kGuard only: where it stands guard, world space. Without one a guard
+    // takes where it first goes idle (B4).
+    bool has_anchor = false;
+    KernelVec3 anchor{0.0f, 0.0f, 0.0f};
 
     bool empty() const {
-        return role == AgentControllerRole::kNone && route.empty() && !has_hunter;
+        return role == AgentControllerRole::kNone && route.empty() && !has_hunter &&
+            target_net_id == 0u && !has_anchor;
     }
 
 };
@@ -223,7 +262,7 @@ struct AgentEntryRuntimeState {
     std::uint32_t restore_movement_collision_mask = 0;
 };
 
-// An authored route a garrison walks while idle: the waypoints joined by
+// An authored route a patrol walks while idle: the waypoints joined by
 // navmesh corners, walked to the end and back.
 struct AgentRoutePatrolState {
     std::vector<KernelVec3> path;
@@ -256,12 +295,29 @@ struct AgentRuntimeState {
     // Resolved once from this agent's own actor template when the runtime first
     // discovers it; see AgentRuntimeManager::sync_agents_from_kernel.
     AgentSentryConfig sentry_config{};
-    // Garrison only: the route its spawn source gave it, walked whenever it
-    // has nothing to fight. Empty for a garrison that stands its ground.
+    // Patrol only: the route it was given, walked whenever it
+    // has nothing to fight. Empty for everyone else.
     AgentRoutePatrolState route_patrol{};
     // Chaser only: true once the agent has closed inside its stop distance and
     // is holding position, until the target opens the gap back up.
     bool chase_holding = false;
+    // Chaser only (chase.retreat): backing off from a target that came too
+    // close, for how many ticks so far, and ticks until it may again. Where
+    // it stood when the current stall window began, and how many ticks that
+    // window has run: a retreat that is not getting anywhere is cornered.
+    bool retreating = false;
+    std::uint32_t retreat_ticks = 0;
+    std::uint32_t retreat_cooldown_ticks = 0;
+    KernelVec3 retreat_window_start{0.0f, 0.0f, 0.0f};
+    std::uint32_t retreat_window_ticks = 0;
+    // Which way it is backing off: an index into the retreat's headings
+    // (straight away, then 45 and 90 degrees either side), kept while it
+    // stays clear so the agent does not flick between two.
+    std::uint8_t retreat_heading = 0;
+    // turn_and_run: done running and turning back to face the target, for
+    // how many ticks so far.
+    bool retreat_turning = false;
+    std::uint32_t retreat_turn_ticks = 0;
     // Chaser only. Ticks until a leap it started lands, counted down once per
     // controller tick; zero when it is not leaping. And ticks until it may
     // start another.
@@ -303,9 +359,25 @@ struct AgentRuntimeState {
     // manager last found towards it, with the ticks until it looks again.
     AgentHunterTuning hunter{};
     std::uint32_t hunt_target = 0;
+    // A lock_target walks these too, towards its own target, and a guard
+    // walks them home to its post.
     std::vector<KernelVec3> seek_path;
     std::size_t seek_next = 0;
     std::uint32_t seek_repath_in = 0;
+    // Guard only: its post (docs/AI_BEHAVIOR_PLAN.md §12.11), where it goes
+    // back to whenever it has nothing to fight. Unset until it first goes
+    // idle, which then sets it to where it stands.
+    bool has_guard_anchor = false;
+    KernelVec3 guard_anchor{0.0f, 0.0f, 0.0f};
+    // Lock_target only: its tuning, who it is after, and how long it has gone
+    // without seeing them.
+    AgentLockTargetTuning lock_tuning{};
+    std::uint32_t lock_target = 0;
+    std::uint32_t lock_unseen_ticks = 0;
+    // When an agent command last changed its behavior (B11), on the manager's
+    // own tick count. Internal switches neither set nor wait for it.
+    bool remote_switched = false;
+    std::uint64_t last_remote_switch_tick = 0;
     // Its vision cone is switched off while nothing hostile is near enough to
     // see (D11). The cone's range, read once when the agent is discovered; 0
     // when it has none, which leaves vision alone.

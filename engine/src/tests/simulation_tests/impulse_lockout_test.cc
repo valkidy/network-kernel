@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <entt/entt.hpp>
@@ -528,6 +529,39 @@ void revive_lift_stops_under_a_ceiling() {
     require(std::fabs(lift - 1.15f) < 0.02f);
 }
 
+// Only the world is a ceiling. An actor standing over the body -- a giant's
+// capsule and leg boxes -- is in the movement mask, but it walks on, and
+// counting it took the whole lift away.
+void revive_lift_passes_actors_overhead() {
+    MovementFixture fixture({0.0f, 0.0f, 0.0f});
+    fixture.tick_pushing_back();
+    require(fixture.grounded());
+    const Transform& transform =
+        fixture.world.registry().get<Transform>(fixture.entity);
+    // The player's mask: the engine default plus limb.
+    fixture.world.registry().get<MovementState>(fixture.entity).movement_collision_mask =
+        network_example::physics::kMovementCollisionMask |
+        collision_layer_bit(CollisionLayer::kActorLimb);
+    const std::pair<CollisionObjectKind, CollisionLayer> actors[] = {
+        {CollisionObjectKind::kActorMovement, CollisionLayer::kActorMovement},
+        {CollisionObjectKind::kActorLimb, CollisionLayer::kActorLimb},
+    };
+    std::uint32_t collider_id = 201;
+    for (const auto& [kind, layer] : actors) {
+        CollisionObjectDescriptor body{};
+        body.identity = CollisionObjectIdentity{0, collider_id++, 0, kind, layer};
+        body.shape.type = CollisionShapeType::kBox;
+        body.shape.half_extents = glm::vec3{2.0f, 0.5f, 2.0f};
+        // Touching the capsule's top: the lift was clamped to zero here.
+        body.position = transform.position + glm::vec3{0.0f, 2.3f, 0.0f};
+        std::string error;
+        require(fixture.physics.upsert_object(body, &error));
+    }
+    require(available_lift(
+                fixture.world, fixture.actor, transform.position,
+                transform.rotation, 5.0f) == 5.0f);
+}
+
 // A hit that both knocks back and staggers keeps its knockback: the lockout is
 // tested first, so the stagger's rooting never zeroes a flight in progress.
 void a_knockback_outranks_a_stagger_in_movement() {
@@ -555,5 +589,6 @@ int main() {
     a_knockback_outranks_a_stagger_in_movement();
     a_dead_actor_ignores_its_input();
     revive_lift_stops_under_a_ceiling();
+    revive_lift_passes_actors_overhead();
     return 0;
 }

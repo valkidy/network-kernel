@@ -311,7 +311,8 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             KERNEL_CAPABILITY_LOCAL_SHELTER_STATE |
             KERNEL_CAPABILITY_GAME_MESSAGES |
             KERNEL_CAPABILITY_SERVER_FALL_DEATH_HEIGHT |
-            KERNEL_CAPABILITY_SERVER_DAMAGE_RECORDS;
+            KERNEL_CAPABILITY_SERVER_DAMAGE_RECORDS |
+            KERNEL_CAPABILITY_AGENT_COMMANDS;
         return true;
     });
 }
@@ -1148,6 +1149,46 @@ uint32_t Kernel_ServerPollGameMessages(
         return kernel == nullptr
             ? 0u
             : kernel->engine->server_poll_game_messages(out_messages, max_messages);
+    });
+}
+
+bool Kernel_SubmitAgentCommand(
+    KernelHandle* kernel,
+    const KernelAgentCommand* command) {
+    return abi_call("Kernel_SubmitAgentCommand", false, [&]() {
+        return kernel != nullptr && command != nullptr &&
+            kernel->engine->submit_agent_command(*command);
+    });
+}
+
+uint32_t Kernel_PollAgentCommandOutcomes(
+    KernelHandle* kernel,
+    KernelAgentCommandOutcome* out_outcomes,
+    uint32_t max_outcomes) {
+    return abi_call("Kernel_PollAgentCommandOutcomes", 0u, [&]() {
+        return kernel == nullptr
+            ? 0u
+            : kernel->engine->poll_agent_command_outcomes(out_outcomes, max_outcomes);
+    });
+}
+
+uint32_t Kernel_ServerPollAgentCommands(
+    KernelHandle* kernel,
+    KernelAgentCommand* out_commands,
+    uint32_t max_commands) {
+    return abi_call("Kernel_ServerPollAgentCommands", 0u, [&]() {
+        return kernel == nullptr
+            ? 0u
+            : kernel->engine->server_poll_agent_commands(out_commands, max_commands);
+    });
+}
+
+bool Kernel_ServerSendAgentCommandOutcome(
+    KernelHandle* kernel,
+    const KernelAgentCommandOutcome* outcome) {
+    return abi_call("Kernel_ServerSendAgentCommandOutcome", false, [&]() {
+        return kernel != nullptr && outcome != nullptr &&
+            kernel->engine->server_send_agent_command_outcome(*outcome);
     });
 }
 

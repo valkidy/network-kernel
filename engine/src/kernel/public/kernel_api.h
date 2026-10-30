@@ -493,6 +493,41 @@ uint32_t Kernel_ServerPollGameMessages(
     KernelGameMessage* out_messages,
     uint32_t max_messages);
 
+/*
+ * Agent commands; see KernelAgentCommand. Behind KERNEL_CAPABILITY_AGENT_COMMANDS.
+ *
+ * Kernel_SubmitAgentCommand sends a command from the local player: over the
+ * network from a welcomed client, straight into the server's queue on a listen
+ * host. False on a dedicated server, before a client is welcomed, or for a
+ * struct_size short of KernelAgentCommand. Kernel_PollAgentCommandOutcomes
+ * drains the answers that came back.
+ *
+ * Kernel_ServerPollAgentCommands drains what players sent, oldest first, with
+ * the sender filled in from the session. Kernel_ServerSendAgentCommandOutcome
+ * answers one, to outcome->requester_peer (a listen host's own peer
+ * included); false for a peer with no welcomed session. Each queue holds at
+ * most 256; one arriving past that is dropped with an Error event, code 36.
+ *
+ * The poll calls fill whole records and return how many.
+ */
+bool Kernel_SubmitAgentCommand(
+    KernelHandle* kernel,
+    const KernelAgentCommand* command);
+
+uint32_t Kernel_PollAgentCommandOutcomes(
+    KernelHandle* kernel,
+    KernelAgentCommandOutcome* out_outcomes,
+    uint32_t max_outcomes);
+
+uint32_t Kernel_ServerPollAgentCommands(
+    KernelHandle* kernel,
+    KernelAgentCommand* out_commands,
+    uint32_t max_commands);
+
+bool Kernel_ServerSendAgentCommandOutcome(
+    KernelHandle* kernel,
+    const KernelAgentCommandOutcome* outcome);
+
 uint32_t Kernel_PollInventoryDeltas(
     KernelHandle* kernel,
     KernelInventoryContainerId container_id,

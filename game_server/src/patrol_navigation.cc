@@ -160,6 +160,40 @@ bool PatrolNavigation::snap(
     return true;
 }
 
+std::optional<bool> PatrolNavigation::walkable_line(
+    const KernelVec3& from,
+    const KernelVec3& to,
+    float half_extent_meters) const {
+    if (!valid()) {
+        return std::nullopt;
+    }
+    const float center[3] = {from.x, from.y, from.z};
+    // Tight vertically, unlike snap: at the top of a cliff the nearest polygon
+    // has to be the one underfoot, not the floor below.
+    const float half_extents[3] = {half_extent_meters, 3.0f, half_extent_meters};
+    const dtQueryFilter filter;
+    dtPolyRef start_ref = 0;
+    float start[3] = {0.0f, 0.0f, 0.0f};
+    if (dtStatusFailed(
+            query_->findNearestPoly(center, half_extents, &filter, &start_ref, start)) ||
+        start_ref == 0) {
+        return std::nullopt;
+    }
+    // Along the navmesh surface, so the end only needs the right x and z.
+    const float end[3] = {to.x, start[1], to.z};
+    float hit_fraction = 0.0f;
+    float hit_normal[3] = {0.0f, 0.0f, 0.0f};
+    std::array<dtPolyRef, 32> path{};
+    int path_count = 0;
+    if (dtStatusFailed(query_->raycast(
+            start_ref, start, end, &filter, &hit_fraction, hit_normal,
+            path.data(), &path_count, static_cast<int>(path.size())))) {
+        return std::nullopt;
+    }
+    // FLT_MAX when nothing was hit.
+    return hit_fraction >= 1.0f;
+}
+
 bool PatrolNavigation::find_route(
     const PatrolRouteRequest& request,
     std::vector<KernelVec3>* waypoints) const {

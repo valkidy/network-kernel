@@ -2,6 +2,7 @@
 #define GAME_SERVER_PATROL_NAVIGATION_H_
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -66,6 +67,17 @@ public:
     bool find_route(
         const PatrolRouteRequest& request,
         std::vector<KernelVec3>* waypoints) const;
+
+    // Whether walking straight from `from` to `to` stays on walkable ground:
+    // false at a wall, a cliff edge or anything else the navmesh ends at.
+    // `from` is matched to the navmesh within `half_extent_meters`
+    // horizontally and a few metres up or down, so a point on a plateau is not
+    // read as the ground below it. Unknown -- no navmesh, or `from` off it --
+    // is reported as nullopt, for the caller to decide.
+    std::optional<bool> walkable_line(
+        const KernelVec3& from,
+        const KernelVec3& to,
+        float half_extent_meters) const;
 
 private:
     dtNavMesh* mesh_ = nullptr;

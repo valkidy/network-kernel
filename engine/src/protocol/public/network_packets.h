@@ -442,6 +442,27 @@ bool decode_game_message_packet(
     std::size_t size,
     GameMessagePacket* out_message);
 
+// Client -> server. The requester fields are not sent: the server takes them
+// from the session.
+std::vector<std::uint8_t> encode_agent_command_packet(
+    const KernelAgentCommand& command,
+    std::uint32_t sequence = 0);
+
+bool decode_agent_command_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    KernelAgentCommand* out_command);
+
+// Server -> client. requester_peer is not sent: the client is the requester.
+std::vector<std::uint8_t> encode_agent_command_outcome_packet(
+    const KernelAgentCommandOutcome& outcome,
+    std::uint32_t sequence = 0);
+
+bool decode_agent_command_outcome_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    KernelAgentCommandOutcome* out_outcome);
+
 std::vector<std::uint8_t> encode_gameplay_request_packet(
     const KernelGameplayRequest& request,
     std::uint32_t sequence = 0);

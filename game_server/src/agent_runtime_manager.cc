@@ -6,6 +6,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include "game_server/src/agent_steering.h"
 #include "kernel/src/kernel_api_internal.h"
 
 namespace network_example::game_server {
@@ -30,12 +31,14 @@ void take_controllers(
         std::make_move_iterator(taken.end()));
 }
 
-// Garrison and patrol are both the chaser; everything else, including an agent
+// Guard, patrol, squad and hunter are all the chaser; everything else, including an agent
 // whose template has no ai block, is the sentry, as it always was.
 bool runs_chaser(AgentControllerRole role) {
-    return role == AgentControllerRole::kGarrison ||
+    return role == AgentControllerRole::kGuard ||
            role == AgentControllerRole::kPatrol ||
-           role == AgentControllerRole::kHunter;
+           role == AgentControllerRole::kSquad ||
+           role == AgentControllerRole::kHunter ||
+           role == AgentControllerRole::kLockTarget;
 }
 
 // How to fire one weapon: its own ballistic aim when its projectile arcs, and
@@ -183,8 +186,9 @@ AgentRuntimeManager::AgentControllerBinding AgentRuntimeManager::make_binding(
             chaser.sentry =
                 agent_sentry_config(config_, actor_template.actor_template_id);
             chaser.chase = actor_template.chaser;
+            chaser.squad = actor_template.squad;
+            chaser.guard = actor_template.guard;
             chaser.patrol = actor_template.patrol;
-            chaser.garrison = actor_template.garrison;
             for (const AgentSkillConfig& skill : actor_template.skills) {
                 if (skill.type != AgentSkillType::kWeapon) {
                     continue;
@@ -199,6 +203,8 @@ AgentRuntimeManager::AgentControllerBinding AgentRuntimeManager::make_binding(
                 chaser.weapon_skills.push_back(weapon);
             }
             chaser.gravity_y = actor_template.movement_gravity.y;
+            chaser.hovers = actor_template.movement_controller_type ==
+                KernelMovementControllerType_Hover;
             binding.chaser = AgentChaserController(chaser);
         }
         return binding;
@@ -255,7 +261,8 @@ void AgentRuntimeManager::dispatch_controllers(
         }
         if (runs_chaser(binding.role)) {
             binding.chaser.tick(
-                kernel_, perception_frame_, binding.batch, delta_seconds);
+                kernel_, perception_frame_, binding.batch, delta_seconds,
+                &patrol_navigation_);
         } else {
             binding.sentry.tick(
                 kernel_, perception_frame_, binding.batch, delta_seconds);
@@ -309,6 +316,11 @@ const std::vector<AlertSignal>& AgentRuntimeManager::alert_signals() const {
 }
 
 void AgentRuntimeManager::handle_event(const KernelEvent& event) {
+    if (event.type == KernelEventType_Disconnected) {
+        // Its command window goes with it; a peer id may be reused.
+        command_windows_.erase(event.peer_id);
+        return;
+    }
     if (event.type != KernelEventType_EntityDestroyed) {
         return;
     }
@@ -463,28 +475,49 @@ void AgentRuntimeManager::use_item_skills() {
 // the snapshot the manager already has and shared by every hunter, which
 // cheats its way to its target through it. Seeing that target -- the narrow
 // phase -- is still vision's. Only the living: a dead player is not hunted.
+// Each hunter reads the table of what is hostile to its own side, by the same
+// rule vision uses (kernel classify_agent_relation).
 void AgentRuntimeManager::update_hunters(const ActorStateView& actors) {
-    hostiles_.clear();
+    hostiles_of_enemy_side_.clear();
+    hostiles_of_player_side_.clear();
     hidden_hostiles_.clear();
+    bool player_side_hunters = false;
+    for (const AgentRuntimeState& agent : agents_) {
+        player_side_hunters = player_side_hunters ||
+            (agent.controller_role == AgentControllerRole::kHunter &&
+             camp_of(agent.actor_template_id) == KernelAgentCamp_PlayerSide);
+    }
     for (std::uint32_t index = 0; index < actors.count; ++index) {
         const KernelServerEntityState& state = actors.states[index];
-        if (state.valid != 0u && state.actor_type == kActorTypePlayer && state.hp > 0u &&
-            (state.visual_flags & KERNEL_VISUAL_FLAG_DEAD) == 0u) {
+        if (state.valid == 0u || state.hp == 0u ||
+            (state.visual_flags & KERNEL_VISUAL_FLAG_DEAD) != 0u) {
+            continue;
+        }
+        if (state.actor_type == kActorTypePlayer) {
             // A tent that hides its occupants hides them from the cheat too,
             // as it does from every cone (Q3).
             if (hidden_in_shelter(state.net_id)) {
                 hidden_hostiles_.push_back(state.net_id);
             } else {
-                hostiles_.push_back(Hostile{state.net_id, state.position});
+                hostiles_of_enemy_side_.push_back(Hostile{state.net_id, state.position});
+            }
+        } else if (state.actor_type == kActorTypeAgent) {
+            const std::uint8_t camp = camp_of(state.actor_template_id);
+            if (camp == KernelAgentCamp_PlayerSide) {
+                hostiles_of_enemy_side_.push_back(Hostile{state.net_id, state.position});
+            } else if (camp == KernelAgentCamp_EnemySide && player_side_hunters) {
+                hostiles_of_player_side_.push_back(Hostile{state.net_id, state.position});
             }
         }
     }
     const auto distance = [](const KernelVec3& a, const KernelVec3& b) {
         return std::hypot(a.x - b.x, a.z - b.z);
     };
+    // Set per hunter, to the table of its own side.
+    const std::vector<Hostile>* hostiles = &hostiles_of_enemy_side_;
     const auto nearest = [&](const KernelVec3& from) -> const Hostile* {
         const Hostile* best = nullptr;
-        for (const Hostile& hostile : hostiles_) {
+        for (const Hostile& hostile : *hostiles) {
             if (best == nullptr ||
                 distance(from, hostile.position) < distance(from, best->position)) {
                 best = &hostile;
@@ -518,6 +551,9 @@ void AgentRuntimeManager::update_hunters(const ActorStateView& actors) {
             if (agent.vision_off) set_vision(agent, true);
             continue;
         }
+        hostiles = camp_of(agent.actor_template_id) == KernelAgentCamp_PlayerSide
+            ? &hostiles_of_player_side_
+            : &hostiles_of_enemy_side_;
         if (agent.vision_reach_meters > 0.0f) {
             const Hostile* closest = nearest(agent.position);
             set_vision(agent, closest != nullptr &&
@@ -525,13 +561,13 @@ void AgentRuntimeManager::update_hunters(const ActorStateView& actors) {
                                       agent.vision_reach_meters + kVisionMarginMeters);
         }
         const Hostile* target = nullptr;
-        for (const Hostile& hostile : hostiles_) {
+        for (const Hostile& hostile : *hostiles) {
             if (hostile.net_id == agent.hunt_target) target = &hostile;
         }
         // Hidden is not gone: a player who ducks into a tent is still its
         // target. It goes after another it can find, or waits where it is
         // until this one comes out -- never on_target_lost, which would turn
-        // a garrison for good over a player stepping inside for a moment.
+        // a guard for good over a player stepping inside for a moment.
         if (target == nullptr &&
             std::find(hidden_hostiles_.begin(), hidden_hostiles_.end(), agent.hunt_target) !=
                 hidden_hostiles_.end()) {
@@ -552,10 +588,12 @@ void AgentRuntimeManager::update_hunters(const ActorStateView& actors) {
             const bool lost = agent.hunt_target != 0u ||
                 agent.hunter.target_source == HunterTargetSource::kInherited;
             agent.hunt_target = 0u;
-            if (lost && agent.hunter.on_target_lost == HunterOnTargetLost::kGarrison) {
-                agent.controller_role = AgentControllerRole::kGarrison;
-                agent.seek_path.clear();
-                agent.seek_next = 0;
+            if (lost && agent.hunter.on_target_lost == HunterOnTargetLost::kGuard) {
+                // Unchecked and without dropping the fight: whatever it can
+                // see now, a guard fights as well.
+                AgentControllerSpec guard;
+                guard.role = AgentControllerRole::kGuard;
+                apply_behavior(&agent, guard, 0u);
                 continue;
             }
             agent.hunter.target_source = HunterTargetSource::kNearestHostile;
@@ -601,6 +639,97 @@ void AgentRuntimeManager::update_hunters(const ActorStateView& actors) {
     }
 }
 
+void AgentRuntimeManager::update_guard_homes() {
+    for (AgentRuntimeState& agent : agents_) {
+        if (agent.controller_role != AgentControllerRole::kGuard || agent.patrol.has_slot ||
+            agent.entry.active) {
+            continue;
+        }
+        // A path is for one walk home from where a fight left it; anything
+        // else -- the fight, a Return on the leash -- makes it stale.
+        if (agent.sentry.state != AgentSentryState::kIdle || !agent.has_guard_anchor ||
+            agent_steering::horizontal_distance(agent.position, agent.guard_anchor) <=
+                kGuardAnchorArrivalMeters) {
+            agent.seek_path.clear();
+            agent.seek_next = 0;
+            continue;
+        }
+        if (!agent.seek_path.empty()) {
+            continue;
+        }
+        PatrolRouteRequest request;
+        request.start = agent.position;
+        request.end = agent.guard_anchor;
+        request.snap_half_extent_meters = 2.0f;
+        agent.seek_next = 0;
+        if (!patrol_navigation_.valid() ||
+            !patrol_navigation_.find_route(request, &agent.seek_path) ||
+            agent.seek_path.empty()) {
+            agent.seek_path.assign(1, agent.guard_anchor);
+        }
+    }
+}
+
+void AgentRuntimeManager::update_lock_targets(const ActorStateView& actors) {
+    for (AgentRuntimeState& agent : agents_) {
+        if (agent.controller_role != AgentControllerRole::kLockTarget || agent.entry.active) {
+            continue;
+        }
+        const KernelServerEntityState* target = nullptr;
+        for (std::uint32_t index = 0; index < actors.count; ++index) {
+            if (actors.states[index].net_id == agent.lock_target) {
+                target = &actors.states[index];
+                break;
+            }
+        }
+        const bool gone = target == nullptr || target->valid == 0u || target->hp == 0u ||
+            (target->visual_flags & KERNEL_VISUAL_FLAG_DEAD) != 0u;
+        const bool given_up = agent.lock_tuning.give_up_ticks > 0u &&
+            agent.lock_unseen_ticks >= agent.lock_tuning.give_up_ticks;
+        if (gone || given_up) {
+            // Unchecked and without dropping the fight, as a hunter turning
+            // guard is: whatever it can see now, what it becomes fights too.
+            AgentControllerSpec next;
+            next.role = agent.lock_tuning.on_target_lost == LockTargetOnLost::kHunter
+                ? AgentControllerRole::kHunter
+                : AgentControllerRole::kGuard;
+            apply_behavior(&agent, next, 0u);
+            continue;
+        }
+        if (agent.seek_repath_in > 0u) {
+            --agent.seek_repath_in;
+            continue;
+        }
+        const std::uint32_t repath = agent.lock_tuning.repath_ticks;
+        agent.seek_repath_in =
+            repath + agent.net_id % std::max<std::uint32_t>(1u, repath / 4u);
+        agent.seek_path.clear();
+        agent.seek_next = 0;
+        PatrolRouteRequest request;
+        request.start = agent.position;
+        request.end = target->position;
+        request.snap_half_extent_meters = 2.0f;
+        if (!patrol_navigation_.valid() ||
+            !patrol_navigation_.find_route(request, &agent.seek_path) ||
+            agent.seek_path.empty()) {
+            agent.seek_path.assign(1, target->position);
+        }
+    }
+}
+
+std::uint8_t AgentRuntimeManager::camp_of(std::uint32_t actor_template_id) const {
+    const auto cached = camp_cache_.find(actor_template_id);
+    if (cached != camp_cache_.end()) {
+        return cached->second;
+    }
+    const ActorTemplateConfig* actor_template = find_actor_template(config_, actor_template_id);
+    const std::uint8_t camp = actor_template != nullptr
+        ? actor_template->vision.camp
+        : static_cast<std::uint8_t>(KernelAgentCamp_Unknown);
+    camp_cache_.emplace(actor_template_id, camp);
+    return camp;
+}
+
 bool AgentRuntimeManager::hidden_in_shelter(std::uint32_t net_id) const {
     if (shelter_ == nullptr) {
         return false;
@@ -632,28 +761,278 @@ void AgentRuntimeManager::attach_pending_controllers() {
             spdlog::warn("controller spec has no agent net_id={}", spawned.net_id);
             continue;
         }
-        AgentRuntimeState& agent = agents_[index];
-        // The catalog has already checked the role suits the template.
-        if (spawned.spec.role != AgentControllerRole::kNone) {
-            agent.controller_role = spawned.spec.role;
+        // The catalog has already checked the role suits the template. A
+        // route makes a patrol (B8) however the spec was built; the parser
+        // says so too, but a spec built in code may leave the role out.
+        AgentControllerSpec spec = spawned.spec;
+        if (spec.role == AgentControllerRole::kNone && !spec.route.empty()) {
+            spec.role = AgentControllerRole::kPatrol;
         }
-        if (spawned.spec.has_hunter) {
-            agent.hunter = spawned.spec.hunter;
+        if (spec.role != AgentControllerRole::kNone) {
+            apply_behavior(&agents_[index], spec, spawned.source_net_id);
         }
-        // Reinforcements go after what called them: the spawning agent's
-        // target as it stands now. Nothing to inherit leaves it 0, which the
-        // hunter pass reads as already lost.
-        if (agent.controller_role == AgentControllerRole::kHunter &&
-            agent.hunter.target_source == HunterTargetSource::kInherited &&
-            spawned.source_net_id != 0u) {
-            const std::size_t source = agent_index_.find(spawned.source_net_id);
-            if (source != AgentIndex::kNotFound) {
-                agent.hunt_target = agents_[source].sentry.target;
+    }
+}
+
+BehaviorSwitchResult AgentRuntimeManager::set_behavior(
+    std::uint32_t net_id,
+    const AgentControllerSpec& spec) {
+    const std::size_t index = agent_index_.find(net_id);
+    if (index == AgentIndex::kNotFound) {
+        return BehaviorSwitchResult::kAgentMissing;
+    }
+    AgentRuntimeState& agent = agents_[index];
+    const BehaviorSwitchResult result = check_behavior(agent, spec);
+    if (result != BehaviorSwitchResult::kAccepted) {
+        return result;
+    }
+    // Lets go at once (B10). An action already under way finishes on its own;
+    // a wind-up the chaser drops itself once the agent is not pursuing.
+    agent.sentry.target = 0;
+    agent.sentry.has_attention_point = false;
+    agent.sentry.alerted_by_damage = false;
+    agent.chase_holding = false;
+    agent_steering::transition_to(&agent, AgentSentryState::kIdle);
+    apply_behavior(&agent, spec, 0u);
+    return BehaviorSwitchResult::kAccepted;
+}
+
+namespace {
+
+// A peer's agent commands per second before the rest are refused: a guard
+// against a client flooding the server, counting every command, apart from
+// the cooldown after an obeyed one -- which is what a player feels.
+constexpr std::uint32_t kAgentCommandsPerPeerPerWindow = 16;
+constexpr std::uint64_t kAgentCommandWindowTicks = 30;
+// How far from the agent a command may post it (§12.11): one order moves it
+// across a fight, not across the map -- a patrol route does that.
+constexpr float kAgentCommandMaxAnchorMeters = 30.0f;
+
+}  // namespace
+
+KernelAgentCommandOutcome AgentRuntimeManager::handle_agent_command(
+    const KernelAgentCommand& command) {
+    KernelAgentCommandOutcome outcome{};
+    outcome.struct_size = sizeof(outcome);
+    outcome.requester_peer = command.requester_peer;
+    outcome.request_id = command.request_id;
+    outcome.agent_net_id = command.agent_net_id;
+    const auto reject = [&](std::uint8_t reason) {
+        outcome.status = KernelAgentCommandStatus_Rejected;
+        outcome.rejection_reason = reason;
+        return outcome;
+    };
+
+    CommandWindow& window = command_windows_[command.requester_peer];
+    // A new flood window; the cooldown carries across it.
+    if (ticks_ >= window.start_tick + kAgentCommandWindowTicks) {
+        window.start_tick = ticks_;
+        window.count = 0u;
+    }
+    if (++window.count > kAgentCommandsPerPeerPerWindow) {
+        return reject(KernelAgentCommandRejection_RateLimited);
+    }
+    // Still cooling down from the last order obeyed: whatever this one asks,
+    // it waits. Only an obeyed order starts the cooldown, so a mistaken one
+    // costs nothing.
+    if (window.obeyed &&
+        ticks_ < window.last_obeyed_tick + config_.agent_command_peer_cooldown_ticks) {
+        return reject(KernelAgentCommandRejection_RateLimited);
+    }
+
+    KernelServerEntityState requester{};
+    requester.struct_size = sizeof(requester);
+    if (command.requester_net_id == 0u ||
+        !Kernel_ServerGetEntityState(kernel_, command.requester_net_id, &requester) ||
+        requester.valid == 0u || requester.hp == 0u ||
+        (requester.visual_flags & KERNEL_VISUAL_FLAG_DEAD) != 0u) {
+        return reject(KernelAgentCommandRejection_RequesterDead);
+    }
+
+    const std::size_t index = agent_index_.find(command.agent_net_id);
+    if (index == AgentIndex::kNotFound) {
+        return reject(KernelAgentCommandRejection_AgentMissing);
+    }
+    AgentRuntimeState& agent = agents_[index];
+    // Any living player commands any agent of its side (B13).
+    if (camp_of(agent.actor_template_id) != KernelAgentCamp_PlayerSide) {
+        return reject(KernelAgentCommandRejection_NotPlayerSide);
+    }
+
+    // What the command asks for, and nothing a behavior would ignore (B3).
+    const bool has_position = (command.flags & KERNEL_AGENT_COMMAND_FLAG_POSITION) != 0u;
+    if ((command.flags & ~KERNEL_AGENT_COMMAND_FLAG_POSITION) != 0u) {
+        return reject(KernelAgentCommandRejection_InvalidData);
+    }
+    AgentControllerSpec spec;
+    switch (command.behavior) {
+        case KernelAgentCommandBehavior_Guard:
+            if (command.route_id != 0u || command.target_net_id != 0u) {
+                return reject(KernelAgentCommandRejection_InvalidData);
             }
+            spec.role = AgentControllerRole::kGuard;
+            if (has_position) {
+                if (!std::isfinite(command.position.x) || !std::isfinite(command.position.y) ||
+                    !std::isfinite(command.position.z) ||
+                    agent_steering::horizontal_distance(agent.position, command.position) >
+                        kAgentCommandMaxAnchorMeters) {
+                    return reject(KernelAgentCommandRejection_InvalidData);
+                }
+                spec.has_anchor = true;
+                spec.anchor = command.position;
+            }
+            break;
+        case KernelAgentCommandBehavior_Patrol: {
+            const AgentRouteConfig* route = find_agent_route(config_, command.route_id);
+            if (route == nullptr || command.target_net_id != 0u || has_position) {
+                return reject(KernelAgentCommandRejection_InvalidData);
+            }
+            spec.role = AgentControllerRole::kPatrol;
+            spec.route = route->waypoints;
+            break;
         }
-        if (!spawned.spec.route.empty()) {
-            attach_route(&agent, spawned.spec.route);
+        case KernelAgentCommandBehavior_LockTarget:
+            if (command.route_id != 0u || has_position) {
+                return reject(KernelAgentCommandRejection_InvalidData);
+            }
+            spec.role = AgentControllerRole::kLockTarget;
+            spec.target_net_id = command.target_net_id;
+            break;
+        default:
+            return reject(KernelAgentCommandRejection_BehaviorNotAllowed);
+    }
+
+    const ActorTemplateConfig* actor_template =
+        find_actor_template(config_, agent.actor_template_id);
+    const std::uint64_t interval = actor_template != nullptr
+        ? actor_template->remote_command_min_switch_interval_ticks
+        : 0u;
+    if (agent.remote_switched && ticks_ < agent.last_remote_switch_tick + interval) {
+        return reject(KernelAgentCommandRejection_TooSoon);
+    }
+
+    switch (set_behavior(command.agent_net_id, spec)) {
+        case BehaviorSwitchResult::kAccepted:
+            break;
+        case BehaviorSwitchResult::kAgentMissing:
+            return reject(KernelAgentCommandRejection_AgentMissing);
+        case BehaviorSwitchResult::kNotAllowed:
+            return reject(KernelAgentCommandRejection_BehaviorNotAllowed);
+        case BehaviorSwitchResult::kInvalidData:
+            return reject(KernelAgentCommandRejection_InvalidData);
+    }
+    agent.remote_switched = true;
+    agent.last_remote_switch_tick = ticks_;
+    window.obeyed = true;
+    window.last_obeyed_tick = ticks_;
+    outcome.status = KernelAgentCommandStatus_Accepted;
+    outcome.rejection_reason = KernelAgentCommandRejection_None;
+    return outcome;
+}
+
+BehaviorSwitchResult AgentRuntimeManager::check_behavior(
+    const AgentRuntimeState& agent,
+    const AgentControllerSpec& spec) const {
+    if (spec.role == AgentControllerRole::kNone) {
+        return BehaviorSwitchResult::kInvalidData;
+    }
+    // A sentry cannot walk and nothing else can stand still, so neither side
+    // switches across; and a squad keeps its members.
+    if (spec.role == AgentControllerRole::kSentry ||
+        agent.controller_role == AgentControllerRole::kSentry ||
+        agent.controller_role == AgentControllerRole::kNone ||
+        agent.patrol.has_slot) {
+        return BehaviorSwitchResult::kNotAllowed;
+    }
+    const AgentBehavior* behavior = agent_behavior_for_role(spec.role);
+    if (behavior == nullptr) {
+        return BehaviorSwitchResult::kNotAllowed;
+    }
+    const BehaviorSwitchResult result = behavior->validate(spec);
+    if (result == BehaviorSwitchResult::kAccepted &&
+        spec.role == AgentControllerRole::kLockTarget &&
+        !lockable(agent, spec.target_net_id)) {
+        return BehaviorSwitchResult::kInvalidData;
+    }
+    return result;
+}
+
+bool AgentRuntimeManager::lockable(
+    const AgentRuntimeState& agent,
+    std::uint32_t target) const {
+    if (target == 0u || target == agent.net_id) {
+        return false;
+    }
+    KernelServerEntityState state{};
+    state.struct_size = sizeof(state);
+    if (!Kernel_ServerGetEntityState(kernel_, target, &state) || state.valid == 0u ||
+        state.hp == 0u || (state.visual_flags & KERNEL_VISUAL_FLAG_DEAD) != 0u) {
+        return false;
+    }
+    const ActorTemplateConfig* self_template =
+        find_actor_template(config_, agent.actor_template_id);
+    const ActorTemplateConfig* target_template =
+        find_actor_template(config_, state.actor_template_id);
+    if (self_template == nullptr || target_template == nullptr) {
+        return false;
+    }
+    // The kernel's vision rule (classify_agent_relation): the two sides are
+    // hostile to each other, and nothing else is.
+    const std::uint8_t self_camp = self_template->vision.camp;
+    const std::uint8_t target_camp = target_template->vision.camp;
+    const bool hostile =
+        (self_camp == KernelAgentCamp_PlayerSide && target_camp == KernelAgentCamp_EnemySide) ||
+        (self_camp == KernelAgentCamp_EnemySide && target_camp == KernelAgentCamp_PlayerSide);
+    return hostile &&
+        (self_template->lock_target.target_relations & kLockTargetRelationHostile) != 0u;
+}
+
+void AgentRuntimeManager::apply_behavior(
+    AgentRuntimeState* agent_state,
+    const AgentControllerSpec& spec,
+    std::uint32_t source_net_id) {
+    AgentRuntimeState& agent = *agent_state;
+    if (const AgentBehavior* old = agent_behavior_for_role(agent.controller_role)) {
+        old->exit(agent);
+    }
+    agent.controller_role = spec.role;
+    if (spec.has_hunter) {
+        agent.hunter = spec.hunter;
+    } else if (spec.role == AgentControllerRole::kHunter) {
+        // Its template's own hunter tuning, not whatever an earlier spec left.
+        const ActorTemplateConfig* actor_template =
+            find_actor_template(config_, agent.actor_template_id);
+        if (actor_template != nullptr) {
+            agent.hunter = actor_template->hunter;
         }
+    }
+    if (spec.role == AgentControllerRole::kLockTarget) {
+        const ActorTemplateConfig* actor_template =
+            find_actor_template(config_, agent.actor_template_id);
+        agent.lock_tuning = actor_template != nullptr ? actor_template->lock_target
+                                                      : AgentLockTargetTuning{};
+        agent.lock_target = spec.target_net_id;
+    }
+    if (const AgentBehavior* now = agent_behavior_for_role(agent.controller_role)) {
+        now->enter(agent);
+    }
+    if (spec.has_anchor) {
+        agent.has_guard_anchor = true;
+        agent.guard_anchor = spec.anchor;
+    }
+    // Reinforcements go after what called them: the spawning agent's target
+    // as it stands now. Nothing to inherit leaves it 0, which the hunter pass
+    // reads as already lost.
+    if (agent.controller_role == AgentControllerRole::kHunter &&
+        agent.hunter.target_source == HunterTargetSource::kInherited &&
+        source_net_id != 0u) {
+        const std::size_t source = agent_index_.find(source_net_id);
+        if (source != AgentIndex::kNotFound) {
+            agent.hunt_target = agents_[source].sentry.target;
+        }
+    }
+    if (!spec.route.empty()) {
+        attach_route(&agent, spec.route);
     }
 }
 
@@ -662,12 +1041,12 @@ void AgentRuntimeManager::attach_route(
     const std::vector<KernelVec3>& waypoints) {
     AgentRuntimeState& agent = *agent_state;
     {
-        if (agent.controller_role != AgentControllerRole::kGarrison) {
-            // Only a garrison walks a route; anything else decides its own
-            // movement and would silently ignore one. The catalog refuses
-            // this, so it is a bug if seen.
+        if (agent.controller_role != AgentControllerRole::kPatrol) {
+            // Only a patrol walks a route; anything else decides its own
+            // movement and would silently ignore one. The catalog and
+            // set_behavior refuse this, so it is a bug if seen.
             spdlog::warn(
-                "patrol route on an agent that is not a garrison net_id={} template_id={}",
+                "route on an agent that is not a patrol net_id={} template_id={}",
                 agent.net_id,
                 agent.actor_template_id);
             return;
@@ -793,6 +1172,7 @@ void AgentRuntimeManager::tick(float delta_seconds) {
     if (kernel_ == nullptr) {
         return;
     }
+    ++ticks_;
     if (despawn_pending_) {
         if (!has_live_agent()) {
             despawn_pending_ = false;
@@ -862,6 +1242,8 @@ void AgentRuntimeManager::tick(float delta_seconds) {
     patrol_groups_.tick(&agents_, agent_index_, delta_seconds);
     // Before the controllers, so a hunter seeks along this tick's path.
     update_hunters(actors);
+    update_lock_targets(actors);
+    update_guard_homes();
     // Still on the post-director snapshot: nothing between it and here creates,
     // destroys or moves an entity, so it is what a per-agent query would return.
     dispatch_controllers(actors, delta_seconds);

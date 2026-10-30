@@ -9,7 +9,7 @@ namespace network_example {
 
 constexpr std::uint32_t kPacketMagic = 0x4e584b31u;
 constexpr std::uint16_t kProtocolVersion = 3;
-constexpr std::uint16_t kPacketSchemaVersion = 33;
+constexpr std::uint16_t kPacketSchemaVersion = 34;
 constexpr std::uint16_t kSnapshotSchemaVersion = 32;
 constexpr std::uint16_t kSchemaVersion = kPacketSchemaVersion;
 constexpr std::size_t kPacketHeaderSize = 28;
@@ -54,6 +54,10 @@ enum class MessageType : std::uint16_t {
     // Actors a portal moved this tick, for the owner's camera and for every
     // client's interpolation to cut rather than blend. Packet schema 32.
     kActorTeleportBatch = 33,
+    // A player's order to an agent on its side, and game_server's answer
+    // (docs/AI_BEHAVIOR_PLAN.md §8). Packet schema 34.
+    kAgentCommand = 34,
+    kAgentCommandOutcome = 35,
 };
 
 struct PacketHeader {

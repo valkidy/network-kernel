@@ -43,7 +43,7 @@ animations:
 vision:
   collider_template: sentry_grunt_vision_cone
 ai:
-  default_controller: garrison
+  default_behavior: guard
   profile: default
   perception:
     alert_ticks: 90
@@ -64,8 +64,8 @@ ai:
   # SLOWEST member's patrol speed has to beat advance_speed_meters_per_second,
   # or that member falls behind its slot for the whole route and never arrives.
   # 2.0 m/s x 0.6 = 1.2 m/s here, against a cursor at 0.9.
-  controllers:
-    patrol:
+  behaviors:
+    squad:
       slot_radius_meters: 1.2
       input_magnitude: 0.6
       # About the vision cone's own reach, so it gives up at roughly the distance
