@@ -173,6 +173,16 @@ std::vector<std::uint8_t> read_ground_scene() {
 
 enum class Scene { kFlatGround, kMapWithNavmesh, kMapWithoutNavmesh };
 
+// What R3 varies on top of a run: the agent's guard leash, its template's
+// chase spacing, running it as a hunter, and a second agent of the template
+// beside it (`partner_offset` from it, zero for none).
+struct Options {
+    float guard_leash_meters = 0.0f;
+    float spacing_meters = 0.0f;
+    bool hunter = false;
+    KernelVec3 partner_offset{0.0f, 0.0f, 0.0f};
+};
+
 std::uint32_t template_id_of(const gs::GameServerGameplayConfig& config, const std::string& name) {
     for (const auto& candidate : config.entity_templates) {
         if (candidate.name == name) return candidate.actor_template_id;
@@ -199,13 +209,20 @@ struct Outcome {
     float final_distance_from_start = 0.0f;
     // Gone from the world: off the edge and under the kill floor.
     bool lost = false;
+    // R3: the furthest it got from where it started, whether it was ever
+    // sent back on its leash, and how far apart it and its partner ended up.
+    float furthest_from_start = 0.0f;
+    bool returned = false;
+    float partner_separation_final = 0.0f;
+    float partner_separation_min = 1e9f;
 };
 
 // `follow_speed` zero pins the player where it starts; otherwise it walks
 // after the agent at that speed, keeping no closer than `start_distance`.
 Outcome run(const char* label, const std::string& unit, const gs::AgentRetreatTuning& tuning,
             float start_distance, float follow_speed, int ticks, std::uint16_t port,
-            Scene where = Scene::kFlatGround, KernelVec3 spawn = {0.0f, 1.0f, 0.0f}) {
+            Scene where = Scene::kFlatGround, KernelVec3 spawn = {0.0f, 1.0f, 0.0f},
+            const Options& options = {}) {
     gs::GameServerGameplayConfig config = gs::default_game_server_gameplay_config();
     config.game_rules.clear();
     config.world_rule_spawns.clear();
@@ -225,7 +242,17 @@ Outcome run(const char* label, const std::string& unit, const gs::AgentRetreatTu
     require(unit_id != 0u);
     for (auto* templates : {&config.actor_templates, &config.entity_templates}) {
         for (gs::ActorTemplateConfig& actor : *templates) {
-            if (actor.actor_template_id == unit_id) actor.chaser.retreat = tuning;
+            if (actor.actor_template_id != unit_id) continue;
+            actor.chaser.retreat = tuning;
+            actor.chaser.spacing_meters = options.spacing_meters;
+            if (options.guard_leash_meters > 0.0f) {
+                actor.guard.leash_meters = options.guard_leash_meters;
+                actor.guard.leash_resume_meters = 0.5f * options.guard_leash_meters;
+            }
+            if (options.hunter) {
+                actor.default_controller_role = gs::AgentControllerRole::kHunter;
+                actor.hunter.target_source = gs::HunterTargetSource::kNearestHostile;
+            }
         }
     }
     KernelConfig kernel_config{};
@@ -278,6 +305,11 @@ Outcome run(const char* label, const std::string& unit, const gs::AgentRetreatTu
     };
 
     const std::uint32_t agent_id = create(unit_id, spawn);
+    const bool has_partner = options.partner_offset.x != 0.0f || options.partner_offset.z != 0.0f;
+    const std::uint32_t partner = has_partner
+        ? create(unit_id, {spawn.x + options.partner_offset.x, spawn.y + options.partner_offset.y,
+                           spawn.z + options.partner_offset.z})
+        : 0u;
     for (int i = 0; i < 20; ++i) step();
     // In front of it: an agent looks down its local -x.
     const KernelVec3 agent_start = state_of(agent_id).position;
@@ -347,6 +379,19 @@ Outcome run(const char* label, const std::string& unit, const gs::AgentRetreatTu
         }
         was_retreating = agent->retreating;
         const KernelVec3 now = after.position;
+        if (agent->sentry.state == gs::AgentSentryState::kReturn) outcome.returned = true;
+        outcome.furthest_from_start = std::max(
+            outcome.furthest_from_start, std::hypot(now.x - agent_start.x, now.z - agent_start.z));
+        if (partner != 0u) {
+            KernelServerEntityState other{};
+            other.struct_size = sizeof(other);
+            if (Kernel_ServerGetEntityState(kernel, partner, &other)) {
+                const float apart =
+                    std::hypot(now.x - other.position.x, now.z - other.position.z);
+                outcome.partner_separation_min = std::min(outcome.partner_separation_min, apart);
+                outcome.partner_separation_final = apart;
+            }
+        }
         const float distance = std::hypot(now.x - player_at.x, now.z - player_at.z);
         if (where != Scene::kFlatGround) {
             outcome.lowest_drop = std::min(outcome.lowest_drop, now.y - agent_start.y);
@@ -369,6 +414,9 @@ Outcome run(const char* label, const std::string& unit, const gs::AgentRetreatTu
         outcome.retreats, outcome.retreat_ticks, outcome.longest_retreat, outcome.shots,
         outcome.shots_while_retreating, outcome.lowest_drop, outcome.off_navmesh_ticks,
         outcome.headings_used, outcome.final_distance_from_start, outcome.lost ? ", LOST" : "");
+    std::printf("    furthest from start %.2f m, returned %d, partner apart %.2f m at the end (min %.2f)\n",
+                outcome.furthest_from_start, outcome.returned, outcome.partner_separation_final,
+                outcome.partner_separation_min);
     Kernel_Destroy(kernel);
     return outcome;
 }
@@ -617,6 +665,49 @@ int main() {
                           shipped_retreat("beam_drone"), 3.0f, 0.0f, 240, 7999);
     require(g.retreats == 1u);
     require(g.last_second_min >= 9.0f && g.last_second_max <= 10.0f);
+
+    // I (R3): a 6 m guard leash. The retreat stops short of it rather than
+    // dragging the mage past it into a Return, and it fights from there.
+    {
+        Options leashed;
+        leashed.guard_leash_meters = 6.0f;
+        const Outcome i = run("I mage, 6 m guard leash", "gingerbread_mage", mage, 5.0f, 0.0f, 300,
+                              8103, Scene::kFlatGround, {0.0f, 1.0f, 0.0f}, leashed);
+        require(i.retreats >= 1u);
+        require(i.furthest_from_start <= 6.0f);
+        require(!i.returned);
+        require(i.shots > i.shots_while_retreating);
+    }
+
+    // J (R3): as a hunter, which has no leash and seeks what it cannot see.
+    // With the target in sight it backs off and holds like a guard.
+    {
+        Options hunting;
+        hunting.hunter = true;
+        const Outcome j = run("J mage as a hunter", "gingerbread_mage", mage, 5.0f, 0.0f, 420, 8104,
+                              Scene::kFlatGround, {0.0f, 1.0f, 0.0f}, hunting);
+        require(j.retreats == 1u);
+        require(j.last_second_min >= 18.5f && j.last_second_max <= 20.0f);
+    }
+
+    // K (R3): two mages a metre apart back off from one player. With spacing
+    // they push apart as they go; without it (the control) they only drift
+    // apart as far as backing off radially from the same point spreads them.
+    {
+        Options spaced;
+        spaced.spacing_meters = 4.0f;
+        spaced.partner_offset = {0.0f, 0.0f, 1.0f};
+        Options unspaced = spaced;
+        unspaced.spacing_meters = 0.0f;
+        const Outcome k = run("K two mages, spacing 4 m", "gingerbread_mage", mage, 5.0f, 0.0f, 240,
+                              8105, Scene::kFlatGround, {0.0f, 1.0f, 0.0f}, spaced);
+        const Outcome k0 = run("K' two mages, no spacing", "gingerbread_mage", mage, 5.0f, 0.0f, 240,
+                               8106, Scene::kFlatGround, {0.0f, 1.0f, 0.0f}, unspaced);
+        std::printf("    K apart %.2f m with spacing, %.2f m without\n",
+                    k.partner_separation_final, k0.partner_separation_final);
+        require(k.retreats >= 1u && k0.retreats >= 1u);
+        require(k.partner_separation_final >= k0.partner_separation_final + 0.5f);
+    }
 
     // E: on the plateau with the cliff behind it. Long retreats, so it would
     // reach the edge if nothing stopped it.

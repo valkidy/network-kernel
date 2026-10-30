@@ -595,6 +595,7 @@ void update_retreat(
     float step_meters,
     const PatrolNavigation* navigation,
     const KernelVec3& target_position,
+    const KernelVec2& spacing_push,
     AgentRuntimeState* agent,
     KernelVec2* move) {
     if (retreat.trigger_distance_meters <= 0.0f) {
@@ -667,6 +668,23 @@ void update_retreat(
     ++agent->retreat_ticks;
     ++agent->retreat_window_ticks;
     *move = rotated(away, kRetreatHeadingDegrees[heading]);
+    // Others of its template too close (chase.spacing_meters) push it aside
+    // as it goes, the way they do while it closes -- unless that would take it
+    // somewhere the heading itself was not checked for.
+    if (!is_zero_move(spacing_push)) {
+        KernelVec2 pushed{
+            move->x + spacing_push.x * retreat.input_magnitude,
+            move->y + spacing_push.y * retreat.input_magnitude,
+        };
+        const float length = std::sqrt(pushed.x * pushed.x + pushed.y * pushed.y);
+        if (length > retreat.input_magnitude) {
+            pushed.x *= retreat.input_magnitude / length;
+            pushed.y *= retreat.input_magnitude / length;
+        }
+        if (length > 1e-4f && retreat_heading_clear(navigation, agent->position, pushed)) {
+            *move = pushed;
+        }
+    }
 }
 
 }  // namespace
@@ -998,6 +1016,7 @@ void AgentChaserController::tick(
                     sentry_config.move_speed_meters_per_second * delta_seconds,
                     config_.hovers ? nullptr : navigation,
                     perception.target_position,
+                    spacing[agent_index].push,
                     &agent,
                     &move);
                 retreat_ran = true;
