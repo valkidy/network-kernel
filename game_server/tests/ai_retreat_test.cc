@@ -18,8 +18,9 @@
 //   E  it backs off sideways, never off the navmesh and never down a drop;
 //   E' the same spot with no navmesh loaded walks straight over the edge, so
 //      E proves the navmesh is what kept it on.
-// And the shipped mission (R4): the lone mage and drone game_rule places when a
-// player arrives are guards, not squad members, and back off from a player.
+// And the shipped mission on the real map (R4): a mage in the warband, and a
+// drone in the airforce squad -- switched on in a copy of the catalog, since
+// the shipped one leaves it off -- back off from a player as squad members.
 // The player is pinned in place every tick (or walked, in B), and healed, so
 // a grenade's knockback or damage cannot move the goalposts.
 
@@ -404,10 +405,20 @@ KernelVec3 find_edge_spot(const gs::GameServerGameplayConfig& config) {
     return {};
 }
 
-// The shipped mission on the real map: a player arrives, game_rule places the
-// lone mage and drone, and each backs off from a player put in front of it.
-void shipped_lone_spawns(std::uint16_t port) {
+// The shipped mission on the real map: a player arrives and the squads come.
+// The first squad member of `unit` it finds backs off from a player put in
+// front of it. `airforce` switches the airforce squad on, in a copy of the
+// catalog: the shipped one runs only the warband.
+float shipped_squad_member(const char* label, const char* unit, bool airforce,
+                           float distance, int ticks, std::uint16_t port) {
     gs::GameServerGameplayConfig config = gs::default_game_server_gameplay_config();
+    if (airforce) {
+        auto edited = load_after("airforce on", "gameplay_catalog.yaml", [](YAML::Node& node) {
+            node["patrols"] = YAML::Load("[{ids: [1, 2]}]");
+        });
+        require(edited.has_value());
+        config = std::move(*edited);
+    }
     config.navigation_mesh.artifact = read_file(catalog_root() / config.navigation_mesh.entry_path);
     const std::vector<std::uint8_t> scene =
         read_file(catalog_root() / config.static_collision_scene.entry_path);
@@ -459,59 +470,80 @@ void shipped_lone_spawns(std::uint16_t port) {
     vision.camp = KernelAgentCamp_PlayerSide;
     require(Kernel_ServerSetEntityVisionConfig(kernel, player, &vision));
     const std::uint16_t full_hp = state_of(player).max_hp;
-    for (int tick = 0; tick < 60; ++tick) step();
 
-    // The lone ones are guards; the warband's mages are squad members.
-    const auto lone = [&](const char* name) {
-        const std::uint32_t template_id = template_id_of(config, name);
-        std::uint32_t found = 0, count = 0;
+    // Wait for one that has been in its squad for two seconds: just spawned,
+    // it still faces the way it was created rather than the way its squad
+    // walks, and a squad whose route is short can retire within a second or
+    // two, its members dropping out of it.
+    const std::uint32_t template_id = template_id_of(config, unit);
+    const auto in_squad = [&](std::uint32_t net_id) {
         for (const gs::AgentRuntimeState& agent : game_server.agent_runtime_manager().agents()) {
-            if (agent.actor_template_id != template_id ||
-                agent.controller_role != gs::AgentControllerRole::kGuard) continue;
-            require(!agent.patrol.has_slot);
-            found = agent.net_id;
-            ++count;
+            if (agent.net_id != net_id) continue;
+            KernelServerEntityState alive{};
+            alive.struct_size = sizeof(alive);
+            return agent.controller_role == gs::AgentControllerRole::kSquad &&
+                agent.patrol.has_slot && Kernel_ServerGetEntityState(kernel, net_id, &alive);
         }
-        require(count == 1u);
-        return found;
+        return false;
     };
+    std::uint32_t agent_id = 0, settled_ticks = 0;
+    for (int tick = 0; tick < 3600 && settled_ticks < 60u; ++tick) {
+        require(Kernel_ServerSetEntityHealth(kernel, player, full_hp));
+        step();
+        if (agent_id != 0u && in_squad(agent_id)) {
+            ++settled_ticks;
+            continue;
+        }
+        agent_id = 0u;
+        settled_ticks = 0u;
+        for (const gs::AgentRuntimeState& agent : game_server.agent_runtime_manager().agents()) {
+            if (agent.actor_template_id == template_id && in_squad(agent.net_id)) {
+                agent_id = agent.net_id;
+                break;
+            }
+        }
+    }
+    require(agent_id != 0u && settled_ticks >= 60u);
     const auto retreating = [&](std::uint32_t net_id) {
         for (const gs::AgentRuntimeState& agent : game_server.agent_runtime_manager().agents()) {
             if (agent.net_id == net_id) return agent.retreating;
         }
         return false;
     };
-    // A player `distance` in front of the agent -- where its local -x looks --
-    // pinned there and kept alive; the furthest the agent then gets from it.
-    const auto confront = [&](const char* label, std::uint32_t agent, float distance, int ticks) {
-        const KernelServerEntityState start = state_of(agent);
-        const KernelQuat& q = start.rotation;
-        float fx = -(1.0f - 2.0f * (q.y * q.y + q.z * q.z));
-        float fz = -(2.0f * (q.x * q.z - q.w * q.y));
-        const float length = std::hypot(fx, fz);
-        fx /= length;
-        fz /= length;
-        const KernelVec3 at{start.position.x + fx * distance, start.position.y + 0.5f,
-                            start.position.z + fz * distance};
-        bool backed_off = false;
-        float final_distance = 0.0f;
-        for (int tick = 0; tick < ticks; ++tick) {
-            const KernelServerEntityState p = state_of(player);
-            require(Kernel_ServerSetEntityTransform(kernel, player, &at, &p.rotation));
-            require(Kernel_ServerSetEntityHealth(kernel, player, full_hp));
-            step();
-            backed_off = backed_off || retreating(agent);
-            const KernelVec3 now = state_of(agent).position;
-            final_distance = std::hypot(now.x - at.x, now.z - at.z);
-        }
-        std::printf("[H %s] at (%.1f %.1f) | backed off %d | final %.2f m\n", label,
-                    start.position.x, start.position.z, backed_off, final_distance);
-        require(backed_off);
-        return final_distance;
-    };
-    require(confront("lone mage, player at 5 m", lone("gingerbread_mage"), 5.0f, 330) >= 18.5f);
-    require(confront("lone drone, player at 3 m", lone("beam_drone"), 3.0f, 150) >= 9.0f);
+    // A player `distance` in front of it -- where the kernel says its eyes
+    // look -- pinned there and kept alive.
+    const KernelServerEntityState start = state_of(agent_id);
+    KernelVisionStateQuery vision_query{};
+    vision_query.struct_size = sizeof(vision_query);
+    vision_query.agent_net_id = agent_id;
+    KernelVisionStateView eyes{};
+    eyes.struct_size = sizeof(eyes);
+    require(Kernel_QueryVisionState(kernel, &vision_query, &eyes, 1u) == 1u && eyes.valid);
+    const float length = std::hypot(eyes.vision_forward.x, eyes.vision_forward.z);
+    require(length > 0.5f);
+    const float fx = eyes.vision_forward.x / length;
+    const float fz = eyes.vision_forward.z / length;
+    const KernelVec3 at{start.position.x + fx * distance, start.position.y + 0.5f,
+                        start.position.z + fz * distance};
+    bool backed_off = false;
+    float furthest = 0.0f, final_distance = 0.0f;
+    KernelServerEntityState now{};
+    now.struct_size = sizeof(now);
+    for (int tick = 0; tick < ticks; ++tick) {
+        const KernelServerEntityState p = state_of(player);
+        require(Kernel_ServerSetEntityTransform(kernel, player, &at, &p.rotation));
+        require(Kernel_ServerSetEntityHealth(kernel, player, full_hp));
+        step();
+        backed_off = backed_off || retreating(agent_id);
+        if (!Kernel_ServerGetEntityState(kernel, agent_id, &now)) break;
+        final_distance = std::hypot(now.position.x - at.x, now.position.z - at.z);
+        furthest = std::max(furthest, final_distance);
+    }
+    std::printf("[H %s] squad member at (%.1f %.1f) | backed off %d | furthest %.2f m, final %.2f m\n",
+                label, start.position.x, start.position.z, backed_off, furthest, final_distance);
+    require(backed_off);
     Kernel_Destroy(kernel);
+    return furthest;
 }
 
 }  // namespace
@@ -605,7 +637,12 @@ int main() {
                                 5.0f, 0.0f, 300, 7992, Scene::kMapWithoutNavmesh, spawn);
     require(control.lost || control.lowest_drop < -3.0f || control.off_navmesh_ticks > 0u);
 
-    shipped_lone_spawns(8101);
+    // Squad members back off too; the rest of the squad is all round them, so
+    // only that they open the gap is asserted, not how far.
+    require(shipped_squad_member("warband mage, player at 5 m", "gingerbread_mage", false, 5.0f,
+                                 330, 8101) >= 10.0f);
+    require(shipped_squad_member("airforce drone, player at 3 m", "beam_drone", true, 3.0f, 150,
+                                 8102) >= 7.0f);
 
     std::printf("ai_retreat_test passed\n");
     return 0;

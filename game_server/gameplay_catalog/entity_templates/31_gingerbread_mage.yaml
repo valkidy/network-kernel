@@ -85,9 +85,9 @@ ai:
     # A player inside 8 m is backed away from, still firing, out to 19 m --
     # inside the hold band, a little short of the grenade's 22 m. At 1.8 m/s
     # even a player standing on it is 19 m off in ~10.6 s, hence 11 s before it
-    # gives up; a player who keeps coming outruns it all the same. Never in a
-    # squad (docs/AI_RANGED_RETREAT_PLAN.md Q4), and the warband is the only
-    # place a mage spawns today.
+    # gives up; a player who keeps coming outruns it all the same. In the
+    # warband too: its squad leash (30 m, below) still bounds it, and it walks
+    # back to its slot once the fight is over.
     retreat:
       trigger_distance_meters: 8.0
       target_distance_meters: 19.0

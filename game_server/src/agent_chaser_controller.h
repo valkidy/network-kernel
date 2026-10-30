@@ -81,8 +81,10 @@ struct AgentChargeTuning {
 // Backing off from a target that has come too close
 // (`ai.locomotion.retreat`, docs/AI_RANGED_RETREAT_PLAN.md). Opt-in:
 // trigger_distance_meters zero leaves the rest unread, which is every chaser
-// authored before this existed. Only while pursuing, never in a squad, never
-// on a legged rig (its body turns to the way it walks, and with it its eyes).
+// authored before this existed. Only while pursuing, never on a legged rig
+// (its body turns to the way it walks, and with it its eyes). A squad member
+// backs off like anyone else; its squad leash still bounds how far, and it
+// walks back to its slot once the fight is over.
 struct AgentRetreatTuning {
     // Closer than this, origin to origin, and it starts backing off.
     float trigger_distance_meters = 0.0f;

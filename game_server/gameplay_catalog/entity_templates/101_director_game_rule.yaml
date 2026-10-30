@@ -27,8 +27,6 @@ director:
           - giant_forest_flank
           - giant_swamp_shortcut
           - giant_narrow_pass
-          - lone_mage
-          - lone_drone
       # The objective is the nests themselves. Placing them here and waiting on
       # the same group being eliminated is the whole mission: three things in
       # the world, each putting gingerbread out until it is destroyed.
@@ -79,33 +77,6 @@ director:
         condition:
           type: group_eliminated
           group: giant_open_combat
-      # A mage and a drone on their own, in open combat ~30 m from the player
-      # spawn: the only places either appears otherwise are squads, and squad
-      # members never back off (docs/AI_RANGED_RETREAT_PLAN.md Q4), so these two
-      # are where a ranged agent's retreat can be seen. Spawned like this they
-      # are guards. Both spots were checked against the navmesh: the mage's is
-      # flat (0.2-0.5 m within 10 m) and walkable 20 m in every direction, 19 m
-      # south of the open-combat giant's lane; the drone hovers ~15 m from it.
-      - id: lone_mage
-        on_activate:
-          - type: spawn_group
-            group: lone_mage
-            count: 1
-            entity_template: gingerbread_mage
-            position: {x: -55.0, y: 0.8, z: -75.0}
-        condition:
-          type: group_eliminated
-          group: lone_mage
-      - id: lone_drone
-        on_activate:
-          - type: spawn_group
-            group: lone_drone
-            count: 1
-            entity_template: beam_drone
-            position: {x: -62.0, y: 1.5, z: -88.0}
-        condition:
-          type: group_eliminated
-          group: lone_drone
       - id: giant_forest_flank
         on_activate:
           - type: spawn_group

@@ -586,8 +586,9 @@ void end_retreat(const AgentRetreatTuning& retreat, AgentRuntimeState* agent) {
 // Backing off from a target that has come too close (chase.retreat,
 // docs/AI_RANGED_RETREAT_PLAN.md). Called while pursuing a target in sight,
 // after chase_move: while retreating it replaces `move` with one straight
-// away from the target, and the caller keeps facing the target. Never for a
-// squad member, never once a leap or charge is under way.
+// away from the target, and the caller keeps facing the target. Never once a
+// leap or charge is under way. A squad member backs off too, held to its
+// squad's leash.
 void update_retreat(
     const AgentRetreatTuning& retreat,
     float leash_meters,
@@ -599,7 +600,7 @@ void update_retreat(
     if (retreat.trigger_distance_meters <= 0.0f) {
         return;
     }
-    if (agent->patrol.has_slot || agent->leap_ticks_to_landing > 0u ||
+    if (agent->leap_ticks_to_landing > 0u ||
         agent->charge_windup_ticks > 0u || agent->charge_ticks_left > 0u) {
         if (agent->retreating) end_retreat(retreat, agent);
         return;
