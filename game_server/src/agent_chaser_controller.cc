@@ -1,6 +1,7 @@
 #include "game_server/src/agent_chaser_controller.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <utility>
@@ -11,6 +12,7 @@
 #include "game_server/src/agent_behavior.h"
 #include "game_server/src/agent_steering.h"
 #include "game_server/src/ai_perception_adapter.h"
+#include "game_server/src/patrol_navigation.h"
 #include "kernel/src/kernel_api_internal.h"
 
 namespace network_example::game_server {
@@ -533,6 +535,43 @@ constexpr std::uint32_t kRetreatStallWindowTicks = 15u;
 constexpr float kRetreatStallFraction = 0.3f;
 // Stops this short of the leash, so backing off is never what breaks it.
 constexpr float kRetreatLeashMarginMeters = 0.5f;
+// The ways it may back off, tried in order: straight away from the target,
+// then 45 and 90 degrees either side. Past 90 it would be closing again.
+constexpr std::array<float, 5> kRetreatHeadingDegrees{0.0f, 45.0f, -45.0f, 90.0f, -90.0f};
+// How far ahead each heading has to stay on walkable ground.
+constexpr float kRetreatProbeMeters = 2.0f;
+// How far off the navmesh an agent may stand and still be matched to it.
+constexpr float kRetreatNavmeshMatchMeters = 1.0f;
+
+KernelVec2 rotated(const KernelVec2& move, float degrees) {
+    const float radians = degrees * 3.14159265358979f / 180.0f;
+    const float c = std::cos(radians);
+    const float s = std::sin(radians);
+    return KernelVec2{move.x * c - move.y * s, move.x * s + move.y * c};
+}
+
+// Whether backing off along `move` keeps to walkable ground for the next
+// kRetreatProbeMeters; unknown (no navmesh, or the agent off it) counts as
+// clear, which is how R1 behaved before it could look.
+bool retreat_heading_clear(
+    const PatrolNavigation* navigation,
+    const KernelVec3& position,
+    const KernelVec2& move) {
+    if (navigation == nullptr) {
+        return true;
+    }
+    const float length = std::sqrt(move.x * move.x + move.y * move.y);
+    if (length <= 1e-4f) {
+        return true;
+    }
+    const KernelVec3 ahead{
+        position.x + move.x / length * kRetreatProbeMeters,
+        position.y,
+        position.z + move.y / length * kRetreatProbeMeters,
+    };
+    return navigation->walkable_line(position, ahead, kRetreatNavmeshMatchMeters)
+        .value_or(true);
+}
 
 void end_retreat(const AgentRetreatTuning& retreat, AgentRuntimeState* agent) {
     agent->retreating = false;
@@ -553,6 +592,7 @@ void update_retreat(
     const AgentRetreatTuning& retreat,
     float leash_meters,
     float step_meters,
+    const PatrolNavigation* navigation,
     const KernelVec3& target_position,
     AgentRuntimeState* agent,
     KernelVec2* move) {
@@ -575,6 +615,7 @@ void update_retreat(
         agent->retreat_ticks = 0u;
         agent->retreat_window_start = agent->position;
         agent->retreat_window_ticks = 0u;
+        agent->retreat_heading = 0u;
     }
     bool done = distance >= retreat.target_distance_meters ||
         agent->retreat_ticks >= retreat.max_ticks ||
@@ -595,11 +636,36 @@ void update_retreat(
         *move = KernelVec2{0.0f, 0.0f};
         return;
     }
-    ++agent->retreat_ticks;
-    ++agent->retreat_window_ticks;
     const KernelVec2 toward = agent_steering::horizontal_move_toward(
         agent->position, target_position, retreat.input_magnitude);
-    *move = KernelVec2{-toward.x, -toward.y};
+    const KernelVec2 away{-toward.x, -toward.y};
+    // The heading it was on, if that is still clear; otherwise the first
+    // clear one in order; none clear and it is cornered.
+    std::size_t heading = kRetreatHeadingDegrees.size();
+    if (agent->retreat_heading < kRetreatHeadingDegrees.size() &&
+        retreat_heading_clear(
+            navigation, agent->position,
+            rotated(away, kRetreatHeadingDegrees[agent->retreat_heading]))) {
+        heading = agent->retreat_heading;
+    } else {
+        for (std::size_t index = 0; index < kRetreatHeadingDegrees.size(); ++index) {
+            if (retreat_heading_clear(
+                    navigation, agent->position,
+                    rotated(away, kRetreatHeadingDegrees[index]))) {
+                heading = index;
+                break;
+            }
+        }
+    }
+    if (heading == kRetreatHeadingDegrees.size()) {
+        end_retreat(retreat, agent);
+        *move = KernelVec2{0.0f, 0.0f};
+        return;
+    }
+    agent->retreat_heading = static_cast<std::uint8_t>(heading);
+    ++agent->retreat_ticks;
+    ++agent->retreat_window_ticks;
+    *move = rotated(away, kRetreatHeadingDegrees[heading]);
 }
 
 }  // namespace
@@ -627,7 +693,8 @@ void AgentChaserController::tick(
     KernelHandle* kernel,
     const PerceptionFrame& frame,
     const AgentBatch& agents,
-    float delta_seconds) const {
+    float delta_seconds,
+    const PatrolNavigation* navigation) const {
     if (kernel == nullptr) {
         return;
     }
@@ -928,6 +995,7 @@ void AgentChaserController::tick(
                     config_.chase.retreat,
                     behavior.leash_meters(config_),
                     sentry_config.move_speed_meters_per_second * delta_seconds,
+                    config_.hovers ? nullptr : navigation,
                     perception.target_position,
                     &agent,
                     &move);

@@ -310,6 +310,10 @@ struct AgentRuntimeState {
     std::uint32_t retreat_cooldown_ticks = 0;
     KernelVec3 retreat_window_start{0.0f, 0.0f, 0.0f};
     std::uint32_t retreat_window_ticks = 0;
+    // Which way it is backing off: an index into the retreat's headings
+    // (straight away, then 45 and 90 degrees either side), kept while it
+    // stays clear so the agent does not flick between two.
+    std::uint8_t retreat_heading = 0;
     // Chaser only. Ticks until a leap it started lands, counted down once per
     // controller tick; zero when it is not leaping. And ticks until it may
     // start another.

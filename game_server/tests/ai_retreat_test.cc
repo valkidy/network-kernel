@@ -13,6 +13,11 @@
 //      gives up within max_ticks and it fights where it stands;
 //   C  fire_while_retreating false: nothing is fired while backing off;
 //   D  a hovering drone backs off the same way.
+// And on the real 4-zone map, with its navmesh, at a spot found by searching
+// the navmesh for an edge -- a cliff or a wall -- just behind a mage (R2):
+//   E  it backs off sideways, never off the navmesh and never down a drop;
+//   E' the same spot with no navmesh loaded walks straight over the edge, so
+//      E proves the navmesh is what kept it on.
 // The player is pinned in place every tick (or walked, in B), and healed, so
 // a grenade's knockback or damage cannot move the goalposts.
 
@@ -34,6 +39,7 @@
 #include "game_server/src/agent_runtime.h"
 #include "game_server/src/game_server.h"
 #include "game_server/src/gameplay_config.h"
+#include "game_server/src/patrol_navigation.h"
 #include "kernel/public/kernel_api.h"
 #include "kernel/src/kernel_api_internal.h"
 
@@ -138,13 +144,18 @@ void catalog_checks() {
         retreat("{trigger_distance_meters: 3, target_distance_meters: 5.5}")));
 }
 
-std::vector<std::uint8_t> read_ground_scene() {
-    const fs::path path = catalog_root() / "mesh_assets" / "jolt" / "plane_200x200.joltmesh";
+std::vector<std::uint8_t> read_file(const fs::path& path) {
     std::ifstream file(path, std::ios::binary);
     require(file.good());
     return std::vector<std::uint8_t>(
         std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
 }
+
+std::vector<std::uint8_t> read_ground_scene() {
+    return read_file(catalog_root() / "mesh_assets" / "jolt" / "plane_200x200.joltmesh");
+}
+
+enum class Scene { kFlatGround, kMapWithNavmesh, kMapWithoutNavmesh };
 
 std::uint32_t template_id_of(const gs::GameServerGameplayConfig& config, const std::string& name) {
     for (const auto& candidate : config.entity_templates) {
@@ -164,16 +175,36 @@ struct Outcome {
     // Distance over the last second: does it hold once it got there.
     float last_second_min = 1e9f;
     float last_second_max = 0.0f;
+    // Real map only: the lowest it got relative to where it started, ticks it
+    // spent off the navmesh, and which retreat headings it used (bit per index).
+    float lowest_drop = 0.0f;
+    std::uint32_t off_navmesh_ticks = 0;
+    std::uint32_t headings_used = 0;
+    float final_distance_from_start = 0.0f;
+    // Gone from the world: off the edge and under the kill floor.
+    bool lost = false;
 };
 
 // `follow_speed` zero pins the player where it starts; otherwise it walks
 // after the agent at that speed, keeping no closer than `start_distance`.
 Outcome run(const char* label, const std::string& unit, const gs::AgentRetreatTuning& tuning,
-            float start_distance, float follow_speed, int ticks, std::uint16_t port) {
+            float start_distance, float follow_speed, int ticks, std::uint16_t port,
+            Scene where = Scene::kFlatGround, KernelVec3 spawn = {0.0f, 1.0f, 0.0f}) {
     gs::GameServerGameplayConfig config = gs::default_game_server_gameplay_config();
     config.game_rules.clear();
     config.world_rule_spawns.clear();
     config.patrols.clear();
+    config.spawner_carriers.clear();
+    // The map's own navmesh, as a bundle load hands it over; the flat ground
+    // has none, and the control run on the map leaves it out on purpose.
+    gs::PatrolNavigation navigation;
+    if (where != Scene::kFlatGround) {
+        const std::vector<std::uint8_t> artifact =
+            read_file(catalog_root() / config.navigation_mesh.entry_path);
+        std::string error;
+        require(navigation.load(artifact, &error));
+        if (where == Scene::kMapWithNavmesh) config.navigation_mesh.artifact = artifact;
+    }
     const std::uint32_t unit_id = template_id_of(config, unit);
     require(unit_id != 0u);
     for (auto* templates : {&config.actor_templates, &config.entity_templates}) {
@@ -190,7 +221,9 @@ Outcome run(const char* label, const std::string& unit, const gs::AgentRetreatTu
     KernelHandle* kernel = Kernel_Create(&kernel_config);
     require(kernel != nullptr);
     require(gs::load_kernel_gameplay_catalog(kernel, config));
-    const std::vector<std::uint8_t> scene = read_ground_scene();
+    const std::vector<std::uint8_t> scene = where == Scene::kFlatGround
+        ? read_ground_scene()
+        : read_file(catalog_root() / config.static_collision_scene.entry_path);
     KernelStaticCollisionSceneConfig scene_config{};
     scene_config.struct_size = sizeof(scene_config);
     scene_config.artifact_bytes = scene.data();
@@ -228,7 +261,7 @@ Outcome run(const char* label, const std::string& unit, const gs::AgentRetreatTu
         return net_id;
     };
 
-    const std::uint32_t agent_id = create(unit_id, {0.0f, 1.0f, 0.0f});
+    const std::uint32_t agent_id = create(unit_id, spawn);
     for (int i = 0; i < 20; ++i) step();
     // In front of it: an agent looks down its local -x.
     const KernelVec3 agent_start = state_of(agent_id).position;
@@ -244,7 +277,12 @@ Outcome run(const char* label, const std::string& unit, const gs::AgentRetreatTu
     std::uint32_t run_length = 0, last_projectile = 0;
     bool was_retreating = false;
     for (int tick = 0; tick < ticks; ++tick) {
-        const KernelServerEntityState agent_state = state_of(agent_id);
+        KernelServerEntityState agent_state{};
+        agent_state.struct_size = sizeof(agent_state);
+        if (!Kernel_ServerGetEntityState(kernel, agent_id, &agent_state)) {
+            outcome.lost = true;
+            break;
+        }
         KernelServerEntityState player_state = state_of(player);
         if (follow_speed > 0.0f) {
             const float dx = agent_state.position.x - player_at.x;
@@ -264,7 +302,12 @@ Outcome run(const char* label, const std::string& unit, const gs::AgentRetreatTu
         for (const gs::AgentRuntimeState& candidate : game_server.agent_runtime_manager().agents()) {
             if (candidate.net_id == agent_id) agent = &candidate;
         }
-        require(agent != nullptr);
+        KernelServerEntityState after{};
+        after.struct_size = sizeof(after);
+        if (agent == nullptr || !Kernel_ServerGetEntityState(kernel, agent_id, &after)) {
+            outcome.lost = true;
+            break;
+        }
         std::array<KernelServerEntityState, 64> projectiles{};
         for (KernelServerEntityState& projectile : projectiles) {
             projectile.struct_size = sizeof(projectile);
@@ -287,8 +330,15 @@ Outcome run(const char* label, const std::string& unit, const gs::AgentRetreatTu
             run_length = 0;
         }
         was_retreating = agent->retreating;
-        const KernelVec3 now = state_of(agent_id).position;
+        const KernelVec3 now = after.position;
         const float distance = std::hypot(now.x - player_at.x, now.z - player_at.z);
+        if (where != Scene::kFlatGround) {
+            outcome.lowest_drop = std::min(outcome.lowest_drop, now.y - agent_start.y);
+            if (!navigation.walkable_line(now, now, 0.5f).has_value()) ++outcome.off_navmesh_ticks;
+            if (agent->retreating) outcome.headings_used |= 1u << agent->retreat_heading;
+            outcome.final_distance_from_start =
+                std::hypot(now.x - agent_start.x, now.z - agent_start.z);
+        }
         outcome.final_distance = distance;
         if (tick >= ticks - 30) {
             outcome.last_second_min = std::min(outcome.last_second_min, distance);
@@ -297,12 +347,46 @@ Outcome run(const char* label, const std::string& unit, const gs::AgentRetreatTu
     }
     std::printf(
         "[%s] final %.2f m (last second %.2f-%.2f) | %u retreats, %u ticks, longest %u | "
-        "shots %u, %u while retreating\n",
+        "shots %u, %u while retreating | drop %.2f m, %u ticks off navmesh, headings 0x%x, "
+        "%.1f m from start%s\n",
         label, outcome.final_distance, outcome.last_second_min, outcome.last_second_max,
         outcome.retreats, outcome.retreat_ticks, outcome.longest_retreat, outcome.shots,
-        outcome.shots_while_retreating);
+        outcome.shots_while_retreating, outcome.lowest_drop, outcome.off_navmesh_ticks,
+        outcome.headings_used, outcome.final_distance_from_start, outcome.lost ? ", LOST" : "");
     Kernel_Destroy(kernel);
     return outcome;
+}
+
+// A spot on the narrow pass's plateau (~11-13 m up, ringed by cliffs) with
+// the navmesh's edge less than 3 m east of it -- behind a mage that faces west
+// at a player -- while something to the side is walkable and so are the 6 m
+// west. Searched rather than hard-coded, so a rebaked navmesh moves the spot
+// instead of breaking the test.
+KernelVec3 find_edge_spot(const gs::GameServerGameplayConfig& config) {
+    gs::PatrolNavigation navigation;
+    std::string error;
+    require(navigation.load(read_file(catalog_root() / config.navigation_mesh.entry_path), &error));
+    const auto walkable = [&](const KernelVec3& from, float dx, float dz) {
+        return navigation.walkable_line(from, {from.x + dx, from.y, from.z + dz}, 0.5f)
+            .value_or(false);
+    };
+    for (float x = 60.0f; x <= 98.0f; x += 1.0f) {
+        for (float z = -95.0f; z <= -10.0f; z += 1.0f) {
+            KernelVec3 ground{};
+            if (!navigation.snap({x, 40.0f, z}, 0.5f, &ground) || ground.y < 8.0f) continue;
+            const float r = 3.0f;
+            const float d = r * 0.70710678f;
+            if (walkable(ground, r, 0.0f)) continue;                     // edge behind
+            if (!walkable(ground, -6.0f, 0.0f)) continue;                // room in front
+            // A straight edge rather than a corner: room either side.
+            if (!walkable(ground, 0.0f, 2.0f * r) || !walkable(ground, 0.0f, -2.0f * r)) continue;
+            (void)d;
+            std::printf("edge spot (%.1f %.2f %.1f)\n", ground.x, ground.y, ground.z);
+            return ground;
+        }
+    }
+    require(false && "no edge spot on the plateau");
+    return {};
 }
 
 }  // namespace
@@ -358,6 +442,25 @@ int main() {
     require(d.retreats == 1u);
     require(d.last_second_min >= 9.0f && d.last_second_max <= 10.0f);
     require(d.shots > 0u);
+
+    // E: on the plateau with the cliff behind it. Long retreats, so it would
+    // reach the edge if nothing stopped it.
+    const KernelVec3 edge = find_edge_spot(gs::default_game_server_gameplay_config());
+    const KernelVec3 spawn{edge.x, edge.y + 1.0f, edge.z};
+    gs::AgentRetreatTuning cliff = mage;
+    const Outcome e = run("E mage, cliff behind, navmesh", "gingerbread_mage", cliff, 5.0f, 0.0f,
+                          300, 7980, Scene::kMapWithNavmesh, spawn);
+    require(e.retreats >= 1u);
+    require(e.lowest_drop > -1.0f);
+    require(e.off_navmesh_ticks == 0u);
+    // It went to the side rather than straight back, and still got away.
+    require((e.headings_used & ~1u) != 0u);
+    require(e.final_distance_from_start > 1.0f);
+
+    // E': nothing to look at, so it backs straight off the edge.
+    const Outcome control = run("E' mage, cliff behind, no navmesh", "gingerbread_mage", cliff,
+                                5.0f, 0.0f, 300, 7992, Scene::kMapWithoutNavmesh, spawn);
+    require(control.lost || control.lowest_drop < -3.0f || control.off_navmesh_ticks > 0u);
 
     std::printf("ai_retreat_test passed\n");
     return 0;

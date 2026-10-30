@@ -203,6 +203,8 @@ AgentRuntimeManager::AgentControllerBinding AgentRuntimeManager::make_binding(
                 chaser.weapon_skills.push_back(weapon);
             }
             chaser.gravity_y = actor_template.movement_gravity.y;
+            chaser.hovers = actor_template.movement_controller_type ==
+                KernelMovementControllerType_Hover;
             binding.chaser = AgentChaserController(chaser);
         }
         return binding;
@@ -259,7 +261,8 @@ void AgentRuntimeManager::dispatch_controllers(
         }
         if (runs_chaser(binding.role)) {
             binding.chaser.tick(
-                kernel_, perception_frame_, binding.batch, delta_seconds);
+                kernel_, perception_frame_, binding.batch, delta_seconds,
+                &patrol_navigation_);
         } else {
             binding.sentry.tick(
                 kernel_, perception_frame_, binding.batch, delta_seconds);

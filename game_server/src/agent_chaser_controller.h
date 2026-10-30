@@ -11,6 +11,8 @@
 
 namespace network_example::game_server {
 
+class PatrolNavigation;
+
 // A leap at the target before the swing: when the target is within reach of a
 // leap but not of the weapon, the agent jumps to land `landing_distance_meters`
 // short of it, on a flight the kernel solves to land there on a known tick.
@@ -188,6 +190,9 @@ struct AgentChaserConfig {
     // The template's movement gravity, which a leap's airtime is worked out
     // against. Not authored here.
     float gravity_y = -9.81f;
+    // Its movement controller is hover: it flies over a cliff rather than off
+    // it, so a retreat does not look at the navmesh. Not authored here.
+    bool hovers = false;
 };
 
 // A sentry that closes on what it sees. It pursues while the target is in
@@ -206,11 +211,14 @@ public:
 
     // `frame` is the tick's perception snapshot, taken once for the whole
     // population by the caller.
+    // `navigation`, when there is one, keeps a retreat off cliffs and out of
+    // walls.
     void tick(
         KernelHandle* kernel,
         const PerceptionFrame& frame,
         const AgentBatch& agents,
-        float delta_seconds) const;
+        float delta_seconds,
+        const PatrolNavigation* navigation = nullptr) const;
 
 private:
     AgentChaserConfig config_;

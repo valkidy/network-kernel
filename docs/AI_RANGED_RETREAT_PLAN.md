@@ -2,7 +2,7 @@
 
 需求：玩家逼近遠程單位時，遠程單位先後退，拉開到自身武器射程的最大距離附近，再攻擊玩家。
 
-狀態：R0、R1 完成（2026-10-30，見 §7、§8），R2 尚未開始。量測基準：main 4f295edc；實作基準：main 351993a2（已合併 `claude/ai-behavior-*`）。
+狀態：R0、R1、R2 完成（2026-10-30，見 §7–§9），R3 尚未開始。量測基準：main 4f295edc；實作基準：main 351993a2（已合併 `claude/ai-behavior-*`）。
 
 ---
 
@@ -244,3 +244,36 @@ ABI：無。snapshot schema：無。`bundle.bytes`：只有 R4 需要。
 | D 無人機，玩家站在 3 m | 後退 1 次、49 ticks，停在 9.53 m；3 次光束 |
 
 **`bundle.bytes`：** 需要重新產生。出貨 template 雖然都沒有加 retreat，但 retreat 欄位已經納入 catalog hash，所有 template 的 hash 都會改變（和 `giant-chase-spacing` 的情況相同）。R4 加上法師與無人機的數值後，需要再產生一次。
+
+---
+
+## 9. R2 實作結果（2026-10-30，分支 `claude/ranged-retreat`）
+
+**改動**（只改 game_server；kernel、ABI、snapshot schema 都沒變）：
+
+- `PatrolNavigation::walkable_line(from, to, half_extent)`：包裝 Detour 的 `dtNavMeshQuery::raycast`。
+  - 從 `from` 直線走到 `to`，途中遇到 navmesh 邊緣（懸崖、牆）就回傳 false。
+  - `from` 對應 navmesh 時，垂直範圍只抓 ±3 m。這樣站在高台上不會被當成高台下方的地面。
+  - 沒有 navmesh，或 `from` 不在 navmesh 上時，回傳 nullopt。
+- `AgentChaserController::tick` 新增 `navigation` 參數（預設 nullptr）。manager 傳入自己的 `patrol_navigation_`。
+  - 沒有把指標存進 controller 設定，因為 manager 可能被 move。
+- 後退方向依序嘗試：正後方、±45°、±90°。每個方向往前探 2 m，必須仍在 navmesh 上。
+  - 上一 tick 用的方向如果仍然可走，就繼續用，避免在兩個方向之間來回切換。
+  - 五個方向都不行就是被逼到角落：結束後退，原地應戰。
+  - 沒有 navmesh、或單位不在 navmesh 上時，視為可走，也就是 R1 的行為。
+- hover 單位（`AgentChaserConfig::hovers`，從 template 的 movement controller 推得）不看 navmesh，因為它會飛越懸崖而不是掉下去。卡住偵測照舊適用。
+
+**測試 `ai_retreat_test` 新增情境（通過）：**
+
+| 情境 | 結果 |
+|---|---|
+| E 法師在高台上，背後 3 m 內是懸崖，載入 navmesh | 地點由測試在 navmesh 上搜尋，這次是 (97.0, 11.35, −93.0)。用了 0° / 45° / 90° 三個方向，沿著懸崖邊側移 10.4 m；0 ticks 離開 navmesh，沒有往下掉 |
+| E' 同一地點，不載入 navmesh（對照組） | 直接往後走下懸崖，掉了 20.7 m，被 kill floor 移除 |
+
+E' 證明 E 的結果確實來自 navmesh 檢查，不是地形剛好擋住。
+
+**已知限制（留給 R3 或之後）：**
+
+- **懸崖就在正後方時，只能側移，拉不開距離。** ±90° 的方向和玩家的距離幾乎不變：E 只從 5 m 拉到 6.16 m，之後由卡住偵測結束後退。安全上正確，但效果有限。如果希望這種情況下乾脆原地應戰，可以拿掉 ±90°（只剩正後方與 ±45°），由使用者決定。
+- **卡住偵測仍然沒有自動化測試。** navmesh 已經把靜態的牆和道具挖掉，所以真實地圖上會觸發卡住偵測的，只剩其他角色或動態物件擋路。
+- **測試地點是搜尋出來的。** navmesh 重新 bake 後地點會換，但測試不會因此壞掉。目前找到的是高台東緣、靠近地圖邊界的位置，懸崖下方就是地圖外。
