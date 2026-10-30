@@ -117,11 +117,24 @@ void catalog_checks() {
     require(std::abs(gs::find_actor_template(*defaulted, 31u)
                          ->chaser.retreat.target_distance_meters - 19.8f) < 1e-4f);
 
-    // Off is the default: the shipped mage has none.
-    const auto shipped = load_after("mage as shipped", kMage, [](YAML::Node&) {});
+    // As shipped (R4): the mage and the drone back off; nothing else does.
+    const auto shipped = load_after("as shipped", kMage, [](YAML::Node&) {});
     require(shipped.has_value());
-    require(gs::find_actor_template(*shipped, 31u)->chaser.retreat.trigger_distance_meters ==
-            0.0f);
+    for (const gs::ActorTemplateConfig& actor : shipped->entity_templates) {
+        const gs::AgentRetreatTuning& tuning = actor.chaser.retreat;
+        if (actor.name == "gingerbread_mage") {
+            require(tuning.trigger_distance_meters == 8.0f);
+            require(tuning.target_distance_meters == 19.0f);
+            require(tuning.max_ticks == 330u && tuning.cooldown_ticks == 150u);
+            require(tuning.fire_while_retreating);
+        } else if (actor.name == "beam_drone") {
+            require(tuning.trigger_distance_meters == 4.0f);
+            require(tuning.target_distance_meters == 9.5f);
+            require(tuning.max_ticks == 90u && tuning.cooldown_ticks == 150u);
+        } else {
+            require(tuning.trigger_distance_meters == 0.0f);
+        }
+    }
 
     require(!load_after("trigger at the stop distance", kMage,
         retreat("{trigger_distance_meters: 16, target_distance_meters: 19}")));
@@ -442,6 +455,24 @@ int main() {
     require(d.retreats == 1u);
     require(d.last_second_min >= 9.0f && d.last_second_max <= 10.0f);
     require(d.shots > 0u);
+
+    // F, G: the shipped tuning, as the catalog has it (R4).
+    const gs::GameServerGameplayConfig shipped = gs::default_game_server_gameplay_config();
+    const auto shipped_retreat = [&](const char* name) {
+        for (const gs::ActorTemplateConfig& actor : shipped.entity_templates) {
+            if (actor.name == name) return actor.chaser.retreat;
+        }
+        require(false && "template missing");
+        return gs::AgentRetreatTuning{};
+    };
+    const Outcome f = run("F mage as shipped, player standing at 5 m", "gingerbread_mage",
+                          shipped_retreat("gingerbread_mage"), 5.0f, 0.0f, 420, 7970);
+    require(f.retreats == 1u);
+    require(f.last_second_min >= 18.5f && f.last_second_max <= 20.0f);
+    const Outcome g = run("G drone as shipped, player standing at 3 m", "beam_drone",
+                          shipped_retreat("beam_drone"), 3.0f, 0.0f, 240, 7999);
+    require(g.retreats == 1u);
+    require(g.last_second_min >= 9.0f && g.last_second_max <= 10.0f);
 
     // E: on the plateau with the cliff behind it. Long retreats, so it would
     // reach the edge if nothing stopped it.
