@@ -11,6 +11,8 @@
 
 namespace network_example::game_server {
 
+class PatrolNavigation;
+
 // A leap at the target before the swing: when the target is within reach of a
 // leap but not of the weapon, the agent jumps to land `landing_distance_meters`
 // short of it, on a flight the kernel solves to land there on a known tick.
@@ -76,6 +78,46 @@ struct AgentChargeTuning {
     bool has_windup_animation = false;
 };
 
+// How a retreat gets away (docs/AI_RANGED_RETREAT_PLAN.md §13).
+enum class AgentRetreatStyle : std::uint8_t {
+    // Facing the target, walking backwards, still able to fire.
+    kBackpedal = 0,
+    // Turned away, running for run_ticks, then turning back to face it. Holds
+    // its fire throughout. The only style for a legged rig, whose body turns
+    // to the way it walks anyway.
+    kTurnAndRun = 1,
+};
+
+// Backing off from a target that has come too close
+// (`ai.locomotion.retreat`, docs/AI_RANGED_RETREAT_PLAN.md). Opt-in:
+// trigger_distance_meters zero leaves the rest unread, which is every chaser
+// authored before this existed. Only while pursuing. A legged rig may only
+// turn_and_run: its body turns to the way it walks, and with it its eyes. A
+// squad member backs off like anyone else; its squad leash still bounds how
+// far, and it walks back to its slot once the fight is over.
+struct AgentRetreatTuning {
+    AgentRetreatStyle style = AgentRetreatStyle::kBackpedal;
+    // Closer than this, origin to origin, and it starts backing off.
+    float trigger_distance_meters = 0.0f;
+    // Backed off this far, it stops. Inside the hold band, so it does not
+    // turn round and close again.
+    float target_distance_meters = 0.0f;
+    // Fraction of the template's move speed, 0..1.
+    float input_magnitude = 1.0f;
+    // A target that keeps coming is faster than anything that backs off, so
+    // a retreat that has not opened the gap by now gives up and fights where
+    // it stands.
+    std::uint32_t max_ticks = 90;
+    // After a retreat ends, however it ended, how long before another.
+    std::uint32_t cooldown_ticks = 150;
+    // Whether it keeps shooting while it backs off. Always false for
+    // turn_and_run: its back is to the target.
+    bool fire_while_retreating = true;
+    // turn_and_run only: how long it runs before it turns back. A fixed time,
+    // not a distance; target_distance_meters and max_ticks are backpedal's.
+    std::uint32_t run_ticks = 0;
+};
+
 // Movement tuning layered on top of the sentry's perception and attack tuning.
 struct AgentChaseTuning {
     // Closer than this and the agent holds still instead of walking into the
@@ -111,6 +153,7 @@ struct AgentChaseTuning {
     float spacing_meters = 0.0f;
     AgentLeapTuning leap;
     AgentChargeTuning charge;
+    AgentRetreatTuning retreat;
 };
 
 // What walking to a squad slot costs and what it tolerates (`behaviors.squad`).
@@ -164,6 +207,9 @@ struct AgentChaserConfig {
     // The template's movement gravity, which a leap's airtime is worked out
     // against. Not authored here.
     float gravity_y = -9.81f;
+    // Its movement controller is hover: it flies over a cliff rather than off
+    // it, so a retreat does not look at the navmesh. Not authored here.
+    bool hovers = false;
 };
 
 // A sentry that closes on what it sees. It pursues while the target is in
@@ -182,11 +228,14 @@ public:
 
     // `frame` is the tick's perception snapshot, taken once for the whole
     // population by the caller.
+    // `navigation`, when there is one, keeps a retreat off cliffs and out of
+    // walls.
     void tick(
         KernelHandle* kernel,
         const PerceptionFrame& frame,
         const AgentBatch& agents,
-        float delta_seconds) const;
+        float delta_seconds,
+        const PatrolNavigation* navigation = nullptr) const;
 
 private:
     AgentChaserConfig config_;

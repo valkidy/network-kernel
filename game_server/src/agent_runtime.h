@@ -301,6 +301,23 @@ struct AgentRuntimeState {
     // Chaser only: true once the agent has closed inside its stop distance and
     // is holding position, until the target opens the gap back up.
     bool chase_holding = false;
+    // Chaser only (chase.retreat): backing off from a target that came too
+    // close, for how many ticks so far, and ticks until it may again. Where
+    // it stood when the current stall window began, and how many ticks that
+    // window has run: a retreat that is not getting anywhere is cornered.
+    bool retreating = false;
+    std::uint32_t retreat_ticks = 0;
+    std::uint32_t retreat_cooldown_ticks = 0;
+    KernelVec3 retreat_window_start{0.0f, 0.0f, 0.0f};
+    std::uint32_t retreat_window_ticks = 0;
+    // Which way it is backing off: an index into the retreat's headings
+    // (straight away, then 45 and 90 degrees either side), kept while it
+    // stays clear so the agent does not flick between two.
+    std::uint8_t retreat_heading = 0;
+    // turn_and_run: done running and turning back to face the target, for
+    // how many ticks so far.
+    bool retreat_turning = false;
+    std::uint32_t retreat_turn_ticks = 0;
     // Chaser only. Ticks until a leap it started lands, counted down once per
     // controller tick; zero when it is not leaping. And ticks until it may
     // start another.

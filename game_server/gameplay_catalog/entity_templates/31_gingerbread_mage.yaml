@@ -82,6 +82,17 @@ ai:
     stop_distance_meters: 16.0
     resume_distance_meters: 20.0
     input_magnitude: 1.0
+    # A player inside 8 m is backed away from, still firing, out to 19 m --
+    # inside the hold band, a little short of the grenade's 22 m. At 1.8 m/s
+    # even a player standing on it is 19 m off in ~10.6 s, hence 11 s before it
+    # gives up; a player who keeps coming outruns it all the same. In the
+    # warband too: its squad leash (30 m, below) still bounds it, and it walks
+    # back to its slot once the fight is over.
+    retreat:
+      trigger_distance_meters: 8.0
+      target_distance_meters: 19.0
+      max_ticks: 330
+      cooldown_ticks: 150
   # Only read when this mage is in a squad; a lone one has no slot and none of
   # this applies to it.
   behaviors:
