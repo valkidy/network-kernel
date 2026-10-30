@@ -313,3 +313,20 @@ E' 證明 E 的結果確實來自 navmesh 檢查，不是地形剛好擋住。
   - (a) 讓巡邏隊成員也能後退（推翻 Q4；需要處理和隊形位置、巡邏隊 leash 的互動）。
   - (b) 啟用 airforce 巡邏隊（`patrols: ids: [1, 2]`），但無人機仍然是巡邏隊成員，同樣受 Q4 限制。
   - (c) 另外加一個單獨生成的法師 / 無人機（例如 world rule 的 `spawn_group`），它們是 guard，會後退。
+
+**決定（2026-10-30）：(c)。** 在 game_rule（101）加入兩個節點 `lone_mage`、`lone_drone`。玩家抵達時，用 `spawn_group` 各生成一隻，和巨人的生成方式相同。world_rule（100）在出貨 catalog 裡沒有 preload，所以不用它。
+
+| 單位 | 位置 | 地點檢查（navmesh） |
+|---|---|---|
+| gingerbread_mage | (−55, 0.8, −75) | 10 m 內高度 0.18～0.54 m，16 個方向都能走 20 m；離玩家出生點約 32 m，離 open combat 巨人的路線 19 m |
+| beam_drone | (−62, 1.5, −88) | 離法師約 15 m；hover，不受 navmesh 影響 |
+
+**量測（`ai_retreat_test` 的 H：出貨 catalog、真實地圖、preload 的 director、玩家從出生點抵達）：**
+
+- 兩隻都是 guard，不是巡邏隊成員。
+- 玩家放在法師面前 5 m：法師後退到 19.04 m。
+- 玩家放在無人機面前 3 m：無人機後退到 9.53 m。
+
+**注意：兩隻距離只有約 15 m，打其中一隻時，另一隻也會被拉進來。** 測法師時玩家在無人機的 20 m 視野內，所以輪到無人機時，它已經從 (−62, −88) 移動到 (−60.9, −80.9)。如果想分開測，需要把兩隻再拉遠。
+
+**回歸測試：** 70 個測試通過，包括所有會啟動任務流程的測試。新增生成會讓之後生成的 net id 改變，所以特別包含了依賴生成順序的 `knockdown_recovery_test`、`pass_giant_route_test`、`shipping_catalog_flow_test`。

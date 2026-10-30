@@ -18,6 +18,8 @@
 //   E  it backs off sideways, never off the navmesh and never down a drop;
 //   E' the same spot with no navmesh loaded walks straight over the edge, so
 //      E proves the navmesh is what kept it on.
+// And the shipped mission (R4): the lone mage and drone game_rule places when a
+// player arrives are guards, not squad members, and back off from a player.
 // The player is pinned in place every tick (or walked, in B), and healed, so
 // a grenade's knockback or damage cannot move the goalposts.
 
@@ -402,6 +404,116 @@ KernelVec3 find_edge_spot(const gs::GameServerGameplayConfig& config) {
     return {};
 }
 
+// The shipped mission on the real map: a player arrives, game_rule places the
+// lone mage and drone, and each backs off from a player put in front of it.
+void shipped_lone_spawns(std::uint16_t port) {
+    gs::GameServerGameplayConfig config = gs::default_game_server_gameplay_config();
+    config.navigation_mesh.artifact = read_file(catalog_root() / config.navigation_mesh.entry_path);
+    const std::vector<std::uint8_t> scene =
+        read_file(catalog_root() / config.static_collision_scene.entry_path);
+    KernelConfig kernel_config{};
+    kernel_config.mode = KernelMode_DedicatedServer;
+    kernel_config.tick.server_tick_rate = 30;
+    kernel_config.tick.snapshot_rate = 15;
+    kernel_config.max_events = 256;
+    kernel_config.max_render_states = 64;
+    KernelHandle* kernel = Kernel_Create(&kernel_config);
+    require(kernel != nullptr);
+    require(gs::load_kernel_gameplay_catalog(kernel, config));
+    KernelStaticCollisionSceneConfig scene_config{};
+    scene_config.struct_size = sizeof(scene_config);
+    scene_config.artifact_bytes = scene.data();
+    scene_config.artifact_size = static_cast<std::uint32_t>(scene.size());
+    scene_config.scene_id = config.static_collision_scene.scene_id;
+    scene_config.collider_id = config.static_collision_scene.collider_id;
+    scene_config.collision_layer = config.static_collision_scene.collision_layer;
+    require(Kernel_SetStaticCollisionScene(kernel, &scene_config));
+    require(Kernel_StartDedicatedServer(kernel, port));
+    gs::GameServer game_server(kernel, config);
+    require(game_server.preload_directors());
+    std::array<KernelEvent, 256> events{};
+    const auto step = [&]() {
+        game_server.tick(kTickSeconds);
+        Kernel_Update(kernel, kTickSeconds);
+        const std::uint32_t count = Kernel_PollEvents(
+            kernel, events.data(), static_cast<std::uint32_t>(events.size()));
+        for (std::uint32_t index = 0; index < count; ++index) {
+            game_server.handle_event(events[index]);
+        }
+    };
+    const auto state_of = [&](std::uint32_t net_id) {
+        KernelServerEntityState state{};
+        state.struct_size = sizeof(state);
+        require(Kernel_ServerGetEntityState(kernel, net_id, &state));
+        return state;
+    };
+    KernelServerEntityCreateInfo create_info{};
+    create_info.struct_size = sizeof(create_info);
+    create_info.entity_template_id = template_id_of(config, "player");
+    create_info.position = config.player.spawn_position;
+    create_info.rotation = kIdentityRotation;
+    std::uint32_t player = 0;
+    require(Kernel_ServerCreateEntity(kernel, &create_info, &player));
+    KernelAgentVisionConfig vision{};
+    vision.struct_size = sizeof(vision);
+    vision.camp = KernelAgentCamp_PlayerSide;
+    require(Kernel_ServerSetEntityVisionConfig(kernel, player, &vision));
+    const std::uint16_t full_hp = state_of(player).max_hp;
+    for (int tick = 0; tick < 60; ++tick) step();
+
+    // The lone ones are guards; the warband's mages are squad members.
+    const auto lone = [&](const char* name) {
+        const std::uint32_t template_id = template_id_of(config, name);
+        std::uint32_t found = 0, count = 0;
+        for (const gs::AgentRuntimeState& agent : game_server.agent_runtime_manager().agents()) {
+            if (agent.actor_template_id != template_id ||
+                agent.controller_role != gs::AgentControllerRole::kGuard) continue;
+            require(!agent.patrol.has_slot);
+            found = agent.net_id;
+            ++count;
+        }
+        require(count == 1u);
+        return found;
+    };
+    const auto retreating = [&](std::uint32_t net_id) {
+        for (const gs::AgentRuntimeState& agent : game_server.agent_runtime_manager().agents()) {
+            if (agent.net_id == net_id) return agent.retreating;
+        }
+        return false;
+    };
+    // A player `distance` in front of the agent -- where its local -x looks --
+    // pinned there and kept alive; the furthest the agent then gets from it.
+    const auto confront = [&](const char* label, std::uint32_t agent, float distance, int ticks) {
+        const KernelServerEntityState start = state_of(agent);
+        const KernelQuat& q = start.rotation;
+        float fx = -(1.0f - 2.0f * (q.y * q.y + q.z * q.z));
+        float fz = -(2.0f * (q.x * q.z - q.w * q.y));
+        const float length = std::hypot(fx, fz);
+        fx /= length;
+        fz /= length;
+        const KernelVec3 at{start.position.x + fx * distance, start.position.y + 0.5f,
+                            start.position.z + fz * distance};
+        bool backed_off = false;
+        float final_distance = 0.0f;
+        for (int tick = 0; tick < ticks; ++tick) {
+            const KernelServerEntityState p = state_of(player);
+            require(Kernel_ServerSetEntityTransform(kernel, player, &at, &p.rotation));
+            require(Kernel_ServerSetEntityHealth(kernel, player, full_hp));
+            step();
+            backed_off = backed_off || retreating(agent);
+            const KernelVec3 now = state_of(agent).position;
+            final_distance = std::hypot(now.x - at.x, now.z - at.z);
+        }
+        std::printf("[H %s] at (%.1f %.1f) | backed off %d | final %.2f m\n", label,
+                    start.position.x, start.position.z, backed_off, final_distance);
+        require(backed_off);
+        return final_distance;
+    };
+    require(confront("lone mage, player at 5 m", lone("gingerbread_mage"), 5.0f, 330) >= 18.5f);
+    require(confront("lone drone, player at 3 m", lone("beam_drone"), 3.0f, 150) >= 9.0f);
+    Kernel_Destroy(kernel);
+}
+
 }  // namespace
 
 int main() {
@@ -492,6 +604,8 @@ int main() {
     const Outcome control = run("E' mage, cliff behind, no navmesh", "gingerbread_mage", cliff,
                                 5.0f, 0.0f, 300, 7992, Scene::kMapWithoutNavmesh, spawn);
     require(control.lost || control.lowest_drop < -3.0f || control.off_navmesh_ticks > 0u);
+
+    shipped_lone_spawns(8101);
 
     std::printf("ai_retreat_test passed\n");
     return 0;
