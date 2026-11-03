@@ -32,12 +32,63 @@ enum class PatrolCompositionMode : std::uint8_t {
     kExplicitRanges = 0,
 };
 
+// WHERE. An authored area in world coordinates, or around whoever is playing.
+enum class PatrolPlacementMode : std::uint8_t {
+    kArea = 0,
+    // Squads are aimed at groups of players: spawned on a ring around one, out
+    // of the client's relevance, on a route that crosses where it stood. See
+    // docs/PLAYER_TARGETED_PATROL_PLAN.md.
+    kAroundPlayers = 1,
+};
+
+// `where: {mode: around_players, ...}`. Defaults are the plan's P0-revised
+// numbers, not tuning anyone has played.
+struct PatrolAroundPlayersConfig {
+    // Spawn distance from the target. The floor sits past the kernel's 44 m
+    // relevance exit plus half a squad, so a squad is never seen appearing.
+    float ring_min_meters = 50.0f;
+    float ring_max_meters = 60.0f;
+    // How close the route must pass the target's spawn-time position. Under a
+    // member's vision range the squad engages by default and the player has to
+    // step aside; over it the squad only walks by.
+    float pass_within_meters = 15.0f;
+    // Spread around the bearing straight across from the start.
+    float exit_spread_degrees = 30.0f;
+    // Players this close to one another are one group.
+    float group_radius_meters = 18.0f;
+    // Live squads a group may hold, per member, rounded up.
+    float groups_per_member = 1.0f;
+    // Live squads across the definition, per player, rounded up. Replaces
+    // max_live_groups, which is refused alongside this mode.
+    float groups_per_player = 1.5f;
+    // A group nothing has threatened for this long is served before anyone's
+    // second squad. Zero is no floor.
+    std::uint32_t floor_interval_ticks = 1800;
+};
+
+// One row of `squad_by_group_size:`: how big a squad is, and what it is made
+// of, for a target group of this many players. A table rather than a formula
+// because the mix has to change with the size -- the full warband's floors
+// alone are six bodies, more than a lone player's squad.
+struct PatrolSquadTier {
+    std::uint32_t members_min = 1;
+    // Zero is unbounded, and only the last tier may say it.
+    std::uint32_t members_max = 0;
+    std::uint32_t count_min = 1;
+    std::uint32_t count_max = 1;
+    std::vector<SpawnCompositionEntry> composition;
+};
+
 // One authored kind of patrol. The catalog holds a list of these; each one
 // spawns squads on its own cadence, into its own area, out of its own mix.
 struct PatrolDefinitionConfig {
     std::uint32_t id = 0;
     std::string name;
+    PatrolPlacementMode placement = PatrolPlacementMode::kArea;
+    // Read only under kArea.
     SpawnAreaConfig area;
+    // Read only under kAroundPlayers.
+    PatrolAroundPlayersConfig around_players;
     // Not a PRNG seed in the existing spawners, where it is a starting index
     // into a golden-angle sequence. Here it really is one: every draw a
     // definition makes is derived from this and the number of squads it has
@@ -52,9 +103,15 @@ struct PatrolDefinitionConfig {
     std::uint32_t max_live_groups = 1;
 
     PatrolCompositionMode composition_mode = PatrolCompositionMode::kExplicitRanges;
+    // With tiers, these are the smallest and largest squad across all of them,
+    // so a budget check against count_max stays an upper bound; composition
+    // is then empty and each tier carries its own.
     std::uint32_t count_min = 1;
     std::uint32_t count_max = 1;
     std::vector<SpawnCompositionEntry> composition;
+    // Empty unless authored, and only authorable under kAroundPlayers: a squad
+    // sized by its target group needs a target group.
+    std::vector<PatrolSquadTier> squad_tiers;
 
     float formation_spacing_meters = 1.5f;
     PatrolGroupTuning group{};

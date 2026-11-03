@@ -3710,6 +3710,10 @@ void apply_catalog_patrol_config(
     const YAML::Node& document,
     GameServerGameplayConfig* config,
     const std::string& path);
+MapConfig map_config_from_yaml(
+    const YAML::Node& node,
+    const std::string& path,
+    std::uint32_t source_kind);
 void apply_catalog_world_rule_config(GameServerGameplayConfig* config);
 void resolve_agent_skills(GameServerGameplayConfig* config);
 void apply_catalog_population_budget_config(
@@ -10077,6 +10081,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             "reinforce_budget",
             "agent_budget",
             "navigation_mesh",
+            "map",
             "scene_props",
             "scene_items",
             "agent_routes",
@@ -10263,6 +10268,10 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
         // fail on an asset that was never meant to be there.
         config.navigation_mesh.entry_path =
             navigation["entry_path"].as<std::string>();
+    }
+    if (document["map"]) {
+        config.map = map_config_from_yaml(
+            document["map"], path, source.source_kind());
     }
     if (document["static_collision_scene"]) {
         const YAML::Node scene = document["static_collision_scene"];
@@ -11051,6 +11060,229 @@ SpawnAreaConfig patrol_area_from_yaml(
     return area;
 }
 
+MapConfig map_config_from_yaml(
+    const YAML::Node& node,
+    const std::string& path,
+    std::uint32_t source_kind) {
+    reject_unknown_keys(
+        node,
+        {"playable_bounds"},
+        path,
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+    MapConfig map;
+    const YAML::Node bounds = node["playable_bounds"];
+    if (!bounds) {
+        return map;
+    }
+    reject_unknown_keys(
+        bounds,
+        {"min", "max"},
+        path,
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+    if (!bounds["min"] || !bounds["max"]) {
+        throw std::runtime_error(
+            "map playable_bounds requires min and max: " + path);
+    }
+    // Horizontal only: x and z, and a y would be a height nobody reads.
+    const auto corner = [&](const YAML::Node& point, float* x, float* z) {
+        reject_unknown_keys(
+            point,
+            {"x", "z"},
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+        if (!point["x"] || !point["z"]) {
+            throw std::runtime_error(
+                "map playable_bounds corners require x and z: " + path);
+        }
+        *x = point["x"].as<float>();
+        *z = point["z"].as<float>();
+    };
+    PlayableBoundsConfig& playable = map.playable_bounds;
+    corner(bounds["min"], &playable.min_x, &playable.min_z);
+    corner(bounds["max"], &playable.max_x, &playable.max_z);
+    if (!std::isfinite(playable.min_x) || !std::isfinite(playable.min_z) ||
+        !std::isfinite(playable.max_x) || !std::isfinite(playable.max_z) ||
+        playable.min_x >= playable.max_x || playable.min_z >= playable.max_z) {
+        throw std::runtime_error(
+            "map playable_bounds min must be below max on both x and z: " +
+            path);
+    }
+    playable.authored = true;
+    return map;
+}
+
+// `where: {mode: around_players, ...}`. `area:` stays the way to author the
+// world-anchored mode, so `where:` names nothing else yet.
+PatrolAroundPlayersConfig patrol_around_players_from_yaml(
+    const YAML::Node& node,
+    const std::string& path,
+    std::uint32_t source_kind) {
+    reject_unknown_keys(
+        node,
+        {
+            "mode",
+            "ring",
+            "pass_within_meters",
+            "exit_spread_degrees",
+            "group_radius_meters",
+            "groups_per_member",
+            "groups_per_player",
+            "floor_interval_ticks",
+        },
+        path,
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+    if (!node["mode"] || node["mode"].as<std::string>() != "around_players") {
+        throw std::runtime_error(
+            "patrol where mode must be around_players: " + path);
+    }
+    PatrolAroundPlayersConfig around;
+    if (node["ring"]) {
+        reject_unknown_keys(
+            node["ring"],
+            {"min_meters", "max_meters"},
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+        if (node["ring"]["min_meters"]) {
+            around.ring_min_meters = node["ring"]["min_meters"].as<float>();
+        }
+        if (node["ring"]["max_meters"]) {
+            around.ring_max_meters = node["ring"]["max_meters"].as<float>();
+        }
+    }
+    const auto read_float = [&](const char* key, float* out) {
+        if (node[key]) {
+            *out = node[key].as<float>();
+        }
+    };
+    read_float("pass_within_meters", &around.pass_within_meters);
+    read_float("exit_spread_degrees", &around.exit_spread_degrees);
+    read_float("group_radius_meters", &around.group_radius_meters);
+    read_float("groups_per_member", &around.groups_per_member);
+    read_float("groups_per_player", &around.groups_per_player);
+    if (node["floor_interval_ticks"]) {
+        around.floor_interval_ticks =
+            node["floor_interval_ticks"].as<std::uint32_t>();
+    }
+    return around;
+}
+
+// A `composition:` list, ids resolved against templates already loaded.
+std::vector<SpawnCompositionEntry> patrol_composition_from_yaml(
+    const YAML::Node& composition,
+    const GameServerGameplayConfig& config,
+    const std::string& path,
+    std::uint32_t source_kind) {
+    if (!composition || !composition.IsSequence()) {
+        throw std::runtime_error("patrol composition must be a sequence");
+    }
+    std::vector<SpawnCompositionEntry> entries;
+    for (const YAML::Node& entry_node : composition) {
+        reject_unknown_keys(
+            entry_node,
+            {"entity_template", "min", "max"},
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+        if (!entry_node["entity_template"] || !entry_node["min"] ||
+            !entry_node["max"]) {
+            throw std::runtime_error(
+                "patrol composition entry requires entity_template, min "
+                "and max");
+        }
+        SpawnCompositionEntry entry;
+        entry.entity_template_ref =
+            entry_node["entity_template"].as<std::string>();
+        entry.entity_template_id = entity_template_ref_from_yaml(
+            entry_node["entity_template"], config.entity_templates);
+        entry.min_count = entry_node["min"].as<std::uint32_t>();
+        entry.max_count = entry_node["max"].as<std::uint32_t>();
+        entries.push_back(std::move(entry));
+    }
+    return entries;
+}
+
+// `count: {min, max}`.
+void patrol_count_from_yaml(
+    const YAML::Node& count,
+    const std::string& path,
+    std::uint32_t source_kind,
+    std::uint32_t* count_min,
+    std::uint32_t* count_max) {
+    if (!count) {
+        throw std::runtime_error("patrol requires count");
+    }
+    reject_unknown_keys(
+        count,
+        {"min", "max"},
+        path,
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+    if (!count["min"] || !count["max"]) {
+        throw std::runtime_error("patrol count requires min and max");
+    }
+    *count_min = count["min"].as<std::uint32_t>();
+    *count_max = count["max"].as<std::uint32_t>();
+}
+
+// `squad_by_group_size:`. Shape only; whether the tiers cover every group size
+// is validate_patrol_definition's question.
+std::vector<PatrolSquadTier> patrol_squad_tiers_from_yaml(
+    const YAML::Node& node,
+    const GameServerGameplayConfig& config,
+    const std::string& path,
+    std::uint32_t source_kind) {
+    if (!node.IsSequence() || node.size() == 0) {
+        throw std::runtime_error(
+            "patrol squad_by_group_size must be a non-empty sequence: " + path);
+    }
+    std::vector<PatrolSquadTier> tiers;
+    for (const YAML::Node& tier_node : node) {
+        reject_unknown_keys(
+            tier_node,
+            {"members", "count", "composition"},
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+        const YAML::Node members = tier_node["members"];
+        if (!members || !members["min"]) {
+            throw std::runtime_error(
+                "patrol squad_by_group_size tier requires members min: " +
+                path);
+        }
+        reject_unknown_keys(
+            members,
+            {"min", "max"},
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+        PatrolSquadTier tier;
+        tier.members_min = members["min"].as<std::uint32_t>();
+        if (members["max"]) {
+            tier.members_max = members["max"].as<std::uint32_t>();
+            // Zero is how the struct spells unbounded; authoring it would
+            // read as "no players".
+            if (tier.members_max == 0) {
+                throw std::runtime_error(
+                    "patrol squad_by_group_size members max must not be "
+                    "zero; leave it out for unbounded: " +
+                    path);
+            }
+        }
+        patrol_count_from_yaml(
+            tier_node["count"], path, source_kind, &tier.count_min,
+            &tier.count_max);
+        tier.composition = patrol_composition_from_yaml(
+            tier_node["composition"], config, path, source_kind);
+        tiers.push_back(std::move(tier));
+    }
+    return tiers;
+}
+
 // Resolves what a spawner names and collects the templates that carry one.
 // Separate from the template parse because a spawner names other templates,
 // which may not have been loaded when its own was.
@@ -11317,6 +11549,8 @@ PatrolDefinitionConfig patrol_definition_from_yaml(
             "id",
             "name",
             "area",
+            "where",
+            "squad_by_group_size",
             "seed",
             "interval_ticks",
             "max_live_groups",
@@ -11342,7 +11576,25 @@ PatrolDefinitionConfig patrol_definition_from_yaml(
     if (patrol.id == 0) {
         throw std::runtime_error("patrol id must not be zero: " + path);
     }
-    patrol.area = patrol_area_from_yaml(node["area"], path, source_kind);
+    if (node["where"]) {
+        if (node["area"]) {
+            throw std::runtime_error(
+                "patrol takes area or where, not both: " + path);
+        }
+        // Its own ceiling is groups_per_player; a max_live_groups beside it
+        // would be read by nothing.
+        if (node["max_live_groups"]) {
+            throw std::runtime_error(
+                "patrol where around_players replaces max_live_groups with "
+                "groups_per_player: " +
+                path);
+        }
+        patrol.placement = PatrolPlacementMode::kAroundPlayers;
+        patrol.around_players =
+            patrol_around_players_from_yaml(node["where"], path, source_kind);
+    } else {
+        patrol.area = patrol_area_from_yaml(node["area"], path, source_kind);
+    }
     if (node["seed"]) {
         patrol.seed = node["seed"].as<std::uint32_t>();
     }
@@ -11378,46 +11630,29 @@ PatrolDefinitionConfig patrol_definition_from_yaml(
     if (node["route_attempts"]) {
         patrol.route_attempts = node["route_attempts"].as<std::uint32_t>();
     }
-    const YAML::Node count = node["count"];
-    if (!count) {
-        throw std::runtime_error("patrol requires count");
-    }
-    reject_unknown_keys(
-        count,
-        {"min", "max"},
-        path,
-        source_kind,
-        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
-    if (!count["min"] || !count["max"]) {
-        throw std::runtime_error("patrol count requires min and max");
-    }
-    patrol.count_min = count["min"].as<std::uint32_t>();
-    patrol.count_max = count["max"].as<std::uint32_t>();
-    const YAML::Node composition = node["composition"];
-    if (!composition || !composition.IsSequence()) {
-        throw std::runtime_error("patrol composition must be a sequence");
-    }
-    for (const YAML::Node& entry_node : composition) {
-        reject_unknown_keys(
-            entry_node,
-            {"entity_template", "min", "max"},
-            path,
-            source_kind,
-            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
-        if (!entry_node["entity_template"] || !entry_node["min"] ||
-            !entry_node["max"]) {
+    if (node["squad_by_group_size"]) {
+        if (node["count"] || node["composition"]) {
             throw std::runtime_error(
-                "patrol composition entry requires entity_template, min "
-                "and max");
+                "patrol takes squad_by_group_size or count and composition, "
+                "not both: " +
+                path);
         }
-        SpawnCompositionEntry entry;
-        entry.entity_template_ref =
-            entry_node["entity_template"].as<std::string>();
-        entry.entity_template_id = entity_template_ref_from_yaml(
-            entry_node["entity_template"], config.entity_templates);
-        entry.min_count = entry_node["min"].as<std::uint32_t>();
-        entry.max_count = entry_node["max"].as<std::uint32_t>();
-        patrol.composition.push_back(std::move(entry));
+        patrol.squad_tiers = patrol_squad_tiers_from_yaml(
+            node["squad_by_group_size"], config, path, source_kind);
+        // The envelope across tiers, so anything still reading the
+        // definition-wide band sees a bound that holds for every tier.
+        patrol.count_min = patrol.squad_tiers.front().count_min;
+        patrol.count_max = patrol.squad_tiers.front().count_max;
+        for (const PatrolSquadTier& tier : patrol.squad_tiers) {
+            patrol.count_min = std::min(patrol.count_min, tier.count_min);
+            patrol.count_max = std::max(patrol.count_max, tier.count_max);
+        }
+    } else {
+        patrol_count_from_yaml(
+            node["count"], path, source_kind, &patrol.count_min,
+            &patrol.count_max);
+        patrol.composition = patrol_composition_from_yaml(
+            node["composition"], config, path, source_kind);
     }
     // Unsatisfiable here means a catalog that does not load, rather than a
     // squad that quietly comes out the wrong size at run time.
@@ -11818,7 +12053,37 @@ std::uint64_t compute_gameplay_catalog_hash(
             hash_scalar(&hash, entry.min_count);
             hash_scalar(&hash, entry.max_count);
         }
+        hash_scalar(&hash, static_cast<std::uint32_t>(patrol.placement));
+        const PatrolAroundPlayersConfig& around = patrol.around_players;
+        hash_float(&hash, around.ring_min_meters);
+        hash_float(&hash, around.ring_max_meters);
+        hash_float(&hash, around.pass_within_meters);
+        hash_float(&hash, around.exit_spread_degrees);
+        hash_float(&hash, around.group_radius_meters);
+        hash_float(&hash, around.groups_per_member);
+        hash_float(&hash, around.groups_per_player);
+        hash_scalar(&hash, around.floor_interval_ticks);
+        hash_scalar(&hash, static_cast<std::uint32_t>(patrol.squad_tiers.size()));
+        for (const PatrolSquadTier& tier : patrol.squad_tiers) {
+            hash_scalar(&hash, tier.members_min);
+            hash_scalar(&hash, tier.members_max);
+            hash_scalar(&hash, tier.count_min);
+            hash_scalar(&hash, tier.count_max);
+            hash_scalar(&hash, static_cast<std::uint32_t>(tier.composition.size()));
+            for (const SpawnCompositionEntry& entry : tier.composition) {
+                hash_string(&hash, entry.entity_template_ref);
+                hash_scalar(&hash, entry.entity_template_id);
+                hash_scalar(&hash, entry.min_count);
+                hash_scalar(&hash, entry.max_count);
+            }
+        }
     }
+    const PlayableBoundsConfig& playable = config.map.playable_bounds;
+    hash_scalar(&hash, playable.authored ? 1u : 0u);
+    hash_float(&hash, playable.min_x);
+    hash_float(&hash, playable.min_z);
+    hash_float(&hash, playable.max_x);
+    hash_float(&hash, playable.max_z);
     for (const GameRuleConfig& rule : config.game_rules) {
         hash_scalar(&hash, rule.director_template_id);
         hash_string(&hash, rule.name);

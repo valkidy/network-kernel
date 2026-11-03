@@ -50,11 +50,103 @@ KernelVec3 rotate_into_heading(
 
 }  // namespace
 
+namespace {
+
+std::string validate_around_players(const PatrolAroundPlayersConfig& around) {
+    const auto positive = [](float value) {
+        return std::isfinite(value) && value > 0.0f;
+    };
+    if (!positive(around.ring_min_meters) ||
+        !positive(around.ring_max_meters) ||
+        around.ring_min_meters >= around.ring_max_meters) {
+        return "around_players ring needs 0 < min_meters < max_meters";
+    }
+    // A route that only has to pass the target somewhere inside the ring it
+    // started on is no constraint at all.
+    if (!positive(around.pass_within_meters) ||
+        around.pass_within_meters >= around.ring_min_meters) {
+        return "around_players pass_within_meters must be above zero and "
+               "below ring min_meters";
+    }
+    if (!std::isfinite(around.exit_spread_degrees) ||
+        around.exit_spread_degrees < 0.0f ||
+        around.exit_spread_degrees > 90.0f) {
+        return "around_players exit_spread_degrees must be within 0..90";
+    }
+    if (!positive(around.group_radius_meters)) {
+        return "around_players group_radius_meters must be above zero";
+    }
+    if (!positive(around.groups_per_member) ||
+        !positive(around.groups_per_player)) {
+        return "around_players groups_per_member and groups_per_player must "
+               "be above zero";
+    }
+    return {};
+}
+
+// Tiers have to cover every group size exactly once, from a lone player up,
+// or some group has no squad to draw and finds out at run time.
+std::string validate_squad_tiers(const std::vector<PatrolSquadTier>& tiers) {
+    std::uint32_t next_members = 1;
+    for (std::size_t index = 0; index < tiers.size(); ++index) {
+        const PatrolSquadTier& tier = tiers[index];
+        const bool last = index + 1 == tiers.size();
+        if (tier.members_min != next_members) {
+            return "squad_by_group_size tiers must start at members 1 and "
+                   "leave no gap, expected min " +
+                std::to_string(next_members);
+        }
+        if (tier.members_max == 0) {
+            if (!last) {
+                return "squad_by_group_size only the last tier may leave "
+                       "members max unbounded";
+            }
+        } else {
+            if (tier.members_max < tier.members_min) {
+                return "squad_by_group_size tier members max is below min";
+            }
+            if (last) {
+                return "squad_by_group_size last tier must leave members max "
+                       "unbounded";
+            }
+            next_members = tier.members_max + 1;
+        }
+        const std::string composition_error = validate_spawn_composition(
+            tier.composition, tier.count_min, tier.count_max);
+        if (!composition_error.empty()) {
+            return "squad_by_group_size members " +
+                std::to_string(tier.members_min) + " tier " + composition_error;
+        }
+    }
+    return {};
+}
+
+}  // namespace
+
 std::string validate_patrol_definition(const PatrolDefinitionConfig& definition) {
-    const std::string composition_error = validate_spawn_composition(
-        definition.composition, definition.count_min, definition.count_max);
-    if (!composition_error.empty()) {
-        return "patrol " + composition_error;
+    if (!definition.squad_tiers.empty()) {
+        if (definition.placement != PatrolPlacementMode::kAroundPlayers) {
+            return "patrol squad_by_group_size needs where mode around_players";
+        }
+        const std::string tier_error =
+            validate_squad_tiers(definition.squad_tiers);
+        if (!tier_error.empty()) {
+            return "patrol " + tier_error;
+        }
+    } else {
+        const std::string composition_error = validate_spawn_composition(
+            definition.composition, definition.count_min, definition.count_max);
+        if (!composition_error.empty()) {
+            return "patrol " + composition_error;
+        }
+    }
+    if (definition.placement == PatrolPlacementMode::kAroundPlayers) {
+        const std::string around_error =
+            validate_around_players(definition.around_players);
+        if (!around_error.empty()) {
+            return "patrol " + around_error;
+        }
+        return {};
     }
     const std::string area_error = validate_spawn_area(definition.area);
     if (!area_error.empty()) {
@@ -110,6 +202,12 @@ void PatrolDirector::tick(
         const PatrolDefinitionConfig& definition = definitions_[index];
         DefinitionRuntime& runtime = runtimes_[index];
         if (definition.trigger != PatrolSpawnTrigger::kFixedInterval) {
+            continue;
+        }
+        // Loaded and validated, but nothing spawns around players until the
+        // targeting (P2-P3) and the ring placement (P4) exist. Drawing it from
+        // its unused area would put squads at the origin.
+        if (definition.placement != PatrolPlacementMode::kArea) {
             continue;
         }
         if (runtime.ticks_until_spawn > 0) {

@@ -1041,6 +1041,40 @@ void an_unwalkable_area_spawns_nothing() {
 
 }  // namespace
 
+// Loaded but inert until the targeting and ring placement land: drawn from its
+// unused area, it would put squads at the origin. The area-placed definition
+// beside it is the control that proves the director was ticking at all.
+void an_around_players_definition_spawns_nothing_yet() {
+    using network_example::game_server::PatrolDirector;
+    using network_example::game_server::PatrolGroupRuntime;
+    using network_example::game_server::PatrolPlacementMode;
+
+    const KernelConfig config = server_config();
+    KernelHandle* kernel = Kernel_Create(&config);
+    require(kernel != nullptr);
+    require(Kernel_StartDedicatedServer(kernel, 7833));
+    load_catalog(kernel);
+
+    PatrolDefinitionConfig area = mixed_definition();
+    area.interval_ticks = 1;
+    PatrolDefinitionConfig around = mixed_definition();
+    around.id = area.id + 1;
+    around.interval_ticks = 1;
+    around.placement = PatrolPlacementMode::kAroundPlayers;
+    require(network_example::game_server::validate_patrol_definition(around).empty());
+
+    PatrolDirector director({around, area});
+    PatrolGroupRuntime groups;
+    for (std::uint32_t tick = 0; tick < 4; ++tick) {
+        tick_director(&director, kernel, &groups, nullptr);
+    }
+    require(groups.groups().size() == 1u);
+    require(groups.groups()[0].definition_id == area.id);
+    require(director.route_failure_count() == 0u);
+
+    Kernel_Destroy(kernel);
+}
+
 int main() {
     composition_is_floors_plus_capacity();
     a_narrow_band_does_not_saturate_beside_a_wide_one();
@@ -1056,5 +1090,6 @@ int main() {
     the_agent_budget_counts_agents_patrols_did_not_make();
     a_navigable_patrol_routes_around_obstacles();
     an_unwalkable_area_spawns_nothing();
+    an_around_players_definition_spawns_nothing_yet();
     return 0;
 }

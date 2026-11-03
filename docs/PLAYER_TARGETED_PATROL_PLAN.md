@@ -49,10 +49,16 @@ where:
   pass_within_meters: 15.0
   # 終點在對側方位上加多少隨機偏移
   exit_spread_degrees: 30.0
+  # §4 的分群與分配參數，都只對 around_players 有意義，所以放在 where 底下
+  group_radius_meters: 18.0
+  groups_per_member: 1.0
+  groups_per_player: 1.5
+  floor_interval_ticks: 1800 # 0 = 不保底
 ```
 
-- 現有的 `area` 定義行為完全不變，`patrol_catalog_test` 不用改。
-- `around_players` 和 `area` 不能同時出現，catalog 會拒絕載入。
+- 現有的 `area` 定義行為完全不變。
+- `where` 和 `area` 不能同時出現；`where` 也不能和 `max_live_groups` 同時出現（由 `groups_per_player` 取代），catalog 都會拒絕載入。
+- 驗證規則（P1 實作）：`0 < ring.min < ring.max`；`0 < pass_within < ring.min`；`exit_spread` 在 0..90；`group_radius`、`groups_per_member`、`groups_per_player` 都必須大於 0。
 
 ---
 
@@ -193,7 +199,7 @@ P0 的結論（§10）推翻了原本的草案（25–45 m）：
 | 階段 | 內容 | 測試 |
 |---|---|---|
 | P0 ✅ | 量測：relevance 距離、snapshot 優先順序分帶、隊伍成員的 vision。由常數直接決定，不需要 runtime probe（§10）。 | 量測記錄寫進本文件 §10 |
-| P1 | catalog：`where.mode: around_players`、`squad_by_group_size`、`map.playable_bounds`、`groups_per_member` / `groups_per_player` / `floor_interval_ticks` 的解析與驗證 | `patrol_catalog_test`：每一條拒絕規則各一個 case；舊的 `area` 定義照常載入 |
+| P1 ✅ | catalog：`where.mode: around_players`、`squad_by_group_size`、`map.playable_bounds`、`groups_per_member` / `groups_per_player` / `floor_interval_ticks` 的解析與驗證 | `patrol_catalog_test`：每一條拒絕規則各一個 case；舊的 `area` 定義照常載入 |
 | P2 | 分群（§4.1）、已有威脅的判斷（§4.2）、每名玩家的冷卻與飢餓時間（§4.3）。寫成不依賴 kernel 的純函式。 | 新的 `patrol_targeting_test`：3 + 1 分群、拆散後不會立刻重新生成、走進別群的範圍算已有威脅 |
 | P3 | 分配順序（§4.4），預算檢查改用目標那一層的 `count_max` | `patrol_director_test`：§4.5 的例子；落單的玩家在三人組額度用完時仍拿得到隊伍；保底優先 |
 | P4 | 生成點與路線（§6）：環帶抽樣、對所有玩家檢查 r_min、穿越檢查、邊界裁切 | 平面 navmesh：生成點的距離都在 [r_min, r_max] 內；玩家貼著邊時沒有點落在邊界外；穿越檢查失敗時不消耗冷卻 |
