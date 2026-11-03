@@ -128,8 +128,16 @@ agent_routes:
       - {x: -60.0, y: 5.0, z: -80.0}
       - {x: -60.0, y: 5.0, z: -60.0}
       - {x: -80.0, y: 5.0, z: -60.0}
+# Where players play, horizontally. around_players patrols start and end
+# inside it; without it they fall back to the navmesh's extent, and with
+# neither they are not clipped at all. plane_200x200_4zones_v2 is 200 m
+# across, centred on the origin -- a map swap has to change this too.
+map:
+  playable_bounds: {min: {x: -100.0, z: -100.0}, max: {x: 100.0, z: 100.0}}
+# Six squads of up to twelve: four players at 1.5 squads each, rounded up
+# (docs/PLAYER_TARGETED_PATROL_PLAN.md §9).
 patrol_budget:
-  max_live_agents: 48
+  max_live_agents: 72
 # Every unit an on_alert spawner has put out, server-wide, alive at once. Each
 # caller's own max_live_agents bounds one caller; this bounds all of them, so N
 # callers spotting a player on the same tick cannot put out N waves. It counts

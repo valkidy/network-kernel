@@ -656,10 +656,18 @@ std::uint32_t PatrolDirector::tick_around_players(
     const std::vector<std::uint32_t> drawn =
         draw_spawn_composition(*shape.composition, count, &random_state);
 
+    const HorizontalBounds bounds = resolve_bounds(playable_bounds_, navigation);
+    if (!bounds.bounded && !warned_unbounded_) {
+        warned_unbounded_ = true;
+        spdlog::warn(
+            "patrol {} aims at players with no map.playable_bounds and no "
+            "navmesh; its squads can start off the map",
+            definition.name);
+    }
     KernelVec3 route_start{0.0f, 0.0f, 0.0f};
     std::vector<KernelVec3> waypoints;
     if (!draw_ring_route(
-            definition, navigation, resolve_bounds(playable_bounds_, navigation),
+            definition, navigation, bounds,
             center, players, &random_state, &route_start, &waypoints)) {
         // The interval is not spent: the next try is the same choice, a
         // second later.

@@ -264,6 +264,9 @@ private:
     // Director ticks since construction: the clock threat records are kept
     // in.
     std::uint64_t tick_ = 0;
+    // Said once: an around_players squad with no bounds at all can start
+    // off the map.
+    bool warned_unbounded_ = false;
     std::uint32_t spawned_group_count_ = 0;
     std::vector<SpawnedControllerSpec> spawned_controllers_;
     std::uint32_t retired_group_count_ = 0;

@@ -203,7 +203,7 @@ P0 的結論（§10）推翻了原本的草案（25–45 m）：
 | P2 ✅ | 分群（§4.1）、已有威脅的判斷（§4.2）、每名玩家的冷卻與飢餓時間（§4.3）。寫成不依賴 kernel 的純函式。 | 新的 `patrol_targeting_test`：3 + 1 分群、拆散後不會立刻重新生成、走進別群的範圍算已有威脅 |
 | P3 ✅ | 分配順序（§4.4）、每層隊伍大小（§5），預算檢查改用目標那一層的 `count_max`。寫成純函式 `patrol_allocation`，**director 還沒接上**。 | `patrol_allocation_test`：§4.5 的例子；落單的玩家在三人組額度用完時仍拿得到隊伍；保底優先 |
 | P4 ✅ | 生成點與路線（§6）：環帶抽樣、對所有玩家檢查 r_min、穿越檢查、邊界裁切。**加上把 P2、P3 接進 `PatrolDirector`**：每個 tick 更新 tracker、算候選、選目標，再生成。原本排在 P3，但沒有生成點就沒有東西可生，所以移到這裡一起做。 | 平面 navmesh：生成點的距離都在 [r_min, r_max] 內；玩家貼著邊時沒有點落在邊界外；穿越檢查失敗時不消耗冷卻 |
-| P5 | 把 warband 改成 `around_players`；改寫 `AI_PATROL_SYSTEM.md` 的前提與 WHERE 表 | headless 跑一次 4 名玩家（3 + 1）、120 s，記錄每群的威脅覆蓋率和 `route_failure` 次數 |
+| P5 ✅ | 把 warband 改成 `around_players`；改寫 `AI_PATROL_SYSTEM.md` 的前提與 WHERE 表 | headless 跑一次 4 名玩家（3 + 1）、120 s，記錄每群的威脅覆蓋率和 `route_failure` 次數 |
 
 每個階段都注意：
 - 斷言必須包含一組對照情境，證明斷言真的有在檢查。
@@ -322,3 +322,50 @@ P0 的結論（§10）推翻了原本的草案（25–45 m）：
 測試用的玩家沒有 template，hp 是 0，會被目標篩選濾掉，所以 P4 的測試都用 `create_living_player` 補上 hp，並用 director 讀的同一個查詢確認。
 
 變異檢查：拿掉穿越檢查，測試在第 1239 行失敗；拿掉範圍篩選，測試在第 1232 行失敗。
+
+### P5：上線 shipping catalog 與 headless 量測（2026-11-03）
+
+**catalog 變更**
+- `1_patrol_gingerbread_warband.yaml` 改成 `where: around_players` 加三層 `squad_by_group_size`（§5 的數字）。
+- `patrol_budget.max_live_agents` 48 → 72（§9）。
+- 新增 `map.playable_bounds` ±100（plane_200x200_4zones_v2）。**換地圖時要一起改**，例如 composed 216 m 地圖要寫 `{min: {x: 0, z: 0}, max: {x: 216, z: 216}}`。
+
+**P5 才發現的問題，已修正**
+- **沒有範圍時會生在地圖外。** `gingerbread_door_stack_test` 建 `GameServer` 時沒有載入 navmesh bytes，catalog 也沒有 `playable_bounds`，環帶完全沒有裁切，隊伍生在 (−112.7, −129.0)，掉出地圖（−13.7 m/s）。修法：shipping catalog 寫上範圍；director 在完全沒有範圍時 **warn 一次**。
+- **分層表的成員沒有檢查「能不能進 squad」。** 原本只檢查頂層 `composition`，分層表裡放 sentry 模板也能載入。已改成每一層都檢查（`ai_controller_spec_test` 抓到）。
+
+**測試調整**
+- `patrol_catalog_test`：warband 改成分層，控制組改用 airforce；`playable_bounds` 的控制組改成「shipping 有寫、拿掉後沒有」。
+- `ai_controller_spec_test`：sentry 放進分層表的第一層。
+- `ai_retreat_test`：一名玩家是落單，warband 會用落單那一層，其 mage 下限是 0。這個測試要的是 mage，所以在 catalog 複本中把落單層的 mage 下限改成 1。
+- `patrol_cpu_bench`（manual）：暖機時沒有玩家，around_players 不會生成，所以 bench 把定義改回原本的 ±40 m area、2 隊、最大層的配比，量的是隊伍成本，與以前的表可比。
+
+`//game_server:all`（非 manual）79 個裡 78 個通過。唯一失敗的 `weapon_template_loader_test` 在 main 40f1ad57 上也失敗，不是這次造成的。
+
+**headless 量測**：`bazel run -c opt //game_server:patrol_targeting_soak`（manual，已 commit，可重跑）
+
+shipping bundle、真的 `AgentRuntimeManager`、4 名用 player template 的玩家站著不動：三人組在 (−40, −40) 附近，落單的在 (55, 55)，相距約 134 m。玩家每秒補滿血，所以量的是「隊伍到不到得了」，不是「玩家活不活得下來」。180 s：
+
+| 時間 | 生成 | 人數 | 離最近玩家（即時位置） |
+|---|---|---|---|
+| 30.0 s | 三人組 | 12 | 55.2 m |
+| 60.0 s | 落單 | 6 | 57.7 m |
+| 90.0 s | 三人組 | 9 | 51.8 m |
+| 120.1 s | 三人組 | 11 | 51.9 m |
+
+| 目標 | 有威脅（≤ 60 m）| 第一次威脅 | 接觸（≤ 30 m）| 第一次接觸 | 同時最多幾隊 |
+|---|---|---|---|---|---|
+| 三人組 | 83.3% | 30.0 s | 67.7% | 58.2 s | 3 |
+| 落單 | 66.7% | 60.0 s | 48.4% | 93.0 s | 1 |
+
+- 環帶失敗 0 次；最多同時 4 隊、37 隻，都在上限內（6 隊、72 隻）。
+- **分配順序與預期一致**：三人組先拿第一隊；第二個 interval 輪到還沒有威脅的落單；之後三人組補到上限 3 隊；落單維持上限 1 隊。
+- **生成到接觸約 28–33 s**：55 m ÷ 0.9 m/s ≈ 61 s 走到身邊，但 mage 在 30 m 就看到玩家，隊伍停下來開打，所以只需走約 25 m。
+- **隊伍停在 25–28 m 開打**（cursor 停住，成員各自交戰），玩家一直補血，所以不會走完路線，也不會退場。
+- **第一隊要等 30 s**：這是 director 開機時錯開一個 interval 的設計（`ticks_until_spawn = interval_ticks`）。落單第一次是 60 s，剛好是第二個 interval，也剛好達到 60 s 保底。
+- 一開始用「玩家的初始位置」量，第 4 隊看起來只有 47.9 m；改用即時位置後是 51.9 m。玩家被打得移動了，r_min 的規則本身沒問題。
+
+**沒有量到的**
+- 玩家在移動、會死、會重生的情況。
+- 有高低差的地圖（composed 216 m、giantwood）。
+- client 端的實際觀感（隊伍從 40 m 走進視野）。

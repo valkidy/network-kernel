@@ -147,6 +147,28 @@ Catalog load_catalog() {
         static_cast<std::uint32_t>(bundle.size()),
         catalog.config.navigation_mesh.entry_path);
     require(!catalog.config.navigation_mesh.artifact.empty());
+    // This measures what squads cost, not who they are aimed at. An
+    // around_players definition spawns nothing until a player exists, and the
+    // warmup has none on purpose, so it goes back on the area it used to have
+    // with its largest tier's mix -- the population the earlier tables were
+    // measured on.
+    for (gs::PatrolDefinitionConfig& definition : catalog.config.patrols) {
+        if (definition.placement != gs::PatrolPlacementMode::kAroundPlayers) {
+            continue;
+        }
+        definition.placement = gs::PatrolPlacementMode::kArea;
+        definition.area = gs::SpawnAreaConfig{};
+        definition.area.shape = gs::SpawnAreaShape::kRect;
+        definition.area.half_extents = KernelVec3{40.0f, 0.0f, 40.0f};
+        definition.max_live_groups = 2;
+        if (!definition.squad_tiers.empty()) {
+            const gs::PatrolSquadTier& largest = definition.squad_tiers.back();
+            definition.count_min = largest.count_min;
+            definition.count_max = largest.count_max;
+            definition.composition = largest.composition;
+            definition.squad_tiers.clear();
+        }
+    }
     return catalog;
 }
 

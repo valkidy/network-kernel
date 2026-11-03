@@ -4,15 +4,26 @@ Status: **Implemented for flat terrain, and both directors have since moved out
 of the kernel. Placement reachability is deferred — see "Deferred: placement
 reachability" for what that costs and when it comes due.**
 
-A patrol is a squad the world produces on its own schedule: it spawns somewhere
-in an authored area, walks one route across the map, engages what it sees on the
-way, and retires when it is done. It is not a mission step, and nothing waits for
-it.
+A patrol is a squad the world produces on its own schedule: it spawns, walks
+one route, engages what it sees on the way, and retires when it is done. It is
+not a mission step, and nothing waits for it.
 
-The model is deliberately one-shot. A patrol is not a garrison walking a beat
-forever; it is an encounter the player may or may not run into, and it is meant
-to be avoidable. That single decision is why retirement is mandatory rather than
-an optimisation, and why a route is a route rather than a loop.
+**Where it spawns has two modes.** `area:` is the original one: somewhere in an
+authored rectangle or circle in world coordinates, an encounter the player may
+or may not run into. `where: {mode: around_players}` (2026-11-03) is the one the
+shipping warband uses: squads are aimed at groups of players on purpose, so
+fights happen at a steady rate -- started on a ring out of the client's
+relevance, on a route that crosses where the group stood, sized by the group,
+with a floor so a lone player is never left without a threat because a larger
+group used up the budget. The design, its numbers and the measurements behind
+them are in [PLAYER_TARGETED_PATROL_PLAN.md](PLAYER_TARGETED_PATROL_PLAN.md).
+It overturns this document's original premise that a patrol is meant to be
+avoidable: a player can still see one coming and step aside, but one will come.
+
+The model is still deliberately one-shot, in both modes. A patrol is not a
+garrison walking a beat forever, and an aimed squad does not track its target
+once its route is drawn. That is why retirement is mandatory rather than an
+optimisation, and why a route is a route rather than a loop.
 
 ## Ownership
 
@@ -204,7 +215,7 @@ credit budget; and every mixture of those is a sensible thing to author.
 |---|---|---|
 | WHEN | `fixed_interval` | spawn pressure with per-objective heat |
 | WHAT | explicit count bands | credit budget with weighted spawn cards |
-| WHERE | `rect`, `circle` | relative to players or points of interest |
+| WHERE | `rect`, `circle`; `around_players` (ring around player groups) | relative to points of interest |
 
 Only one option per axis exists today. Separating them is what makes adding the
 others a change to one axis rather than to a mode matrix.

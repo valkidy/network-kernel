@@ -126,7 +126,9 @@ void listing_both_runs_both_patrols() {
     require(config.patrols[0].name == "gingerbread_warband");
     require(config.patrols[1].id == 2u);
     require(config.patrols[1].name == "gingerbread_airforce");
-    require(!config.patrols[0].composition.empty());
+    // The warband is tiered by group size; the airforce keeps one mix.
+    require(!config.patrols[0].squad_tiers.empty());
+    require(!config.patrols[1].composition.empty());
 }
 
 void listed_order_is_run_order() {
@@ -174,7 +176,7 @@ void every_file_is_validated_listed_or_not() {
 
     write_file(
         catalog.root() / kWarbandFile,
-        replace(warband, "max_live_groups: 2\n", "max_live_groups: 2\nbogus: 1\n"));
+        replace(warband, "interval_ticks: 900\n", "interval_ticks: 900\nbogus: 1\n"));
     require(!catalog.rejection("  - ids: [2]\n").empty());
     write_file(catalog.root() / kWarbandFile, warband);
 
@@ -257,9 +259,9 @@ void around_players_definition_loads() {
     using network_example::game_server::PatrolPlacementMode;
     CatalogCopy catalog;
 
-    // The control: the shipping warband is still area-placed and untiered, so
-    // the checks below are about the new file and not a default.
-    const GameServerGameplayConfig shipping = catalog.load_with_ids("  - ids: [1]\n");
+    // The control: the airforce is area-placed and untiered, so the checks
+    // below are about the new file and not a default.
+    const GameServerGameplayConfig shipping = catalog.load_with_ids("  - ids: [2]\n");
     require(shipping.patrols.size() == 1u);
     require(shipping.patrols[0].placement == PatrolPlacementMode::kArea);
     require(shipping.patrols[0].squad_tiers.empty());
@@ -372,29 +374,27 @@ void around_players_misauthoring_is_refused() {
                     "      - {entity_template: gingerbread, min: 4, max: 6}\n")),
         "squad_by_group_size members 1 tier"));
 
-    // Tiers on an area-placed definition: the warband with its count and
-    // composition swapped for the tier table.
-    const std::string warband = read_file(catalog.root() / kWarbandFile);
-    const std::size_t count_at = warband.find("count: {min: 6, max: 12}\n");
-    const std::size_t spacing_at = warband.find("# Three abreast");
-    require(count_at != std::string::npos && spacing_at != std::string::npos);
-    write_file(
-        catalog.root() / kWarbandFile,
-        warband.substr(0, count_at) + kTargetedTiers + warband.substr(spacing_at));
+    // Tiers on an area-placed definition.
     require(contains(
-        catalog.rejection("  - ids: [1]\n"),
+        targeted_rejection(
+            &catalog, replace(good, kTargetedWhere, "area: {shape: circle, radius: 10.0}\n")),
         "squad_by_group_size needs where mode around_players"));
-    write_file(catalog.root() / kWarbandFile, warband);
 }
 
 void map_playable_bounds() {
     CatalogCopy catalog;
-    // The control: shipping says nothing about the map.
-    require(!catalog.load_with_ids("  - ids: [1]\n").map.playable_bounds.authored);
+    // Shipping authors the 200 m map's bounds.
+    const auto authored = catalog.load_with_ids("  - ids: [1]\n").map.playable_bounds;
+    require(authored.authored);
+    require(authored.min_x == -100.0f && authored.max_z == 100.0f);
 
     const std::string shipping = catalog.catalog();
+    const std::string shipping_map =
+        "map:\n"
+        "  playable_bounds: {min: {x: -100.0, z: -100.0}, max: {x: 100.0, z: 100.0}}\n";
+    const std::string unmapped = replace(shipping, shipping_map, "");
     const auto with_map = [&](const std::string& map_block) {
-        return replace(shipping, "\npatrols:\n", "\n" + map_block + "patrols:\n");
+        return replace(unmapped, "\npatrols:\n", "\n" + map_block + "patrols:\n");
     };
     const auto load = [&](const std::string& text) {
         write_file(catalog.root() / "gameplay_catalog.yaml", text);
@@ -413,6 +413,9 @@ void map_playable_bounds() {
         }
         return std::string();
     };
+
+    // The control: without the block, nothing is authored.
+    require(!load(unmapped).map.playable_bounds.authored);
 
     const GameServerGameplayConfig config = load(with_map(
         "map:\n"

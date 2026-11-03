@@ -657,6 +657,19 @@ cc_test(
 # than asserting them -- a wall-clock bound would be flaky and host-dependent --
 # so it is manual, like the other benches.
 cc_test(
+    name = "patrol_targeting_soak",
+    srcs = ["tests/patrol_targeting_soak.cc"],
+    data = [
+        "//game_server/gameplay_catalog_bundle:bundle",
+    ],
+    tags = ["manual"],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
     name = "patrol_cpu_bench",
     srcs = ["tests/patrol_cpu_bench.cc"],
     data = [

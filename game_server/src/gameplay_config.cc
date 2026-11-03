@@ -12566,6 +12566,14 @@ std::vector<std::string> validate_gameplay_config(
                 config, patrol_member, entry.entity_template_id,
                 "patrol " + patrol.name, &errors);
         }
+        // Tiered, the mix is in the tiers and `composition` is empty.
+        for (const PatrolSquadTier& tier : patrol.squad_tiers) {
+            for (const SpawnCompositionEntry& entry : tier.composition) {
+                validate_controller_spec(
+                    config, patrol_member, entry.entity_template_id,
+                    "patrol " + patrol.name, &errors);
+            }
+        }
     }
     std::vector<std::uint32_t> prop_population_rule_ids;
     std::vector<std::string> prop_population_rule_names;
