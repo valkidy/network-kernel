@@ -39,6 +39,7 @@ cc_library(
         "src/game_rule_director.cc",
         "src/gameplay_config.cc",
         "src/game_server.cc",
+        "src/patrol_allocation.cc",
         "src/patrol_director.cc",
         "src/patrol_group_runtime.cc",
         "src/patrol_navigation.cc",
@@ -67,6 +68,7 @@ cc_library(
         "src/respawn_scheduler.h",
         "src/shelter_director.h",
         "src/loadout_director.h",
+        "src/patrol_allocation.h",
         "src/patrol_director.h",
         "src/patrol_group_runtime.h",
         "src/patrol_navigation.h",
@@ -358,6 +360,12 @@ cc_test(
         ":game_server",
         "//engine/src/kernel:kernel",
     ],
+)
+
+cc_test(
+    name = "patrol_allocation_test",
+    srcs = ["tests/patrol_allocation_test.cc"],
+    deps = [":game_server"],
 )
 
 cc_test(

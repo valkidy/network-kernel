@@ -201,8 +201,8 @@ P0 的結論（§10）推翻了原本的草案（25–45 m）：
 | P0 ✅ | 量測：relevance 距離、snapshot 優先順序分帶、隊伍成員的 vision。由常數直接決定，不需要 runtime probe（§10）。 | 量測記錄寫進本文件 §10 |
 | P1 ✅ | catalog：`where.mode: around_players`、`squad_by_group_size`、`map.playable_bounds`、`groups_per_member` / `groups_per_player` / `floor_interval_ticks` 的解析與驗證 | `patrol_catalog_test`：每一條拒絕規則各一個 case；舊的 `area` 定義照常載入 |
 | P2 ✅ | 分群（§4.1）、已有威脅的判斷（§4.2）、每名玩家的冷卻與飢餓時間（§4.3）。寫成不依賴 kernel 的純函式。 | 新的 `patrol_targeting_test`：3 + 1 分群、拆散後不會立刻重新生成、走進別群的範圍算已有威脅 |
-| P3 | 分配順序（§4.4），預算檢查改用目標那一層的 `count_max` | `patrol_director_test`：§4.5 的例子；落單的玩家在三人組額度用完時仍拿得到隊伍；保底優先 |
-| P4 | 生成點與路線（§6）：環帶抽樣、對所有玩家檢查 r_min、穿越檢查、邊界裁切 | 平面 navmesh：生成點的距離都在 [r_min, r_max] 內；玩家貼著邊時沒有點落在邊界外；穿越檢查失敗時不消耗冷卻 |
+| P3 ✅ | 分配順序（§4.4）、每層隊伍大小（§5），預算檢查改用目標那一層的 `count_max`。寫成純函式 `patrol_allocation`，**director 還沒接上**。 | `patrol_allocation_test`：§4.5 的例子；落單的玩家在三人組額度用完時仍拿得到隊伍；保底優先 |
+| P4 | 生成點與路線（§6）：環帶抽樣、對所有玩家檢查 r_min、穿越檢查、邊界裁切。**加上把 P2、P3 接進 `PatrolDirector`**：每個 tick 更新 tracker、算候選、選目標，再生成。原本排在 P3，但沒有生成點就沒有東西可生，所以移到這裡一起做。 | 平面 navmesh：生成點的距離都在 [r_min, r_max] 內；玩家貼著邊時沒有點落在邊界外；穿越檢查失敗時不消耗冷卻 |
 | P5 | 把 warband 改成 `around_players`；改寫 `AI_PATROL_SYSTEM.md` 的前提與 WHERE 表 | headless 跑一次 4 名玩家（3 + 1）、120 s，記錄每群的威脅覆蓋率和 `route_failure` 次數 |
 
 每個階段都注意：
@@ -284,3 +284,14 @@ P0 的結論（§10）推翻了原本的草案（25–45 m）：
 - 判斷「有威脅」的半徑由呼叫端傳入，P3 會用 `ring.max_meters`。
 
 測試：`patrol_targeting_test`，10 個 case，每個都有對照。另外做過一次變異檢查：讓 tracker 永遠不記錄威脅，測試會在第 158 行失敗。
+
+### P3：實作時做的決定（2026-11-03）
+
+`game_server/src/patrol_allocation.{h,cc}`，純函式；director 還沒接上（P4）。
+
+- **§4.4 第 1 項的解讀**：保底**不受**全服組數上限（`groups_per_player`）和 `interval_ticks` 倒數的限制，但**仍受**隻數預算（`patrol_budget`、`agent_budget`）的限制。隻數預算是伺服器的硬上限，保底也不能越過。
+- **預算不夠時往下找**：每一類都依序找第一個「那一層的 `count_max` 放得進剩餘隻數」的群。三人組的 12 隻放不下、落單的 6 隻放得下時，就先生落單的那一隊，不會整輪什麼都不生。
+- **上限的無條件進位會扣掉一點誤差**：`10 × 0.3` 在 float 裡略大於 3，仍算 3，不會變成 4。
+- 沒有分層表的定義，任何群都用定義本身的 `count` / `composition`。
+
+測試：`patrol_allocation_test`，10 個 case，每個都有對照。變異檢查：讓保底也受全服上限限制，測試會在第 155 行失敗。
