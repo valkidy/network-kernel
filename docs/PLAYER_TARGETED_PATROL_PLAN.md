@@ -200,7 +200,7 @@ P0 的結論（§10）推翻了原本的草案（25–45 m）：
 |---|---|---|
 | P0 ✅ | 量測：relevance 距離、snapshot 優先順序分帶、隊伍成員的 vision。由常數直接決定，不需要 runtime probe（§10）。 | 量測記錄寫進本文件 §10 |
 | P1 ✅ | catalog：`where.mode: around_players`、`squad_by_group_size`、`map.playable_bounds`、`groups_per_member` / `groups_per_player` / `floor_interval_ticks` 的解析與驗證 | `patrol_catalog_test`：每一條拒絕規則各一個 case；舊的 `area` 定義照常載入 |
-| P2 | 分群（§4.1）、已有威脅的判斷（§4.2）、每名玩家的冷卻與飢餓時間（§4.3）。寫成不依賴 kernel 的純函式。 | 新的 `patrol_targeting_test`：3 + 1 分群、拆散後不會立刻重新生成、走進別群的範圍算已有威脅 |
+| P2 ✅ | 分群（§4.1）、已有威脅的判斷（§4.2）、每名玩家的冷卻與飢餓時間（§4.3）。寫成不依賴 kernel 的純函式。 | 新的 `patrol_targeting_test`：3 + 1 分群、拆散後不會立刻重新生成、走進別群的範圍算已有威脅 |
 | P3 | 分配順序（§4.4），預算檢查改用目標那一層的 `count_max` | `patrol_director_test`：§4.5 的例子；落單的玩家在三人組額度用完時仍拿得到隊伍；保底優先 |
 | P4 | 生成點與路線（§6）：環帶抽樣、對所有玩家檢查 r_min、穿越檢查、邊界裁切 | 平面 navmesh：生成點的距離都在 [r_min, r_max] 內；玩家貼著邊時沒有點落在邊界外；穿越檢查失敗時不消耗冷卻 |
 | P5 | 把 warband 改成 `around_players`；改寫 `AI_PATROL_SYSTEM.md` 的前提與 WHERE 表 | headless 跑一次 4 名玩家（3 + 1）、120 s，記錄每群的威脅覆蓋率和 `route_failure` 次數 |
@@ -271,3 +271,16 @@ P0 的結論（§10）推翻了原本的草案（25–45 m）：
 3. 要擴大觀察窗，有兩個方向，都不在本計劃範圍內：
    - 把 entity 的 relevance 距離調大。這是 kernel 常數，會增加頻寬，而且會讓更多 entity 落在權重 ×1 的遠帶。
    - 縮小巡邏隊成員的 vision。這會影響這些 template 在巡邏以外的行為。
+
+### P2：實作時做的決定（2026-11-03）
+
+`game_server/src/patrol_targeting.{h,cc}`，純函式，不碰 kernel；director 還沒接上（P3）。
+
+- **只有活著的玩家是目標**：`valid`、`hp > 0`、沒有 `KERNEL_VISUAL_FLAG_DEAD`。往屍體走的隊伍是浪費，重生也會把玩家放到別處。
+- **距離一律用水平距離**，與 `nearest_player_distance` 一致。
+- **分群是 single-linkage**：A–B、B–C 各在半徑內，A–C 不在，三人仍是同一群。輸出依人數由多到少，同人數時依最小的 net_id，跟輸入順序無關。
+- **新加入的玩家，第一次被看到就算「有威脅」**。這樣剛加入的人要和其他人一樣等滿保底時間，不會一進來就插隊。
+- **離開的玩家會被遺忘**，重新加入時從頭算。
+- 判斷「有威脅」的半徑由呼叫端傳入，P3 會用 `ring.max_meters`。
+
+測試：`patrol_targeting_test`，10 個 case，每個都有對照。另外做過一次變異檢查：讓 tracker 永遠不記錄威脅，測試會在第 158 行失敗。

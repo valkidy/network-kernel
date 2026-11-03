@@ -42,6 +42,7 @@ cc_library(
         "src/patrol_director.cc",
         "src/patrol_group_runtime.cc",
         "src/patrol_navigation.cc",
+        "src/patrol_targeting.cc",
         "src/respawn_scheduler.cc",
         "src/shelter_director.cc",
         "src/loadout_director.cc",
@@ -69,6 +70,7 @@ cc_library(
         "src/patrol_director.h",
         "src/patrol_group_runtime.h",
         "src/patrol_navigation.h",
+        "src/patrol_targeting.h",
         "src/spawn_sampling.h",
         "src/spawner_director.h",
         "src/world_rule_director.h",
@@ -356,6 +358,12 @@ cc_test(
         ":game_server",
         "//engine/src/kernel:kernel",
     ],
+)
+
+cc_test(
+    name = "patrol_targeting_test",
+    srcs = ["tests/patrol_targeting_test.cc"],
+    deps = [":game_server"],
 )
 
 cc_test(
