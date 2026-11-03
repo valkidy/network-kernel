@@ -202,7 +202,7 @@ P0 的結論（§10）推翻了原本的草案（25–45 m）：
 | P1 ✅ | catalog：`where.mode: around_players`、`squad_by_group_size`、`map.playable_bounds`、`groups_per_member` / `groups_per_player` / `floor_interval_ticks` 的解析與驗證 | `patrol_catalog_test`：每一條拒絕規則各一個 case；舊的 `area` 定義照常載入 |
 | P2 ✅ | 分群（§4.1）、已有威脅的判斷（§4.2）、每名玩家的冷卻與飢餓時間（§4.3）。寫成不依賴 kernel 的純函式。 | 新的 `patrol_targeting_test`：3 + 1 分群、拆散後不會立刻重新生成、走進別群的範圍算已有威脅 |
 | P3 ✅ | 分配順序（§4.4）、每層隊伍大小（§5），預算檢查改用目標那一層的 `count_max`。寫成純函式 `patrol_allocation`，**director 還沒接上**。 | `patrol_allocation_test`：§4.5 的例子；落單的玩家在三人組額度用完時仍拿得到隊伍；保底優先 |
-| P4 | 生成點與路線（§6）：環帶抽樣、對所有玩家檢查 r_min、穿越檢查、邊界裁切。**加上把 P2、P3 接進 `PatrolDirector`**：每個 tick 更新 tracker、算候選、選目標，再生成。原本排在 P3，但沒有生成點就沒有東西可生，所以移到這裡一起做。 | 平面 navmesh：生成點的距離都在 [r_min, r_max] 內；玩家貼著邊時沒有點落在邊界外；穿越檢查失敗時不消耗冷卻 |
+| P4 ✅ | 生成點與路線（§6）：環帶抽樣、對所有玩家檢查 r_min、穿越檢查、邊界裁切。**加上把 P2、P3 接進 `PatrolDirector`**：每個 tick 更新 tracker、算候選、選目標，再生成。原本排在 P3，但沒有生成點就沒有東西可生，所以移到這裡一起做。 | 平面 navmesh：生成點的距離都在 [r_min, r_max] 內；玩家貼著邊時沒有點落在邊界外；穿越檢查失敗時不消耗冷卻 |
 | P5 | 把 warband 改成 `around_players`；改寫 `AI_PATROL_SYSTEM.md` 的前提與 WHERE 表 | headless 跑一次 4 名玩家（3 + 1）、120 s，記錄每群的威脅覆蓋率和 `route_failure` 次數 |
 
 每個階段都注意：
@@ -295,3 +295,30 @@ P0 的結論（§10）推翻了原本的草案（25–45 m）：
 - 沒有分層表的定義，任何群都用定義本身的 `count` / `composition`。
 
 測試：`patrol_allocation_test`，10 個 case，每個都有對照。變異檢查：讓保底也受全服上限限制，測試會在第 155 行失敗。
+
+### P4：實作時做的決定（2026-11-03）
+
+`patrol_director.cc` 的 `draw_ring_route` 與 `tick_around_players`；`PatrolNavigation::horizontal_bounds`。around_players 定義現在真的會生成。
+
+- **方位分成 24 個扇區**：扇區中線在環帶中間半徑上的點若落在可生成範圍外，這個扇區就不抽。玩家貼邊時不會浪費一半的嘗試次數。
+- **起點**：落在範圍外，或離**任何一名玩家**不到 `ring.min_meters`（水平距離），就重抽。
+- **終點**：超出範圍時**夾回範圍內**（內縮 1 m），不重抽。玩家在角落時，地圖內沒有「對側」，夾在邊上的終點仍會讓路線經過玩家。
+- **navmesh**：起點 snap 1 m，終點 snap 3 m（夾在邊上的點常落在 Recast 內縮帶裡），目標群的重心也 snap 3 m。路線經過 `find_route`，沿用 `max_detour_ratio`。
+- **穿越檢查**用路線折線（起點加上所有 waypoint）到目標重心的最近水平距離。
+- **可生成範圍的來源**依序為：catalog 的 `map.playable_bounds`、navmesh tile 的範圍、不設限。
+- **失敗**：記一次 `route_failure`，log `patrol found no ring route`，**30 tick 後才重試**，不消耗 `interval_ticks`。保底生不出來時，不會每個 tick 都 warning。
+- **威脅半徑 = `ring.max_meters`**。tracker 每個 tick 都更新，重試等待期間也一樣。所有巡邏隊（不分定義）的 cursor 都算威脅。
+- **預算**：剩餘隻數取 `patrol_budget` 與 `agent_budget` 中較緊的一個，生成後扣掉那一層的 `count_max`，跟 area 模式的規則一樣。
+- **任何一次生成（包括保底）都會重新開始 `interval_ticks` 倒數。**
+- `AgentRuntimeManager` 把 `config.map.playable_bounds` 傳給 `PatrolDirector`。
+
+測試（`patrol_director_test`，5 個新 case，取代 P1 的「還不會生成」）：
+- 沒有玩家時不生成；一名玩家時生成 1 隊，起點距離 50–60 m，路線離玩家 ≤ 15 m，之後不會再多生（落單上限 1 隊）。
+- 1 人用小隊那一層，2 人用大隊那一層。
+- 玩家離西邊界 5 m：8 隊的起點與所有 waypoint 都在範圍內。對照組不設範圍時，有起點超出邊界。
+- obstructed_field navmesh 上：起點在 navmesh 上，路線經過玩家。
+- 範圍放不下環帶時失敗，30 tick 內不重試。
+
+測試用的玩家沒有 template，hp 是 0，會被目標篩選濾掉，所以 P4 的測試都用 `create_living_player` 補上 hp，並用 director 讀的同一個查詢確認。
+
+變異檢查：拿掉穿越檢查，測試在第 1239 行失敗；拿掉範圍篩選，測試在第 1232 行失敗。

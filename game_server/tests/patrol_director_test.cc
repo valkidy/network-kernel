@@ -1039,15 +1039,80 @@ void an_unwalkable_area_spawns_nothing() {
     Kernel_Destroy(kernel);
 }
 
-}  // namespace
+// around_players, docs/PLAYER_TARGETED_PATROL_PLAN.md §6: squads aimed at
+// players, started on a ring out of sight, on a route across the target.
 
-// Loaded but inert until the targeting and ring placement land: drawn from its
-// unused area, it would put squads at the origin. The area-placed definition
-// beside it is the control that proves the director was ticking at all.
-void an_around_players_definition_spawns_nothing_yet() {
+float horizontal_distance(const KernelVec3& from, const KernelVec3& to) {
+    const float delta_x = to.x - from.x;
+    const float delta_z = to.z - from.z;
+    return std::sqrt(delta_x * delta_x + delta_z * delta_z);
+}
+
+// Closest the route comes to `point`, horizontally: the squad walks from its
+// cursor through each waypoint in turn.
+float closest_approach(
+    const network_example::game_server::PatrolGroup& group, const KernelVec3& point) {
+    float closest = horizontal_distance(group.cursor, point);
+    KernelVec3 from = group.cursor;
+    for (const KernelVec3& to : group.waypoints) {
+        const float segment_x = to.x - from.x;
+        const float segment_z = to.z - from.z;
+        const float length_squared = segment_x * segment_x + segment_z * segment_z;
+        float along = 0.0f;
+        if (length_squared > 0.0f) {
+            along = std::clamp(
+                ((point.x - from.x) * segment_x + (point.z - from.z) * segment_z) /
+                    length_squared,
+                0.0f,
+                1.0f);
+        }
+        closest = std::min(
+            closest,
+            horizontal_distance(
+                KernelVec3{from.x + segment_x * along, 0.0f, from.z + segment_z * along},
+                point));
+        from = to;
+    }
+    return closest;
+}
+
+// A player the targeting will see: created without a template, a player has
+// no health, and around_players aims only at the living. Checked through the
+// same query the director reads, so a test cannot pass by aiming at nobody.
+std::uint32_t create_living_player(KernelHandle* kernel, const KernelVec3& position) {
+    const std::uint32_t net_id = create_player(kernel, position);
+    require(Kernel_ServerSetEntityHealth(kernel, net_id, 100));
+    std::vector<KernelServerEntityState> actors(256);
+    for (KernelServerEntityState& state : actors) {
+        state.struct_size = sizeof(KernelServerEntityState);
+    }
+    const std::uint32_t count = Kernel_ServerQueryEntities(
+        kernel,
+        network_example::game_server::kEntityTypeActor,
+        actors.data(),
+        static_cast<std::uint32_t>(actors.size()));
+    bool living = false;
+    for (std::uint32_t index = 0; index < count; ++index) {
+        living = living || (actors[index].net_id == net_id && actors[index].hp > 0u);
+    }
+    require(living);
+    return net_id;
+}
+
+PatrolDefinitionConfig around_definition() {
+    PatrolDefinitionConfig definition = mixed_definition();
+    definition.placement = network_example::game_server::PatrolPlacementMode::kAroundPlayers;
+    definition.interval_ticks = 1;
+    definition.route_attempts = 16;
+    return definition;
+}
+
+// No players, no squads. Then one player: one squad, started 50-60 m out on
+// the ring, routed within 15 m of the player, and only one -- a loner's cap is
+// one squad however long the director runs.
+void a_squad_is_aimed_across_a_player() {
     using network_example::game_server::PatrolDirector;
     using network_example::game_server::PatrolGroupRuntime;
-    using network_example::game_server::PatrolPlacementMode;
 
     const KernelConfig config = server_config();
     KernelHandle* kernel = Kernel_Create(&config);
@@ -1055,25 +1120,227 @@ void an_around_players_definition_spawns_nothing_yet() {
     require(Kernel_StartDedicatedServer(kernel, 7833));
     load_catalog(kernel);
 
-    PatrolDefinitionConfig area = mixed_definition();
-    area.interval_ticks = 1;
-    PatrolDefinitionConfig around = mixed_definition();
-    around.id = area.id + 1;
-    around.interval_ticks = 1;
-    around.placement = PatrolPlacementMode::kAroundPlayers;
-    require(network_example::game_server::validate_patrol_definition(around).empty());
-
-    PatrolDirector director({around, area});
+    const PatrolDefinitionConfig definition = around_definition();
+    require(network_example::game_server::validate_patrol_definition(definition).empty());
+    PatrolDirector director({definition});
     PatrolGroupRuntime groups;
-    for (std::uint32_t tick = 0; tick < 4; ++tick) {
+    for (int tick = 0; tick < 5; ++tick) {
+        tick_director(&director, kernel, &groups, nullptr);
+    }
+    require(groups.groups().empty());
+    require(director.route_failure_count() == 0u);
+
+    const KernelVec3 player{12.0f, 0.0f, -7.0f};
+    create_living_player(kernel, player);
+    for (int tick = 0; tick < 30; ++tick) {
         tick_director(&director, kernel, &groups, nullptr);
     }
     require(groups.groups().size() == 1u);
-    require(groups.groups()[0].definition_id == area.id);
-    require(director.route_failure_count() == 0u);
+    const network_example::game_server::PatrolGroup& group = groups.groups()[0];
+    require(group.definition_id == definition.id);
+    require(group.member_net_ids.size() >= definition.count_min);
+    const float start_distance = horizontal_distance(group.cursor, player);
+    require(start_distance >= 50.0f && start_distance <= 60.0f);
+    require(!group.waypoints.empty());
+    require(closest_approach(group, player) <= 15.0f);
+    // The end is across the player, not back on the start's side.
+    require(horizontal_distance(group.waypoints.back(), group.cursor) > 60.0f);
 
     Kernel_Destroy(kernel);
 }
+
+// A lone player gets the small tier, two players together the large one.
+void the_squad_size_follows_the_group() {
+    using network_example::game_server::PatrolDirector;
+    using network_example::game_server::PatrolGroupRuntime;
+    using network_example::game_server::PatrolSquadTier;
+
+    const KernelConfig config = server_config();
+    KernelHandle* kernel = Kernel_Create(&config);
+    require(kernel != nullptr);
+    require(Kernel_StartDedicatedServer(kernel, 7834));
+    load_catalog(kernel);
+
+    PatrolDefinitionConfig definition = around_definition();
+    PatrolSquadTier lone;
+    lone.members_min = 1;
+    lone.members_max = 1;
+    lone.count_min = 2;
+    lone.count_max = 3;
+    lone.composition = {SpawnCompositionEntry{"grunt", kGruntEntityTemplateId, 2, 3}};
+    PatrolSquadTier crowd;
+    crowd.members_min = 2;
+    crowd.count_min = 8;
+    crowd.count_max = 10;
+    crowd.composition = definition.composition;
+    definition.squad_tiers = {lone, crowd};
+    definition.composition.clear();
+    definition.count_min = 2;
+    definition.count_max = 10;
+    require(network_example::game_server::validate_patrol_definition(definition).empty());
+
+    create_living_player(kernel, KernelVec3{0.0f, 0.0f, 0.0f});
+    PatrolDirector alone({definition});
+    PatrolGroupRuntime alone_groups;
+    for (int tick = 0; tick < 5; ++tick) {
+        tick_director(&alone, kernel, &alone_groups, nullptr);
+    }
+    require(alone_groups.groups().size() == 1u);
+    require(alone_groups.groups()[0].member_net_ids.size() <= 3u);
+
+    create_living_player(kernel, KernelVec3{4.0f, 0.0f, 0.0f});
+    PatrolDirector paired({definition});
+    PatrolGroupRuntime paired_groups;
+    for (int tick = 0; tick < 5; ++tick) {
+        tick_director(&paired, kernel, &paired_groups, nullptr);
+    }
+    require(!paired_groups.groups().empty());
+    require(paired_groups.groups()[0].member_net_ids.size() >= 8u);
+
+    Kernel_Destroy(kernel);
+}
+
+// A player 5 m from the west edge: every start lands inside the playable
+// bounds and every route stays in them. The control is the same director with
+// no bounds, whose starts do go past the edge -- otherwise "inside" could just
+// be where this seed happens to draw.
+void ring_spawns_stay_inside_the_playable_bounds() {
+    using network_example::game_server::PatrolDirector;
+    using network_example::game_server::PatrolGroupRuntime;
+    using network_example::game_server::PlayableBoundsConfig;
+
+    const KernelConfig config = server_config();
+    KernelHandle* kernel = Kernel_Create(&config);
+    require(kernel != nullptr);
+    require(Kernel_StartDedicatedServer(kernel, 7835));
+    load_catalog(kernel);
+
+    PatrolDefinitionConfig definition = around_definition();
+    definition.around_players.groups_per_member = 8.0f;
+    definition.around_players.groups_per_player = 8.0f;
+    const KernelVec3 player{-95.0f, 0.0f, 0.0f};
+    create_living_player(kernel, player);
+
+    const PlayableBoundsConfig bounds{true, -100.0f, -100.0f, 100.0f, 100.0f};
+    PatrolDirector bounded({definition}, {}, bounds);
+    PatrolGroupRuntime bounded_groups;
+    for (int tick = 0; tick < 400; ++tick) {
+        tick_director(&bounded, kernel, &bounded_groups, nullptr);
+    }
+    require(bounded_groups.groups().size() == 8u);
+    for (const network_example::game_server::PatrolGroup& group : bounded_groups.groups()) {
+        require(group.cursor.x >= -100.0f && group.cursor.x <= 100.0f);
+        require(group.cursor.z >= -100.0f && group.cursor.z <= 100.0f);
+        require(horizontal_distance(group.cursor, player) >= 50.0f);
+        for (const KernelVec3& waypoint : group.waypoints) {
+            require(waypoint.x >= -100.0f && waypoint.x <= 100.0f);
+            require(waypoint.z >= -100.0f && waypoint.z <= 100.0f);
+        }
+        require(closest_approach(group, player) <= 15.0f);
+    }
+
+    PatrolDirector unbounded({definition});
+    PatrolGroupRuntime unbounded_groups;
+    for (int tick = 0; tick < 400; ++tick) {
+        tick_director(&unbounded, kernel, &unbounded_groups, nullptr);
+    }
+    require(unbounded_groups.groups().size() == 8u);
+    bool past_the_edge = false;
+    for (const network_example::game_server::PatrolGroup& group : unbounded_groups.groups()) {
+        past_the_edge = past_the_edge || group.cursor.x < -100.0f;
+    }
+    require(past_the_edge);
+
+    Kernel_Destroy(kernel);
+}
+
+// On a navmesh the start is somewhere a squad can stand and the route is a
+// path. obstructed_field is 90 m across, so the ring is pulled in to fit it.
+void a_ring_route_is_pathed_on_a_navmesh() {
+    using network_example::game_server::PatrolDirector;
+    using network_example::game_server::PatrolGroupRuntime;
+    using network_example::game_server::PatrolNavigation;
+
+    const std::vector<std::uint8_t> artifact = read_binary_file(
+        (runfiles_root() / "game_server" / "tests" / "test_mesh_assets" / "recast" /
+         "obstructed_field.navmesh")
+            .string());
+    PatrolNavigation navigation;
+    std::string load_error;
+    require(navigation.load(artifact, &load_error));
+
+    const KernelConfig config = server_config();
+    KernelHandle* kernel = Kernel_Create(&config);
+    require(kernel != nullptr);
+    require(Kernel_StartDedicatedServer(kernel, 7837));
+    load_catalog(kernel);
+
+    KernelVec3 player{0.0f, 0.0f, 0.0f};
+    // The field's centre is a wall; whatever ground is nearest it.
+    require(navigation.snap(player, 15.0f, &player));
+    create_living_player(kernel, player);
+
+    PatrolDefinitionConfig definition = around_definition();
+    definition.around_players.ring_min_meters = 20.0f;
+    definition.around_players.ring_max_meters = 30.0f;
+    definition.around_players.pass_within_meters = 10.0f;
+    definition.route_attempts = 32;
+    definition.max_detour_ratio = 6.0f;
+    require(network_example::game_server::validate_patrol_definition(definition).empty());
+    PatrolDirector director({definition});
+    PatrolGroupRuntime groups;
+    for (int tick = 0; tick < 200 && groups.groups().empty(); ++tick) {
+        tick_director(&director, kernel, &groups, &navigation);
+    }
+    require(groups.groups().size() == 1u);
+    const network_example::game_server::PatrolGroup& group = groups.groups()[0];
+    KernelVec3 snapped{0.0f, 0.0f, 0.0f};
+    require(navigation.snap(group.cursor, 0.5f, &snapped));
+    // Snapping moves a start by up to a metre.
+    const float start_distance = horizontal_distance(group.cursor, player);
+    require(start_distance >= 19.0f && start_distance <= 31.0f);
+    require(!group.waypoints.empty());
+    require(closest_approach(group, player) <= 10.0f);
+
+    Kernel_Destroy(kernel);
+}
+
+// A ring that cannot fit anywhere fails, says so, and waits a second before
+// trying again rather than warning every tick.
+void a_failed_ring_waits_before_retrying() {
+    using network_example::game_server::PatrolDirector;
+    using network_example::game_server::PatrolGroupRuntime;
+    using network_example::game_server::PlayableBoundsConfig;
+
+    const KernelConfig config = server_config();
+    KernelHandle* kernel = Kernel_Create(&config);
+    require(kernel != nullptr);
+    require(Kernel_StartDedicatedServer(kernel, 7838));
+    load_catalog(kernel);
+    create_living_player(kernel, KernelVec3{0.0f, 0.0f, 0.0f});
+
+    // 20 m across: no 50 m ring fits.
+    PatrolDirector director(
+        {around_definition()}, {}, PlayableBoundsConfig{true, -10.0f, -10.0f, 10.0f, 10.0f});
+    PatrolGroupRuntime groups;
+    for (int tick = 0; tick < 3; ++tick) {
+        tick_director(&director, kernel, &groups, nullptr);
+    }
+    require(director.route_failure_count() == 1u);
+    for (int tick = 3; tick < 31; ++tick) {
+        tick_director(&director, kernel, &groups, nullptr);
+    }
+    require(director.route_failure_count() == 1u);
+    for (int tick = 31; tick < 36; ++tick) {
+        tick_director(&director, kernel, &groups, nullptr);
+    }
+    require(director.route_failure_count() == 2u);
+    require(groups.groups().empty());
+
+    Kernel_Destroy(kernel);
+}
+
+}  // namespace
 
 int main() {
     composition_is_floors_plus_capacity();
@@ -1090,6 +1357,10 @@ int main() {
     the_agent_budget_counts_agents_patrols_did_not_make();
     a_navigable_patrol_routes_around_obstacles();
     an_unwalkable_area_spawns_nothing();
-    an_around_players_definition_spawns_nothing_yet();
+    a_squad_is_aimed_across_a_player();
+    the_squad_size_follows_the_group();
+    ring_spawns_stay_inside_the_playable_bounds();
+    a_ring_route_is_pathed_on_a_navmesh();
+    a_failed_ring_waits_before_retrying();
     return 0;
 }

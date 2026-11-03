@@ -9,6 +9,7 @@
 #include "game_server/src/agent_runtime.h"
 #include "game_server/src/patrol_group_runtime.h"
 #include "game_server/src/patrol_navigation.h"
+#include "game_server/src/patrol_targeting.h"
 #include "game_server/src/spawn_sampling.h"
 #include "kernel/public/kernel_api.h"
 #include "kernel/public/kernel_types.h"
@@ -166,9 +167,12 @@ std::vector<KernelVec3> formation_offsets(std::uint32_t count, float spacing);
 // nothing about squads. Everything below runs on the public server API.
 class PatrolDirector {
 public:
+    // `playable_bounds` clips around_players spawns; unauthored, they are
+    // clipped to the navmesh's own extent when there is one.
     explicit PatrolDirector(
         std::vector<PatrolDefinitionConfig> definitions = {},
-        PatrolBudgetConfig budget = {});
+        PatrolBudgetConfig budget = {},
+        PlayableBoundsConfig playable_bounds = {});
 
     // Runs before the agent list is resynced, so that the entities it creates
     // are discovered on the same tick their squad is. The other order drops
@@ -207,6 +211,12 @@ private:
     struct DefinitionRuntime {
         std::uint32_t ticks_until_spawn = 0;
         std::uint32_t spawn_ordinal = 0;
+        // around_players only. Who has had a squad near them lately, measured
+        // at this definition's own ring.
+        PlayerThreatTracker threats;
+        // After a ring draw that found no route, so a floor that cannot be
+        // served does not retry, and warn, every tick.
+        std::uint32_t ticks_until_retry = 0;
     };
 
     void retire_finished_patrols(
@@ -221,9 +231,39 @@ private:
         const PatrolDefinitionConfig& definition,
         DefinitionRuntime* runtime);
 
+    // One around_players definition's tick: record who is threatened, choose
+    // a group, and spawn at most one squad for it. Returns the agents the
+    // squad may cost, zero when nothing spawned.
+    std::uint32_t tick_around_players(
+        KernelHandle* kernel,
+        PatrolGroupRuntime* groups,
+        const PatrolNavigation* navigation,
+        const std::vector<TargetPlayer>& players,
+        const std::vector<KernelVec3>& squad_cursors,
+        std::uint32_t agent_room,
+        const PatrolDefinitionConfig& definition,
+        DefinitionRuntime* runtime);
+
+    // The member spawns and the group, once a route exists. Shared by both
+    // placements so a squad is a squad however its start was chosen.
+    bool place_squad(
+        KernelHandle* kernel,
+        PatrolGroupRuntime* groups,
+        const PatrolDefinitionConfig& definition,
+        const std::vector<SpawnCompositionEntry>& composition,
+        const std::vector<std::uint32_t>& drawn,
+        std::uint32_t count,
+        const KernelVec3& route_start,
+        std::vector<KernelVec3> waypoints,
+        DefinitionRuntime* runtime);
+
     std::vector<PatrolDefinitionConfig> definitions_;
     PatrolBudgetConfig budget_;
+    PlayableBoundsConfig playable_bounds_;
     std::vector<DefinitionRuntime> runtimes_;
+    // Director ticks since construction: the clock threat records are kept
+    // in.
+    std::uint64_t tick_ = 0;
     std::uint32_t spawned_group_count_ = 0;
     std::vector<SpawnedControllerSpec> spawned_controllers_;
     std::uint32_t retired_group_count_ = 0;
