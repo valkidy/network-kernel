@@ -16,7 +16,7 @@ namespace NetworkExample.Kernel
         public const int GameplayCatalogLoadFieldSize = 64;
         public const int GameplayCatalogLoadDiagnosticSize = 256;
         public const ushort LANDiscoveryDefaultPort = 47777;
-        public const uint GameplayCatalogSyncMaxBundleSize = 1024U * 1024U;
+        public const uint GameplayCatalogSyncMaxBundleSize = 2U * 1024U * 1024U;
         public const uint GameplayCatalogSyncDefaultMaxBundleSize =
             GameplayCatalogSyncMaxBundleSize;
         public const uint GameplayCatalogSyncDefaultTimeoutMs = 30000U;
