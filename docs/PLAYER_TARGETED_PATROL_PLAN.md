@@ -2,7 +2,7 @@
 
 需求：巡邏隊刻意出現在玩家附近，以穩定的頻率製造交戰機會。多名玩家時，先照顧人多且聚在一起的群，再照顧落單的玩家，而且落單的玩家不能因為預算被別人用完而沒有威脅。
 
-狀態：**計劃，尚未實作。** 設計決定於 2026-11-03 與使用者確認（§2）。數字是草案（§9），實作前要量測或確認。基準：main 40f1ad57。
+狀態：**計劃，尚未實作。** 設計決定於 2026-11-03 與使用者確認（§2）。數字是草案（§9），實作前要確認。P0 已完成（§10），生成環帶由 25–45 m 修訂為 50–60 m。基準：main 40f1ad57。
 
 本計劃只改 `game_server`（PatrolDirector、catalog 解析與驗證），**不動 kernel ABI，不動 snapshot / packet schema**，`bundle.bytes` 只有在 catalog 內容變更時才需要重新產生。
 
@@ -44,9 +44,9 @@
 ```yaml
 where:
   mode: around_players
-  ring: {min_meters: 25.0, max_meters: 45.0}
+  ring: {min_meters: 50.0, max_meters: 60.0}
   # 路線離目標生成當下的位置多近才算「穿越」
-  pass_within_meters: 10.0
+  pass_within_meters: 15.0
   # 終點在對側方位上加多少隨機偏移
   exit_spread_degrees: 30.0
 ```
@@ -167,12 +167,24 @@ map:
 
 ---
 
-## 7. 生成距離的上下界（D6）
+## 7. 生成距離的上下界（D6，P0 修訂）
 
-| 界線 | 條件 | 草案 |
+P0 的結論（§10）推翻了原本的草案（25–45 m）：
+
+- **45 m 的生成點，client 根本收不到。** entity 的 relevance 距離是固定的 40 m（進入）/ 44 m（離開），超出範圍就不會被送到 client。
+- **25 m 的生成點，會直接生在 gingerbread 的 vision（26 m）和 mage 的 vision（30 m）裡面。** 隊伍一出現就開打。
+- **生在 40 m 以內，玩家會看到隊伍憑空冒出來。**
+
+修訂後的規則：
+
+| 界線 | 條件 | 修訂值 |
 |---|---|---|
-| r_min | 大於 vision cone 的距離和 squad leash（gingerbread 為 18 m），隊伍一生成就開打的話，玩家就沒有選擇的機會 | 25 m |
-| r_max | 在 relevance 近帶以內。遠帶的單位會因為 snapshot 不足而卡頓、跳動（template 32 曾停頓 1–1.8 s），「從遠處觀察」就看不清楚 | 45 m，**P0 量測後確定** |
+| r_min（生成） | 離**每一名玩家**都要超過 relevance 的離開距離 44 m，再加上 squad 縱深的一半（約 5 m）。這樣整隊都在 client 看不到的地方生成，不會憑空出現，隊伍會從 40 m 的邊緣走進視野 | 50 m |
+| r_max（生成） | 越大，走到玩家那裡要越久。0.9 m/s 走 50 m 約 55 s，走 60 m 約 67 s，與保底的 60 s 同一個量級 | 60 m |
+| 觀察窗 | 從進入 relevance（40 m）到隊伍裡 vision 最遠的成員看到玩家（mage 30 m）之間，只剩 **10 m**。玩家站著不動時，大約是 11 s | 由成員的 vision 決定 |
+| `pass_within_meters` | 決定「預設會不會開打」：小於 20 m 時，warrior 和 gingerbread 也都會看到，玩家要主動閃開才不會開打；30–38 m 時，只看得到、不會開打，除非玩家主動靠近。依 D1 取前者 | 15 m |
+
+隊伍的觀察窗落在 snapshot 的遠帶（25–40 m，權重 ×1）。在人多的時候，更新頻率會低到每秒一次的保底，遠處的隊伍會跳動。這是已知的遠帶問題，不是本計劃要處理的；要擴大觀察窗，需要改 kernel 的 relevance 距離（§10），不在本計劃範圍內。
 
 ---
 
@@ -180,7 +192,7 @@ map:
 
 | 階段 | 內容 | 測試 |
 |---|---|---|
-| P0 | 量測：relevance 近帶與遠帶的邊界距離，以及 r_max = 45 m 時遠處隊伍在 client 上是否看得清楚。量測 probe 不 commit。 | 量測記錄寫進本文件 §10 |
+| P0 ✅ | 量測：relevance 距離、snapshot 優先順序分帶、隊伍成員的 vision。由常數直接決定，不需要 runtime probe（§10）。 | 量測記錄寫進本文件 §10 |
 | P1 | catalog：`where.mode: around_players`、`squad_by_group_size`、`map.playable_bounds`、`groups_per_member` / `groups_per_player` / `floor_interval_ticks` 的解析與驗證 | `patrol_catalog_test`：每一條拒絕規則各一個 case；舊的 `area` 定義照常載入 |
 | P2 | 分群（§4.1）、已有威脅的判斷（§4.2）、每名玩家的冷卻與飢餓時間（§4.3）。寫成不依賴 kernel 的純函式。 | 新的 `patrol_targeting_test`：3 + 1 分群、拆散後不會立刻重新生成、走進別群的範圍算已有威脅 |
 | P3 | 分配順序（§4.4），預算檢查改用目標那一層的 `count_max` | `patrol_director_test`：§4.5 的例子；落單的玩家在三人組額度用完時仍拿得到隊伍；保底優先 |
@@ -199,8 +211,8 @@ map:
 | 參數 | 草案 | 依據 |
 |---|---|---|
 | `group_radius_meters` | 18 | gingerbread 的 squad leash |
-| `ring` | 25–45 m | §7 |
-| `pass_within_meters` | 10 | 小於 leash（18 m），隊伍經過時目標會落在 vision 範圍內 |
+| `ring` | 50–60 m（P0 修訂） | §7：在 relevance 44 m 外生成 |
+| `pass_within_meters` | 15（P0 修訂） | §7：小於 warrior 的 vision（20 m），預設會開打 |
 | `exit_spread_degrees` | 30 | 避免每次都直直撞向玩家 |
 | `groups_per_member`（k） | 1 | 4 人時：三人組 3 組加落單 1 組 |
 | `groups_per_player` | 1.5 | 4 人時共 6 組 |
@@ -213,4 +225,43 @@ map:
 
 ## 10. 量測記錄
 
-（P0 之後填寫）
+### P0：relevance 與 vision（2026-11-03，main 40f1ad57）
+
+這些數字都是常數，可以直接從程式碼讀出來，不需要 runtime probe。遠帶在人多時的實際卡頓，之前已經量過：template 32 在 relevance 邊緣停頓 1–1.8 s，原因是 15 個 snapshot 的保底，加上 0.25 s 的外插上限，再加上封包遺失。
+
+**Relevance**（`engine/src/kernel/src/kernel.cc`，`kDefaultEntity*`）：
+
+| 項目 | 值 | 說明 |
+|---|---|---|
+| 進入距離 | 40 m | 距離 = 與玩家的**3D** 距離減去 entity 的水平包圍半徑 |
+| 離開距離 | 44 m | 避免在邊界上反覆進出 |
+| projectile | 80 m | 只適用於 projectile，與巡邏隊無關 |
+
+- 這些值是固定常數，沒有 catalog 或 per-entity 的設定可以覆寫。要改只能改 kernel。
+- 距離是 **3D**（`glm::length(entity.position - player.position)`），不是水平距離。3D 距離一定不小於水平距離，所以 §6 用水平距離檢查 r_min ≥ 50 m 就足以保證生成點在 relevance 外。代價是：在高低差大的地形上（composed 地圖 y 8–38 m、giantwood y −38–148 m），隊伍要走得更近才會進入視野，觀察窗會比平地更窄。
+
+**Snapshot 優先順序分帶**（`kSnapshotPriority*`）：
+
+| 帶 | 距離 | 權重 |
+|---|---|---|
+| 近 | ≤ 10 m | ×4 |
+| 中 | ≤ 25 m | ×2 |
+| 遠 | 25–40 m | ×1 |
+| 保底 | — | 15 個 snapshot（1 s）沒被送過，就優先送 |
+
+**隊伍成員的 vision**（`collider_templates` 的 `range`）：
+
+| 成員 | vision | leash |
+|---|---|---|
+| gingerbread（28） | 26 m | 18 m |
+| gingerbread_warrior（29） | 20 m | 20 m |
+| gingerbread_mage（31） | 30 m | 30 m |
+
+隊伍在任何一名成員開打時就會停下來（`PatrolGroup::holding`），所以整隊在什麼距離開打，取決於 vision 最遠的成員：有 mage 的隊伍是 30 m。
+
+**結論：**
+1. 原本的草案 25–45 m 兩頭都不對：45 m 時 client 收不到，25 m 時一生成就在 vision 裡。修訂為生成在 50–60 m（§7）。
+2. 「從遠處觀察」的窗口只有 40 → 30 m，也就是 10 m。這個窗口由 kernel 的 relevance 常數與成員的 vision 共同決定。
+3. 要擴大觀察窗，有兩個方向，都不在本計劃範圍內：
+   - 把 entity 的 relevance 距離調大。這是 kernel 常數，會增加頻寬，而且會讓更多 entity 落在權重 ×1 的遠帶。
+   - 縮小巡邏隊成員的 vision。這會影響這些 template 在巡邏以外的行為。
