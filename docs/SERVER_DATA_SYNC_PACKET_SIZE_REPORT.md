@@ -42,7 +42,7 @@ Recast/Detour artifacts.
 | Recast/Detour navmesh artifacts | 80,612 B |
 | 32 KiB sync chunks | 5 |
 
-The bundle size is below the 1 MiB protocol limit. Four chunks carry 32,768 B
+The bundle size is below the 2 MiB protocol limit. Four chunks carry 32,768 B
 each; the final chunk carries 10,558 B. Packet sizes are therefore four
 32,840 B messages and one 10,630 B message.
 
@@ -81,9 +81,10 @@ For a bundle of size `B`, the server-to-client download is:
 268 + B + 72 * ceil(B / 32768)
 ```
 
-At the 1 MiB limit, 32 chunks produce 1,051,148 B server-to-client. Including
-the manifest and bundle requests produces 1,051,242 B combined application
-traffic.
+At the 2 MiB limit, 64 chunks produce 2,102,028 B server-to-client. Including
+the manifest and bundle requests produces 2,102,122 B combined application
+traffic. (The limit was 1 MiB, 32 chunks and 1,051,148 B, until a 216 m
+layered test map's cooked geometry left too little room under it.)
 
 ## Fragmentation And Packet Splitting
 
@@ -95,7 +96,7 @@ The application already:
 
 - limits chunk data to 32 KiB;
 - validates bundle hash, offset, total size, and chunk length;
-- limits the complete compressed bundle to 1 MiB.
+- limits the complete compressed bundle to 2 MiB.
 
 No additional application split is required for the current transport. A
 transport with a lower reliable-message limit must revisit

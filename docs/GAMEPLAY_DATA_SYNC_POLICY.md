@@ -90,7 +90,7 @@ entire collider/presentation model dynamically synced by default.
 
 ## Current Bundle Limitation
 
-The compressed `bundle.zip` has a hard sync limit of 1 MiB on both server and
+The compressed `bundle.zip` has a hard sync limit of 2 MiB on both server and
 client. Clients may choose a smaller limit but cannot raise the version-level
 cap. Sync remains a whole-bundle, pre-handshake operation with local caching;
 hot reload, delta sync, and Unity presentation assets are not supported.
