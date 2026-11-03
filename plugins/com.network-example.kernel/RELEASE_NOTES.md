@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- raises the gameplay catalog sync bundle limit to 2 MiB in native and managed code
+
+
+0.7.0 release notes:
+
 - adds agent command bindings and updates ranged retreats, squad spacing and turn-and-run behavior
 
 
