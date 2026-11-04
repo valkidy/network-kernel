@@ -45,19 +45,103 @@ double stamp_height_m(const StampAsset& s, double lx, double lz) {
     return (a + (b - a) * tz) / 100.0;
 }
 
-// TerrainMapLayers.CrossesCliff, painted-map branch.
-bool crosses_cliff(const GroundSampler& g, const Rect& claim, const LayoutParams& p) {
-    const double st = p.cliff_probe_m;
-    for (double a = claim.x0; a <= claim.x1; a += st) {
-        for (double b = claim.z0; b <= claim.z1; b += st) {
-            const double h0 = g.at(a, b);
-            if (std::fabs(g.at(a + st, b) - h0) > p.cliff_rise_m || std::fabs(g.at(a, b + st) - h0) > p.cliff_rise_m) {
-                return true;
+// TerrainMapLayers.CrossesCliff, painted-map branch: a claim crosses a cliff
+// if, anywhere in it, the ground rises more than cliff_rise over one
+// cliff_probe step along x or z. Unity probed from each claim's own corner;
+// here the probes sit on one map-wide lattice, so whether each lattice point
+// starts a cliff is worked out once and a claim is a prefix-sum lookup (the
+// per-claim scan was ~90% of a 1 km layout). Same rule, probe points shifted by
+// less than one step.
+struct CliffLattice {
+    double step = 1.5, apron = 0;
+    std::int32_t nx = 0, nz = 0;
+    std::vector<std::int32_t> sum;   // (nx + 1) x (nz + 1) prefix sums of cliff flags
+
+    void build(const GroundSampler& g, double size_x, double size_z, const LayoutParams& p) {
+        step = p.cliff_probe_m;
+        apron = p.max_ring_m + step;   // claims reach max_ring past a footprint that is >= 12 m in
+        nx = static_cast<std::int32_t>(std::ceil((size_x + 2 * apron) / step)) + 1;
+        nz = static_cast<std::int32_t>(std::ceil((size_z + 2 * apron) / step)) + 1;
+        sum.assign(static_cast<std::size_t>(nx + 1) * static_cast<std::size_t>(nz + 1), 0);
+        for (std::int32_t j = 0; j < nz; ++j) {
+            for (std::int32_t i = 0; i < nx; ++i) {
+                const double a = i * step - apron, b = j * step - apron;
+                const double h0 = g.at(a, b);
+                const bool cliff = std::fabs(g.at(a + step, b) - h0) > p.cliff_rise_m || std::fabs(g.at(a, b + step) - h0) > p.cliff_rise_m;
+                sum[idx(i + 1, j + 1)] = (cliff ? 1 : 0) + sum[idx(i, j + 1)] + sum[idx(i + 1, j)] - sum[idx(i, j)];
             }
         }
     }
-    return false;
-}
+    std::size_t idx(std::int32_t i, std::int32_t j) const {
+        return static_cast<std::size_t>(j) * static_cast<std::size_t>(nx + 1) + static_cast<std::size_t>(i);
+    }
+    bool crosses(const Rect& r) const {
+        const std::int32_t i0 = std::clamp(static_cast<std::int32_t>(std::ceil((r.x0 + apron) / step)), 0, nx);
+        const std::int32_t i1 = std::clamp(static_cast<std::int32_t>(std::floor((r.x1 + apron) / step)) + 1, 0, nx);
+        const std::int32_t j0 = std::clamp(static_cast<std::int32_t>(std::ceil((r.z0 + apron) / step)), 0, nz);
+        const std::int32_t j1 = std::clamp(static_cast<std::int32_t>(std::floor((r.z1 + apron) / step)) + 1, 0, nz);
+        if (i0 >= i1 || j0 >= j1) return false;
+        return sum[idx(i1, j1)] - sum[idx(i0, j1)] - sum[idx(i1, j0)] + sum[idx(i0, j0)] > 0;
+    }
+};
+
+// The ground at every 2 m lattice point of the map plus an 8 m apron: the
+// base / ring probes of a site on the 12 m grid always land on it (x - 8 + 2k,
+// z + e + 8 with e a multiple of 12), so they are lookups of the very values
+// GroundSampler would compute.
+struct LatticeCache {
+    double step = 2.0, apron = 8.0;
+    std::int32_t nx = 0, nz = 0;
+    std::vector<double> h;
+    void build(const GroundSampler& g, double size_x, double size_z) {
+        nx = static_cast<std::int32_t>(std::llround((size_x + 2 * apron) / step)) + 1;
+        nz = static_cast<std::int32_t>(std::llround((size_z + 2 * apron) / step)) + 1;
+        h.resize(static_cast<std::size_t>(nx) * static_cast<std::size_t>(nz));
+        for (std::int32_t j = 0; j < nz; ++j)
+            for (std::int32_t i = 0; i < nx; ++i)
+                h[static_cast<std::size_t>(j) * static_cast<std::size_t>(nx) + static_cast<std::size_t>(i)] =
+                    g.at(i * step - apron, j * step - apron);
+    }
+    double at(double x, double z) const {
+        const std::int64_t i = std::llround((x + apron) / step), j = std::llround((z + apron) / step);
+        return h[static_cast<std::size_t>(j) * static_cast<std::size_t>(nx) + static_cast<std::size_t>(i)];
+    }
+};
+
+// Reserved claims bucketed by 12 m cell, so an overlap test looks at the few
+// claims near a site instead of all of them.
+struct ClaimGrid {
+    double cell = 12.0;
+    std::int32_t nx = 0, nz = 0;
+    std::vector<std::vector<std::uint32_t>> buckets;
+    std::vector<Rect> rects;
+    void init(double size_x, double size_z) {
+        nx = static_cast<std::int32_t>(std::ceil(size_x / cell)) + 1;
+        nz = static_cast<std::int32_t>(std::ceil(size_z / cell)) + 1;
+        buckets.assign(static_cast<std::size_t>(nx) * static_cast<std::size_t>(nz), {});
+    }
+    template <typename Fn>
+    void cells(const Rect& r, Fn fn) const {
+        const std::int32_t i0 = std::clamp(static_cast<std::int32_t>(std::floor(r.x0 / cell)), 0, nx - 1);
+        const std::int32_t i1 = std::clamp(static_cast<std::int32_t>(std::floor(r.x1 / cell)), 0, nx - 1);
+        const std::int32_t j0 = std::clamp(static_cast<std::int32_t>(std::floor(r.z0 / cell)), 0, nz - 1);
+        const std::int32_t j1 = std::clamp(static_cast<std::int32_t>(std::floor(r.z1 / cell)), 0, nz - 1);
+        for (std::int32_t j = j0; j <= j1; ++j)
+            for (std::int32_t i = i0; i <= i1; ++i) fn(static_cast<std::size_t>(j) * static_cast<std::size_t>(nx) + static_cast<std::size_t>(i));
+    }
+    void add(const Rect& r) {
+        const std::uint32_t id = static_cast<std::uint32_t>(rects.size());
+        rects.push_back(r);
+        cells(r, [&](std::size_t b) { buckets[b].push_back(id); });
+    }
+    bool overlaps(const Rect& r) const {
+        bool hit = false;
+        cells(r, [&](std::size_t b) {
+            for (const std::uint32_t id : buckets[b]) hit = hit || rects[id].overlaps(r);
+        });
+        return hit;
+    }
+};
 
 // C#'s Mathf.Round rounds half to even.
 double round_half_even(double v) { return std::nearbyint(v); }
@@ -131,7 +215,12 @@ bool layout_stamps(TerrainRecipe* r, const TerrainLibrary& lib, const LayoutPara
     });
     report->picked = static_cast<std::int32_t>(picks.size());
 
-    std::vector<Rect> reserved;
+    ClaimGrid reserved;
+    reserved.init(size_x, size_z);
+    LatticeCache lattice;
+    lattice.build(g, size_x, size_z);
+    CliffLattice cliffs;
+    cliffs.build(g, size_x, size_z, p);
     for (const std::uint32_t m : picks) {
         const StampAsset& s = lib.stamps[m];
         const double e = s.cells_x * kCellM;
@@ -143,10 +232,19 @@ bool layout_stamps(TerrainRecipe* r, const TerrainLibrary& lib, const LayoutPara
         double bx = 0, bz = 0, bbase = 0, bring = 0;
         for (double x = grid; x + e <= size_x - grid + 1e-9; x += grid) {
             for (double z = grid; z + e <= size_z - grid + 1e-9; z += grid) {
+                // A claim is at least footprint + min_ring: if that already
+                // overlaps an earlier one, no ring this site could need is free.
+                // (Same choice as testing after the ring; it just skips the probes.)
+                if (reserved.overlaps(Rect{x - p.min_ring_m, z - p.min_ring_m, x + e + p.min_ring_m, z + e + p.min_ring_m})) {
+                    ++report->rejected_overlap;
+                    continue;
+                }
                 const double a = p.around_m;
                 double lo = std::numeric_limits<double>::max(), hi = -lo;
+                const bool on_lattice = a == lattice.apron;
+                auto probe = [&](double px, double pz) { return on_lattice ? lattice.at(px, pz) : g.at(px, pz); };
                 for (double t = -a; t <= e + a + 1e-9; t += 2.0) {
-                    for (const double h : {g.at(x + t, z - a), g.at(x + t, z + e + a), g.at(x - a, z + t), g.at(x + e + a, z + t)}) {
+                    for (const double h : {probe(x + t, z - a), probe(x + t, z + e + a), probe(x - a, z + t), probe(x + e + a, z + t)}) {
                         lo = std::min(lo, h);
                         hi = std::max(hi, h);
                     }
@@ -158,10 +256,8 @@ bool layout_stamps(TerrainRecipe* r, const TerrainLibrary& lib, const LayoutPara
                 const double ring = std::max(p.min_ring_m, delta / tan_ring + 1.0);
                 if (ring > p.max_ring_m) { ++report->rejected_ring; continue; }
                 const Rect claim{x - ring, z - ring, x + e + ring, z + e + ring};
-                bool overlap = false;
-                for (const Rect& q : reserved) overlap = overlap || q.overlaps(claim);
-                if (overlap) { ++report->rejected_overlap; continue; }
-                if (crosses_cliff(g, claim, p)) { ++report->rejected_cliff; continue; }
+                if (reserved.overlaps(claim)) { ++report->rejected_overlap; continue; }
+                if (cliffs.crosses(claim)) { ++report->rejected_cliff; continue; }
                 const double score = ring + rng.next_double() * p.ring_noise_m;
                 if (score < best_score) {
                     best_score = score;
@@ -215,7 +311,7 @@ bool layout_stamps(TerrainRecipe* r, const TerrainLibrary& lib, const LayoutPara
         tp.turns = turns;
         tp.mirror = mirror;
         r->placements.push_back(tp);
-        reserved.push_back(Rect{bx - bring, bz - bring, bx + e + bring, bz + e + bring});
+        reserved.add(Rect{bx - bring, bz - bring, bx + e + bring, bz + e + bring});
     }
     report->placed = static_cast<std::int32_t>(r->placements.size());
     return true;

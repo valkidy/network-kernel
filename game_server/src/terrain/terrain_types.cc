@@ -1,19 +1,21 @@
 #include "game_server/src/terrain/terrain_types.h"
 
+#include <cmath>
+
 namespace network_example::game_server::terrain {
 
 std::uint64_t isqrt64(std::uint64_t v) {
+    // IEEE 754 requires sqrt to be correctly rounded on every platform, so the
+    // double estimate is the same everywhere; the integer fix-up then makes it
+    // exactly floor(sqrt(v)). (A Newton loop gave the same answer ~10x slower,
+    // and the cone pass calls this tens of millions of times on a 1 km map.)
     if (v == 0) {
         return 0;
     }
-    // Newton from above; converges to floor(sqrt(v)).
-    std::uint64_t x = v;
-    std::uint64_t y = (x + 1) / 2;
-    while (y < x) {
-        x = y;
-        y = (x + v / x) / 2;
-    }
-    return x;
+    std::uint64_t r = static_cast<std::uint64_t>(std::sqrt(static_cast<double>(v)));
+    while (r > 0 && r > v / r) --r;                      // r * r > v
+    while ((r + 1) <= v / (r + 1)) ++r;                  // (r + 1)^2 <= v
+    return r;
 }
 
 std::int64_t inverse_lerp_q16(std::int64_t a, std::int64_t b, std::int64_t v) {

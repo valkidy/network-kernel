@@ -40,7 +40,32 @@ int main() {
         req.accept.min_reach_fraction = 0;
         req.accept.max_unreachable_m2 = 1e12;
         req.accept.max_seam_failures = 1u << 30;
-        for (const std::uint32_t threads : {1u, 0u}) {
+        {
+            // Compose stage by stage on one layout (what a client pays).
+            terrain::TerrainRecipe r = req.base;
+            r.seed = 1;
+            terrain::LayoutReport lr;
+            std::string e;
+            auto t0 = std::chrono::steady_clock::now();
+            if (!terrain::layout_stamps(&r, lib, req.layout, &lr, &e)) { std::fprintf(stderr, "%s\n", e.c_str()); return 1; }
+            auto t1 = std::chrono::steady_clock::now();
+            std::vector<std::int32_t> mm;
+            if (!terrain::build_terrace_mm(r, lib, &mm, &e)) return 1;
+            auto t2 = std::chrono::steady_clock::now();
+            terrain::apply_detail_and_cones(r, lib, &mm);
+            auto t3 = std::chrono::steady_clock::now();
+            terrain::HeightGrid g = terrain::mm_to_cm_grid(r, mm);
+            if (!terrain::write_stamps(r, lib, &g, &e)) return 1;
+            auto t4 = std::chrono::steady_clock::now();
+            auto ms = [](auto a, auto b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
+            std::uint64_t ph = 1469598103934665603ull;
+            for (const auto& q : r.placements) for (std::int64_t v : {std::int64_t(q.stamp), std::int64_t(q.x_cells), std::int64_t(q.z_cells), std::int64_t(q.base_cm), std::int64_t(q.ring_mm), std::int64_t(q.turns), std::int64_t(q.mirror)}) { ph ^= static_cast<std::uint64_t>(v); ph *= 1099511628211ull; }
+            std::printf("%4d m placements %016llx\n", size_m, static_cast<unsigned long long>(ph));
+            std::printf("%4d m stages: layout %.0f ms (%d/%d placed) | terrace %.0f ms | detail+cones %.0f ms | stamps %.0f ms | hash %016llx\n",
+                size_m, ms(t0, t1), lr.placed, lr.picked, ms(t1, t2), ms(t2, t3), ms(t3, t4),
+                static_cast<unsigned long long>(terrain::height_grid_hash(g)));
+        }
+        for (const std::uint32_t threads : {0u}) {
             req.nav.threads = threads;
             terrain::GenerateResult res;
             std::string error;

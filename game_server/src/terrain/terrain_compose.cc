@@ -1,6 +1,8 @@
 #include "game_server/src/terrain/terrain_compose.h"
 
 #include <algorithm>
+#include <atomic>
+#include <thread>
 
 namespace network_example::game_server::terrain {
 namespace {
@@ -125,24 +127,37 @@ Box clip_box(std::int64_t x0, std::int64_t z0, std::int64_t x1, std::int64_t z1,
     };
 }
 
-// Two-pass chamfer inside box: distance in mm from each sample to the nearest
-// source sample, measured to the source's edge (half a cell less), >= 0, capped.
-// TerrainMapLayers.Chamfer with weights 300 / 424.
-void chamfer(const std::vector<std::uint8_t>& is_source, std::int32_t nx, const Box& b,
-    std::int32_t cap, std::vector<std::int32_t>* d) {
-    const std::int32_t w = b.i1 - b.i0 + 1, h = b.j1 - b.j0 + 1;
-    std::vector<std::int32_t>& v = *d;
-    v.assign(static_cast<std::size_t>(w) * static_cast<std::size_t>(h), kFar);
+// Runs fn(0 .. n-1) on a few threads. Every caller writes disjoint memory per
+// task and each task's result depends only on its inputs, so the output is the
+// same bit for bit whatever the thread count or schedule.
+template <typename Fn>
+void parallel_for(std::int32_t n, Fn fn) {
+    if (n <= 0) return;
+    const std::uint32_t hw = std::max(1u, std::thread::hardware_concurrency());
+    const std::int32_t threads = std::min<std::int32_t>(n, static_cast<std::int32_t>(std::min(hw, 16u)));
+    std::atomic<std::int32_t> next{0};
+    auto work = [&]() {
+        for (std::int32_t k = next++; k < n; k = next++) fn(k);
+    };
+    std::vector<std::thread> pool;
+    for (std::int32_t t = 1; t < threads; ++t) pool.emplace_back(work);
+    work();
+    for (std::thread& t : pool) t.join();
+}
+
+// Rows [0, nz) in blocks, for parallel_for.
+constexpr std::int32_t kRowBlock = 32;
+
+// Two-pass chamfer over a w x h window: distance in mm from each cell to the
+// nearest source cell, measured to the source's edge (half a cell less), >= 0,
+// capped. TerrainMapLayers.Chamfer with weights 300 / 424.
+void chamfer(const std::uint8_t* src, std::int32_t w, std::int32_t h, std::int32_t cap, std::int32_t* v) {
     auto at = [&](std::int32_t x, std::int32_t y) -> std::int32_t& {
         return v[static_cast<std::size_t>(y) * static_cast<std::size_t>(w) + static_cast<std::size_t>(x)];
     };
-    for (std::int32_t y = 0; y < h; ++y) {
-        for (std::int32_t x = 0; x < w; ++x) {
-            if (is_source[static_cast<std::size_t>(b.j0 + y) * static_cast<std::size_t>(nx) + static_cast<std::size_t>(b.i0 + x)]) {
-                at(x, y) = -kHalfCellMm;
-            }
-        }
-    }
+    for (std::int32_t y = 0; y < h; ++y)
+        for (std::int32_t x = 0; x < w; ++x)
+            at(x, y) = src[static_cast<std::size_t>(y) * static_cast<std::size_t>(w) + static_cast<std::size_t>(x)] ? -kHalfCellMm : kFar;
     for (std::int32_t y = 0; y < h; ++y) {
         for (std::int32_t x = 0; x < w; ++x) {
             std::int32_t m = at(x, y);
@@ -167,49 +182,51 @@ void chamfer(const std::vector<std::uint8_t>& is_source, std::int32_t nx, const 
             at(x, y) = m;
         }
     }
-    for (std::int32_t& m : v) {
-        m = std::clamp(m, 0, cap);
-    }
+    const std::size_t n = static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
+    for (std::size_t k = 0; k < n; ++k) v[k] = std::clamp(v[k], 0, cap);
 }
 
-// Distance (capped) from every sample whose level is `target` to the nearest
-// sample for which source_test(level) holds; written into out where level == target.
-template <typename SourceTest>
-void level_distance(const std::vector<std::uint8_t>& level, std::int32_t nx, std::int32_t nz, std::int32_t target,
-    SourceTest source_test, std::int32_t cap, std::vector<std::int32_t>* out,
-    std::vector<std::uint8_t>* scratch_source, std::vector<std::int32_t>* scratch_dist) {
-    std::int32_t i0 = nx, j0 = nz, i1 = -1, j1 = -1;
-    for (std::int32_t j = 0; j < nz; ++j) {
-        for (std::int32_t i = 0; i < nx; ++i) {
-            if (level[static_cast<std::size_t>(j) * static_cast<std::size_t>(nx) + static_cast<std::size_t>(i)] == target) {
-                i0 = std::min(i0, i); i1 = std::max(i1, i);
-                j0 = std::min(j0, j); j1 = std::max(j1, j);
-            }
-        }
-    }
-    if (i1 < 0) {
-        return;
-    }
+// For every sample, the capped distance to the nearest sample one level or
+// more above (up) and below (down). Done per 128-cell tile over the tile plus
+// a pad of the cap: any chamfer path shorter than the cap stays inside the pad
+// and the two-pass chamfer is exact for its mask, so a tile gets exactly the
+// capped distance a whole-map transform would -- tiles just run in parallel and
+// only ever look at the levels they hold.
+void level_distances(const std::vector<std::uint8_t>& level, std::int32_t nx, std::int32_t nz, std::int32_t levels,
+    std::int32_t cap, std::vector<std::int32_t>* up, std::vector<std::int32_t>* down) {
+    constexpr std::int32_t kTile = 128;
     const std::int32_t pad = cap / kCellMm + 2;
-    const Box b{std::max(0, i0 - pad), std::max(0, j0 - pad), std::min(nx - 1, i1 + pad), std::min(nz - 1, j1 + pad)};
-    std::vector<std::uint8_t>& src = *scratch_source;
-    src.assign(level.size(), 0);
-    for (std::int32_t j = b.j0; j <= b.j1; ++j) {
-        for (std::int32_t i = b.i0; i <= b.i1; ++i) {
-            const std::size_t k = static_cast<std::size_t>(j) * static_cast<std::size_t>(nx) + static_cast<std::size_t>(i);
-            src[k] = source_test(level[k]) ? 1 : 0;
+    const std::int32_t tx = (nx + kTile - 1) / kTile, tz = (nz + kTile - 1) / kTile;
+    parallel_for(tx * tz, [&](std::int32_t t) {
+        const std::int32_t ci0 = (t % tx) * kTile, cj0 = (t / tx) * kTile;
+        const std::int32_t ci1 = std::min(nx, ci0 + kTile), cj1 = std::min(nz, cj0 + kTile);   // core, exclusive
+        const std::int32_t wi0 = std::max(0, ci0 - pad), wj0 = std::max(0, cj0 - pad);
+        const std::int32_t wi1 = std::min(nx, ci1 + pad), wj1 = std::min(nz, cj1 + pad);
+        const std::int32_t w = wi1 - wi0, h = wj1 - wj0;
+        std::vector<std::uint8_t> present(static_cast<std::size_t>(levels) + 2, 0);
+        for (std::int32_t j = cj0; j < cj1; ++j)
+            for (std::int32_t i = ci0; i < ci1; ++i)
+                present[level[static_cast<std::size_t>(j) * static_cast<std::size_t>(nx) + static_cast<std::size_t>(i)]] = 1;
+        std::vector<std::uint8_t> src(static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
+        std::vector<std::int32_t> dist(src.size());
+        auto run = [&](std::int32_t target, auto is_source, std::vector<std::int32_t>* out) {
+            for (std::int32_t j = 0; j < h; ++j)
+                for (std::int32_t i = 0; i < w; ++i)
+                    src[static_cast<std::size_t>(j) * static_cast<std::size_t>(w) + static_cast<std::size_t>(i)] =
+                        is_source(level[static_cast<std::size_t>(wj0 + j) * static_cast<std::size_t>(nx) + static_cast<std::size_t>(wi0 + i)]) ? 1 : 0;
+            chamfer(src.data(), w, h, cap, dist.data());
+            for (std::int32_t j = cj0; j < cj1; ++j)
+                for (std::int32_t i = ci0; i < ci1; ++i) {
+                    const std::size_t k = static_cast<std::size_t>(j) * static_cast<std::size_t>(nx) + static_cast<std::size_t>(i);
+                    if (level[k] == target)
+                        (*out)[k] = dist[static_cast<std::size_t>(j - wj0) * static_cast<std::size_t>(w) + static_cast<std::size_t>(i - wi0)];
+                }
+        };
+        for (std::int32_t k = 0; k < levels; ++k) {
+            if (present[static_cast<std::size_t>(k)]) run(k, [k](std::uint8_t l) { return l > k; }, up);
+            if (present[static_cast<std::size_t>(k) + 1]) run(k + 1, [k](std::uint8_t l) { return l <= k; }, down);
         }
-    }
-    chamfer(src, nx, b, cap, scratch_dist);
-    const std::int32_t w = b.i1 - b.i0 + 1;
-    for (std::int32_t j = b.j0; j <= b.j1; ++j) {
-        for (std::int32_t i = b.i0; i <= b.i1; ++i) {
-            const std::size_t k = static_cast<std::size_t>(j) * static_cast<std::size_t>(nx) + static_cast<std::size_t>(i);
-            if (level[k] == target) {
-                (*out)[k] = (*scratch_dist)[static_cast<std::size_t>(j - b.j0) * static_cast<std::size_t>(w) + static_cast<std::size_t>(i - b.i0)];
-            }
-        }
-    }
+    });
 }
 
 }  // namespace
@@ -316,16 +333,12 @@ bool build_terrace_mm(const TerrainRecipe& r, const TerrainLibrary& lib, std::ve
     const std::int32_t walk = r.terrace.riser_run_mm;
     const std::int32_t cap = std::max(4000, walk * 13 / 10 + 2 * kCellMm);
     std::vector<std::int32_t> up(n, cap), down(n, cap);
-    std::vector<std::uint8_t> scratch_source;
-    std::vector<std::int32_t> scratch_dist;
-    for (std::int32_t k = 0; k < r.terrace.levels; ++k) {
-        level_distance(level, nx, nz, k, [k](std::uint8_t l) { return l > k; }, cap, &up, &scratch_source, &scratch_dist);
-        level_distance(level, nx, nz, k + 1, [k](std::uint8_t l) { return l <= k; }, cap, &down, &scratch_source, &scratch_dist);
-    }
+    level_distances(level, nx, nz, r.terrace.levels, cap, &up, &down);
     // Heights (TerrainMapLayers.BuildTexture's formula).
     out->assign(n, 0);
     const std::int64_t cw = r.terrace.cliff_width_mm;
-    for (std::int32_t j = 0; j < nz; ++j) {
+    parallel_for((nz + kRowBlock - 1) / kRowBlock, [&](std::int32_t block) {
+    for (std::int32_t j = block * kRowBlock; j < std::min(nz, (block + 1) * kRowBlock); ++j) {
         for (std::int32_t i = 0; i < nx; ++i) {
             const std::size_t k = static_cast<std::size_t>(j) * static_cast<std::size_t>(nx) + static_cast<std::size_t>(i);
             const std::int64_t band = static_cast<std::int64_t>(up[k]) + down[k];
@@ -340,6 +353,7 @@ bool build_terrace_mm(const TerrainRecipe& r, const TerrainLibrary& lib, std::ve
             (*out)[k] = static_cast<std::int32_t>(r.terrace.black_mm + floor_div(r.terrace.level_height_mm * steps, kQ16));
         }
     }
+    });
     return true;
 }
 
@@ -362,21 +376,25 @@ void apply_detail_and_cones(const TerrainRecipe& r, const TerrainLibrary& lib, s
             }
         }
     }
-    for (std::int32_t j = 0; j < nz; ++j) {
+    parallel_for((nz + kRowBlock - 1) / kRowBlock, [&](std::int32_t block) {
+    for (std::int32_t j = block * kRowBlock; j < std::min(nz, (block + 1) * kRowBlock); ++j) {
         for (std::int32_t i = 0; i < nx; ++i) {
             const std::size_t k = static_cast<std::size_t>(j) * static_cast<std::size_t>(nx) + static_cast<std::size_t>(i);
             if (weight[k] == 0) continue;
             h[k] += static_cast<std::int32_t>(floor_div(detail_mm(r, static_cast<std::int64_t>(i) * kCellMm, static_cast<std::int64_t>(j) * kCellMm) * weight[k], kQ16));
         }
     }
+    });
     // Cones, in placement order (each sample sees the stamps in recipe order).
     const std::int64_t reach = floor_div(kConeReachMm * kQ16 + r.ring_tan_q16 - 1, r.ring_tan_q16);
+    parallel_for((nz + kRowBlock - 1) / kRowBlock, [&](std::int32_t block) {
+    const std::int32_t row0 = block * kRowBlock, row1 = std::min(nz, (block + 1) * kRowBlock) - 1;
     for (const TerrainPlacement& p : r.placements) {
         const std::int64_t e = static_cast<std::int64_t>(lib.stamps[p.stamp].cells_x) * kCellMm;
         const std::int64_t x0 = static_cast<std::int64_t>(p.x_cells) * kCellMm, z0 = static_cast<std::int64_t>(p.z_cells) * kCellMm;
         const std::int64_t base = static_cast<std::int64_t>(p.base_cm) * 10;
         const Box b = clip_box(x0 - reach, z0 - reach, x0 + e + reach, z0 + e + reach, nx, nz);
-        for (std::int32_t j = b.j0; j <= b.j1; ++j) {
+        for (std::int32_t j = std::max(b.j0, row0); j <= std::min(b.j1, row1); ++j) {
             for (std::int32_t i = b.i0; i <= b.i1; ++i) {
                 const std::int64_t d = dist_to_rect_mm(static_cast<std::int64_t>(i) * kCellMm, static_cast<std::int64_t>(j) * kCellMm, x0, z0, e);
                 const std::int64_t a = floor_div(d * r.ring_tan_q16, kQ16);
@@ -386,6 +404,7 @@ void apply_detail_and_cones(const TerrainRecipe& r, const TerrainLibrary& lib, s
             }
         }
     }
+    });
 }
 
 HeightGrid mm_to_cm_grid(const TerrainRecipe& r, const std::vector<std::int32_t>& mm) {
