@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- adds player-targeted patrol grouping and ring spawning and updates the composed 216x216 seed1 map
+
+
+0.7.0 release notes:
+
 - raises the gameplay catalog sync bundle limit to 2 MiB in native and managed code
 
 
