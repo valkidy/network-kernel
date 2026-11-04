@@ -23,6 +23,9 @@ namespace terrain_test {
 
 namespace terrain = network_example::game_server::terrain;
 
+// Not M_PI: MSVC only defines it under _USE_MATH_DEFINES.
+inline constexpr double kPi = 3.14159265358979323846;
+
 inline void require_impl(bool condition, int line, const char* text) {
     if (condition) {
         return;
@@ -86,12 +89,12 @@ inline terrain::TerrainRecipe parity_recipe(const terrain::TerrainLibrary& lib) 
     r.terrace.levels = t["levels"].as<int>();
     r.terrace.level_height_mm = mm(t["level_height_m"].as<double>());
     r.terrace.black_mm = mm(t["black_m"].as<double>());
-    r.terrace.riser_run_mm = mm(t["level_height_m"].as<double>() / std::tan(t["riser_slope_deg"].as<double>() * M_PI / 180.0));
+    r.terrace.riser_run_mm = mm(t["level_height_m"].as<double>() / std::tan(t["riser_slope_deg"].as<double>() * kPi / 180.0));
     r.terrace.cliff_width_mm = mm(t["cliff_width_m"].as<double>());
     r.terrace.cliff_share_q16 = std::lround(t["cliff_share"].as<double>() * 65536.0);
     r.detail.amplitude_mm = mm(y["detail"]["amplitude_m"].as<double>());
     r.detail.wavelength_mm = mm(y["detail"]["wavelength_m"].as<double>());
-    r.ring_tan_q16 = std::lround(std::tan(y["layout"]["ring_slope_deg"].as<double>() * M_PI / 180.0) * 65536.0);
+    r.ring_tan_q16 = std::lround(std::tan(y["layout"]["ring_slope_deg"].as<double>() * kPi / 180.0) * 65536.0);
     std::map<std::string, std::uint32_t> index;
     for (std::uint32_t k = 0; k < lib.stamps.size(); ++k) {
         index[lib.stamps[k].name] = k;

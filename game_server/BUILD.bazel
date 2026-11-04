@@ -2043,6 +2043,18 @@ cc_library(
     visibility = ["//visibility:public"],
 )
 
+# The composed heightfield as a static collision scene (Jolt; float, not hashed).
+cc_library(
+    name = "terrain_physics",
+    srcs = ["src/terrain/terrain_physics.cc"],
+    hdrs = ["src/terrain/terrain_physics.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":terrain_compose",
+        "@jolt_physics//:jolt",
+    ],
+)
+
 cc_library(
     name = "terrain_test_data",
     testonly = True,
@@ -2067,4 +2079,15 @@ cc_test(
     size = "small",
     srcs = ["tests/terrain_unity_parity_test.cc"],
     deps = [":terrain_test_data"],
+)
+
+cc_test(
+    name = "terrain_physics_test",
+    size = "medium",
+    srcs = ["tests/terrain_physics_test.cc"],
+    deps = [
+        ":terrain_physics",
+        ":terrain_test_data",
+        "//engine/src/physics:physics",
+    ],
 )

@@ -156,7 +156,7 @@ void riser_profile(const terrain::TerrainRecipe& r, const terrain::TerrainLibrar
         }
         if (i > 0) {
             const double rise = h - mm[80 * 161 + i - 1];
-            *steepest = std::max(*steepest, std::atan(rise / 300.0) * 180.0 / M_PI);
+            *steepest = std::max(*steepest, std::atan(rise / 300.0) * 180.0 / terrain_test::kPi);
         }
     }
     // A 0.3 m cliff can fall between two samples: then no sample is mid-riser.
@@ -225,7 +225,7 @@ void cones_cap_the_ground_around_a_stamp() {
     double worst = 0;
     for (int i = 120; i < 160; ++i) {
         const double d = (i - 120) * 0.3;
-        const double want = std::min(24.0, 18.0 + d * std::tan(M_PI / 6)) * 100.0;
+        const double want = std::min(24.0, 18.0 + d * std::tan(terrain_test::kPi / 6)) * 100.0;
         worst = std::max(worst, std::abs(out.at(i, 60) - want));
     }
     std::printf("cone: worst |height - (base + d tan30)| = %.1f cm\n", worst);
