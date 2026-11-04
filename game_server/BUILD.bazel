@@ -39,9 +39,11 @@ cc_library(
         "src/game_rule_director.cc",
         "src/gameplay_config.cc",
         "src/game_server.cc",
+        "src/patrol_allocation.cc",
         "src/patrol_director.cc",
         "src/patrol_group_runtime.cc",
         "src/patrol_navigation.cc",
+        "src/patrol_targeting.cc",
         "src/respawn_scheduler.cc",
         "src/shelter_director.cc",
         "src/loadout_director.cc",
@@ -66,9 +68,11 @@ cc_library(
         "src/respawn_scheduler.h",
         "src/shelter_director.h",
         "src/loadout_director.h",
+        "src/patrol_allocation.h",
         "src/patrol_director.h",
         "src/patrol_group_runtime.h",
         "src/patrol_navigation.h",
+        "src/patrol_targeting.h",
         "src/spawn_sampling.h",
         "src/spawner_director.h",
         "src/world_rule_director.h",
@@ -359,6 +363,18 @@ cc_test(
 )
 
 cc_test(
+    name = "patrol_allocation_test",
+    srcs = ["tests/patrol_allocation_test.cc"],
+    deps = [":game_server"],
+)
+
+cc_test(
+    name = "patrol_targeting_test",
+    srcs = ["tests/patrol_targeting_test.cc"],
+    deps = [":game_server"],
+)
+
+cc_test(
     name = "game_rule_director_test",
     srcs = ["tests/game_rule_director_test.cc"],
     deps = [
@@ -640,6 +656,19 @@ cc_test(
 # the phases AgentRuntimeManager::tick runs in order. Reports timings rather
 # than asserting them -- a wall-clock bound would be flaky and host-dependent --
 # so it is manual, like the other benches.
+cc_test(
+    name = "patrol_targeting_soak",
+    srcs = ["tests/patrol_targeting_soak.cc"],
+    data = [
+        "//game_server/gameplay_catalog_bundle:bundle",
+    ],
+    tags = ["manual"],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
 cc_test(
     name = "patrol_cpu_bench",
     srcs = ["tests/patrol_cpu_bench.cc"],

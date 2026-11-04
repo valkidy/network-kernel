@@ -106,7 +106,8 @@ AgentRuntimeManager::AgentRuntimeManager(
     GameServerGameplayConfig config)
     : kernel_(kernel), config_(std::move(config)) {
     build_controllers();
-    patrol_director_ = PatrolDirector(config_.patrols, config_.patrol_budget);
+    patrol_director_ = PatrolDirector(
+        config_.patrols, config_.patrol_budget, config_.map.playable_bounds);
     // The preload list is what makes a director active; the config carries
     // every authored one so that the list stays the live decision.
     const auto preloaded = [this](std::uint32_t template_id) {

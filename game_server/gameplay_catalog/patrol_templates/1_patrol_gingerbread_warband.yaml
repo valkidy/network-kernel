@@ -1,38 +1,54 @@
 id: 1
 name: gingerbread_warband
-area:
-  shape: rect
-  center: {x: 0.0, y: 0.0, z: 0.0}
-  half_extents: {x: 40.0, y: 0.0, z: 40.0}
+# Aimed at players rather than at the map: a squad starts 50-60 m from a
+# group of them, past the kernel's 44 m relevance exit so nobody sees it
+# appear, and walks a route that passes within 15 m of where they stood.
+# docs/PLAYER_TARGETED_PATROL_PLAN.md has the reasoning behind every number.
+where:
+  mode: around_players
+  ring: {min_meters: 50.0, max_meters: 60.0}
+  # Under the warrior's 20 m vision, so by default the squad engages and the
+  # player has to step aside to avoid it.
+  pass_within_meters: 15.0
+  exit_spread_degrees: 30.0
+  # The squad leash: players closer than this are one target.
+  group_radius_meters: 18.0
+  # A trio may have three squads near it, a loner one; and 1.5 per player
+  # across the server, rounded up.
+  groups_per_member: 1.0
+  groups_per_player: 1.5
+  # A minute with nothing near a group puts it ahead of everyone's second
+  # squad, ceiling or not.
+  floor_interval_ticks: 1800
 seed: 7717
-# Every 30 s at 30 Hz, and two squads at a time; a finished squad retires
-# and gives its place back.
+# Every 30 s at 30 Hz. A finished squad retires and gives its place back.
 interval_ticks: 900
-max_live_groups: 2
-count: {min: 6, max: 12}
-# Floors plus capacity, not a second opinion about the total. Every entry
-# gets its minimum -- 1 warrior and 6 gingerbread, 7 of the 20 -- and the
-# remainder is handed out one at a time, each unit going to an entry in
-# proportion to the room it has left. The floors have to fit inside the
-# smallest squad (7 <= 20) and the ceilings have to fill the largest
-# (5 + 24 = 29 >= 24), or the catalog refuses to load.
-#
-# The whole 1-5 band is reachable rather than pinned at its ceiling: four
-# spare warrior slots against eighteen spare gingerbread ones, dealt into a
-# remainder of 13 to 17, puts warriors at five about 20% of the time and
-# spreads the rest across 1 to 4. Widening the gingerbread band, or raising
-# the total, pushes that number down; narrowing it pushes it up.
-composition:
-  - entity_template: gingerbread_warrior
-    min: 1
-    max: 5
-  - entity_template: gingerbread_mage
-    min: 1
-    max: 3
-  - entity_template: gingerbread
-    min: 4
-    max: 8
-# Three abreast, so 24 members stand eight ranks deep -- about 10 m of
+# By the size of the group a squad is aimed at. Floors plus capacity within
+# each tier, as before: the floors have to fit the tier's smallest squad and
+# the ceilings fill its largest, or the catalog refuses to load. A loner's
+# tier has no warrior or mage floor because the full warband's floors alone
+# are six bodies.
+squad_by_group_size:
+  - members: {min: 1, max: 1}
+    count: {min: 4, max: 6}
+    composition:
+      - {entity_template: gingerbread_warrior, min: 0, max: 1}
+      - {entity_template: gingerbread_mage, min: 0, max: 1}
+      - {entity_template: gingerbread, min: 3, max: 6}
+  - members: {min: 2, max: 2}
+    count: {min: 6, max: 9}
+    composition:
+      - {entity_template: gingerbread_warrior, min: 1, max: 3}
+      - {entity_template: gingerbread_mage, min: 0, max: 2}
+      - {entity_template: gingerbread, min: 4, max: 8}
+  # Three or more: the warband as it was.
+  - members: {min: 3}
+    count: {min: 8, max: 12}
+    composition:
+      - {entity_template: gingerbread_warrior, min: 1, max: 5}
+      - {entity_template: gingerbread_mage, min: 1, max: 3}
+      - {entity_template: gingerbread, min: 4, max: 8}
+# Three abreast, so 12 members stand four ranks deep -- about 5 m of
 # column behind the squad's point. The rank width is not authored; it is
 # kRankWidth in formation_offsets.
 formation_spacing_meters: 1.5

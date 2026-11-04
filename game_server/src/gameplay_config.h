@@ -57,6 +57,10 @@ struct NavigationMeshConfig {
     std::vector<std::uint8_t> artifact;
 };
 
+struct MapConfig {
+    PlayableBoundsConfig playable_bounds;
+};
+
 struct EntityHealthDefinition {
     std::uint16_t hp = 0;
     std::uint16_t max_hp = 0;
@@ -682,6 +686,8 @@ struct GameServerGameplayConfig {
     // it itself -- Detour never reaches the kernel -- so nothing downstream has
     // the archive open any more by the time it is needed.
     NavigationMeshConfig navigation_mesh;
+    // `map:` -- facts about the map that are not in its meshes.
+    MapConfig map;
     // World rules that were preloaded. Built from director entity templates
     // whose kind is world_rule, and driven by game_server: a population ceiling
     // is a gameplay rule, so it never reaches the kernel as a director.

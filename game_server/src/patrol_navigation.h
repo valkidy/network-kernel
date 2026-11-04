@@ -79,6 +79,11 @@ public:
         const KernelVec3& to,
         float half_extent_meters) const;
 
+    // The horizontal extent of every tile, which is what a map that authored
+    // no playable bounds is taken to be. False without a mesh.
+    bool horizontal_bounds(
+        float* min_x, float* min_z, float* max_x, float* max_z) const;
+
 private:
     dtNavMesh* mesh_ = nullptr;
     dtNavMeshQuery* query_ = nullptr;

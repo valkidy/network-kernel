@@ -50,7 +50,8 @@ skeleton_manifests_dir: skeleton_assets/generated
 # It has to name the same source mesh as static_collision_scene, or squads will
 # path over one shape and walk into another.
 navigation_mesh:
-  entry_path: mesh_assets/recast/plane_200x200_4zones_v2.navmesh
+  # entry_path: mesh_assets/recast/plane_200x200_4zones_v2.navmesh
+  entry_path: mesh_assets/recast/composed_216m_ground_0001_seed1_collision.navmesh
 # Four 100 m zones around the origin: open combat (-x,-z), forest flank
 # (-x,+z), swamp shortcut (+x,+z) and narrow pass (+x,-z). Open combat holds
 # the 6 m camp pad at y=5 in its far corner, on the same navmesh island as
@@ -60,7 +61,8 @@ navigation_mesh:
 static_collision_scene:
   # entry_path: mesh_assets/jolt/undulating.joltmesh
   # entry_path: mesh_assets/jolt/plane_200x200.joltmesh
-  entry_path: mesh_assets/jolt/plane_200x200_4zones_v2.joltmesh
+  # entry_path: mesh_assets/jolt/plane_200x200_4zones_v2.joltmesh
+  entry_path: mesh_assets/jolt/composed_216m_ground_0001_seed1_collision.joltmesh
   scene_id: 1
   collider_id: 2147483649
   collision_layer: 1
@@ -80,7 +82,8 @@ player:
   # Where a joining player is put: on the mound beside the camp pad, ~6 m from
   # the camp, so the first thing a player can do is pick a loadout. y is the
   # mound top (~4.7 m) plus a little; the controller settles it onto the ground.
-  spawn_position: {x: -85.0, y: 5.0, z: -85.0}
+  # spawn_position: {x: -85.0, y: 5.0, z: -85.0}
+  spawn_position: {x: 50.0, y: 25.0, z: 50.0}
   # The kill floor, in metres. Any actor or prop that falls below it has left
   # the map: a living actor dies (a player respawns at spawn_position), and
   # anything else is removed. Must be under spawn_position.
@@ -128,8 +131,17 @@ agent_routes:
       - {x: -60.0, y: 5.0, z: -80.0}
       - {x: -60.0, y: 5.0, z: -60.0}
       - {x: -80.0, y: 5.0, z: -60.0}
+# Where players play, horizontally. around_players patrols start and end
+# inside it; without it they fall back to the navmesh's extent, and with
+# neither they are not clipped at all. plane_200x200_4zones_v2 is 200 m
+# across, centred on the origin -- a map swap has to change this too.
+map:
+  # playable_bounds: {min: {x: -100.0, z: -100.0}, max: {x: 100.0, z: 100.0}}
+  playable_bounds: {min: {x: 0, z: 0}, max: {x: 216, z: 216}}
+# Six squads of up to twelve: four players at 1.5 squads each, rounded up
+# (docs/PLAYER_TARGETED_PATROL_PLAN.md §9).
 patrol_budget:
-  max_live_agents: 48
+  max_live_agents: 72
 # Every unit an on_alert spawner has put out, server-wide, alive at once. Each
 # caller's own max_live_agents bounds one caller; this bounds all of them, so N
 # callers spotting a player on the same tick cannot put out N waves. It counts

@@ -212,7 +212,7 @@ void mismatched_controllers_are_refused() {
     }));
     require(!loads_after("sentry template in a squad",
                          "patrol_templates/1_patrol_gingerbread_warband.yaml", [](YAML::Node& root) {
-        root["composition"][0]["entity_template"] = "sentry_grunt";
+        root["squad_by_group_size"][0]["composition"][0]["entity_template"] = "sentry_grunt";
     }));
 }
 

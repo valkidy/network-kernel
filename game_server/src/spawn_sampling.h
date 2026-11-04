@@ -53,6 +53,18 @@ KernelVec3 sample_area(
 // Empty when the area can place anything at all.
 std::string validate_spawn_area(const SpawnAreaConfig& area);
 
+// `map: playable_bounds:`, the horizontal rectangle players play in. Not the
+// navmesh's bounds, which include Recast's erosion and any margin authored
+// outside the playable area. Unauthored leaves readers to fall back to the
+// navmesh.
+struct PlayableBoundsConfig {
+    bool authored = false;
+    float min_x = 0.0f;
+    float min_z = 0.0f;
+    float max_x = 0.0f;
+    float max_z = 0.0f;
+};
+
 struct SpawnCompositionEntry {
     std::string entity_template_ref;
     std::uint32_t entity_template_id = 0;

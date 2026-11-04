@@ -531,6 +531,19 @@ float shipped_squad_member(const char* label, const char* unit, bool airforce,
         });
         require(edited.has_value());
         config = std::move(*edited);
+    } else if (std::string(unit) == "gingerbread_mage") {
+        // One player is a loner, and the warband aims its loner tier at them,
+        // whose mage band starts at zero. A mage is what is under test, so the
+        // copy guarantees one rather than leaving it to the seed.
+        auto edited = load_after(
+            "warband loner tier with a mage", "patrol_templates/1_patrol_gingerbread_warband.yaml",
+            [](YAML::Node& node) {
+                YAML::Node mage = node["squad_by_group_size"][0]["composition"][1];
+                require(mage["entity_template"].as<std::string>() == "gingerbread_mage");
+                mage["min"] = 1;
+            });
+        require(edited.has_value());
+        config = std::move(*edited);
     }
     config.navigation_mesh.artifact = read_file(catalog_root() / config.navigation_mesh.entry_path);
     const std::vector<std::uint8_t> scene =

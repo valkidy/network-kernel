@@ -194,6 +194,29 @@ std::optional<bool> PatrolNavigation::walkable_line(
     return hit_fraction >= 1.0f;
 }
 
+bool PatrolNavigation::horizontal_bounds(
+    float* min_x, float* min_z, float* max_x, float* max_z) const {
+    if (!valid()) {
+        return false;
+    }
+    const dtNavMesh* mesh = mesh_;
+    bool any = false;
+    for (int index = 0; index < mesh->getMaxTiles(); ++index) {
+        const dtMeshTile* tile = mesh->getTile(index);
+        if (tile == nullptr || tile->header == nullptr) {
+            continue;
+        }
+        const float* bmin = tile->header->bmin;
+        const float* bmax = tile->header->bmax;
+        *min_x = any ? std::min(*min_x, bmin[0]) : bmin[0];
+        *min_z = any ? std::min(*min_z, bmin[2]) : bmin[2];
+        *max_x = any ? std::max(*max_x, bmax[0]) : bmax[0];
+        *max_z = any ? std::max(*max_z, bmax[2]) : bmax[2];
+        any = true;
+    }
+    return any;
+}
+
 bool PatrolNavigation::find_route(
     const PatrolRouteRequest& request,
     std::vector<KernelVec3>* waypoints) const {
