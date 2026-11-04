@@ -2024,3 +2024,47 @@ cc_test(
         "@yaml-cpp//:yaml-cpp",
     ],
 )
+
+# Random terrain compose (docs/KERNEL_TERRAIN_IMPLEMENTATION_PLAN.md P1).
+# Integer-only and dependency-free: client and server must compose the same
+# recipe into the same heightfield bit for bit.
+cc_library(
+    name = "terrain_compose",
+    srcs = [
+        "src/terrain/terrain_assets.cc",
+        "src/terrain/terrain_compose.cc",
+        "src/terrain/terrain_types.cc",
+    ],
+    hdrs = [
+        "src/terrain/terrain_assets.h",
+        "src/terrain/terrain_compose.h",
+        "src/terrain/terrain_types.h",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "terrain_test_data",
+    testonly = True,
+    hdrs = ["tests/terrain_test_data.h"],
+    data = glob(["tests/testdata/terrain/*"]),
+    deps = [
+        ":terrain_compose",
+        "@yaml-cpp//:yaml-cpp",
+        "@zip_archive//:zip",
+    ],
+)
+
+cc_test(
+    name = "terrain_compose_test",
+    size = "small",
+    srcs = ["tests/terrain_compose_test.cc"],
+    deps = [":terrain_test_data"],
+)
+
+cc_test(
+    name = "terrain_unity_parity_test",
+    size = "small",
+    srcs = ["tests/terrain_unity_parity_test.cc"],
+    deps = [":terrain_test_data"],
+)
