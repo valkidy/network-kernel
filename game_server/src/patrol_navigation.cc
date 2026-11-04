@@ -129,6 +129,27 @@ bool PatrolNavigation::load(
     return true;
 }
 
+bool PatrolNavigation::adopt(dtNavMesh* mesh, std::string* error) {
+    if (query_ != nullptr) {
+        dtFreeNavMeshQuery(query_);
+        query_ = nullptr;
+    }
+    if (mesh_ != nullptr) {
+        dtFreeNavMesh(mesh_);
+    }
+    mesh_ = mesh;
+    if (mesh_ == nullptr) {
+        if (error != nullptr) *error = "no navmesh to adopt";
+        return false;
+    }
+    query_ = dtAllocNavMeshQuery();
+    if (query_ == nullptr || dtStatusFailed(query_->init(mesh_, kMaxPathPolys))) {
+        if (error != nullptr) *error = "navmesh query init failed";
+        return false;
+    }
+    return true;
+}
+
 bool PatrolNavigation::valid() const {
     return mesh_ != nullptr && query_ != nullptr;
 }

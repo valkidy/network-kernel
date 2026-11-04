@@ -2055,6 +2055,28 @@ cc_library(
     ],
 )
 
+# Server-only terrain generation: layout, Recast tiled navmesh, checks, retry /
+# fallback (P2). Float is fine here: the result travels as a recipe.
+cc_library(
+    name = "terrain_generate",
+    srcs = [
+        "src/terrain/terrain_generate.cc",
+        "src/terrain/terrain_layout.cc",
+        "src/terrain/terrain_navmesh.cc",
+    ],
+    hdrs = [
+        "src/terrain/terrain_generate.h",
+        "src/terrain/terrain_layout.h",
+        "src/terrain/terrain_navmesh.h",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":terrain_compose",
+        "@recastnavigation//:detour",
+        "@recastnavigation//:recast",
+    ],
+)
+
 cc_library(
     name = "terrain_test_data",
     testonly = True,
@@ -2089,5 +2111,40 @@ cc_test(
         ":terrain_physics",
         ":terrain_test_data",
         "//engine/src/physics:physics",
+    ],
+)
+
+cc_test(
+    name = "terrain_generate_test",
+    size = "medium",
+    srcs = ["tests/terrain_generate_test.cc"],
+    deps = [
+        ":terrain_generate",
+        ":terrain_test_data",
+        "@recastnavigation//:detour",
+    ],
+)
+
+cc_test(
+    name = "terrain_patrol_navigation_test",
+    size = "small",
+    srcs = ["tests/terrain_patrol_navigation_test.cc"],
+    deps = [
+        ":game_server",
+        ":terrain_generate",
+        ":terrain_test_data",
+        "@recastnavigation//:detour",
+    ],
+)
+
+cc_binary(
+    name = "terrain_generate_bench",
+    testonly = True,
+    srcs = ["tests/terrain_generate_bench.cc"],
+    data = glob(["tests/testdata/terrain/*"]),
+    deps = [
+        ":terrain_generate",
+        ":terrain_test_data",
+        "@recastnavigation//:detour",
     ],
 )
