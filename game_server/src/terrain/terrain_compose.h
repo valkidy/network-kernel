@@ -79,6 +79,11 @@ std::int64_t gradient_noise_q16(std::int64_t x_mm, std::int64_t z_mm, std::int64
 void turn_source(std::int32_t u, std::int32_t v, std::int32_t e, std::uint8_t turns, bool mirror,
     std::int32_t* lx, std::int32_t* lz);
 
+// A gray ground map (1.2 m) turned into the terrace levels compose would
+// derive from it on the 0.3 m grid -- the same code path, so composing either
+// gives the same heights. For storing a ground compactly (NKGL).
+GroundMapAsset ground_levels_from_gray(const GroundMapAsset& gray, std::int32_t levels);
+
 // Stage 1, in mm on the 0.3 m grid.
 bool build_terrace_mm(const TerrainRecipe& recipe, const TerrainLibrary& library,
     std::vector<std::int32_t>* out, std::string* error);

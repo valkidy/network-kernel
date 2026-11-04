@@ -1575,7 +1575,7 @@ public:
             // Binary assets the catalog reads whole: skeletons, and a terrain's
             // stamps (.hf) and ground maps (.nkgm).
             const bool skeleton_entry = has_ozz_extension(path) ||
-                has_extension(path, ".hf") || has_extension(path, ".nkgm");
+                has_extension(path, ".hf") || has_extension(path, ".nkgm") || has_extension(path, ".nkgl");
             if (!document_entry && !skeleton_entry) {
                 zip_entry_close(archive.get());
                 continue;

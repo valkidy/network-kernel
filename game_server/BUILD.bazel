@@ -21,6 +21,7 @@ filegroup(
         "gameplay_catalog/stamp_templates/*.yaml",
         "gameplay_catalog/stamp_templates/*.hf",
         "gameplay_catalog/terrain_assets/*.nkgm",
+        "gameplay_catalog/terrain_assets/*.nkgl",
     ]) + [
         "gameplay_catalog/gameplay_catalog.yaml",
         "tests/test_catalogs/legged_locomotion/gameplay_catalog.yaml",
@@ -2104,6 +2105,7 @@ cc_test(
     name = "terrain_compose_test",
     size = "small",
     srcs = ["tests/terrain_compose_test.cc"],
+    data = ["gameplay_catalog/terrain_assets/ground_0001.nkgl"],
     deps = [":terrain_test_data"],
 )
 
@@ -2178,6 +2180,7 @@ cc_test(
         "gameplay_catalog/**/*.yaml",
         "gameplay_catalog/stamp_templates/*.hf",
         "gameplay_catalog/terrain_assets/*.nkgm",
+        "gameplay_catalog/terrain_assets/*.nkgl",
     ]) + [
         "//game_server/gameplay_catalog/skeleton_assets:locomotion_skeleton_assets",
         "//game_server/gameplay_catalog/skeleton_assets:simplified_biped_assets",
@@ -2199,4 +2202,12 @@ cc_binary(
     name = "terrain_obj_export",
     srcs = ["tools/terrain_obj_export.cc"],
     deps = [":game_server"],
+)
+
+# Gray ground map (NKGM) -> terrace levels on the 0.3 m grid (NKGL):
+#   bazel run -c opt //game_server:terrain_ground_levels -- <in.nkgm> <levels> <out.nkgl>
+cc_binary(
+    name = "terrain_ground_levels",
+    srcs = ["tools/terrain_ground_levels.cc"],
+    deps = [":terrain_compose"],
 )

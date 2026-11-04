@@ -33,7 +33,76 @@ struct Header {
     std::uint32_t a = 0;  // cells_x (NKHF) or samples_x (NKGM)
     std::uint32_t b = 0;
     std::uint32_t spacing_mm = 0;
+    std::uint32_t level_count = 0;   // NKGL only
 };
+
+bool read_header(std::span<const std::uint8_t> bytes, const char* magic, Header* h, std::string* error);
+
+// NKGL keeps level_count where the others keep a reserved 0.
+bool read_header_levels(std::span<const std::uint8_t> bytes, Header* h, std::string* error) {
+    if (bytes.size() < kHeaderSize || std::memcmp(bytes.data(), "NKGL", 4) != 0) {
+        *error = "not an NKGL file";
+        return false;
+    }
+    const std::uint8_t* p = bytes.data();
+    if (le16(p + 4) != 1) {
+        *error = "NKGL version is not 1";
+        return false;
+    }
+    h->flags = le16(p + 6);
+    h->a = le32(p + 8);
+    h->b = le32(p + 12);
+    h->spacing_mm = le32(p + 16);
+    h->level_count = le32(p + 20);
+    return true;
+}
+
+bool decode_levels(std::span<const std::uint8_t> bytes, const Header& h, std::string name, GroundMapAsset* out, std::string* error) {
+    if (h.spacing_mm != static_cast<std::uint32_t>(kCellMm)) {
+        *error = "NKGL spacing is not 300 mm";
+        return false;
+    }
+    if (h.a < 2 || h.b < 2 || h.a > kMaxSamples || h.b > kMaxSamples ||
+        (h.a - 1) % kCellsPerGrid != 0 || (h.b - 1) % kCellsPerGrid != 0) {
+        *error = "NKGL size is not a positive multiple of 12 m";
+        return false;
+    }
+    if (h.level_count < 1 || h.level_count > 255) {
+        *error = "NKGL level_count must be 1-255";
+        return false;
+    }
+    GroundMapAsset g;
+    g.name = std::move(name);
+    g.samples_x = static_cast<std::int32_t>(h.a);
+    g.samples_z = static_cast<std::int32_t>(h.b);
+    g.level_count = static_cast<std::int32_t>(h.level_count);
+    g.levels.reserve(static_cast<std::size_t>(h.a) * h.b);
+    std::size_t p = kHeaderSize;
+    for (std::uint32_t j = 0; j < h.b; ++j) {
+        std::uint32_t filled = 0;
+        while (filled < h.a) {
+            if (p + 3 > bytes.size()) {
+                *error = "NKGL runs are truncated";
+                return false;
+            }
+            const std::uint32_t length = le16(bytes.data() + p);
+            const std::uint8_t level = bytes[p + 2];
+            p += 3;
+            if (length == 0 || filled + length > h.a || level > h.level_count) {
+                *error = "NKGL run is empty, crosses a row or exceeds level_count";
+                return false;
+            }
+            g.levels.insert(g.levels.end(), length, level);
+            filled += length;
+        }
+    }
+    if (p != bytes.size()) {
+        *error = "NKGL has bytes after its last row";
+        return false;
+    }
+    *out = std::move(g);
+    return true;
+}
 
 bool read_header(std::span<const std::uint8_t> bytes, const char* magic, Header* h, std::string* error) {
     if (bytes.size() < kHeaderSize || std::memcmp(bytes.data(), magic, 4) != 0) {
@@ -130,7 +199,22 @@ std::vector<std::uint8_t> write_nkhf(const HeightGrid& grid, std::uint16_t flags
     return b;
 }
 
+namespace {
+
+bool parse_ground_levels(std::span<const std::uint8_t> bytes, std::string name, GroundMapAsset* out, std::string* error) {
+    Header h;
+    if (!read_header_levels(bytes, &h, error)) {
+        return false;
+    }
+    return decode_levels(bytes, h, std::move(name), out, error);
+}
+
+}  // namespace
+
 bool parse_ground_map(std::span<const std::uint8_t> bytes, std::string name, GroundMapAsset* out, std::string* error) {
+    if (bytes.size() >= 4 && std::memcmp(bytes.data(), "NKGL", 4) == 0) {
+        return parse_ground_levels(bytes, std::move(name), out, error);
+    }
     Header h;
     if (!read_header(bytes, "NKGM", &h, error)) {
         return false;
@@ -160,6 +244,29 @@ bool parse_ground_map(std::span<const std::uint8_t> bytes, std::string name, Gro
         out->gray[k] = le16(bytes.data() + kHeaderSize + 2 * k);
     }
     return true;
+}
+
+std::vector<std::uint8_t> write_nkgl(const GroundMapAsset& map) {
+    std::vector<std::uint8_t> b;
+    b.insert(b.end(), {'N', 'K', 'G', 'L'});
+    put16(b, 1);
+    put16(b, 0);
+    put32(b, static_cast<std::uint32_t>(map.samples_x));
+    put32(b, static_cast<std::uint32_t>(map.samples_z));
+    put32(b, static_cast<std::uint32_t>(kCellMm));
+    put32(b, static_cast<std::uint32_t>(map.level_count));
+    for (std::int32_t j = 0; j < map.samples_z; ++j) {
+        const std::uint8_t* row = map.levels.data() + static_cast<std::size_t>(j) * static_cast<std::size_t>(map.samples_x);
+        std::int32_t i = 0;
+        while (i < map.samples_x) {
+            std::int32_t run = 1;
+            while (i + run < map.samples_x && run < 0xFFFF && row[i + run] == row[i]) ++run;
+            put16(b, static_cast<std::uint16_t>(run));
+            b.push_back(row[i]);
+            i += run;
+        }
+    }
+    return b;
 }
 
 std::vector<std::uint8_t> write_nkgm(const GroundMapAsset& map) {

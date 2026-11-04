@@ -260,6 +260,47 @@ void stamps_land_at_base_with_the_turn_rule() {
     require(g.at(39, 80) == 777 && g.at(121, 80) == 777);
 }
 
+// NKGL: round trip, rejection, and -- the point of it -- the same map as the
+// gray it was cooked from, in every orientation; plus the catalog's checked-in
+// copy is exactly what the cook tool makes from the 16-bit export.
+void ground_levels_are_the_same_map() {
+    terrain::TerrainLibrary gray = terrain_test::load_library();
+    terrain::TerrainLibrary lv = gray;
+    lv.ground_maps[0] = terrain::ground_levels_from_gray(gray.ground_maps[0], 19);
+    require(lv.ground_maps[0].is_levels() && lv.ground_maps[0].samples_x == 721);
+    std::string error;
+    terrain::GroundMapAsset back;
+    const std::vector<std::uint8_t> bytes = terrain::write_nkgl(lv.ground_maps[0]);
+    require(terrain::parse_ground_map(bytes, "g", &back, &error));
+    require(back.levels == lv.ground_maps[0].levels && back.level_count == 19);
+    std::vector<std::uint8_t> bad = bytes;
+    bad[24] = 0xFF; bad[25] = 0xFF;                        // first run longer than its row
+    require(!terrain::parse_ground_map(bad, "g", &back, &error));
+    bad = bytes;
+    bad.push_back(0);
+    require(!terrain::parse_ground_map(bad, "g", &back, &error));
+
+    terrain::TerrainRecipe r = terrain_test::parity_recipe(gray);
+    for (std::uint8_t o = 0; o < 8; ++o) {
+        r.ground_orientation = o;
+        std::vector<std::int32_t> a, b;
+        require(terrain::build_terrace_mm(r, gray, &a, &error));
+        require(terrain::build_terrace_mm(r, lv, &b, &error));
+        require(a == b);
+    }
+    r.ground_orientation = 0;
+    terrain::HeightGrid ha, hb;
+    require(terrain::compose(r, gray, &ha, &error) && terrain::compose(r, lv, &hb, &error));
+    require(terrain::height_grid_hash(ha) == terrain::height_grid_hash(hb));
+    terrain::TerrainRecipe wrong = r;
+    wrong.terrace.levels = 18;
+    require(!terrain::validate_recipe(wrong, lv, &error));
+
+    const std::vector<std::uint8_t> shipped = terrain_test::read_file("game_server/gameplay_catalog/terrain_assets/ground_0001.nkgl");
+    require(shipped == bytes);
+    std::printf("NKGL: %zu bytes, same terraces in all 8 orientations, catalog copy current\n", bytes.size());
+}
+
 void recipe_validation() {
     terrain::TerrainLibrary lib = terrain_test::load_library();
     terrain::TerrainRecipe r = terrain_test::parity_recipe(lib);
@@ -291,6 +332,7 @@ int main() {
     cones_cap_the_ground_around_a_stamp();
     stamps_land_at_base_with_the_turn_rule();
     recipe_validation();
+    ground_levels_are_the_same_map();
     std::printf("terrain_compose_test passed\n");
     return 0;
 }

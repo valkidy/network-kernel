@@ -66,7 +66,10 @@ terrain:
   map_size: {x: 216.0, z: 216.0}
   seed: 1
   recipe: terrain/terrain_gameplay_catalog.nktr
-  ground_maps: [terrain_assets/ground_0001.nkgm]
+  # ground_0001 as terrace levels on the 0.3 m grid (NKGL), cooked from its
+  # 16-bit export by //game_server:terrain_ground_levels -- the same map, a
+  # quarter of the bundle bytes.
+  ground_maps: [terrain_assets/ground_0001.nkgl]
   stamps: {count: 12, min_count: 10}
   terrace: {levels: 19, level_height: 1.2, black: 12.0, riser_slope_degrees: 28.0, cliff_share: 0.15, cliff_width: 0.3, cliff_wavelength: 25.0}
   detail: {amplitude: 0.4, wavelength: 12.0}

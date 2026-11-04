@@ -229,7 +229,41 @@ void level_distances(const std::vector<std::uint8_t>& level, std::int32_t nx, st
     });
 }
 
+// 1.2 m gray -> 0.3 m terrace levels: exact bilinear in quarters, then the
+// level the gray rounds to.
+void gray_to_levels(const std::vector<std::uint16_t>& gray, std::int32_t gx, std::int32_t gz, std::int32_t levels,
+    std::vector<std::uint8_t>* level) {
+    const std::int32_t nx = (gx - 1) * kCellsPerGroundSample + 1, nz = (gz - 1) * kCellsPerGroundSample + 1;
+    level->resize(static_cast<std::size_t>(nx) * static_cast<std::size_t>(nz));
+    const std::int64_t full = 16 * 65535;
+    for (std::int32_t j = 0; j < nz; ++j) {
+        const std::int32_t gj = j / kCellsPerGroundSample, fj = j % kCellsPerGroundSample;
+        for (std::int32_t i = 0; i < nx; ++i) {
+            const std::int32_t gi = i / kCellsPerGroundSample, fi = i % kCellsPerGroundSample;
+            auto G = [&](std::int32_t a, std::int32_t b) -> std::int64_t {
+                return gray[static_cast<std::size_t>(b) * static_cast<std::size_t>(gx) + static_cast<std::size_t>(a)];
+            };
+            std::int64_t sum = static_cast<std::int64_t>(4 - fi) * (4 - fj) * G(gi, gj);
+            if (fi) sum += static_cast<std::int64_t>(fi) * (4 - fj) * G(gi + 1, gj);
+            if (fj) sum += static_cast<std::int64_t>(4 - fi) * fj * G(gi, gj + 1);
+            if (fi && fj) sum += static_cast<std::int64_t>(fi) * fj * G(gi + 1, gj + 1);
+            (*level)[static_cast<std::size_t>(j) * static_cast<std::size_t>(nx) + static_cast<std::size_t>(i)] =
+                static_cast<std::uint8_t>((sum * levels * 2 + full) / (2 * full));
+        }
+    }
+}
+
 }  // namespace
+
+GroundMapAsset ground_levels_from_gray(const GroundMapAsset& g, std::int32_t levels) {
+    GroundMapAsset out;
+    out.name = g.name;
+    out.samples_x = (g.samples_x - 1) * kCellsPerGroundSample + 1;
+    out.samples_z = (g.samples_z - 1) * kCellsPerGroundSample + 1;
+    out.level_count = levels;
+    gray_to_levels(g.gray, g.samples_x, g.samples_z, levels, &out.levels);
+    return out;
+}
 
 std::int64_t gradient_noise_q16(std::int64_t x_mm, std::int64_t z_mm, std::int64_t wavelength_mm, std::int32_t seed) {
     // Unity turns each seed's domain by (Hash(seed, 7, 99) + 1) * pi: the hash's fraction of a turn.
@@ -270,8 +304,12 @@ bool validate_recipe(const TerrainRecipe& r, const TerrainLibrary& lib, std::str
     const bool odd = (r.ground_orientation & 1u) != 0;
     if (r.ground_orientation > 7) return fail("ground orientation is not 0-7");
     if (odd && g.samples_x != g.samples_z) return fail("a quarter-turned ground map must be square");
-    if (g.samples_x != r.cells_x / kCellsPerGroundSample + 1 || g.samples_z != r.cells_z / kCellsPerGroundSample + 1)
+    if (g.is_levels()) {
+        if (g.samples_x != r.cells_x + 1 || g.samples_z != r.cells_z + 1) return fail("ground level map size does not match the map");
+        if (g.level_count != r.terrace.levels) return fail("ground level map was made for a different terrace level count");
+    } else if (g.samples_x != r.cells_x / kCellsPerGroundSample + 1 || g.samples_z != r.cells_z / kCellsPerGroundSample + 1) {
         return fail("ground map size does not match the map");
+    }
     const TerraceParams& t = r.terrace;
     if (t.levels < 1 || t.levels > 255 || t.level_height_mm <= 0 || t.riser_run_mm <= 0 || t.cliff_width_mm <= 0 ||
         t.cliff_wavelength_mm <= 0 || t.cliff_share_q16 < 0 || t.cliff_share_q16 > kQ16)
@@ -295,38 +333,34 @@ bool build_terrace_mm(const TerrainRecipe& r, const TerrainLibrary& lib, std::ve
         return false;
     }
     const GroundMapAsset& g = lib.ground_maps[r.ground_map];
-    // Whole-map turn / mirror, on the 1.2 m samples.
-    const std::int32_t gx = r.cells_x / kCellsPerGroundSample + 1, gz = r.cells_z / kCellsPerGroundSample + 1;
-    std::vector<std::uint16_t> gray(static_cast<std::size_t>(gx) * static_cast<std::size_t>(gz));
-    for (std::int32_t v = 0; v < gz; ++v) {
-        for (std::int32_t u = 0; u < gx; ++u) {
-            std::int32_t lx = u, lz = v;
-            if (r.ground_orientation != 0) {
-                turn_source(u, v, gx - 1, r.ground_orientation & 3u, (r.ground_orientation & 4u) != 0, &lx, &lz);
-            }
-            gray[static_cast<std::size_t>(v) * static_cast<std::size_t>(gx) + static_cast<std::size_t>(u)] =
-                g.gray[static_cast<std::size_t>(lz) * static_cast<std::size_t>(g.samples_x) + static_cast<std::size_t>(lx)];
-        }
-    }
-    // 0.3 m samples: exact bilinear in quarters, then terrace levels.
     const std::int32_t nx = r.cells_x + 1, nz = r.cells_z + 1;
     const std::size_t n = static_cast<std::size_t>(nx) * static_cast<std::size_t>(nz);
     std::vector<std::uint8_t> level(n);
-    const std::int64_t full = 16 * 65535;
-    for (std::int32_t j = 0; j < nz; ++j) {
-        const std::int32_t gj = j / kCellsPerGroundSample, fj = j % kCellsPerGroundSample;
-        for (std::int32_t i = 0; i < nx; ++i) {
-            const std::int32_t gi = i / kCellsPerGroundSample, fi = i % kCellsPerGroundSample;
-            auto G = [&](std::int32_t a, std::int32_t b) -> std::int64_t {
-                return gray[static_cast<std::size_t>(b) * static_cast<std::size_t>(gx) + static_cast<std::size_t>(a)];
-            };
-            std::int64_t sum = static_cast<std::int64_t>(4 - fi) * (4 - fj) * G(gi, gj);
-            if (fi) sum += static_cast<std::int64_t>(fi) * (4 - fj) * G(gi + 1, gj);
-            if (fj) sum += static_cast<std::int64_t>(4 - fi) * fj * G(gi, gj + 1);
-            if (fi && fj) sum += static_cast<std::int64_t>(fi) * fj * G(gi + 1, gj + 1);
-            level[static_cast<std::size_t>(j) * static_cast<std::size_t>(nx) + static_cast<std::size_t>(i)] =
-                static_cast<std::uint8_t>((sum * r.terrace.levels * 2 + full) / (2 * full));
-        }
+    const std::uint8_t turns = r.ground_orientation & 3u;
+    const bool mirror = (r.ground_orientation & 4u) != 0;
+    if (g.is_levels()) {
+        // Already levels on the 0.3 m grid: just the whole-map turn / mirror.
+        // (Turning before or after the quarter-cell bilinear gives the same
+        // levels: its weights are symmetric under the eight turns.)
+        for (std::int32_t v = 0; v < nz; ++v)
+            for (std::int32_t u = 0; u < nx; ++u) {
+                std::int32_t lx = u, lz = v;
+                if (r.ground_orientation != 0) turn_source(u, v, nx - 1, turns, mirror, &lx, &lz);
+                level[static_cast<std::size_t>(v) * static_cast<std::size_t>(nx) + static_cast<std::size_t>(u)] =
+                    g.levels[static_cast<std::size_t>(lz) * static_cast<std::size_t>(g.samples_x) + static_cast<std::size_t>(lx)];
+            }
+    } else {
+        // Whole-map turn / mirror on the 1.2 m samples, then levels.
+        const std::int32_t gx = g.samples_x, gz = g.samples_z;
+        std::vector<std::uint16_t> gray(static_cast<std::size_t>(gx) * static_cast<std::size_t>(gz));
+        for (std::int32_t v = 0; v < gz; ++v)
+            for (std::int32_t u = 0; u < gx; ++u) {
+                std::int32_t lx = u, lz = v;
+                if (r.ground_orientation != 0) turn_source(u, v, gx - 1, turns, mirror, &lx, &lz);
+                gray[static_cast<std::size_t>(v) * static_cast<std::size_t>(gx) + static_cast<std::size_t>(u)] =
+                    g.gray[static_cast<std::size_t>(lz) * static_cast<std::size_t>(gx) + static_cast<std::size_t>(lx)];
+            }
+        gray_to_levels(gray, gx, gz, r.terrace.levels, &level);
     }
     // Distances to the next level up and down. Past cap every formula below
     // gives what an infinite distance would, so the transforms stay local.

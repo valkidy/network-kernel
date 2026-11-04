@@ -62,6 +62,8 @@ std::uint64_t terrain_library_hash(const TerrainLibrary& lib) {
         h.u32(static_cast<std::uint32_t>(g.samples_x));
         h.u32(static_cast<std::uint32_t>(g.samples_z));
         for (const std::uint16_t v : g.gray) h.i16(static_cast<std::int16_t>(v));
+        h.u32(static_cast<std::uint32_t>(g.level_count));
+        h.bytes(g.levels.data(), g.levels.size());
     }
     return h.value();
 }
