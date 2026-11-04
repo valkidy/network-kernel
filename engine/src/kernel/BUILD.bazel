@@ -315,6 +315,10 @@ cc_shared_library(
             "-Wl,-exported_symbol,_GameServer_GetEnemyCount",
             "-Wl,-exported_symbol,_GameServer_QueryWeaponTemplate",
             "-Wl,-exported_symbol,_GameServer_DespawnAll",
+            "-Wl,-exported_symbol,_GameServer_GetTerrainInfo",
+            "-Wl,-exported_symbol,_GameServer_CopyTerrainHeights",
+            "-Wl,-exported_symbol,_GameServer_CopyTerrainPlacements",
+            "-Wl,-exported_symbol,_GameServer_ReleaseTerrain",
         ],
         # MinGW-w64 Windows DLL
         "//engine:windows": [

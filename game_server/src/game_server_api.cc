@@ -1,9 +1,13 @@
 #include "game_server/public/game_server_api.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <map>
+#include <memory>
+#include <mutex>
 #include <new>
 #include <string>
 #include <utility>
@@ -32,7 +36,43 @@ constexpr std::uint64_t kCapabilityFlags =
     GAME_SERVER_CAPABILITY_WEAPON_TEMPLATE_DIRECTORY |
     GAME_SERVER_CAPABILITY_WEAPON_TEMPLATE_QUERY |
     GAME_SERVER_CAPABILITY_GAMEPLAY_CATALOG_BUNDLE |
-    GAME_SERVER_CAPABILITY_LOADOUT_MESSAGES;
+    GAME_SERVER_CAPABILITY_LOADOUT_MESSAGES |
+    GAME_SERVER_CAPABILITY_TERRAIN_QUERY;
+
+// The terrain each kernel's last catalog load composed, for the client to draw
+// (GameServer_GetTerrainInfo and friends). Keyed by kernel because a pure
+// client has no GameServerHandle; replaced by every load into that kernel.
+struct TerrainView {
+    network_example::game_server::terrain::HeightGrid heights;
+    network_example::game_server::terrain::StoredRecipe recipe;
+    std::vector<std::uint32_t> stamp_template_ids;      // per library stamp
+    std::vector<std::int32_t> stamp_cells;              // per library stamp
+};
+
+std::mutex& terrain_views_mutex() {
+    static std::mutex m;
+    return m;
+}
+
+std::map<const KernelHandle*, std::shared_ptr<const TerrainView>>& terrain_views() {
+    static std::map<const KernelHandle*, std::shared_ptr<const TerrainView>> views;
+    return views;
+}
+
+void set_terrain_view(const KernelHandle* kernel, std::shared_ptr<const TerrainView> view) {
+    std::scoped_lock lock(terrain_views_mutex());
+    if (view) {
+        terrain_views()[kernel] = std::move(view);
+    } else {
+        terrain_views().erase(kernel);
+    }
+}
+
+std::shared_ptr<const TerrainView> terrain_view(const KernelHandle* kernel) {
+    std::scoped_lock lock(terrain_views_mutex());
+    const auto it = terrain_views().find(kernel);
+    return it == terrain_views().end() ? nullptr : it->second;
+}
 
 void initialize_load_result(KernelGameplayCatalogLoadResult* out_result) {
     if (out_result == nullptr) {
@@ -144,6 +184,7 @@ bool load_gameplay_catalog_bundle(
             entry_path);
 
     std::vector<std::uint8_t> collision_scene_bytes;
+    std::shared_ptr<const TerrainView> pending_terrain_view;
     const network_example::game_server::StaticCollisionSceneConfig&
         static_scene = config.static_collision_scene;
     if (!static_scene.entry_path.empty()) {
@@ -179,6 +220,12 @@ bool load_gameplay_catalog_bundle(
             return false;
         }
         collision_scene_bytes = std::move(prepared.collision_artifact);
+        auto view = std::make_shared<TerrainView>();
+        view->heights = std::move(prepared.heights);
+        view->recipe = std::move(prepared.recipe);
+        view->stamp_template_ids = config.terrain.stamp_template_ids;
+        for (const auto& stamp : config.terrain.library.stamps) view->stamp_cells.push_back(stamp.cells_x);
+        pending_terrain_view = std::move(view);
     }
 
     if (!collision_scene_bytes.empty()) {
@@ -223,6 +270,8 @@ bool load_gameplay_catalog_bundle(
         return false;
     }
 
+    // Only a load that went through replaces what the terrain queries see.
+    set_terrain_view(kernel, std::move(pending_terrain_view));
     fill_load_result(out_result, config);
     if (out_config != nullptr) {
         *out_config = std::move(config);
@@ -434,6 +483,93 @@ void GameServer_DespawnAll(
         game_server->server.agent_runtime_manager().despawn_all(reason);
     } catch (...) {
     }
+}
+
+bool GameServer_GetTerrainInfo(KernelHandle* kernel, GameServerTerrainInfo* out_info) {
+    if (kernel == nullptr || out_info == nullptr || out_info->struct_size < sizeof(GameServerTerrainInfo)) {
+        return false;
+    }
+    const std::shared_ptr<const TerrainView> view = terrain_view(kernel);
+    if (!view) {
+        return false;
+    }
+    const auto& h = view->heights;
+    const auto [lo, hi] = std::minmax_element(h.cm.begin(), h.cm.end());
+    *out_info = GameServerTerrainInfo{};
+    out_info->struct_size = sizeof(GameServerTerrainInfo);
+    out_info->samples_x = static_cast<std::uint32_t>(h.samples_x);
+    out_info->samples_z = static_cast<std::uint32_t>(h.samples_z);
+    out_info->cell_mm = static_cast<std::uint32_t>(network_example::game_server::terrain::kCellMm);
+    out_info->origin_x = static_cast<float>(-(h.samples_x - 1) * 0.15);
+    out_info->origin_z = static_cast<float>(-(h.samples_z - 1) * 0.15);
+    out_info->min_height_cm = *lo;
+    out_info->max_height_cm = *hi;
+    out_info->heights_hash = view->recipe.heights_hash;
+    out_info->seed = view->recipe.recipe.seed;
+    out_info->placement_count = static_cast<std::uint32_t>(view->recipe.recipe.placements.size());
+    return true;
+}
+
+bool GameServer_CopyTerrainHeights(
+    KernelHandle* kernel,
+    std::uint32_t x0,
+    std::uint32_t z0,
+    std::uint32_t width,
+    std::uint32_t depth,
+    std::int16_t* out_cm,
+    std::uint32_t out_count) {
+    if (kernel == nullptr || out_cm == nullptr || width == 0 || depth == 0) {
+        return false;
+    }
+    const std::shared_ptr<const TerrainView> view = terrain_view(kernel);
+    if (!view) {
+        return false;
+    }
+    const auto& h = view->heights;
+    const std::uint64_t nx = static_cast<std::uint64_t>(h.samples_x), nz = static_cast<std::uint64_t>(h.samples_z);
+    if (static_cast<std::uint64_t>(x0) + width > nx || static_cast<std::uint64_t>(z0) + depth > nz ||
+        static_cast<std::uint64_t>(width) * depth > out_count) {
+        return false;
+    }
+    for (std::uint32_t j = 0; j < depth; ++j) {
+        const std::int16_t* row = h.cm.data() + (static_cast<std::size_t>(z0) + j) * nx + x0;
+        std::memcpy(out_cm + static_cast<std::size_t>(j) * width, row, static_cast<std::size_t>(width) * sizeof(std::int16_t));
+    }
+    return true;
+}
+
+std::uint32_t GameServer_CopyTerrainPlacements(
+    KernelHandle* kernel,
+    GameServerTerrainPlacement* out_placements,
+    std::uint32_t capacity) {
+    if (kernel == nullptr) {
+        return 0;
+    }
+    const std::shared_ptr<const TerrainView> view = terrain_view(kernel);
+    if (!view) {
+        return 0;
+    }
+    const auto& recipe = view->recipe.recipe;
+    const float ox = static_cast<float>(-recipe.cells_x * 0.15), oz = static_cast<float>(-recipe.cells_z * 0.15);
+    const std::uint32_t total = static_cast<std::uint32_t>(recipe.placements.size());
+    for (std::uint32_t k = 0; k < total && k < capacity && out_placements != nullptr; ++k) {
+        const auto& p = recipe.placements[k];
+        GameServerTerrainPlacement& o = out_placements[k];
+        o = GameServerTerrainPlacement{};
+        o.struct_size = sizeof(GameServerTerrainPlacement);
+        o.stamp_template_id = view->stamp_template_ids[p.stamp];
+        o.min_x = ox + static_cast<float>(p.x_cells * 0.3);
+        o.min_z = oz + static_cast<float>(p.z_cells * 0.3);
+        o.size_x = o.size_z = static_cast<float>(view->stamp_cells[p.stamp] * 0.3);
+        o.base_y = static_cast<float>(p.base_cm / 100.0);
+        o.turns = p.turns;
+        o.mirror = p.mirror ? 1 : 0;
+    }
+    return total;
+}
+
+void GameServer_ReleaseTerrain(KernelHandle* kernel) {
+    set_terrain_view(kernel, nullptr);
 }
 
 }  // extern "C"

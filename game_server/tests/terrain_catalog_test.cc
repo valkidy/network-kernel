@@ -6,6 +6,7 @@
 // could disagree with itself is refused rather than composed into another map.
 
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -77,7 +78,7 @@ bool loads(const std::string& yaml, std::string* why) {
     }
 }
 
-void config_and_prepare(const std::vector<std::uint8_t>& bundle) {
+gs::PreparedTerrain config_and_prepare(const std::vector<std::uint8_t>& bundle) {
     gs::GameServerGameplayConfig config = load(bundle);
     const gs::TerrainCatalogConfig& t = config.terrain;
     require(t.enabled && t.recipe_entry_path == kRecipe);
@@ -141,6 +142,7 @@ void config_and_prepare(const std::vector<std::uint8_t>& bundle) {
     // The shipping entry in the same bundle is untouched.
     const gs::GameServerGameplayConfig shipping = load(bundle, "gameplay_catalog.yaml");
     require(!shipping.terrain.enabled && !shipping.static_collision_scene.entry_path.empty());
+    return pc;
 }
 
 KernelConfig kernel_config(KernelMode mode) {
@@ -175,7 +177,8 @@ bool pump_until(KernelHandle* server, KernelHandle* client, KernelGameplayCatalo
 // The real flow: a Unity Host (game server + listen server, catalog from the
 // bundle) serves the bundle; a pure client syncs its manifest, then loads the
 // catalog -- composing the map -- before Welcome, as NetworkClient does.
-bool client_loads(KernelHandle* host, const std::vector<std::uint8_t>& client_bundle, KernelGameplayCatalogLoadResult* result) {
+// The client kernel after the load (still alive), or nullptr when the load failed.
+KernelHandle* client_after_load(KernelHandle* host, const std::vector<std::uint8_t>& client_bundle, KernelGameplayCatalogLoadResult* result) {
     KernelConfig client_config = kernel_config(KernelMode_Client);
     KernelHandle* client = Kernel_Create(&client_config);
     require(client != nullptr);
@@ -188,11 +191,33 @@ bool client_loads(KernelHandle* host, const std::vector<std::uint8_t>& client_bu
     *result = KernelGameplayCatalogLoadResult{};
     const bool loaded = Kernel_LoadGameplayCatalogFromMemory(
         client, client_bundle.data(), static_cast<std::uint32_t>(client_bundle.size()), kEntry, result);
-    Kernel_Destroy(client);
-    return loaded;
+    if (!loaded) {
+        Kernel_Destroy(client);
+        return nullptr;
+    }
+    return client;
 }
 
-void c_api_paths(const std::vector<std::uint8_t>& bundle) {
+// What a client draws from: info, a rectangle of heights, the placements.
+struct Drawn {
+    GameServerTerrainInfo info{};
+    std::vector<std::int16_t> heights;
+    std::vector<GameServerTerrainPlacement> placements;
+};
+
+Drawn query_terrain(KernelHandle* kernel) {
+    Drawn d;
+    d.info.struct_size = sizeof(d.info);
+    require(GameServer_GetTerrainInfo(kernel, &d.info));
+    d.heights.resize(40 * 30);
+    require(GameServer_CopyTerrainHeights(kernel, 300, 200, 40, 30, d.heights.data(), static_cast<std::uint32_t>(d.heights.size())));
+    const std::uint32_t n = GameServer_CopyTerrainPlacements(kernel, nullptr, 0);
+    d.placements.resize(n);
+    require(GameServer_CopyTerrainPlacements(kernel, d.placements.data(), n) == n);
+    return d;
+}
+
+void c_api_paths(const std::vector<std::uint8_t>& bundle, const gs::PreparedTerrain& expected) {
     KernelConfig host_config = kernel_config(KernelMode_ListenServer);
     KernelHandle* host = Kernel_Create(&host_config);
     require(host != nullptr);
@@ -213,17 +238,49 @@ void c_api_paths(const std::vector<std::uint8_t>& bundle) {
     require(Kernel_StartListenServer(host, kPort));
     for (int k = 0; k < 30; ++k) GameServer_Tick(game_server, 1.0f / 30.0f);
 
-    const bool loaded = client_loads(host, bundle, &result);
-    if (!loaded) std::fprintf(stderr, "client load: %s\n", result.diagnostic);
-    require(loaded);
+    KernelHandle* client = client_after_load(host, bundle, &result);
+    if (client == nullptr) std::fprintf(stderr, "client load: %s\n", result.diagnostic);
+    require(client != nullptr);
     std::printf("host + client loaded the terrain level\n");
+
+    // Terrain queries (P5): the Host and the client see the same map, and it
+    // is the map the catalog path composes.
+    GameServerAbiInfo abi{};
+    require(GameServer_GetAbiInfo(&abi, sizeof(abi)));
+    require((abi.capability_flags & GAME_SERVER_CAPABILITY_TERRAIN_QUERY) != 0);
+    const Drawn h = query_terrain(host), c = query_terrain(client);
+    require(h.info.heights_hash == expected.recipe.heights_hash && c.info.heights_hash == h.info.heights_hash);
+    require(c.info.samples_x == 721 && c.info.samples_z == 721 && c.info.cell_mm == 300);
+    require(c.info.origin_x == -108.0f && c.info.origin_z == -108.0f && c.info.seed == expected.recipe.recipe.seed);
+    require(c.heights == h.heights);
+    for (int j = 0; j < 30; ++j)
+        for (int i = 0; i < 40; ++i) require(c.heights[static_cast<std::size_t>(j) * 40 + i] == expected.heights.at(300 + i, 200 + j));
+    require(c.placements.size() == expected.recipe.recipe.placements.size() && c.placements.size() == c.info.placement_count);
+    for (std::size_t k = 0; k < c.placements.size(); ++k) {
+        const GameServerTerrainPlacement& p = c.placements[k];
+        const auto& r = expected.recipe.recipe.placements[k];
+        require(p.stamp_template_id >= 1 && p.stamp_template_id <= 4 && p.turns == r.turns && p.mirror == (r.mirror ? 1 : 0));
+        require(std::fabs(p.min_x - (-108.0f + r.x_cells * 0.3f)) < 1e-3f && std::fabs(p.base_y - r.base_cm / 100.0f) < 1e-4f);
+        require(p.min_x >= -108.0f && p.min_x + p.size_x <= 108.0f);
+    }
+    std::int16_t one = 0;
+    require(!GameServer_CopyTerrainHeights(client, 720, 0, 2, 1, &one, 2));      // past the edge
+    std::printf("terrain queries: %u x %u samples, %zu placements, heights %016llx on host and client\n", c.info.samples_x,
+        c.info.samples_z, c.placements.size(), static_cast<unsigned long long>(c.info.heights_hash));
+    GameServer_ReleaseTerrain(client);
+    GameServerTerrainInfo gone{};
+    gone.struct_size = sizeof(gone);
+    require(!GameServer_GetTerrainInfo(client, &gone));
+    require(GameServer_CopyTerrainPlacements(client, nullptr, 0) == 0);
+    Kernel_Destroy(client);
 
     // A bundle without the recipe (bundle_uncooked, the cook's input): a client cannot know the map.
     const std::vector<std::uint8_t> bare = read_bundle("game_server/gameplay_catalog_bundle/bundle_uncooked.zip");
-    require(!client_loads(host, bare, &result));
+    require(client_after_load(host, bare, &result) == nullptr);
     require(result.error_code == KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_MISSING_BUNDLE_ENTRY);
     std::printf("bundle without recipe refused: %s\n", result.diagnostic);
 
+    GameServer_ReleaseTerrain(host);
     GameServer_Destroy(game_server);
     Kernel_Destroy(host);
 }
@@ -257,8 +314,8 @@ void catalog_rules(const std::vector<std::uint8_t>& bundle) {
 
 int main() {
     const std::vector<std::uint8_t> bundle = read_bundle();
-    config_and_prepare(bundle);
-    c_api_paths(bundle);
+    const gs::PreparedTerrain expected = config_and_prepare(bundle);
+    c_api_paths(bundle, expected);
     catalog_rules(bundle);
     std::printf("terrain_catalog_test passed\n");
     return 0;
