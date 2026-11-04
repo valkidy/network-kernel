@@ -2189,3 +2189,11 @@ cc_test(
         "//engine/src/kernel:kernel",
     ],
 )
+
+# The composed terrain level as an OBJ, to look at in Unity before P5:
+#   bazel run -c opt //game_server:terrain_obj_export -- <bundle.zip> <entry> <out.obj> [stride]
+cc_binary(
+    name = "terrain_obj_export",
+    srcs = ["tools/terrain_obj_export.cc"],
+    deps = [":game_server"],
+)
