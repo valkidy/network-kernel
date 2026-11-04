@@ -2,7 +2,8 @@
 // invariants, the navmesh bake and checks on synthetic ground, the prototype's
 // seeds 1-3 against Compose Test Map's result (fe57fb3: 1 navmesh island, every
 // probe reached, 11-12 of 12 stamps), and the retry / fallback ladder.
-// Top-down pictures of seeds 1-3 go to bazel's undeclared outputs.
+// Top-down pictures of seeds 1-3 go to bazel's undeclared outputs with
+// --test_env=TERRAIN_TEST_DUMP=1.
 
 #include <DetourNavMesh.h>
 
@@ -71,8 +72,10 @@ void png_rgb(const std::string& path, int w, int h, const std::vector<std::uint8
 // seam break; white = stamp edges.
 void picture(const std::string& name, const terrain::HeightGrid& g, const terrain::TerrainRecipe& r,
     const terrain::TerrainLibrary& lib, const terrain::NavCheck& c) {
+    // Only on request (--test_env=TERRAIN_TEST_DUMP=1): bazel zips undeclared
+    // outputs with `zip`, which the Linux builder container does not have.
     const char* dir = std::getenv("TEST_UNDECLARED_OUTPUTS_DIR");
-    if (dir == nullptr) return;
+    if (dir == nullptr || std::getenv("TERRAIN_TEST_DUMP") == nullptr) return;
     const int n = c.probe_nx, W = n * 2, H = static_cast<int>(c.probe_state.size() / n) * 2;
     std::vector<std::uint8_t> rgb(static_cast<std::size_t>(W) * H * 3);
     const auto [lo, hi] = std::minmax_element(g.cm.begin(), g.cm.end());
