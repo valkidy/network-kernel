@@ -2155,7 +2155,10 @@ cc_binary(
     data = glob(["tests/testdata/terrain/*"]),
     deps = [
         ":terrain_generate",
+        ":terrain_physics",
         ":terrain_test_data",
+        "//engine/src/kernel:kernel_api",
+        "//engine/src/physics:physics",
         "@recastnavigation//:detour",
     ],
 )
