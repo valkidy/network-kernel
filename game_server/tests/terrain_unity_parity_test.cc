@@ -91,10 +91,13 @@ int main() {
     const Diff cones = compare(terrain::mm_to_cm_grid(recipe, mm), u_ground);
     print("cones", cones);
 
-    // Stage dumps for a look outside the test (bazel's undeclared outputs).
+    // Stage dumps for a look outside the test, only on request
+    // (--test_env=TERRAIN_TEST_DUMP=1): anything in bazel's undeclared outputs
+    // gets zipped by test-setup.sh, which fails where `zip` is not installed
+    // (the Linux builder container).
     auto dump = [](const char* name, const terrain::HeightGrid& g) {
         const char* dir = std::getenv("TEST_UNDECLARED_OUTPUTS_DIR");
-        if (dir == nullptr) return;
+        if (dir == nullptr || std::getenv("TERRAIN_TEST_DUMP") == nullptr) return;
         const std::vector<std::uint8_t> b = terrain::write_nkhf(g, 0);
         std::FILE* f = std::fopen((std::string(dir) + "/" + name).c_str(), "wb");
         if (f != nullptr) { std::fwrite(b.data(), 1, b.size(), f); std::fclose(f); }
