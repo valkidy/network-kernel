@@ -63,6 +63,17 @@ struct NavBakeStats {
 dtNavMesh* bake_terrain_navmesh(const HeightGrid& grid, const NavBakeParams& params,
     NavBakeStats* stats, std::string* error);
 
+// The baked navmesh as bytes, so it can ride in GameServerGameplayConfig the
+// way a baked .navmesh does (navigation_mesh.artifact). NKTN v1: "NKTN", u32
+// version, dtNavMeshParams (orig xyz, tile width / height as float bits,
+// max tiles, max polys), u32 tile count, then per tile u32 size + Detour tile
+// data. Detour's own tile layout, native byte order: it never leaves the
+// process that baked it (server only).
+std::vector<std::uint8_t> write_navmesh_tiles(const dtNavMesh& nav);
+bool is_navmesh_tiles(const std::vector<std::uint8_t>& bytes);
+// Returns a dtNavMesh the caller owns, or nullptr.
+dtNavMesh* read_navmesh_tiles(const std::vector<std::uint8_t>& bytes, std::string* error);
+
 struct NavCheck {
     std::uint32_t islands = 0;
     std::vector<double> island_areas_m2;   // biggest first

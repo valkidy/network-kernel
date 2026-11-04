@@ -13,6 +13,8 @@
 #include <DetourNavMeshQuery.h>
 #include <DetourStatus.h>
 
+#include "game_server/src/terrain/terrain_navmesh.h"
+
 namespace network_example::game_server {
 namespace {
 
@@ -86,6 +88,13 @@ bool PatrolNavigation::load(
         }
         return false;
     };
+    // A generated terrain's multi-tile navmesh (terrain_navmesh.h) rather than
+    // a baked single-tile file.
+    if (terrain::is_navmesh_tiles(artifact)) {
+        std::string local;
+        dtNavMesh* mesh = terrain::read_navmesh_tiles(artifact, error != nullptr ? error : &local);
+        return mesh != nullptr && adopt(mesh, error);
+    }
     if (artifact.size() < kMeshArtifactHeaderSize ||
         !std::equal(kRecastMagic.begin(), kRecastMagic.end(), artifact.begin())) {
         return fail("navmesh artifact magic or header is wrong");

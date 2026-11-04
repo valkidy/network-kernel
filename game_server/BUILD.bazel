@@ -18,9 +18,13 @@ filegroup(
         "gameplay_catalog/item_templates/*.yaml",
         "gameplay_catalog/projectile_templates/*.yaml",
         "gameplay_catalog/weapon_templates/*.yaml",
+        "gameplay_catalog/stamp_templates/*.yaml",
+        "gameplay_catalog/stamp_templates/*.hf",
+        "gameplay_catalog/terrain_assets/*.nkgm",
     ]) + [
         "gameplay_catalog/gameplay_catalog.yaml",
         "tests/test_catalogs/legged_locomotion/gameplay_catalog.yaml",
+        "tests/test_catalogs/terrain/gameplay_catalog.yaml",
         "//game_server/gameplay_catalog/skeleton_assets:locomotion_skeleton_assets",
     ],
 )
@@ -49,6 +53,7 @@ cc_library(
         "src/loadout_director.cc",
         "src/spawn_sampling.cc",
         "src/spawner_director.cc",
+        "src/terrain_catalog.cc",
         "src/world_rule_director.cc",
     ],
     hdrs = [
@@ -75,10 +80,14 @@ cc_library(
         "src/patrol_targeting.h",
         "src/spawn_sampling.h",
         "src/spawner_director.h",
+        "src/terrain_catalog.h",
         "src/world_rule_director.h",
         "public/game_server_types.h",
     ],
     deps = [
+        ":terrain_compose",
+        ":terrain_generate",
+        ":terrain_physics",
         "//engine/components/ai:ai",
         "//engine/src/kernel:kernel_api",
         "//engine/src/kernel:kernel_api_internal",
@@ -2033,11 +2042,13 @@ cc_library(
     srcs = [
         "src/terrain/terrain_assets.cc",
         "src/terrain/terrain_compose.cc",
+        "src/terrain/terrain_recipe.cc",
         "src/terrain/terrain_types.cc",
     ],
     hdrs = [
         "src/terrain/terrain_assets.h",
         "src/terrain/terrain_compose.h",
+        "src/terrain/terrain_recipe.h",
         "src/terrain/terrain_types.h",
     ],
     visibility = ["//visibility:public"],
@@ -2146,5 +2157,35 @@ cc_binary(
         ":terrain_generate",
         ":terrain_test_data",
         "@recastnavigation//:detour",
+    ],
+)
+
+cc_binary(
+    name = "terrain_recipe_cook",
+    srcs = ["tools/terrain_recipe_cook.cc"],
+    visibility = ["//game_server/gameplay_catalog_bundle:__pkg__"],
+    deps = [":game_server"],
+)
+
+cc_test(
+    name = "terrain_catalog_test",
+    size = "medium",
+    srcs = ["tests/terrain_catalog_test.cc"],
+    data = glob([
+        "gameplay_catalog/**/*.yaml",
+        "gameplay_catalog/stamp_templates/*.hf",
+        "gameplay_catalog/terrain_assets/*.nkgm",
+    ]) + [
+        "//game_server/gameplay_catalog/skeleton_assets:locomotion_skeleton_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_biped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_quadruped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_tripod_assets",
+        "//game_server/gameplay_catalog_bundle:bundle",
+        "//game_server/gameplay_catalog_bundle:bundle_uncooked",
+    ],
+    deps = [
+        ":game_server",
+        ":game_server_bridge",
+        "//engine/src/kernel:kernel",
     ],
 )

@@ -1,4 +1,5 @@
 #include "game_server/src/gameplay_config.h"
+#include "game_server/src/terrain/terrain_recipe.h"
 
 #include <algorithm>
 #include <array>
@@ -1571,7 +1572,10 @@ public:
             }
             const bool document_entry =
                 has_yaml_extension(path) || has_json_extension(path);
-            const bool skeleton_entry = has_ozz_extension(path);
+            // Binary assets the catalog reads whole: skeletons, and a terrain's
+            // stamps (.hf) and ground maps (.nkgm).
+            const bool skeleton_entry = has_ozz_extension(path) ||
+                has_extension(path, ".hf") || has_extension(path, ".nkgm");
             if (!document_entry && !skeleton_entry) {
                 zip_entry_close(archive.get());
                 continue;
@@ -10050,6 +10054,154 @@ GameServerGameplayConfig load_gameplay_config_from_weapon_template_source(
     return config;
 }
 
+// `terrain:` and the stamps under `stamp_template_dir`, assets read whole.
+TerrainCatalogConfig terrain_catalog_from_yaml(
+    const GameplayConfigSource& source,
+    const std::string& base_path,
+    const YAML::Node& document,
+    const std::string& path) {
+    namespace terrain = network_example::game_server::terrain;
+    const std::uint32_t kind = source.source_kind();
+    const YAML::Node t = document["terrain"];
+    auto keys = [&](const YAML::Node& node, std::initializer_list<const char*> allowed) {
+        reject_unknown_keys(node, allowed, path, kind, KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+    };
+    auto fail = [&](const std::string& message) -> TerrainCatalogConfig {
+        throw std::runtime_error("terrain " + message + ": " + path);
+    };
+    keys(t, {"map_size", "seed", "recipe", "ground_maps", "stamps", "terrace", "detail", "layout", "accept",
+             "max_retries", "playable_margin", "fallback_recipe"});
+    TerrainCatalogConfig c;
+    c.enabled = true;
+    if (!t["map_size"] || !t["recipe"] || !t["ground_maps"] || !t["stamps"]) {
+        return fail("requires map_size, recipe, ground_maps and stamps");
+    }
+    keys(t["map_size"], {"x", "z"});
+    auto cells = [&](float metres) {
+        const long v = std::lround(metres / 0.3f);
+        if (!std::isfinite(metres) || metres <= 0.0f || v % terrain::kCellsPerGrid != 0 || std::fabs(v * 0.3f - metres) > 0.01f) {
+            fail("map_size must be a positive multiple of 12 m");
+        }
+        return static_cast<std::int32_t>(v);
+    };
+    c.base.cells_x = cells(t["map_size"]["x"].as<float>());
+    c.base.cells_z = cells(t["map_size"]["z"].as<float>());
+    c.recipe_entry_path = t["recipe"].as<std::string>();
+    if (t["seed"]) c.seed = t["seed"].as<std::int32_t>();
+    if (t["max_retries"]) c.max_retries = t["max_retries"].as<std::int32_t>();
+    if (t["playable_margin"]) c.playable_margin_meters = t["playable_margin"].as<float>();
+    if (c.max_retries < 1) return fail("max_retries must be at least 1");
+
+    auto mm = [](double metres) { return static_cast<std::int32_t>(std::llround(metres * 1000.0)); };
+    constexpr double kPi = 3.14159265358979323846;
+    if (const YAML::Node n = t["terrace"]) {
+        keys(n, {"levels", "level_height", "black", "riser_slope_degrees", "cliff_share", "cliff_width", "cliff_wavelength"});
+        terrain::TerraceParams& p = c.base.terrace;
+        if (n["levels"]) p.levels = n["levels"].as<std::int32_t>();
+        if (n["level_height"]) p.level_height_mm = mm(n["level_height"].as<double>());
+        if (n["black"]) p.black_mm = mm(n["black"].as<double>());
+        const double slope = n["riser_slope_degrees"] ? n["riser_slope_degrees"].as<double>() : 28.0;
+        if (!(slope > 1.0 && slope < 89.0)) fail("riser_slope_degrees must be within (1, 89)");
+        p.riser_run_mm = mm(p.level_height_mm / 1000.0 / std::tan(slope * kPi / 180.0));
+        if (n["cliff_share"]) p.cliff_share_q16 = std::llround(n["cliff_share"].as<double>() * 65536.0);
+        if (n["cliff_width"]) p.cliff_width_mm = mm(n["cliff_width"].as<double>());
+        if (n["cliff_wavelength"]) p.cliff_wavelength_mm = mm(n["cliff_wavelength"].as<double>());
+    } else {
+        c.base.terrace.riser_run_mm = mm(1.2 / std::tan(28.0 * kPi / 180.0));
+    }
+    if (const YAML::Node n = t["detail"]) {
+        keys(n, {"amplitude", "wavelength"});
+        if (n["amplitude"]) c.base.detail.amplitude_mm = mm(n["amplitude"].as<double>());
+        if (n["wavelength"]) c.base.detail.wavelength_mm = mm(n["wavelength"].as<double>());
+    }
+    if (const YAML::Node n = t["layout"]) {
+        keys(n, {"base_step", "ring_slope_degrees", "min_ring", "max_ring"});
+        if (n["base_step"]) c.layout.base_step_m = n["base_step"].as<double>();
+        if (n["ring_slope_degrees"]) c.layout.ring_slope_deg = n["ring_slope_degrees"].as<double>();
+        if (n["min_ring"]) c.layout.min_ring_m = n["min_ring"].as<double>();
+        if (n["max_ring"]) c.layout.max_ring_m = n["max_ring"].as<double>();
+    }
+    c.base.ring_tan_q16 = std::llround(std::tan(c.layout.ring_slope_deg * kPi / 180.0) * 65536.0);
+    if (const YAML::Node n = t["accept"]) {
+        keys(n, {"min_reach", "max_unreachable_area", "max_seam_breaks", "min_placed"});
+        if (n["min_reach"]) c.accept.min_reach_fraction = n["min_reach"].as<double>();
+        if (n["max_unreachable_area"]) c.accept.max_unreachable_m2 = n["max_unreachable_area"].as<double>();
+        if (n["max_seam_breaks"]) c.accept.max_seam_failures = n["max_seam_breaks"].as<std::uint32_t>();
+        if (n["min_placed"]) c.accept.min_placed = n["min_placed"].as<std::int32_t>();
+    }
+
+    // Ground maps, in listed order (the recipe names one by index).
+    if (!t["ground_maps"].IsSequence() || t["ground_maps"].size() == 0) return fail("ground_maps must list at least one map");
+    for (const YAML::Node& entry : t["ground_maps"]) {
+        const std::string file = source.resolve_path(base_path, entry);
+        terrain::GroundMapAsset g;
+        std::string error;
+        if (!terrain::parse_ground_map(source.load_bytes(file), std::filesystem::path(file).stem().string(), &g, &error)) {
+            fail("ground map " + file + ": " + error);
+        }
+        c.library.ground_maps.push_back(std::move(g));
+    }
+
+    // Stamps: one template per file, `<id>_stamp_<name>.yaml` naming its .hf.
+    if (!document["stamp_template_dir"]) return fail("needs stamp_template_dir");
+    const std::string dir = source.resolve_path(base_path, document["stamp_template_dir"]);
+    struct Loaded { std::uint32_t id; terrain::StampAsset stamp; };
+    std::vector<Loaded> stamps;
+    for (const std::string& file : source.list_yaml_files(dir)) {
+        const YAML::Node st = source.load_yaml(file);
+        reject_unknown_keys(st, {"id", "name", "heights"}, file, kind, KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+        if (!st["id"] || !st["name"] || !st["heights"]) {
+            throw std::runtime_error("stamp template requires id, name and heights: " + file);
+        }
+        const std::uint32_t id = st["id"].as<std::uint32_t>();
+        const std::string name = st["name"].as<std::string>();
+        const std::string expected = std::to_string(id) + "_stamp_" + name;
+        if (std::filesystem::path(file).stem().string() != expected) {
+            throw std::runtime_error("stamp file must be named " + expected + ".yaml: " + file);
+        }
+        for (const Loaded& l : stamps) {
+            if (l.id == id) throw std::runtime_error("duplicate stamp id " + std::to_string(id) + ": " + file);
+        }
+        const std::string heights = source.resolve_path(source.parent_path(file), st["heights"]);
+        Loaded l{id, {}};
+        std::string error;
+        if (!terrain::parse_stamp(source.load_bytes(heights), name, &l.stamp, &error)) {
+            throw std::runtime_error("stamp " + heights + ": " + error);
+        }
+        stamps.push_back(std::move(l));
+    }
+    std::sort(stamps.begin(), stamps.end(), [](const Loaded& a, const Loaded& b) { return a.id < b.id; });
+    if (stamps.empty()) return fail("stamp_template_dir holds no stamps");
+    for (Loaded& l : stamps) {
+        c.stamp_template_ids.push_back(l.id);
+        c.library.stamps.push_back(std::move(l.stamp));
+    }
+    const YAML::Node st = t["stamps"];
+    keys(st, {"count", "min_count", "pool"});
+    if (!st["count"]) return fail("stamps requires count");
+    c.layout.stamp_count = st["count"].as<std::int32_t>();
+    if (st["min_count"]) c.min_stamp_count = st["min_count"].as<std::int32_t>();
+    if (c.layout.stamp_count < 0 || c.min_stamp_count < 0 || c.min_stamp_count > c.layout.stamp_count) {
+        return fail("stamps count / min_count out of range");
+    }
+    if (st["pool"]) {
+        for (const YAML::Node& id_node : st["pool"]) {
+            const std::uint32_t id = id_node.as<std::uint32_t>();
+            const auto it = std::find(c.stamp_template_ids.begin(), c.stamp_template_ids.end(), id);
+            if (it == c.stamp_template_ids.end()) fail("stamps pool names stamp " + std::to_string(id) + ", which has no template");
+            c.layout.stamp_pool.push_back(static_cast<std::uint32_t>(it - c.stamp_template_ids.begin()));
+        }
+    }
+    if (t["fallback_recipe"]) {
+        c.fallback_recipe = source.load_bytes(source.resolve_path(base_path, t["fallback_recipe"]));
+    }
+    // The recipe's parameters must stand on their own.
+    terrain::TerrainRecipe probe = c.base;
+    std::string error;
+    if (!terrain::validate_recipe(probe, c.library, &error)) fail(error);
+    return c;
+}
+
 GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     const GameplayConfigSource& source,
     const std::string& path) {
@@ -10086,6 +10238,8 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             "scene_items",
             "agent_routes",
             "agent_commands",
+            "terrain",
+            "stamp_template_dir",
         },
         path,
         source.source_kind(),
@@ -10275,21 +10429,64 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     }
     if (document["static_collision_scene"]) {
         const YAML::Node scene = document["static_collision_scene"];
-        if (!scene["entry_path"] || !scene["scene_id"] ||
+        // With `terrain:` the composed heightfield is the scene, so it names
+        // ids and a layer but no mesh; without, a mesh is required.
+        const bool terrain = static_cast<bool>(document["terrain"]);
+        if (terrain && scene["entry_path"]) {
+            throw std::runtime_error(
+                "static_collision_scene names no entry_path with terrain: "
+                "the generated heightfield is the scene: " +
+                path);
+        }
+        if ((!terrain && !scene["entry_path"]) || !scene["scene_id"] ||
             !scene["collider_id"] || !scene["collision_layer"]) {
             throw std::runtime_error(
                 "static_collision_scene requires entry_path, scene_id, "
                 "collider_id, and collision_layer: " +
                 path);
         }
-        config.static_collision_scene.entry_path =
-            scene["entry_path"].as<std::string>();
+        if (!terrain) {
+            config.static_collision_scene.entry_path =
+                scene["entry_path"].as<std::string>();
+        }
         config.static_collision_scene.scene_id =
             scene["scene_id"].as<std::uint32_t>();
         config.static_collision_scene.collider_id =
             scene["collider_id"].as<std::uint32_t>();
         config.static_collision_scene.collision_layer =
             scene["collision_layer"].as<std::uint32_t>();
+    }
+    if (document["terrain"]) {
+        config.terrain = terrain_catalog_from_yaml(source, base_path, document, path);
+        if (!document["static_collision_scene"]) {
+            throw std::runtime_error(
+                "terrain needs static_collision_scene (scene_id, collider_id, "
+                "collision_layer) for its heightfield: " +
+                path);
+        }
+        if (document["navigation_mesh"]) {
+            throw std::runtime_error(
+                "navigation_mesh and terrain are exclusive: a generated map's "
+                "navmesh is baked from it: " +
+                path);
+        }
+        // playable_bounds follows the map unless authored, and an authored one
+        // has to fit inside it. The map is centred on the world origin.
+        // From integer mm, so a 216 m map is exactly +-108 m.
+        const float half_x = static_cast<float>(config.terrain.base.cells_x * 300 / 2 / 1000.0 - config.terrain.playable_margin_meters);
+        const float half_z = static_cast<float>(config.terrain.base.cells_z * 300 / 2 / 1000.0 - config.terrain.playable_margin_meters);
+        if (half_x <= 0.0f || half_z <= 0.0f) {
+            throw std::runtime_error("terrain playable_margin leaves no map: " + path);
+        }
+        PlayableBoundsConfig& bounds = config.map.playable_bounds;
+        if (!bounds.authored) {
+            bounds = PlayableBoundsConfig{true, -half_x, -half_z, half_x, half_z};
+        } else if (bounds.min_x < -half_x || bounds.min_z < -half_z || bounds.max_x > half_x || bounds.max_z > half_z) {
+            throw std::runtime_error(
+                "map playable_bounds reaches outside the terrain: " + path);
+        }
+    } else if (document["stamp_template_dir"]) {
+        throw std::runtime_error("stamp_template_dir is only read with terrain: " + path);
     }
     if (document["action_template_dir"]) {
         const std::string action_template_dir =
@@ -12123,6 +12320,10 @@ std::uint64_t compute_gameplay_catalog_hash(
         &hash,
         static_cast<std::uint32_t>(config.navigation_mesh.artifact.size()));
     hash_string(&hash, config.static_collision_scene.entry_path);
+    if (config.terrain.enabled) {
+        hash_string(&hash, config.terrain.recipe_entry_path);
+        hash_scalar(&hash, terrain::terrain_library_hash(config.terrain.library));
+    }
     hash_scalar(&hash, config.static_collision_scene.scene_id);
     hash_scalar(&hash, config.static_collision_scene.collider_id);
     hash_scalar(&hash, config.static_collision_scene.collision_layer);
@@ -12833,7 +13034,7 @@ std::vector<std::string> validate_gameplay_config(
         static_scene.scene_id != 0u || static_scene.collider_id != 0u ||
         static_scene.collision_layer != 0u;
     if (has_static_scene &&
-        (static_scene.entry_path.empty() || static_scene.scene_id == 0u ||
+        ((static_scene.entry_path.empty() && !config.terrain.enabled) || static_scene.scene_id == 0u ||
          static_scene.collider_id == 0u ||
          static_scene.collision_layer != KERNEL_STATIC_COLLISION_LAYER_TERRAIN)) {
         errors.push_back("static collision scene must be valid");

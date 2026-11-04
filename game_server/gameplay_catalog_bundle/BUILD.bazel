@@ -11,11 +11,14 @@ set -euo pipefail
 out_path="$$(pwd)/$@"
 bundle_root="$(@D)/bundle_root"
 rm -rf "$$bundle_root"
-mkdir -p "$$bundle_root/action_templates" "$$bundle_root/action_graph_templates" "$$bundle_root/status_effect_templates" "$$bundle_root/sp_attack_templates" "$$bundle_root/weapon_templates" "$$bundle_root/projectile_templates" "$$bundle_root/collider_templates" "$$bundle_root/entity_templates" "$$bundle_root/item_templates" "$$bundle_root/patrol_templates" "$$bundle_root/skeleton_assets/generated"
+mkdir -p "$$bundle_root/action_templates" "$$bundle_root/action_graph_templates" "$$bundle_root/status_effect_templates" "$$bundle_root/sp_attack_templates" "$$bundle_root/weapon_templates" "$$bundle_root/projectile_templates" "$$bundle_root/collider_templates" "$$bundle_root/entity_templates" "$$bundle_root/item_templates" "$$bundle_root/patrol_templates" "$$bundle_root/skeleton_assets/generated" "$$bundle_root/stamp_templates" "$$bundle_root/terrain_assets"
 for src in $(SRCS); do
   case "$$src" in
     */test_catalogs/legged_locomotion/gameplay_catalog.yaml)
       cp "$$src" "$$bundle_root/legged_locomotion_gameplay_catalog.yaml"
+      ;;
+    */test_catalogs/terrain/gameplay_catalog.yaml)
+      cp "$$src" "$$bundle_root/terrain_gameplay_catalog.yaml"
       ;;
     */gameplay_catalog.yaml)
       cp "$$src" "$$bundle_root/gameplay_catalog.yaml"
@@ -55,6 +58,12 @@ for src in $(SRCS); do
     */patrol_templates/*.yaml)
       cp "$$src" "$$bundle_root/patrol_templates/$$(basename "$$src")"
       ;;
+    */stamp_templates/*.yaml|*/stamp_templates/*.hf)
+      cp "$$src" "$$bundle_root/stamp_templates/$$(basename "$$src")"
+      ;;
+    */terrain_assets/*.nkgm)
+      cp "$$src" "$$bundle_root/terrain_assets/$$(basename "$$src")"
+      ;;
     */skeleton_assets/generated/*.ozz|*/skeleton_assets/generated/*.skeleton_manifest.json|*/skeleton_assets/generated/*.rig.yaml)
       cp "$$src" "$$bundle_root/skeleton_assets/generated/$$(basename "$$src")"
       ;;
@@ -69,13 +78,15 @@ rm -rf "$$bundle_root"
 """,
 )
 
+# Everything but the cooked terrain recipe; terrain_recipe reads it to
+# generate the recipe, and bundle adds it.
 genrule(
-    name = "bundle",
+    name = "bundle_uncooked",
     srcs = [
         ":gameplay_bundle_base",
         "//game_server/gameplay_catalog/mesh_assets:cooked_mesh_assets",
     ],
-    outs = ["bundle.zip"],
+    outs = ["bundle_uncooked.zip"],
     cmd = """
 set -euo pipefail
 out_path="$$(pwd)/$@"
@@ -95,6 +106,42 @@ for src in $(SRCS); do
       ;;
   esac
 done
+find "$$bundle_root" -exec touch -t 198001010000 {} +
+(cd "$$bundle_root" && find . -mindepth 1 | sed 's|^\\./||' | LC_ALL=C sort | /usr/bin/zip -q -X -@ "$$out_path")
+rm -rf "$$bundle_root"
+""",
+)
+
+# The terrain level's recipe, generated (layout, checks, retries, fallback)
+# from the catalog's seed at build time, so every server and client of this
+# bundle composes the same map (docs/KERNEL_TERRAIN_IMPLEMENTATION_PLAN.md P3).
+# The report lists every attempt.
+genrule(
+    name = "terrain_recipe",
+    srcs = [":bundle_uncooked"],
+    outs = [
+        "terrain_gameplay_catalog.nktr",
+        "terrain_recipe_report.txt",
+    ],
+    cmd = "$(location //game_server:terrain_recipe_cook) $(location :bundle_uncooked) terrain_gameplay_catalog.yaml $(location terrain_gameplay_catalog.nktr) > $(location terrain_recipe_report.txt)",
+    tools = ["//game_server:terrain_recipe_cook"],
+)
+
+genrule(
+    name = "bundle",
+    srcs = [
+        ":bundle_uncooked",
+        ":terrain_gameplay_catalog.nktr",
+    ],
+    outs = ["bundle.zip"],
+    cmd = """
+set -euo pipefail
+out_path="$$(pwd)/$@"
+bundle_root="$(@D)/cooked_bundle_root"
+rm -rf "$$bundle_root"
+mkdir -p "$$bundle_root/terrain"
+/usr/bin/unzip -q "$(location :bundle_uncooked)" -d "$$bundle_root"
+cp "$(location :terrain_gameplay_catalog.nktr)" "$$bundle_root/terrain/terrain_gameplay_catalog.nktr"
 find "$$bundle_root" -exec touch -t 198001010000 {} +
 (cd "$$bundle_root" && find . -mindepth 1 | sed 's|^\\./||' | LC_ALL=C sort | /usr/bin/zip -q -X -@ "$$out_path")
 rm -rf "$$bundle_root"

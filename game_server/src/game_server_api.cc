@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "game_server/src/gameplay_config.h"
+#include "game_server/src/terrain_catalog.h"
 #include "game_server/src/game_server.h"
 
 struct GameServerHandle {
@@ -152,8 +153,35 @@ bool load_gameplay_catalog_bundle(
                 bundle_size,
                 static_scene.entry_path);
     }
+    if (config.terrain.enabled) {
+        // A Host (out_config: it runs the game server) also gets the navmesh; a
+        // client only composes, and only from a cooked recipe.
+        namespace gs = network_example::game_server;
+        gs::PreparedTerrain prepared;
+        std::string error;
+        const std::vector<std::uint8_t> cooked =
+            gs::read_cooked_terrain_recipe(bundle_bytes, bundle_size, config.terrain);
+        if (!gs::prepare_catalog_terrain(
+                &config,
+                cooked,
+                out_config != nullptr ? gs::TerrainRole::kServer : gs::TerrainRole::kClient,
+                &prepared,
+                &error)) {
+            set_load_error(
+                out_result,
+                cooked.empty() ? KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_MISSING_BUNDLE_ENTRY
+                               : KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_KERNEL_REJECTED_CATALOG,
+                error.c_str(),
+                config.terrain.recipe_entry_path.c_str(),
+                "terrain",
+                KERNEL_GAMEPLAY_CATALOG_LOAD_SOURCE_BUNDLE,
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+            return false;
+        }
+        collision_scene_bytes = std::move(prepared.collision_artifact);
+    }
 
-    if (!static_scene.entry_path.empty()) {
+    if (!collision_scene_bytes.empty()) {
         const network_example::game_server::KernelGameplayCatalogStorage storage =
             network_example::game_server::build_kernel_gameplay_catalog(config);
         KernelStaticCollisionSceneConfig scene_config{};

@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <map>
 #include <memory>
 #include <numeric>
@@ -290,6 +291,93 @@ dtNavMesh* bake_terrain_navmesh(const HeightGrid& grid, const NavBakeParams& p, 
         stats->tiles = added;
         stats->polys = polys;
         stats->bake_ms = ms_since(t0);
+    }
+    return nav;
+}
+
+namespace {
+
+void put32(std::vector<std::uint8_t>* b, std::uint32_t v) {
+    for (int k = 0; k < 4; ++k) b->push_back(static_cast<std::uint8_t>(v >> (8 * k)));
+}
+
+std::uint32_t get32(const std::vector<std::uint8_t>& b, std::size_t* p) {
+    std::uint32_t v = 0;
+    for (int k = 0; k < 4; ++k) v |= static_cast<std::uint32_t>(b[(*p)++]) << (8 * k);
+    return v;
+}
+
+}  // namespace
+
+std::vector<std::uint8_t> write_navmesh_tiles(const dtNavMesh& nav) {
+    std::vector<std::uint8_t> b{'N', 'K', 'T', 'N'};
+    put32(&b, 1);
+    const dtNavMeshParams* np = nav.getParams();
+    for (const float f : {np->orig[0], np->orig[1], np->orig[2], np->tileWidth, np->tileHeight}) {
+        std::uint32_t bits = 0;
+        std::memcpy(&bits, &f, sizeof(bits));
+        put32(&b, bits);
+    }
+    put32(&b, static_cast<std::uint32_t>(np->maxTiles));
+    put32(&b, static_cast<std::uint32_t>(np->maxPolys));
+    std::vector<const dtMeshTile*> tiles;
+    for (int t = 0; t < nav.getMaxTiles(); ++t) {
+        const dtMeshTile* tile = nav.getTile(t);
+        if (tile != nullptr && tile->header != nullptr && tile->data != nullptr) tiles.push_back(tile);
+    }
+    put32(&b, static_cast<std::uint32_t>(tiles.size()));
+    for (const dtMeshTile* tile : tiles) {
+        put32(&b, static_cast<std::uint32_t>(tile->dataSize));
+        b.insert(b.end(), tile->data, tile->data + tile->dataSize);
+    }
+    return b;
+}
+
+bool is_navmesh_tiles(const std::vector<std::uint8_t>& b) {
+    return b.size() >= 8 && std::memcmp(b.data(), "NKTN", 4) == 0;
+}
+
+dtNavMesh* read_navmesh_tiles(const std::vector<std::uint8_t>& b, std::string* error) {
+    constexpr std::size_t kHeader = 4 + 4 + 5 * 4 + 4 + 4 + 4;
+    if (!is_navmesh_tiles(b) || b.size() < kHeader) {
+        *error = "not a terrain navmesh (NKTN)";
+        return nullptr;
+    }
+    std::size_t p = 4;
+    if (get32(b, &p) != 1) {
+        *error = "terrain navmesh version is not 1";
+        return nullptr;
+    }
+    dtNavMeshParams np{};
+    float f[5];
+    for (float& v : f) {
+        const std::uint32_t bits = get32(b, &p);
+        std::memcpy(&v, &bits, sizeof(v));
+    }
+    np.orig[0] = f[0]; np.orig[1] = f[1]; np.orig[2] = f[2];
+    np.tileWidth = f[3]; np.tileHeight = f[4];
+    np.maxTiles = static_cast<int>(get32(b, &p));
+    np.maxPolys = static_cast<int>(get32(b, &p));
+    const std::uint32_t n = get32(b, &p);
+    dtNavMesh* nav = dtAllocNavMesh();
+    if (nav == nullptr || dtStatusFailed(nav->init(&np))) {
+        dtFreeNavMesh(nav);
+        *error = "terrain navmesh init failed";
+        return nullptr;
+    }
+    for (std::uint32_t k = 0; k < n; ++k) {
+        if (p + 4 > b.size()) { dtFreeNavMesh(nav); *error = "terrain navmesh is truncated"; return nullptr; }
+        const std::uint32_t size = get32(b, &p);
+        if (p + size > b.size()) { dtFreeNavMesh(nav); *error = "terrain navmesh is truncated"; return nullptr; }
+        auto* data = static_cast<unsigned char*>(dtAlloc(static_cast<int>(size), DT_ALLOC_PERM));
+        std::memcpy(data, b.data() + p, size);
+        p += size;
+        if (dtStatusFailed(nav->addTile(data, static_cast<int>(size), DT_TILE_FREE_DATA, 0, nullptr))) {
+            dtFree(data);
+            dtFreeNavMesh(nav);
+            *error = "terrain navmesh addTile failed";
+            return nullptr;
+        }
     }
     return nav;
 }
