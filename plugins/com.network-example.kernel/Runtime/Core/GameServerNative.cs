@@ -52,5 +52,31 @@ namespace NetworkExample.Kernel
         internal static extern void GameServer_DespawnAll(
             IntPtr gameServer,
             uint reason);
+
+        [DllImport(KernelNative.LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool GameServer_GetTerrainInfo(
+            IntPtr kernel,
+            ref GameServerTerrainInfo outInfo);
+
+        [DllImport(KernelNative.LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool GameServer_CopyTerrainHeights(
+            IntPtr kernel,
+            uint x0,
+            uint z0,
+            uint width,
+            uint depth,
+            [Out] short[] outCm,
+            uint outCount);
+
+        [DllImport(KernelNative.LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern uint GameServer_CopyTerrainPlacements(
+            IntPtr kernel,
+            [Out] GameServerTerrainPlacement[] outPlacements,
+            uint capacity);
+
+        [DllImport(KernelNative.LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void GameServer_ReleaseTerrain(IntPtr kernel);
     }
 }

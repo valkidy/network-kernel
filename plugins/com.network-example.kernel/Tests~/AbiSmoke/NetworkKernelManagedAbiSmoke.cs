@@ -290,6 +290,16 @@ public static class NetworkKernelManagedAbiSmoke
             (gameServerInfo.capability_flags & GameServerConstants.CapabilityLoadoutMessages) != 0UL,
             "Kernel item and weapon system (ABI 101) mismatch.");
         Require(
+            GameServerTerrainInfo.StructSize == 48 &&
+            (int)System.Runtime.InteropServices.Marshal.OffsetOf<GameServerTerrainInfo>("heights_hash") == 32 &&
+            (int)System.Runtime.InteropServices.Marshal.OffsetOf<GameServerTerrainInfo>("placement_count") == 44 &&
+            GameServerTerrainPlacement.StructSize == 32 &&
+            (int)System.Runtime.InteropServices.Marshal.OffsetOf<GameServerTerrainPlacement>("base_y") == 24 &&
+            (int)System.Runtime.InteropServices.Marshal.OffsetOf<GameServerTerrainPlacement>("turns") == 28 &&
+            KernelConstants.StaticCollisionSceneMaxBytes == 64U * 1024U * 1024U &&
+            (gameServerInfo.capability_flags & GameServerConstants.CapabilityTerrainQuery) != 0UL,
+            "Game server terrain queries mismatch.");
+        Require(
             (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("status_direction_authored") == 132 &&
             (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("suspend_rise_speed") == 136 &&
             (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("suspend_drift_speed") == 140 &&

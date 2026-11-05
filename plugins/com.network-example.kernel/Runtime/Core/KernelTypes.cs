@@ -20,7 +20,7 @@ namespace NetworkExample.Kernel
         public const uint GameplayCatalogSyncDefaultMaxBundleSize =
             GameplayCatalogSyncMaxBundleSize;
         public const uint GameplayCatalogSyncDefaultTimeoutMs = 30000U;
-        public const uint StaticCollisionSceneMaxBytes = 16U * 1024U * 1024U;
+        public const uint StaticCollisionSceneMaxBytes = 64U * 1024U * 1024U;
         public const uint StaticCollisionLayerTerrain = 1U;
         public const int MaxWeaponSlots = 4;
         public const int MaxSkeletonLegs = 8;
