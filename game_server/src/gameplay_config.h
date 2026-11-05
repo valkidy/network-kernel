@@ -786,10 +786,13 @@ GameServerGameplayConfig load_gameplay_config_from_weapon_template_directory(
     const std::string& directory);
 GameServerGameplayConfig load_gameplay_config_from_catalog_file(
     const std::string& path);
+// `map_variant`, when set, plays that one of the catalog's map_variants
+// instead of the one its map_variant names (the terrain recipe cook).
 GameServerGameplayConfig load_gameplay_config_from_bundle_memory(
     const std::uint8_t* bundle_bytes,
     std::uint32_t bundle_size,
-    const std::string& entry_path);
+    const std::string& entry_path,
+    const std::string& map_variant = {});
 std::vector<std::uint8_t> load_gameplay_bundle_entry_bytes(
     const std::uint8_t* bundle_bytes,
     std::uint32_t bundle_size,

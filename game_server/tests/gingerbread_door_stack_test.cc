@@ -79,8 +79,20 @@ std::uint32_t template_id_of(
 }  // namespace
 
 int main() {
-    const network_example::game_server::GameServerGameplayConfig config =
+    network_example::game_server::GameServerGameplayConfig config =
         network_example::game_server::default_game_server_gameplay_config();
+    // The shipping player spawn and map belong to the shipping map, not this
+    // flat 200 m plane: its spawn (106.8, 77) is past the plane's east edge, so
+    // the host would fall, respawn 50 m up, and draw a patrol up there with
+    // it. Put the host on the plane and bound the map by it (this test loads
+    // no navmesh for the bounds to come from).
+    config.player.has_spawn_position = true;
+    config.player.spawn_position = KernelVec3{50.0f, 1.0f, 50.0f};
+    config.map.playable_bounds.authored = true;
+    config.map.playable_bounds.min_x = -100.0f;
+    config.map.playable_bounds.min_z = -100.0f;
+    config.map.playable_bounds.max_x = 100.0f;
+    config.map.playable_bounds.max_z = 100.0f;
     const std::uint32_t gingerbread = template_id_of(config, "gingerbread");
     require(gingerbread != 0u);
     const std::vector<std::uint8_t> scene = read_ground_scene();

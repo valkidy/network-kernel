@@ -221,27 +221,42 @@ std::vector<std::uint8_t> make_store_zip(
 
 // The collision mesh the catalog names, read from the catalog itself so the
 // missing-entry check follows the terrain the game actually ships with.
+// The static scene's entry_path as the shipping catalog plays it: under
+// map_variants.<map_variant> when the catalog has variants, at the root
+// otherwise. Read off the text by indentation (two spaces a level), since this
+// test sees only the public API.
 std::string static_collision_entry_path() {
     std::istringstream catalog(read_text_file(
         runfiles_root() / "game_server" / "gameplay_catalog" /
         "gameplay_catalog.yaml"));
-    bool in_scene = false;
+    std::vector<std::string> lines;
+    std::string variant;
     for (std::string line; std::getline(catalog, line);) {
-        if (line.rfind("static_collision_scene:", 0) == 0) {
-            in_scene = true;
-            continue;
+        const std::size_t hash = line.find('#');
+        if (hash != std::string::npos) line.erase(hash);
+        while (!line.empty() && line.back() == ' ') line.pop_back();
+        if (line.empty()) continue;
+        if (line.rfind("map_variant:", 0) == 0) {
+            const std::size_t value = line.find_first_not_of(' ', 12);
+            variant = value == std::string::npos ? std::string() : line.substr(value);
         }
-        if (!in_scene) {
-            continue;
-        }
-        if (!line.empty() && line[0] != ' ') {
-            break;
-        }
-        const std::size_t key = line.find_first_not_of(' ');
-        const std::string entry = "entry_path:";
-        if (key != std::string::npos && line.compare(key, entry.size(), entry) == 0) {
-            const std::size_t value =
-                line.find_first_not_of(' ', key + entry.size());
+        lines.push_back(line);
+    }
+    std::vector<std::string> want;
+    if (!variant.empty()) {
+        want = {"map_variants", variant};
+    }
+    want.push_back("static_collision_scene");
+    want.push_back("entry_path");
+    std::vector<std::string> path;
+    for (const std::string& line : lines) {
+        const std::size_t indent = line.find_first_not_of(' ');
+        const std::size_t colon = line.find(':', indent);
+        if (indent == std::string::npos || colon == std::string::npos || line[indent] == '-') continue;
+        path.resize(indent / 2);
+        path.push_back(line.substr(indent, colon - indent));
+        if (path == want) {
+            const std::size_t value = line.find_first_not_of(' ', colon + 1);
             return value == std::string::npos ? std::string() : line.substr(value);
         }
     }
@@ -507,7 +522,7 @@ int main() {
     require(loaded_catalog);
     require(load_result.status == KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS);
     require(load_result.error_code == KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_NONE);
-    require(load_result.catalog_version == 16);
+    require(load_result.catalog_version == 17);
     require(load_result.catalog_hash != 0);
     require(load_result.projectile_template_count > 0);
     require(

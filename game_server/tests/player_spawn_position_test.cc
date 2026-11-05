@@ -2,9 +2,10 @@
 // map.
 //
 // The kernel spawns every player at the origin; game_server moves it on
-// PlayerJoined. The shipping spawn is on the mound beside the camp pad, ~5 m
-// up, so the check is against the baked collision scene: the player ends up
-// there and standing on it, not at the origin and not falling through.
+// PlayerJoined. The shipping spawn (the composed_mesh map variant) is on the
+// terrace floor beside the initial camp, ~20 m up, so the check is against the
+// baked collision scene: the player ends up there and standing on it, not at
+// the origin and not falling through.
 
 #include <cmath>
 #include <cstdint>
@@ -120,9 +121,9 @@ int main() {
         spawn.z);
     require(std::abs(state.position.x - spawn.x) < 0.5f);
     require(std::abs(state.position.z - spawn.z) < 0.5f);
-    // Settled onto the mound, not sunk through it or still dropping: the
-    // mound top under the spawn is ~4.7 m.
-    require(state.position.y > 4.0f && state.position.y < 5.5f);
+    // Settled onto the ground, not sunk through it or still dropping: the
+    // camp's terrace floor under the spawn is ~20.4 m.
+    require(state.position.y > 19.8f && state.position.y < 21.0f);
     require((state.visual_flags & KERNEL_VISUAL_FLAG_GROUNDED) != 0u);
 
     Kernel_Destroy(kernel);

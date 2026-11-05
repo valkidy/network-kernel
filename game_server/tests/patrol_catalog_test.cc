@@ -156,8 +156,8 @@ void only_listed_ids_run() {
 void misauthored_lists_are_refused() {
     CatalogCopy catalog;
     require(contains(
-        catalog.rejection("  - ids: [3]\n"),
-        "patrol id 3 is listed but no file under patrol_template_dir"));
+        catalog.rejection("  - ids: [99]\n"),
+        "patrol id 99 is listed but no file under patrol_template_dir"));
     require(contains(
         catalog.rejection("  - ids: [1, 1]\n"), "patrol id 1 is listed twice"));
     require(contains(
@@ -182,16 +182,16 @@ void every_file_is_validated_listed_or_not() {
 
     // A copy whose id was never changed.
     const fs::path copy =
-        catalog.root() / "patrol_templates/3_patrol_gingerbread_warband.yaml";
+        catalog.root() / "patrol_templates/9_patrol_gingerbread_warband.yaml";
     write_file(copy, warband);
     require(contains(
         catalog.rejection(kBothIds),
         "patrol file must be named 1_patrol_gingerbread_warband.yaml"));
-    // Renamed with its id: a third definition, which runs when listed.
-    write_file(copy, replace(warband, "id: 1\n", "id: 3\n"));
-    const GameServerGameplayConfig three = catalog.load_with_ids("  - ids: [3]\n");
+    // Renamed with its id (9: 3 is the shipping giant): another definition, which runs when listed.
+    write_file(copy, replace(warband, "id: 1\n", "id: 9\n"));
+    const GameServerGameplayConfig three = catalog.load_with_ids("  - ids: [9]\n");
     require(three.patrols.size() == 1u);
-    require(three.patrols[0].id == 3u);
+    require(three.patrols[0].id == 9u);
     fs::remove(copy);
 
     // Same id under another name: the file is named correctly, the id is not
@@ -206,8 +206,8 @@ void every_file_is_validated_listed_or_not() {
 
 // A definition aimed at players, written out whole rather than edited from the
 // warband, so the needles below name text this file owns.
-constexpr const char* kTargetedFile = "patrol_templates/3_patrol_targeted.yaml";
-constexpr const char* kTargetedIds = "  - ids: [3]\n";
+constexpr const char* kTargetedFile = "patrol_templates/9_patrol_targeted.yaml";
+constexpr const char* kTargetedIds = "  - ids: [9]\n";
 
 const std::string kTargetedWhere =
     "where:\n"
@@ -242,7 +242,7 @@ const std::string kTargetedTiers =
     "      - {entity_template: gingerbread, min: 4, max: 8}\n";
 
 std::string targeted_definition() {
-    return "id: 3\nname: targeted\n" + kTargetedWhere + "seed: 11\n" +
+    return "id: 9\nname: targeted\n" + kTargetedWhere + "seed: 11\n" +
         "interval_ticks: 900\n" + kTargetedTiers;
 }
 
@@ -383,16 +383,13 @@ void around_players_misauthoring_is_refused() {
 
 void map_playable_bounds() {
     CatalogCopy catalog;
-    // Shipping authors the 200 m map's bounds.
-    const auto authored = catalog.load_with_ids("  - ids: [1]\n").map.playable_bounds;
-    require(authored.authored);
-    require(authored.min_x == -100.0f && authored.max_z == 100.0f);
+    // Shipping leaves the bounds to the map: a terrain fills them in from
+    // map_size, and a mesh map's patrols fall back to the navmesh's extent.
+    const auto shipped = catalog.load_with_ids("  - ids: [1]\n").map.playable_bounds;
+    require(!shipped.authored);
 
     const std::string shipping = catalog.catalog();
-    const std::string shipping_map =
-        "map:\n"
-        "  playable_bounds: {min: {x: -100.0, z: -100.0}, max: {x: 100.0, z: 100.0}}\n";
-    const std::string unmapped = replace(shipping, shipping_map, "");
+    const std::string unmapped = shipping;
     const auto with_map = [&](const std::string& map_block) {
         return replace(unmapped, "\npatrols:\n", "\n" + map_block + "patrols:\n");
     };

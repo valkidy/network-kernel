@@ -841,6 +841,88 @@ void PhysicsWorld::reset_query_stats() {
     }
 }
 
+bool static_scene_triangles(
+    std::span<const std::uint8_t> artifact,
+    std::vector<float>* positions,
+    std::vector<std::uint32_t>* indices,
+    std::string* error) {
+    std::string local_error;
+    error = error == nullptr ? &local_error : error;
+    positions->clear();
+    indices->clear();
+    const ProcessRuntime runtime;
+    if (!runtime.acquired()) {
+        *error = "Jolt runtime is unavailable";
+        return false;
+    }
+    std::uint64_t payload_size = 0;
+    if (!validate_artifact(artifact, &payload_size, error)) {
+        return false;
+    }
+    const std::string payload(
+        reinterpret_cast<const char*>(artifact.data() + kArtifactHeaderSize),
+        static_cast<std::size_t>(payload_size));
+    std::istringstream input(payload, std::ios::binary | std::ios::in);
+    JPH::StreamInWrapper stream(input);
+    JPH::Shape::IDToShapeMap shape_map;
+    JPH::Shape::IDToMaterialMap material_map;
+    JPH::Shape::ShapeResult result = JPH::Shape::sRestoreWithChildren(
+        stream, shape_map, material_map);
+    if (result.HasError() || stream.IsFailed()) {
+        *error = result.HasError()
+            ? "Jolt MeshShape restore failed: " + result.GetError()
+            : "Jolt MeshShape payload is truncated";
+        return false;
+    }
+    const JPH::RefConst<JPH::Shape> shape = result.Get();
+    JPH::Shape::GetTrianglesContext context;
+    // In the space the shape was baked in: the body load_static_scene makes
+    // sits at the origin unrotated.
+    shape->GetTrianglesStart(
+        context,
+        shape->GetLocalBounds(),
+        shape->GetCenterOfMass(),
+        JPH::Quat::sIdentity(),
+        JPH::Vec3::sReplicate(1.0f));
+    constexpr int kBatch = JPH::Shape::cGetTrianglesMinTrianglesRequested * 8;
+    std::vector<JPH::Float3> corners(static_cast<std::size_t>(kBatch) * 3u);
+    // Welded on the exact bits, so only corners that really coincide merge.
+    std::unordered_map<std::uint64_t, std::vector<std::uint32_t>> welded;
+    const auto vertex_of = [&](const JPH::Float3& corner) {
+        const std::uint32_t x = std::bit_cast<std::uint32_t>(corner.x);
+        const std::uint32_t y = std::bit_cast<std::uint32_t>(corner.y);
+        const std::uint32_t z = std::bit_cast<std::uint32_t>(corner.z);
+        const std::uint64_t key = (static_cast<std::uint64_t>(x) * 0x9E3779B97F4A7C15ull) ^
+            (static_cast<std::uint64_t>(y) * 0xC2B2AE3D27D4EB4Full) ^ z;
+        std::vector<std::uint32_t>& bucket = welded[key];
+        for (const std::uint32_t index : bucket) {
+            const float* p = positions->data() + static_cast<std::size_t>(index) * 3u;
+            if (std::bit_cast<std::uint32_t>(p[0]) == x && std::bit_cast<std::uint32_t>(p[1]) == y &&
+                std::bit_cast<std::uint32_t>(p[2]) == z) {
+                return index;
+            }
+        }
+        const std::uint32_t index = static_cast<std::uint32_t>(positions->size() / 3u);
+        positions->insert(positions->end(), {corner.x, corner.y, corner.z});
+        bucket.push_back(index);
+        return index;
+    };
+    for (;;) {
+        const int count = shape->GetTrianglesNext(context, kBatch, corners.data());
+        if (count <= 0) {
+            break;
+        }
+        for (int k = 0; k < count * 3; ++k) {
+            indices->push_back(vertex_of(corners[static_cast<std::size_t>(k)]));
+        }
+    }
+    if (indices->empty()) {
+        *error = "static scene has no triangles";
+        return false;
+    }
+    return true;
+}
+
 bool PhysicsWorld::load_static_scene(
     std::span<const std::uint8_t> artifact,
     const CollisionObjectIdentity& identity,

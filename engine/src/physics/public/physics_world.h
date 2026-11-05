@@ -39,6 +39,18 @@ struct CollisionQueryStats {
     std::uint64_t defensive_post_filter_rejections = 0;
 };
 
+// The triangles of a static scene artifact (the NKMJOLT1 MeshShape that
+// load_static_scene takes), for drawing what the kernel collides with:
+// `positions` holds x, y, z per vertex (vertices shared by triangles are
+// welded), `indices` three per triangle in the shape's own order. That order
+// is Jolt's front face, cross(b - a, c - a) pointing out of the surface; with
+// the kernel's axes being Unity's, the same order is Unity's front face too.
+bool static_scene_triangles(
+    std::span<const std::uint8_t> artifact,
+    std::vector<float>* positions,
+    std::vector<std::uint32_t>* indices,
+    std::string* error);
+
 class PhysicsWorld final {
 public:
     explicit PhysicsWorld(const PhysicsWorldConfig& config = {});

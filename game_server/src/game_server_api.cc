@@ -15,6 +15,7 @@
 
 #include "game_server/src/gameplay_config.h"
 #include "game_server/src/terrain_catalog.h"
+#include "physics/public/physics_world.h"
 #include "game_server/src/game_server.h"
 
 struct GameServerHandle {
@@ -37,7 +38,8 @@ constexpr std::uint64_t kCapabilityFlags =
     GAME_SERVER_CAPABILITY_WEAPON_TEMPLATE_QUERY |
     GAME_SERVER_CAPABILITY_GAMEPLAY_CATALOG_BUNDLE |
     GAME_SERVER_CAPABILITY_LOADOUT_MESSAGES |
-    GAME_SERVER_CAPABILITY_TERRAIN_QUERY;
+    GAME_SERVER_CAPABILITY_TERRAIN_QUERY |
+    GAME_SERVER_CAPABILITY_STATIC_SCENE_MESH_QUERY;
 
 // The terrain each kernel's last catalog load composed, for the client to draw
 // (GameServer_GetTerrainInfo and friends). Keyed by kernel because a pure
@@ -48,6 +50,64 @@ struct TerrainView {
     std::vector<std::uint32_t> stamp_template_ids;      // per library stamp
     std::vector<std::int32_t> stamp_cells;              // per library stamp
 };
+
+// A mesh level's baked static scene, kept as the artifact and turned into
+// triangles the first time a client asks (GameServer_GetStaticSceneMeshInfo).
+struct StaticSceneView {
+    std::vector<std::uint8_t> artifact;
+    std::once_flag extracted;
+    bool ok = false;
+    std::vector<float> positions;
+    std::vector<std::uint32_t> indices;
+    float min[3] = {0.0f, 0.0f, 0.0f};
+    float max[3] = {0.0f, 0.0f, 0.0f};
+
+    bool extract() {
+        std::call_once(extracted, [this] {
+            std::string error;
+            ok = network_example::physics::static_scene_triangles(artifact, &positions, &indices, &error);
+            if (!ok) {
+                std::fprintf(stderr, "static scene mesh query: %s\n", error.c_str());
+                return;
+            }
+            for (int axis = 0; axis < 3; ++axis) {
+                min[axis] = max[axis] = positions[static_cast<std::size_t>(axis)];
+            }
+            for (std::size_t k = 0; k < positions.size(); ++k) {
+                const int axis = static_cast<int>(k % 3u);
+                min[axis] = std::min(min[axis], positions[k]);
+                max[axis] = std::max(max[axis], positions[k]);
+            }
+            std::vector<std::uint8_t>().swap(artifact);
+        });
+        return ok;
+    }
+};
+
+std::mutex& static_scene_views_mutex() {
+    static std::mutex m;
+    return m;
+}
+
+std::map<const KernelHandle*, std::shared_ptr<StaticSceneView>>& static_scene_views() {
+    static std::map<const KernelHandle*, std::shared_ptr<StaticSceneView>> views;
+    return views;
+}
+
+void set_static_scene_view(const KernelHandle* kernel, std::shared_ptr<StaticSceneView> view) {
+    std::scoped_lock lock(static_scene_views_mutex());
+    if (view) {
+        static_scene_views()[kernel] = std::move(view);
+    } else {
+        static_scene_views().erase(kernel);
+    }
+}
+
+std::shared_ptr<StaticSceneView> static_scene_view(const KernelHandle* kernel) {
+    std::scoped_lock lock(static_scene_views_mutex());
+    const auto it = static_scene_views().find(kernel);
+    return it == static_scene_views().end() ? nullptr : it->second;
+}
 
 std::mutex& terrain_views_mutex() {
     static std::mutex m;
@@ -271,7 +331,13 @@ bool load_gameplay_catalog_bundle(
     }
 
     // Only a load that went through replaces what the terrain queries see.
+    std::shared_ptr<StaticSceneView> pending_static_scene_view;
+    if (!config.terrain.enabled && !collision_scene_bytes.empty()) {
+        pending_static_scene_view = std::make_shared<StaticSceneView>();
+        pending_static_scene_view->artifact = std::move(collision_scene_bytes);
+    }
     set_terrain_view(kernel, std::move(pending_terrain_view));
+    set_static_scene_view(kernel, std::move(pending_static_scene_view));
     fill_load_result(out_result, config);
     if (out_config != nullptr) {
         *out_config = std::move(config);
@@ -570,6 +636,50 @@ std::uint32_t GameServer_CopyTerrainPlacements(
 
 void GameServer_ReleaseTerrain(KernelHandle* kernel) {
     set_terrain_view(kernel, nullptr);
+    set_static_scene_view(kernel, nullptr);
+}
+
+bool GameServer_GetStaticSceneMeshInfo(
+    KernelHandle* kernel,
+    GameServerStaticSceneMeshInfo* out_info) {
+    if (kernel == nullptr || out_info == nullptr ||
+        out_info->struct_size < sizeof(GameServerStaticSceneMeshInfo)) {
+        return false;
+    }
+    const std::shared_ptr<StaticSceneView> view = static_scene_view(kernel);
+    if (!view || !view->extract()) {
+        return false;
+    }
+    *out_info = GameServerStaticSceneMeshInfo{};
+    out_info->struct_size = sizeof(GameServerStaticSceneMeshInfo);
+    out_info->vertex_count = static_cast<std::uint32_t>(view->positions.size() / 3u);
+    out_info->triangle_count = static_cast<std::uint32_t>(view->indices.size() / 3u);
+    out_info->min_x = view->min[0];
+    out_info->min_y = view->min[1];
+    out_info->min_z = view->min[2];
+    out_info->max_x = view->max[0];
+    out_info->max_y = view->max[1];
+    out_info->max_z = view->max[2];
+    return true;
+}
+
+bool GameServer_CopyStaticSceneMesh(
+    KernelHandle* kernel,
+    float* out_positions,
+    std::uint32_t position_capacity,
+    std::uint32_t* out_indices,
+    std::uint32_t index_capacity) {
+    if (kernel == nullptr || out_positions == nullptr || out_indices == nullptr) {
+        return false;
+    }
+    const std::shared_ptr<StaticSceneView> view = static_scene_view(kernel);
+    if (!view || !view->extract() || view->positions.size() > position_capacity ||
+        view->indices.size() > index_capacity) {
+        return false;
+    }
+    std::memcpy(out_positions, view->positions.data(), view->positions.size() * sizeof(float));
+    std::memcpy(out_indices, view->indices.data(), view->indices.size() * sizeof(std::uint32_t));
+    return true;
 }
 
 }  // extern "C"

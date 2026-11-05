@@ -1,0 +1,39 @@
+id: 3
+name: gingerbread_giant
+# One gingerbread_giant walking past the players, aimed at them the way the
+# warband is (docs/PLAYER_TARGETED_PATROL_PLAN.md): it starts 50-60 m out,
+# past the kernel's 44 m relevance exit, and walks a route that passes within
+# 25 m of where they stood -- inside its 35 m vision, so by default it sees
+# them and comes over.
+where:
+  mode: around_players
+  ring: {min_meters: 50.0, max_meters: 60.0}
+  pass_within_meters: 25.0
+  exit_spread_degrees: 30.0
+  group_radius_meters: 18.0
+  # One giant per group of players, and one per two players across the
+  # server, rounded up.
+  groups_per_member: 1.0
+  groups_per_player: 0.5
+  # Two minutes with no giant near a group puts it first in line.
+  floor_interval_ticks: 3600
+seed: 7719
+# Every 60 s at 30 Hz. A finished giant retires and gives its place back.
+interval_ticks: 1800
+count: {min: 1, max: 1}
+composition:
+  - {entity_template: gingerbread_giant, min: 1, max: 1}
+# One member, so it has no formation to keep.
+formation_spacing_meters: 6.0
+# Under its 2.5 m/s move speed, so the cursor never leaves it behind.
+advance_speed_meters_per_second: 1.2
+# Its feet are metres apart; a tight radius would have it shuffling on each
+# waypoint.
+waypoint_radius_meters: 2.0
+despawn_linger_ticks: 300
+despawn_distance_meters: 120.0
+# The navmesh is baked for a 0.6 m agent, so a route can run where a giant's
+# ~5.6 m stance does not fit (a narrow terrace or a stamp's rim). Watch it on
+# the terrain map before trusting it near cliffs.
+max_detour_ratio: 4.0
+route_attempts: 8
