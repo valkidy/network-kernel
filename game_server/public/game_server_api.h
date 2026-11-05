@@ -83,6 +83,25 @@ uint32_t GameServer_CopyTerrainPlacements(
     uint32_t capacity);
 void GameServer_ReleaseTerrain(KernelHandle* kernel);
 
+/*
+ * Static scene mesh queries (GAME_SERVER_CAPABILITY_STATIC_SCENE_MESH_QUERY),
+ * keyed by kernel like the terrain ones: a catalog whose map is a baked mesh
+ * (not a terrain) keeps that mesh for these. False when the kernel's last
+ * catalog load had none, or after GameServer_ReleaseTerrain, which frees this
+ * copy too. The triangles are taken out of the artifact on the first call.
+ */
+bool GameServer_GetStaticSceneMeshInfo(
+    KernelHandle* kernel,
+    GameServerStaticSceneMeshInfo* out_info);
+/* position_capacity counts floats (3 per vertex), index_capacity indices (3
+ * per triangle); both must hold the whole mesh. */
+bool GameServer_CopyStaticSceneMesh(
+    KernelHandle* kernel,
+    float* out_positions,
+    uint32_t position_capacity,
+    uint32_t* out_indices,
+    uint32_t index_capacity);
+
 #ifdef __cplusplus
 }
 #endif

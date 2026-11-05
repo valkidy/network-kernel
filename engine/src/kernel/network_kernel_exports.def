@@ -120,3 +120,5 @@ EXPORTS
     GameServer_CopyTerrainHeights
     GameServer_CopyTerrainPlacements
     GameServer_ReleaseTerrain
+    GameServer_GetStaticSceneMeshInfo
+    GameServer_CopyStaticSceneMesh

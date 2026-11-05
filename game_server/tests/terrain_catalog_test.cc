@@ -253,6 +253,9 @@ void c_api_paths(const std::vector<std::uint8_t>& bundle, const gs::PreparedTerr
     if (client == nullptr) std::fprintf(stderr, "client load: %s\n", result.diagnostic);
     require(client != nullptr);
     std::printf("host + client loaded the terrain level\n");
+    GameServerStaticSceneMeshInfo no_mesh{};
+    no_mesh.struct_size = sizeof(no_mesh);
+    require(!GameServer_GetStaticSceneMeshInfo(client, &no_mesh) && !GameServer_GetStaticSceneMeshInfo(host, &no_mesh));
 
     // Terrain queries (P5): the Host and the client see the same map, and it
     // is the map the catalog path composes.
@@ -292,6 +295,57 @@ void c_api_paths(const std::vector<std::uint8_t>& bundle, const gs::PreparedTerr
     std::printf("bundle without recipe refused: %s\n", result.diagnostic);
 
     GameServer_ReleaseTerrain(host);
+    GameServer_Destroy(game_server);
+    Kernel_Destroy(host);
+}
+
+// The mesh map (the default entry, composed_mesh): its baked scene comes back
+// as triangles for the client to draw; a terrain level has none.
+void static_scene_mesh_paths(const std::vector<std::uint8_t>& bundle) {
+    GameServerAbiInfo abi{};
+    require(GameServer_GetAbiInfo(&abi, sizeof(abi)));
+    require((abi.capability_flags & GAME_SERVER_CAPABILITY_STATIC_SCENE_MESH_QUERY) != 0);
+    KernelConfig host_config = kernel_config(KernelMode_ListenServer);
+    KernelHandle* host = Kernel_Create(&host_config);
+    require(host != nullptr);
+    KernelGameplayCatalogLoadResult result{};
+    GameServerHandle* game_server = GameServer_CreateWithGameplayCatalogFromMemory(
+        host, bundle.data(), static_cast<std::uint32_t>(bundle.size()), "gameplay_catalog.composed_mesh.yaml", &result);
+    if (game_server == nullptr) std::fprintf(stderr, "mesh host load: %s\n", result.diagnostic);
+    require(game_server != nullptr);
+    GameServerTerrainInfo no_terrain{};
+    no_terrain.struct_size = sizeof(no_terrain);
+    require(!GameServer_GetTerrainInfo(host, &no_terrain));
+
+    GameServerStaticSceneMeshInfo info{};
+    info.struct_size = sizeof(info);
+    require(GameServer_GetStaticSceneMeshInfo(host, &info));
+    require(info.vertex_count >= 3u && info.triangle_count >= 1u);
+    // composed_216m_ground_0001_seed1_collision: 0..216 m across, 8-38 m up.
+    require(std::fabs(info.min_x) < 0.5f && std::fabs(info.max_x - 216.0f) < 0.5f);
+    require(std::fabs(info.min_z) < 0.5f && std::fabs(info.max_z - 216.0f) < 0.5f);
+    require(info.min_y > 7.0f && info.max_y < 40.0f);
+    std::vector<float> positions(static_cast<std::size_t>(info.vertex_count) * 3u);
+    std::vector<std::uint32_t> indices(static_cast<std::size_t>(info.triangle_count) * 3u);
+    require(!GameServer_CopyStaticSceneMesh(host, positions.data(), static_cast<std::uint32_t>(positions.size() - 1),
+        indices.data(), static_cast<std::uint32_t>(indices.size())));
+    require(GameServer_CopyStaticSceneMesh(host, positions.data(), static_cast<std::uint32_t>(positions.size()),
+        indices.data(), static_cast<std::uint32_t>(indices.size())));
+    // A ground: almost every triangle faces up in the order given.
+    std::size_t up = 0;
+    for (std::size_t t = 0; t < indices.size(); t += 3) {
+        require(indices[t] < info.vertex_count && indices[t + 1] < info.vertex_count && indices[t + 2] < info.vertex_count);
+        const float* a = &positions[indices[t] * 3u];
+        const float* b = &positions[indices[t + 1] * 3u];
+        const float* c = &positions[indices[t + 2] * 3u];
+        const float ux = b[0] - a[0], uz = b[2] - a[2], vx = c[0] - a[0], vz = c[2] - a[2];
+        if (uz * vx - ux * vz > 0.0f) ++up;   // y of cross(b - a, c - a)
+    }
+    std::printf("static scene mesh: %u vertices, %u triangles, %zu face up, y %.2f..%.2f\n", info.vertex_count,
+        info.triangle_count, up, info.min_y, info.max_y);
+    require(up * 100 >= static_cast<std::size_t>(info.triangle_count) * 95);
+    GameServer_ReleaseTerrain(host);
+    require(!GameServer_GetStaticSceneMeshInfo(host, &info));
     GameServer_Destroy(game_server);
     Kernel_Destroy(host);
 }
@@ -341,6 +395,7 @@ int main() {
     const std::vector<std::uint8_t> bundle = read_bundle();
     const gs::PreparedTerrain expected = config_and_prepare(bundle);
     c_api_paths(bundle, expected);
+    static_scene_mesh_paths(bundle);
     catalog_rules(bundle);
     std::printf("terrain_catalog_test passed\n");
     return 0;

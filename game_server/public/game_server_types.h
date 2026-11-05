@@ -19,6 +19,9 @@
 /* GameServer_GetTerrainInfo / CopyTerrainHeights / CopyTerrainPlacements /
  * ReleaseTerrain: a generated terrain level's map, for the client to draw. */
 #define GAME_SERVER_CAPABILITY_TERRAIN_QUERY UINT64_C(0x0000000000000080)
+/* GameServer_GetStaticSceneMeshInfo / CopyStaticSceneMesh: a mesh level's
+ * baked static collision scene as triangles, for the client to draw. */
+#define GAME_SERVER_CAPABILITY_STATIC_SCENE_MESH_QUERY UINT64_C(0x0000000000000100)
 
 /*
  * Game messages game_server sends and reads (KernelGameMessage::message_type;
@@ -143,6 +146,25 @@ typedef struct GameServerTerrainPlacement {
     uint8_t mirror;
     uint8_t reserved[2];
 } GameServerTerrainPlacement;
+
+/*
+ * A mesh level's static collision scene (catalog static_collision_scene
+ * entry_path: a baked .joltmesh), as the kernel collides with it: welded
+ * vertices in world space (kernel axes, no flip) and three indices per
+ * triangle, in the order that is the front face (cross(b - a, c - a) points
+ * out of the surface). Bounds are of the vertices.
+ */
+typedef struct GameServerStaticSceneMeshInfo {
+    uint32_t struct_size;
+    uint32_t vertex_count;
+    uint32_t triangle_count;
+    float min_x;
+    float min_y;
+    float min_z;
+    float max_x;
+    float max_y;
+    float max_z;
+} GameServerStaticSceneMeshInfo;
 
 #ifdef __cplusplus
 }

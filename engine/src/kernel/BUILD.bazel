@@ -319,6 +319,8 @@ cc_shared_library(
             "-Wl,-exported_symbol,_GameServer_CopyTerrainHeights",
             "-Wl,-exported_symbol,_GameServer_CopyTerrainPlacements",
             "-Wl,-exported_symbol,_GameServer_ReleaseTerrain",
+            "-Wl,-exported_symbol,_GameServer_GetStaticSceneMeshInfo",
+            "-Wl,-exported_symbol,_GameServer_CopyStaticSceneMesh",
         ],
         # MinGW-w64 Windows DLL
         "//engine:windows": [

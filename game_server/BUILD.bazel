@@ -328,6 +328,7 @@ cc_library(
     deps = [
         ":game_server",
         ":game_server_api",
+        "//engine/src/physics:physics",
     ],
 )
 
