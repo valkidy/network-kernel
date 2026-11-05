@@ -16,6 +16,9 @@
 #define GAME_SERVER_CAPABILITY_GAMEPLAY_CATALOG_BUNDLE UINT64_C(0x0000000000000020)
 /* The loadout game messages below. */
 #define GAME_SERVER_CAPABILITY_LOADOUT_MESSAGES UINT64_C(0x0000000000000040)
+/* GameServer_GetTerrainInfo / CopyTerrainHeights / CopyTerrainPlacements /
+ * ReleaseTerrain: a generated terrain level's map, for the client to draw. */
+#define GAME_SERVER_CAPABILITY_TERRAIN_QUERY UINT64_C(0x0000000000000080)
 
 /*
  * Game messages game_server sends and reads (KernelGameMessage::message_type;
@@ -92,6 +95,54 @@ typedef struct GameServerWeaponTemplateInfo {
     KernelWeaponMechanicsDefinition mechanics;
     uint32_t valid;
 } GameServerWeaponTemplateInfo;
+
+/*
+ * A generated terrain level (catalog `terrain:`), as composed when the catalog
+ * was loaded into a kernel -- by Kernel_LoadGameplayCatalogFromMemory on a
+ * client, or GameServer_CreateWithGameplayCatalogFromMemory on a Host. The
+ * same heights the kernel collides with, so the client draws what players walk
+ * on.
+ *
+ * The heightfield is samples_x * samples_z heights in cm on a cell_mm grid:
+ * sample (i, j) is at world x = origin_x + i * cell_mm / 1000, z = origin_z +
+ * j * cell_mm / 1000 (the map is centred on the world origin). Rows run south
+ * to north (j = 0 first), columns west to east. Kernel world axes: no flip.
+ * A collision mesh built from it should split each cell along the (i, j) ->
+ * (i + 1, j + 1) diagonal, as the kernel's heightfield does.
+ */
+typedef struct GameServerTerrainInfo {
+    uint32_t struct_size;
+    uint32_t samples_x;
+    uint32_t samples_z;
+    uint32_t cell_mm;
+    float origin_x;
+    float origin_z;
+    int32_t min_height_cm;
+    int32_t max_height_cm;
+    uint64_t heights_hash;
+    int32_t seed;
+    uint32_t placement_count;
+} GameServerTerrainInfo;
+
+/*
+ * One stamp the recipe placed: which template, where its footprint lies in the
+ * world (after turning; square for now), the height its border sits at, and
+ * how it was turned -- quarter turns as TerrainMapComposer.Compose counts them,
+ * mirror = the stamp's own x flipped before the turn. Enough to put the stamp's
+ * render prefab (buildings, props) where its collision is.
+ */
+typedef struct GameServerTerrainPlacement {
+    uint32_t struct_size;
+    uint32_t stamp_template_id;
+    float min_x;
+    float min_z;
+    float size_x;
+    float size_z;
+    float base_y;
+    uint8_t turns;
+    uint8_t mirror;
+    uint8_t reserved[2];
+} GameServerTerrainPlacement;
 
 #ifdef __cplusplus
 }

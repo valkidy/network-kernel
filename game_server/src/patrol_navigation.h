@@ -49,6 +49,10 @@ public:
 
     // `artifact` is the whole baked file, header included.
     bool load(const std::vector<std::uint8_t>& artifact, std::string* error);
+    // Takes ownership of a navmesh built at runtime (the terrain generator's
+    // multi-tile bake, game_server/src/terrain/terrain_navmesh.h) instead of
+    // loading a baked file. On failure the mesh is still freed.
+    bool adopt(dtNavMesh* mesh, std::string* error);
     bool valid() const;
 
     // Pulls a point onto walkable ground. False when there is none within

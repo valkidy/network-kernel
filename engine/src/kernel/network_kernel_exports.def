@@ -116,3 +116,7 @@ EXPORTS
     GameServer_GetEnemyCount
     GameServer_QueryWeaponTemplate
     GameServer_DespawnAll
+    GameServer_GetTerrainInfo
+    GameServer_CopyTerrainHeights
+    GameServer_CopyTerrainPlacements
+    GameServer_ReleaseTerrain

@@ -18,9 +18,14 @@ filegroup(
         "gameplay_catalog/item_templates/*.yaml",
         "gameplay_catalog/projectile_templates/*.yaml",
         "gameplay_catalog/weapon_templates/*.yaml",
+        "gameplay_catalog/stamp_templates/*.yaml",
+        "gameplay_catalog/stamp_templates/*.hf",
+        "gameplay_catalog/terrain_assets/*.nkgm",
+        "gameplay_catalog/terrain_assets/*.nkgl",
     ]) + [
         "gameplay_catalog/gameplay_catalog.yaml",
         "tests/test_catalogs/legged_locomotion/gameplay_catalog.yaml",
+        "tests/test_catalogs/terrain/gameplay_catalog.yaml",
         "//game_server/gameplay_catalog/skeleton_assets:locomotion_skeleton_assets",
     ],
 )
@@ -49,6 +54,7 @@ cc_library(
         "src/loadout_director.cc",
         "src/spawn_sampling.cc",
         "src/spawner_director.cc",
+        "src/terrain_catalog.cc",
         "src/world_rule_director.cc",
     ],
     hdrs = [
@@ -75,10 +81,14 @@ cc_library(
         "src/patrol_targeting.h",
         "src/spawn_sampling.h",
         "src/spawner_director.h",
+        "src/terrain_catalog.h",
         "src/world_rule_director.h",
         "public/game_server_types.h",
     ],
     deps = [
+        ":terrain_compose",
+        ":terrain_generate",
+        ":terrain_physics",
         "//engine/components/ai:ai",
         "//engine/src/kernel:kernel_api",
         "//engine/src/kernel:kernel_api_internal",
@@ -2023,4 +2033,181 @@ cc_test(
         "//engine/src/kernel:kernel",
         "@yaml-cpp//:yaml-cpp",
     ],
+)
+
+# Random terrain compose (docs/KERNEL_TERRAIN_IMPLEMENTATION_PLAN.md P1).
+# Integer-only and dependency-free: client and server must compose the same
+# recipe into the same heightfield bit for bit.
+cc_library(
+    name = "terrain_compose",
+    srcs = [
+        "src/terrain/terrain_assets.cc",
+        "src/terrain/terrain_compose.cc",
+        "src/terrain/terrain_recipe.cc",
+        "src/terrain/terrain_types.cc",
+    ],
+    hdrs = [
+        "src/terrain/terrain_assets.h",
+        "src/terrain/terrain_compose.h",
+        "src/terrain/terrain_recipe.h",
+        "src/terrain/terrain_types.h",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# The composed heightfield as a static collision scene (Jolt; float, not hashed).
+cc_library(
+    name = "terrain_physics",
+    srcs = ["src/terrain/terrain_physics.cc"],
+    hdrs = ["src/terrain/terrain_physics.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":terrain_compose",
+        "@jolt_physics//:jolt",
+    ],
+)
+
+# Server-only terrain generation: layout, Recast tiled navmesh, checks, retry /
+# fallback (P2). Float is fine here: the result travels as a recipe.
+cc_library(
+    name = "terrain_generate",
+    srcs = [
+        "src/terrain/terrain_generate.cc",
+        "src/terrain/terrain_layout.cc",
+        "src/terrain/terrain_navmesh.cc",
+    ],
+    hdrs = [
+        "src/terrain/terrain_generate.h",
+        "src/terrain/terrain_layout.h",
+        "src/terrain/terrain_navmesh.h",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":terrain_compose",
+        "@recastnavigation//:detour",
+        "@recastnavigation//:recast",
+    ],
+)
+
+cc_library(
+    name = "terrain_test_data",
+    testonly = True,
+    hdrs = ["tests/terrain_test_data.h"],
+    data = glob(["tests/testdata/terrain/*"]),
+    deps = [
+        ":terrain_compose",
+        "@yaml-cpp//:yaml-cpp",
+        "@zip_archive//:zip",
+    ],
+)
+
+cc_test(
+    name = "terrain_compose_test",
+    size = "small",
+    srcs = ["tests/terrain_compose_test.cc"],
+    data = ["gameplay_catalog/terrain_assets/ground_0001.nkgl"],
+    deps = [":terrain_test_data"],
+)
+
+cc_test(
+    name = "terrain_unity_parity_test",
+    size = "small",
+    srcs = ["tests/terrain_unity_parity_test.cc"],
+    deps = [":terrain_test_data"],
+)
+
+cc_test(
+    name = "terrain_physics_test",
+    size = "medium",
+    srcs = ["tests/terrain_physics_test.cc"],
+    deps = [
+        ":terrain_physics",
+        ":terrain_test_data",
+        "//engine/src/physics:physics",
+    ],
+)
+
+cc_test(
+    name = "terrain_generate_test",
+    size = "medium",
+    srcs = ["tests/terrain_generate_test.cc"],
+    deps = [
+        ":terrain_generate",
+        ":terrain_test_data",
+        "@recastnavigation//:detour",
+    ],
+)
+
+cc_test(
+    name = "terrain_patrol_navigation_test",
+    size = "small",
+    srcs = ["tests/terrain_patrol_navigation_test.cc"],
+    deps = [
+        ":game_server",
+        ":terrain_generate",
+        ":terrain_test_data",
+        "@recastnavigation//:detour",
+    ],
+)
+
+cc_binary(
+    name = "terrain_generate_bench",
+    testonly = True,
+    srcs = ["tests/terrain_generate_bench.cc"],
+    data = glob(["tests/testdata/terrain/*"]),
+    deps = [
+        ":terrain_generate",
+        ":terrain_physics",
+        ":terrain_test_data",
+        "//engine/src/kernel:kernel_api",
+        "//engine/src/physics:physics",
+        "@recastnavigation//:detour",
+    ],
+)
+
+cc_binary(
+    name = "terrain_recipe_cook",
+    srcs = ["tools/terrain_recipe_cook.cc"],
+    visibility = ["//game_server/gameplay_catalog_bundle:__pkg__"],
+    deps = [":game_server"],
+)
+
+cc_test(
+    name = "terrain_catalog_test",
+    size = "medium",
+    srcs = ["tests/terrain_catalog_test.cc"],
+    data = glob([
+        "gameplay_catalog/**/*.yaml",
+        "gameplay_catalog/stamp_templates/*.hf",
+        "gameplay_catalog/terrain_assets/*.nkgm",
+        "gameplay_catalog/terrain_assets/*.nkgl",
+    ]) + [
+        "//game_server/gameplay_catalog/skeleton_assets:locomotion_skeleton_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_biped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_quadruped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_tripod_assets",
+        "//game_server/gameplay_catalog_bundle:bundle",
+        "//game_server/gameplay_catalog_bundle:bundle_uncooked",
+    ],
+    deps = [
+        ":game_server",
+        ":game_server_bridge",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+# The composed terrain level as an OBJ, to look at in Unity before P5:
+#   bazel run -c opt //game_server:terrain_obj_export -- <bundle.zip> <entry> <out.obj> [stride]
+cc_binary(
+    name = "terrain_obj_export",
+    srcs = ["tools/terrain_obj_export.cc"],
+    deps = [":game_server"],
+)
+
+# Gray ground map (NKGM) -> terrace levels on the 0.3 m grid (NKGL):
+#   bazel run -c opt //game_server:terrain_ground_levels -- <in.nkgm> <levels> <out.nkgl>
+cc_binary(
+    name = "terrain_ground_levels",
+    srcs = ["tools/terrain_ground_levels.cc"],
+    deps = [":terrain_compose"],
 )

@@ -56,6 +56,33 @@ bool GameServer_QueryWeaponTemplate(
 
 void GameServer_DespawnAll(GameServerHandle* game_server, uint32_t reason);
 
+/*
+ * Terrain queries (GAME_SERVER_CAPABILITY_TERRAIN_QUERY), keyed by the kernel
+ * the terrain level's catalog was loaded into. False / 0 when that kernel has
+ * no terrain (its last catalog load had none, or ReleaseTerrain was called).
+ * Loading another catalog into the kernel replaces what these return; call
+ * GameServer_ReleaseTerrain before Kernel_Destroy to free the copy.
+ */
+bool GameServer_GetTerrainInfo(KernelHandle* kernel, GameServerTerrainInfo* out_info);
+/* A rectangle of heights (cm), rows south first; out_count must be at least
+ * width * depth and the rectangle inside the map. */
+bool GameServer_CopyTerrainHeights(
+    KernelHandle* kernel,
+    uint32_t x0,
+    uint32_t z0,
+    uint32_t width,
+    uint32_t depth,
+    int16_t* out_cm,
+    uint32_t out_count);
+/* Copies up to capacity placements (each struct_size set by the caller is
+ * honoured as sizeof(GameServerTerrainPlacement)); returns how many the map
+ * has, so a call with capacity 0 sizes the buffer. */
+uint32_t GameServer_CopyTerrainPlacements(
+    KernelHandle* kernel,
+    GameServerTerrainPlacement* out_placements,
+    uint32_t capacity);
+void GameServer_ReleaseTerrain(KernelHandle* kernel);
+
 #ifdef __cplusplus
 }
 #endif
