@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- adds client terrain queries, supports 64 MiB static scenes and refreshes terrace terrain generation
+
+
+0.7.0 release notes:
+
 - adds player-targeted patrol grouping and ring spawning and updates the composed 216x216 seed1 map
 
 
