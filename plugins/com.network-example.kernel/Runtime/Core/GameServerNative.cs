@@ -78,5 +78,20 @@ namespace NetworkExample.Kernel
 
         [DllImport(KernelNative.LibraryName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern void GameServer_ReleaseTerrain(IntPtr kernel);
+
+        [DllImport(KernelNative.LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool GameServer_GetStaticSceneMeshInfo(
+            IntPtr kernel,
+            ref GameServerStaticSceneMeshInfo outInfo);
+
+        [DllImport(KernelNative.LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool GameServer_CopyStaticSceneMesh(
+            IntPtr kernel,
+            [Out] float[] outPositions,
+            uint positionCapacity,
+            [Out] uint[] outIndices,
+            uint indexCapacity);
     }
 }

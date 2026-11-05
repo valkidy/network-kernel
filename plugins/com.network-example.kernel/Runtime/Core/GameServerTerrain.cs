@@ -80,10 +80,73 @@ namespace NetworkExample.Kernel
             return placements;
         }
 
+        // Frees the native copy of the terrain and of the static scene mesh.
         public static void Release(Kernel kernel)
         {
             IntPtr handle = RequireSupported(kernel);
             GameServerNative.GameServer_ReleaseTerrain(handle);
+        }
+
+        // Whether the native library has the static scene mesh queries.
+        public static bool IsStaticSceneMeshSupported =>
+            (GameServerAbi.GetInfo().capability_flags & GameServerConstants.CapabilityStaticSceneMeshQuery) != 0UL;
+
+        // A mesh level's baked static scene: false when the kernel's last
+        // catalog load had none (a terrain level, or no map), or after Release.
+        public static bool TryGetStaticSceneMeshInfo(Kernel kernel, out GameServerStaticSceneMeshInfo info)
+        {
+            IntPtr handle = RequireStaticSceneMeshSupported(kernel);
+            info = new GameServerStaticSceneMeshInfo { struct_size = GameServerStaticSceneMeshInfo.StructSize };
+            if (GameServerNative.GameServer_GetStaticSceneMeshInfo(handle, ref info))
+            {
+                return true;
+            }
+            info = default;
+            return false;
+        }
+
+        // The whole mesh: positions x, y, z per vertex and three indices per
+        // triangle, or false when there is none.
+        public static bool TryCopyStaticSceneMesh(
+            Kernel kernel,
+            out GameServerStaticSceneMeshInfo info,
+            out float[] positions,
+            out uint[] indices)
+        {
+            positions = null;
+            indices = null;
+            if (!TryGetStaticSceneMeshInfo(kernel, out info))
+            {
+                return false;
+            }
+            var copiedPositions = new float[(long)info.vertex_count * 3];
+            var copiedIndices = new uint[(long)info.triangle_count * 3];
+            if (!GameServerNative.GameServer_CopyStaticSceneMesh(
+                    kernel.Handle,
+                    copiedPositions,
+                    (uint)copiedPositions.Length,
+                    copiedIndices,
+                    (uint)copiedIndices.Length))
+            {
+                return false;
+            }
+            positions = copiedPositions;
+            indices = copiedIndices;
+            return true;
+        }
+
+        private static IntPtr RequireStaticSceneMeshSupported(Kernel kernel)
+        {
+            if (kernel == null)
+            {
+                throw new ArgumentNullException(nameof(kernel));
+            }
+            if (!IsStaticSceneMeshSupported)
+            {
+                throw new NotSupportedException(
+                    "The native game server has no static scene mesh queries (GAME_SERVER_CAPABILITY_STATIC_SCENE_MESH_QUERY).");
+            }
+            return kernel.Handle;
         }
 
         private static IntPtr RequireSupported(Kernel kernel)

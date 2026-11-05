@@ -18,6 +18,10 @@ namespace NetworkExample.Kernel
         // ReleaseTerrain: a generated terrain level's map, for the client to draw.
         // Optional: the queries check it, ValidateNativeAbi does not require it.
         public const ulong CapabilityTerrainQuery = 0x0000000000000080UL;
+        // GameServer_GetStaticSceneMeshInfo / CopyStaticSceneMesh: a mesh
+        // level's baked static collision scene as triangles, to draw. Optional,
+        // like the terrain queries.
+        public const ulong CapabilityStaticSceneMeshQuery = 0x0000000000000100UL;
 
         // KernelGameMessage.message_type values game_server sends and reads.
         // Bodies are little-endian and packed; see game_server_types.h.
@@ -106,5 +110,26 @@ namespace NetworkExample.Kernel
         public byte reserved1;
 
         public static uint StructSize => (uint)Marshal.SizeOf<GameServerTerrainPlacement>();
+    }
+
+    // A mesh level's static collision scene (catalog static_collision_scene
+    // entry_path, a baked .joltmesh) as the kernel collides with it: welded
+    // vertices in world space (kernel axes = Unity axes, no flip) and three
+    // indices per triangle in Unity's front-face order. Bounds are of the
+    // vertices. 36 bytes.
+    [StructLayout(LayoutKind.Sequential)]
+    public struct GameServerStaticSceneMeshInfo
+    {
+        public uint struct_size;
+        public uint vertex_count;
+        public uint triangle_count;
+        public float min_x;
+        public float min_y;
+        public float min_z;
+        public float max_x;
+        public float max_y;
+        public float max_z;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<GameServerStaticSceneMeshInfo>();
     }
 }

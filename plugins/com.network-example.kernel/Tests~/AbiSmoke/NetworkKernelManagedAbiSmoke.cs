@@ -300,6 +300,11 @@ public static class NetworkKernelManagedAbiSmoke
             (gameServerInfo.capability_flags & GameServerConstants.CapabilityTerrainQuery) != 0UL,
             "Game server terrain queries mismatch.");
         Require(
+            GameServerStaticSceneMeshInfo.StructSize == 36 &&
+            (int)System.Runtime.InteropServices.Marshal.OffsetOf<GameServerStaticSceneMeshInfo>("max_z") == 32 &&
+            (gameServerInfo.capability_flags & GameServerConstants.CapabilityStaticSceneMeshQuery) != 0UL,
+            "Game server static scene mesh queries mismatch.");
+        Require(
             (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("status_direction_authored") == 132 &&
             (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("suspend_rise_speed") == 136 &&
             (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("suspend_drift_speed") == 140 &&
