@@ -14,6 +14,7 @@
 #include <spdlog/spdlog.h>
 
 #include "game_server/src/game_server.h"
+#include "game_server/src/terrain_catalog.h"
 #include "client_app.h"
 #include "kernel/public/kernel_api.h"
 #include "protocol/public/network_packets.h"
@@ -282,6 +283,45 @@ int RunDedicatedServer(
                 gameplay_catalog_path,
                 gameplay_config.weapons.catalog_version,
                 gameplay_config.weapons.catalog_hash);
+        }
+        // A generated map (`terrain:`): the composed heightfield is the static
+        // scene and its navmesh rides on the config. Served bundles must carry
+        // the cooked recipe -- a recipe generated here would be this server's
+        // alone, and every client would refuse the bundle.
+        if (gameplay_config.terrain.enabled) {
+            namespace gs = network_example::game_server;
+            const std::vector<std::uint8_t> cooked = gs::read_cooked_terrain_recipe(
+                bundle_bytes.data(),
+                static_cast<std::uint32_t>(bundle_bytes.size()),
+                gameplay_config.terrain);
+            if (cooked.empty() && !bundle_bytes.empty()) {
+                spdlog::error(
+                    "terrain: the bundle has no cooked recipe at {}; rebuild it with "
+                    "//game_server/gameplay_catalog_bundle:bundle",
+                    gameplay_config.terrain.recipe_entry_path);
+                return 1;
+            }
+            gs::PreparedTerrain prepared;
+            std::string terrain_error;
+            const bool prepared_ok = gs::prepare_catalog_terrain(
+                &gameplay_config, cooked, gs::TerrainRole::kServer, &prepared, &terrain_error);
+            for (const std::string& line : prepared.report) {
+                spdlog::info("terrain: {}", line);
+            }
+            if (!prepared_ok) {
+                spdlog::error("terrain: {}", terrain_error);
+                return 1;
+            }
+            spdlog::info(
+                "terrain: {} recipe seed={} placements={} heights_hash={:016x} "
+                "collision_bytes={} navmesh_bytes={}",
+                prepared.generated ? "generated" : "cooked",
+                prepared.recipe.recipe.seed,
+                prepared.recipe.recipe.placements.size(),
+                prepared.recipe.heights_hash,
+                prepared.collision_artifact.size(),
+                gameplay_config.navigation_mesh.artifact.size());
+            collision_scene_bytes = std::move(prepared.collision_artifact);
         }
     } catch (const network_example::game_server::DataLoadError& error) {
         spdlog::error(

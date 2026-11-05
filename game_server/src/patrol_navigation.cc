@@ -13,6 +13,8 @@
 #include <DetourNavMeshQuery.h>
 #include <DetourStatus.h>
 
+#include "game_server/src/terrain/terrain_navmesh.h"
+
 namespace network_example::game_server {
 namespace {
 
@@ -86,6 +88,13 @@ bool PatrolNavigation::load(
         }
         return false;
     };
+    // A generated terrain's multi-tile navmesh (terrain_navmesh.h) rather than
+    // a baked single-tile file.
+    if (terrain::is_navmesh_tiles(artifact)) {
+        std::string local;
+        dtNavMesh* mesh = terrain::read_navmesh_tiles(artifact, error != nullptr ? error : &local);
+        return mesh != nullptr && adopt(mesh, error);
+    }
     if (artifact.size() < kMeshArtifactHeaderSize ||
         !std::equal(kRecastMagic.begin(), kRecastMagic.end(), artifact.begin())) {
         return fail("navmesh artifact magic or header is wrong");
@@ -125,6 +134,27 @@ bool PatrolNavigation::load(
     query_ = dtAllocNavMeshQuery();
     if (query_ == nullptr || dtStatusFailed(query_->init(mesh_, kMaxPathPolys))) {
         return fail("navmesh query init failed");
+    }
+    return true;
+}
+
+bool PatrolNavigation::adopt(dtNavMesh* mesh, std::string* error) {
+    if (query_ != nullptr) {
+        dtFreeNavMeshQuery(query_);
+        query_ = nullptr;
+    }
+    if (mesh_ != nullptr) {
+        dtFreeNavMesh(mesh_);
+    }
+    mesh_ = mesh;
+    if (mesh_ == nullptr) {
+        if (error != nullptr) *error = "no navmesh to adopt";
+        return false;
+    }
+    query_ = dtAllocNavMeshQuery();
+    if (query_ == nullptr || dtStatusFailed(query_->init(mesh_, kMaxPathPolys))) {
+        if (error != nullptr) *error = "navmesh query init failed";
+        return false;
     }
     return true;
 }

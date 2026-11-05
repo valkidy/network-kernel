@@ -1,0 +1,155 @@
+# A generated-terrain level (docs/KERNEL_TERRAIN_IMPLEMENTATION_PLAN.md P3.7):
+# the shipping catalog with its baked map swapped for `terrain:`. Bundled as
+# terrain_gameplay_catalog.yaml next to gameplay_catalog.yaml (the shipping
+# entry is untouched); a dedicated server plays it with
+#   --gameplay-catalog-entry=terrain_gameplay_catalog.yaml
+# and pure clients follow the entry the server's bundle names.
+#
+# Paths are bundle-root relative, like legged_locomotion's test catalog: this
+# file only loads from the bundle.
+#
+# Left out against the shipping catalog, because they are placed in
+# plane_200x200_4zones_v2's world coordinates: scene_props (the initial camp at
+# y 5 would sit inside the ground), agent_routes, and map.playable_bounds
+# (terrain fills it in from map_size).
+catalog_version: 16
+prop_population_rules:
+  - id: 1
+    name: temporary_deployable
+    max_alive: 256
+  # Buildings: tents and field camps share these places. Kept apart from
+  # temporary_deployable so a pile of ice blocks can never evict a tent
+  # someone is resting in; a new building may.
+  - id: 2
+    name: building
+    max_alive: 4
+    # A tent folding away throws its occupants clear however it goes, so its
+    # on_destroy_entity runs on expiry and eviction too. A building with no
+    # on_destroy_entity has nothing to run.
+    cleanup_runs_on_destroy: true
+  # Portals, apart from buildings: two at a time, a third evicting the oldest
+  # (and its exit with it).
+  - id: 3
+    name: portal
+    max_alive: 2
+action_template_dir: action_templates
+action_graph_template_dir: action_graph_templates
+status_effect_template_dir: status_effect_templates
+sp_attack_template_dir: sp_attack_templates
+reload_action_template:
+  id: 4199
+  name: shared_reload
+  trigger_mode: press
+  flags: [cancel_on_death, cancel_on_weapon_change, cancel_before_first_commit]
+  ammo_cost_per_commit: 0
+  commit_offset_ticks: 30
+  commit_interval_ticks: 0
+  max_commit_count: 1
+  recovery_ticks: 0
+  hold_input_timeout_ticks: 0
+weapon_template_dir: weapon_templates
+projectile_template_dir: projectile_templates
+entity_template_dir: entity_templates
+preload_directors:
+  - game_rule
+item_template_dir: item_templates
+collider_template_dir: collider_templates
+patrol_template_dir: patrol_templates
+skeleton_manifests_dir: skeleton_assets/generated
+# The map: a 216 m painted ground (ground_0001, 19 terrace levels) with the four
+# prototype stamps laid out on it. The recipe that places them is cooked into
+# the bundle at bundle build time (//game_server:terrain_recipe_cook), from
+# `seed`; every client composes the same heightfield from it. The heightfield is
+# the static collision scene, so that names ids and a layer but no mesh; the
+# server bakes its navmesh from the same heights.
+terrain:
+  map_size: {x: 216.0, z: 216.0}
+  seed: 1
+  recipe: terrain/terrain_gameplay_catalog.nktr
+  # ground_0001 as terrace levels on the 0.3 m grid (NKGL), cooked from its
+  # 16-bit export by //game_server:terrain_ground_levels -- the same map, a
+  # quarter of the bundle bytes.
+  ground_maps: [terrain_assets/ground_0001.nkgl]
+  stamps: {count: 12, min_count: 10}
+  terrace: {levels: 19, level_height: 1.2, black: 12.0, riser_slope_degrees: 28.0, cliff_share: 0.15, cliff_width: 0.3, cliff_wavelength: 25.0}
+  detail: {amplitude: 0.4, wavelength: 12.0}
+  layout: {base_step: 1.5, ring_slope_degrees: 30.0, min_ring: 4.0, max_ring: 24.0}
+  accept: {min_reach: 0.995, max_unreachable_area: 400.0, max_seam_breaks: 0, min_placed: 10}
+  max_retries: 8
+stamp_template_dir: stamp_templates
+static_collision_scene:
+  scene_id: 1
+  collider_id: 2147483649
+  collision_layer: 1
+# `scene_items:` (none by default) lays items on the map from the start, each
+#   - item_template: <name>   quantity: <n, default 1>   position: {x, y, z}
+# A weapon placed so is a map weapon: a loadout being reapplied leaves it with
+# whoever picked it up. Every entity placed here moves the net ids of all that
+# follow, which some order-sensitive tests notice (knockdown_recovery_test).
+player:
+  entity_template: player
+  # Where a joining player is put: the map centre, above the highest ground
+  # (12-38 m here) so the controller drops it onto whatever the seed laid out.
+  spawn_position: {x: 0.0, y: 45.0, z: 0.0}
+  # The kill floor, in metres. Any actor or prop that falls below it has left
+  # the map: a living actor dies (a player respawns at spawn_position), and
+  # anything else is removed. Must be under spawn_position.
+  fall_death_height: -10.0
+  # A dead player comes back delay_seconds later, height_offset metres above
+  # its body (less under a ceiling) so it drops back in, and cannot be hurt for
+  # invulnerable_seconds. team_revive_times is one pool shared by every player:
+  # -1 never runs out; at 0 the dead stay dead.
+  respawn:
+    delay_seconds: 4.0
+    height_offset: 50.0
+    invulnerable_seconds: 2.0
+    team_revive_times: -1
+# Squads the world produces on its own schedule, independent of the mission.
+# Authored in the catalog rather than on world_rule because a patrol never
+# reaches the kernel as a director: game_server spawns it, owns its grouping and
+# walks its route, the same way it owns every other AI decision. Each definition
+# is a file under patrol_template_dir; `patrols:` below picks which ones run.
+#
+# The route is pathed over navigation_mesh when one is loaded, and a straight
+# chord between two points in the area otherwise -- wrong on this map, which is
+# not flat: it would walk squads into cliffs and trunks. East of
+# plane_200x200_4zones_v2's 04_Narrow_Pass valley (x > 62, z < 0) is a plateau
+# ~11 m up, ringed by cliffs no agent can climb, so a point drawn on it finds no
+# route from the low ground. The valley floor below it is connected;
+# pass_giant_route_test walks it. See //game_server:patrol_nav_bench.
+#
+# A ceiling across every definition, which is the one thing the per-definition
+# ceilings cannot express.
+# Player orders to their side's agents (docs/AI_BEHAVIOR_PLAN.md §12.9).
+agent_commands:
+  # After an order is obeyed, the player's next one waits this long: 5 s.
+  # Agents take orders slowly on purpose, so each order is a considered one.
+  peer_cooldown_ticks: 150
+# Six squads of up to twelve: four players at 1.5 squads each, rounded up
+# (docs/PLAYER_TARGETED_PATROL_PLAN.md §9).
+patrol_budget:
+  max_live_agents: 72
+# Every unit an on_alert spawner has put out, server-wide, alive at once. Each
+# caller's own max_live_agents bounds one caller; this bounds all of them, so N
+# callers spotting a player on the same tick cannot put out N waves. It counts
+# the units, not the callers: killing a caller does not hand its share back.
+reinforce_budget:
+  max_live_agents: 64
+# Every agent on the server. Patrols, nests and calls for help only fill room
+# that is left under it, and calls give way first. Mission and world rules, and
+# action-graph spawns, are counted but never refused -- so this must stay above
+# whatever they keep in the world, or nothing discretionary ever spawns.
+#
+# Sized from this map's discretionary ceilings: patrols 48 + calls 64 + nests
+# (12 each) + mission/world rules is about 170, and 256 leaves half again. At
+# -c opt that is ~2 ms of kernel tick (200 engaged agents measured 1.6 ms),
+# well inside 33 ms. 200 fighting agents near one party is the most the
+# snapshot path has been measured clean at, so 256 converging on one party is
+# past what has been measured; drop to 200 if that shows.
+agent_budget:
+  max_live_agents: 256
+# Which of the patrol_template_dir definitions run. Every file there is loaded
+# and validated whether it is listed or not, so a broken definition fails the
+# catalog even while it is switched off; only the listed ids ever spawn.
+patrols:
+  - ids: [1] # [1, 2]
