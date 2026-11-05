@@ -1545,13 +1545,13 @@ int main() {
     require(config.player.actor_template_id == 1);
     require(
         config.static_collision_scene.entry_path ==
-        "mesh_assets/jolt/plane_200x200_4zones_v2.joltmesh");
+        "mesh_assets/jolt/composed_216m_ground_0001_seed1_collision.joltmesh");
     require(config.static_collision_scene.scene_id == 1u);
     require(config.static_collision_scene.collider_id == 0x80000001u);
     require(
         config.static_collision_scene.collision_layer ==
         KERNEL_STATIC_COLLISION_LAYER_TERRAIN);
-    require(config.weapons.catalog_version == 16);
+    require(config.weapons.catalog_version == 17);
     require(config.prop_population_rules.size() == 3u);
     require(config.prop_population_rules[0].name == "temporary_deployable");
     require(

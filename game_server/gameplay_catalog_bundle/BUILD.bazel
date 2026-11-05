@@ -17,11 +17,14 @@ for src in $(SRCS); do
     */test_catalogs/legged_locomotion/gameplay_catalog.yaml)
       cp "$$src" "$$bundle_root/legged_locomotion_gameplay_catalog.yaml"
       ;;
-    */test_catalogs/terrain/gameplay_catalog.yaml)
-      cp "$$src" "$$bundle_root/terrain_gameplay_catalog.yaml"
-      ;;
     */gameplay_catalog.yaml)
       cp "$$src" "$$bundle_root/gameplay_catalog.yaml"
+      # One entry per map variant, the catalog with map_variant set to it, so
+      # a server picks the map by entry path without a rebuild.
+      for variant in kernel_terrain composed_mesh; do
+        sed "s/^map_variant: .*/map_variant: $$variant/" "$$src" > "$$bundle_root/gameplay_catalog.$$variant.yaml"
+        grep -q "^map_variant: $$variant$$" "$$bundle_root/gameplay_catalog.$$variant.yaml"
+      done
       ;;
     */weapon_templates/*.yaml)
       cp "$$src" "$$bundle_root/weapon_templates/$$(basename "$$src")"
@@ -120,10 +123,10 @@ genrule(
     name = "terrain_recipe",
     srcs = [":bundle_uncooked"],
     outs = [
-        "terrain_gameplay_catalog.nktr",
+        "gameplay_catalog.nktr",
         "terrain_recipe_report.txt",
     ],
-    cmd = "$(location //game_server:terrain_recipe_cook) $(location :bundle_uncooked) terrain_gameplay_catalog.yaml $(location terrain_gameplay_catalog.nktr) > $(location terrain_recipe_report.txt)",
+    cmd = "$(location //game_server:terrain_recipe_cook) $(location :bundle_uncooked) gameplay_catalog.yaml $(location gameplay_catalog.nktr) kernel_terrain > $(location terrain_recipe_report.txt)",
     tools = ["//game_server:terrain_recipe_cook"],
 )
 
@@ -131,7 +134,7 @@ genrule(
     name = "bundle",
     srcs = [
         ":bundle_uncooked",
-        ":terrain_gameplay_catalog.nktr",
+        ":gameplay_catalog.nktr",
     ],
     outs = ["bundle.zip"],
     cmd = """
@@ -141,7 +144,7 @@ bundle_root="$(@D)/cooked_bundle_root"
 rm -rf "$$bundle_root"
 mkdir -p "$$bundle_root/terrain"
 /usr/bin/unzip -q "$(location :bundle_uncooked)" -d "$$bundle_root"
-cp "$(location :terrain_gameplay_catalog.nktr)" "$$bundle_root/terrain/terrain_gameplay_catalog.nktr"
+cp "$(location :gameplay_catalog.nktr)" "$$bundle_root/terrain/gameplay_catalog.nktr"
 find "$$bundle_root" -exec touch -t 198001010000 {} +
 (cd "$$bundle_root" && find . -mindepth 1 | sed 's|^\\./||' | LC_ALL=C sort | /usr/bin/zip -q -X -@ "$$out_path")
 rm -rf "$$bundle_root"

@@ -28,13 +28,18 @@ interval_ticks: 900
 # the ceilings fill its largest, or the catalog refuses to load. A loner's
 # tier has no warrior or mage floor because the full warband's floors alone
 # are six bodies.
+#
+# The loner's tier was 4-6 and is now 2.5-3 times that, 10-18: a squad big
+# enough to be a fight for one player on the terrain map. It is now larger
+# than the two-player tier and close to the three-player one; those were left
+# as they were.
 squad_by_group_size:
   - members: {min: 1, max: 1}
-    count: {min: 4, max: 6}
+    count: {min: 10, max: 18}
     composition:
-      - {entity_template: gingerbread_warrior, min: 0, max: 1}
-      - {entity_template: gingerbread_mage, min: 0, max: 1}
-      - {entity_template: gingerbread, min: 3, max: 6}
+      - {entity_template: gingerbread_warrior, min: 1, max: 3}
+      - {entity_template: gingerbread_mage, min: 0, max: 2}
+      - {entity_template: gingerbread, min: 6, max: 13}
   - members: {min: 2, max: 2}
     count: {min: 6, max: 9}
     composition:

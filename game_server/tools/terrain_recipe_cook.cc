@@ -3,7 +3,11 @@
 // (layout, checks, retries, fallback) from the catalog's seed, and writes the
 // accepted recipe (NKTR) to <out>, plus one report line per attempt to stdout.
 //
-//   terrain_recipe_cook <bundle.zip> <entry.yaml> <out.nktr>
+//   terrain_recipe_cook <bundle.zip> <entry.yaml> <out.nktr> [<map_variant>]
+//
+// With <map_variant>, cooks that one of the catalog's map_variants whichever
+// one its map_variant plays, so switching the catalog to a mesh map and back
+// never leaves the bundle without a recipe.
 //
 // Fails (non-zero) when no map passes: a bundle never ships an unchecked map.
 
@@ -18,8 +22,8 @@
 
 int main(int argc, char** argv) {
     namespace gs = network_example::game_server;
-    if (argc != 4) {
-        std::fprintf(stderr, "usage: %s <bundle.zip> <entry.yaml> <out.nktr>\n", argv[0]);
+    if (argc != 4 && argc != 5) {
+        std::fprintf(stderr, "usage: %s <bundle.zip> <entry.yaml> <out.nktr> [<map_variant>]\n", argv[0]);
         return 2;
     }
     std::ifstream in(argv[1], std::ios::binary);
@@ -30,7 +34,7 @@ int main(int argc, char** argv) {
     }
     try {
         const gs::GameServerGameplayConfig config = gs::load_gameplay_config_from_bundle_memory(
-            bundle.data(), static_cast<std::uint32_t>(bundle.size()), argv[2]);
+            bundle.data(), static_cast<std::uint32_t>(bundle.size()), argv[2], argc == 5 ? argv[4] : "");
         if (!config.terrain.enabled) {
             std::fprintf(stderr, "terrain_recipe_cook: %s has no terrain\n", argv[2]);
             return 1;

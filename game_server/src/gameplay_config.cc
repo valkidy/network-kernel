@@ -10202,10 +10202,104 @@ TerrainCatalogConfig terrain_catalog_from_yaml(
     return c;
 }
 
+// `over` laid on `base`: mappings merge key by key, anything else replaces.
+YAML::Node merge_map_variant_node(const YAML::Node& base, const YAML::Node& over) {
+    if (!base || !base.IsMap() || !over.IsMap()) {
+        return YAML::Clone(over);
+    }
+    YAML::Node out = YAML::Clone(base);
+    for (const auto& entry : over) {
+        const std::string key = entry.first.as<std::string>();
+        const YAML::Node& lookup = out;
+        const YAML::Node existing = lookup[key];
+        out[key] = existing ? merge_map_variant_node(existing, entry.second)
+                            : YAML::Clone(entry.second);
+    }
+    return out;
+}
+
+// `map_variant:` names one of `map_variants:`, whose keys are laid over the
+// catalog root before anything else reads it: a mapping merges key by key
+// (so a variant's `player: {spawn_position: ...}` keeps the root player's other
+// keys), anything else replaces. One catalog then carries every map it can be
+// played on and switches between them with one word. `override_name`, when
+// set, wins over the file's choice (the recipe cook uses it to always cook
+// the terrain variant, whichever one the file plays).
+YAML::Node apply_map_variant(
+    const YAML::Node& document,
+    const std::string& override_name,
+    const std::string& path,
+    std::uint32_t source_kind) {
+    const YAML::Node variants = document["map_variants"];
+    const YAML::Node chosen = document["map_variant"];
+    if (!variants && !chosen) {
+        if (!override_name.empty()) {
+            throw std::runtime_error(
+                "map variant " + override_name + " requested, but the catalog has no map_variants: " + path);
+        }
+        return document;
+    }
+    if (!variants || !variants.IsMap() || variants.size() == 0) {
+        throw std::runtime_error("map_variant needs a map_variants mapping: " + path);
+    }
+    std::string names;
+    for (const auto& entry : variants) {
+        const std::string name = entry.first.as<std::string>();
+        names += (names.empty() ? "" : ", ") + name;
+        if (!entry.second.IsMap()) {
+            throw std::runtime_error("map_variants " + name + " must be a mapping: " + path);
+        }
+        // Every variant is checked, not only the one in play, so switching to
+        // one does not first reveal that it never loaded.
+        reject_unknown_keys(
+            entry.second,
+            {
+                "navigation_mesh",
+                "static_collision_scene",
+                "terrain",
+                "stamp_template_dir",
+                "map",
+                "player",
+                "scene_props",
+                "scene_items",
+                "agent_routes",
+            },
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+    }
+    if (!chosen && override_name.empty()) {
+        throw std::runtime_error("map_variants needs map_variant to pick one of: " + names + ": " + path);
+    }
+    const std::string name = override_name.empty() ? chosen.as<std::string>() : override_name;
+    const YAML::Node variant = variants[name];
+    if (!variant) {
+        throw std::runtime_error(
+            "map_variant " + name + " is not one of map_variants (" + names + "): " + path);
+    }
+    YAML::Node out(YAML::NodeType::Map);
+    for (const auto& entry : document) {
+        const std::string key = entry.first.as<std::string>();
+        if (key != "map_variant" && key != "map_variants") {
+            out[key] = entry.second;
+        }
+    }
+    for (const auto& entry : variant) {
+        const std::string key = entry.first.as<std::string>();
+        const YAML::Node& lookup = out;
+        const YAML::Node existing = lookup[key];
+        out[key] = existing ? merge_map_variant_node(existing, entry.second)
+                            : YAML::Clone(entry.second);
+    }
+    return out;
+}
+
 GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     const GameplayConfigSource& source,
-    const std::string& path) {
-    const YAML::Node document = source.load_yaml(path);
+    const std::string& path,
+    const std::string& map_variant = {}) {
+    const YAML::Node document =
+        apply_map_variant(source.load_yaml(path), map_variant, path, source.source_kind());
     reject_unknown_keys(
         document,
         {
@@ -10288,7 +10382,8 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     const std::uint32_t catalog_version =
         document["catalog_version"] ? document["catalog_version"].as<std::uint32_t>()
                                     : 1u;
-    // 11 added the optional skeleton.colliders block. 10 replaced the
+    // 17 added map_variant / map_variants (applied above, before this check
+    // sees the root). 11 added the optional skeleton.colliders block. 10 replaced the
     // skeleton_manifests list with skeleton_manifests_dir. 8, 9 and 10 stay
     // loadable because nothing else about them changed; a catalog that still
     // carries the old key is caught below with a migration message rather than
@@ -10299,7 +10394,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
         catalog_version != 10u && catalog_version != 11u &&
         catalog_version != 12u && catalog_version != 13u &&
         catalog_version != 14u && catalog_version != 15u &&
-        catalog_version != 16u) {
+        catalog_version != 16u && catalog_version != 17u) {
         throw DataLoadError(
             KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNSUPPORTED_CATALOG_VERSION,
             "unsupported catalog_version: " + std::to_string(catalog_version),
@@ -12432,9 +12527,10 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_file(
 GameServerGameplayConfig load_gameplay_config_from_bundle_memory(
     const std::uint8_t* bundle_bytes,
     std::uint32_t bundle_size,
-    const std::string& entry_path) {
+    const std::string& entry_path,
+    const std::string& map_variant) {
     const MemoryZipGameplayConfigSource source(bundle_bytes, bundle_size);
-    return load_gameplay_config_from_catalog_source(source, entry_path);
+    return load_gameplay_config_from_catalog_source(source, entry_path, map_variant);
 }
 
 // The file counterpart of load_gameplay_bundle_entry_bytes. A catalog names

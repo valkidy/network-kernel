@@ -1,4 +1,4 @@
-catalog_version: 16
+catalog_version: 17
 prop_population_rules:
   - id: 1
     name: temporary_deployable
@@ -42,36 +42,108 @@ item_template_dir: item_templates
 collider_template_dir: collider_templates
 patrol_template_dir: patrol_templates
 skeleton_manifests_dir: skeleton_assets/generated
-# The baked navmesh for the scene below, which has been shipping in this bundle
-# since mesh_asset_bakes started emitting one -- nothing had ever loaded it.
-# game_server loads it itself and the kernel never sees it: navigation is what
-# the AI decides with, and kernel movement is driven by the character controller.
+# The map. Everything tied to one map's coordinates or to how it is made
+# lives under map_variants; map_variant picks the one this catalog plays, and
+# its keys are laid over the rest of this file when it loads (a mapping merges
+# key by key, so a variant's `player: {spawn_position}` keeps the player's
+# other keys below). Switching maps for a test is this one word plus a bundle
+# rebuild. The bundle always carries both: the terrain recipe is cooked from
+# kernel_terrain whichever variant is in play, and it carries every variant as
+# an entry of its own too, gameplay_catalog.<variant>.yaml (this file with
+# map_variant set to it): a dedicated server switches map without a rebuild
+# with --gameplay-catalog-entry=gameplay_catalog.kernel_terrain.yaml, and pure
+# clients follow the entry the server names.
 #
-# It has to name the same source mesh as static_collision_scene, or squads will
-# path over one shape and walk into another.
-navigation_mesh:
-  # entry_path: mesh_assets/recast/plane_200x200_4zones_v2.navmesh
-  entry_path: mesh_assets/recast/composed_216m_ground_0001_seed1_collision.navmesh
-# Four 100 m zones around the origin: open combat (-x,-z), forest flank
-# (-x,+z), swamp shortcut (+x,+z) and narrow pass (+x,-z). Open combat holds
-# the 6 m camp pad at y=5 in its far corner, on the same navmesh island as
-# the rest of the map. The pass's plateau (x 57-99, z -99 to -6, ~11-13 m up)
-# is ringed by cliffs and is its own island: nothing walks up to it. The
-# forest is studded with trunks; all of it is static collision here.
+# composed_mesh is the default because the tests and tools that load this file
+# from the source tree (not from the bundle) cannot compose a terrain: its
+# recipe exists only in the bundle.
+#
+# The two variants are the same map. composed_mesh is the Unity prototype's
+# seed-1 compose of it, exported as an OBJ and baked like any hand-made map
+# (mesh_assets/raw, x and z 0..216); kernel_terrain is the kernel composing the
+# same recipe itself, centred on the origin (x and z -108..108). So every
+# position below is the kernel_terrain one plus 108 on x and z in
+# composed_mesh. The mesh is sampled every ~1.5 m, so its ground can sit up to
+# ~0.4 m off the kernel's (more on a cliff).
+#
+# map.playable_bounds is left out of both: kernel_terrain fills it in from
+# map_size (+-108), and with no bounds the patrols fall back to the navmesh's
+# extent, which for composed_mesh is the mesh's 0..216.
+map_variant: composed_mesh
+map_variants:
+  kernel_terrain:
+    # A 216 m painted ground (ground_0001, 19 terrace levels) with the four
+    # prototype stamps laid out on it. The recipe that places them is cooked
+    # into the bundle at bundle build time (//game_server:terrain_recipe_cook),
+    # from `seed`; every client composes the same heightfield from it. The
+    # heightfield is the static collision scene, so that names ids and a layer
+    # but no mesh; the server bakes its navmesh from the same heights.
+    terrain:
+      map_size: {x: 216.0, z: 216.0}
+      seed: 1
+      recipe: terrain/gameplay_catalog.nktr
+      # ground_0001 as terrace levels on the 0.3 m grid (NKGL), cooked from
+      # its 16-bit export by //game_server:terrain_ground_levels.
+      ground_maps: [terrain_assets/ground_0001.nkgl]
+      stamps: {count: 12, min_count: 10}
+      terrace: {levels: 19, level_height: 1.2, black: 12.0, riser_slope_degrees: 28.0, cliff_share: 0.15, cliff_width: 0.3, cliff_wavelength: 25.0}
+      detail: {amplitude: 0.4, wavelength: 12.0}
+      layout: {base_step: 1.5, ring_slope_degrees: 30.0, min_ring: 4.0, max_ring: 24.0}
+      accept: {min_reach: 0.995, max_unreachable_area: 400.0, max_seam_breaks: 0, min_placed: 10}
+      max_retries: 8
+    stamp_template_dir: stamp_templates
+    # The initial camp on the flattest ground near the middle: a terrace floor
+    # at y 20.4-20.6 m around (-7.2, -36), measured off the composed heights.
+    scene_props:
+      - entity_template: initial_camp
+        position: {x: -7.2, y: 20.6, z: -36.0}
+    player:
+      # ~7 m from the camp on the same floor (20.4 m), dropped from a little
+      # above it; the controller settles it onto the ground.
+      spawn_position: {x: -1.2, y: 23.0, z: -31.0}
+    # A loop round the camp's terrace (heights are the ground there). Each leg
+    # is pathed over the navmesh, which walks it round the cliff south of it.
+    agent_routes:
+      - id: 1
+        name: camp_perimeter
+        waypoints:
+          - {x: -17.0, y: 22.5, z: -26.0}
+          - {x: 22.8, y: 20.1, z: -26.0}
+          - {x: 22.8, y: 21.0, z: -46.0}
+          - {x: -17.0, y: 21.5, z: -46.0}
+  composed_mesh:
+    # The baked navmesh for the scene below. game_server loads it itself and
+    # the kernel never sees it: navigation is what the AI decides with, and
+    # kernel movement is driven by the character controller. It has to name
+    # the same source mesh as static_collision_scene, or squads will path over
+    # one shape and walk into another.
+    navigation_mesh:
+      # entry_path: mesh_assets/recast/plane_200x200_4zones_v2.navmesh
+      entry_path: mesh_assets/recast/composed_216m_ground_0001_seed1_collision.navmesh
+    static_collision_scene:
+      # entry_path: mesh_assets/jolt/undulating.joltmesh
+      # entry_path: mesh_assets/jolt/plane_200x200.joltmesh
+      # entry_path: mesh_assets/jolt/plane_200x200_4zones_v2.joltmesh
+      entry_path: mesh_assets/jolt/composed_216m_ground_0001_seed1_collision.joltmesh
+    scene_props:
+      - entity_template: initial_camp
+        position: {x: 100.8, y: 20.6, z: 72.0}
+    player:
+      spawn_position: {x: 106.8, y: 23.0, z: 77.0}
+    agent_routes:
+      - id: 1
+        name: camp_perimeter
+        waypoints:
+          - {x: 91.0, y: 22.5, z: 82.0}
+          - {x: 130.8, y: 20.1, z: 82.0}
+          - {x: 130.8, y: 21.0, z: 62.0}
+          - {x: 91.0, y: 21.5, z: 62.0}
+# The ids and layer the map's collision registers under, whichever variant
+# supplies its shape (a mesh names entry_path; a terrain is its own shape).
 static_collision_scene:
-  # entry_path: mesh_assets/jolt/undulating.joltmesh
-  # entry_path: mesh_assets/jolt/plane_200x200.joltmesh
-  # entry_path: mesh_assets/jolt/plane_200x200_4zones_v2.joltmesh
-  entry_path: mesh_assets/jolt/composed_216m_ground_0001_seed1_collision.joltmesh
   scene_id: 1
   collider_id: 2147483649
   collision_layer: 1
-# Props placed once the server is running, before any mission: a stand-in for
-# the scene file that will place a map's fixed props. The initial camp sits
-# on the camp pad in open combat's far corner (x,z -93 to -87 at y=5).
-scene_props:
-  - entity_template: initial_camp
-    position: {x: -90.0, y: 5.0, z: -90.0}
 # `scene_items:` (none by default) lays items on the map from the start, each
 #   - item_template: <name>   quantity: <n, default 1>   position: {x, y, z}
 # A weapon placed so is a map weapon: a loadout being reapplied leaves it with
@@ -79,11 +151,9 @@ scene_props:
 # follow, which some order-sensitive tests notice (knockdown_recovery_test).
 player:
   entity_template: player
-  # Where a joining player is put: on the mound beside the camp pad, ~6 m from
-  # the camp, so the first thing a player can do is pick a loadout. y is the
-  # mound top (~4.7 m) plus a little; the controller settles it onto the ground.
-  # spawn_position: {x: -85.0, y: 5.0, z: -85.0}
-  spawn_position: {x: 50.0, y: 25.0, z: 50.0}
+  # Where a joining player is put (spawn_position) comes from the map
+  # variant above: beside the initial camp, so the first thing a player can
+  # do is pick a loadout.
   # The kill floor, in metres. Any actor or prop that falls below it has left
   # the map: a living actor dies (a player respawns at spawn_position), and
   # anything else is removed. Must be under spawn_position.
@@ -120,24 +190,7 @@ agent_commands:
   peer_cooldown_ticks: 150
 # Routes an agent command may send a player-side patrol along, by id
 # (docs/AI_BEHAVIOR_PLAN.md B15): a client names one of these and never sends
-# waypoints of its own. World space, on plane_200x200_4zones_v2 -- move them
-# with the map.
-agent_routes:
-  # A loop just outside the initial camp (-90, -90).
-  - id: 1
-    name: camp_perimeter
-    waypoints:
-      - {x: -80.0, y: 5.0, z: -80.0}
-      - {x: -60.0, y: 5.0, z: -80.0}
-      - {x: -60.0, y: 5.0, z: -60.0}
-      - {x: -80.0, y: 5.0, z: -60.0}
-# Where players play, horizontally. around_players patrols start and end
-# inside it; without it they fall back to the navmesh's extent, and with
-# neither they are not clipped at all. plane_200x200_4zones_v2 is 200 m
-# across, centred on the origin -- a map swap has to change this too.
-map:
-  # playable_bounds: {min: {x: -100.0, z: -100.0}, max: {x: 100.0, z: 100.0}}
-  playable_bounds: {min: {x: 0, z: 0}, max: {x: 216, z: 216}}
+# waypoints of its own. World space, so they are per map: see map_variants.
 # Six squads of up to twelve: four players at 1.5 squads each, rounded up
 # (docs/PLAYER_TARGETED_PATROL_PLAN.md §9).
 patrol_budget:
@@ -164,5 +217,7 @@ agent_budget:
 # Which of the patrol_template_dir definitions run. Every file there is loaded
 # and validated whether it is listed or not, so a broken definition fails the
 # catalog even while it is switched off; only the listed ids ever spawn.
+#
+# 1 the warband, 3 the giant; 2 (the airforce) is off.
 patrols:
-  - ids: [1] # [1, 2]
+  - ids: [1, 3] # [1, 2, 3]

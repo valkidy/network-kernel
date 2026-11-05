@@ -1,5 +1,6 @@
 // The terrain level end to end through the catalog (implementation plan P3):
-// the bundle's terrain_gameplay_catalog.yaml with its cooked recipe loads, the
+// the bundle's gameplay_catalog.yaml (its kernel_terrain map variant) with its
+// cooked recipe loads, the
 // client and server prepare paths compose the recorded map, a Unity Host
 // (GameServer_CreateWithGameplayCatalogFromMemory) and a pure client
 // (Kernel_LoadGameplayCatalogFromMemory) both accept it, and every way a bundle
@@ -35,8 +36,11 @@ void require_impl(bool condition, int line, const char* text) {
 }
 #define require(expr) require_impl(static_cast<bool>(expr), __LINE__, #expr)
 
-constexpr const char* kEntry = "terrain_gameplay_catalog.yaml";
-constexpr const char* kRecipe = "terrain/terrain_gameplay_catalog.nktr";
+// The shipping catalog's kernel_terrain variant, as the entry the bundle
+// build derives for it (gameplay_catalog.yaml with map_variant set).
+constexpr const char* kEntry = "gameplay_catalog.kernel_terrain.yaml";
+constexpr const char* kRecipe = "terrain/gameplay_catalog.nktr";
+constexpr const char* kVariant = "kernel_terrain";
 
 std::vector<std::uint8_t> read_bundle(const char* file = "game_server/gameplay_catalog_bundle/bundle.zip") {
     std::ifstream s(file, std::ios::binary);
@@ -49,8 +53,9 @@ std::string entry_text(const std::vector<std::uint8_t>& bundle, const std::strin
     return std::string(b.begin(), b.end());
 }
 
-gs::GameServerGameplayConfig load(const std::vector<std::uint8_t>& bundle, const char* entry = kEntry) {
-    return gs::load_gameplay_config_from_bundle_memory(bundle.data(), static_cast<std::uint32_t>(bundle.size()), entry);
+gs::GameServerGameplayConfig load(
+    const std::vector<std::uint8_t>& bundle, const char* entry = kEntry, const char* variant = kVariant) {
+    return gs::load_gameplay_config_from_bundle_memory(bundle.data(), static_cast<std::uint32_t>(bundle.size()), entry, variant);
 }
 
 // The catalog from a directory: the edited yaml next to links to the real
@@ -139,9 +144,15 @@ gs::PreparedTerrain config_and_prepare(const std::vector<std::uint8_t>& bundle) 
     require(error.find("different stamp") != std::string::npos);
     std::printf("other library refused: %s\n", error.c_str());
 
-    // The shipping entry in the same bundle is untouched.
-    const gs::GameServerGameplayConfig shipping = load(bundle, "gameplay_catalog.yaml");
+    // The default entry plays the file's own map_variant, composed_mesh: the
+    // baked mesh and its navmesh, no terrain. Forcing kernel_terrain on it
+    // (as the recipe cook does) is the terrain again.
+    const gs::GameServerGameplayConfig shipping = load(bundle, "gameplay_catalog.yaml", "");
     require(!shipping.terrain.enabled && !shipping.static_collision_scene.entry_path.empty());
+    require(!shipping.navigation_mesh.entry_path.empty() && !shipping.map.playable_bounds.authored);
+    require(shipping.player.has_spawn_position && shipping.player.spawn_position.x == 106.8f && shipping.player.actor_template_id != 0);
+    require(load(bundle, "gameplay_catalog.yaml").terrain.enabled);
+    require(!load(bundle, "gameplay_catalog.composed_mesh.yaml", "").terrain.enabled);
     return pc;
 }
 
@@ -296,17 +307,31 @@ void catalog_rules(const std::vector<std::uint8_t>& bundle) {
     };
     std::string why;
     require(loads(yaml, &why));                     // the unedited copy loads from a directory too
-    require(!loads(with("static_collision_scene:\n", "navigation_mesh:\n  entry_path: x.navmesh\nstatic_collision_scene:\n"), &why));
+    // Root-level edits anchor on a newline: the composed_mesh variant carries
+    // an indented static_collision_scene of its own.
+    require(!loads(with("\nstatic_collision_scene:\n", "\nnavigation_mesh:\n  entry_path: x.navmesh\nstatic_collision_scene:\n"), &why));
     require(why.find("exclusive") != std::string::npos);
-    require(!loads(with("static_collision_scene:\n  scene_id: 1\n", "static_collision_scene:\n  entry_path: x.joltmesh\n  scene_id: 1\n"), &why));
+    require(!loads(with("\nstatic_collision_scene:\n  scene_id: 1\n", "\nstatic_collision_scene:\n  entry_path: x.joltmesh\n  scene_id: 1\n"), &why));
     require(why.find("no entry_path with terrain") != std::string::npos);
     require(!loads(with("map_size: {x: 216.0, z: 216.0}", "map_size: {x: 200.0, z: 216.0}"), &why));
     require(why.find("multiple of 12") != std::string::npos);
-    require(!loads(with("static_collision_scene:\n", "map:\n  playable_bounds: {min: {x: -120.0, z: -100.0}, max: {x: 100.0, z: 100.0}}\nstatic_collision_scene:\n"), &why));
+    require(!loads(with("\nstatic_collision_scene:\n", "\nmap:\n  playable_bounds: {min: {x: -120.0, z: -100.0}, max: {x: 100.0, z: 100.0}}\nstatic_collision_scene:\n"), &why));
     require(why.find("outside the terrain") != std::string::npos);
-    require(loads(with("static_collision_scene:\n", "map:\n  playable_bounds: {min: {x: -90.0, z: -100.0}, max: {x: 100.0, z: 100.0}}\nstatic_collision_scene:\n"), &why));
+    require(loads(with("\nstatic_collision_scene:\n", "\nmap:\n  playable_bounds: {min: {x: -90.0, z: -100.0}, max: {x: 100.0, z: 100.0}}\nstatic_collision_scene:\n"), &why));
     require(!loads(with("stamps: {count: 12, min_count: 10}", "stamps: {count: 12, pool: [9]}"), &why));
     require(why.find("no template") != std::string::npos);
+
+    // map_variant: the other map loads, a name that is not a variant, a key a
+    // variant may not carry (checked in every variant, not just the one in
+    // play), and variants with nothing picking one are all refused.
+    const std::string current = std::string("map_variant: ") + kVariant;
+    require(loads(with(current, "map_variant: composed_mesh"), &why));
+    require(!loads(with(current, "map_variant: nowhere"), &why));
+    require(why.find("not one of map_variants") != std::string::npos);
+    require(!loads(with("  composed_mesh:\n", "  composed_mesh:\n    patrols: []\n"), &why));
+    require(why.find("patrols") != std::string::npos);
+    require(!loads(with(current + "\n", ""), &why));
+    require(why.find("needs map_variant") != std::string::npos);
     std::printf("catalog rules: all refused as expected\n");
 }
 
