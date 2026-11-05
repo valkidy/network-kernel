@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- adds static scene mesh queries for client rendering and unifies map selection through map_variant
+
+
+0.7.0 release notes:
+
 - adds client terrain queries, supports 64 MiB static scenes and refreshes terrace terrain generation
 
 
