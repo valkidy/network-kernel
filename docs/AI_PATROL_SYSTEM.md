@@ -116,6 +116,22 @@ while the squad moves on.
 **A route that walks far further than the line between its ends is rejected** and
 another start/end pair is drawn. See the measurements below for why.
 
+## Reading what the AI decided
+
+A server (`--mode=dedicated_server` or `host_server`) writes every AI state
+change to `~/.network-example/logs/ai_trace_<port>.log`, or wherever
+`--ai-trace-file=` says (`off` for nowhere). 8 MB, then rotated to `.1.log`; at most
+300 lines a second, the rest counted as `dropped_lines=`. Each line has the local
+wall clock, so it lines up with a video recorded on the same machine.
+
+- `Chasing->Return reason=leash ... anchor_d=18.1 target_d=10.0 target_visible=1`:
+  why it turned round, and where the player was when it did. `reason` is `sight`,
+  `squad` or `damage` into Alert and `leash` or `forgot` into Return.
+- `stuck state=Return for=3.0s ... slot_d=20` and `unstuck ... after=23.3s`: it
+  means to walk somewhere and has gone less than 0.5 m in 3 s.
+- `group=3 holding=1 by=7 by_state=Alert by_target=0 by_lost=12`: who is keeping the
+  squad in place, and on what. `by_target=0` is holding for nobody in sight.
+
 ## Authoring
 
 Each definition is its own file under `patrol_template_dir`, named

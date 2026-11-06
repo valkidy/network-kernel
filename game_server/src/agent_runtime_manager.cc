@@ -1251,6 +1251,8 @@ void AgentRuntimeManager::tick(float delta_seconds) {
     // After the controllers, so a state entered this tick is entered here too.
     use_item_skills();
     collect_alert_signals();
+    // Last, so it sees what this tick decided.
+    trace_.observe(ticks_, agents_, patrol_groups_.groups(), actors);
 }
 
 void AgentRuntimeManager::despawn_all(std::uint32_t reason) {

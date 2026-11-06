@@ -10,6 +10,8 @@
 
 #include <spdlog/spdlog.h>
 
+#include "game_server/src/ai_trace.h"
+
 #include "client_app.h"
 #include "dedicated_server_app.h"
 #include "host_server_app.h"
@@ -33,6 +35,8 @@ struct Options {
     std::string gameplay_catalog_content_namespace{"default"};
     std::string gameplay_catalog_cache_directory;
     std::uint16_t port = kDefaultPort;
+    // Empty for the default place; "off" for none.
+    std::string ai_trace_file;
     std::uint32_t host_frames = 12;
     std::uint8_t network_stats_mode = 0u;
     std::uint32_t physics_simulation = 0;
@@ -59,6 +63,7 @@ void print_usage() {
         "[--aim-pitch-degrees=-89..89] "
         "[--physics_simulation=0|1] [--physics-workers=0|N] "
         "[--actor-blocking=0|1] "
+        "[--ai-trace-file=path|off] (servers; default ~/.network-example/logs/ai_trace_<port>.log) "
         "[--netcode=standard|responsive] "
         "[--max-players=0|N] (dedicated server only; 0=unlimited, the default) "
         "(standard=15 snapshots/s, 143 kbit/s, 133 ms interpolation delay; "
@@ -186,6 +191,50 @@ std::string find_default_gameplay_catalog_bundle(const char* argv0) {
     return {};
 }
 
+// A fixed place, so a client on the same machine can pick the trace up for a
+// bug report without being told where the server was started. By port, because
+// two servers on one machine would otherwise rotate each other's file.
+std::filesystem::path default_ai_trace_path(std::uint16_t port) {
+#ifdef _WIN32
+    const char* home = std::getenv("USERPROFILE");
+#else
+    const char* home = std::getenv("HOME");
+#endif
+    if (home == nullptr || home[0] == '\0') {
+        return {};
+    }
+    return std::filesystem::path(home) / ".network-example" / "logs" /
+        ("ai_trace_" + std::to_string(port) + ".log");
+}
+
+// Before any server is built: an AgentRuntimeManager takes its sink when it is.
+// A server without its trace is still a server, so failing here only warns.
+void open_ai_trace(const Options& options) {
+    constexpr std::size_t kMaxBytes = 8 * 1024 * 1024;
+    constexpr std::size_t kMaxFiles = 2;
+    if (options.ai_trace_file == "off") {
+        return;
+    }
+    const std::filesystem::path path = options.ai_trace_file.empty()
+        ? default_ai_trace_path(options.port)
+        : std::filesystem::path(options.ai_trace_file);
+    if (path.empty()) {
+        spdlog::warn("no AI trace: no home directory to put it in");
+        return;
+    }
+    std::error_code ignored;
+    if (path.has_parent_path()) {
+        std::filesystem::create_directories(path.parent_path(), ignored);
+    }
+    std::string error;
+    if (!network_example::game_server::open_ai_trace_file(
+            path.string(), kMaxBytes, kMaxFiles, &error)) {
+        spdlog::warn("no AI trace: {}", error);
+        return;
+    }
+    spdlog::info("AI trace: {}", std::filesystem::absolute(path, ignored).string());
+}
+
 bool parse_args(int argc, char** argv, Options* options) {
     for (int index = 1; index < argc; ++index) {
         const std::string_view arg(argv[index]);
@@ -199,6 +248,10 @@ bool parse_args(int argc, char** argv, Options* options) {
         }
         if (read_value(arg, "--address", &index, argc, argv, &value)) {
             options->address = value;
+            continue;
+        }
+        if (read_value(arg, "--ai-trace-file", &index, argc, argv, &value)) {
+            options->ai_trace_file = value;
             continue;
         }
         if (read_value(arg, "--port", &index, argc, argv, &value)) {
@@ -331,6 +384,9 @@ int main(int argc, char** argv) {
     }
     SetAppNetworkStatsMode(options.network_stats_mode);
     SetAppAimPitchDegrees(options.aim_pitch_degrees);
+    if (options.mode != "client") {
+        open_ai_trace(options);
+    }
 
     if (options.mode == "dedicated_server") {
         std::string gameplay_catalog_bundle = options.gameplay_catalog_bundle;
