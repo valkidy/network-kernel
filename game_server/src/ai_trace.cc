@@ -242,12 +242,20 @@ void AiTrace::observe_group(
     const auto [found, first_seen] = groups_.try_emplace(group.group_id);
     GroupMemory& memory = found->second;
 
-    // Which member is keeping it there, and on what. The first engaged one, the
-    // same member order the squad's own tick reads.
+    // Which member is keeping it there, and on what. One that can see its target
+    // if there is one: a squad-mate merely alerted by the fight also counts as
+    // engaged, and naming it would read as a squad holding for nobody.
     const AgentRuntimeState* holder = nullptr;
     for (const std::uint32_t net_id : group.member_net_ids) {
         const auto member = by_net_id_.find(net_id);
-        if (member != by_net_id_.end() && is_engaged(member->second->sentry.state)) {
+        if (member == by_net_id_.end() || !is_engaged(member->second->sentry.state)) {
+            continue;
+        }
+        if (holder == nullptr) {
+            holder = member->second;
+        }
+        if (member->second->sentry.target != 0 &&
+            member->second->sentry.lost_target_ticks == 0) {
             holder = member->second;
             break;
         }

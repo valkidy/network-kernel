@@ -29,7 +29,8 @@ namespace network_example::game_server {
 //   tick=900 net=7 tpl=28 group=3 unstuck state=Idle after=23.3s pos=(..)
 //   tick=90 group=3 holding=1 by=7 by_state=Chasing by_target=2 by_lost=0
 //
-// A squad held by a member with by_target=0 is holding for nobody in sight.
+// A squad held by a member with by_target=0 is holding for nobody in sight: one
+// with a target in sight is named ahead of any without.
 class AiTrace {
 public:
     using Sink = std::function<void(const std::string&)>;
