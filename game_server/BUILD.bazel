@@ -34,6 +34,7 @@ cc_library(
     srcs = [
         "src/actor_intent_executor.cc",
         "src/ai_perception_adapter.cc",
+        "src/ai_trace.cc",
         "src/agent_behavior.cc",
         "src/agent_chaser_controller.cc",
         "src/agent_sentry_controller.cc",
@@ -59,6 +60,7 @@ cc_library(
     hdrs = [
         "src/actor_intent_executor.h",
         "src/ai_perception_adapter.h",
+        "src/ai_trace.h",
         "src/agent_behavior.h",
         "src/agent_chaser_controller.h",
         "src/agent_runtime.h",
@@ -149,6 +151,12 @@ cc_test(
 cc_test(
     name = "respawn_scheduler_test",
     srcs = ["tests/respawn_scheduler_test.cc"],
+    deps = [":game_server"],
+)
+
+cc_test(
+    name = "ai_trace_test",
+    srcs = ["tests/ai_trace_test.cc"],
     deps = [":game_server"],
 )
 
@@ -689,6 +697,36 @@ cc_test(
     deps = [
         ":game_server",
         ":game_server_bridge",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+# What a squad's return path and ledge leap cost a tick, for comparing builds.
+cc_test(
+    name = "squad_chase_bench",
+    srcs = ["tests/squad_chase_bench.cc"],
+    data = glob([
+        "gameplay_catalog/action_graph_templates/**/*.yaml",
+        "gameplay_catalog/action_templates/*.yaml",
+        "gameplay_catalog/collider_templates/*.yaml",
+        "gameplay_catalog/patrol_templates/*.yaml",
+        "gameplay_catalog/entity_templates/*.yaml",
+        "gameplay_catalog/item_templates/*.yaml",
+        "gameplay_catalog/projectile_templates/*.yaml",
+        "gameplay_catalog/status_effect_templates/*.yaml",
+        "gameplay_catalog/sp_attack_templates/*.yaml",
+        "gameplay_catalog/weapon_templates/*.yaml",
+    ]) + [
+        "gameplay_catalog/gameplay_catalog.yaml",
+        "//game_server/gameplay_catalog/mesh_assets:cooked_mesh_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:locomotion_skeleton_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_biped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_quadruped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_tripod_assets",
+    ],
+    tags = ["manual"],
+    deps = [
+        ":game_server",
         "//engine/src/kernel:kernel",
     ],
 )
@@ -1858,6 +1896,48 @@ cc_test(
         ":game_server",
         "//engine/src/kernel:kernel",
         "@yaml-cpp//:yaml-cpp",
+    ],
+)
+
+# The shipped mission on the shipped maps, from the bundle.
+cc_test(
+    name = "mission_on_map_test",
+    size = "medium",
+    srcs = ["tests/mission_on_map_test.cc"],
+    data = ["//game_server/gameplay_catalog_bundle:bundle"],
+    deps = [
+        ":game_server",
+        ":game_server_bridge",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+# Squad members finding their way back on the real map, with its navmesh.
+cc_test(
+    name = "squad_return_path_test",
+    srcs = ["tests/squad_return_path_test.cc"],
+    data = glob([
+        "gameplay_catalog/action_graph_templates/**/*.yaml",
+        "gameplay_catalog/action_templates/*.yaml",
+        "gameplay_catalog/collider_templates/*.yaml",
+        "gameplay_catalog/patrol_templates/*.yaml",
+        "gameplay_catalog/entity_templates/*.yaml",
+        "gameplay_catalog/item_templates/*.yaml",
+        "gameplay_catalog/projectile_templates/*.yaml",
+        "gameplay_catalog/status_effect_templates/*.yaml",
+        "gameplay_catalog/sp_attack_templates/*.yaml",
+        "gameplay_catalog/weapon_templates/*.yaml",
+    ]) + [
+        "gameplay_catalog/gameplay_catalog.yaml",
+        "//game_server/gameplay_catalog/mesh_assets:cooked_mesh_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:locomotion_skeleton_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_biped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_quadruped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_tripod_assets",
+    ],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
     ],
 )
 

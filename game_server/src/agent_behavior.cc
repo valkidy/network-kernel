@@ -100,6 +100,27 @@ KernelVec2 patrol_move(
 // and goes back to it after a fight. Only the squad makes one, and a member
 // stays one.
 class SquadBehavior final : public AgentBehavior {
+    // Along the path update_squad_returns found, when the straight line to the
+    // slot does not get there. At the chase's pace rather than the squad's:
+    // the way round a cliff can be many times the line, and a member strolling
+    // it would be out of the fight for the rest of the route.
+    static bool follow_return_path(AgentRuntimeState& agent, AgentBehaviorStep& step) {
+        while (agent.seek_next < agent.seek_path.size() &&
+               agent_steering::horizontal_distance(
+                   agent.position, agent.seek_path[agent.seek_next]) <=
+                   kGuardAnchorArrivalMeters) {
+            ++agent.seek_next;
+        }
+        if (agent.seek_next >= agent.seek_path.size()) {
+            return false;
+        }
+        const KernelVec3& corner = agent.seek_path[agent.seek_next];
+        step.move = agent_steering::horizontal_move_toward(
+            agent.position, corner, step.config.chase.input_magnitude);
+        face_toward(agent, corner, step);
+        return true;
+    }
+
 public:
     BehaviorSwitchResult validate(const AgentControllerSpec&) const override {
         return BehaviorSwitchResult::kNotAllowed;
@@ -109,8 +130,37 @@ public:
         return config.squad.leash_meters;
     }
 
+    // Turning back with the player in plain sight reads as a bug. The authored
+    // leash is measured from where it broke off and its eyes go with it, so at
+    // 18 m out it can still see 26 m further on. It lets go when it loses sight
+    // past the leash, or here: the squad holds for as long as it is out, and a
+    // player must not be able to drag it across the map. The kernel's relevance
+    // radius, which is about as far as a player can see it anyway.
+    float leash_in_sight_meters(const AgentChaserConfig& config) const override {
+        constexpr float kSquadLeashInSightMeters = 40.0f;
+        return config.squad.leash_meters > 0.0f
+            ? std::max(config.squad.leash_meters, kSquadLeashInSightMeters)
+            : 0.0f;
+    }
+
     void on_idle(AgentRuntimeState& agent, AgentBehaviorStep& step) const override {
         const AgentSquadTuning& squad = step.config.squad;
+        if (follow_return_path(agent, step)) {
+            return;
+        }
+        if (agent.patrol.return_stranded_ticks > 0) {
+            // Back to the wall it could not get past, and so to where the
+            // chase came from. Its vision cone was pointed at the wall.
+            face_toward(
+                agent,
+                KernelVec3{
+                    2.0f * agent.position.x - agent.patrol.slot.x,
+                    agent.position.y,
+                    2.0f * agent.position.z - agent.patrol.slot.z,
+                },
+                step);
+            return;
+        }
         if (!standing_in_slot(squad, agent) ||
             std::hypot(agent.patrol.travel_velocity.x,
                        agent.patrol.travel_velocity.z) > 0.0001f) {
@@ -135,6 +185,9 @@ public:
             // tick, which is also what re-anchors the leash to where the next
             // chase starts.
             agent_steering::transition_to(&agent, AgentSentryState::kIdle);
+            return;
+        }
+        if (follow_return_path(agent, step)) {
             return;
         }
         step.move = patrol_move(

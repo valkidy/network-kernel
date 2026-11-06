@@ -95,10 +95,10 @@ YAML::Node giant_spawn(YAML::Node& root) {
     return {};
 }
 
-// The clear_the_nests node's spawn_group: nests are props with no ai.
+// A nest node's spawn_group: nests are props with no ai.
 YAML::Node nest_spawn(YAML::Node& root) {
     for (YAML::Node node : root["director"]["graph"]["nodes"]) {
-        if (node["id"].as<std::string>() == "clear_the_nests") {
+        if (node["id"].as<std::string>() == "clear_nest_west") {
             return node["on_activate"][0];
         }
     }
@@ -106,21 +106,21 @@ YAML::Node nest_spawn(YAML::Node& root) {
     return {};
 }
 
-// Four giants, each a patrol on a route: the narrow pass's nine waypoints,
-// and the three strips' two (P1c). The world rules route by offsets. None
+// Four giants in the map's mission, each a patrol on a two-point route (P1c).
+// The world rules route by offsets. None
 // says `type: patrol`; the route does.
 void the_shipped_routes_are_controller_routes(const gs::GameServerGameplayConfig& config) {
-    int nine = 0;
     int two = 0;
     for (const gs::GameRuleConfig& rule : config.game_rules) {
+        // The catalog also carries the other map's mission, unplayed.
+        if (rule.name != "game_rule") continue;
         for (const gs::GameRuleNodeConfig& node : rule.nodes) {
             if (node.spawn.controller.route.empty()) continue;
             require(node.spawn.controller.role == gs::AgentControllerRole::kPatrol);
-            if (node.spawn.controller.route.size() == 9u) ++nine;
             if (node.spawn.controller.route.size() == 2u) ++two;
         }
     }
-    require(nine == 1 && two == 3);
+    require(two == 4);
     int world_rules = 0;
     for (const gs::WorldRuleSpawnConfig& rule : config.world_rule_spawns) {
         if (rule.controller.route.size() != 2u) continue;

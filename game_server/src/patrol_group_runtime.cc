@@ -112,7 +112,11 @@ void PatrolGroupRuntime::tick(
             const AgentRuntimeState* member = find_agent(agents, index, net_id);
             if (member != nullptr && is_engaged(member->sentry.state)) {
                 group.holding = true;
-                if (alerting == nullptr && member->sentry.has_attention_point) {
+                // Hearsay is not passed on. Two members alerting each other as
+                // each forgets would hold the squad for good with nobody there.
+                const bool hearsay =
+                    member->sentry.alerted_by_squad && member->sentry.target == 0;
+                if (alerting == nullptr && member->sentry.has_attention_point && !hearsay) {
                     alerting = member;
                 }
             }
@@ -123,6 +127,11 @@ void PatrolGroupRuntime::tick(
         // perception takes over from there; one that sees nothing forgets and
         // is alerted again for as long as the fight goes on, so it keeps
         // watching that way.
+        //
+        // Only one in formation. Stopping a member still on its way back would
+        // pin it wherever it had got to: it forgets, takes a step and is stopped
+        // again. It finishes the walk first, and its own eyes still engage
+        // whatever it passes.
         if (alerting != nullptr) {
             const AgentSentryRuntimeState source = alerting->sentry;
             for (const std::uint32_t net_id : group.member_net_ids) {
@@ -130,8 +139,15 @@ void PatrolGroupRuntime::tick(
                 if (member == nullptr || member->sentry.state != AgentSentryState::kIdle) {
                     continue;
                 }
+                // No slot yet is a squad on its first tick, placing it comes below.
+                if (!member->patrol.has_slot ||
+                    agent_steering::horizontal_distance(member->position, member->patrol.slot) >
+                        kSquadAwayFromSlotMeters) {
+                    continue;
+                }
                 member->patrol.leash_anchor = member->position;
                 agent_steering::transition_to(member, AgentSentryState::kAlert);
+                member->sentry.alerted_by_squad = true;
                 member->sentry.alerted_by_damage = source.alerted_by_damage;
                 member->sentry.attention_point = source.attention_point;
                 member->sentry.has_attention_point = true;
@@ -192,6 +208,7 @@ void PatrolGroupRuntime::tick(
                 group.cursor.y + offset.y,
                 group.cursor.z + offset.z,
             };
+            agent->patrol.squad_point = group.cursor;
             agent->patrol.has_slot = true;
             agent->patrol.travel_velocity = {};
             if (!group.holding && !group.route_complete) {

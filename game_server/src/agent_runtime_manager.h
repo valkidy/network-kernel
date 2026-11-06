@@ -11,6 +11,7 @@
 #include "game_server/src/agent_sentry_controller.h"
 #include "game_server/src/ai_perception_adapter.h"
 #include "game_server/src/agent_runtime.h"
+#include "game_server/src/ai_trace.h"
 #include "game_server/src/game_rule_director.h"
 #include "game_server/src/gameplay_config.h"
 #include "game_server/src/patrol_director.h"
@@ -117,6 +118,9 @@ private:
     // Paths every idle guard away from its post back to it, once per time it
     // goes idle there; the path is dropped whenever it is doing anything else.
     void update_guard_homes();
+    // Finds a way back for every squad member away from its slot whose straight
+    // line there is cut, and gives up a Return that is going nowhere.
+    void update_squad_returns();
     // Ends a lock_target whose target is gone or that has given up, and paths
     // the rest towards where their targets are now.
     void update_lock_targets(const ActorStateView& actors);
@@ -161,6 +165,8 @@ private:
     GameServerGameplayConfig config_;
     // Ticks this manager has run: the clock agent command intervals are kept on.
     std::uint64_t ticks_ = 0;
+    // Writes what the controllers decided, when the process opened a trace file.
+    AiTrace trace_{ai_trace_file_sink()};
     // Each peer's agent commands: how many in its current one-second window
     // (a flood guard, every command counted), and when one was last obeyed
     // (the cooldown, agent_command_peer_cooldown_ticks).

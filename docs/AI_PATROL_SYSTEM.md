@@ -109,12 +109,55 @@ back. It ends on reaching its slot *or* on returning to where it broke
 formation — the second condition is what stops a short chase from leaving the
 agent unwilling to engage for the rest of the leg.
 
+**A member cut off from its slot walks round, over the navmesh.** A chase can go
+down a drop it cannot climb back, and the straight line to the slot then runs into
+that riser for good (it did, at 3 m on the composed map; the character steps 0.4 m).
+So a member away from its slot asks once a second whether the line is walkable, and
+when it is not, routes there at chase pace (`update_squad_returns`). Open ground
+costs a line test and no route; at most 8 routes a tick. A Return lasts 10 s at most
+and ends early on 3 s without 0.5 m of headway: it keeps walking back, as Idle, and
+can fight again. One with no route at all stops pressing the wall and turns its back
+on it for 10 s, since its vision cone was pointed at the wall.
+
 **The leash is measured from where the member broke formation**, not from the
 route, so "how far a pursuit may drag a patrol" stays a property of the pursuit
 while the squad moves on.
 
+**An alert passed on stops at the one it was passed to.** A squad turns as one (AI
+plan D7), but only members in formation are told: one still walking back carries on,
+since stopping it pinned it where it was, 40 m from its slot, for a whole fight. And
+one told, with no target of its own, tells nobody else. Two of them forgetting a little
+apart would otherwise re-alert each other for good and hold the squad with nobody there.
+
+**The leash only binds once it has lost sight.** With its target in view a member
+keeps going to 40 m from where it broke off (the relevance radius; a code constant,
+not authored), since its eyes go with it and at 18 m out it can still see 26 m on.
+Turning back in front of a player read as a bug. Guards and route patrols keep their
+leash as authored.
+
+**A target up a ledge gets leapt at.** Target 1.5-10 m higher, the navmesh line to it
+cut, inside or under the leap's distance band: it leaps, whatever the band's minimum
+says, and lands 1.2 m past the target, because short of it is the air off the edge.
+Only units with a leap; a slope it can walk gets walked.
+
 **A route that walks far further than the line between its ends is rejected** and
 another start/end pair is drawn. See the measurements below for why.
+
+## Reading what the AI decided
+
+A server (`--mode=dedicated_server` or `host_server`) writes every AI state
+change to `~/.network-example/logs/ai_trace_<port>.log`, or wherever
+`--ai-trace-file=` says (`off` for nowhere). 8 MB, then rotated to `.1.log`; at most
+300 lines a second, the rest counted as `dropped_lines=`. Each line has the local
+wall clock, so it lines up with a video recorded on the same machine.
+
+- `Chasing->Return reason=leash ... anchor_d=18.1 target_d=10.0 target_visible=1`:
+  why it turned round, and where the player was when it did. `reason` is `sight`,
+  `squad` or `damage` into Alert and `leash` or `forgot` into Return.
+- `stuck state=Return for=3.0s ... slot_d=20` and `unstuck ... after=23.3s`: it
+  means to walk somewhere and has gone less than 0.5 m in 3 s.
+- `group=3 holding=1 by=7 by_state=Alert by_target=0 by_lost=12`: who is keeping the
+  squad in place, and on what. `by_target=0` is holding for nobody in sight.
 
 ## Authoring
 
@@ -436,6 +479,7 @@ drove the old mechanism are gone.
 | `//game_server:patrol_navigation_test` | loading, snapping, partial-path rejection, detour rejection |
 | `//game_server:patrol_group_runtime_test` | cursor advance, formation rotation, hold-while-engaged, casualties |
 | `//game_server:patrol_director_test` | composition draws, validation, spawning, determinism, retirement, budget, navigable routing |
+| `//game_server:squad_return_path_test` | back round a cliff on the shipping map; stranded and not deaf |
 | `//game_server:agent_chaser_controller_test` | slot following, return trajectory, leash |
 | `//game_server:patrol_nav_bench` | manual; route viability per terrain |
 

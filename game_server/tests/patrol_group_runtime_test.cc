@@ -253,5 +253,71 @@ int main() {
         tick_groups(&squad_runtime, &quiet, kFixedDelta);
         require(quiet[1].sentry.state == AgentSentryState::kIdle);
     }
+
+    // An alert passed on stops there. With two members forgetting a little apart,
+    // each would re-alert the other for good, with nobody in sight
+    // (issue_20261106_150830: the squad never moved).
+    {
+        PatrolGroupRuntime squad_runtime;
+        std::vector<AgentRuntimeState> squad{agent(31), agent(32), agent(33)};
+        const std::uint32_t squad_id = squad_runtime.create_group(
+            kDefinitionId,
+            {KernelVec3{10.0f, 0.0f, 0.0f}},
+            KernelVec3{0.0f, 0.0f, 0.0f},
+            {31u, 32u, 33u},
+            wedge_offsets(),
+            tuning);
+        require(squad_id != 0);
+        tick_groups(&squad_runtime, &squad, kFixedDelta);
+
+        // A real fight: 31 sees something, and tells the others.
+        squad[0].sentry.state = AgentSentryState::kChasing;
+        squad[0].sentry.target = 2u;
+        squad[0].sentry.attention_point = KernelVec3{-6.0f, 0.0f, 4.0f};
+        squad[0].sentry.has_attention_point = true;
+        tick_groups(&squad_runtime, &squad, kFixedDelta);
+        require(squad[1].sentry.state == AgentSentryState::kAlert);
+        require(squad[1].sentry.alerted_by_squad);
+        require(squad[2].sentry.state == AgentSentryState::kAlert);
+
+        // The fight ends; 33 has already forgotten, and 32 is only hearsay.
+        squad[0].sentry.state = AgentSentryState::kIdle;
+        squad[0].sentry.target = 0u;
+        squad[0].sentry.has_attention_point = false;
+        squad[2].sentry.state = AgentSentryState::kIdle;
+        tick_groups(&squad_runtime, &squad, kFixedDelta);
+        require(squad_runtime.find_group(squad_id)->holding);
+        require(squad[0].sentry.state == AgentSentryState::kIdle);
+        require(squad[2].sentry.state == AgentSentryState::kIdle);
+
+        // It saw something for itself: no longer hearsay, so it does pass it on.
+        squad[1].sentry.target = 2u;
+        tick_groups(&squad_runtime, &squad, kFixedDelta);
+        require(squad[0].sentry.state == AgentSentryState::kAlert);
+    }
+
+    // Only a member in formation stops to look. One still walking back carries on,
+    // or it would never get there.
+    {
+        PatrolGroupRuntime squad_runtime;
+        std::vector<AgentRuntimeState> squad{agent(41), agent(42), agent(43)};
+        const std::uint32_t squad_id = squad_runtime.create_group(
+            kDefinitionId,
+            {KernelVec3{10.0f, 0.0f, 0.0f}},
+            KernelVec3{0.0f, 0.0f, 0.0f},
+            {41u, 42u, 43u},
+            wedge_offsets(),
+            tuning);
+        require(squad_id != 0);
+        tick_groups(&squad_runtime, &squad, kFixedDelta);
+        squad[2].position = KernelVec3{-30.0f, 0.0f, 20.0f};
+        squad[0].sentry.state = AgentSentryState::kChasing;
+        squad[0].sentry.target = 2u;
+        squad[0].sentry.attention_point = KernelVec3{-6.0f, 0.0f, 4.0f};
+        squad[0].sentry.has_attention_point = true;
+        tick_groups(&squad_runtime, &squad, kFixedDelta);
+        require(squad[1].sentry.state == AgentSentryState::kAlert);
+        require(squad[2].sentry.state == AgentSentryState::kIdle);
+    }
     return 0;
 }

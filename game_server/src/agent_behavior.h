@@ -57,6 +57,10 @@ public:
 
     // How far a pursuit may drag it from where it broke off. Zero is no leash.
     virtual float leash_meters(const AgentChaserConfig& config) const = 0;
+    // The same, while it can still see what it is after. Zero is no leash.
+    virtual float leash_in_sight_meters(const AgentChaserConfig& config) const {
+        return leash_meters(config);
+    }
     // Idle with nothing in sight.
     virtual void on_idle(AgentRuntimeState& agent, AgentBehaviorStep& step) const = 0;
     // In Return: walks back, and goes Idle once it is back.
