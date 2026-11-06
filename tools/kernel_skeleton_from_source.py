@@ -18,7 +18,10 @@ copy from it, so the two cannot drift:
   3. Colliders. A GEO_* node's box is the bounds of its mesh, baked into the
      node's scale (full extents) and translation, with the mesh replaced by a
      unit cube -- the convention the rig loader reads. A GEO_* node with no
-     mesh keeps its scale as the extents.
+     mesh keeps its scale as the extents. --collider-radius-scale and
+     --collider-raise-bottom then fit a box to gameplay rather than to the
+     mesh; the source keeps its own, so the same flags must be passed again
+     whenever this runs (rig.yaml's header records them).
   4. Frame. The result is converted to Unity's left-handed values with the
      same conversion glTFast applies (see gltf_to_unity_handedness.py), so the
      kernel writes exactly the values the client's import already holds.
@@ -36,6 +39,8 @@ copy from it, so the two cannot drift:
     python3 tools/kernel_skeleton_from_source.py \\
         --source=../unity-network-example/Assets/Presentation/ActorRigs/simplified_gingerbread_giant.glb \\
         --skeleton=simplified_gingerbread_giant \\
+        --collider-radius-scale='GEO_Leg*=0.75' \\
+        --collider-raise-bottom=GEO_Hip=1 \\
         --glb-output=game_server/gameplay_catalog/skeleton_assets/raw/simplified_gingerbread_giant.glb \\
         --rig-output=game_server/gameplay_catalog/skeleton_assets/raw/simplified_gingerbread_giant.rig.yaml
 
@@ -45,6 +50,7 @@ the source, or to confirm the committed files are what the source produces.
 """
 
 import argparse
+import fnmatch
 import math
 import os
 import struct
@@ -291,7 +297,45 @@ def trs(node):
             list(node.get("scale", [1.0, 1.0, 1.0])))
 
 
-def build_kernel_gltf(source, binary, roles, graph):
+def parse_collider_edits(texts, flag):
+    """[PATTERN=VALUE, ...] as (pattern, value) pairs; patterns are fnmatch."""
+    edits = []
+    for text in texts or []:
+        pattern, separator, value = text.partition("=")
+        try:
+            number = float(value)
+        except ValueError:
+            number = None
+        if not pattern or not separator or number is None or number <= 0.0:
+            raise ValueError("%s wants PATTERN=POSITIVE_NUMBER, not '%s'"
+                             % (flag, text))
+        edits.append((pattern, number))
+    return edits
+
+
+def apply_collider_edits(name, translation, rotation, scale, radius_scales,
+                         bottom_raises, used):
+    """Resizes one collider box: x/z about its axis, and y from below only."""
+    short = strip_namespace(name)
+    for pattern, factor in radius_scales:
+        if fnmatch.fnmatchcase(short, pattern):
+            used.add(pattern)
+            scale = [scale[0] * factor, scale[1], scale[2] * factor]
+    for pattern, meters in bottom_raises:
+        if fnmatch.fnmatchcase(short, pattern):
+            used.add(pattern)
+            if meters >= scale[1]:
+                raise ValueError("raising '%s' by %g m leaves no box (it is "
+                                 "%g m tall)" % (name, meters, scale[1]))
+            scale = [scale[0], scale[1] - meters, scale[2]]
+            # The top stays where it was, so the centre moves half the raise.
+            translation = v_add(translation,
+                                q_rotate(rotation, [0.0, meters * 0.5, 0.0]))
+    return translation, scale
+
+
+def build_kernel_gltf(source, binary, roles, graph, radius_scales=(),
+                      bottom_raises=()):
     root, body, legs = roles
     colliders = [i for i in range(len(graph.nodes))
                  if strip_namespace(graph.name(i)).startswith(COLLIDER_PREFIX)
@@ -317,6 +361,7 @@ def build_kernel_gltf(source, binary, roles, graph):
             raise ValueError("collider '%s' has kept children"
                              % graph.name(index))
 
+    used_patterns = set()
     order = []
 
     def visit(index):
@@ -340,6 +385,10 @@ def build_kernel_gltf(source, binary, roles, graph):
             offset = q_rotate(rotation, [scale[c] * centre[c] for c in range(3)])
             translation = v_add(translation, offset)
             scale = [scale[c] * extent[c] for c in range(3)]
+        if old in colliders:
+            translation, scale = apply_collider_edits(
+                graph.name(old), translation, rotation, scale, radius_scales,
+                bottom_raises, used_patterns)
         node = {"name": graph.name(old)}
         if any(abs(c) > 0.0 for c in translation):
             node["translation"] = translation
@@ -354,6 +403,11 @@ def build_kernel_gltf(source, binary, roles, graph):
         if children:
             node["children"] = children
         nodes.append(node)
+
+    # A typo here would silently ship the mesh's full-size box.
+    for pattern, _ in list(radius_scales) + list(bottom_raises):
+        if pattern not in used_patterns:
+            raise ValueError("no collider matches '%s'" % pattern)
 
     gltf = {
         "asset": {"version": "2.0",
@@ -566,7 +620,12 @@ def generate(args):
             "; the source must be the standard glTF export")
     graph = Graph(source)
     roles = resolve_roles(graph, args)
-    gltf, cube_binary, names = build_kernel_gltf(source, binary, roles, graph)
+    radius_scales = parse_collider_edits(args.collider_radius_scale,
+                                         "--collider-radius-scale")
+    bottom_raises = parse_collider_edits(args.collider_raise_bottom,
+                                         "--collider-raise-bottom")
+    gltf, cube_binary, names = build_kernel_gltf(
+        source, binary, roles, graph, radius_scales, bottom_raises)
     cube_binary = bytearray(cube_binary)
     handedness.convert(gltf, cube_binary, [])
     edits = bend_knees(gltf, names, args.knee_bend)
@@ -583,7 +642,12 @@ def generate(args):
         "restPoseEdits": edits,
     }
     command = ("python3 tools/kernel_skeleton_from_source.py --source=<client GLB> "
-               "--skeleton=%s --knee-bend=%g ..." % (args.skeleton, args.knee_bend))
+               "--skeleton=%s --knee-bend=%g" % (args.skeleton, args.knee_bend))
+    for pattern, factor in radius_scales:
+        command += " --collider-radius-scale=%s=%g" % (pattern, factor)
+    for pattern, meters in bottom_raises:
+        command += " --collider-raise-bottom=%s=%g" % (pattern, meters)
+    command += " ..."
     lines, leg_of = rig_yaml(args.skeleton, names, hinge, poles, command)
     lines += collider_lines(gltf, names, leg_of)
     return gltf, cube_binary, "\n".join(lines) + "\n", names, edits, report
@@ -624,6 +688,14 @@ def main():
     parser.add_argument("--leg", action="append",
                         help="ID:HIP,KNEE,FOOT; repeatable (default: mixamo "
                              "LeftUpLeg/LeftLeg/LeftFoot as leg0, Right as leg1)")
+    parser.add_argument("--collider-radius-scale", action="append",
+                        metavar="PATTERN=FACTOR",
+                        help="multiply the x and z of each GEO_* box matching "
+                             "the fnmatch pattern; repeatable")
+    parser.add_argument("--collider-raise-bottom", action="append",
+                        metavar="PATTERN=METERS",
+                        help="move the underside of each matching GEO_* box up, "
+                             "keeping its top; repeatable")
     parser.add_argument("--check", action="store_true",
                         help="compare with the existing outputs instead of "
                              "writing them")
