@@ -18,6 +18,13 @@
 //   C  it leaps up and lands on the player's level, where its claw reaches;
 //   C' the same distance on the level is too close to leap, as it always was;
 //   C" nor up a slope it can walk, however much higher the player stands.
+//
+// And the squad-mates of a fight (issue_20261106_150830): 40 m from their slots,
+// they looped Alert->Return->Idle->Alert every 5 s for a minute, neither home nor
+// in the fight, and the alert passed from one to another with nobody in sight.
+//   D  a member far from its slot goes home while the fight goes on, and is not
+//      told to stand and watch on the way;
+//   D' once the fight is over nobody is left holding the squad on hearsay.
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -357,6 +364,108 @@ void print(const char* label, const Ledge& ledge) {
         static_cast<float>(ledge.ticks_to_top) * kTickSeconds, ledge.damage);
 }
 
+struct SquadFight {
+    int far_alerts_on_the_way = 0;
+    int far_ticks_to_home = -1;
+    int ticks_to_release = -1;
+    int holding_ticks_after = 0;
+};
+
+// Three members: two under the player's ledge, in a real fight, and one a long way
+// from its slot with nothing in sight. Then the player goes, and the squad should
+// be free inside one forget.
+SquadFight fight_with_one_far_away(std::uint16_t port) {
+    Rig rig(true, port);
+    const std::uint32_t player = rig.create("player", kPlayerOnLedge);
+    KernelAgentVisionConfig vision{};
+    vision.struct_size = sizeof(vision);
+    vision.camp = KernelAgentCamp_PlayerSide;
+    require(Kernel_ServerSetEntityVisionConfig(rig.kernel, player, &vision));
+    for (int i = 0; i < 30; ++i) rig.step();
+    const KernelVec3 feet = rig.position_of(player);
+    KernelServerEntityState player_state{};
+    player_state.struct_size = sizeof(player_state);
+    require(Kernel_ServerGetEntityState(rig.kernel, player, &player_state));
+    const std::uint16_t full_hp = player_state.max_hp;
+
+    // Slots in open ground a little way off, on the player's level: where the
+    // report's squad stood relative to its fight.
+    const KernelVec3 cursor{111.24f, 22.5f, 89.96f};
+    const std::uint32_t near_a = rig.create("gingerbread", {feet.x + 2.0f, 21.5f, feet.z - 1.0f});
+    const std::uint32_t near_b = rig.create("gingerbread", {feet.x + 2.5f, 21.5f, feet.z - 2.5f});
+    // Out of its own eyes' 26 m, so what it does is down to the squad's alert.
+    gs::PatrolNavigation navigation;
+    std::string error;
+    require(navigation.load(rig.config.navigation_mesh.artifact, &error));
+    KernelVec3 far_ground{};
+    require(navigation.snap({80.0f, 21.0f, 84.0f}, 3.0f, &far_ground));
+    const std::uint32_t far =
+        rig.create("gingerbread", {far_ground.x, far_ground.y + 1.0f, far_ground.z});
+    for (int i = 0; i < 30; ++i) {
+        require(Kernel_ServerSetEntityTransform(rig.kernel, player, &feet, &player_state.rotation));
+        rig.step();
+    }
+    gs::PatrolGroupTuning tuning;
+    tuning.advance_speed_meters_per_second = 0.9f;
+    const std::uint32_t group_id = rig.server->agent_runtime_manager().patrol_groups().create_group(
+        1u, {cursor, {cursor.x + 60.0f, cursor.y, cursor.z}}, cursor,
+        {near_a, near_b, far},
+        {KernelVec3{0.0f, 0.0f, 0.0f}, KernelVec3{0.0f, 0.0f, 1.5f}, KernelVec3{0.0f, 0.0f, -1.5f}},
+        tuning);
+    require(group_id != 0u);
+
+    SquadFight fight;
+    bool player_there = true;
+    int gone_at = -1;
+    gs::AgentSentryState far_state = gs::AgentSentryState::kIdle;
+    KernelVec3 player_at = feet;
+    for (int tick = 0; tick < 1800; ++tick) {
+        require(Kernel_ServerGetEntityState(rig.kernel, player, &player_state));
+        require(Kernel_ServerSetEntityTransform(rig.kernel, player, &player_at, &player_state.rotation));
+        require(Kernel_ServerSetEntityHealth(rig.kernel, player, full_hp));
+        rig.step();
+
+        const gs::AgentRuntimeState* far_agent = rig.agent(far);
+        require(far_agent != nullptr);
+        const float far_from_slot = horizontal(far_agent->position, far_agent->patrol.slot);
+        if (far_agent->sentry.state == gs::AgentSentryState::kAlert &&
+            far_state != gs::AgentSentryState::kAlert && far_agent->sentry.target == 0 &&
+            far_from_slot > 3.0f) {
+            ++fight.far_alerts_on_the_way;
+        }
+        far_state = far_agent->sentry.state;
+        if (fight.far_ticks_to_home < 0 && far_from_slot <= 3.0f) {
+            fight.far_ticks_to_home = tick;
+        }
+        if (player_there && tick == 900) {
+            player_there = false;
+            gone_at = tick;
+            player_at = kPlayerGone;
+        }
+        if (!player_there) {
+            const gs::PatrolGroup* group =
+                rig.server->agent_runtime_manager().patrol_groups().find_group(group_id);
+            require(group != nullptr);
+            if (group->holding) {
+                ++fight.holding_ticks_after;
+            } else if (fight.ticks_to_release < 0) {
+                fight.ticks_to_release = tick - gone_at;
+            }
+        }
+    }
+    return fight;
+}
+
+void print(const char* label, const SquadFight& fight) {
+    std::printf(
+        "%s: far member alerted on its way %d times, home at %.1f s; after the player left, "
+        "released at %.1f s, held %.1f s in all\n",
+        label, fight.far_alerts_on_the_way,
+        static_cast<float>(fight.far_ticks_to_home) * kTickSeconds,
+        static_cast<float>(fight.ticks_to_release) * kTickSeconds,
+        static_cast<float>(fight.holding_ticks_after) * kTickSeconds);
+}
+
 void print(const char* label, const Walk& walk) {
     std::printf(
         "%s: start (%.1f, %.1f, %.1f) end (%.1f, %.1f, %.1f) closest %.1f m, walked %.1f m, arrived %s %.1f s\n",
@@ -449,6 +558,15 @@ int main() {
         8017, 300);
     print("C\" slope", slope);
     require(slope.leaps == 0);
+
+    const SquadFight fight = fight_with_one_far_away(8018);
+    print("D  squad fight", fight);
+    std::printf("  far member's start: 32 m from the player, 31 m from its slot\n");
+    require(fight.far_alerts_on_the_way == 0);
+    require(fight.far_ticks_to_home >= 0);
+    // D': one forget (5 s) and a little, and not coming back.
+    require(fight.ticks_to_release >= 0);
+    require(fight.holding_ticks_after <= 240);
 
     std::puts("squad_return_path_test: ok");
     return 0;

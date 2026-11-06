@@ -103,6 +103,7 @@ void transition_to(AgentRuntimeState* agent, AgentSentryState state) {
     agent->sentry.state = state;
     agent->sentry.state_ticks = 0;
     agent->sentry.lost_target_ticks = 0;
+    agent->sentry.alerted_by_squad = false;
     agent->sentry.patrol_rotation_tick = 0;
     agent->sentry.patrol_rotation_step = 0;
 }

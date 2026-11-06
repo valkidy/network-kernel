@@ -18,9 +18,6 @@ namespace {
 // fraction of a centimetre an agent pressed against a wall jitters by.
 constexpr float kProgressMeters = 0.5f;
 constexpr std::uint64_t kStuckTicks = 90;
-// A squad member further than this from its slot is on its way back to it,
-// rather than settling into place.
-constexpr float kOffSlotMeters = 3.0f;
 // One server's worth of lines per second at most. A world in a mass fight must
 // not spend its tick on this, and the count of what was dropped is itself a
 // finding.
@@ -108,7 +105,7 @@ bool walking_somewhere(const AgentRuntimeState& agent) {
     return !agent.seek_path.empty() ||
         (agent.patrol.has_slot &&
          agent_steering::horizontal_distance(agent.position, agent.patrol.slot) >
-             kOffSlotMeters);
+             kSquadAwayFromSlotMeters);
 }
 
 std::shared_ptr<spdlog::logger>& file_logger() {

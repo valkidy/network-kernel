@@ -65,6 +65,10 @@ inline bool is_engaged(AgentSentryState state) {
            state == AgentSentryState::kSearch;
 }
 
+// Further than this from its slot a squad member is on its way back rather than
+// settling into place.
+inline constexpr float kSquadAwayFromSlotMeters = 3.0f;
+
 // What a squad member needs to know about the squad, which is very little: the
 // point it should be standing on and the squad's travel velocity. The route,
 // formation and progress all live on the PatrolGroup, so the controller can
@@ -225,6 +229,9 @@ struct AgentSentryRuntimeState {
     KernelVec3 attention_point{0.0f, 0.0f, 0.0f};
     // This alert began with a hit, so it runs alert_on_damage_ticks.
     bool alerted_by_damage = false;
+    // This alert was passed on by a squad-mate. With no target of its own the
+    // agent is hearsay: it looks, and it does not pass the alert on.
+    bool alerted_by_squad = false;
 };
 
 // The sentry knobs an agent runs on. These are authored per actor template
