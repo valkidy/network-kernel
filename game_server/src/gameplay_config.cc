@@ -10263,6 +10263,7 @@ YAML::Node apply_map_variant(
                 "scene_props",
                 "scene_items",
                 "agent_routes",
+                "preload_directors",
             },
             path,
             source_kind,

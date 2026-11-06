@@ -1869,6 +1869,19 @@ cc_test(
     ],
 )
 
+# The shipped mission on the shipped maps, from the bundle.
+cc_test(
+    name = "mission_on_map_test",
+    size = "medium",
+    srcs = ["tests/mission_on_map_test.cc"],
+    data = ["//game_server/gameplay_catalog_bundle:bundle"],
+    deps = [
+        ":game_server",
+        ":game_server_bridge",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
 # Squad members finding their way back on the real map, with its navmesh.
 cc_test(
     name = "squad_return_path_test",
