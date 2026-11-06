@@ -11,6 +11,7 @@
 #include "game_server/src/agent_sentry_controller.h"
 #include "game_server/src/ai_perception_adapter.h"
 #include "game_server/src/agent_runtime.h"
+#include "game_server/src/ai_trace.h"
 #include "game_server/src/game_rule_director.h"
 #include "game_server/src/gameplay_config.h"
 #include "game_server/src/patrol_director.h"
@@ -161,6 +162,8 @@ private:
     GameServerGameplayConfig config_;
     // Ticks this manager has run: the clock agent command intervals are kept on.
     std::uint64_t ticks_ = 0;
+    // Writes what the controllers decided, when the process opened a trace file.
+    AiTrace trace_{ai_trace_file_sink()};
     // Each peer's agent commands: how many in its current one-second window
     // (a flood guard, every command counted), and when one was last obeyed
     // (the cooldown, agent_command_peer_cooldown_ticks).
