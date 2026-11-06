@@ -118,6 +118,9 @@ private:
     // Paths every idle guard away from its post back to it, once per time it
     // goes idle there; the path is dropped whenever it is doing anything else.
     void update_guard_homes();
+    // Finds a way back for every squad member away from its slot whose straight
+    // line there is cut, and gives up a Return that is going nowhere.
+    void update_squad_returns();
     // Ends a lock_target whose target is gone or that has given up, and paths
     // the rest towards where their targets are now.
     void update_lock_targets(const ActorStateView& actors);

@@ -671,6 +671,124 @@ void AgentRuntimeManager::update_guard_homes() {
     }
 }
 
+void AgentRuntimeManager::update_squad_returns() {
+    // Further than this from its slot it is on its way back rather than settling
+    // into place, and worth a look at whether it can get there.
+    constexpr float kAwayFromSlotMeters = 3.0f;
+    // A squad on the move drags the slot along; a path is kept while it still
+    // ends about there.
+    constexpr float kPathStillGoodMeters = 3.0f;
+    constexpr std::uint32_t kReplanTicks = 30;
+    // A whole squad breaks off on one tick, and a route is the dearest thing
+    // here. The rest wait their turn, a tick or two at most.
+    constexpr int kRoutesPerTick = 8;
+    // Less than this in the time below is not getting anywhere.
+    constexpr float kProgressMeters = 0.5f;
+    constexpr std::uint32_t kStalledTicks = 90;
+    // Return refuses to engage, which is right for the few seconds a short walk
+    // back takes (docs/AI_PATROL_SYSTEM.md) and wrong for the long way round a
+    // cliff, past a player it ignores. Idle walks the same way and can engage.
+    constexpr std::uint32_t kLongestReturnTicks = 300;
+    // Pressed against a wall it faces the wall, and sees nobody behind it. A
+    // while facing the other way before it has another go.
+    constexpr std::uint32_t kStrandedTicks = 300;
+
+    int routes_left = kRoutesPerTick;
+    for (AgentRuntimeState& agent : agents_) {
+        if (!agent.patrol.has_slot || agent.entry.active) {
+            continue;
+        }
+        AgentPatrolRuntimeState& patrol = agent.patrol;
+        const bool in_return = agent.sentry.state == AgentSentryState::kReturn;
+        const bool away = in_return ||
+            (agent.sentry.state == AgentSentryState::kIdle &&
+             agent_steering::horizontal_distance(agent.position, patrol.slot) >
+                 kAwayFromSlotMeters);
+        if (!away) {
+            patrol.returning = false;
+            patrol.return_stranded_ticks = 0;
+            agent.seek_path.clear();
+            agent.seek_next = 0;
+            continue;
+        }
+        if (!patrol.returning) {
+            patrol.returning = true;
+            patrol.return_replan_in = 0;
+            patrol.return_ticks = 0;
+            patrol.return_progress_position = agent.position;
+            patrol.return_stalled_ticks = 0;
+            patrol.return_stranded_ticks = 0;
+        }
+
+        if (patrol.return_stranded_ticks > 0) {
+            --patrol.return_stranded_ticks;
+            patrol.return_progress_position = agent.position;
+            patrol.return_stalled_ticks = 0;
+        }
+        if (agent_steering::horizontal_distance(agent.position, patrol.return_progress_position) >=
+            kProgressMeters) {
+            patrol.return_progress_position = agent.position;
+            patrol.return_stalled_ticks = 0;
+        } else {
+            ++patrol.return_stalled_ticks;
+        }
+        ++patrol.return_ticks;
+        const bool stalled = patrol.return_stalled_ticks >= kStalledTicks;
+        if (in_return && (stalled || patrol.return_ticks >= kLongestReturnTicks)) {
+            // It still walks back, as Idle; what ends is refusing to fight.
+            agent_steering::transition_to(&agent, AgentSentryState::kIdle);
+        }
+        if (stalled) {
+            // Whatever it was walking at has not worked. A path found below
+            // takes it out of this again.
+            agent.seek_path.clear();
+            agent.seek_next = 0;
+            patrol.return_stalled_ticks = 0;
+            patrol.return_replan_in = 0;
+            patrol.return_stranded_ticks = kStrandedTicks;
+        }
+
+        if (patrol.return_replan_in > 0) {
+            --patrol.return_replan_in;
+            continue;
+        }
+        if (!patrol_navigation_.valid() || routes_left == 0) {
+            continue;
+        }
+        patrol.return_replan_in = kReplanTicks;
+        const std::optional<bool> line =
+            patrol_navigation_.walkable_line(agent.position, patrol.slot, 2.0f);
+        if (line.has_value() && *line) {
+            // The usual case, a chase over open ground: the formation's own
+            // steering does better than a path, and costs no route.
+            agent.seek_path.clear();
+            agent.seek_next = 0;
+            continue;
+        }
+        if (!agent.seek_path.empty() &&
+            agent_steering::horizontal_distance(agent.seek_path.back(), patrol.slot) <=
+                kPathStillGoodMeters) {
+            continue;
+        }
+        --routes_left;
+        PatrolRouteRequest request;
+        request.start = agent.position;
+        request.end = patrol.slot;
+        request.snap_half_extent_meters = 2.0f;
+        agent.seek_next = 0;
+        if (!patrol_navigation_.find_route(request, &agent.seek_path)) {
+            // The slot can hang over an edge. The squad itself cannot.
+            request.end = patrol.squad_point;
+            if (!patrol_navigation_.find_route(request, &agent.seek_path)) {
+                agent.seek_path.clear();
+            }
+        }
+        if (!agent.seek_path.empty()) {
+            patrol.return_stranded_ticks = 0;
+        }
+    }
+}
+
 void AgentRuntimeManager::update_lock_targets(const ActorStateView& actors) {
     for (AgentRuntimeState& agent : agents_) {
         if (agent.controller_role != AgentControllerRole::kLockTarget || agent.entry.active) {
@@ -1245,6 +1363,7 @@ void AgentRuntimeManager::tick(float delta_seconds) {
     update_hunters(actors);
     update_lock_targets(actors);
     update_guard_homes();
+    update_squad_returns();
     // Still on the post-director snapshot: nothing between it and here creates,
     // destroys or moves an entity, so it is what a per-agent query would return.
     dispatch_controllers(actors, delta_seconds);

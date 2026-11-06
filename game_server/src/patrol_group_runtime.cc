@@ -192,6 +192,7 @@ void PatrolGroupRuntime::tick(
                 group.cursor.y + offset.y,
                 group.cursor.z + offset.z,
             };
+            agent->patrol.squad_point = group.cursor;
             agent->patrol.has_slot = true;
             agent->patrol.travel_velocity = {};
             if (!group.holding && !group.route_complete) {

@@ -109,6 +109,16 @@ back. It ends on reaching its slot *or* on returning to where it broke
 formation — the second condition is what stops a short chase from leaving the
 agent unwilling to engage for the rest of the leg.
 
+**A member cut off from its slot walks round, over the navmesh.** A chase can go
+down a drop it cannot climb back, and the straight line to the slot then runs into
+that riser for good (it did, at 3 m on the composed map; the character steps 0.4 m).
+So a member away from its slot asks once a second whether the line is walkable, and
+when it is not, routes there at chase pace (`update_squad_returns`). Open ground
+costs a line test and no route; at most 8 routes a tick. A Return lasts 10 s at most
+and ends early on 3 s without 0.5 m of headway: it keeps walking back, as Idle, and
+can fight again. One with no route at all stops pressing the wall and turns its back
+on it for 10 s, since its vision cone was pointed at the wall.
+
 **The leash is measured from where the member broke formation**, not from the
 route, so "how far a pursuit may drag a patrol" stays a property of the pursuit
 while the squad moves on.
@@ -452,6 +462,7 @@ drove the old mechanism are gone.
 | `//game_server:patrol_navigation_test` | loading, snapping, partial-path rejection, detour rejection |
 | `//game_server:patrol_group_runtime_test` | cursor advance, formation rotation, hold-while-engaged, casualties |
 | `//game_server:patrol_director_test` | composition draws, validation, spawning, determinism, retirement, budget, navigable routing |
+| `//game_server:squad_return_path_test` | back round a cliff on the shipping map; stranded and not deaf |
 | `//game_server:agent_chaser_controller_test` | slot following, return trajectory, leash |
 | `//game_server:patrol_nav_bench` | manual; route viability per terrain |
 

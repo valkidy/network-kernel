@@ -84,6 +84,19 @@ struct AgentPatrolRuntimeState {
     // drag a patrol" is a property of the pursuit and does not change as the
     // squad moves on.
     KernelVec3 leash_anchor{0.0f, 0.0f, 0.0f};
+    // Where the squad itself is, which the route keeps on walkable ground. A
+    // slot is that plus a formation offset, and can be over an edge.
+    KernelVec3 squad_point{0.0f, 0.0f, 0.0f};
+    // Finding its way back to the slot (update_squad_returns). Only meaningful
+    // while it is away from it.
+    bool returning = false;
+    std::uint32_t return_replan_in = 0;
+    std::uint32_t return_ticks = 0;
+    KernelVec3 return_progress_position{0.0f, 0.0f, 0.0f};
+    std::uint32_t return_stalled_ticks = 0;
+    // No way back found and the straight line went nowhere: it stops walking
+    // into the wall and turns its back on it for this long, then tries again.
+    std::uint32_t return_stranded_ticks = 0;
 };
 
 // What an agent is there to do, which picks the controller that runs it
