@@ -92,6 +92,10 @@ map_variants:
       accept: {min_reach: 0.995, max_unreachable_area: 400.0, max_seam_breaks: 0, min_placed: 10}
       max_retries: 8
     stamp_template_dir: stamp_templates
+    # The mission's positions belong to one map; composed_mesh plays the root's
+    # game_rule.
+    preload_directors:
+      - game_rule_kernel_terrain
     # The initial camp on the flattest ground near the middle: a terrace floor
     # at y 20.4-20.6 m around (-7.2, -36), measured off the composed heights.
     scene_props:

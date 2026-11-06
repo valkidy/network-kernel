@@ -1,17 +1,16 @@
-// The narrow-pass giant walks its authored route, on the real map.
+// The mission's giants walk their authored routes, on the real map.
 //
-// Its route goes down a valley as narrow as 9 m beside a cliff, so the only
-// meaningful check is against the shipping terrain itself: the baked 4-zone
+// A giant's stance is 5.6 m and the navmesh is baked for a 0.6 m agent, so the
+// only meaningful check is against the shipping terrain itself: the baked
 // collision under the character controller, and the baked navmesh joining the
 // waypoints. A filesystem catalog load reads neither artifact (only a bundle
 // does), so both are handed over here exactly as the bundle path would.
 //
-// What is asserted is the shape of the walk -- it goes through the valley's
-// narrowest stretch, out onto the open ground at its north end and down to its
-// south end, and never climbs a cliff -- not the timing, which follows move
-// speed.
+// What is asserted is the shape of the walk -- every giant gets to both ends of
+// its route and stays on the ground -- not the timing, which follows move speed.
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -98,6 +97,8 @@ int main() {
     const std::uint32_t giant_template =
         template_id_of(config, "gingerbread_giant");
     require(giant_template != 0);
+    // Only the mission's giants: the patrols spawn the same template.
+    config.patrols.clear();
 
     KernelConfig kernel_config{};
     kernel_config.mode = KernelMode_DedicatedServer;
@@ -128,7 +129,7 @@ int main() {
     player.struct_size = sizeof(player);
     player.entity_type = network_example::game_server::kEntityTypeActor;
     player.actor_type = network_example::game_server::kActorTypePlayer;
-    player.position = KernelVec3{0.0f, 2.0f, 0.0f};
+    player.position = config.player.spawn_position;
     player.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
     std::uint32_t player_net_id = 0;
     require(Kernel_ServerCreateEntity(kernel, &player, &player_net_id));
@@ -137,68 +138,62 @@ int main() {
         Kernel_Update(kernel, kTickSeconds);
     }
 
-    std::uint32_t pass_giant = 0;
-    std::vector<std::pair<std::uint32_t, float>> sweep_lanes;
-    for (const KernelServerEntityState& giant : giants(kernel, giant_template)) {
-        if (giant.position.x > 0.0f && giant.position.z < 0.0f) {
-            pass_giant = giant.net_id;
-        } else {
-            sweep_lanes.emplace_back(giant.net_id, giant.position.z);
-        }
-    }
-    require(pass_giant != 0u);
-    require(sweep_lanes.size() == 3u);
-
-    // Long enough to walk the whole valley both ways from wherever it joins:
-    // the corner nearest its spawn is mid-valley, so at worst one end, then
-    // the full length to the other.
-    bool corridor_deep = false;   // In the valley's narrowest stretch.
-    float northmost = -1e9f;
-    float southmost = 1e9f;
-    float highest = -1e9f;
-    float sweep_drift = 0.0f;
-    for (int tick = 0; tick < 3300; ++tick) {
-        game_server.tick(kTickSeconds);
-        Kernel_Update(kernel, kTickSeconds);
-        for (const KernelServerEntityState& giant : giants(kernel, giant_template)) {
-            if (giant.net_id == pass_giant) {
-                const KernelVec3& p = giant.position;
-                corridor_deep = corridor_deep ||
-                    (p.z < -40.0f && p.z > -60.0f && p.x > 44.0f && p.x < 54.0f);
-                northmost = std::max(northmost, p.z);
-                southmost = std::min(southmost, p.z);
-                highest = std::max(highest, p.y);
-                continue;
-            }
-            for (const auto& [net_id, lane_z] : sweep_lanes) {
-                if (net_id == giant.net_id) {
-                    sweep_drift =
-                        std::max(sweep_drift, std::abs(giant.position.z - lane_z));
+    // Each giant, with the route it was spawned on.
+    struct Walk {
+        std::uint32_t net_id = 0;
+        std::vector<KernelVec3> route;
+        std::vector<float> closest;
+        float lowest = 1e9f;
+    };
+    std::vector<Walk> walks;
+    for (const auto& rule : config.game_rules) {
+        if (rule.name != "game_rule") continue;
+        for (const auto& node : rule.nodes) {
+            if (node.spawn.entity_template_id != giant_template) continue;
+            for (const KernelServerEntityState& giant : giants(kernel, giant_template)) {
+                if (std::hypot(giant.position.x - node.spawn.position.x,
+                               giant.position.z - node.spawn.position.z) < 5.0f) {
+                    walks.push_back(Walk{
+                        giant.net_id,
+                        node.spawn.controller.route,
+                        std::vector<float>(node.spawn.controller.route.size(), 1e9f)});
                 }
             }
         }
     }
-    std::fprintf(
-        stderr,
-        "pass giant: corridor=%d northmost_z=%.1f southmost_z=%.1f highest_y=%.2f; "
-        "other giants' lane drift=%.2f\n",
-        corridor_deep,
-        northmost,
-        southmost,
-        highest,
-        sweep_drift);
-    require(corridor_deep);
-    // Out of the valley's north end onto the open ground (its first waypoint
-    // is at z 10), and down to its south end (its last waypoint, z -85).
-    require(northmost > 5.0f);
-    require(southmost < -80.0f);
-    // The valley floor is ~0.2-0.6 m, the plateau ~11 m and the ridge up to
-    // ~9 m: anything above a couple of metres is a giant that climbed out.
-    require(highest < 2.0f);
-    // The other three walk their own 2-point routes along x. Each leg is
-    // pathed over the navmesh now (AI plan P1c) rather than swept in a dead
-    // straight line, so a corner may sit a metre or so off the lane.
-    require(sweep_drift < 2.0f);
+    require(walks.size() == 4u);
+
+    // Long enough for the longest route (79 m) out and back.
+    for (int tick = 0; tick < 3300; ++tick) {
+        game_server.tick(kTickSeconds);
+        Kernel_Update(kernel, kTickSeconds);
+        for (const KernelServerEntityState& giant : giants(kernel, giant_template)) {
+            for (Walk& walk : walks) {
+                if (walk.net_id != giant.net_id) continue;
+                walk.lowest = std::min(walk.lowest, giant.position.y);
+                for (std::size_t point = 0; point < walk.route.size(); ++point) {
+                    walk.closest[point] = std::min(
+                        walk.closest[point],
+                        std::hypot(giant.position.x - walk.route[point].x,
+                                   giant.position.z - walk.route[point].z));
+                }
+            }
+        }
+    }
+    for (const Walk& walk : walks) {
+        std::fprintf(stderr, "giant #%u lowest y %.2f, closest to its route's points:", walk.net_id, walk.lowest);
+        for (const float closest : walk.closest) {
+            std::fprintf(stderr, " %.1f", closest);
+        }
+        std::fprintf(stderr, "\n");
+    }
+    for (const Walk& walk : walks) {
+        // The map's floor is at y 8; below it is a giant that fell through.
+        require(walk.lowest > 8.0f);
+        for (const float closest : walk.closest) {
+            require(closest < 4.0f);
+        }
+    }
 
     Kernel_Destroy(kernel);
     return 0;

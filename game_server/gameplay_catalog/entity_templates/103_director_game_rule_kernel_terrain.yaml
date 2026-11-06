@@ -1,0 +1,147 @@
+# The mission on the kernel_terrain map: the same objectives as
+# 101_director_game_rule, with every point chosen and measured off the kernel's
+# own compose. That is nearly the mesh's ground minus 108 on x and z, but not
+# near enough to copy: measured, a shifted point can sit a metre into the ground
+# or come off the terrace it was on. Change the two together.
+#
+# Mission flow: which objectives exist, in what order, and what has to
+# happen before the next one opens. The graph is acyclic by construction --
+# gameplay_config.cc rejects a cycle at load -- which is right for a mission
+# and wrong for anything periodic. Roaming population belongs to
+# world_rule instead.
+id: 103
+name: game_rule_kernel_terrain
+entity_type: director
+server_only: true
+transform:
+  position: {x: 0.0, y: 0.0, z: 0.0}
+ai:
+  controller: director
+  profile: game_rule_kernel_terrain
+  tick_interval: 1
+director:
+  kind: game_rule
+  graph:
+    nodes:
+      - id: wait_for_player
+        condition:
+          type: player_count_at_least
+          count: 1
+        next:
+          - clear_nest_west
+          - clear_nest_north_east
+          - clear_nest_south_east
+          - giant_open_combat
+          - giant_forest_flank
+          - giant_swamp_shortcut
+          - giant_narrow_pass
+      # The objective is the nests themselves. Placing them here and waiting on
+      # them being eliminated is the whole mission: three things in the world,
+      # each putting gingerbread out until it is destroyed.
+      #
+      # Nothing special connects the two halves. The mission rule spawns props
+      # and waits for them to die, which it could already do; each prop carries
+      # its own spawner, which needs nothing from the mission rule. A nest is a
+      # group member and a spawner at once because those are separate concerns
+      # that happen to meet on one entity.
+      #
+      # One node each, because a spawn_group has one height and this ground has
+      # terraces: a nest's position is its base and each unit's first footing,
+      # so it has to be the ground under it. A unit put out below the ground
+      # falls straight through to the kill floor, every wave, for as long as
+      # the nest stands. Each spot is a flat patch at least 6 m round (a door
+      # needs 3 m), on the player's side of every cliff, measured off the mesh;
+      # //game_server:mission_on_map_test plays them.
+      - id: clear_nest_west
+        on_activate:
+          - type: spawn_group
+            group: nest_west
+            count: 1
+            entity_template: gingerbread_nest
+            position: {x: -48.0, y: 28.81, z: 60.0}
+        condition:
+          type: group_eliminated
+          group: nest_west
+      - id: clear_nest_north_east
+        on_activate:
+          - type: spawn_group
+            group: nest_north_east
+            count: 1
+            entity_template: gingerbread_nest
+            position: {x: 52.0, y: 20.39, z: 30.0}
+        condition:
+          type: group_eliminated
+          group: nest_north_east
+      - id: clear_nest_south_east
+        on_activate:
+          - type: spawn_group
+            group: nest_south_east
+            count: 1
+            entity_template: gingerbread_nest
+            position: {x: 74.0, y: 13.24, z: -92.0}
+        condition:
+          type: group_eliminated
+          group: nest_south_east
+      # One giant in each corner of the map, each its own objective, all opened
+      # by the same player arrival as the nests. A giant is a patrol that walks
+      # its behavior.route and fights what it sees. Its legs are pathed over the
+      # navmesh, but that is baked for a 0.6 m agent and a giant's stance is
+      # 5.6 m, so every point is a flat patch rather than a terrace edge. Each
+      # stays well clear of the nests: its GEO_ boxes span 16 m across. y is the
+      # floor plus 0.5 m, as with any legged body.
+      - id: giant_open_combat
+        on_activate:
+          - type: spawn_group
+            group: giant_open_combat
+            count: 1
+            entity_template: gingerbread_giant
+            position: {x: -82.0, y: 20.93, z: -94.0}
+            behavior:
+              route:
+                - {x: -82.0, y: 20.43, z: -94.0}
+                - {x: -102.0, y: 22.69, z: -70.0}
+        condition:
+          type: group_eliminated
+          group: giant_open_combat
+      - id: giant_forest_flank
+        on_activate:
+          - type: spawn_group
+            group: giant_forest_flank
+            count: 1
+            entity_template: gingerbread_giant
+            position: {x: -90.0, y: 35.24, z: 96.0}
+            behavior:
+              route:
+                - {x: -90.0, y: 34.74, z: 96.0}
+                - {x: -70.0, y: 32.82, z: 85.0}
+        condition:
+          type: group_eliminated
+          group: giant_forest_flank
+      - id: giant_swamp_shortcut
+        on_activate:
+          - type: spawn_group
+            group: giant_swamp_shortcut
+            count: 1
+            entity_template: gingerbread_giant
+            position: {x: 76.0, y: 20.98, z: 96.0}
+            behavior:
+              route:
+                - {x: 76.0, y: 20.48, z: 96.0}
+                - {x: 52.0, y: 20.30, z: 82.0}
+        condition:
+          type: group_eliminated
+          group: giant_swamp_shortcut
+      - id: giant_narrow_pass
+        on_activate:
+          - type: spawn_group
+            group: giant_narrow_pass
+            count: 1
+            entity_template: gingerbread_giant
+            position: {x: 102.0, y: 16.12, z: 0.0}
+            behavior:
+              route:
+                - {x: 102.0, y: 15.62, z: 0.0}
+                - {x: 64.0, y: 15.69, z: -16.0}
+        condition:
+          type: group_eliminated
+          group: giant_narrow_pass

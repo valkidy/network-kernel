@@ -95,6 +95,23 @@ int main() {
     config.map.playable_bounds.max_z = 100.0f;
     const std::uint32_t gingerbread = template_id_of(config, "gingerbread");
     require(gingerbread != 0u);
+    // The mission's nests stand on the shipping map's terraces, up to y 22 and
+    // past the plane's edge. Stand them on the plane: a unit dropped from a
+    // terrace is falling for a reason this test is not about.
+    const std::uint32_t nest = template_id_of(config, "gingerbread_nest");
+    require(nest != 0u);
+    int nests_placed = 0;
+    for (network_example::game_server::GameRuleConfig& rule : config.game_rules) {
+        for (network_example::game_server::GameRuleNodeConfig& node : rule.nodes) {
+            if (node.spawn.entity_template_id != nest) continue;
+            node.spawn.position = KernelVec3{
+                -30.0f + 30.0f * static_cast<float>(nests_placed % 3),
+                0.0f,
+                -30.0f};
+            ++nests_placed;
+        }
+    }
+    require(nests_placed >= 3);
     const std::vector<std::uint8_t> scene = read_ground_scene();
 
     KernelConfig kernel_config{};
