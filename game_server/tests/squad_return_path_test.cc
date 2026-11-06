@@ -8,10 +8,16 @@
 //      that this spot reproduces the report.
 //
 // And the whole of it from a real chase, with the player luring it off the top:
-//   B  it goes down after the player, turns back, and rejoins its squad, never
-//      refusing to fight for longer than a short walk takes;
+//   B  it goes down after the player, the player vanishes, and it rejoins its
+//      squad, never refusing to fight for longer than a short walk takes;
 //   B' with no navmesh it cannot get back, and must not stay deaf to a player
 //      who walks up to it, as the report's did at 13 m.
+//
+// And a player up a ledge (issue_20261106_150830, the spot from it), who a melee
+// unit stood under for a minute swinging at air:
+//   C  it leaps up and lands on the player's level, where its claw reaches;
+//   C' the same distance on the level is too close to leap, as it always was;
+//   C" nor up a slope it can walk, however much higher the player stands.
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -250,11 +256,13 @@ Chase chase_down_and_back(bool with_navmesh, std::uint16_t port, int ticks) {
         const bool in_return = agent->sentry.state == gs::AgentSentryState::kReturn;
         return_streak = in_return ? return_streak + 1 : 0;
         if (return_streak > chase.longest_return_ticks) chase.longest_return_ticks = return_streak;
-        if (in_return && !chase.returned) {
-            chase.returned = true;
-            // Out of the way: from here it has only the walk back to do.
+        if (chase.went_down && player_at.x == kPlayerBelow.x &&
+            horizontal(now, slot) > 18.0f) {
+            // Past its leash, and now out of its sight: it lets go, and has only
+            // the walk back to do.
             player_at = kPlayerGone;
         }
+        if (in_return) chase.returned = true;
         if (chase.returned && !came_back_to_it && chase.ticks_to_rejoin < 0 &&
             horizontal(now, slot) <= 3.0f && now.y > 20.0f) {
             chase.rejoined = true;
@@ -285,6 +293,68 @@ void print(const char* label, const Chase& chase) {
         static_cast<float>(chase.longest_return_ticks) * kTickSeconds,
         chase.engaged_again, chase.end.x, chase.end.y, chase.end.z,
         static_cast<int>(chase.end_state));
+}
+
+struct Ledge {
+    int leaps = 0;
+    float best_y = -1e9f;
+    int ticks_to_top = -1;
+    int first_leap_tick = -1;
+    std::uint16_t damage = 0;
+};
+
+constexpr KernelVec3 kPlayerOnLedge{76.35f, 25.0f, 117.27f};
+constexpr KernelVec3 kAtLedgeFoot{76.46f, 21.5f, 115.48f};
+
+Ledge leap_at_ledge(const KernelVec3& player_spot, const KernelVec3& unit_spot, std::uint16_t port, int ticks) {
+    Rig rig(true, port);
+    const std::uint32_t player = rig.create("player", player_spot);
+    KernelAgentVisionConfig vision{};
+    vision.struct_size = sizeof(vision);
+    vision.camp = KernelAgentCamp_PlayerSide;
+    require(Kernel_ServerSetEntityVisionConfig(rig.kernel, player, &vision));
+    KernelServerEntityState player_state{};
+    player_state.struct_size = sizeof(player_state);
+    for (int i = 0; i < 30; ++i) rig.step();
+    const KernelVec3 feet = rig.position_of(player);
+    // Facing the player, down its local -x: put it to the player's +x side.
+    const std::uint32_t unit = rig.create("gingerbread", unit_spot);
+    require(Kernel_ServerGetEntityState(rig.kernel, player, &player_state));
+    const std::uint16_t full_hp = player_state.max_hp;
+    Ledge ledge;
+    bool was_leaping = false;
+    for (int tick = 0; tick < ticks; ++tick) {
+        require(Kernel_ServerSetEntityTransform(rig.kernel, player, &feet, &player_state.rotation));
+        rig.step();
+        KernelServerEntityState state{};
+        state.struct_size = sizeof(state);
+        require(Kernel_ServerGetEntityState(rig.kernel, unit, &state));
+        const bool leaping = (state.visual_flags & KERNEL_VISUAL_FLAG_LEAPING) != 0u;
+        if (leaping && !was_leaping) {
+            ++ledge.leaps;
+            if (ledge.first_leap_tick < 0) ledge.first_leap_tick = tick;
+        }
+        was_leaping = leaping;
+        if (state.position.y > ledge.best_y) ledge.best_y = state.position.y;
+        if (ledge.ticks_to_top < 0 && !leaping && state.position.y >= feet.y - 1.0f) {
+            ledge.ticks_to_top = tick;
+        }
+        require(Kernel_ServerGetEntityState(rig.kernel, player, &player_state));
+        if (player_state.hp < full_hp) {
+            ledge.damage = static_cast<std::uint16_t>(full_hp - player_state.hp);
+        }
+    }
+    std::printf(
+        "  player feet (%.1f, %.1f, %.1f) unit started y %.1f\n",
+        feet.x, feet.y, feet.z, unit_spot.y);
+    return ledge;
+}
+
+void print(const char* label, const Ledge& ledge) {
+    std::printf(
+        "%s: leaps %d, first at %.1f s, highest y %.1f, on the level at %.1f s, damage %u\n",
+        label, ledge.leaps, static_cast<float>(ledge.first_leap_tick) * kTickSeconds, ledge.best_y,
+        static_cast<float>(ledge.ticks_to_top) * kTickSeconds, ledge.damage);
 }
 
 void print(const char* label, const Walk& walk) {
@@ -342,6 +412,43 @@ int main() {
     require(!stranded.rejoined);
     require(stranded.longest_return_ticks <= 301);
     require(stranded.engaged_again);
+
+    const Ledge up = leap_at_ledge(kPlayerOnLedge, kAtLedgeFoot, 8015, 900);
+    print("C  ledge", up);
+    require(up.leaps >= 1);
+    require(up.ticks_to_top >= 0);
+    require(up.damage > 0u);
+
+    const KernelVec3 on_level{kPlayerOnLedge.x + 5.0f, kPlayerOnLedge.y, kPlayerOnLedge.z};
+    const Ledge level = leap_at_ledge(kPlayerOnLedge, on_level, 8016, 300);
+    print("C' level", level);
+    require(level.leaps == 0);
+
+    // A walkable slope with a real climb, searched for so a rebake moves it. Its
+    // unit is to the player's +x, because it looks down its local -x.
+    const gs::GameServerGameplayConfig config = gs::default_game_server_gameplay_config();
+    gs::PatrolNavigation navigation;
+    std::string error;
+    require(navigation.load(read_file(catalog_root() / config.navigation_mesh.entry_path), &error));
+    bool found_slope = false;
+    KernelVec3 slope_top{}, slope_foot{};
+    for (float x = 4.0f; x < 212.0f && !found_slope; x += 3.0f) {
+        for (float z = 4.0f; z < 212.0f && !found_slope; z += 3.0f) {
+            for (float y = 0.0f; y < 40.0f && !found_slope; y += 4.0f) {
+                if (!navigation.snap({x, y, z}, 1.0f, &slope_top)) continue;
+                if (!navigation.snap({x + 6.0f, slope_top.y - 2.0f, z}, 1.0f, &slope_foot)) continue;
+                if (slope_top.y - slope_foot.y < 1.6f || slope_top.y - slope_foot.y > 3.0f) continue;
+                found_slope = navigation.walkable_line(slope_foot, slope_top, 0.5f).value_or(false);
+            }
+        }
+    }
+    require(found_slope);
+    const Ledge slope = leap_at_ledge(
+        {slope_top.x, slope_top.y + 1.0f, slope_top.z},
+        {slope_foot.x, slope_foot.y + 1.0f, slope_foot.z},
+        8017, 300);
+    print("C\" slope", slope);
+    require(slope.leaps == 0);
 
     std::puts("squad_return_path_test: ok");
     return 0;

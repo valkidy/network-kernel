@@ -130,6 +130,19 @@ public:
         return config.squad.leash_meters;
     }
 
+    // Turning back with the player in plain sight reads as a bug. The authored
+    // leash is measured from where it broke off and its eyes go with it, so at
+    // 18 m out it can still see 26 m further on. It lets go when it loses sight
+    // past the leash, or here: the squad holds for as long as it is out, and a
+    // player must not be able to drag it across the map. The kernel's relevance
+    // radius, which is about as far as a player can see it anyway.
+    float leash_in_sight_meters(const AgentChaserConfig& config) const override {
+        constexpr float kSquadLeashInSightMeters = 40.0f;
+        return config.squad.leash_meters > 0.0f
+            ? std::max(config.squad.leash_meters, kSquadLeashInSightMeters)
+            : 0.0f;
+    }
+
     void on_idle(AgentRuntimeState& agent, AgentBehaviorStep& step) const override {
         const AgentSquadTuning& squad = step.config.squad;
         if (follow_return_path(agent, step)) {

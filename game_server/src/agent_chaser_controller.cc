@@ -144,12 +144,25 @@ std::uint32_t leap_airtime_ticks(
 // target_feet is the target's own position, not perception's target_position:
 // that is an aim point at the body's centre, and read as the ground it put a
 // level leap 0.9 m uphill and stretched its airtime to match.
+//
+// A target up a ledge it cannot walk to is leapt at from any distance in the
+// band or under it, since under it is where a melee unit ends up: at the foot,
+// swinging at air. Not for ground it can walk up, where a leap would only be
+// showing off, and not past what a leap can sensibly clear.
 bool try_start_leap(
     KernelHandle* kernel,
     const AgentChaserConfig& config,
     AgentRuntimeState* agent,
     const KernelServerEntityState& self,
-    const KernelVec3& target_feet) {
+    const KernelVec3& target_feet,
+    const PatrolNavigation* navigation) {
+    // A terrace's riser is 1.2 m and the walkable slopes between them are
+    // gentle; less than this is rarely a ledge at all.
+    constexpr float kLedgeMinMeters = 1.5f;
+    constexpr float kLedgeMaxMeters = 10.0f;
+    // Past the target rather than short of it: short of it, on a ledge, is the
+    // air in front of the edge it is standing at.
+    constexpr float kLedgeLandingPastMeters = 1.2f;
     const AgentLeapTuning& leap = config.chase.leap;
     if (leap.max_distance_meters <= 0.0f || agent->leap_ticks_to_landing > 0u ||
         agent->leap_cooldown_ticks > 0u ||
@@ -160,21 +173,48 @@ bool try_start_leap(
     const float dx = target_feet.x - agent->position.x;
     const float dz = target_feet.z - agent->position.z;
     const float distance = std::hypot(dx, dz);
-    if (distance < leap.min_distance_meters ||
-        distance > leap.max_distance_meters || distance <= 0.0001f) {
+    if (distance > leap.max_distance_meters) {
         return false;
     }
-    const float travel = distance - leap.landing_distance_meters;
-    const KernelVec3 destination{
-        agent->position.x + dx * (travel / distance),
-        target_feet.y,
-        agent->position.z + dz * (travel / distance)};
+    const float climb = target_feet.y - agent->position.y;
+    const bool up_a_ledge = climb >= kLedgeMinMeters && climb <= kLedgeMaxMeters;
+    if (distance < leap.min_distance_meters) {
+        if (!up_a_ledge) {
+            return false;
+        }
+        const std::optional<bool> line = navigation != nullptr && navigation->valid()
+            ? navigation->walkable_line(agent->position, target_feet, 1.0f)
+            : std::nullopt;
+        if (line.value_or(false)) {
+            return false;
+        }
+    }
+    KernelVec3 destination = target_feet;
+    if (up_a_ledge) {
+        if (distance > 0.0001f && navigation != nullptr && navigation->valid()) {
+            const KernelVec3 past{
+                target_feet.x + dx / distance * kLedgeLandingPastMeters,
+                target_feet.y,
+                target_feet.z + dz / distance * kLedgeLandingPastMeters};
+            KernelVec3 ground{};
+            if (navigation->snap(past, 0.5f, &ground) &&
+                std::fabs(ground.y - target_feet.y) <= 1.0f) {
+                destination = ground;
+            }
+        }
+    } else {
+        const float short_of = distance - leap.landing_distance_meters;
+        destination.x = agent->position.x + dx * (short_of / distance);
+        destination.z = agent->position.z + dz * (short_of / distance);
+    }
+    const float travel = std::hypot(
+        destination.x - agent->position.x, destination.z - agent->position.z);
     // The target's feet stand in for the ground under the landing spot,
     // which only the kernel probes.
     const std::uint32_t airtime = leap_airtime_ticks(
         leap,
         travel,
-        target_feet.y - agent->position.y,
+        destination.y - agent->position.y,
         config.gravity_y,
         Kernel_GetFixedDeltaSeconds(kernel));
     if (!Kernel_ServerEnqueueEntityLeap(
@@ -877,7 +917,10 @@ void AgentChaserController::tick(
         // it is made before the pursuit states get to look at what they can
         // see. Without it the leash could only be enforced on a tick where
         // vision happened to break.
-        if (leash_exceeded(behavior.leash_meters(config_), agent) &&
+        if (leash_exceeded(
+                has_visible_target ? behavior.leash_in_sight_meters(config_)
+                                   : behavior.leash_meters(config_),
+                agent) &&
             is_engaged(agent.sentry.state)) {
             agent.sentry.target = 0;
             agent.sentry.has_attention_point = false;
@@ -1111,7 +1154,8 @@ void AgentChaserController::tick(
                 } else if (target_state != nullptr) {
                     (void)try_start_leap(
                         kernel, config_, &agent, entity_state,
-                        target_state->position);
+                        target_state->position,
+                        config_.hovers ? nullptr : navigation);
                 }
                 // Seeing a target is not the same as being able to hit one.
                 // Not attacking leaves submitted_input false, so the tail of
