@@ -123,6 +123,23 @@ on it for 10 s, since its vision cone was pointed at the wall.
 route, so "how far a pursuit may drag a patrol" stays a property of the pursuit
 while the squad moves on.
 
+**An alert passed on stops at the one it was passed to.** A squad turns as one (AI
+plan D7), but only members in formation are told: one still walking back carries on,
+since stopping it pinned it where it was, 40 m from its slot, for a whole fight. And
+one told, with no target of its own, tells nobody else. Two of them forgetting a little
+apart would otherwise re-alert each other for good and hold the squad with nobody there.
+
+**The leash only binds once it has lost sight.** With its target in view a member
+keeps going to 40 m from where it broke off (the relevance radius; a code constant,
+not authored), since its eyes go with it and at 18 m out it can still see 26 m on.
+Turning back in front of a player read as a bug. Guards and route patrols keep their
+leash as authored.
+
+**A target up a ledge gets leapt at.** Target 1.5-10 m higher, the navmesh line to it
+cut, inside or under the leap's distance band: it leaps, whatever the band's minimum
+says, and lands 1.2 m past the target, because short of it is the air off the edge.
+Only units with a leap; a slope it can walk gets walked.
+
 **A route that walks far further than the line between its ends is rejected** and
 another start/end pair is drawn. See the measurements below for why.
 

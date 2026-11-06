@@ -18,9 +18,6 @@ namespace {
 // fraction of a centimetre an agent pressed against a wall jitters by.
 constexpr float kProgressMeters = 0.5f;
 constexpr std::uint64_t kStuckTicks = 90;
-// A squad member further than this from its slot is on its way back to it,
-// rather than settling into place.
-constexpr float kOffSlotMeters = 3.0f;
 // One server's worth of lines per second at most. A world in a mass fight must
 // not spend its tick on this, and the count of what was dropped is itself a
 // finding.
@@ -108,7 +105,7 @@ bool walking_somewhere(const AgentRuntimeState& agent) {
     return !agent.seek_path.empty() ||
         (agent.patrol.has_slot &&
          agent_steering::horizontal_distance(agent.position, agent.patrol.slot) >
-             kOffSlotMeters);
+             kSquadAwayFromSlotMeters);
 }
 
 std::shared_ptr<spdlog::logger>& file_logger() {
@@ -242,12 +239,20 @@ void AiTrace::observe_group(
     const auto [found, first_seen] = groups_.try_emplace(group.group_id);
     GroupMemory& memory = found->second;
 
-    // Which member is keeping it there, and on what. The first engaged one, the
-    // same member order the squad's own tick reads.
+    // Which member is keeping it there, and on what. One that can see its target
+    // if there is one: a squad-mate merely alerted by the fight also counts as
+    // engaged, and naming it would read as a squad holding for nobody.
     const AgentRuntimeState* holder = nullptr;
     for (const std::uint32_t net_id : group.member_net_ids) {
         const auto member = by_net_id_.find(net_id);
-        if (member != by_net_id_.end() && is_engaged(member->second->sentry.state)) {
+        if (member == by_net_id_.end() || !is_engaged(member->second->sentry.state)) {
+            continue;
+        }
+        if (holder == nullptr) {
+            holder = member->second;
+        }
+        if (member->second->sentry.target != 0 &&
+            member->second->sentry.lost_target_ticks == 0) {
             holder = member->second;
             break;
         }

@@ -619,9 +619,10 @@ void a_returning_member_walks_to_the_squad_not_to_where_it_left(
     run_frame(kernel, controller, agents);
     require(almost_equal((*agents)[0].patrol.leash_anchor.x, 0.0f, 0.5f));
 
-    // Dragged past the leash, so the agent is returning.
-    set_position(kernel, agent_net_id, {20.0f, 0.0f, 0.0f});
-    set_position(kernel, player_net_id, {25.0f, 0.0f, 0.0f});
+    // Dragged past even what it holds to with the target in sight, so the agent
+    // is returning.
+    set_position(kernel, agent_net_id, {45.0f, 0.0f, 0.0f});
+    set_position(kernel, player_net_id, {50.0f, 0.0f, 0.0f});
     Kernel_Update(kernel, kFixedDelta);
     run_frame(kernel, controller, agents);
     require(
@@ -630,12 +631,12 @@ void a_returning_member_walks_to_the_squad_not_to_where_it_left(
 
     // The squad has walked on, and it is further out than the agent -- so its
     // slot and the point it broke off from are now in opposite directions.
-    (*agents)[0].patrol.slot = KernelVec3{40.0f, 0.0f, 0.0f};
+    (*agents)[0].patrol.slot = KernelVec3{90.0f, 0.0f, 0.0f};
     const float broke_off_at = query_state(kernel, agent_net_id).position.x;
     for (int tick = 0; tick < 30; ++tick) {
         run_frame(kernel, controller, agents);
-        // Neither exit applies out here: the slot is 20 m ahead and the anchor
-        // 20 m behind, so this stays a return the whole way.
+        // Neither exit applies out here: the slot is 45 m ahead and the anchor
+        // 45 m behind, so this stays a return the whole way.
         require(
             (*agents)[0].sentry.state ==
             network_example::game_server::AgentSentryState::kReturn);
@@ -665,9 +666,20 @@ void a_leash_breaks_off_a_pursuit_that_drags_too_far(
     // to have been recorded.
     require(almost_equal((*agents)[0].patrol.leash_anchor.x, 0.0f, 0.5f));
 
-    // Dragged well past the leash, with the target still in front of it.
+    // Past the authored leash (6 m) with the target in plain sight: it keeps
+    // going. Turning back here is what a player reads as a bug.
     set_position(kernel, agent_net_id, {20.0f, 0.0f, 0.0f});
     set_position(kernel, player_net_id, {25.0f, 0.0f, 0.0f});
+    Kernel_Update(kernel, kFixedDelta);
+    run_frame(kernel, leashed, agents);
+    require(
+        (*agents)[0].sentry.state !=
+        network_example::game_server::AgentSentryState::kReturn);
+
+    // Dragged well past what it holds to even then, with the target still in
+    // front of it.
+    set_position(kernel, agent_net_id, {45.0f, 0.0f, 0.0f});
+    set_position(kernel, player_net_id, {50.0f, 0.0f, 0.0f});
     Kernel_Update(kernel, kFixedDelta);
     run_frame(kernel, leashed, agents);
     require(
@@ -690,14 +702,44 @@ void a_leash_breaks_off_a_pursuit_that_drags_too_far(
     require(
         (*agents)[0].sentry.state ==
         network_example::game_server::AgentSentryState::kAlert);
-    set_position(kernel, agent_net_id, {20.0f, 0.0f, 0.0f});
-    set_position(kernel, player_net_id, {25.0f, 0.0f, 0.0f});
+    set_position(kernel, agent_net_id, {45.0f, 0.0f, 0.0f});
+    set_position(kernel, player_net_id, {50.0f, 0.0f, 0.0f});
     Kernel_Update(kernel, kFixedDelta);
     run_frame(kernel, free_chaser, agents);
     require(
         (*agents)[0].sentry.state !=
         network_example::game_server::AgentSentryState::kReturn);
     require((*agents)[0].sentry.target == player_net_id);
+}
+
+// Past the authored leash it lets go the moment it cannot see what it is after,
+// long before the limit that holds while it can.
+void a_member_past_its_leash_lets_go_when_it_loses_sight(
+    KernelHandle* kernel,
+    std::uint32_t agent_net_id,
+    std::uint32_t player_net_id,
+    std::vector<network_example::game_server::AgentRuntimeState>* agents) {
+    const network_example::game_server::AgentChaserController leashed(
+        patrol_config());
+    reset_patrol_agent(
+        kernel, agent_net_id, player_net_id, agents, {0.0f, 0.0f, 0.0f});
+    set_position(kernel, player_net_id, {10.0f, 0.0f, 0.0f});
+    Kernel_Update(kernel, kFixedDelta);
+    run_frame(kernel, leashed, agents);
+    set_position(kernel, agent_net_id, {20.0f, 0.0f, 0.0f});
+    set_position(kernel, player_net_id, {25.0f, 0.0f, 0.0f});
+    Kernel_Update(kernel, kFixedDelta);
+    run_frame(kernel, leashed, agents);
+    require(
+        (*agents)[0].sentry.state !=
+        network_example::game_server::AgentSentryState::kReturn);
+
+    set_position(kernel, player_net_id, {90.0f, 0.0f, 0.0f});
+    Kernel_Update(kernel, kFixedDelta);
+    run_frame(kernel, leashed, agents);
+    require(
+        (*agents)[0].sentry.state ==
+        network_example::game_server::AgentSentryState::kReturn);
 }
 
 // A guard's leash (AI plan P2b): the same break-off as a squad's, measured
@@ -1176,6 +1218,8 @@ int main() {
     a_guard_leash_walks_it_back_to_where_it_broke_off(
         kernel, agent_net_id, player_net_id, &agents);
     a_leash_breaks_off_a_pursuit_that_drags_too_far(
+        kernel, agent_net_id, player_net_id, &agents);
+    a_member_past_its_leash_lets_go_when_it_loses_sight(
         kernel, agent_net_id, player_net_id, &agents);
     an_agents_aim_holds_its_target_through_the_ticks_it_cannot_fire(
         kernel, agent_net_id, player_net_id, &agents);

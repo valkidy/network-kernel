@@ -243,6 +243,14 @@ void a_squad_says_who_holds_it_and_on_what() {
     rig.step();
     require(rig.wrote("holding=1 by=7"));
 
+    // Somebody with a target in sight is who it is really holding for, whoever
+    // comes first in the list.
+    rig.agents[1].sentry.state = AgentSentryState::kChasing;
+    rig.agents[1].sentry.target = 2;
+    rig.agents[1].sentry.lost_target_ticks = 0;
+    rig.step();
+    require(rig.wrote("holding=1 by=8 by_state=Chasing by_target=2"));
+
     rig.groups.clear();
     rig.step();
     require(rig.wrote("group=3 gone"));

@@ -672,9 +672,6 @@ void AgentRuntimeManager::update_guard_homes() {
 }
 
 void AgentRuntimeManager::update_squad_returns() {
-    // Further than this from its slot it is on its way back rather than settling
-    // into place, and worth a look at whether it can get there.
-    constexpr float kAwayFromSlotMeters = 3.0f;
     // A squad on the move drags the slot along; a path is kept while it still
     // ends about there.
     constexpr float kPathStillGoodMeters = 3.0f;
@@ -703,7 +700,7 @@ void AgentRuntimeManager::update_squad_returns() {
         const bool away = in_return ||
             (agent.sentry.state == AgentSentryState::kIdle &&
              agent_steering::horizontal_distance(agent.position, patrol.slot) >
-                 kAwayFromSlotMeters);
+                 kSquadAwayFromSlotMeters);
         if (!away) {
             patrol.returning = false;
             patrol.return_stranded_ticks = 0;
