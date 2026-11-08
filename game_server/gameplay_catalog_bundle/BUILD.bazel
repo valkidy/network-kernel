@@ -130,11 +130,25 @@ genrule(
     tools = ["//game_server:terrain_recipe_cook"],
 )
 
+# One recipe per terrain scene template (docs/SCENE_TABLE_PLAN.md S2), at the
+# path the template's terrain.recipe names.
+genrule(
+    name = "terrain_recipe_level_terrain_seed2",
+    srcs = [":bundle_uncooked"],
+    outs = [
+        "level_terrain_seed2.nktr",
+        "terrain_recipe_level_terrain_seed2_report.txt",
+    ],
+    cmd = "$(location //game_server:terrain_recipe_cook) $(location :bundle_uncooked) gameplay_catalog.yaml $(location level_terrain_seed2.nktr) scene_template:level_terrain_seed2 > $(location terrain_recipe_level_terrain_seed2_report.txt)",
+    tools = ["//game_server:terrain_recipe_cook"],
+)
+
 genrule(
     name = "bundle",
     srcs = [
         ":bundle_uncooked",
         ":gameplay_catalog.nktr",
+        ":level_terrain_seed2.nktr",
     ],
     outs = ["bundle.zip"],
     cmd = """
@@ -145,6 +159,7 @@ rm -rf "$$bundle_root"
 mkdir -p "$$bundle_root/terrain"
 /usr/bin/unzip -q "$(location :bundle_uncooked)" -d "$$bundle_root"
 cp "$(location :gameplay_catalog.nktr)" "$$bundle_root/terrain/gameplay_catalog.nktr"
+cp "$(location :level_terrain_seed2.nktr)" "$$bundle_root/terrain/level_terrain_seed2.nktr"
 find "$$bundle_root" -exec touch -t 198001010000 {} +
 (cd "$$bundle_root" && find . -mindepth 1 | sed 's|^\\./||' | LC_ALL=C sort | /usr/bin/zip -q -X -@ "$$out_path")
 rm -rf "$$bundle_root"

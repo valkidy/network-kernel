@@ -2291,6 +2291,28 @@ cc_test(
     ],
 )
 
+# Scene templates in the catalog (docs/SCENE_TABLE_PLAN.md S2): the shipping
+# bundle's level resolves and composes; edited copies on disk for the rules.
+cc_test(
+    name = "scene_template_catalog_test",
+    size = "medium",
+    srcs = ["tests/scene_template_catalog_test.cc"],
+    data = glob([
+        "gameplay_catalog/**/*.yaml",
+        "gameplay_catalog/stamp_templates/*.hf",
+        "gameplay_catalog/terrain_assets/*.nkgm",
+        "gameplay_catalog/terrain_assets/*.nkgl",
+    ]) + [
+        "//game_server/gameplay_catalog/mesh_assets:cooked_mesh_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:locomotion_skeleton_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_biped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_quadruped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_tripod_assets",
+        "//game_server/gameplay_catalog_bundle:bundle",
+    ],
+    deps = [":game_server"],
+)
+
 cc_test(
     name = "terrain_catalog_test",
     size = "medium",

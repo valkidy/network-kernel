@@ -185,28 +185,35 @@ Empty ──load──▶ Loading ──server 準備好 + 全隊 ready──▶
 
 ## 6. Catalog：scene template
 
-### 6.1 格式（建議）
+### 6.1 格式（S2 已實作）
 
 ```yaml
-camp_scene: camp_216            # slot 0 放哪個 template
-scene_templates:
-  camp_216:
-    # 和現在 map_variants 下的欄位相同：terrain 或 navigation_mesh + static_collision_scene、
-    # preload_directors、scene_props、player.spawn_position、agent_routes
-  level_forest_01:
-    ...
-    portal_exit: {position: ..., forward: ...}   # 回 camp 的出口（本地座標）
+catalog_version: 18
+map_variant: composed_mesh       # slot 0（camp）照舊由 map_variant 決定（Q6）
+map_variants: {...}
+scene_templates:                 # 關卡用的地圖；在這個 mapping 裡的順序就是 wire 上的 id
+  level_terrain_seed2:
+    terrain: {...}               # 或 static_collision_scene + navigation_mesh
+    stamp_template_dir: stamp_templates
+    preload_directors: []        # 必填，[] 代表沒有任務
+    scene_props: []
+    agent_routes: []
+    player: {spawn_position: ...}
 ```
 
-- **欄位直接沿用 `map_variants` 的覆蓋格式。** 差別只在於：現在一份 catalog 一次只「選一個」variant 疊上去，改成之後每個 template 各自保留一份。
-- **相容性：** 只寫了 `map_variant` 而沒有 `scene_templates` 的 catalog，視為「只有 slot 0」，行為和現在相同。約 70 個測試直接載入原始 catalog，這樣它們不會一次全壞。
-- **地形 recipe 改成每個 terrain template 各烤一份**（`terrain/<template>.nktr`），`terrain_recipe_cook` 要能接受 template 名稱。
+- **欄位和 `map_variants` 相同**（同一份允許清單 `kMapOverlayKeys`）。template 疊在 catalog 的 **root** 上，不疊在 camp 的 variant 上。
+- **每個 template 必須寫明自己的地圖**（`terrain:` 或 `static_collision_scene:`）**和 `preload_directors:`**，避免 root 的 mission 漏進關卡。
+- **不設 `camp_scene`：** Q6 定案 slot 0 由 `map_variant` 決定，所以原本建議的 `camp_scene` 不需要。
+- **延遲解析：** 載入 catalog 時只檢查 template 的格式，並保留名稱和原始 YAML 文字（`SceneTemplateRef`）；要用時才呼叫 `load_scene_template_config_from_bundle_memory` 或 `load_scene_template_config_from_catalog_file`，得到一份完整的 config。所以約 70 個直接載入原始 catalog 的測試不需要 template 的地形檔。
+- **catalog hash** 納入每個 template 的名稱和原始 YAML 文字，順序依檔案順序。
+- **地形 recipe 每個 terrain template 各烤一份**，放在 template 的 `terrain.recipe` 指定的路徑。`terrain_recipe_cook` 接受 `scene_template:<name>`；`gameplay_catalog_bundle/BUILD.bazel` 每個 template 一個 genrule。
+- **之後要補的欄位**（S4）：關卡的傳送門出口。
 
 ### 6.2 版本影響
 
 - **新的 catalog key，舊 package 會無法解析**（`InvalidBundle unknown field`）。client 和 server 要用同一份 game_server build，**package 要重新打包**。
 - `bundle.bytes` 要重新產生。
-- bundle 上限 2 MiB：用 recipe 產生的地形每張只有幾 KB；用 mesh 的地圖每張約 0.4 MB。實際能放幾張要在 S2 量。
+- bundle 上限 2 MiB。S2 實測：加入一個 recipe 地形關卡後 bundle 為 1,039,680 B；該關卡的 recipe 只有 384 B（組好的碰撞資料 1.05 MB 是 client 和 server 各自組出來的，不在 bundle 裡）。用 mesh 的地圖每張約 0.4 MB，數量受限，優先用 recipe 地形。
 
 ---
 
@@ -237,10 +244,10 @@ scene_templates:
 
 | # | 工作 |
 |---|---|
-| S2.1 | `gameplay_config` 解析 `camp_scene` 和 `scene_templates`；沒有這兩個 key 的舊格式照常運作 |
+| S2.1 | `gameplay_config` 解析 `scene_templates`（延遲解析，見 §6.1）；沒有這個 key 的舊格式照常運作；catalog_version 18 |
 | S2.2 | catalog hash 納入所有 template |
 | S2.3 | `terrain_recipe_cook` 和 bundle genrule 改成每個 terrain template 各烤一份 |
-| S2.4 | 出貨 catalog：現有地圖當作 `camp_216`，再加一個測試用關卡 template（可以先用同一張地圖的另一個 seed） |
+| S2.4 | 出貨 catalog：camp 不變，加一個測試用關卡 template `level_terrain_seed2`（同一張地面、seed 2 的 stamp 配置，沒有任務） |
 | S2.5 | 量 bundle 大小 |
 
 **版本：** catalog 格式變動，package 和 `bundle.bytes` 都要更新。

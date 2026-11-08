@@ -634,6 +634,16 @@ struct TerrainCatalogConfig {
     std::vector<std::uint8_t> fallback_recipe;       // NKTR, optional
 };
 
+// One of the catalog's `scene_templates` (docs/SCENE_TABLE_PLAN.md S2): a
+// map a level slot can be loaded with. Only its name and its overlay, as YAML
+// text, are kept with the catalog; the overlay is resolved into a whole config
+// on demand (load_scene_template_config_from_*), so loading a catalog never
+// pays for -- or needs the files of -- maps it is not playing.
+struct SceneTemplateRef {
+    std::string name;
+    std::string overlay_yaml;
+};
+
 struct StaticCollisionSceneConfig {
     // Empty with `terrain:`, whose composed heightfield is the scene.
     std::string entry_path;
@@ -736,6 +746,12 @@ struct GameServerGameplayConfig {
     std::vector<SkeletonAssetConfig> skeleton_assets;
     StaticCollisionSceneConfig static_collision_scene;
     TerrainCatalogConfig terrain;
+    // Every scene template the catalog defines, in file order (a template's
+    // index here is its id on the wire); part of the catalog hash.
+    std::vector<SceneTemplateRef> scene_templates;
+    // The template this config was loaded as; empty for the catalog's own
+    // map (the camp, slot 0).
+    std::string scene_template;
 };
 
 struct KernelGameplayCatalogStorage {
@@ -793,6 +809,18 @@ GameServerGameplayConfig load_gameplay_config_from_bundle_memory(
     std::uint32_t bundle_size,
     const std::string& entry_path,
     const std::string& map_variant = {});
+// One of the catalog's scene_templates laid over the catalog root, as a whole
+// config: everything the root defines, with the template's map in place of
+// the root's (its map_variant is not applied). Throws for a name the catalog
+// does not define.
+GameServerGameplayConfig load_scene_template_config_from_bundle_memory(
+    const std::uint8_t* bundle_bytes,
+    std::uint32_t bundle_size,
+    const std::string& entry_path,
+    const std::string& scene_template);
+GameServerGameplayConfig load_scene_template_config_from_catalog_file(
+    const std::string& path,
+    const std::string& scene_template);
 std::vector<std::uint8_t> load_gameplay_bundle_entry_bytes(
     const std::uint8_t* bundle_bytes,
     std::uint32_t bundle_size,
