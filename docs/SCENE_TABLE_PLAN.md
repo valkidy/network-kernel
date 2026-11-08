@@ -1,6 +1,6 @@
 # Scene table 實作計劃書
 
-狀態：**計劃，待使用者確認 §11 的問題後開工。** 尚未實作。
+狀態：**計劃已定案（2026-11-08，§11 Q1–Q9 全部採用建議），可以開工。** 尚未實作。
 分支：`claude/scene-table-plan`（只有文件），從 main `6bd6f524` 開出。
 日期：2026-11-08。
 
@@ -324,14 +324,14 @@ scene_templates:
 | 組地形卡住 tick（1440 m server 約 4.3 s） | S3.7 放到背景 thread，只有加進 kernel 在 tick thread 上 |
 | listen host 有兩個物理 world，容易漏更新一個 | S1 測試對 listen 模式兩個 world 都檢查 |
 | bundle 超過 2 MiB | S2.5 先量；mesh 地圖數量受限時，優先用 recipe 產生的地形 |
-| `fall_death_height` 是全域值 | 第一版規定所有 scene 用同一個高度基準（§11 Q2） |
-| multiverse 的 tick 成本疊加 | 第一版只開 slot 0、1；multiverse 是否只在 dedicated 開放，之後再決定 |
+| `fall_death_height` 是全域值 | 所有 scene 用同一個高度基準（§11 Q2 已定案） |
+| multiverse 的 tick 成本疊加 | 第一版流程只開一支隊伍（Q9）；multiverse 是否只在 dedicated 開放，之後再決定 |
 
 ---
 
-## 11. 待確認的問題
+## 11. 已定案的問題（2026-11-08 使用者全部採用建議）
 
-| # | 問題 | 建議 |
+| # | 問題 | 決定 |
 |---|---|---|
 | Q1 | slot 間距和數量 | 4096 m，沿 +x；預設 N = 8 |
 | Q2 | kill floor 要每個 slot 一個，還是統一高度基準？ | 第一版統一基準（template 的地面都要高於 -10 m），kernel 不改 |
