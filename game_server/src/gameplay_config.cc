@@ -10261,6 +10261,10 @@ std::vector<SceneTemplateRef> read_scene_templates(
             throw std::runtime_error(
                 "scene_templates name " + name + " must be lower-case letters, digits and _: " + path);
         }
+        // It travels in SCENE_STATE, which gives a name at most 32 bytes.
+        if (name.size() > 32u) {
+            throw std::runtime_error("scene_templates name " + name + " is longer than 32: " + path);
+        }
         if (!entry.second.IsMap()) {
             throw std::runtime_error("scene_templates " + name + " must be a mapping: " + path);
         }

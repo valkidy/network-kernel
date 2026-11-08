@@ -323,6 +323,13 @@ cc_shared_library(
             "-Wl,-exported_symbol,_GameServer_ReleaseTerrain",
             "-Wl,-exported_symbol,_GameServer_GetStaticSceneMeshInfo",
             "-Wl,-exported_symbol,_GameServer_CopyStaticSceneMesh",
+            "-Wl,-exported_symbol,_GameServer_ClientLoadSceneSlot",
+            "-Wl,-exported_symbol,_GameServer_ClientUnloadSceneSlot",
+            "-Wl,-exported_symbol,_GameServer_GetSceneTerrainInfo",
+            "-Wl,-exported_symbol,_GameServer_CopySceneTerrainHeights",
+            "-Wl,-exported_symbol,_GameServer_CopySceneTerrainPlacements",
+            "-Wl,-exported_symbol,_GameServer_GetSceneStaticMeshInfo",
+            "-Wl,-exported_symbol,_GameServer_CopySceneStaticMesh",
         ],
         # MinGW-w64 Windows DLL
         "//engine:windows": [

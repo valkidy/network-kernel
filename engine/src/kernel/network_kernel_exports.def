@@ -124,3 +124,10 @@ EXPORTS
     GameServer_ReleaseTerrain
     GameServer_GetStaticSceneMeshInfo
     GameServer_CopyStaticSceneMesh
+    GameServer_ClientLoadSceneSlot
+    GameServer_ClientUnloadSceneSlot
+    GameServer_GetSceneTerrainInfo
+    GameServer_CopySceneTerrainHeights
+    GameServer_CopySceneTerrainPlacements
+    GameServer_GetSceneStaticMeshInfo
+    GameServer_CopySceneStaticMesh

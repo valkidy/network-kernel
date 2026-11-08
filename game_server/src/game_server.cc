@@ -59,6 +59,12 @@ GameServer::GameServer(KernelHandle* kernel, GameServerGameplayConfig config)
 void GameServer::handle_event(const KernelEvent& event) {
     if (event.type == KernelEventType_PlayerJoined && event.net_id != 0) {
         players_.insert(event.net_id);
+        // Everyone gets the scene table's state on arrival; a level already
+        // under way is in it, to load and then walk into.
+        peer_players_[event.peer_id] = event.net_id;
+        if (scene_table_enabled_) {
+            send_scene_state(event.peer_id);
+        }
         configure_player(event.net_id);
         if (kernel_ != nullptr && config_.player.has_spawn_position) {
             const KernelQuat facing{0.0f, 0.0f, 0.0f, 1.0f};
@@ -72,6 +78,8 @@ void GameServer::handle_event(const KernelEvent& event) {
         }
     } else if (event.type == KernelEventType_PlayerLeft) {
         players_.erase(event.net_id);
+        peer_players_.erase(event.peer_id);
+        level_ready_.erase(event.net_id);
         respawn_.on_player_left(event.net_id);
     } else if (event.type == KernelEventType_EntitySpawned) {
         stock_camp(event.net_id);
@@ -98,6 +106,7 @@ void GameServer::tick(float delta_seconds) {
         while ((count = Kernel_ServerPollGameMessages(kernel_, messages, 8u)) != 0u) {
             for (std::uint32_t index = 0; index < count; ++index) {
                 loadout_.handle_message(messages[index]);
+                handle_scene_message(messages[index]);
             }
         }
         // Players' orders to their side's agents (docs/AI_BEHAVIOR_PLAN.md
@@ -105,8 +114,10 @@ void GameServer::tick(float delta_seconds) {
         KernelAgentCommand commands[8]{};
         while ((count = Kernel_ServerPollAgentCommands(kernel_, commands, 8u)) != 0u) {
             for (std::uint32_t index = 0; index < count; ++index) {
+                // The agent's own slot answers: a level's AI, or the camp's.
                 const KernelAgentCommandOutcome outcome =
-                    agent_runtime_manager_.handle_agent_command(commands[index]);
+                    manager_for_agent(commands[index].agent_net_id)
+                        .handle_agent_command(commands[index]);
                 Kernel_ServerSendAgentCommandOutcome(kernel_, &outcome);
             }
         }
@@ -116,6 +127,7 @@ void GameServer::tick(float delta_seconds) {
     }
     agent_runtime_manager_.tick(delta_seconds);
     tick_scene_slots(delta_seconds);
+    tick_scene_flow(delta_seconds);
 }
 
 void GameServer::place_scene_props() {

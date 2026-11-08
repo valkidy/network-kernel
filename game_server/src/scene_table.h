@@ -13,6 +13,7 @@
 
 #include "game_server/src/gameplay_config.h"
 #include "game_server/src/scene_bounds.h"
+#include "game_server/src/terrain_catalog.h"
 #include "kernel/public/kernel_types.h"
 
 namespace network_example::game_server {
@@ -53,16 +54,22 @@ struct PreparedScene {
     std::string error;
     GameServerGameplayConfig config;
     std::vector<std::uint8_t> collision_artifact;
+    // A terrain level's composed heights and recipe, for a client to draw.
+    terrain::HeightGrid terrain_heights;
+    terrain::StoredRecipe terrain_recipe;
 };
 
 // Loads `scene_template` for `slot`: the template's config, its map (a
 // terrain composed from its cooked recipe, or a mesh scene and its navmesh
 // read from the bundle or next to the catalog file), offset to the slot.
 // Touches no kernel, so it may run on a worker thread.
+// A server (kServer) also gets the terrain's navmesh; a client (kClient)
+// only composes.
 PreparedScene prepare_scene(
     const SceneCatalogSource& source,
     const std::string& scene_template,
-    std::uint32_t slot);
+    std::uint32_t slot,
+    TerrainRole role = TerrainRole::kServer);
 
 }  // namespace network_example::game_server
 

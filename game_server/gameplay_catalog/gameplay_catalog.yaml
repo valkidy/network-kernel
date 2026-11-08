@@ -176,7 +176,8 @@ scene_templates:
     player:
       spawn_position: {x: -1.2, y: 23.0, z: -31.0}
   # The camp's mesh map with its mission (game_rule) and no initial camp: a
-  # level whose directors spawn, to load beside the camp and clear again.
+  # level whose directors spawn, to load beside the camp and clear again,
+  # complete or lose.
   level_composed_mission:
     navigation_mesh:
       entry_path: mesh_assets/recast/composed_216m_ground_0001_seed1_collision.navmesh
@@ -187,6 +188,8 @@ scene_templates:
     scene_props: []
     player:
       spawn_position: {x: 106.8, y: 23.0, z: 77.0}
+      # One revive for the whole party, so a test can lose the level.
+      respawn: {team_revive_times: 1}
     agent_routes:
       - id: 1
         name: camp_perimeter

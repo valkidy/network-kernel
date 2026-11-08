@@ -51,6 +51,7 @@ cc_library(
         "src/patrol_targeting.cc",
         "src/respawn_scheduler.cc",
         "src/scene_table.cc",
+        "src/scene_flow.cc",
         "src/shelter_director.cc",
         "src/loadout_director.cc",
         "src/spawn_sampling.cc",
@@ -2286,6 +2287,21 @@ cc_binary(
 cc_test(
     name = "static_scene_slot_grounding_test",
     srcs = ["tests/static_scene_slot_grounding_test.cc"],
+    data = ["//game_server/gameplay_catalog_bundle:bundle"],
+    deps = [
+        ":game_server",
+        ":game_server_bridge",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+# The playable loop over the scene table (docs/SCENE_TABLE_PLAN.md S4/S6):
+# select, ready, gate, mission, return, and a lost level, with real clients,
+# as a listen host and as a dedicated server.
+cc_test(
+    name = "scene_table_loop_test",
+    size = "medium",
+    srcs = ["tests/scene_table_loop_test.cc"],
     data = ["//game_server/gameplay_catalog_bundle:bundle"],
     deps = [
         ":game_server",

@@ -4,6 +4,7 @@
 #include <array>
 #include <cstdint>
 #include <future>
+#include <map>
 #include <memory>
 #include <set>
 #include <string>
@@ -77,6 +78,31 @@ public:
     // A Ready level's config (in world space), else null.
     const GameServerGameplayConfig* scene_config(std::uint32_t slot) const;
 
+    // The party's way through levels (docs/SCENE_TABLE_PLAN.md S4.3): one
+    // party, every player, level slot kPartyLevelSlot. From the camp a level
+    // is asked for (request_level, or SCENE_SELECT from a listen host's own
+    // player); it loads; once every player has reported SCENE_READY (or 60 s
+    // have passed) a gate opens beside the camp spawn and a ready player who
+    // walks into it arrives at the level's spawn. The mission completing opens
+    // a gate back beside the level spawn; when the last player has gone
+    // through it the level unloads. The party running out of revives with
+    // every player in the level dead fails it: they come back to the camp
+    // alive and the level unloads. Every change is broadcast as SCENE_STATE.
+    static constexpr std::uint32_t kPartyLevelSlot = 1u;
+    struct SceneGate {
+        bool open = false;
+        KernelVec3 position{0.0f, 0.0f, 0.0f};
+        float radius = 2.0f;
+    };
+    // False unless the party is in the camp and the template exists.
+    bool request_level(const std::string& scene_template);
+    std::uint8_t scene_flow() const { return flow_; }
+    std::uint8_t scene_outcome() const { return flow_outcome_; }
+    const SceneGate& scene_gate() const { return gate_; }
+    // Players who reported SCENE_READY for the party's current level.
+    std::size_t scene_ready_count() const { return level_ready_.size(); }
+    std::int32_t remaining_revives() const { return respawn_.remaining_revives(); }
+
 private:
     // Health, weapons, ammo and starting inventory from the player template.
     // On join an existing inventory is kept; a revive (reset_inventory) empties
@@ -111,6 +137,17 @@ private:
     // every player there is put at the camp's spawn. Returns how many were
     // removed.
     std::uint32_t clear_scene_bounds(const SceneBounds& bounds) const;
+    void handle_scene_message(const KernelGameMessage& message);
+    void tick_scene_flow(float delta_seconds);
+    std::vector<std::uint8_t> encode_scene_state() const;
+    void send_scene_state(std::uint32_t peer) const;
+    void broadcast_scene_state() const;
+    void set_flow(std::uint8_t flow);
+    // Ends the party's level: back to the camp's revives, the slot unloaded.
+    void finish_level(std::uint8_t outcome);
+    std::uint32_t host_player_net_id() const;
+    // The manager a command's agent belongs to: a level's, or the camp's.
+    AgentRuntimeManager& manager_for_agent(std::uint32_t net_id);
 
     KernelHandle* kernel_ = nullptr;
     GameServerGameplayConfig config_;
@@ -139,6 +176,16 @@ private:
     bool scene_table_enabled_ = false;
     SceneCatalogSource scene_source_;
     std::array<SceneSlot, kSceneSlotCount> scene_slots_;
+
+    std::uint8_t flow_ = GAME_SERVER_SCENE_FLOW_CAMP;
+    std::uint8_t flow_outcome_ = GAME_SERVER_SCENE_OUTCOME_NONE;
+    std::uint16_t level_template_index_ = 0;
+    SceneGate gate_;
+    // Player net id of each peer, for messages; peer 1 is a listen host's own.
+    std::map<std::uint32_t, std::uint32_t> peer_players_;
+    std::set<std::uint32_t> level_ready_;
+    float ready_wait_seconds_ = 0.0f;
+    bool level_entered_ = false;
 };
 
 }  // namespace network_example::game_server

@@ -22,6 +22,11 @@
 /* GameServer_GetStaticSceneMeshInfo / CopyStaticSceneMesh: a mesh level's
  * baked static collision scene as triangles, for the client to draw. */
 #define GAME_SERVER_CAPABILITY_STATIC_SCENE_MESH_QUERY UINT64_C(0x0000000000000100)
+/* The scene table (docs/SCENE_TABLE_PLAN.md S4): the SCENE_* game messages
+ * below, GameServer_ClientLoadSceneSlot / ClientUnloadSceneSlot, and the
+ * per-slot GameServer_GetSceneTerrainInfo / CopySceneTerrainHeights /
+ * CopySceneTerrainPlacements / GetSceneStaticMeshInfo / CopySceneStaticMesh. */
+#define GAME_SERVER_CAPABILITY_SCENE_SLOTS UINT64_C(0x0000000000000200)
 
 /*
  * Game messages game_server sends and reads (KernelGameMessage::message_type;
@@ -77,6 +82,63 @@
 #define GAME_SERVER_LOADOUT_RESULT_DEAD 6u
 #define GAME_SERVER_LOADOUT_RESULT_APPLY_FAILED 7u
 #define GAME_SERVER_LOADOUT_RESULT_CATEGORY_TAKEN 8u
+
+/*
+ * The scene table's messages (docs/SCENE_TABLE_PLAN.md §5). Same encoding as
+ * the loadout messages: little-endian, packed.
+ *
+ * SCENE_STATE, server -> client. The whole state, sent to a player when they
+ * join and to everyone whenever it changes; the client reconciles to it
+ * rather than following steps, so a late joiner needs nothing else.
+ *   u8  flow                 GAME_SERVER_SCENE_FLOW_*
+ *   u8  level_slot           the party's level slot, 0 for none
+ *   u32 level_generation
+ *   u8  outcome              GAME_SERVER_SCENE_OUTCOME_*: how the last level ended
+ *   u8  gate_open            1 while a gate is open (camp -> level in
+ *                            GATE_OPEN, level -> camp in RETURN_OPEN)
+ *   f32 gate_x, gate_y, gate_z, gate_radius   world space
+ *   u8  slot_count           level slots the client must have loaded, 0..7
+ *   slot_count x {
+ *     u8  slot
+ *     u32 generation
+ *     u16 template_index     its index in the catalog's scene_templates
+ *     u8  name_length        1..32
+ *     name_length bytes      the template's name, no terminator
+ *   }
+ *   A client loads each listed slot it does not have at that generation
+ *   (GameServer_ClientLoadSceneSlot), answers SCENE_READY once it has, and
+ *   unloads any it has that is not listed.
+ *
+ * SCENE_READY, client -> server. The slot's collision is in this client's
+ * prediction world (art may still be loading).
+ *   u8  slot
+ *   u32 generation
+ *
+ * SCENE_SELECT, client -> server. Asks for a level. Obeyed only from a listen
+ * host's own player, and only while the party is in the camp (Q3); a
+ * dedicated server takes a level from its operator instead.
+ *   u16 template_index
+ */
+#define GAME_SERVER_MESSAGE_SCENE_STATE 4u
+#define GAME_SERVER_MESSAGE_SCENE_READY 5u
+#define GAME_SERVER_MESSAGE_SCENE_SELECT 6u
+
+#define GAME_SERVER_SCENE_FLOW_CAMP 0u
+#define GAME_SERVER_SCENE_FLOW_LOADING 1u
+#define GAME_SERVER_SCENE_FLOW_GATE_OPEN 2u
+#define GAME_SERVER_SCENE_FLOW_RETURN_OPEN 3u
+
+#define GAME_SERVER_SCENE_OUTCOME_NONE 0u
+#define GAME_SERVER_SCENE_OUTCOME_COMPLETED 1u
+#define GAME_SERVER_SCENE_OUTCOME_FAILED 2u
+/* The level never loaded. */
+#define GAME_SERVER_SCENE_OUTCOME_LOAD_FAILED 3u
+
+/* GameServer_ClientLoadSceneSlot flags. */
+/* Add the slot's collision to the kernel (Kernel_AddStaticSceneSlot). A pure
+ * client sets it; a listen host does not, because its server side already
+ * added the slot to both of its worlds. */
+#define GAME_SERVER_SCENE_LOAD_REGISTER_COLLISION 0x1u
 
 #ifdef __cplusplus
 extern "C" {

@@ -162,26 +162,29 @@ Empty ──load──▶ Loading ──server 準備好 + 全隊 ready──▶
 
 ---
 
-## 5. 載入協定（走 game message，不用新 packet）
+## 5. 載入協定（S4 已實作，走 game message，不用新 packet）
 
-| 訊息 | 方向 | 內容 | 時機 |
-|---|---|---|---|
-| `SCENE_TABLE` | S→C | 目前非 Empty 的 slot：`(slot, generation, template_id, state)` | Welcome 之後馬上送；中途加入的玩家靠這個補載入 |
-| `SCENE_LOAD` | S→C | `(slot, generation, template_id)` | slot 進入 Loading，server 端準備好時 |
-| `SCENE_READY` | C→S | `(slot, generation)` | client 組好地形、加進 prediction world 之後 |
-| `SCENE_UNLOAD` | S→C | `(slot, generation)` | slot 進入 Unloading |
+原本規劃四種訊息（`SCENE_TABLE`、`SCENE_LOAD`、`SCENE_READY`、`SCENE_UNLOAD`）。實作時改成**一則完整狀態**加上兩則 client 訊息，比較簡單，也不會有訊息順序的問題：
 
-- 每則都遠小於 512 B。
-- message id 接在 `GAME_SERVER_MESSAGE_LOADOUT_RESULT`（3）之後。
-- listen host 自己也要回 `SCENE_READY`，走 peer 1 的本機路徑。
+| 訊息 | 方向 | 內容 |
+|---|---|---|
+| `SCENE_STATE`（4） | S→C | 完整狀態：流程階段、隊伍的關卡 slot 和 generation、上一關的結果、目前開著的傳送門位置和半徑、client 應該載入的 slot 清單（slot、generation、template index、template 名稱） |
+| `SCENE_READY`（5） | C→S | `(slot, generation)`：這個 slot 的碰撞已經加進 client 的 prediction world |
+| `SCENE_SELECT`（6） | C→S | `template_index`：選關，只接受 listen host 自己的玩家，而且只在 camp 階段 |
 
-**等待和 timeout：**
-- 全隊 ready 之前，傳送門不會出現，所以不需要把玩家凍結在關卡裡。
-- 某個 client 在 `kSceneLoadTimeout` 內沒有回 ready（第一版建議 60 s），就把他踢掉，這是 `MAP_SYSTEM_EXPANSION_PLAN.md` D3 的第一版做法。
+- **client 依狀態對齊，不依步驟。** 收到 `SCENE_STATE` 後，載入清單裡有、自己還沒有的 slot（`GameServer_ClientLoadSceneSlot`），回 `SCENE_READY`；卸載自己有、清單裡沒有的 slot。所以中途加入的玩家不需要額外處理：加入時就會收到一份完整狀態。
+- **server 在玩家加入時，以及每次狀態改變時**送出 `SCENE_STATE`。
+- 格式寫在 `game_server_types.h`（little-endian、packed）。空狀態 25 B，加一個 slot 約 33 B 加上名稱，遠小於 512 B。template 名稱上限 32 字元（catalog 載入時檢查）。
 
-**client 不需要地形的 render 資料也能 ready：** ready 的條件是**碰撞已就緒**（地形已加進 prediction world）。Unity 的美術資源可以晚一點到，由 Unity 決定要不要延後送 ready。
+**ready 和 timeout：**
+- 全隊 ready（或等了 60 秒）才開傳送門。
+- **和 Q4 的差異：** 原定逾時就踢掉，但 kernel 沒有踢人的 API，所以改成：逾時照樣開門，**沒回 ready 的玩家走不進傳送門**，等他 ready 了才能進。
 
----
+**傳送門（和 S4.5 的差異）：**
+- 傳送門是 **game_server 的區域**，不是 kernel 的 portal entity。原因是 kernel portal 的目的地寫死在 template 裡，換關卡、換 slot 都要另一個 template。
+- server 每 tick 檢查：活著、已 ready、站在門的半徑內（2 m，高度差 3 m 內）的玩家，用 `Kernel_ServerSetEntityTransform` 送到目的地。Unity 從 `SCENE_STATE` 的位置畫門。
+- **第一版的門位置：** 出發點出生點往 +x 3 m（camp 的門在 camp 出生點旁，回程門在關卡出生點旁）。之後再加 catalog 欄位。
+- **已知限制：** 這種傳送不會送 `ActorTeleportBatch`，其他玩家看到的內插可能有一個 frame 的拉線，和掉出地圖後重生的行為一樣。Unity 端應該當作瞬移處理。
 
 ## 6. Catalog：scene template
 
@@ -280,16 +283,25 @@ scene_templates:                 # 關卡用的地圖；在這個 mapping 裡的
 
 實測：mesh 關卡約 25 ms 就 Ready；216 m 的地形關卡約 100 ms，期間 host 跑了 50 個 frame。
 
-### S4 協定與流程
+### S4 協定與流程（已實作，`claude/scene-table-s4`）
 
-| # | 工作 |
-|---|---|
-| S4.1 | §5 的四種訊息：server 端送出和處理 |
-| S4.2 | client 端 API（game_server bridge，新 GameServer capability）：`GameServer_ClientLoadSceneSlot(kernel, bundle, template, slot, generation)` 組地形並呼叫 `Kernel_AddStaticSceneSlot`；對應的 unload 也一樣。Unity 收到訊息時呼叫這兩個 API |
-| S4.3 | 隊伍流程狀態機（第一版）：隊長選關 → Loading → 全隊 ready → 在 camp 生成傳送門 → InLevel → 任務完成時在關卡生成回程傳送門 → 全員回到 camp → Draining/Unloading |
-| S4.4 | 任務結果：讀取 `GameRuleStatus::kCompleted`，作為該 slot 的 mission 完成事件。**失敗** = 隊伍重生次數用完而且全員死亡 → 全員送回 camp 並復活 |
-| S4.5 | 傳送門：每個關卡 template 一個入口傳送門 template，目的地是「slot offset + template 的本地座標」。由 game_server 在 slot 進入 Ready 時用 `Kernel_ServerCreateEntity` 生成。注意出口 net id 必須是入口 + 1（memory：portal-design） |
-| S4.6 | 選關請求：第一版只有 host（listen 模式的 peer 1，或 dedicated 模式下由 RPC 或指令觸發）可以選 |
+| # | 工作 | 狀態 |
+|---|---|---|
+| S4.1 | §5 的訊息：server 送出和處理 | 完成，改成 `SCENE_STATE` / `SCENE_READY` / `SCENE_SELECT` |
+| S4.2 | client 端 API：`GameServer_ClientLoadSceneSlot` / `ClientUnloadSceneSlot`（`GAME_SERVER_SCENE_LOAD_REGISTER_COLLISION`：pure client 設，listen host 不設），以及每個 slot 的地形和 mesh 查詢（`GameServer_GetSceneTerrainInfo` 等 5 個，原本的查詢等同 slot 0）。這也完成了 S3.9 | 完成 |
+| S4.3 | 隊伍流程（第一版只有一支隊伍，就是所有玩家；關卡固定用 slot 1）：CAMP → LOADING → GATE_OPEN → RETURN_OPEN → CAMP | 完成 |
+| S4.4 | 任務結果：關卡的 game rule 全部 `kCompleted` → 開回程門；最後一個人回到 camp 後卸載。**失敗**：重生次數用完、關卡裡全員死亡、沒有人在等重生 → 全員送回 camp 並復活，卸載 | 完成。沒有 game rule 的關卡永遠不會完成 |
+| S4.5 | 傳送門 | 完成，做法見 §5（game_server 區域，不是 kernel portal） |
+| S4.6 | 選關：listen host 自己的玩家送 `SCENE_SELECT`；dedicated 由營運端呼叫 `GameServer::request_level` | 完成。dedicated app 的指令介面還沒接 |
+| — | 重生次數每支隊伍一份（從 S3.6 移過來）：有人進入關卡時改用關卡的 `player.respawn`，回 camp 時換回 camp 的 | 完成（一支隊伍） |
+| — | agent command 依 agent 所在的 slot 分派（從 S3 移過來） | 完成 |
+
+**測試（`scene_table_loop_test`，同一個 process 裡的真實連線，listen host 和 dedicated 各跑一次）：**
+- 選關：listen 模式下 client 的 `SCENE_SELECT` 被拒絕，host 的被接受。
+- 全隊 ready 後開門；走進門的玩家到了關卡；遠端 client 自己畫面上的高度和 server 一致（20.37 m），證明 client 的 prediction world 有這個 slot 的地形。
+- 中途加入的 client 從第一份狀態就知道關卡，載入、ready、走進門。
+- 清掉任務 → 回程門 → 全員回到 camp → server 和每個 client 都卸載了 slot。
+- 第二關（generation 1）：重生次數用完、全員死亡 → 全員在 camp 活著，重生次數回到 camp 的值。
 
 ### S5 Unity（使用者負責）
 
@@ -328,7 +340,7 @@ scene_templates:                 # 關卡用的地圖；在這個 mapping 裡的
 | S1 | 新增 export（capability，不 bump） | 不變 | 不變 | 不變 | 不變 | 要重打（新 export） |
 | S2 | 不變 | 不變 | 不變 | **變動** | **要更新** | 要重打 |
 | S3 | 不變 | 不變 | 不變 | 可能（per-slot 設定） | 可能 | 要重打 |
-| S4 | 不變 | 不變 | 不變（走 game message） | 可能（傳送門 template） | 可能 | 要重打 |
+| S4 | 不變（GameServer 新增 7 個 export，capability `0x200`，不 bump） | 不變 | 不變（走 game message） | 內容變動（測試關卡的重生次數），格式不變 | 要更新 | 要重打 |
 
 ---
 

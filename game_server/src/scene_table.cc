@@ -78,7 +78,8 @@ void offset_scene_config(GameServerGameplayConfig* config, std::uint32_t slot) {
 PreparedScene prepare_scene(
     const SceneCatalogSource& source,
     const std::string& scene_template,
-    std::uint32_t slot) {
+    std::uint32_t slot,
+    TerrainRole role) {
     PreparedScene out;
     try {
         if (slot == 0u || slot >= kSceneSlotCount) {
@@ -102,11 +103,13 @@ PreparedScene prepare_scene(
             PreparedTerrain prepared;
             std::string error;
             if (!prepare_catalog_terrain(&config, std::span<const std::uint8_t>(recipe),
-                    TerrainRole::kServer, &prepared, &error)) {
+                    role, &prepared, &error)) {
                 out.error = "scene template " + scene_template + " terrain: " + error;
                 return out;
             }
             out.collision_artifact = std::move(prepared.collision_artifact);
+            out.terrain_heights = std::move(prepared.heights);
+            out.terrain_recipe = std::move(prepared.recipe);
         } else {
             const std::string& scene = config.static_collision_scene.entry_path;
             const std::string& navmesh = config.navigation_mesh.entry_path;
