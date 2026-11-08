@@ -8,6 +8,7 @@
 #include <limits>
 #include <memory>
 #include <span>
+#include <string>
 #include <string_view>
 #include <tuple>
 #include <unordered_map>
@@ -141,9 +142,8 @@ public:
     // state it believes it already wrote, and a write it did not see would
     // leave it believing the wrong thing.
     void set_physics_collider_enabled(std::uint32_t collider_id, bool enabled);
-    bool has_static_collision_scene() const {
-        return !static_collision_scene_.empty();
-    }
+    // Any static scene slot, the camp's (slot 0) or a level's.
+    bool has_static_collision_scene() const;
     DamagePipeline& damage_pipeline() { return damage_pipeline_; }
     std::uint32_t current_tick() const { return tick_loop_.current_tick(); }
     float fixed_delta_seconds() const {
@@ -162,6 +162,8 @@ public:
     bool set_session_rules(const KernelSessionRulesConfig& config);
     bool set_static_collision_scene(
         const KernelStaticCollisionSceneConfig& config);
+    bool add_static_scene_slot(const KernelStaticSceneSlotConfig& config);
+    bool remove_static_scene_slot(std::uint32_t slot);
     bool set_gameplay_catalog_sync_bundle(
         const KernelGameplayCatalogSyncServerConfig& config,
         KernelGameplayCatalogManifest* out_manifest);
@@ -1009,6 +1011,11 @@ private:
     void commit_static_collision_scene(
         std::vector<std::uint8_t> scene,
         const KernelStaticCollisionSceneConfig& config);
+    // Loads every occupied slot into `world`; false (with the first error)
+    // if one does not load.
+    bool load_static_scene_slots(
+        physics::PhysicsWorld* world,
+        std::string* error) const;
     void diagnose_client_snapshot_metadata_waits();
     std::uint32_t local_knockdown_recovery_ticks() const;
     void adopt_authoritative_impulse_lockout(
@@ -1636,10 +1643,20 @@ private:
         sizeof(KernelSessionRulesConfig),
         KernelActorBlockingMode_Disabled,
         0};
-    std::vector<std::uint8_t> static_collision_scene_;
-    std::uint32_t static_collision_scene_id_ = 0;
-    std::uint32_t static_collision_collider_id_ = 0;
-    std::uint32_t static_collision_layer_ = 0;
+    // The static scene table (docs/SCENE_TABLE_PLAN.md). Slot 0 is what
+    // Kernel_SetStaticCollisionScene registers (the camp); the others come and
+    // go at runtime through Kernel_AddStaticSceneSlot. A slot is empty while
+    // its artifact is. Each is kept so a physics world built later -- a
+    // client's prediction world at Welcome, a server's at start -- gets every
+    // slot that exists at that moment.
+    struct StaticSceneSlot {
+        std::vector<std::uint8_t> artifact;
+        std::uint32_t scene_id = 0;
+        std::uint32_t collider_id = 0;
+        std::uint32_t collision_layer = 0;
+        glm::vec3 offset{0.0f};
+    };
+    std::array<StaticSceneSlot, KERNEL_STATIC_SCENE_SLOT_COUNT> static_scene_slots_{};
     std::unique_ptr<physics::PhysicsWorld> physics_world_;
     // What the collider sync last wrote into physics_world_ for each entity
     // collider it holds there. A body is only written when what the sync

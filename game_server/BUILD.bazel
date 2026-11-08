@@ -2278,6 +2278,19 @@ cc_binary(
     deps = [":game_server"],
 )
 
+# A player stands on a static scene slot's terrain as on the camp's
+# (docs/SCENE_TABLE_PLAN.md S1); a real listen host from the shipping bundle.
+cc_test(
+    name = "static_scene_slot_grounding_test",
+    srcs = ["tests/static_scene_slot_grounding_test.cc"],
+    data = ["//game_server/gameplay_catalog_bundle:bundle"],
+    deps = [
+        ":game_server",
+        ":game_server_bridge",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
 cc_test(
     name = "terrain_catalog_test",
     size = "medium",

@@ -129,6 +129,33 @@ bool Kernel_SetStaticCollisionScene(
     });
 }
 
+bool Kernel_AddStaticSceneSlot(
+    KernelHandle* kernel,
+    const KernelStaticSceneSlotConfig* config) {
+    return abi_call("Kernel_AddStaticSceneSlot", false, [&]() {
+        if (kernel == nullptr || kernel->engine == nullptr || config == nullptr) {
+            spdlog::error(
+                "Kernel_AddStaticSceneSlot rejected: invalid kernel handle or config");
+            return false;
+        }
+        if (config->struct_size < sizeof(KernelStaticSceneSlotConfig)) {
+            spdlog::error(
+                "Kernel_AddStaticSceneSlot rejected: struct_size={} required={}",
+                config->struct_size,
+                sizeof(KernelStaticSceneSlotConfig));
+            return false;
+        }
+        return kernel->engine->add_static_scene_slot(*config);
+    });
+}
+
+bool Kernel_RemoveStaticSceneSlot(KernelHandle* kernel, uint32_t slot) {
+    return abi_call("Kernel_RemoveStaticSceneSlot", false, [&]() {
+        return kernel != nullptr && kernel->engine != nullptr &&
+               kernel->engine->remove_static_scene_slot(slot);
+    });
+}
+
 bool Kernel_InvokeRpcCommand(
     KernelHandle* kernel,
     const char* request_json,
@@ -312,7 +339,8 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             KERNEL_CAPABILITY_GAME_MESSAGES |
             KERNEL_CAPABILITY_SERVER_FALL_DEATH_HEIGHT |
             KERNEL_CAPABILITY_SERVER_DAMAGE_RECORDS |
-            KERNEL_CAPABILITY_AGENT_COMMANDS;
+            KERNEL_CAPABILITY_AGENT_COMMANDS |
+            KERNEL_CAPABILITY_STATIC_SCENE_SLOTS;
         return true;
     });
 }

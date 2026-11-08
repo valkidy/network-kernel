@@ -66,10 +66,16 @@ public:
     CollisionQueryStats query_stats() const;
     void reset_query_stats();
 
+    // Restores a static scene artifact as one static terrain body at
+    // `position` (the scene's own origin lands there; no rotation). A collider
+    // id already in this world is replaced, so callers that must not replace
+    // anything check has_object first.
     bool load_static_scene(
         std::span<const std::uint8_t> artifact,
         const CollisionObjectIdentity& identity,
-        std::string* error);
+        std::string* error,
+        const glm::vec3& position = glm::vec3(0.0f));
+    bool has_object(std::uint32_t collider_id) const;
     bool upsert_object(const CollisionObjectDescriptor& object, std::string* error);
     bool remove_object(std::uint32_t collider_id);
     bool set_object_enabled(std::uint32_t collider_id, bool enabled);

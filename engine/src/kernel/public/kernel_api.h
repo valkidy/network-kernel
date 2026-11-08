@@ -105,6 +105,29 @@ bool Kernel_SetStaticCollisionScene(
     KernelHandle* kernel,
     const KernelStaticCollisionSceneConfig* config);
 
+/*
+ * The static scene table; see KernelStaticSceneSlotConfig. Additive within
+ * ABI 109, behind KERNEL_CAPABILITY_STATIC_SCENE_SLOTS.
+ *
+ * Kernel_AddStaticSceneSlot fills an empty slot from 1 up, in any mode and at
+ * any point of the lifecycle: the scene goes at once into every physics world
+ * the kernel has (a dedicated server's world; a listen host's world and its
+ * prediction world; a client's prediction world once it is welcomed), and
+ * into any built later. False -- and nothing changes -- for slot 0 or past
+ * the table, an occupied slot, a collider_id already in use, or an artifact
+ * that does not load.
+ *
+ * Kernel_RemoveStaticSceneSlot empties a slot from 1 up and takes its scene
+ * out of every physics world. Whatever stood on it falls; clearing the
+ * scene's entities first is the caller's job. False for slot 0, past the
+ * table, or an empty slot.
+ */
+bool Kernel_AddStaticSceneSlot(
+    KernelHandle* kernel,
+    const KernelStaticSceneSlotConfig* config);
+
+bool Kernel_RemoveStaticSceneSlot(KernelHandle* kernel, uint32_t slot);
+
 bool Kernel_InvokeRpcCommand(
     KernelHandle* kernel,
     const char* request_json,

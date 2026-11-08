@@ -139,6 +139,22 @@ removed, and a prop is cleaned up as `KernelDespawnReason_Expired`. game_server
 sets it from the catalog's `player.fall_death_height`. A non-finite height is
 rejected. No struct changes, and a client never calls it.
 
+`Kernel_AddStaticSceneSlot` and `Kernel_RemoveStaticSceneSlot` are additive
+within ABI 109, behind `KERNEL_CAPABILITY_STATIC_SCENE_SLOTS`
+(`0x0040000000000000`), with `KernelStaticSceneSlotConfig` (48 B on 64-bit:
+struct_size, slot, artifact pointer and size, scene_id, collider_id,
+collision_layer, offset). They are the kernel half of the scene table
+(docs/SCENE_TABLE_PLAN.md): slot 0 is the scene
+`Kernel_SetStaticCollisionScene` registers, and slots 1 to
+`KERNEL_STATIC_SCENE_SLOT_COUNT` - 1 (8 slots in all) are filled and emptied at
+runtime, each at its own offset. Unlike the slot 0 call they work in every mode
+and at any point of the lifecycle: a slot goes at once into every physics world
+the kernel has (a dedicated server's, both of a listen host's, a welcomed
+client's prediction world) and into any built later. A refusal -- slot 0, past
+the table, occupied, a collider id another slot or the world already uses, an
+artifact that does not load -- changes nothing. Removing a slot takes its
+terrain out from under whatever stands on it; clearing that is the caller's.
+
 ABI 92 adds `Kernel_ServerReviveEntity`, `KernelServerReviveInfo` (16 B) and
 `KERNEL_CAPABILITY_SERVER_ENTITY_REVIVE`. It brings back an entity whose health
 is zero out of a non-zero maximum, and refuses anything alive. In one call: full

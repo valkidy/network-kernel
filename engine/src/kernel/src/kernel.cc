@@ -2404,14 +2404,155 @@ bool KernelEngine::prepare_static_collision_scene(
 void KernelEngine::commit_static_collision_scene(
     std::vector<std::uint8_t> scene,
     const KernelStaticCollisionSceneConfig& config) {
-    static_collision_scene_ = std::move(scene);
-    static_collision_scene_id_ = config.scene_id;
-    static_collision_collider_id_ = config.collider_id;
-    static_collision_layer_ = config.collision_layer;
+    StaticSceneSlot& camp = static_scene_slots_[0];
+    camp.artifact = std::move(scene);
+    camp.scene_id = config.scene_id;
+    camp.collider_id = config.collider_id;
+    camp.collision_layer = config.collision_layer;
+    camp.offset = glm::vec3(0.0f);
+}
+
+bool KernelEngine::has_static_collision_scene() const {
+    for (const StaticSceneSlot& slot : static_scene_slots_) {
+        if (!slot.artifact.empty()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool KernelEngine::load_static_scene_slots(
+    physics::PhysicsWorld* world,
+    std::string* error) const {
+    for (std::size_t index = 0; index < static_scene_slots_.size(); ++index) {
+        const StaticSceneSlot& slot = static_scene_slots_[index];
+        if (slot.artifact.empty()) {
+            continue;
+        }
+        physics::CollisionObjectIdentity identity{};
+        identity.collider_id = slot.collider_id;
+        identity.kind = physics::CollisionObjectKind::kTerrain;
+        identity.layer = physics::CollisionLayer::kTerrain;
+        identity.scene_id = slot.scene_id;
+        if (!world->load_static_scene(slot.artifact, identity, error, slot.offset)) {
+            *error = "slot " + std::to_string(index) + ": " + *error;
+            return false;
+        }
+    }
+    return true;
+}
+
+bool KernelEngine::add_static_scene_slot(const KernelStaticSceneSlotConfig& config) {
+    if (config.slot == 0u || config.slot >= KERNEL_STATIC_SCENE_SLOT_COUNT) {
+        spdlog::error(
+            "Kernel_AddStaticSceneSlot rejected: slot={} must be 1..{}",
+            config.slot,
+            KERNEL_STATIC_SCENE_SLOT_COUNT - 1u);
+        return false;
+    }
+    StaticSceneSlot& target = static_scene_slots_[config.slot];
+    if (!target.artifact.empty()) {
+        spdlog::error(
+            "Kernel_AddStaticSceneSlot rejected: slot={} is occupied", config.slot);
+        return false;
+    }
+    if (config.artifact_bytes == nullptr || config.artifact_size == 0u ||
+        config.artifact_size > KERNEL_STATIC_COLLISION_SCENE_MAX_BYTES ||
+        config.scene_id == 0u || config.collider_id == 0u ||
+        config.collision_layer != KERNEL_STATIC_COLLISION_LAYER_TERRAIN ||
+        !std::isfinite(config.offset.x) || !std::isfinite(config.offset.y) ||
+        !std::isfinite(config.offset.z)) {
+        spdlog::error(
+            "Kernel_AddStaticSceneSlot rejected: slot={} invalid artifact, ids, "
+            "layer or offset (size={} scene_id={} collider_id={} layer={})",
+            config.slot,
+            config.artifact_size,
+            config.scene_id,
+            config.collider_id,
+            config.collision_layer);
+        return false;
+    }
+    for (const StaticSceneSlot& other : static_scene_slots_) {
+        if (!other.artifact.empty() && other.collider_id == config.collider_id) {
+            spdlog::error(
+                "Kernel_AddStaticSceneSlot rejected: collider_id={} belongs to "
+                "another slot",
+                config.collider_id);
+            return false;
+        }
+    }
+    // Every world the kernel has now; a world built later loads the table.
+    std::vector<physics::PhysicsWorld*> worlds;
+    if (physics_world_ != nullptr) {
+        worlds.push_back(physics_world_.get());
+    }
+    if (prediction_physics_world_ != nullptr) {
+        worlds.push_back(prediction_physics_world_.get());
+    }
+    for (physics::PhysicsWorld* world : worlds) {
+        if (world->has_object(config.collider_id)) {
+            spdlog::error(
+                "Kernel_AddStaticSceneSlot rejected: collider_id={} is already "
+                "in a physics world",
+                config.collider_id);
+            return false;
+        }
+    }
+
+    StaticSceneSlot slot;
+    slot.artifact.assign(
+        config.artifact_bytes, config.artifact_bytes + config.artifact_size);
+    slot.scene_id = config.scene_id;
+    slot.collider_id = config.collider_id;
+    slot.collision_layer = config.collision_layer;
+    slot.offset = glm::vec3(config.offset.x, config.offset.y, config.offset.z);
+
+    physics::CollisionObjectIdentity identity{};
+    identity.collider_id = slot.collider_id;
+    identity.kind = physics::CollisionObjectKind::kTerrain;
+    identity.layer = physics::CollisionLayer::kTerrain;
+    identity.scene_id = slot.scene_id;
+    for (std::size_t index = 0; index < worlds.size(); ++index) {
+        std::string error;
+        if (!worlds[index]->load_static_scene(
+                slot.artifact, identity, &error, slot.offset)) {
+            spdlog::error(
+                "Kernel_AddStaticSceneSlot rejected: slot={} does not load: {}",
+                config.slot,
+                error);
+            for (std::size_t loaded = 0; loaded < index; ++loaded) {
+                worlds[loaded]->remove_object(slot.collider_id);
+            }
+            return false;
+        }
+    }
+    target = std::move(slot);
+    return true;
+}
+
+bool KernelEngine::remove_static_scene_slot(std::uint32_t slot) {
+    if (slot == 0u || slot >= KERNEL_STATIC_SCENE_SLOT_COUNT ||
+        static_scene_slots_[slot].artifact.empty()) {
+        spdlog::error(
+            "Kernel_RemoveStaticSceneSlot rejected: slot={} is not an occupied "
+            "slot from 1 to {}",
+            slot,
+            KERNEL_STATIC_SCENE_SLOT_COUNT - 1u);
+        return false;
+    }
+    const std::uint32_t collider_id = static_scene_slots_[slot].collider_id;
+    if (physics_world_ != nullptr) {
+        physics_world_->remove_object(collider_id);
+    }
+    if (prediction_physics_world_ != nullptr) {
+        prediction_physics_world_->remove_object(collider_id);
+    }
+    static_scene_slots_[slot] = StaticSceneSlot{};
+    return true;
 }
 
 bool KernelEngine::prepare_prediction_physics() {
-    if (static_collision_scene_.empty()) {
+    if (!has_static_collision_scene()) {
         spdlog::error(
             "client prediction physics requires a verified static collision scene");
         return false;
@@ -2422,13 +2563,8 @@ bool KernelEngine::prepare_prediction_physics() {
         spdlog::error("failed to initialize client prediction physics world");
         return false;
     }
-    physics::CollisionObjectIdentity identity{};
-    identity.collider_id = static_collision_collider_id_;
-    identity.kind = physics::CollisionObjectKind::kTerrain;
-    identity.layer = physics::CollisionLayer::kTerrain;
-    identity.scene_id = static_collision_scene_id_;
     std::string error;
-    if (!world->load_static_scene(static_collision_scene_, identity, &error)) {
+    if (!load_static_scene_slots(world.get(), &error)) {
         spdlog::error(
             "failed to load client prediction static collision scene: {}", error);
         return false;
@@ -2460,15 +2596,9 @@ bool KernelEngine::prepare_server_physics(
         spdlog::error("failed to initialize query-only Jolt physics world");
         return false;
     }
-    if (!static_collision_scene_.empty()) {
-        physics::CollisionObjectIdentity identity{};
-        identity.collider_id = static_collision_collider_id_;
-        identity.kind = physics::CollisionObjectKind::kTerrain;
-        identity.layer = physics::CollisionLayer::kTerrain;
-        identity.scene_id = static_collision_scene_id_;
+    if (has_static_collision_scene()) {
         std::string error;
-        if (!world->load_static_scene(
-                static_collision_scene_, identity, &error)) {
+        if (!load_static_scene_slots(world.get(), &error)) {
             spdlog::error("failed to load static collision scene: {}", error);
             return false;
         }
@@ -2556,7 +2686,7 @@ bool KernelEngine::start_listen_server(std::uint16_t port) {
         return false;
     }
     prediction_physics_world_.reset();
-    if ((!static_collision_scene_.empty() ||
+    if ((has_static_collision_scene() ||
          session_rules_.actor_blocking_mode ==
              KernelActorBlockingMode_Predicted) &&
         !prepare_prediction_physics()) {
@@ -9656,7 +9786,7 @@ bool KernelEngine::apply_welcome(const WelcomePacket& welcome) {
                 "collision catalog artifact is not ready");
             return false;
         }
-    } else if (!static_collision_scene_.empty() &&
+    } else if (has_static_collision_scene() &&
                !prepare_prediction_physics()) {
         spdlog::error(
             "rejecting session: configured prediction collision artifact "
