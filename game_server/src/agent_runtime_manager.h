@@ -17,6 +17,7 @@
 #include "game_server/src/patrol_director.h"
 #include "game_server/src/shelter_director.h"
 #include "game_server/src/patrol_navigation.h"
+#include "game_server/src/scene_bounds.h"
 #include "game_server/src/spawner_director.h"
 #include "game_server/src/world_rule_director.h"
 #include "game_server/src/patrol_group_runtime.h"
@@ -38,6 +39,11 @@ public:
     // director is still a configuration error worth refusing to start on.
     bool preload_directors();
     void despawn_all(std::uint32_t reason);
+    // The slot this manager runs (docs/SCENE_TABLE_PLAN.md S3): it adopts,
+    // drives and counts only the actors inside it, and so do its directors;
+    // players elsewhere are neither targets nor counted. Unbounded by default.
+    void set_scene_bounds(const SceneBounds& bounds);
+    const SceneBounds& scene_bounds() const { return scene_bounds_; }
 
     std::size_t agent_count() const;
     const std::vector<AgentRuntimeState>& agents() const;
@@ -220,6 +226,7 @@ private:
     bool director_preload_attempted_ = false;
     bool director_preload_succeeded_ = false;
     bool despawn_pending_ = false;
+    SceneBounds scene_bounds_;
 };
 
 }  // namespace network_example::game_server

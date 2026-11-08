@@ -25,7 +25,7 @@ bool entity_alive(KernelHandle* kernel, std::uint32_t net_id) {
         state.valid != 0u;
 }
 
-std::uint32_t live_player_count(KernelHandle* kernel) {
+std::uint32_t live_player_count(KernelHandle* kernel, const SceneBounds& bounds) {
     std::vector<KernelServerEntityState> states(64);
     while (true) {
         for (KernelServerEntityState& state : states) {
@@ -45,7 +45,8 @@ std::uint32_t live_player_count(KernelHandle* kernel) {
         std::uint32_t players = 0;
         for (std::uint32_t index = 0; index < count; ++index) {
             if (states[index].valid != 0u &&
-                states[index].actor_type == kActorTypePlayer) {
+                states[index].actor_type == kActorTypePlayer &&
+                bounds.contains(states[index].position.x)) {
                 ++players;
             }
         }
@@ -178,7 +179,7 @@ void GameRuleDirector::tick(KernelHandle* kernel) {
             continue;
         }
 
-        const std::uint32_t player_count = live_player_count(kernel);
+        const std::uint32_t player_count = live_player_count(kernel, bounds_);
         for (std::size_t offset = 0; offset < rule.nodes.size(); ++offset) {
             if (runtime.node_states[offset] != GameRuleNodeState::kActive) {
                 continue;

@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "game_server/src/agent_runtime.h"
+#include "game_server/src/scene_bounds.h"
 #include "kernel/public/kernel_api.h"
 #include "kernel/public/kernel_types.h"
 
@@ -80,6 +81,9 @@ public:
     explicit GameRuleDirector(std::vector<GameRuleConfig> rules = {});
 
     void tick(KernelHandle* kernel);
+    // The slot this director's mission plays in: only players inside it
+    // count towards a player_count_at_least condition.
+    void set_scene_bounds(const SceneBounds& bounds) { bounds_ = bounds; }
 
     // No `sealed` flag. The kernel version needed one -- it dispatched creates
     // through a command queue, so a group could not know when it was fully
@@ -120,6 +124,7 @@ private:
     std::vector<GameRuleConfig> rules_;
     std::vector<RuleRuntime> runtimes_;
     std::vector<SpawnedControllerSpec> spawned_controllers_;
+    SceneBounds bounds_;
 };
 
 }  // namespace network_example::game_server

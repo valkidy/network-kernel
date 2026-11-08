@@ -175,6 +175,26 @@ scene_templates:
     agent_routes: []
     player:
       spawn_position: {x: -1.2, y: 23.0, z: -31.0}
+  # The camp's mesh map with its mission (game_rule) and no initial camp: a
+  # level whose directors spawn, to load beside the camp and clear again.
+  level_composed_mission:
+    navigation_mesh:
+      entry_path: mesh_assets/recast/composed_216m_ground_0001_seed1_collision.navmesh
+    static_collision_scene:
+      entry_path: mesh_assets/jolt/composed_216m_ground_0001_seed1_collision.joltmesh
+    preload_directors:
+      - game_rule
+    scene_props: []
+    player:
+      spawn_position: {x: 106.8, y: 23.0, z: 77.0}
+    agent_routes:
+      - id: 1
+        name: camp_perimeter
+        waypoints:
+          - {x: 91.0, y: 22.5, z: 82.0}
+          - {x: 130.8, y: 20.1, z: 82.0}
+          - {x: 130.8, y: 21.0, z: 62.0}
+          - {x: 91.0, y: 21.5, z: 62.0}
 # The ids and layer the map's collision registers under, whichever variant
 # supplies its shape (a mesh names entry_path; a terrain is its own shape).
 static_collision_scene:

@@ -752,6 +752,11 @@ struct GameServerGameplayConfig {
     // The template this config was loaded as; empty for the catalog's own
     // map (the camp, slot 0).
     std::string scene_template;
+    // Where this config's map sits in the world: zero for the camp, the
+    // slot's offset for a level (offset_scene_config, scene_table.h). Every
+    // position above is already in world space; the navmesh, baked at the
+    // origin, is read through it.
+    KernelVec3 scene_offset{0.0f, 0.0f, 0.0f};
 };
 
 struct KernelGameplayCatalogStorage {

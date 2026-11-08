@@ -252,23 +252,33 @@ scene_templates:                 # 關卡用的地圖；在這個 mapping 裡的
 
 **版本：** catalog 格式變動，package 和 `bundle.bytes` 都要更新。
 
-### S3 game_server：slot array 與 per-slot 執行
+### S3 game_server：slot array 與 per-slot 執行（已實作，`claude/scene-table-s3`）
 
-| # | 工作 |
-|---|---|
-| S3.1 | `SceneTable`：slot array、狀態機、generation、bounds |
-| S3.2 | navmesh 每個 slot 一份（每個 slot 一個 `PatrolNavigation`，查詢時扣掉 offset）。`AgentRuntimeManager` 依 agent 所在的 slot 選 navmesh |
-| S3.3 | director 依 slot 執行：`preload_directors` 在 slot 進入 Ready 時啟動、Unloading 時停止；生怪點、路徑都加 offset |
-| S3.4 | `around_players` 巡邏只看同一個 slot 的玩家 |
-| S3.5 | budget：全域上限，再分給各個 Active 的 slot |
-| S3.6 | 重生：重生點用玩家所在 slot 的出生點；重生次數改成每支隊伍一份 |
-| S3.7 | 背景載入：組地形、建 navmesh 在 worker thread 上做；加進 kernel 一律在 tick thread 上做（GNS 和 kernel 都假設單一 thread） |
-| S3.8 | 卸載清理：依 bounds 過濾 `Kernel_ServerQueryEntities` 的結果，逐一刪除（`Retired`）；把留在裡面的玩家送回 slot 0；移除 scene；釋放 navmesh |
-| S3.9 | `TerrainView` 改成以 `(kernel, slot)` 為 key。地形查詢 API 加上 slot 參數，舊 API 等同 slot 0。這是新的 GameServer capability |
+**實作方式：每個關卡 slot 一個自己的 `AgentRuntimeManager`。** manager 本來就把一張地圖的 navmesh、director、budget、agent 包在一起，所以每個 slot 用它的 template config 建一個新的 manager，不另外拆分。camp 是 slot 0，沿用原本的 manager。
 
-**測試：**
-- `scene_slot_cleanup_test`：同一個關卡載入、卸載 20 次，每次比較 entity 數（依 type 分）、budget 使用量、director 數、navmesh 數，都要回到初始值。這是本計劃最大的風險，**先寫這個測試**。
-- 兩個 slot 同時 Active（multiverse 的最小情況）：A 隊在 slot 1、B 隊在 slot 2，互相看不到對方的 entity，巡邏也不會跑到另一個 slot。
+| # | 工作 | 狀態 |
+|---|---|---|
+| S3.1 | `GameServer` 的 slot array：Empty → Loading → Ready，generation，bounds（`scene_table.h`、`scene_bounds.h`） | 完成。Active、Draining 跟著 S4 的協定一起加 |
+| S3.2 | navmesh 每個 slot 一份：每個 manager 有自己的 `PatrolNavigation`，`set_origin(slot offset)` 讓所有查詢都用世界座標 | 完成 |
+| S3.3 | director 依 slot 執行：template 的 `preload_directors` 在 slot Ready 時隨 manager 啟動，卸載時隨 manager 移除；`offset_scene_config` 把出生點、擺設、巡邏路徑、playable bounds、mission 生怪點和世界座標路徑、guard anchor、world rule 生怪點都加上 offset | 完成 |
+| S3.4 | 只看同一個 slot：manager 唯一的 entity 查詢、game rule 的玩家計數、spawner 的 carrier 掃描都依 slot 的 x 範圍過濾（`keep_in_scene`）。所以 `around_players`、hunter、`player_count_at_least` 都只看同一個 slot | 完成。關卡 slot 不跑 catalog 的 world patrols（`patrols` 會被清掉），只跑 template 自己的 director |
+| S3.5 | budget：全域上限，再分給各個 slot | **延後**：目前每個 slot 用 template 自己的 budget。第一版流程只有一支隊伍（Q9），最多 camp 加一個關卡 |
+| S3.6 | 重生：掉出地圖的玩家，在他掉下去的那個 slot 的出生點復活 | 完成。重生次數改成每支隊伍一份 → 移到 S4，跟隊伍一起做 |
+| S3.7 | 背景載入：template config、地形組裝、navmesh 在 worker thread（`std::async`）；加進 kernel、建 manager、擺設在 tick thread | 完成 |
+| S3.8 | 卸載清理：slot 範圍內的玩家送回 camp 出生點，其餘 actor、prop、projectile 全部刪除（`Retired`），移除 manager 和 kernel slot，generation + 1 | 完成 |
+| S3.9 | `TerrainView` 以 `(kernel, slot)` 為 key | **移到 S4**：它是給 client 畫地形用的，和 S4.2 的 client 端載入 API 一起做 |
+
+**其他限制：** 玩家的 agent command 目前只交給 camp 的 manager 處理，S4 再依 agent 所在的 slot 分派。
+
+**測試（`scene_slot_runtime_test`，真實的 listen host 加出貨的 bundle）：**
+- 關卡載入後，任務生出的東西全部在自己的 slot 裡，camp 的 AI 只管 camp。
+- 從關卡掉下去的玩家，在關卡裡復活。
+- 卸載後 slot 清空，camp 的 entity 一個都沒少；連續載入、卸載 20 次，每次都清乾淨。
+- 兩個關卡同時存在：等待玩家的任務只在有玩家的 slot 開始。
+- 地形關卡在背景組裝時，host 照常 tick。
+- 拿掉 slot 範圍過濾後，測試會失敗（camp 的 agent 被關卡的 manager 收走）。
+
+實測：mesh 關卡約 25 ms 就 Ready；216 m 的地形關卡約 100 ms，期間 host 跑了 50 個 frame。
 
 ### S4 協定與流程
 

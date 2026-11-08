@@ -88,9 +88,30 @@ public:
     bool horizontal_bounds(
         float* min_x, float* min_z, float* max_x, float* max_z) const;
 
+    // Where the navmesh's origin sits in the world: zero for the camp, the
+    // slot's offset for a level (docs/SCENE_TABLE_PLAN.md S3). Every query
+    // above takes and returns world space.
+    void set_origin(const KernelVec3& origin) { origin_ = origin; }
+    const KernelVec3& origin() const { return origin_; }
+
 private:
+    bool snap_local(
+        const KernelVec3& position,
+        float half_extent_meters,
+        KernelVec3* out_position) const;
+    bool find_route_local(
+        const PatrolRouteRequest& request,
+        std::vector<KernelVec3>* waypoints) const;
+    std::optional<bool> walkable_line_local(
+        const KernelVec3& from,
+        const KernelVec3& to,
+        float half_extent_meters) const;
+    bool horizontal_bounds_local(
+        float* min_x, float* min_z, float* max_x, float* max_z) const;
+
     dtNavMesh* mesh_ = nullptr;
     dtNavMeshQuery* query_ = nullptr;
+    KernelVec3 origin_{0.0f, 0.0f, 0.0f};
 };
 
 }  // namespace network_example::game_server

@@ -101,7 +101,7 @@ void bundle_templates() {
     const gs::GameServerGameplayConfig camp = gs::load_gameplay_config_from_bundle_memory(bundle.data(), size, kEntry);
     require(camp.weapons.catalog_version == 18u);
     require(camp.scene_template.empty());
-    require(camp.scene_templates.size() == 1u);
+    require(camp.scene_templates.size() == 2u);
     require(camp.scene_templates[0].name == kLevel);
     require(!camp.scene_templates[0].overlay_yaml.empty());
     require(!camp.preload_director_template_ids.empty());  // the camp's mission
@@ -109,7 +109,7 @@ void bundle_templates() {
     const gs::GameServerGameplayConfig level =
         gs::load_scene_template_config_from_bundle_memory(bundle.data(), size, kEntry, kLevel);
     require(level.scene_template == kLevel);
-    require(level.scene_templates.size() == 1u);
+    require(level.scene_templates.size() == 2u);
     require(level.terrain.enabled);
     require(level.terrain.seed == 2);
     require(level.terrain.recipe_entry_path == "terrain/level_terrain_seed2.nktr");

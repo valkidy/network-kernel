@@ -50,6 +50,7 @@ cc_library(
         "src/patrol_navigation.cc",
         "src/patrol_targeting.cc",
         "src/respawn_scheduler.cc",
+        "src/scene_table.cc",
         "src/shelter_director.cc",
         "src/loadout_director.cc",
         "src/spawn_sampling.cc",
@@ -73,6 +74,8 @@ cc_library(
         "src/gameplay_config.h",
         "src/game_server.h",
         "src/respawn_scheduler.h",
+        "src/scene_bounds.h",
+        "src/scene_table.h",
         "src/shelter_director.h",
         "src/loadout_director.h",
         "src/patrol_allocation.h",
@@ -2283,6 +2286,20 @@ cc_binary(
 cc_test(
     name = "static_scene_slot_grounding_test",
     srcs = ["tests/static_scene_slot_grounding_test.cc"],
+    data = ["//game_server/gameplay_catalog_bundle:bundle"],
+    deps = [
+        ":game_server",
+        ":game_server_bridge",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+# The scene table on the server (docs/SCENE_TABLE_PLAN.md S3): levels load
+# beside the camp, keep to their slots, and unload without a trace.
+cc_test(
+    name = "scene_slot_runtime_test",
+    size = "medium",
+    srcs = ["tests/scene_slot_runtime_test.cc"],
     data = ["//game_server/gameplay_catalog_bundle:bundle"],
     deps = [
         ":game_server",
