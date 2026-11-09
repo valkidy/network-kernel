@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- adds runtime scene slots, asynchronous level loading and camp-terminal level selection
+
+
+0.7.0 release notes:
+
 - improves squad pursuit, cliff return paths and ledge leaps, fixes alert loops and grounds mission nests and giants on the active map
 
 
