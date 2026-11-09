@@ -1373,6 +1373,15 @@ void AgentRuntimeManager::tick(float delta_seconds) {
     trace_.observe(ticks_, agents_, patrol_groups_.groups(), actors);
 }
 
+bool AgentRuntimeManager::is_enemy_agent(std::uint32_t net_id) const {
+    for (const AgentRuntimeState& agent : agents_) {
+        if (agent.net_id == net_id) {
+            return camp_of(agent.actor_template_id) == KernelAgentCamp_EnemySide;
+        }
+    }
+    return false;
+}
+
 void AgentRuntimeManager::set_scene_bounds(const SceneBounds& bounds) {
     scene_bounds_ = bounds;
     game_rule_director_.set_scene_bounds(bounds);

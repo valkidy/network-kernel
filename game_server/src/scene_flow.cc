@@ -135,6 +135,8 @@ bool GameServer::request_level(const std::string& scene_template) {
     level_entered_ = false;
     abort_level_requested_ = false;
     gate_open_seconds_ = 0.0f;
+    level_defeated_ = 0u;
+    level_revives_granted_ = 0;
     flow_outcome_ = GAME_SERVER_SCENE_OUTCOME_NONE;
     gate_.open = false;
     set_flow(GAME_SERVER_SCENE_FLOW_LOADING);
@@ -186,6 +188,9 @@ std::vector<std::uint8_t> GameServer::encode_scene_state() const {
     put_f32(&out, gate_.position.z);
     put_f32(&out, gate_.radius);
     put_u32(&out, level_owner_net_id());
+    const GameServerGameplayConfig* level_config = scene_config(kPartyLevelSlot);
+    put_u16(&out, static_cast<std::uint16_t>(std::min<std::uint32_t>(level_defeated_, 0xffffu)));
+    put_u16(&out, static_cast<std::uint16_t>(level_config != nullptr ? level_config->objective.defeat_enemies : 0u));
     put_u8(&out, has_level ? 1u : 0u);
     if (has_level) {
         const auto found = std::find_if(
@@ -215,12 +220,52 @@ void GameServer::flush_scene_state() {
     }
 }
 
-void GameServer::broadcast_scene_state() {
+void GameServer::mark_scene_state_owed() {
     for (const auto& [peer, player] : peer_players_) {
         (void)player;
         scene_state_owed_.insert(peer);
     }
+}
+
+void GameServer::broadcast_scene_state() {
+    mark_scene_state_owed();
     flush_scene_state();
+}
+
+void GameServer::note_level_enemy_death(std::uint32_t net_id) {
+    if (flow_ != GAME_SERVER_SCENE_FLOW_GATE_OPEN) return;
+    const AgentRuntimeManager* level = scene_manager(kPartyLevelSlot);
+    if (level == nullptr || !level->is_enemy_agent(net_id)) return;
+    ++level_defeated_;
+    mark_scene_state_owed();  // sent next tick, however many fell this one
+}
+
+void GameServer::grant_late_joiner_revives() {
+    const GameServerGameplayConfig* level = scene_config(kPartyLevelSlot);
+    if (!level_entered_ || level == nullptr || level->player.respawn.revives_per_player <= 0) {
+        return;
+    }
+    const std::int32_t share = std::min(
+        level->player.respawn.revives_per_player,
+        level->player.respawn.max_team_revives - level_revives_granted_);
+    if (share > 0) {
+        respawn_.grant(share);
+        level_revives_granted_ += share;
+    }
+}
+
+bool GameServer::level_objective_met() const {
+    const GameServerGameplayConfig* level = scene_config(kPartyLevelSlot);
+    const AgentRuntimeManager* level_ai = scene_manager(kPartyLevelSlot);
+    if (level == nullptr || level_ai == nullptr) return false;
+    if (level->objective.defeat_enemies != 0u) {
+        return level_defeated_ >= level->objective.defeat_enemies;
+    }
+    const auto& rules = level_ai->game_rule_director().runtimes();
+    return !rules.empty() &&
+        std::all_of(rules.begin(), rules.end(), [](const GameRuleDirector::RuleRuntime& rule) {
+            return rule.status == GameRuleStatus::kCompleted;
+        });
 }
 
 void GameServer::return_level_players_to_camp(const std::vector<KernelServerEntityState>& players) {
@@ -343,7 +388,14 @@ void GameServer::tick_scene_flow(float delta_seconds) {
                 std::any_of(players.begin(), players.end(), [&](const KernelServerEntityState& p) {
                     return level_bounds.contains(p.position.x);
                 }))) {
-            respawn_.reset(level->player.respawn);
+            PlayerRespawnConfig pool = level->player.respawn;
+            if (pool.revives_per_player > 0) {
+                level_revives_granted_ = std::min(
+                    static_cast<std::int32_t>(peer_players_.size()) * pool.revives_per_player,
+                    pool.max_team_revives);
+                pool.team_revive_times = level_revives_granted_;
+            }
+            respawn_.reset(pool);
             level_entered_ = true;
         }
         gate_open_seconds_ += delta_seconds;
@@ -352,12 +404,7 @@ void GameServer::tick_scene_flow(float delta_seconds) {
             finish_level(GAME_SERVER_SCENE_OUTCOME_ABORTED);
             return;
         }
-        const auto& rules = level_ai->game_rule_director().runtimes();
-        const bool completed = !rules.empty() &&
-            std::all_of(rules.begin(), rules.end(), [](const GameRuleDirector::RuleRuntime& rule) {
-                return rule.status == GameRuleStatus::kCompleted;
-            });
-        if (completed) {
+        if (level_objective_met()) {
             gate_.position = plus(spawn_of(*level), kGateOffset);
             flow_outcome_ = GAME_SERVER_SCENE_OUTCOME_COMPLETED;
             spdlog::info("party level completed; return gate open");

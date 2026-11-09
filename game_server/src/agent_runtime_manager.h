@@ -44,6 +44,8 @@ public:
     // players elsewhere are neither targets nor counted. Unbounded by default.
     void set_scene_bounds(const SceneBounds& bounds);
     const SceneBounds& scene_bounds() const { return scene_bounds_; }
+    // Whether `net_id` is one of this manager's agents on the enemy side.
+    bool is_enemy_agent(std::uint32_t net_id) const;
 
     std::size_t agent_count() const;
     const std::vector<AgentRuntimeState>& agents() const;

@@ -10245,7 +10245,7 @@ const std::initializer_list<const char*> kMapOverlayKeys = {
 
 // The keys a scene template file may set beyond the map overlay.
 const std::initializer_list<const char*> kSceneTemplateFileKeys = {
-    "id", "name", "level", "game_rule",
+    "id", "name", "level", "game_rule", "objective",
     "navigation_mesh", "static_collision_scene", "terrain", "stamp_template_dir",
     "map", "player", "scene_props", "scene_items", "agent_routes", "preload_directors",
     "patrols", "patrol_budget", "agent_budget", "reinforce_budget",
@@ -10506,6 +10506,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             "stamp_template_dir",
             "scene_template_dir",
             "game_rule",
+            "objective",
         },
         path,
         source.source_kind(),
@@ -10522,7 +10523,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             reject_unknown_keys(
                 document["player"]["respawn"],
                 {"delay_seconds", "height_offset", "invulnerable_seconds",
-                 "team_revive_times"},
+                 "team_revive_times", "revives_per_player", "max_team_revives"},
                 path,
                 source.source_kind(),
                 KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
@@ -10888,6 +10889,33 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     apply_catalog_spawner_config(&config, path, source.source_kind());
     for (const LoadedSceneTemplate& loaded : scene_templates) {
         config.scene_templates.push_back(loaded.ref);
+    }
+    if (const YAML::Node objective = document["objective"]) {
+        reject_unknown_keys(
+            objective, {"defeat_enemies"}, path, source.source_kind(),
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+        const std::uint32_t defeat = objective["defeat_enemies"]
+            ? objective["defeat_enemies"].as<std::uint32_t>() : 0u;
+        if (defeat == 0u || defeat > 0xffffu) {
+            throw std::runtime_error("objective.defeat_enemies must be 1..65535: " + path);
+        }
+        config.objective.defeat_enemies = defeat;
+    }
+    if (!scene_template.empty()) {
+        // A level's revive pool scales with its party unless the level names a
+        // fixed one; the root's -1 does not count as naming one.
+        const auto chosen = std::find_if(scene_templates.begin(), scene_templates.end(),
+            [&](const LoadedSceneTemplate& t) { return t.ref.name == scene_template; });
+        const YAML::Node file_player = chosen->file["player"];
+        const YAML::Node file_respawn = file_player ? file_player["respawn"] : YAML::Node();
+        PlayerRespawnConfig& respawn = config.player.respawn;
+        if (file_respawn && file_respawn.IsMap() && file_respawn["team_revive_times"]) {
+            respawn.revives_per_player = 0;
+            respawn.max_team_revives = 0;
+        } else {
+            if (respawn.revives_per_player == 0) respawn.revives_per_player = 5;
+            if (respawn.max_team_revives == 0) respawn.max_team_revives = 20;
+        }
     }
     config.scene_template = scene_template;
 
@@ -11259,6 +11287,17 @@ void apply_catalog_player_config(
         if (respawn["team_revive_times"]) {
             config_respawn.team_revive_times =
                 respawn["team_revive_times"].as<std::int32_t>();
+        }
+        if (respawn["revives_per_player"]) {
+            config_respawn.revives_per_player = respawn["revives_per_player"].as<std::int32_t>();
+        }
+        if (respawn["max_team_revives"]) {
+            config_respawn.max_team_revives = respawn["max_team_revives"].as<std::int32_t>();
+        }
+        if ((respawn["revives_per_player"] && config_respawn.revives_per_player < 1) ||
+            (respawn["max_team_revives"] && config_respawn.max_team_revives < 1)) {
+            throw std::runtime_error(
+                "player.respawn.revives_per_player and max_team_revives must be at least 1");
         }
         const auto finite_non_negative = [](float value) {
             return std::isfinite(value) && value >= 0.0f;
@@ -12485,6 +12524,9 @@ std::uint64_t compute_gameplay_catalog_hash(
     hash_float(&hash, config.player.respawn.height_offset_meters);
     hash_float(&hash, config.player.respawn.invulnerable_seconds);
     hash_scalar(&hash, config.player.respawn.team_revive_times);
+    hash_scalar(&hash, config.player.respawn.revives_per_player);
+    hash_scalar(&hash, config.player.respawn.max_team_revives);
+    hash_scalar(&hash, config.objective.defeat_enemies);
     hash_scalar(&hash, config.player.has_spawn_position);
     hash_float(&hash, config.player.spawn_position.x);
     hash_float(&hash, config.player.spawn_position.y);

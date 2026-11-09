@@ -77,6 +77,8 @@ struct SceneState {
     bool gate_open = false;
     KernelVec3 gate{};
     std::uint32_t owner = 0;
+    std::uint32_t defeated = 0;
+    std::uint32_t target = 0;
     std::map<std::uint32_t, std::pair<std::uint32_t, std::string>> slots;
 };
 
@@ -89,7 +91,7 @@ struct Follower {
     std::map<std::uint32_t, std::uint32_t> loaded;
 
     void decode(const KernelGameMessage& m) {
-        require(m.payload_size >= 29u);
+        require(m.payload_size >= 33u);
         const std::uint8_t* p = m.payload;
         SceneState s;
         s.received = true;
@@ -105,8 +107,10 @@ struct Follower {
         };
         s.gate = KernelVec3{f(8), f(12), f(16)};
         s.owner = u32_at(p + 24);
-        std::uint32_t at = 29;
-        for (std::uint32_t k = 0; k < p[28]; ++k) {
+        s.defeated = static_cast<std::uint16_t>(p[28] | (p[29] << 8));
+        s.target = static_cast<std::uint16_t>(p[30] | (p[31] << 8));
+        std::uint32_t at = 33;
+        for (std::uint32_t k = 0; k < p[32]; ++k) {
             const std::uint32_t name_length = p[at + 7];
             s.slots[p[at]] = {u32_at(p + at + 1), std::string(reinterpret_cast<const char*>(p + at + 8), name_length)};
             at += 8 + name_length;
@@ -313,7 +317,7 @@ std::uint16_t level_index(const std::vector<std::uint8_t>& bundle) {
 
 void listen_host(const std::vector<std::uint8_t>& bundle, std::uint16_t index) {
     World world;
-    const CApiServer server = start_c_api(&world, true, 8072, bundle);
+    const CApiServer server = start_c_api(&world, true, 8232, bundle);
     Follower host{server.kernel, false, &bundle};
     world.followers.push_back(&host);
     Follower* a = world.join();
@@ -374,7 +378,7 @@ void listen_host(const std::vector<std::uint8_t>& bundle, std::uint16_t index) {
 
 void dedicated(const std::vector<std::uint8_t>& bundle, std::uint16_t index) {
     World world;
-    const CApiServer server = start_c_api(&world, false, 8073, bundle);
+    const CApiServer server = start_c_api(&world, false, 8233, bundle);
     Follower* a = world.join();
     Follower* b = world.join();
     const std::uint32_t a_player = player_of(a->kernel);
@@ -418,7 +422,10 @@ void dedicated(const std::vector<std::uint8_t>& bundle, std::uint16_t index) {
     stop(&world, server);
 }
 
-void auto_level(const std::vector<std::uint8_t>& bundle_bytes) {
+// A dedicated server built natively, as the app does, for what a test must
+// read or set on the GameServer itself.
+std::unique_ptr<gs::GameServer> start_native(
+    World* world, std::uint16_t port, const std::vector<std::uint8_t>& bundle_bytes) {
     auto bundle = std::make_shared<const std::vector<std::uint8_t>>(bundle_bytes);
     const auto size = static_cast<std::uint32_t>(bundle->size());
     gs::GameServerGameplayConfig config = gs::load_gameplay_config_from_bundle_memory(bundle->data(), size, kEntry);
@@ -426,10 +433,9 @@ void auto_level(const std::vector<std::uint8_t>& bundle_bytes) {
         gs::load_gameplay_bundle_entry_bytes(bundle->data(), size, config.static_collision_scene.entry_path);
     config.navigation_mesh.artifact =
         gs::load_gameplay_bundle_entry_bytes(bundle->data(), size, config.navigation_mesh.entry_path);
-    World world;
     KernelConfig kernel_config = config_for(KernelMode_DedicatedServer);
-    world.server_kernel = Kernel_Create(&kernel_config);
-    require(gs::load_kernel_gameplay_catalog(world.server_kernel, config));
+    world->server_kernel = Kernel_Create(&kernel_config);
+    require(gs::load_kernel_gameplay_catalog(world->server_kernel, config));
     KernelStaticCollisionSceneConfig camp{};
     camp.struct_size = sizeof(camp);
     camp.artifact_bytes = scene.data();
@@ -437,7 +443,7 @@ void auto_level(const std::vector<std::uint8_t>& bundle_bytes) {
     camp.scene_id = config.static_collision_scene.scene_id;
     camp.collider_id = config.static_collision_scene.collider_id;
     camp.collision_layer = config.static_collision_scene.collision_layer;
-    require(Kernel_SetStaticCollisionScene(world.server_kernel, &camp));
+    require(Kernel_SetStaticCollisionScene(world->server_kernel, &camp));
     KernelGameplayCatalogSyncServerConfig serve{};
     serve.struct_size = sizeof(serve);
     serve.bundle_bytes = bundle->data();
@@ -446,19 +452,25 @@ void auto_level(const std::vector<std::uint8_t>& bundle_bytes) {
     serve.content_namespace = "scene_flow_startup_test";
     KernelGameplayCatalogManifest manifest{};
     manifest.struct_size = sizeof(manifest);
-    require(Kernel_SetGameplayCatalogSyncBundle(world.server_kernel, &serve, &manifest));
-    world.port = 8074;
-    world.bundle = &bundle_bytes;
-    require(Kernel_StartDedicatedServer(world.server_kernel, world.port));
-    gs::GameServer server(world.server_kernel, config);
-    require(server.preload_directors());
-    server.enable_scene_table(gs::SceneCatalogSource{bundle, kEntry, ""});
-    server.set_auto_level(kLevel);
-    world.on_event = [&](const KernelEvent& event) { server.handle_event(event); };
-    world.on_tick = [&] { server.tick(kDt); };
+    require(Kernel_SetGameplayCatalogSyncBundle(world->server_kernel, &serve, &manifest));
+    world->port = port;
+    world->bundle = &bundle_bytes;
+    require(Kernel_StartDedicatedServer(world->server_kernel, world->port));
+    auto server = std::make_unique<gs::GameServer>(world->server_kernel, config);
+    require(server->preload_directors());
+    server->enable_scene_table(gs::SceneCatalogSource{bundle, kEntry, ""});
+    gs::GameServer* raw = server.get();
+    world->on_event = [raw](const KernelEvent& event) { raw->handle_event(event); };
+    world->on_tick = [raw] { raw->tick(kDt); };
+    return server;
+}
 
+void auto_level(const std::vector<std::uint8_t>& bundle_bytes) {
+    World world;
+    std::unique_ptr<gs::GameServer> server = start_native(&world, 8234, bundle_bytes);
+    server->set_auto_level(kLevel);
     world.settle(0.3);
-    require(server.scene_flow() == GAME_SERVER_SCENE_FLOW_CAMP);  // nobody here yet
+    require(server->scene_flow() == GAME_SERVER_SCENE_FLOW_CAMP);  // nobody here yet
     Follower* a = world.join();
     require(world.until([&] { return a->state.flow == GAME_SERVER_SCENE_FLOW_GATE_OPEN; }, 30.0));
     abort_level(a->kernel);
@@ -467,6 +479,123 @@ void auto_level(const std::vector<std::uint8_t>& bundle_bytes) {
     }, 30.0));
     std::printf("--level: opened with the first player, and again after it ended\n");
     world.leave(a);
+    server.reset();
+    Kernel_Destroy(world.server_kernel);
+}
+
+// Enemy actors now in the level.
+std::vector<std::uint32_t> enemies_in(World& world, const gs::SceneBounds& bounds) {
+    std::vector<KernelServerEntityState> states(4096);
+    for (auto& s : states) s.struct_size = sizeof(s);
+    const std::uint32_t n = Kernel_ServerQueryEntities(
+        world.server_kernel, KernelEntityType_Actor, states.data(), static_cast<std::uint32_t>(states.size()));
+    std::vector<std::uint32_t> out;
+    for (std::uint32_t k = 0; k < n; ++k) {
+        if (states[k].actor_type == KernelActorType_Agent && states[k].hp != 0u && bounds.contains(states[k].position.x)) {
+            out.push_back(states[k].net_id);
+        }
+    }
+    return out;
+}
+
+void objective_and_revives(const std::vector<std::uint8_t>& bundle_bytes) {
+    World world;
+    std::unique_ptr<gs::GameServer> server = start_native(&world, 8236, bundle_bytes);
+    const gs::SceneBounds level = gs::scene_slot_bounds(1u);
+    const KernelQuat facing{0.0f, 0.0f, 0.0f, 1.0f};
+    const auto walk_in = [&](Follower* who) {
+        const std::uint32_t player = player_of(who->kernel);
+        require(world.until([&] { return who->loaded.count(1u) == 1u; }, 15.0));
+        world.settle(0.3);  // its SCENE_READY reaches the server
+        require(Kernel_ServerSetEntityTransform(world.server_kernel, player, &who->state.gate, &facing));
+        require(world.until([&] { return level.contains(world.state_of(player).position.x); }, 5.0));
+    };
+
+    Follower* a = world.join();
+    Follower* b = world.join();
+    require(server->request_level("level_composed_patrol"));
+    require(world.until([&] { return a->state.flow == GAME_SERVER_SCENE_FLOW_GATE_OPEN; }, 30.0));
+    require(world.until([&] { return b->state.flow == GAME_SERVER_SCENE_FLOW_GATE_OPEN; }, 5.0));
+    require(a->state.target == 20u && a->state.defeated == 0u);
+    walk_in(a);
+    walk_in(b);
+    require(server->remaining_revives() == 10);  // 2 players x 5
+
+    // Late joiners add 5 each, up to 20 granted in all.
+    Follower* c = world.join();
+    require(world.until([&] { return server->remaining_revives() == 15; }, 2.0));
+    Follower* d = world.join();
+    require(world.until([&] { return server->remaining_revives() == 20; }, 2.0));
+    Follower* e = world.join();
+    world.settle(0.5);
+    require(server->remaining_revives() == 20);
+    std::printf("revives: 2 players 10, late joiners 15 then 20, a fifth joiner still 20\n");
+
+    // The cap is on what was granted: spending some and re-joining adds nothing.
+    const std::uint32_t a_player = player_of(a->kernel);
+    const KernelVec3 at = world.state_of(a_player).position;
+    const KernelVec3 below{at.x, -30.0f, at.z};
+    require(Kernel_ServerSetEntityTransform(world.server_kernel, a_player, &below, &facing));
+    require(world.until([&] { return server->remaining_revives() == 19; }, 5.0));
+    world.leave(e);
+    world.settle(0.5);
+    e = world.join();
+    world.settle(0.5);
+    require(server->remaining_revives() == 19);
+    std::printf("revives: spent one, left and re-joined, still 19\n");
+
+    // Retired enemies do not count; deaths do.
+    require(world.until([&] { return !enemies_in(world, level).empty(); }, 15.0));
+    const std::vector<std::uint32_t> first = enemies_in(world, level);
+    require(Kernel_ServerDestroyEntity(world.server_kernel, first[0], KernelDespawnReason_Retired));
+    world.settle(0.3);
+    require(server->level_defeated() == 0u);
+    require(world.until([&] {
+        for (const std::uint32_t net : enemies_in(world, level)) {
+            const KernelServerEntityState s = world.state_of(net);
+            if (s.position.y < -5.0f) continue;
+            const KernelVec3 under{s.position.x, -30.0f, s.position.z};
+            Kernel_ServerSetEntityTransform(world.server_kernel, net, &under, &facing);
+        }
+        return server->scene_flow() == GAME_SERVER_SCENE_FLOW_RETURN_OPEN;
+    }, 60.0));
+    require(server->scene_outcome() == GAME_SERVER_SCENE_OUTCOME_COMPLETED);
+    require(server->level_defeated() >= 20u);
+    require(world.until([&] { return a->state.flow == GAME_SERVER_SCENE_FLOW_RETURN_OPEN; }, 5.0));
+    require(a->state.defeated >= 20u);
+    std::printf("objective: %u enemies defeated, return gate open\n", a->state.defeated);
+    (void)c;
+    (void)d;
+    while (!world.followers.empty()) world.leave(world.followers.back());
+    server.reset();
+    Kernel_Destroy(world.server_kernel);
+}
+
+// A level out of revives says nothing about the camp a newcomer arrives in.
+void joiner_with_level_out_of_revives(const std::vector<std::uint8_t>& bundle_bytes) {
+    World world;
+    std::unique_ptr<gs::GameServer> server = start_native(&world, 8237, bundle_bytes);
+    const gs::SceneBounds level = gs::scene_slot_bounds(1u);
+    const KernelQuat facing{0.0f, 0.0f, 0.0f, 1.0f};
+    Follower* a = world.join();
+    Follower* b = world.join();
+    require(server->request_level(kLevel));  // one fixed revive
+    require(world.until([&] { return a->state.flow == GAME_SERVER_SCENE_FLOW_GATE_OPEN; }, 30.0));
+    require(world.until([&] { return b->state.flow == GAME_SERVER_SCENE_FLOW_GATE_OPEN; }, 5.0));
+    const std::uint32_t a_player = player_of(a->kernel);
+    require(Kernel_ServerSetEntityTransform(world.server_kernel, a_player, &a->state.gate, &facing));
+    require(world.until([&] { return level.contains(world.state_of(a_player).position.x); }, 5.0));
+    require(server->remaining_revives() == 1);
+    const KernelVec3 at = world.state_of(a_player).position;
+    const KernelVec3 below{at.x, -30.0f, at.z};
+    require(Kernel_ServerSetEntityTransform(world.server_kernel, a_player, &below, &facing));
+    require(world.until([&] { return server->remaining_revives() == 0; }, 5.0));
+    Follower* c = world.join();
+    world.settle(0.3);
+    require(world.state_of(player_of(c->kernel)).hp != 0u);
+    std::printf("revives: a newcomer arrives alive though the level is out of revives\n");
+    while (!world.followers.empty()) world.leave(world.followers.back());
+    server.reset();
     Kernel_Destroy(world.server_kernel);
 }
 
@@ -478,6 +607,8 @@ int main() {
     listen_host(bundle, index);
     dedicated(bundle, index);
     auto_level(bundle);
+    objective_and_revives(bundle);
+    joiner_with_level_out_of_revives(bundle);
     std::printf("scene_flow_startup_test passed\n");
     return 0;
 }

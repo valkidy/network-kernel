@@ -46,8 +46,8 @@ void require_impl(bool condition, int line, const char* text) {
 
 constexpr const char* kEntry = "gameplay_catalog.yaml";
 constexpr const char* kLevel = "level_composed_mission";
-// Kernel tests bind real ports; 8067 is unused elsewhere (test-port-collisions).
-constexpr std::uint16_t kPort = 8067;
+// Kernel tests bind real ports; 8239 is unused elsewhere (test-port-collisions).
+constexpr std::uint16_t kPort = 8239;
 constexpr float kDt = 1.0f / 30.0f;
 
 std::vector<std::uint8_t> read_bundle() {

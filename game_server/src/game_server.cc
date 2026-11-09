@@ -71,9 +71,12 @@ void GameServer::handle_event(const KernelEvent& event) {
             Kernel_ServerSetEntityTransform(
                 kernel_, event.net_id, &config_.player.spawn_position, &facing);
         }
+        grant_late_joiner_revives();
         // Out of revives: arriving late is not a way back in. The kernel emits
         // no EntityDied for this, so it neither splats nor queues a revive.
-        if (kernel_ != nullptr && respawn_.joins_dead()) {
+        // With levels, newcomers arrive in the camp, which a level's lost
+        // revives say nothing about.
+        if (kernel_ != nullptr && !scene_table_enabled_ && respawn_.joins_dead()) {
             Kernel_ServerSetEntityHealth(kernel_, event.net_id, 0u);
         }
     } else if (event.type == KernelEventType_PlayerLeft) {
@@ -90,6 +93,9 @@ void GameServer::handle_event(const KernelEvent& event) {
                players_.find(event.net_id) != players_.end()) {
         drop_tagged_items(event.net_id);
         respawn_.on_player_died(event.net_id);
+    }
+    if (event.type == KernelEventType_EntityDied) {
+        note_level_enemy_death(event.net_id);
     }
     shelter_.handle_event(event);
     loadout_.handle_event(event);

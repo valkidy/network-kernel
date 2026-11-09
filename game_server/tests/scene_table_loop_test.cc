@@ -93,14 +93,14 @@ SceneState decode_state(const KernelGameMessage& m) {
         std::memcpy(&v, &bits, sizeof(v));
         return v;
     };
-    require(m.payload_size >= 29u);
+    require(m.payload_size >= 33u);
     s.received = true;
     s.flow = p[0];
     s.outcome = p[6];
     s.gate_open = p[7] != 0u;
     s.gate = KernelVec3{f32(p + 8), f32(p + 12), f32(p + 16)};
-    std::uint32_t at = 29;
-    const std::uint32_t count = p[28];
+    std::uint32_t at = 33;
+    const std::uint32_t count = p[32];
     for (std::uint32_t k = 0; k < count; ++k) {
         const std::uint32_t slot = p[at];
         const std::uint32_t generation = u32(p + at + 1);
@@ -460,9 +460,9 @@ void run(bool listen, std::uint16_t port) {
 }  // namespace
 
 int main() {
-    // Kernel tests bind real ports; 8068/8069 are unused elsewhere (test-port-collisions).
-    run(true, 8068);
-    run(false, 8069);
+    // Kernel tests bind real ports; 8240/8241 are unused elsewhere (test-port-collisions).
+    run(true, 8240);
+    run(false, 8241);
     std::printf("scene_table_loop_test passed\n");
     return 0;
 }

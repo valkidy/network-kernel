@@ -76,6 +76,18 @@ struct PlayerRespawnConfig {
     float height_offset_meters = 5.0f;
     float invulnerable_seconds = 2.0f;
     std::int32_t team_revive_times = -1;
+    // A level's pool instead of a fixed team_revive_times: this many per
+    // player when the party first enters, this many more per late joiner, and
+    // at most max_team_revives granted in one run of the level. Zero for a
+    // fixed pool; a level that names no team_revive_times gets 5 and 20.
+    std::int32_t revives_per_player = 0;
+    std::int32_t max_team_revives = 0;
+};
+
+// What completes a level (`objective:`). With none, the level's game rules
+// all completing does.
+struct LevelObjectiveConfig {
+    std::uint32_t defeat_enemies = 0;
 };
 
 struct PlayerGameplayDefinition {
@@ -760,6 +772,7 @@ struct GameServerGameplayConfig {
     // position above is already in world space; the navmesh, baked at the
     // origin, is read through it.
     KernelVec3 scene_offset{0.0f, 0.0f, 0.0f};
+    LevelObjectiveConfig objective;
 };
 
 struct KernelGameplayCatalogStorage {

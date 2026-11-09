@@ -108,6 +108,8 @@ public:
     // Players who reported SCENE_READY for the party's current level.
     std::size_t scene_ready_count() const { return level_ready_.size(); }
     std::int32_t remaining_revives() const { return respawn_.remaining_revives(); }
+    // Enemies defeated in the party's current level.
+    std::uint32_t level_defeated() const { return level_defeated_; }
 
 private:
     // Health, weapons, ammo and starting inventory from the player template.
@@ -149,6 +151,12 @@ private:
     // Marks every peer as owed the state and sends what it can; a send that
     // fails stays owed and is tried again next tick.
     void broadcast_scene_state();
+    void mark_scene_state_owed();
+    // An enemy agent of the party's level died: count it towards the objective.
+    void note_level_enemy_death(std::uint32_t net_id);
+    // Someone joined after the party entered: their share of the revive pool.
+    void grant_late_joiner_revives();
+    bool level_objective_met() const;
     void flush_scene_state();
     // Everyone inside the level back at the camp spawn, the dead revived.
     void return_level_players_to_camp(const std::vector<KernelServerEntityState>& players);
@@ -197,6 +205,8 @@ private:
     float ready_wait_seconds_ = 0.0f;
     bool level_entered_ = false;
     bool abort_level_requested_ = false;
+    std::uint32_t level_defeated_ = 0;
+    std::int32_t level_revives_granted_ = 0;
     float gate_open_seconds_ = 0.0f;
     std::string auto_level_;
     std::set<std::uint32_t> scene_state_owed_;

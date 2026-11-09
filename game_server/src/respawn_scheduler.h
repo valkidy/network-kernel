@@ -40,6 +40,10 @@ public:
         remaining_ = config.team_revive_times;
         deaths_ = 0;
     }
+    // More revives in a limited pool (a late joiner's share).
+    void grant(std::int32_t revives) {
+        if (remaining_ >= 0) remaining_ += revives;
+    }
     // A newcomer joins dead once the team is out of revives -- but only after
     // someone has actually died, or a pool authored as 0 would leave every
     // player dead on arrival.

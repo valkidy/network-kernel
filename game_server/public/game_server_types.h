@@ -102,6 +102,8 @@
  *                            listen host's own player, or on a dedicated
  *                            server the connected player with the lowest
  *                            peer id; 0 with nobody connected
+ *   u16 enemies_defeated     towards the level's objective
+ *   u16 enemies_target       0 when the level has no such objective
  *   u8  slot_count           level slots the client must have loaded, 0..7
  *   slot_count x {
  *     u8  slot

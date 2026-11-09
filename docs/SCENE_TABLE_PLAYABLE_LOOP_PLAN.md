@@ -133,7 +133,11 @@ reinforce_budget: {...}
 
 版本：catalog_version 19，package 和 `bundle.bytes` 都要更新。
 
-### L2 關卡目標
+### L2 關卡目標（已完成，`claude/scene-table-l2`）
+
+已驗證：`scene_flow_startup_test`。擊敗數只算敵方 agent 的死亡，掉出地圖的也算（kernel 視為一般死亡），被系統清掉的不算。重生次數的 20 次上限是累計發放量。
+
+和計劃的差異：新加入的玩家在有 scene table 時一律活著進 camp，「重生次數用完就以死亡狀態加入」的規則不再適用。關卡以外地方的死亡也會扣同一份重生次數（camp 沒有敵人，第一版影響不大）。沒有 `objective` 的關卡仍以 game rule 全部完成為準，預設的 20 由關卡檔寫明。
 
 | # | 工作 |
 |---|---|
