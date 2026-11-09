@@ -1,6 +1,6 @@
 # Scene table 後續計劃：可遊玩的關卡循環
 
-狀態：**計劃，第 9 節只剩 Q7 待定。** 尚未實作。
+狀態：**計劃已定案（2026-11-09），可以開工。** 尚未實作。
 分支：`claude/scene-table-s4`（`docs/SCENE_TABLE_PLAN.md` 的 S1–S4 已在這條分支上）。
 日期：2026-11-09。
 
@@ -27,6 +27,7 @@ S1–S4 已完成 kernel 的 slot、catalog 的 scene template、server 的關�
 | F11 | 先做 camp 的開關卡 prop（美術由使用者準備） |
 | F12 | 保留之後用 item 開啟特殊關卡（客製 recipe，例如活動關卡）的路 |
 | F13 | seed 開放成欄位，用一個約定的數字代表由系統隨機產生 |
+| F14 | **關卡權限屬於房主**：listen 模式是 host 自己的玩家，dedicated 模式是目前 peer id 最小的玩家（取代 S4 的「只有 host」）。`--level` 只是開發用參數 |
 | — | LAN discovery（使用者的提案是 client-only action graph）**保留，另開一輪討論，不在本計劃內** |
 
 ---
@@ -107,11 +108,12 @@ reinforce_budget: {...}
 | # | 工作 |
 |---|---|
 | L0.1 | `GameServer_CreateWithGameplayCatalogFromMemory` 在 catalog 有 scene template 時啟用 scene table（沒有的話行為不變） |
-| L0.2 | `dedicated_server_app` 同樣啟用，開關卡的方式見第 9 節 Q7 |
+| L0.2 | `dedicated_server_app` 同樣啟用。開發用參數 `--level=<name>`：隊伍在 camp 且至少有一位玩家時自動開啟該關卡，載入失敗就停止，不重試 |
 | L0.3 | `send_scene_state` 檢查送出結果，失敗就重試，並定期補送 |
-| L0.4 | 卡死的出口：host 可以取消關卡（新訊息 `SCENE_ABORT`）；傳送門開啟後一段時間沒人進就自動取消 |
+| L0.4 | 卡死的出口：房主可以取消關卡（新訊息 `SCENE_ABORT`）；傳送門開啟後 5 分鐘沒人進就自動取消；**沒有任何玩家連線時直接結束關卡、回到 camp**（dedicated 才會發生） |
+| L0.5 | 關卡權限：`host_player_net_id` 改成「房主」，listen 是 host 自己的玩家，dedicated 是目前 peer id 最小的玩家（peer id 只增不減，所以就是最早連線還在線上的人，房主離開時自動換人，不用另外記狀態）。`SCENE_SELECT` 依此檢查；`SCENE_STATE` 帶房主的 net id |
 
-測試：改用 C API 的建立路徑，驗證 `SCENE_SELECT` 確實會開啟關卡；取消關卡後能再開下一關。
+測試：改用 C API 的建立路徑，驗證 `SCENE_SELECT` 確實會開啟關卡；取消關卡後能再開下一關；dedicated 上第一位玩家能選關、其他人不行，房主離線後換人；全員離線時關卡結束。
 
 ### L1 Scene template 檔案
 
@@ -166,7 +168,7 @@ reinforce_budget: {...}
 |---|---|
 | L5.1 | camp 新增開關卡 prop：`on_activated` 加 `open_ui`，用新的 ui_id；美術由使用者準備 |
 | L5.2 | `UiOpened` 分流：只有 shelter 建築交給 `ShelterDirector` |
-| L5.3 | game_server 檢查權限（第一版只有 host），用新的 game message 通知該玩家開介面 |
+| L5.3 | game_server 檢查是否為房主（L0.5），用新的 game message 通知該玩家開介面 |
 
 Unity 顯示關卡清單，選定後送 `SCENE_SELECT`。不動 kernel。
 
@@ -229,17 +231,12 @@ GameServer API 的新增都用 capability 判斷，不 bump。
 | Q4 | 「擊敗敵人」算什麼 | 只算敵方 agent 的死亡，蟲巢和被系統清掉的不算 |
 | Q5 | 小隊人數怎麼算 | 第一個人進入關卡時的連線玩家數；中途加入者再加 5 次；一場關卡累計發放上限 20 |
 | Q6 | 傳送門開啟後無人進入多久自動取消 | 5 分鐘 |
-| Q7 | dedicated 模式的開關卡方式 | **待定**，見下 |
+| Q7 | dedicated 模式的開關卡方式 | 第一位連線的玩家當房主（F14、L0.5）；`--level` 只用於開發測試 |
 
-**Q7：** dedicated 沒有 host 玩家，`SCENE_SELECT` 和開關卡 prop 都不會接受任何人。原本的預設（啟動時 `--level` 開一次）有問題：
-
-- 不帶 `--level`：server 停在 camp，沒有任何方法開關卡。
-- 帶 `--level`、開一次：啟動時沒有玩家，傳送門在 60 秒後開啟，5 分鐘後自動取消，之後回 camp 就再也開不了。
-
-候選做法：
-- **A（建議）：`--level` 視為輪替。** 只要隊伍在 camp 且至少有一位玩家，就自動開啟該關卡；不帶 `--level` 時停在 camp，並在 log 警告。
-- B：在 dedicated 上，開關卡 prop 開放給第一位連線的玩家（房主）。
-- C：只提供營運端指令。
+**已接受的限制：**
+- 房主斷線重連後會拿到新的 peer id，因此失去房主身份；等存檔和重連那一輪有了玩家身份再處理。
+- 第一個連上的人就有權限；公開伺服器需要別的機制，不在這一輪。
+- 房主中途離開不影響進行中的關卡，由下一位接手選關和取消的權限。
 
 ---
 
