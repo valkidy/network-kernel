@@ -1959,7 +1959,7 @@ void catalog_file_loads_colliders() {
     const network_example::game_server::GameServerGameplayConfig config =
         network_example::game_server::load_gameplay_config_from_catalog_file(
             catalog_file.string());
-    require(config.weapons.catalog_version == 17);
+    require(config.weapons.catalog_version == 19);
     require(config.weapons.catalog_hash != 0);
     // Every collider_templates/*.yaml; counted, since the directory grows.
     std::size_t collider_files = 0;

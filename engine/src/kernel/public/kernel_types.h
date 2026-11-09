@@ -531,6 +531,10 @@
  * Additive within ABI 109: check this flag, not the version, before calling
  * them. */
 #define KERNEL_CAPABILITY_AGENT_COMMANDS UINT64_C(0x0020000000000000)
+/* Kernel_AddStaticSceneSlot and Kernel_RemoveStaticSceneSlot (the scene
+ * table, docs/SCENE_TABLE_PLAN.md). Additive within ABI 109: check this flag,
+ * not the version, before calling them. */
+#define KERNEL_CAPABILITY_STATIC_SCENE_SLOTS UINT64_C(0x0040000000000000)
 
 #define KERNEL_SKELETON_RENDER_STATUS_SUCCESS UINT32_C(0)
 #define KERNEL_SKELETON_RENDER_STATUS_INSUFFICIENT_CAPACITY UINT32_C(1)
@@ -1835,6 +1839,27 @@ typedef struct KernelStaticCollisionSceneConfig {
     uint32_t collider_id;
     uint32_t collision_layer;
 } KernelStaticCollisionSceneConfig;
+
+/* The static scene table (docs/SCENE_TABLE_PLAN.md), behind
+ * KERNEL_CAPABILITY_STATIC_SCENE_SLOTS. Slot 0 is the scene
+ * Kernel_SetStaticCollisionScene registers -- the camp, at the origin; slots
+ * 1 to KERNEL_STATIC_SCENE_SLOT_COUNT - 1 are added and removed at runtime,
+ * each at its own `offset` (where the artifact's origin lands; no rotation).
+ * The artifact, ids and layer follow KernelStaticCollisionSceneConfig's
+ * rules; collider_id must also differ from every other slot's and from
+ * anything already in the physics world it goes into. */
+#define KERNEL_STATIC_SCENE_SLOT_COUNT 8u
+
+typedef struct KernelStaticSceneSlotConfig {
+    uint32_t struct_size;
+    uint32_t slot;
+    const uint8_t* artifact_bytes;
+    uint32_t artifact_size;
+    uint32_t scene_id;
+    uint32_t collider_id;
+    uint32_t collision_layer;
+    KernelVec3 offset;
+} KernelStaticSceneSlotConfig;
 
 typedef struct KernelGameplayCatalogLoadOptions {
     uint32_t struct_size;

@@ -20,8 +20,8 @@ movement:
   collision_mask: terrain
 # The entity origin is the lowest bind foot, not the root bone: this rig's root sits
 # at the body, 8.92 m above the feet, and locomotion seats the pose by the bind
-# foot height. The GEO_* boxes span -2.0 m (the foot boxes) to 19.5 m above it
-# and 4.8 m either side: the arms carry no collider (the client animates them,
+# foot height. The GEO_* boxes span -1.8 m (the foot boxes) to 19.5 m above it
+# and 4.3 m either side: the arms carry no collider (the client animates them,
 # the server never sees where they are), so this AABB still reaches 8 m out to
 # cover where they are drawn.
 weapon_slots: [22]
@@ -50,8 +50,8 @@ ai:
     resume_distance_meters: 6.0
     input_magnitude: 1.0
     # Origin to origin between giants, which nothing else keeps apart: their
-    # movement capsules see only terrain. The body spans 4.8 m either side of
-    # the origin, so 9.5 m leaves them all but clear. Two on one target stand
+    # movement capsules see only terrain. The body spans 4.3 m either side of
+    # the origin, so 9.5 m leaves them clear. Two on one target stand
     # 119 degrees apart on the 5.5 m inner ring, inside the 130 a giant can
     # walk round while keeping its target in sight (the controller's
     # kSpacingMaxOffTargetDegrees). At 10 m that would take 131, so a second

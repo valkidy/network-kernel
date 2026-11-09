@@ -41,6 +41,7 @@ struct LayoutParams {
     double cliff_rise_m = 1.1;               // a rise this big over one probe step is a cliff
     double min_floor_m = 1.0;                // a stamp's lowest point stays this far above 0
     double ring_noise_m = 4.0;               // site score = ring + noise in [0, ring_noise)
+    double center_clear_m = 0.0;             // no stamp or its ring within this of the map centre (half-size of a square)
 };
 
 struct LayoutReport {

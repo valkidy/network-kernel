@@ -290,6 +290,17 @@ int RunHostServer(
         Kernel_Destroy(kernel);
         return 1;
     }
+    if (!gameplay_config.scene_templates.empty()) {
+        network_example::game_server::SceneCatalogSource scene_source;
+        if (!bundle_bytes.empty()) {
+            scene_source.bundle =
+                std::make_shared<const std::vector<std::uint8_t>>(bundle_bytes);
+            scene_source.entry_path = gameplay_catalog_entry_path;
+        } else {
+            scene_source.catalog_file = gameplay_catalog_path;
+        }
+        game_server.enable_scene_table(std::move(scene_source));
+    }
     std::uint32_t sequence = 1;
     bool observed_agent_render = false;
     constexpr float kDeltaSeconds = 1.0f / 30.0f;

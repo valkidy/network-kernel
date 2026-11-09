@@ -926,7 +926,8 @@ bool static_scene_triangles(
 bool PhysicsWorld::load_static_scene(
     std::span<const std::uint8_t> artifact,
     const CollisionObjectIdentity& identity,
-    std::string* error) {
+    std::string* error,
+    const glm::vec3& position) {
     std::string local_error;
     error = error == nullptr ? &local_error : error;
     std::unique_lock lock(impl_->mutex_);
@@ -952,11 +953,16 @@ bool PhysicsWorld::load_static_scene(
     return impl_->add_body(
         result.Get(),
         identity,
-        glm::vec3(0.0f),
+        position,
         glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
         JPH::EMotionType::Static,
         kTerrainObjectLayer,
         error);
+}
+
+bool PhysicsWorld::has_object(std::uint32_t collider_id) const {
+    std::shared_lock lock(impl_->mutex_);
+    return impl_->bodies_by_collider_.contains(collider_id);
 }
 
 bool PhysicsWorld::upsert_object(

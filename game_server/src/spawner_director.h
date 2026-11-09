@@ -7,6 +7,7 @@
 
 #include "game_server/src/agent_budget.h"
 #include "game_server/src/agent_runtime.h"
+#include "game_server/src/scene_bounds.h"
 #include "game_server/src/spawn_sampling.h"
 #include "kernel/public/kernel_api.h"
 #include "kernel/public/kernel_types.h"
@@ -178,6 +179,8 @@ public:
         KernelHandle* kernel,
         const std::vector<AlertSignal>& alerts = {},
         AgentBudget* agent_budget = nullptr);
+    // The slot this director runs in: only carriers inside it are clocked.
+    void set_scene_bounds(const SceneBounds& bounds) { bounds_ = bounds; }
 
     struct Instance {
         std::uint32_t carrier_net_id = 0;
@@ -245,6 +248,7 @@ private:
     // Units any spawner put out whose own template calls for help: they may
     // not, or calls would chain.
     std::vector<std::uint32_t> cannot_call_net_ids_;
+    SceneBounds bounds_;
 };
 
 }  // namespace network_example::game_server

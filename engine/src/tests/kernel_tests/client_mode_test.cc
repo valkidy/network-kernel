@@ -2648,7 +2648,7 @@ void gameplay_catalog_and_static_collision_registration_is_atomic() {
     require(static_scene_rejected);
     require(engine.catalog_version_ == baseline_catalog.catalog_version);
     require(engine.catalog_hash_ == baseline_catalog.catalog_hash);
-    require(engine.static_collision_scene_ ==
+    require(engine.static_scene_slots_[0].artifact ==
             std::vector<std::uint8_t>(
                 baseline_scene.begin(),
                 baseline_scene.end()));
@@ -2669,7 +2669,7 @@ void gameplay_catalog_and_static_collision_registration_is_atomic() {
     require(!static_scene_rejected);
     require(engine.catalog_version_ == baseline_catalog.catalog_version);
     require(engine.catalog_hash_ == baseline_catalog.catalog_hash);
-    require(engine.static_collision_scene_ ==
+    require(engine.static_scene_slots_[0].artifact ==
             std::vector<std::uint8_t>(
                 baseline_scene.begin(),
                 baseline_scene.end()));

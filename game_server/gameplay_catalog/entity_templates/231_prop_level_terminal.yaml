@@ -1,0 +1,17 @@
+# Where a level is opened from, in the camp: activating it asks for the level
+# list (ui 4). Whoever is allowed sees it; the server answers everyone else.
+# Unlike the camp and the tent, nobody goes inside.
+id: 231
+name: level_terminal
+entity_type: prop
+force_resistance: 1000.0
+interaction:
+  capabilities: [interactable]
+  range: 3.0
+  line_of_sight_required: false
+triggers:
+  on_activated:
+    action_graph: action_open_ui
+    parameters:
+      ui_id: 4
+      target: event.instigator
