@@ -314,6 +314,23 @@ int main() {
     require(server.scene_config(3u)->terrain.enabled);
     require(server.unload_scene(3u));
 
+    // 6. A level with everything in its own file: its own game rule spawns
+    // its nest, and the warband patrol comes for the player, inside the slot.
+    const gs::SceneBounds slot4 = gs::scene_slot_bounds(4u);
+    require(server.load_scene(4u, "level_composed_patrol"));
+    require(host.ready_within(4u, 30.0));
+    host.teleport_player(server.scene_config(4u)->player.spawn_position);
+    host.frames(30);
+    require(host.entities_in(slot4) > 0u);  // the rule's nest
+    const gs::AgentRuntimeManager* patrolled = server.scene_manager(4u);
+    for (int i = 0; i < 1500 && patrolled->patrol_groups().groups().empty(); ++i) host.frame();
+    std::printf("patrol level: %zu patrol groups, %zu agents, slot entities %u\n",
+        patrolled->patrol_groups().groups().size(), patrolled->agent_count(), host.entities_in(slot4));
+    require(!patrolled->patrol_groups().groups().empty());
+    host.frames(30);
+    require_agents_inside(server, 4u);
+    require(server.unload_scene(4u));
+
     host.server.reset();
     Kernel_Destroy(host.kernel);
     std::printf("scene_slot_runtime_test passed\n");

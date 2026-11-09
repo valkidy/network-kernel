@@ -323,6 +323,8 @@ cc_shared_library(
             "-Wl,-exported_symbol,_GameServer_ReleaseTerrain",
             "-Wl,-exported_symbol,_GameServer_GetStaticSceneMeshInfo",
             "-Wl,-exported_symbol,_GameServer_CopyStaticSceneMesh",
+            "-Wl,-exported_symbol,_GameServer_GetSceneTemplateCount",
+            "-Wl,-exported_symbol,_GameServer_GetSceneTemplate",
             "-Wl,-exported_symbol,_GameServer_ClientLoadSceneSlot",
             "-Wl,-exported_symbol,_GameServer_ClientUnloadSceneSlot",
             "-Wl,-exported_symbol,_GameServer_GetSceneTerrainInfo",

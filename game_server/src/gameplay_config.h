@@ -640,7 +640,10 @@ struct TerrainCatalogConfig {
 // on demand (load_scene_template_config_from_*), so loading a catalog never
 // pays for -- or needs the files of -- maps it is not playing.
 struct SceneTemplateRef {
+    std::uint16_t id = 0;  // the file's; what goes on the wire
     std::string name;
+    std::string display_name;
+    std::string description;
     std::string overlay_yaml;
 };
 
@@ -746,8 +749,8 @@ struct GameServerGameplayConfig {
     std::vector<SkeletonAssetConfig> skeleton_assets;
     StaticCollisionSceneConfig static_collision_scene;
     TerrainCatalogConfig terrain;
-    // Every scene template the catalog defines, in file order (a template's
-    // index here is its id on the wire); part of the catalog hash.
+    // Every scene template the catalog defines, by id; part of the catalog
+    // hash.
     std::vector<SceneTemplateRef> scene_templates;
     // The template this config was loaded as; empty for the catalog's own
     // map (the camp, slot 0).

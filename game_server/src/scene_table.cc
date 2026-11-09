@@ -72,7 +72,9 @@ void offset_scene_config(GameServerGameplayConfig* config, std::uint32_t slot) {
         // A world rule's route is offsets from each agent's spawn point.
         shift_controller(&rule.controller, offset, false);
     }
-    config->patrols.clear();
+    for (PatrolDefinitionConfig& patrol : config->patrols) {
+        shift(&patrol.area.center, offset);
+    }
 }
 
 PreparedScene prepare_scene(

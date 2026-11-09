@@ -270,10 +270,10 @@ void run(bool listen, std::uint16_t port) {
         gs::load_gameplay_bundle_entry_bytes(bundle->data(), size, config.static_collision_scene.entry_path);
     config.navigation_mesh.artifact =
         gs::load_gameplay_bundle_entry_bytes(bundle->data(), size, config.navigation_mesh.entry_path);
-    const auto level_index = static_cast<std::uint16_t>(
-        std::find_if(config.scene_templates.begin(), config.scene_templates.end(),
-            [](const gs::SceneTemplateRef& r) { return r.name == kLevel; }) - config.scene_templates.begin());
-    require(level_index < config.scene_templates.size());
+    const auto level_found = std::find_if(config.scene_templates.begin(), config.scene_templates.end(),
+        [](const gs::SceneTemplateRef& r) { return r.name == kLevel; });
+    require(level_found != config.scene_templates.end());
+    const std::uint16_t level_index = level_found->id;
 
     World world;
     world.listen = listen;

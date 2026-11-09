@@ -117,7 +117,11 @@ reinforce_budget: {...}
 
 測試：改用 C API 的建立路徑，驗證 `SCENE_SELECT` 確實會開啟關卡；取消關卡後能再開下一關；dedicated 上第一位玩家能選關、其他人不行，房主離線後換人；全員離線時關卡結束。
 
-### L1 Scene template 檔案
+### L1 Scene template 檔案（已完成，`claude/scene-table-l1`）
+
+已驗證：`scene_template_catalog_test`（檔案規則、hash、camp variant、patrol offset）、`scene_slot_runtime_test`（關卡自己的 game rule 生出蟲巢，warband 巡邏隊在 slot 內）、`scene_flow_startup_test`（client 列出關卡清單，wire 上用 id）。
+
+和計劃的差異：關卡內的 `game_rule` 由 loader 轉成一個內部的 director template（id 60000），沿用既有解析，只有該關卡會 preload。inline 的 `scene_templates:` 已移除。`GAME_SERVER_MESSAGE_SCENE_*` 的 template 欄位改成 `template_id`。
 
 | # | 工作 |
 |---|---|

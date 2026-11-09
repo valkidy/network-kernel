@@ -129,7 +129,7 @@ bool GameServer::request_level(const std::string& scene_template) {
         !load_scene(kPartyLevelSlot, scene_template)) {
         return false;
     }
-    level_template_index_ = static_cast<std::uint16_t>(found - config_.scene_templates.begin());
+    level_template_id_ = found->id;
     level_ready_.clear();
     ready_wait_seconds_ = 0.0f;
     level_entered_ = false;
@@ -154,12 +154,15 @@ void GameServer::handle_scene_message(const KernelGameMessage& message) {
         }
     } else if (message.message_type == GAME_SERVER_MESSAGE_SCENE_SELECT && message.payload_size == 2u) {
         const std::uint32_t owner = level_owner_net_id();
-        const std::uint16_t index = get_u16(message.payload);
-        if (owner == 0u || message.player_net_id != owner || index >= config_.scene_templates.size()) {
-            spdlog::warn("scene select refused peer={} index={}", message.peer, index);
+        const std::uint16_t id = get_u16(message.payload);
+        const auto found = std::find_if(
+            config_.scene_templates.begin(), config_.scene_templates.end(),
+            [id](const SceneTemplateRef& ref) { return ref.id == id; });
+        if (owner == 0u || message.player_net_id != owner || found == config_.scene_templates.end()) {
+            spdlog::warn("scene select refused peer={} id={}", message.peer, id);
             return;
         }
-        request_level(config_.scene_templates[index].name);
+        request_level(found->name);
     } else if (message.message_type == GAME_SERVER_MESSAGE_SCENE_ABORT && message.payload_size == 0u) {
         const std::uint32_t owner = level_owner_net_id();
         if (owner == 0u || message.player_net_id != owner || flow_ == GAME_SERVER_SCENE_FLOW_CAMP) {
@@ -185,10 +188,13 @@ std::vector<std::uint8_t> GameServer::encode_scene_state() const {
     put_u32(&out, level_owner_net_id());
     put_u8(&out, has_level ? 1u : 0u);
     if (has_level) {
-        const std::string& name = config_.scene_templates[level_template_index_].name;
+        const auto found = std::find_if(
+            config_.scene_templates.begin(), config_.scene_templates.end(),
+            [this](const SceneTemplateRef& ref) { return ref.id == level_template_id_; });
+        const std::string& name = found->name;
         put_u8(&out, static_cast<std::uint8_t>(kPartyLevelSlot));
         put_u32(&out, scene_generation(kPartyLevelSlot));
-        put_u16(&out, level_template_index_);
+        put_u16(&out, level_template_id_);
         put_u8(&out, static_cast<std::uint8_t>(name.size()));
         out.insert(out.end(), name.begin(), name.end());
     }

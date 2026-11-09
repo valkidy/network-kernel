@@ -395,6 +395,7 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip(
     append_directory_files(&files, "item_templates");
     append_directory_files(&files, "projectile_templates");
     append_directory_files(&files, "patrol_templates");
+    append_directory_files(&files, "scene_templates");
     // Agent skills name sp_attacks (AI plan P4a).
     append_directory_files(&files, "sp_attack_templates");
     files.insert(files.end(), extra_files.begin(), extra_files.end());
@@ -1551,7 +1552,7 @@ int main() {
     require(
         config.static_collision_scene.collision_layer ==
         KERNEL_STATIC_COLLISION_LAYER_TERRAIN);
-    require(config.weapons.catalog_version == 18);
+    require(config.weapons.catalog_version == 19);
     require(config.prop_population_rules.size() == 3u);
     require(config.prop_population_rules[0].name == "temporary_deployable");
     require(

@@ -189,7 +189,7 @@ private:
 
     std::uint8_t flow_ = GAME_SERVER_SCENE_FLOW_CAMP;
     std::uint8_t flow_outcome_ = GAME_SERVER_SCENE_OUTCOME_NONE;
-    std::uint16_t level_template_index_ = 0;
+    std::uint16_t level_template_id_ = 0;
     SceneGate gate_;
     // Player net id of each peer, for messages; peer 1 is a listen host's own.
     std::map<std::uint32_t, std::uint32_t> peer_players_;

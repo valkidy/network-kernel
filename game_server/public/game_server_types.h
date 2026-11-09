@@ -23,7 +23,8 @@
  * baked static collision scene as triangles, for the client to draw. */
 #define GAME_SERVER_CAPABILITY_STATIC_SCENE_MESH_QUERY UINT64_C(0x0000000000000100)
 /* The scene table (docs/SCENE_TABLE_PLAN.md S4): the SCENE_* game messages
- * below, GameServer_ClientLoadSceneSlot / ClientUnloadSceneSlot, and the
+ * below, GameServer_ClientLoadSceneSlot / ClientUnloadSceneSlot,
+ * GameServer_GetSceneTemplateCount / GetSceneTemplate, and the
  * per-slot GameServer_GetSceneTerrainInfo / CopySceneTerrainHeights /
  * CopySceneTerrainPlacements / GetSceneStaticMeshInfo / CopySceneStaticMesh. */
 #define GAME_SERVER_CAPABILITY_SCENE_SLOTS UINT64_C(0x0000000000000200)
@@ -105,7 +106,7 @@
  *   slot_count x {
  *     u8  slot
  *     u32 generation
- *     u16 template_index     its index in the catalog's scene_templates
+ *     u16 template_id        its scene template's id
  *     u8  name_length        1..32
  *     name_length bytes      the template's name, no terminator
  *   }
@@ -120,7 +121,7 @@
  *
  * SCENE_SELECT, client -> server. Asks for a level. Obeyed only from the
  * owner (see owner_net_id), and only while the party is in the camp.
- *   u16 template_index
+ *   u16 template_id
  *
  * SCENE_ABORT, client -> server. Ends the party's level at once: everyone in
  * it comes back to the camp alive and it unloads (outcome ABORTED). Obeyed
@@ -155,6 +156,15 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* One level a catalog offers (GameServer_GetSceneTemplate). */
+typedef struct GameServerSceneTemplateInfo {
+    uint32_t struct_size;
+    uint32_t template_id;
+    char name[33];
+    char display_name[64];
+    char description[256];
+} GameServerSceneTemplateInfo;
 
 typedef struct GameServerAbiInfo {
     uint32_t struct_size;

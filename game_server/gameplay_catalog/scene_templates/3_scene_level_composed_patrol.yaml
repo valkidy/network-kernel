@@ -1,0 +1,43 @@
+# The mesh map with a level-scope game rule of its own and the warband
+# patrol: what a level looks like when everything is in its own file.
+id: 3
+name: level_composed_patrol
+level:
+  display_name: Patrol test
+  description: One nest and the warband.
+navigation_mesh:
+  entry_path: mesh_assets/recast/composed_216m_ground_0001_seed1_collision.navmesh
+static_collision_scene:
+  entry_path: mesh_assets/jolt/composed_216m_ground_0001_seed1_collision.joltmesh
+preload_directors: []
+game_rule:
+  nodes:
+    - id: wait_for_player
+      condition:
+        type: player_count_at_least
+        count: 1
+      next:
+        - clear_nest
+    - id: clear_nest
+      on_activate:
+        - type: spawn_group
+          group: nest
+          count: 1
+          entity_template: gingerbread_nest
+          position: {x: 62.0, y: 21.77, z: 72.0}
+      condition:
+        type: group_eliminated
+        group: nest
+patrols:
+  - ids: [1]
+scene_props: []
+player:
+  spawn_position: {x: 106.8, y: 23.0, z: 77.0}
+agent_routes:
+  - id: 1
+    name: camp_perimeter
+    waypoints:
+      - {x: 91.0, y: 22.5, z: 82.0}
+      - {x: 130.8, y: 20.1, z: 82.0}
+      - {x: 130.8, y: 21.0, z: 62.0}
+      - {x: 91.0, y: 21.5, z: 62.0}

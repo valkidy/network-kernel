@@ -35,8 +35,8 @@ std::uint32_t scene_slot_of(float x);
 // rule spawn points and anchors -- gains the slot's offset, and scene_offset
 // records it. Positions stored relative to something (a world rule's route,
 // which is offsets from each agent's spawn; a spawner's, from its carrier)
-// are left alone. Patrols are cleared: a level runs what its template's
-// directors spawn, not the catalog's world patrols.
+// are left alone. Patrol areas move with the rest; around_players patrols
+// follow the players and need nothing.
 void offset_scene_config(GameServerGameplayConfig* config, std::uint32_t slot);
 
 // Where a level's catalog comes from: the bundle it was synced from (a

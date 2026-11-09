@@ -145,8 +145,23 @@ std::shared_ptr<const TerrainView> terrain_view(const KernelHandle* kernel, std:
     return it == terrain_views().end() ? nullptr : it->second;
 }
 
+// The levels each kernel's last catalog load offers.
+std::mutex& scene_template_lists_mutex() {
+    static std::mutex m;
+    return m;
+}
+
+std::map<const KernelHandle*, std::vector<network_example::game_server::SceneTemplateRef>>& scene_template_lists() {
+    static std::map<const KernelHandle*, std::vector<network_example::game_server::SceneTemplateRef>> lists;
+    return lists;
+}
+
 // Every slot's views of `kernel`, for GameServer_ReleaseTerrain.
 void release_scene_views(const KernelHandle* kernel) {
+    {
+        std::scoped_lock lock(scene_template_lists_mutex());
+        scene_template_lists().erase(kernel);
+    }
     {
         std::scoped_lock lock(terrain_views_mutex());
         auto& views = terrain_views();
@@ -362,6 +377,10 @@ bool load_gameplay_catalog_bundle(
     if (!config.terrain.enabled && !collision_scene_bytes.empty()) {
         pending_static_scene_view = std::make_shared<StaticSceneView>();
         pending_static_scene_view->artifact = std::move(collision_scene_bytes);
+    }
+    {
+        std::scoped_lock lock(scene_template_lists_mutex());
+        scene_template_lists()[kernel] = config.scene_templates;
     }
     set_terrain_view(kernel, 0u, std::move(pending_terrain_view));
     set_static_scene_view(kernel, 0u, std::move(pending_static_scene_view));
@@ -808,6 +827,34 @@ bool GameServer_CopySceneStaticMesh(
     uint32_t* out_indices,
     uint32_t index_capacity) {
     return scene_static_mesh(kernel, slot, out_positions, position_capacity, out_indices, index_capacity);
+}
+
+uint32_t GameServer_GetSceneTemplateCount(KernelHandle* kernel) {
+    std::scoped_lock lock(scene_template_lists_mutex());
+    const auto it = scene_template_lists().find(kernel);
+    return it == scene_template_lists().end() ? 0u : static_cast<uint32_t>(it->second.size());
+}
+
+bool GameServer_GetSceneTemplate(
+    KernelHandle* kernel,
+    uint32_t index,
+    GameServerSceneTemplateInfo* out_info) {
+    if (out_info == nullptr || out_info->struct_size < sizeof(GameServerSceneTemplateInfo)) {
+        return false;
+    }
+    std::scoped_lock lock(scene_template_lists_mutex());
+    const auto it = scene_template_lists().find(kernel);
+    if (it == scene_template_lists().end() || index >= it->second.size()) {
+        return false;
+    }
+    const network_example::game_server::SceneTemplateRef& ref = it->second[index];
+    *out_info = GameServerSceneTemplateInfo{};
+    out_info->struct_size = sizeof(GameServerSceneTemplateInfo);
+    out_info->template_id = ref.id;
+    copy_load_result_text(out_info->name, sizeof(out_info->name), ref.name);
+    copy_load_result_text(out_info->display_name, sizeof(out_info->display_name), ref.display_name);
+    copy_load_result_text(out_info->description, sizeof(out_info->description), ref.description);
+    return true;
 }
 
 bool GameServer_ClientLoadSceneSlot(

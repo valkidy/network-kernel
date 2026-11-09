@@ -1,5 +1,5 @@
-# 18: scene_templates (docs/SCENE_TABLE_PLAN.md).
-catalog_version: 18
+# 19: scene_template_dir (docs/SCENE_TABLE_PLAYABLE_LOOP_PLAN.md).
+catalog_version: 19
 prop_population_rules:
   - id: 1
     name: temporary_deployable
@@ -143,61 +143,28 @@ map_variants:
           - {x: 130.8, y: 20.1, z: 82.0}
           - {x: 130.8, y: 21.0, z: 62.0}
           - {x: 91.0, y: 21.5, z: 62.0}
-# Level maps (docs/SCENE_TABLE_PLAN.md): what a level slot can be loaded
-# with, beside the map above (the camp, slot 0, which map_variant picks).
-# Each is an overlay with the same keys as a map variant, laid over this
-# file's root -- not over the camp's variant -- and must name its own map
-# (terrain: or static_collision_scene:) and its own directors
-# (preload_directors:, [] for none). Positions are the template's own, as if
-# it sat at the origin; the server adds the slot's offset. A template's index
-# in this mapping is its id on the wire, so append, do not reorder. A terrain
-# template's recipe is cooked into the bundle at its terrain.recipe path
-# (gameplay_catalog_bundle/BUILD.bazel, one genrule per template).
-scene_templates:
-  # The camp's ground with another stamp layout (seed 2): a level to load
-  # and unload while there is no authored one. No mission, no props, no
-  # routes yet.
-  level_terrain_seed2:
-    terrain:
-      map_size: {x: 216.0, z: 216.0}
-      seed: 2
-      recipe: terrain/level_terrain_seed2.nktr
-      ground_maps: [terrain_assets/ground_0001.nkgl]
-      stamps: {count: 12, min_count: 10}
-      terrace: {levels: 19, level_height: 1.2, black: 12.0, riser_slope_degrees: 28.0, cliff_share: 0.15, cliff_width: 0.3, cliff_wavelength: 25.0}
-      detail: {amplitude: 0.4, wavelength: 12.0}
-      layout: {base_step: 1.5, ring_slope_degrees: 30.0, min_ring: 4.0, max_ring: 24.0}
-      accept: {min_reach: 0.995, max_unreachable_area: 400.0, max_seam_breaks: 0, min_placed: 10}
-      max_retries: 8
-    stamp_template_dir: stamp_templates
-    preload_directors: []
-    scene_props: []
-    agent_routes: []
-    player:
-      spawn_position: {x: -1.2, y: 23.0, z: -31.0}
-  # The camp's mesh map with its mission (game_rule) and no initial camp: a
-  # level whose directors spawn, to load beside the camp and clear again,
-  # complete or lose.
-  level_composed_mission:
+  # The camp for a real session: the composed map with its initial camp and
+  # nothing hostile. A Unity host starts on gameplay_catalog.camp.yaml.
+  camp:
     navigation_mesh:
       entry_path: mesh_assets/recast/composed_216m_ground_0001_seed1_collision.navmesh
     static_collision_scene:
       entry_path: mesh_assets/jolt/composed_216m_ground_0001_seed1_collision.joltmesh
-    preload_directors:
-      - game_rule
-    scene_props: []
+    preload_directors: []
+    patrols: []
+    scene_props:
+      - entity_template: initial_camp
+        position: {x: 100.8, y: 20.6, z: 72.0}
     player:
       spawn_position: {x: 106.8, y: 23.0, z: 77.0}
-      # One revive for the whole party, so a test can lose the level.
-      respawn: {team_revive_times: 1}
-    agent_routes:
-      - id: 1
-        name: camp_perimeter
-        waypoints:
-          - {x: 91.0, y: 22.5, z: 82.0}
-          - {x: 130.8, y: 20.1, z: 82.0}
-          - {x: 130.8, y: 21.0, z: 62.0}
-          - {x: 91.0, y: 21.5, z: 62.0}
+# Levels (docs/SCENE_TABLE_PLAYABLE_LOOP_PLAN.md): one file per level,
+# <id>_scene_<name>.yaml, each an overlay with the keys of a map variant plus
+# its id, name, level: info and its own game_rule:. Laid over this file's root,
+# not over the camp's variant. Positions are the level's own, as if it sat at
+# the origin; the server adds the slot's offset. The id is what goes on the
+# wire. A terrain level with a fixed seed has its recipe cooked into the
+# bundle at terrain.recipe (gameplay_catalog_bundle/BUILD.bazel).
+scene_template_dir: scene_templates
 # The ids and layer the map's collision registers under, whichever variant
 # supplies its shape (a mesh names entry_path; a terrain is its own shape).
 static_collision_scene:

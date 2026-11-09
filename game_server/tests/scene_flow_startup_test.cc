@@ -308,7 +308,7 @@ std::uint16_t level_index(const std::vector<std::uint8_t>& bundle) {
     const auto found = std::find_if(config.scene_templates.begin(), config.scene_templates.end(),
         [](const gs::SceneTemplateRef& r) { return r.name == kLevel; });
     require(found != config.scene_templates.end());
-    return static_cast<std::uint16_t>(found - config.scene_templates.begin());
+    return found->id;
 }
 
 void listen_host(const std::vector<std::uint8_t>& bundle, std::uint16_t index) {
@@ -321,6 +321,15 @@ void listen_host(const std::vector<std::uint8_t>& bundle, std::uint16_t index) {
     const std::uint32_t a_player = player_of(a->kernel);
     require(world.until([&] { return host.state.received && a->state.owner == host_player; }, 5.0));
     require(a->state.flow == GAME_SERVER_SCENE_FLOW_CAMP);
+
+    // A client can list the levels from its own synced catalog.
+    require(GameServer_GetSceneTemplateCount(a->kernel) == 3u);
+    GameServerSceneTemplateInfo info{};
+    info.struct_size = sizeof(info);
+    require(GameServer_GetSceneTemplate(a->kernel, 1u, &info));
+    require(info.template_id == index && std::string(info.name) == kLevel);
+    require(std::string(info.display_name) == "Mission test");
+    require(!GameServer_GetSceneTemplate(a->kernel, 3u, &info));
 
     // The state is re-sent with nothing changing.
     const int before = a->states_received;

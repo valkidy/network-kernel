@@ -124,6 +124,8 @@ EXPORTS
     GameServer_ReleaseTerrain
     GameServer_GetStaticSceneMeshInfo
     GameServer_CopyStaticSceneMesh
+    GameServer_GetSceneTemplateCount
+    GameServer_GetSceneTemplate
     GameServer_ClientLoadSceneSlot
     GameServer_ClientUnloadSceneSlot
     GameServer_GetSceneTerrainInfo

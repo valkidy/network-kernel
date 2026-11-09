@@ -6959,13 +6959,19 @@ std::vector<EntityTemplateConfig> load_entity_templates_from_source(
     const ColliderCatalogConfig& colliders,
     const std::vector<ProjectileTemplateConfig>& projectile_templates,
     const std::vector<PropPopulationRuleConfig>& prop_population_rules,
-    const std::vector<SkeletonAssetConfig>& skeleton_assets) {
+    const std::vector<SkeletonAssetConfig>& skeleton_assets,
+    const YAML::Node& scene_director = YAML::Node()) {
     std::vector<EntityTemplateConfig> entity_templates;
     std::unordered_map<std::uint32_t, std::string> ids;
     std::unordered_map<std::string, std::uint32_t> names;
-    const std::vector<std::string> files = source.list_yaml_files(directory);
-    for (const std::string& file : files) {
-        const YAML::Node node = source.load_yaml(file);
+    std::vector<std::pair<std::string, YAML::Node>> inputs;
+    for (const std::string& file : source.list_yaml_files(directory)) {
+        inputs.emplace_back(file, source.load_yaml(file));
+    }
+    if (scene_director.IsMap()) {
+        inputs.emplace_back(directory + "/<scene game_rule>", scene_director);
+    }
+    for (const auto& [file, node] : inputs) {
         EntityTemplateConfig entity_template;
         try {
             entity_template = entity_template_from_yaml(
@@ -10231,85 +10237,161 @@ const std::initializer_list<const char*> kMapOverlayKeys = {
     "scene_items",
     "agent_routes",
     "preload_directors",
+    "patrols",
+    "patrol_budget",
+    "agent_budget",
+    "reinforce_budget",
 };
 
-// `scene_templates:` (docs/SCENE_TABLE_PLAN.md S2): maps a level slot can be
-// loaded with, each an overlay with the same keys as a map variant. Each must
-// say which map it is (terrain:, or static_collision_scene:) and which
-// directors it runs (preload_directors:, [] for none), so nothing of the
-// root's own map -- its mission above all -- leaks into a level. Checked
-// whole here; resolved into a config only when asked for one.
-std::vector<SceneTemplateRef> read_scene_templates(
+// The keys a scene template file may set beyond the map overlay.
+const std::initializer_list<const char*> kSceneTemplateFileKeys = {
+    "id", "name", "level", "game_rule",
+    "navigation_mesh", "static_collision_scene", "terrain", "stamp_template_dir",
+    "map", "player", "scene_props", "scene_items", "agent_routes", "preload_directors",
+    "patrols", "patrol_budget", "agent_budget", "reinforce_budget",
+};
+
+struct LoadedSceneTemplate {
+    SceneTemplateRef ref;
+    YAML::Node file;
+};
+
+// `scene_template_dir:` (docs/SCENE_TABLE_PLAYABLE_LOOP_PLAN.md L1): one file
+// per level, <id>_scene_<name>.yaml, each an overlay with the same keys as a
+// map variant plus who it is. Each must say which map it is (terrain:, or
+// static_collision_scene:) and which directors it runs (preload_directors:,
+// [] for none, and/or its own game_rule:), so nothing of the root's own map
+// -- its mission above all -- leaks into a level. Checked whole here;
+// resolved into a config only when asked for one. Sorted by id, which is what
+// goes on the wire.
+std::vector<LoadedSceneTemplate> read_scene_templates(
+    const GameplayConfigSource& source,
     const YAML::Node& document,
-    const std::string& path,
-    std::uint32_t source_kind) {
-    std::vector<SceneTemplateRef> refs;
-    const YAML::Node templates = document["scene_templates"];
-    if (!templates) {
-        return refs;
+    const std::string& path) {
+    std::vector<LoadedSceneTemplate> loaded;
+    if (!document["scene_template_dir"]) {
+        return loaded;
     }
-    if (!templates.IsMap() || templates.size() == 0) {
-        throw std::runtime_error("scene_templates must be a non-empty mapping: " + path);
-    }
-    for (const auto& entry : templates) {
-        const std::string name = entry.first.as<std::string>();
+    const std::uint32_t source_kind = source.source_kind();
+    const std::string directory =
+        source.resolve_path(source.parent_path(path), document["scene_template_dir"]);
+    for (const std::string& file : source.list_yaml_files(directory)) {
+        const YAML::Node node = source.load_yaml(file);
+        if (!node.IsMap()) {
+            throw std::runtime_error("scene template must be a mapping: " + file);
+        }
+        reject_unknown_keys(
+            node, kSceneTemplateFileKeys, file, source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+        if (!node["id"] || !node["name"]) {
+            throw std::runtime_error("scene template needs id and name: " + file);
+        }
+        const std::uint32_t id = node["id"].as<std::uint32_t>();
+        if (id == 0u || id > 0xffffu) {
+            throw std::runtime_error("scene template id must be 1..65535: " + file);
+        }
+        const std::string name = node["name"].as<std::string>();
         const bool name_ok = !name.empty() &&
             std::all_of(name.begin(), name.end(), [](char c) {
                 return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_';
             });
         if (!name_ok) {
             throw std::runtime_error(
-                "scene_templates name " + name + " must be lower-case letters, digits and _: " + path);
+                "scene template name " + name + " must be lower-case letters, digits and _: " + file);
         }
         // It travels in SCENE_STATE, which gives a name at most 32 bytes.
         if (name.size() > 32u) {
-            throw std::runtime_error("scene_templates name " + name + " is longer than 32: " + path);
+            throw std::runtime_error("scene template name " + name + " is longer than 32: " + file);
         }
-        if (!entry.second.IsMap()) {
-            throw std::runtime_error("scene_templates " + name + " must be a mapping: " + path);
+        const std::string stem = std::filesystem::path(file).stem().string();
+        const std::string expected = std::to_string(id) + "_scene_" + name;
+        if (stem != expected) {
+            throw std::runtime_error("scene template file must be named " + expected + ".yaml: " + file);
         }
-        reject_unknown_keys(
-            entry.second, kMapOverlayKeys, path, source_kind,
-            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
-        if (!entry.second["terrain"] && !entry.second["static_collision_scene"]) {
-            throw std::runtime_error(
-                "scene_templates " + name + " needs terrain or static_collision_scene: " + path);
+        if (!node["terrain"] && !node["static_collision_scene"]) {
+            throw std::runtime_error("scene template " + name + " needs terrain or static_collision_scene: " + file);
         }
-        if (!entry.second["preload_directors"]) {
-            throw std::runtime_error(
-                "scene_templates " + name + " needs preload_directors ([] for none): " + path);
+        if (!node["preload_directors"] && !node["game_rule"]) {
+            throw std::runtime_error("scene template " + name + " needs preload_directors ([] for none) or game_rule: " + file);
         }
-        refs.push_back(SceneTemplateRef{name, YAML::Dump(entry.second)});
+        SceneTemplateRef ref;
+        ref.id = static_cast<std::uint16_t>(id);
+        ref.name = name;
+        if (const YAML::Node level = node["level"]) {
+            reject_unknown_keys(
+                level, {"display_name", "description"}, file, source_kind,
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+            if (level["display_name"]) ref.display_name = level["display_name"].as<std::string>();
+            if (level["description"]) ref.description = level["description"].as<std::string>();
+            if (ref.display_name.size() > 63u || ref.description.size() > 255u) {
+                throw std::runtime_error("scene template " + name + " level text is too long: " + file);
+            }
+        }
+        ref.overlay_yaml = YAML::Dump(node);
+        for (const LoadedSceneTemplate& other : loaded) {
+            if (other.ref.id == ref.id || other.ref.name == ref.name) {
+                throw std::runtime_error("duplicate scene template id or name: " + file);
+            }
+        }
+        loaded.push_back(LoadedSceneTemplate{std::move(ref), node});
     }
-    return refs;
+    std::sort(loaded.begin(), loaded.end(), [](const LoadedSceneTemplate& a, const LoadedSceneTemplate& b) {
+        return a.ref.id < b.ref.id;
+    });
+    return loaded;
 }
 
 // The catalog root with one scene template laid over it the way a map
 // variant is, minus the root's own map selection.
 YAML::Node apply_scene_template(
     const YAML::Node& document,
+    const std::vector<LoadedSceneTemplate>& templates,
     const std::string& name,
     const std::string& path) {
-    const YAML::Node templates = document["scene_templates"];
-    const YAML::Node chosen = templates ? templates[name] : YAML::Node();
-    if (!chosen) {
-        throw std::runtime_error("scene template " + name + " is not one of scene_templates: " + path);
+    const auto chosen = std::find_if(templates.begin(), templates.end(),
+        [&](const LoadedSceneTemplate& t) { return t.ref.name == name; });
+    if (chosen == templates.end()) {
+        throw std::runtime_error("scene template " + name + " does not exist: " + path);
     }
     YAML::Node out(YAML::NodeType::Map);
     for (const auto& entry : document) {
         const std::string key = entry.first.as<std::string>();
-        if (key != "map_variant" && key != "map_variants" && key != "scene_templates") {
+        if (key != "map_variant" && key != "map_variants" && key != "scene_template_dir") {
             out[key] = entry.second;
         }
     }
-    for (const auto& entry : chosen) {
+    for (const auto& entry : chosen->file) {
         const std::string key = entry.first.as<std::string>();
+        if (key == "id" || key == "name" || key == "level") continue;
         const YAML::Node& lookup = out;
         const YAML::Node existing = lookup[key];
         out[key] = existing ? merge_map_variant_node(existing, entry.second)
                             : YAML::Clone(entry.second);
     }
     return out;
+}
+
+// A scene template's own game_rule: as the director entity template it would
+// be in its own file. Parsed by the same code; only that level ever preloads it.
+constexpr std::uint32_t kSceneGameRuleDirectorId = 60000u;
+
+YAML::Node scene_game_rule_director(const YAML::Node& document) {
+    const YAML::Node graph = document["game_rule"];
+    if (!graph) return YAML::Node();
+    YAML::Node node(YAML::NodeType::Map);
+    node["id"] = kSceneGameRuleDirectorId;
+    node["name"] = "scene_game_rule";
+    node["entity_type"] = "director";
+    node["server_only"] = true;
+    node["transform"]["position"]["x"] = 0.0f;
+    node["transform"]["position"]["y"] = 0.0f;
+    node["transform"]["position"]["z"] = 0.0f;
+    node["ai"]["controller"] = "director";
+    node["ai"]["profile"] = "game_rule";
+    node["ai"]["tick_interval"] = 1;
+    node["director"]["kind"] = "game_rule";
+    node["director"]["graph"] = graph;
+    return node;
 }
 
 // `map_variant:` names one of `map_variants:`, whose keys are laid over the
@@ -10384,11 +10466,10 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     const std::string& map_variant = {},
     const std::string& scene_template = {}) {
     const YAML::Node raw = source.load_yaml(path);
-    std::vector<SceneTemplateRef> scene_templates =
-        read_scene_templates(raw, path, source.source_kind());
+    const std::vector<LoadedSceneTemplate> scene_templates = read_scene_templates(source, raw, path);
     const YAML::Node document = scene_template.empty()
         ? apply_map_variant(raw, map_variant, path, source.source_kind())
-        : apply_scene_template(raw, scene_template, path);
+        : apply_scene_template(raw, scene_templates, scene_template, path);
     reject_unknown_keys(
         document,
         {
@@ -10423,7 +10504,8 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             "agent_commands",
             "terrain",
             "stamp_template_dir",
-            "scene_templates",
+            "scene_template_dir",
+            "game_rule",
         },
         path,
         source.source_kind(),
@@ -10472,8 +10554,10 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     const std::uint32_t catalog_version =
         document["catalog_version"] ? document["catalog_version"].as<std::uint32_t>()
                                     : 1u;
-    // 18 added scene_templates (read above; a catalog with them must say 18,
-    // so an older loader stops on the version rather than an unknown key).
+    // 19 moved scene templates into scene_template_dir, one file per level
+    // (read above; a catalog with them must say 19, so an older loader stops
+    // on the version rather than an unknown key).
+    // 18 added inline scene_templates, since replaced.
     // 17 added map_variant / map_variants (applied above, before this check
     // sees the root). 11 added the optional skeleton.colliders block. 10 replaced the
     // skeleton_manifests list with skeleton_manifests_dir. 8, 9 and 10 stay
@@ -10487,7 +10571,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
         catalog_version != 12u && catalog_version != 13u &&
         catalog_version != 14u && catalog_version != 15u &&
         catalog_version != 16u && catalog_version != 17u &&
-        catalog_version != 18u) {
+        catalog_version != 18u && catalog_version != 19u) {
         throw DataLoadError(
             KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNSUPPORTED_CATALOG_VERSION,
             "unsupported catalog_version: " + std::to_string(catalog_version),
@@ -10500,9 +10584,9 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             yaml_line(document["catalog_version"]),
             yaml_column(document["catalog_version"]));
     }
-    if (!scene_templates.empty() && catalog_version < 18u) {
+    if (document["scene_template_dir"] && catalog_version < 19u) {
         throw std::runtime_error(
-            "scene_templates needs catalog_version 18 or later: " + path);
+            "scene_template_dir needs catalog_version 19 or later: " + path);
     }
     if (!document["weapon_template_dir"] || !document["projectile_template_dir"] ||
         !document["collider_template_dir"]) {
@@ -10752,7 +10836,8 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             config.colliders,
             config.projectile_templates,
             config.prop_population_rules,
-            config.skeleton_assets);
+            config.skeleton_assets,
+            scene_game_rule_director(document));
         config.actor_templates =
             actor_templates_from_entity_templates(config.entity_templates);
     } else if (document["actor_template_dir"]) {
@@ -10794,11 +10879,16 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
         document, &config, path, source.source_kind());
     apply_catalog_director_preload_config(document, &config);
     apply_catalog_patrol_config(source, base_path, document, &config, path);
+    if (document["game_rule"]) {
+        config.preload_director_template_ids.push_back(kSceneGameRuleDirectorId);
+    }
     apply_catalog_world_rule_config(&config);
     apply_catalog_population_budget_config(
         document, &config, path, source.source_kind());
     apply_catalog_spawner_config(&config, path, source.source_kind());
-    config.scene_templates = std::move(scene_templates);
+    for (const LoadedSceneTemplate& loaded : scene_templates) {
+        config.scene_templates.push_back(loaded.ref);
+    }
     config.scene_template = scene_template;
 
     const std::vector<std::string> errors = validate_gameplay_config(config);
@@ -12526,6 +12616,7 @@ std::uint64_t compute_gameplay_catalog_hash(
     // though neither resolves a template to load the catalog.
     hash_scalar(&hash, static_cast<std::uint32_t>(config.scene_templates.size()));
     for (const SceneTemplateRef& scene : config.scene_templates) {
+        hash_scalar(&hash, scene.id);
         hash_string(&hash, scene.name);
         hash_string(&hash, scene.overlay_yaml);
     }

@@ -103,6 +103,17 @@ bool GameServer_CopyStaticSceneMesh(
     uint32_t index_capacity);
 
 /*
+ * The levels the catalog last loaded into `kernel` offers, by ascending id,
+ * for a level list. A client has them as soon as its catalog is loaded.
+ * GetSceneTemplate is false past the end or for a short struct_size.
+ */
+uint32_t GameServer_GetSceneTemplateCount(KernelHandle* kernel);
+bool GameServer_GetSceneTemplate(
+    KernelHandle* kernel,
+    uint32_t index,
+    GameServerSceneTemplateInfo* out_info);
+
+/*
  * The scene table on a client (GAME_SERVER_CAPABILITY_SCENE_SLOTS;
  * docs/SCENE_TABLE_PLAN.md S4), driven by GAME_SERVER_MESSAGE_SCENE_STATE.
  *

@@ -382,8 +382,8 @@ void catalog_rules(const std::vector<std::uint8_t>& bundle) {
     require(loads(with(current, "map_variant: composed_mesh"), &why));
     require(!loads(with(current, "map_variant: nowhere"), &why));
     require(why.find("not one of map_variants") != std::string::npos);
-    require(!loads(with("  composed_mesh:\n", "  composed_mesh:\n    patrols: []\n"), &why));
-    require(why.find("patrols") != std::string::npos);
+    require(!loads(with("  composed_mesh:\n", "  composed_mesh:\n    weapon_template_dir: elsewhere\n"), &why));
+    require(why.find("weapon_template_dir") != std::string::npos);
     require(!loads(with(current + "\n", ""), &why));
     require(why.find("needs map_variant") != std::string::npos);
     std::printf("catalog rules: all refused as expected\n");
