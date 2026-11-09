@@ -197,7 +197,13 @@ prop 是 `level_terminal`（entity template 231，目前沒有美術），ui_id 
 
 Unity 顯示關卡清單，選定後送 `SCENE_SELECT`。不動 kernel。
 
-### L6 端到端驗證
+### L6 端到端驗證（已完成，`claude/scene-table-l6`；Windows hash 待使用者驗證）
+
+已驗證：`scene_playable_loop_test`，listen host 和 dedicated 各跑一次，兩個玩家，從 `camp` 變體開始，玩家只靠真實輸入移動。流程是走到 terminal → 啟動 → 選關 → 全員走過傳送門 → 擊敗 20 個敵人 → 全員走回程門 → camp → 另一張地圖 → 死亡 12 次失敗（2 人 × 5 次重生，最後兩人都倒下）→ 回 camp → 再開第三關。每關結束都檢查 server 和 client 沒有留下關卡實體。100 ms 延遲、20% 掉包下同樣通過（`--test_env=NETWORK_KERNEL_FAKE_LAG_MS=100 --test_env=NETWORK_KERNEL_FAKE_LOSS_PCT=20`）。
+
+敵人和玩家的死亡都是傳送到 kill floor 以下造成的，不是實際戰鬥。
+
+實際的 dedicated server 執行檔（`app --mode=dedicated_server --gameplay-catalog-entry=gameplay_catalog.camp.yaml`）也用暫時的 client driver 跑過一次（未 commit）：terminal → 選關（0.37 s 就緒）→ 走過傳送門 → 中止 → 回 camp。
 
 用正式建立路徑跑完整循環：camp → 啟動 prop → 選關 → 動態關卡 → 擊敗 20 個敵人 → 回程門 → camp → 再開一關 → 全滅失敗 → 回 camp。
 

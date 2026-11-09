@@ -2336,6 +2336,20 @@ cc_test(
     ],
 )
 
+# The full game loop from the real camp, by player input
+# (docs/SCENE_TABLE_PLAYABLE_LOOP_PLAN.md L6).
+cc_test(
+    name = "scene_playable_loop_test",
+    size = "large",
+    srcs = ["tests/scene_playable_loop_test.cc"],
+    data = ["//game_server/gameplay_catalog_bundle:bundle"],
+    deps = [
+        ":game_server",
+        ":game_server_bridge",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
 # The playable loop over the scene table (docs/SCENE_TABLE_PLAN.md S4/S6):
 # select, ready, gate, mission, return, and a lost level, with real clients,
 # as a listen host and as a dedicated server.
