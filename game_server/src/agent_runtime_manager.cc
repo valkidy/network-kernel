@@ -144,6 +144,8 @@ AgentRuntimeManager::AgentRuntimeManager(
     }
     if (!config_.navigation_mesh.artifact.empty()) {
         std::string error;
+        // A level's navmesh was baked at the origin; its slot is elsewhere.
+        patrol_navigation_.set_origin(config_.scene_offset);
         if (patrol_navigation_.load(config_.navigation_mesh.artifact, &error)) {
             spdlog::info(
                 "patrol navigation loaded entry={} bytes={}",
@@ -1371,6 +1373,21 @@ void AgentRuntimeManager::tick(float delta_seconds) {
     trace_.observe(ticks_, agents_, patrol_groups_.groups(), actors);
 }
 
+bool AgentRuntimeManager::is_enemy_agent(std::uint32_t net_id) const {
+    for (const AgentRuntimeState& agent : agents_) {
+        if (agent.net_id == net_id) {
+            return camp_of(agent.actor_template_id) == KernelAgentCamp_EnemySide;
+        }
+    }
+    return false;
+}
+
+void AgentRuntimeManager::set_scene_bounds(const SceneBounds& bounds) {
+    scene_bounds_ = bounds;
+    game_rule_director_.set_scene_bounds(bounds);
+    spawner_director_.set_scene_bounds(bounds);
+}
+
 void AgentRuntimeManager::despawn_all(std::uint32_t reason) {
     if (kernel_ == nullptr) {
         agents_.clear();
@@ -1589,7 +1606,9 @@ std::uint32_t AgentRuntimeManager::query_actor_states(
             buffer->data(),
             static_cast<std::uint32_t>(buffer->size()));
         if (count < buffer->size() || buffer->size() >= kMaxQueriedActors) {
-            return count;
+            // Only this slot's actors, after the truncation check: the
+            // check is about the kernel's count, not what is kept.
+            return keep_in_scene(scene_bounds_, buffer->data(), count);
         }
         buffer->resize(
             std::min(buffer->size() * 2, kMaxQueriedActors));

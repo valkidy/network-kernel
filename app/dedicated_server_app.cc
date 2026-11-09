@@ -218,7 +218,8 @@ int RunDedicatedServer(
     std::uint32_t physics_workers,
     std::uint32_t actor_blocking,
     const char* netcode_preset,
-    std::uint32_t max_players) {
+    std::uint32_t max_players,
+    const char* level) {
     log_dedicated_server_build_info(
         physics_simulation,
         physics_workers,
@@ -429,6 +430,22 @@ int RunDedicatedServer(
         spdlog::error("failed to preload dedicated server directors");
         Kernel_Destroy(kernel);
         return 1;
+    }
+    if (!gameplay_config.scene_templates.empty()) {
+        network_example::game_server::SceneCatalogSource scene_source;
+        if (!bundle_bytes.empty()) {
+            scene_source.bundle =
+                std::make_shared<const std::vector<std::uint8_t>>(bundle_bytes);
+            scene_source.entry_path = gameplay_catalog_entry_path;
+        } else {
+            scene_source.catalog_file = gameplay_catalog_path;
+        }
+        game_server.enable_scene_table(std::move(scene_source));
+    }
+    if (level != nullptr && level[0] != '\0') {
+        // Development only: see GameServer::set_auto_level.
+        game_server.set_auto_level(level);
+        spdlog::info("dedicated server will auto-open level {} (development flag)", level);
     }
     // GNS gets a cleared address, which binds every interface.
     if (max_players == 0) {

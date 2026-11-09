@@ -1,4 +1,5 @@
-catalog_version: 17
+# 19: scene_template_dir (docs/SCENE_TABLE_PLAYABLE_LOOP_PLAN.md).
+catalog_version: 19
 prop_population_rules:
   - id: 1
     name: temporary_deployable
@@ -142,6 +143,30 @@ map_variants:
           - {x: 130.8, y: 20.1, z: 82.0}
           - {x: 130.8, y: 21.0, z: 62.0}
           - {x: 91.0, y: 21.5, z: 62.0}
+  # The camp for a real session: the composed map with its initial camp and
+  # nothing hostile. A Unity host starts on gameplay_catalog.camp.yaml.
+  camp:
+    navigation_mesh:
+      entry_path: mesh_assets/recast/composed_216m_ground_0001_seed1_collision.navmesh
+    static_collision_scene:
+      entry_path: mesh_assets/jolt/composed_216m_ground_0001_seed1_collision.joltmesh
+    preload_directors: []
+    patrols: []
+    scene_props:
+      - entity_template: initial_camp
+        position: {x: 100.8, y: 20.6, z: 72.0}
+      - entity_template: level_terminal
+        position: {x: 106.8, y: 20.4, z: 82.0}
+    player:
+      spawn_position: {x: 106.8, y: 23.0, z: 77.0}
+# Levels (docs/SCENE_TABLE_PLAYABLE_LOOP_PLAN.md): one file per level,
+# <id>_scene_<name>.yaml, each an overlay with the keys of a map variant plus
+# its id, name, level: info and its own game_rule:. Laid over this file's root,
+# not over the camp's variant. Positions are the level's own, as if it sat at
+# the origin; the server adds the slot's offset. The id is what goes on the
+# wire. A terrain level with a fixed seed has its recipe cooked into the
+# bundle at terrain.recipe (gameplay_catalog_bundle/BUILD.bazel).
+scene_template_dir: scene_templates
 # The ids and layer the map's collision registers under, whichever variant
 # supplies its shape (a mesh names entry_path; a terrain is its own shape).
 static_collision_scene:

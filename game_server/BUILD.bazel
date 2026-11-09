@@ -14,6 +14,7 @@ filegroup(
         "gameplay_catalog/action_templates/*.yaml",
         "gameplay_catalog/collider_templates/*.yaml",
         "gameplay_catalog/patrol_templates/*.yaml",
+        "gameplay_catalog/scene_templates/*.yaml",
         "gameplay_catalog/entity_templates/*.yaml",
         "gameplay_catalog/item_templates/*.yaml",
         "gameplay_catalog/projectile_templates/*.yaml",
@@ -50,6 +51,8 @@ cc_library(
         "src/patrol_navigation.cc",
         "src/patrol_targeting.cc",
         "src/respawn_scheduler.cc",
+        "src/scene_table.cc",
+        "src/scene_flow.cc",
         "src/shelter_director.cc",
         "src/loadout_director.cc",
         "src/spawn_sampling.cc",
@@ -73,6 +76,8 @@ cc_library(
         "src/gameplay_config.h",
         "src/game_server.h",
         "src/respawn_scheduler.h",
+        "src/scene_bounds.h",
+        "src/scene_table.h",
         "src/shelter_director.h",
         "src/loadout_director.h",
         "src/patrol_allocation.h",
@@ -110,6 +115,7 @@ cc_test(
         "gameplay_catalog/action_templates/*.yaml",
         "gameplay_catalog/collider_templates/*.yaml",
         "gameplay_catalog/patrol_templates/*.yaml",
+        "gameplay_catalog/scene_templates/*.yaml",
         "gameplay_catalog/entity_templates/*.yaml",
         "gameplay_catalog/item_templates/*.yaml",
         "gameplay_catalog/projectile_templates/*.yaml",
@@ -2275,6 +2281,123 @@ cc_binary(
     name = "terrain_recipe_cook",
     srcs = ["tools/terrain_recipe_cook.cc"],
     visibility = ["//game_server/gameplay_catalog_bundle:__pkg__"],
+    deps = [":game_server"],
+)
+
+# A player stands on a static scene slot's terrain as on the camp's
+# (docs/SCENE_TABLE_PLAN.md S1); a real listen host from the shipping bundle.
+cc_test(
+    name = "static_scene_slot_grounding_test",
+    srcs = ["tests/static_scene_slot_grounding_test.cc"],
+    data = ["//game_server/gameplay_catalog_bundle:bundle"],
+    deps = [
+        ":game_server",
+        ":game_server_bridge",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+# What a generated level puts on its map, over many seeds
+# (docs/SCENE_TABLE_PLAYABLE_LOOP_PLAN.md L4).
+cc_test(
+    name = "scene_level_content_test",
+    size = "medium",
+    srcs = ["tests/scene_level_content_test.cc"],
+    data = ["//game_server/gameplay_catalog_bundle:bundle"],
+    deps = [":game_server"],
+)
+
+# Opening a level by recipe: generation, chunked transfer, worker compose
+# (docs/SCENE_TABLE_PLAYABLE_LOOP_PLAN.md L3).
+cc_test(
+    name = "scene_recipe_test",
+    size = "medium",
+    srcs = ["tests/scene_recipe_test.cc"],
+    data = ["//game_server/gameplay_catalog_bundle:bundle"],
+    deps = [
+        ":game_server",
+        ":game_server_bridge",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+# The scene table through the paths real servers start on: the C API a Unity
+# host uses, room ownership, and the ways out of a level
+# (docs/SCENE_TABLE_PLAYABLE_LOOP_PLAN.md L0).
+cc_test(
+    name = "scene_flow_startup_test",
+    size = "medium",
+    srcs = ["tests/scene_flow_startup_test.cc"],
+    data = ["//game_server/gameplay_catalog_bundle:bundle"],
+    deps = [
+        ":game_server",
+        ":game_server_bridge",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+# The full game loop from the real camp, by player input
+# (docs/SCENE_TABLE_PLAYABLE_LOOP_PLAN.md L6).
+cc_test(
+    name = "scene_playable_loop_test",
+    size = "large",
+    srcs = ["tests/scene_playable_loop_test.cc"],
+    data = ["//game_server/gameplay_catalog_bundle:bundle"],
+    deps = [
+        ":game_server",
+        ":game_server_bridge",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+# The playable loop over the scene table (docs/SCENE_TABLE_PLAN.md S4/S6):
+# select, ready, gate, mission, return, and a lost level, with real clients,
+# as a listen host and as a dedicated server.
+cc_test(
+    name = "scene_table_loop_test",
+    size = "medium",
+    srcs = ["tests/scene_table_loop_test.cc"],
+    data = ["//game_server/gameplay_catalog_bundle:bundle"],
+    deps = [
+        ":game_server",
+        ":game_server_bridge",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+# The scene table on the server (docs/SCENE_TABLE_PLAN.md S3): levels load
+# beside the camp, keep to their slots, and unload without a trace.
+cc_test(
+    name = "scene_slot_runtime_test",
+    size = "medium",
+    srcs = ["tests/scene_slot_runtime_test.cc"],
+    data = ["//game_server/gameplay_catalog_bundle:bundle"],
+    deps = [
+        ":game_server",
+        ":game_server_bridge",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+# Scene templates in the catalog (docs/SCENE_TABLE_PLAN.md S2): the shipping
+# bundle's level resolves and composes; edited copies on disk for the rules.
+cc_test(
+    name = "scene_template_catalog_test",
+    size = "medium",
+    srcs = ["tests/scene_template_catalog_test.cc"],
+    data = glob([
+        "gameplay_catalog/**/*.yaml",
+        "gameplay_catalog/stamp_templates/*.hf",
+        "gameplay_catalog/terrain_assets/*.nkgm",
+        "gameplay_catalog/terrain_assets/*.nkgl",
+    ]) + [
+        "//game_server/gameplay_catalog/mesh_assets:cooked_mesh_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:locomotion_skeleton_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_biped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_quadruped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_tripod_assets",
+        "//game_server/gameplay_catalog_bundle:bundle",
+    ],
     deps = [":game_server"],
 )
 

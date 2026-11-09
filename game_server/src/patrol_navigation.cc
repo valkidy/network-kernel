@@ -66,7 +66,7 @@ PatrolNavigation::~PatrolNavigation() {
 }
 
 PatrolNavigation::PatrolNavigation(PatrolNavigation&& other) noexcept
-    : mesh_(other.mesh_), query_(other.query_) {
+    : mesh_(other.mesh_), query_(other.query_), origin_(other.origin_) {
     other.mesh_ = nullptr;
     other.query_ = nullptr;
 }
@@ -75,6 +75,7 @@ PatrolNavigation& PatrolNavigation::operator=(PatrolNavigation&& other) noexcept
     if (this != &other) {
         std::swap(mesh_, other.mesh_);
         std::swap(query_, other.query_);
+        std::swap(origin_, other.origin_);
     }
     return *this;
 }
@@ -163,7 +164,7 @@ bool PatrolNavigation::valid() const {
     return mesh_ != nullptr && query_ != nullptr;
 }
 
-bool PatrolNavigation::snap(
+bool PatrolNavigation::snap_local(
     const KernelVec3& position,
     float half_extent_meters,
     KernelVec3* out_position) const {
@@ -190,7 +191,7 @@ bool PatrolNavigation::snap(
     return true;
 }
 
-std::optional<bool> PatrolNavigation::walkable_line(
+std::optional<bool> PatrolNavigation::walkable_line_local(
     const KernelVec3& from,
     const KernelVec3& to,
     float half_extent_meters) const {
@@ -224,7 +225,7 @@ std::optional<bool> PatrolNavigation::walkable_line(
     return hit_fraction >= 1.0f;
 }
 
-bool PatrolNavigation::horizontal_bounds(
+bool PatrolNavigation::horizontal_bounds_local(
     float* min_x, float* min_z, float* max_x, float* max_z) const {
     if (!valid()) {
         return false;
@@ -247,7 +248,7 @@ bool PatrolNavigation::horizontal_bounds(
     return any;
 }
 
-bool PatrolNavigation::find_route(
+bool PatrolNavigation::find_route_local(
     const PatrolRouteRequest& request,
     std::vector<KernelVec3>* waypoints) const {
     if (!valid() || waypoints == nullptr) {
@@ -321,6 +322,65 @@ bool PatrolNavigation::find_route(
         });
     }
     return !waypoints->empty();
+}
+
+// The world-space face of the queries above: a level's navmesh was baked at
+// the origin and its slot sits at origin_ (docs/SCENE_TABLE_PLAN.md S3), so
+// points go in less the origin and come back plus it. The camp's origin is
+// zero, and this is the identity.
+namespace {
+
+KernelVec3 minus(const KernelVec3& a, const KernelVec3& b) {
+    return KernelVec3{a.x - b.x, a.y - b.y, a.z - b.z};
+}
+
+KernelVec3 plus(const KernelVec3& a, const KernelVec3& b) {
+    return KernelVec3{a.x + b.x, a.y + b.y, a.z + b.z};
+}
+
+}  // namespace
+
+bool PatrolNavigation::snap(
+    const KernelVec3& position,
+    float half_extent_meters,
+    KernelVec3* out_position) const {
+    if (!snap_local(minus(position, origin_), half_extent_meters, out_position)) {
+        return false;
+    }
+    *out_position = plus(*out_position, origin_);
+    return true;
+}
+
+std::optional<bool> PatrolNavigation::walkable_line(
+    const KernelVec3& from,
+    const KernelVec3& to,
+    float half_extent_meters) const {
+    return walkable_line_local(minus(from, origin_), minus(to, origin_), half_extent_meters);
+}
+
+bool PatrolNavigation::horizontal_bounds(
+    float* min_x, float* min_z, float* max_x, float* max_z) const {
+    if (!horizontal_bounds_local(min_x, min_z, max_x, max_z)) {
+        return false;
+    }
+    *min_x += origin_.x;
+    *max_x += origin_.x;
+    *min_z += origin_.z;
+    *max_z += origin_.z;
+    return true;
+}
+
+bool PatrolNavigation::find_route(
+    const PatrolRouteRequest& request,
+    std::vector<KernelVec3>* waypoints) const {
+    PatrolRouteRequest local = request;
+    local.start = minus(request.start, origin_);
+    local.end = minus(request.end, origin_);
+    if (!find_route_local(local, waypoints)) {
+        return false;
+    }
+    for (KernelVec3& point : *waypoints) point = plus(point, origin_);
+    return true;
 }
 
 }  // namespace network_example::game_server

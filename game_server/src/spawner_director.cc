@@ -206,7 +206,8 @@ void SpawnerDirector::tick_interval_carriers(
                 const SpawnerCarrierConfig* found =
                     carrier_for(state.entity_template_id);
                 if (state.valid == 0u || found == nullptr ||
-                    found->spawner.trigger != SpawnerTrigger::kInterval) {
+                    found->spawner.trigger != SpawnerTrigger::kInterval ||
+                    !bounds_.contains(state.position.x)) {
                     continue;
                 }
                 live_carriers.push_back(state.net_id);

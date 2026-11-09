@@ -507,6 +507,17 @@ cc_binary(
 )
 
 cc_test(
+    name = "static_scene_slot_test",
+    srcs = ["static_scene_slot_test.cc"],
+    data = ["//game_server/gameplay_catalog/mesh_assets:cooked_mesh_assets"],
+    deps = [
+        "//engine/src/kernel:kernel",
+        "@entt//:entt",
+        "@glm//:glm",
+    ],
+)
+
+cc_test(
     name = "movement_collision_mask_test",
     srcs = ["movement_collision_mask_test.cc"],
     data = ["//game_server/gameplay_catalog/mesh_assets:cooked_mesh_assets"],

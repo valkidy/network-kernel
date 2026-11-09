@@ -11,7 +11,7 @@ set -euo pipefail
 out_path="$$(pwd)/$@"
 bundle_root="$(@D)/bundle_root"
 rm -rf "$$bundle_root"
-mkdir -p "$$bundle_root/action_templates" "$$bundle_root/action_graph_templates" "$$bundle_root/status_effect_templates" "$$bundle_root/sp_attack_templates" "$$bundle_root/weapon_templates" "$$bundle_root/projectile_templates" "$$bundle_root/collider_templates" "$$bundle_root/entity_templates" "$$bundle_root/item_templates" "$$bundle_root/patrol_templates" "$$bundle_root/skeleton_assets/generated" "$$bundle_root/stamp_templates" "$$bundle_root/terrain_assets"
+mkdir -p "$$bundle_root/action_templates" "$$bundle_root/action_graph_templates" "$$bundle_root/status_effect_templates" "$$bundle_root/sp_attack_templates" "$$bundle_root/weapon_templates" "$$bundle_root/projectile_templates" "$$bundle_root/collider_templates" "$$bundle_root/entity_templates" "$$bundle_root/item_templates" "$$bundle_root/patrol_templates" "$$bundle_root/scene_templates" "$$bundle_root/skeleton_assets/generated" "$$bundle_root/stamp_templates" "$$bundle_root/terrain_assets"
 for src in $(SRCS); do
   case "$$src" in
     */test_catalogs/legged_locomotion/gameplay_catalog.yaml)
@@ -21,7 +21,7 @@ for src in $(SRCS); do
       cp "$$src" "$$bundle_root/gameplay_catalog.yaml"
       # One entry per map variant, the catalog with map_variant set to it, so
       # a server picks the map by entry path without a rebuild.
-      for variant in kernel_terrain composed_mesh; do
+      for variant in kernel_terrain composed_mesh camp; do
         sed "s/^map_variant: .*/map_variant: $$variant/" "$$src" > "$$bundle_root/gameplay_catalog.$$variant.yaml"
         grep -q "^map_variant: $$variant$$" "$$bundle_root/gameplay_catalog.$$variant.yaml"
       done
@@ -57,6 +57,9 @@ for src in $(SRCS); do
       ;;
     */collider_templates/*.yaml)
       cp "$$src" "$$bundle_root/collider_templates/$$(basename "$$src")"
+      ;;
+    */scene_templates/*.yaml)
+      cp "$$src" "$$bundle_root/scene_templates/$$(basename "$$src")"
       ;;
     */patrol_templates/*.yaml)
       cp "$$src" "$$bundle_root/patrol_templates/$$(basename "$$src")"
@@ -130,11 +133,25 @@ genrule(
     tools = ["//game_server:terrain_recipe_cook"],
 )
 
+# One recipe per terrain scene template (docs/SCENE_TABLE_PLAN.md S2), at the
+# path the template's terrain.recipe names.
+genrule(
+    name = "terrain_recipe_level_terrain_seed2",
+    srcs = [":bundle_uncooked"],
+    outs = [
+        "level_terrain_seed2.nktr",
+        "terrain_recipe_level_terrain_seed2_report.txt",
+    ],
+    cmd = "$(location //game_server:terrain_recipe_cook) $(location :bundle_uncooked) gameplay_catalog.yaml $(location level_terrain_seed2.nktr) scene_template:level_terrain_seed2 > $(location terrain_recipe_level_terrain_seed2_report.txt)",
+    tools = ["//game_server:terrain_recipe_cook"],
+)
+
 genrule(
     name = "bundle",
     srcs = [
         ":bundle_uncooked",
         ":gameplay_catalog.nktr",
+        ":level_terrain_seed2.nktr",
     ],
     outs = ["bundle.zip"],
     cmd = """
@@ -145,6 +162,7 @@ rm -rf "$$bundle_root"
 mkdir -p "$$bundle_root/terrain"
 /usr/bin/unzip -q "$(location :bundle_uncooked)" -d "$$bundle_root"
 cp "$(location :gameplay_catalog.nktr)" "$$bundle_root/terrain/gameplay_catalog.nktr"
+cp "$(location :level_terrain_seed2.nktr)" "$$bundle_root/terrain/level_terrain_seed2.nktr"
 find "$$bundle_root" -exec touch -t 198001010000 {} +
 (cd "$$bundle_root" && find . -mindepth 1 | sed 's|^\\./||' | LC_ALL=C sort | /usr/bin/zip -q -X -@ "$$out_path")
 rm -rf "$$bundle_root"

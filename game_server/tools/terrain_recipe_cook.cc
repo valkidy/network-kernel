@@ -3,11 +3,13 @@
 // (layout, checks, retries, fallback) from the catalog's seed, and writes the
 // accepted recipe (NKTR) to <out>, plus one report line per attempt to stdout.
 //
-//   terrain_recipe_cook <bundle.zip> <entry.yaml> <out.nktr> [<map_variant>]
+//   terrain_recipe_cook <bundle.zip> <entry.yaml> <out.nktr> [<map_variant> | scene_template:<name>]
 //
 // With <map_variant>, cooks that one of the catalog's map_variants whichever
 // one its map_variant plays, so switching the catalog to a mesh map and back
-// never leaves the bundle without a recipe.
+// never leaves the bundle without a recipe. With scene_template:<name>, cooks
+// that one of its scene_templates (docs/SCENE_TABLE_PLAN.md S2): every terrain
+// template ships its own recipe, at the path its terrain.recipe names.
 //
 // Fails (non-zero) when no map passes: a bundle never ships an unchecked map.
 
@@ -23,7 +25,7 @@
 int main(int argc, char** argv) {
     namespace gs = network_example::game_server;
     if (argc != 4 && argc != 5) {
-        std::fprintf(stderr, "usage: %s <bundle.zip> <entry.yaml> <out.nktr> [<map_variant>]\n", argv[0]);
+        std::fprintf(stderr, "usage: %s <bundle.zip> <entry.yaml> <out.nktr> [<map_variant> | scene_template:<name>]\n", argv[0]);
         return 2;
     }
     std::ifstream in(argv[1], std::ios::binary);
@@ -33,10 +35,20 @@ int main(int argc, char** argv) {
         return 1;
     }
     try {
-        const gs::GameServerGameplayConfig config = gs::load_gameplay_config_from_bundle_memory(
-            bundle.data(), static_cast<std::uint32_t>(bundle.size()), argv[2], argc == 5 ? argv[4] : "");
+        const std::string choice = argc == 5 ? argv[4] : "";
+        const std::string kTemplatePrefix = "scene_template:";
+        const gs::GameServerGameplayConfig config = choice.rfind(kTemplatePrefix, 0) == 0
+            ? gs::load_scene_template_config_from_bundle_memory(
+                  bundle.data(), static_cast<std::uint32_t>(bundle.size()), argv[2],
+                  choice.substr(kTemplatePrefix.size()))
+            : gs::load_gameplay_config_from_bundle_memory(
+                  bundle.data(), static_cast<std::uint32_t>(bundle.size()), argv[2], choice);
         if (!config.terrain.enabled) {
             std::fprintf(stderr, "terrain_recipe_cook: %s has no terrain\n", argv[2]);
+            return 1;
+        }
+        if (config.terrain.seed == gs::kTerrainSeedRandom) {
+            std::fprintf(stderr, "terrain_recipe_cook: %s has seed -1: it is generated when opened, not cooked\n", argv[2]);
             return 1;
         }
         gs::PreparedTerrain prepared;

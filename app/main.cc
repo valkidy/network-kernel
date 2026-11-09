@@ -48,6 +48,7 @@ struct Options {
     bool actor_blocking_explicit = false;
     bool gameplay_catalog_explicit = false;
     bool max_players_explicit = false;
+    std::string level;
 };
 
 void print_usage() {
@@ -66,6 +67,8 @@ void print_usage() {
         "[--ai-trace-file=path|off] (servers; default ~/.network-example/logs/ai_trace_<port>.log) "
         "[--netcode=standard|responsive] "
         "[--max-players=0|N] (dedicated server only; 0=unlimited, the default) "
+        "[--level=<scene template>] (dedicated server only, development: "
+        "reopens that level whenever someone is connected in the camp) "
         "(standard=15 snapshots/s, 143 kbit/s, 133 ms interpolation delay; "
         "responsive=30 snapshots/s, 285 kbit/s, 67 ms; dedicated server only) "
         "(0=disabled, 1=predicted; server default=1; predicted clients "
@@ -328,6 +331,10 @@ bool parse_args(int argc, char** argv, Options* options) {
             options->max_players_explicit = true;
             continue;
         }
+        if (read_value(arg, "--level", &index, argc, argv, &value)) {
+            options->level = std::string(value);
+            continue;
+        }
         if (read_value(arg, "--physics_simulation", &index, argc, argv, &value)) {
             if (!parse_u32_allow_zero(value, &options->physics_simulation) ||
                 options->physics_simulation > 1) {
@@ -367,6 +374,10 @@ bool parse_args(int argc, char** argv, Options* options) {
     }
     if (options->mode != "dedicated_server" && options->max_players_explicit) {
         spdlog::error("--max-players is dedicated-server-only");
+        return false;
+    }
+    if (options->mode != "dedicated_server" && !options->level.empty()) {
+        spdlog::error("--level is dedicated-server-only");
         return false;
     }
     return true;
@@ -418,7 +429,8 @@ int main(int argc, char** argv) {
             options.physics_workers,
             options.actor_blocking,
             options.netcode_preset.c_str(),
-            options.max_players);
+            options.max_players,
+            options.level.c_str());
     }
     if (options.mode == "client") {
         return RunClient(

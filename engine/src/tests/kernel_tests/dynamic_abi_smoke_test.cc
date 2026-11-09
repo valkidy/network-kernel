@@ -401,6 +401,14 @@ int main() {
         load_symbol<bool(KernelHandle*, float)>(
             library,
             "Kernel_ServerSetFallDeathHeight");
+    auto* kernel_add_static_scene_slot =
+        load_symbol<bool(KernelHandle*, const KernelStaticSceneSlotConfig*)>(
+            library,
+            "Kernel_AddStaticSceneSlot");
+    auto* kernel_remove_static_scene_slot =
+        load_symbol<bool(KernelHandle*, std::uint32_t)>(
+            library,
+            "Kernel_RemoveStaticSceneSlot");
     auto* kernel_server_query_damage_records =
         load_symbol<std::uint32_t(KernelHandle*, KernelDamageRecord*, std::uint32_t)>(
             library,
@@ -556,6 +564,10 @@ int main() {
     require(
         (abi_info.capability_flags & KERNEL_CAPABILITY_SERVER_FALL_DEATH_HEIGHT) != 0);
     require(!kernel_server_set_fall_death_height(nullptr, -10.0f));
+    require(
+        (abi_info.capability_flags & KERNEL_CAPABILITY_STATIC_SCENE_SLOTS) != 0);
+    require(!kernel_add_static_scene_slot(nullptr, nullptr));
+    require(!kernel_remove_static_scene_slot(nullptr, 1u));
     require(
         (abi_info.capability_flags & KERNEL_CAPABILITY_SERVER_DAMAGE_RECORDS) != 0);
     require(kernel_server_query_damage_records(nullptr, nullptr, 0u) == 0u);

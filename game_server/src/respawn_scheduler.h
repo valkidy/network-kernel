@@ -32,6 +32,18 @@ public:
 
     // -1 while unlimited.
     std::int32_t remaining_revives() const { return remaining_; }
+    // A fresh pool under `config`: a party entering a level gets the level's
+    // revives, and the camp's back when it leaves (docs/SCENE_TABLE_PLAN.md
+    // S4). Revives already due still land.
+    void reset(PlayerRespawnConfig config) {
+        config_ = config;
+        remaining_ = config.team_revive_times;
+        deaths_ = 0;
+    }
+    // More revives in a limited pool (a late joiner's share).
+    void grant(std::int32_t revives) {
+        if (remaining_ >= 0) remaining_ += revives;
+    }
     // A newcomer joins dead once the team is out of revives -- but only after
     // someone has actually died, or a pool authored as 0 would leave every
     // player dead on arrival.

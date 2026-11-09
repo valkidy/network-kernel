@@ -22,6 +22,12 @@
 /* GameServer_GetStaticSceneMeshInfo / CopyStaticSceneMesh: a mesh level's
  * baked static collision scene as triangles, for the client to draw. */
 #define GAME_SERVER_CAPABILITY_STATIC_SCENE_MESH_QUERY UINT64_C(0x0000000000000100)
+/* The scene table (docs/SCENE_TABLE_PLAN.md S4): the SCENE_* game messages
+ * below, GameServer_ClientLoadSceneSlot / ClientUnloadSceneSlot,
+ * GameServer_GetSceneTemplateCount / GetSceneTemplate, and the
+ * per-slot GameServer_GetSceneTerrainInfo / CopySceneTerrainHeights /
+ * CopySceneTerrainPlacements / GetSceneStaticMeshInfo / CopySceneStaticMesh. */
+#define GAME_SERVER_CAPABILITY_SCENE_SLOTS UINT64_C(0x0000000000000200)
 
 /*
  * Game messages game_server sends and reads (KernelGameMessage::message_type;
@@ -78,9 +84,134 @@
 #define GAME_SERVER_LOADOUT_RESULT_APPLY_FAILED 7u
 #define GAME_SERVER_LOADOUT_RESULT_CATEGORY_TAKEN 8u
 
+/*
+ * The scene table's messages (docs/SCENE_TABLE_PLAN.md §5). Same encoding as
+ * the loadout messages: little-endian, packed.
+ *
+ * SCENE_STATE, server -> client. The whole state, sent to a player when they
+ * join and to everyone whenever it changes; the client reconciles to it
+ * rather than following steps, so a late joiner needs nothing else.
+ *   u8  flow                 GAME_SERVER_SCENE_FLOW_*
+ *   u8  level_slot           the party's level slot, 0 for none
+ *   u32 level_generation
+ *   u8  outcome              GAME_SERVER_SCENE_OUTCOME_*: how the last level ended
+ *   u8  gate_open            1 while a gate is open (camp -> level in
+ *                            GATE_OPEN, level -> camp in RETURN_OPEN)
+ *   f32 gate_x, gate_y, gate_z, gate_radius   world space
+ *   u32 owner_net_id         the player who may open and abort levels: a
+ *                            listen host's own player, or on a dedicated
+ *                            server the connected player with the lowest
+ *                            peer id; 0 with nobody connected
+ *   u16 enemies_defeated     towards the level's objective
+ *   u16 enemies_target       0 when the level has no such objective
+ *   u8  slot_count           level slots the client must have loaded, 0..7
+ *   slot_count x {
+ *     u8  slot
+ *     u32 generation
+ *     u16 template_id        its scene template's id
+ *     u8  source             GAME_SERVER_SCENE_SOURCE_*: in the bundle, or a
+ *                            recipe the client must first fetch
+ *     u64 recipe_hash        heights hash of that recipe; 0 for the bundle
+ *     u8  name_length        1..32
+ *     name_length bytes      the template's name, no terminator
+ *   }
+ *   A slot is listed once the server has it ready. A client loads each listed
+ *   slot it does not have at that generation (BeginLoad, after PumpSceneRecipe
+ *   for a recipe), answers SCENE_READY once it has, and unloads any it has
+ *   that is not listed.
+ *
+ * SCENE_READY, client -> server. The slot's collision is in this client's
+ * prediction world (art may still be loading).
+ *   u8  slot
+ *   u32 generation
+ *
+ * SCENE_SELECT, client -> server. Asks for a level. Obeyed only from the
+ * owner (see owner_net_id), and only while the party is in the camp.
+ *   u16 template_id
+ *
+ * SCENE_ABORT, client -> server. Ends the party's level at once: everyone in
+ * it comes back to the camp alive and it unloads (outcome ABORTED). Obeyed
+ * only from the owner. Empty body.
+ *
+ * SCENE_STATE is also re-sent every few seconds, and until a send succeeds.
+ *
+ * SCENE_RECIPE_CHUNK, server -> client. One piece of a slot's recipe. Hand
+ * these to GameServer_ClientAcceptSceneMessage; nothing else reads them.
+ *   u8  slot; u32 generation; u32 transfer_id; u16 chunk_index; u16 chunk_count
+ *   the rest of the body: that chunk's bytes
+ *
+ * SCENE_RECIPE_REQUEST, client -> server. Send me this slot's recipe, whole.
+ * GameServer_ClientPumpSceneRecipe sends it, and again if it does not arrive.
+ *   u8  slot; u32 generation
+ *
+ * OPEN_UI, server -> client. A prop asked to show this player an interface.
+ *   u32 ui_id                GAME_SERVER_UI_*
+ *   u32 prop_net_id
+ *   u8  result               GAME_SERVER_OPEN_UI_*: BUSY while a level is
+ *                            under way, NOT_OWNER for anyone but the owner
+ *
+ * SCENE_LOAD_FAILED, client -> server. This client could not build the slot.
+ * It stays out of the level; the party does not wait for it.
+ *   u8  slot; u32 generation; u8 reason
+ */
+#define GAME_SERVER_MESSAGE_SCENE_STATE 4u
+#define GAME_SERVER_MESSAGE_SCENE_READY 5u
+#define GAME_SERVER_MESSAGE_SCENE_SELECT 6u
+#define GAME_SERVER_MESSAGE_SCENE_ABORT 7u
+#define GAME_SERVER_MESSAGE_SCENE_RECIPE_CHUNK 8u
+#define GAME_SERVER_MESSAGE_SCENE_RECIPE_REQUEST 9u
+#define GAME_SERVER_MESSAGE_SCENE_LOAD_FAILED 10u
+#define GAME_SERVER_MESSAGE_OPEN_UI 11u
+
+/* The interface a prop's open_ui names (1 rest, 2 loadout and 3 camp are the
+ * buildings'): the level list. Answered with OPEN_UI, not by going inside. */
+#define GAME_SERVER_UI_LEVEL_SELECT 4u
+
+#define GAME_SERVER_OPEN_UI_OK 0u
+#define GAME_SERVER_OPEN_UI_NOT_OWNER 1u
+#define GAME_SERVER_OPEN_UI_BUSY 2u
+
+#define GAME_SERVER_SCENE_SOURCE_BUNDLE 0u
+#define GAME_SERVER_SCENE_SOURCE_RECIPE 1u
+
+/* GameServer_ClientPumpSceneRecipe and PollSceneSlotLoad. */
+#define GAME_SERVER_SCENE_LOAD_PENDING 0u
+#define GAME_SERVER_SCENE_LOAD_READY 1u
+#define GAME_SERVER_SCENE_LOAD_FAILED 2u
+
+#define GAME_SERVER_SCENE_FLOW_CAMP 0u
+#define GAME_SERVER_SCENE_FLOW_LOADING 1u
+#define GAME_SERVER_SCENE_FLOW_GATE_OPEN 2u
+#define GAME_SERVER_SCENE_FLOW_RETURN_OPEN 3u
+
+#define GAME_SERVER_SCENE_OUTCOME_NONE 0u
+#define GAME_SERVER_SCENE_OUTCOME_COMPLETED 1u
+#define GAME_SERVER_SCENE_OUTCOME_FAILED 2u
+/* The level never loaded. */
+#define GAME_SERVER_SCENE_OUTCOME_LOAD_FAILED 3u
+/* The owner ended it, nobody entered in time, or everyone left. */
+#define GAME_SERVER_SCENE_OUTCOME_ABORTED 4u
+
+/* GameServer_ClientLoadSceneSlot flags. */
+/* Add the slot's collision to the kernel (Kernel_AddStaticSceneSlot). A pure
+ * client sets it; a listen host does not, because its server side already
+ * added the slot to both of its worlds. */
+#define GAME_SERVER_SCENE_LOAD_REGISTER_COLLISION 0x1u
+/* Compose from the recipe PumpSceneRecipe fetched, not from the bundle. */
+#define GAME_SERVER_SCENE_LOAD_FROM_RECIPE 0x2u
+
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* One level a catalog offers (GameServer_GetSceneTemplate). */
+typedef struct GameServerSceneTemplateInfo {
+    uint32_t struct_size;
+    uint32_t template_id;
+    char name[33];
+    char display_name[64];
+    char description[256];
+} GameServerSceneTemplateInfo;
 
 typedef struct GameServerAbiInfo {
     uint32_t struct_size;

@@ -13,6 +13,7 @@ int RunDedicatedServer(
     std::uint32_t physics_workers,
     std::uint32_t actor_blocking,
     const char* netcode_preset,
-    std::uint32_t max_players);
+    std::uint32_t max_players,
+    const char* level);
 
 #endif  // APP_DEDICATED_SERVER_APP_H_

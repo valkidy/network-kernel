@@ -89,6 +89,8 @@ EXPORTS
     Kernel_ServerReviveEntity
     Kernel_ServerSetEntityMovementCollisionMask
     Kernel_ServerSetFallDeathHeight
+    Kernel_AddStaticSceneSlot
+    Kernel_RemoveStaticSceneSlot
     Kernel_ServerQueryDamageRecords
     Kernel_ServerSubmitEntityInput
     Kernel_ServerSetEntityCombatState
@@ -122,3 +124,16 @@ EXPORTS
     GameServer_ReleaseTerrain
     GameServer_GetStaticSceneMeshInfo
     GameServer_CopyStaticSceneMesh
+    GameServer_GetSceneTemplateCount
+    GameServer_GetSceneTemplate
+    GameServer_ClientLoadSceneSlot
+    GameServer_ClientAcceptSceneMessage
+    GameServer_ClientPumpSceneRecipe
+    GameServer_ClientBeginLoadSceneSlot
+    GameServer_ClientPollSceneSlotLoad
+    GameServer_ClientUnloadSceneSlot
+    GameServer_GetSceneTerrainInfo
+    GameServer_CopySceneTerrainHeights
+    GameServer_CopySceneTerrainPlacements
+    GameServer_GetSceneStaticMeshInfo
+    GameServer_CopySceneStaticMesh

@@ -1,6 +1,7 @@
 #include "game_server/src/game_server.h"
 
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <spdlog/spdlog.h>
@@ -58,19 +59,33 @@ GameServer::GameServer(KernelHandle* kernel, GameServerGameplayConfig config)
 void GameServer::handle_event(const KernelEvent& event) {
     if (event.type == KernelEventType_PlayerJoined && event.net_id != 0) {
         players_.insert(event.net_id);
+        // Everyone gets the scene table's state on arrival; a level already
+        // under way is in it, to load and then walk into.
+        peer_players_[event.peer_id] = event.net_id;
+        if (scene_table_enabled_) {
+            broadcast_scene_state();
+        }
         configure_player(event.net_id);
         if (kernel_ != nullptr && config_.player.has_spawn_position) {
             const KernelQuat facing{0.0f, 0.0f, 0.0f, 1.0f};
             Kernel_ServerSetEntityTransform(
                 kernel_, event.net_id, &config_.player.spawn_position, &facing);
         }
+        grant_late_joiner_revives();
         // Out of revives: arriving late is not a way back in. The kernel emits
         // no EntityDied for this, so it neither splats nor queues a revive.
-        if (kernel_ != nullptr && respawn_.joins_dead()) {
+        // With levels, newcomers arrive in the camp, which a level's lost
+        // revives say nothing about.
+        if (kernel_ != nullptr && !scene_table_enabled_ && respawn_.joins_dead()) {
             Kernel_ServerSetEntityHealth(kernel_, event.net_id, 0u);
         }
     } else if (event.type == KernelEventType_PlayerLeft) {
         players_.erase(event.net_id);
+        peer_players_.erase(event.peer_id);
+        level_ready_.erase(event.net_id);
+        if (scene_table_enabled_) {
+            broadcast_scene_state();  // the owner may have changed
+        }
         respawn_.on_player_left(event.net_id);
     } else if (event.type == KernelEventType_EntitySpawned) {
         stock_camp(event.net_id);
@@ -79,9 +94,22 @@ void GameServer::handle_event(const KernelEvent& event) {
         drop_tagged_items(event.net_id);
         respawn_.on_player_died(event.net_id);
     }
-    shelter_.handle_event(event);
+    if (event.type == KernelEventType_EntityDied) {
+        note_level_enemy_death(event.net_id);
+    }
+    if (event.type == KernelEventType_UiOpened && event.code == GAME_SERVER_UI_LEVEL_SELECT) {
+        // Not a building to go inside: the level list is the player's to see.
+        answer_level_select(event);
+    } else {
+        shelter_.handle_event(event);
+    }
     loadout_.handle_event(event);
     agent_runtime_manager_.handle_event(event);
+    for (SceneSlot& slot : scene_slots_) {
+        if (slot.manager != nullptr) {
+            slot.manager->handle_event(event);
+        }
+    }
 }
 
 void GameServer::tick(float delta_seconds) {
@@ -92,6 +120,7 @@ void GameServer::tick(float delta_seconds) {
         while ((count = Kernel_ServerPollGameMessages(kernel_, messages, 8u)) != 0u) {
             for (std::uint32_t index = 0; index < count; ++index) {
                 loadout_.handle_message(messages[index]);
+                handle_scene_message(messages[index]);
             }
         }
         // Players' orders to their side's agents (docs/AI_BEHAVIOR_PLAN.md
@@ -99,8 +128,10 @@ void GameServer::tick(float delta_seconds) {
         KernelAgentCommand commands[8]{};
         while ((count = Kernel_ServerPollAgentCommands(kernel_, commands, 8u)) != 0u) {
             for (std::uint32_t index = 0; index < count; ++index) {
+                // The agent's own slot answers: a level's AI, or the camp's.
                 const KernelAgentCommandOutcome outcome =
-                    agent_runtime_manager_.handle_agent_command(commands[index]);
+                    manager_for_agent(commands[index].agent_net_id)
+                        .handle_agent_command(commands[index]);
                 Kernel_ServerSendAgentCommandOutcome(kernel_, &outcome);
             }
         }
@@ -109,15 +140,21 @@ void GameServer::tick(float delta_seconds) {
         revive_player(net_id, delta_seconds);
     }
     agent_runtime_manager_.tick(delta_seconds);
+    tick_scene_slots(delta_seconds);
+    tick_scene_flow(delta_seconds);
 }
 
 void GameServer::place_scene_props() {
     if (scene_props_placed_ || kernel_ == nullptr) {
         return;
     }
+    scene_props_placed_ = place_props_of(config_);
+}
+
+bool GameServer::place_props_of(const GameServerGameplayConfig& config) const {
     // All or nothing per attempt: a kernel not yet serving refuses the first,
     // and nothing has been placed to place twice.
-    for (const ScenePropConfig& scene_prop : config_.scene_props) {
+    for (const ScenePropConfig& scene_prop : config.scene_props) {
         KernelServerEntityCreateInfo create{};
         create.struct_size = sizeof(create);
         create.entity_type = KernelEntityType_Prop;
@@ -126,14 +163,14 @@ void GameServer::place_scene_props() {
         create.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
         std::uint32_t net_id = 0;
         if (!Kernel_ServerCreateEntity(kernel_, &create, &net_id)) {
-            if (&scene_prop == &config_.scene_props.front()) {
-                return;
+            if (&scene_prop == &config.scene_props.front()) {
+                return false;
             }
             spdlog::warn(
                 "scene prop not placed template={}", scene_prop.entity_template_id);
         }
     }
-    for (const SceneItemConfig& scene_item : config_.scene_items) {
+    for (const SceneItemConfig& scene_item : config.scene_items) {
         KernelItemInstanceId item = 0;
         std::uint32_t prop = 0;
         if (!Kernel_ServerCreateWorldItem(
@@ -144,14 +181,14 @@ void GameServer::place_scene_props() {
         }
         // A weapon lying on the map is a map weapon: it outlives a loadout
         // being reapplied (D23) and, later, drops on death (D19).
-        for (const ItemTemplateConfig& candidate : config_.item_templates) {
+        for (const ItemTemplateConfig& candidate : config.item_templates) {
             if (candidate.definition.item_template_id == scene_item.item_template_id &&
                 candidate.definition.is_weapon != 0u) {
                 Kernel_ServerSetItemDropTag(kernel_, item, KERNEL_DROP_TAG_MAP_WEAPON);
             }
         }
     }
-    scene_props_placed_ = true;
+    return true;
 }
 
 void GameServer::revive_player(std::uint32_t net_id, float delta_seconds) {
@@ -167,9 +204,15 @@ void GameServer::revive_player(std::uint32_t net_id, float delta_seconds) {
     state.struct_size = sizeof(state);
     if (Kernel_ServerGetEntityState(kernel_, net_id, &state) &&
         !(state.position.y >= config_.player.fall_death_height_meters)) {
-        const KernelVec3 spawn = config_.player.has_spawn_position
-            ? config_.player.spawn_position
-            : KernelVec3{0.0f, 0.0f, 0.0f};
+        // The spawn of the slot it fell from: a level's own, offset to its
+        // slot, or the camp's.
+        const std::uint32_t slot = scene_slot_of(state.position.x);
+        const GameServerGameplayConfig* where =
+            slot != 0u ? scene_config(slot) : nullptr;
+        const GameServerGameplayConfig& map = where != nullptr ? *where : config_;
+        const KernelVec3 spawn = map.player.has_spawn_position
+            ? map.player.spawn_position
+            : map.scene_offset;
         const KernelQuat facing{0.0f, 0.0f, 0.0f, 1.0f};
         Kernel_ServerSetEntityTransform(kernel_, net_id, &spawn, &facing);
     }
@@ -440,6 +483,181 @@ bool GameServer::configure_player_weapons(std::uint32_t net_id, bool reset) cons
             kernel_, item_template_id, 1u, weapons, &item);
     }
     return all_placed;
+}
+
+void GameServer::enable_scene_table(SceneCatalogSource source) {
+    scene_source_ = std::move(source);
+    scene_table_enabled_ = true;
+    agent_runtime_manager_.set_scene_bounds(scene_slot_bounds(0u));
+}
+
+bool GameServer::load_scene(std::uint32_t slot, const std::string& scene_template) {
+    if (!scene_table_enabled_ || slot == 0u || slot >= kSceneSlotCount ||
+        scene_slots_[slot].state != SceneSlotState::kEmpty) {
+        return false;
+    }
+    SceneSlot& target = scene_slots_[slot];
+    target.state = SceneSlotState::kLoading;
+    target.recipe.clear();
+    target.recipe_hash = 0u;
+    target.scene_template = scene_template;
+    target.error.clear();
+    // Only immutable inputs cross: the shared bundle, names and the slot.
+    target.pending = std::async(
+        std::launch::async,
+        [source = scene_source_, scene_template, slot]() {
+            return prepare_scene(source, scene_template, slot);
+        });
+    return true;
+}
+
+void GameServer::tick_scene_slots(float delta_seconds) {
+    for (std::uint32_t index = 1; index < kSceneSlotCount; ++index) {
+        SceneSlot& slot = scene_slots_[index];
+        if (slot.state == SceneSlotState::kLoading && slot.pending.valid() &&
+            slot.pending.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+            PreparedScene prepared = slot.pending.get();
+            if (!prepared.ok || !commit_scene(index, std::move(prepared))) {
+                if (slot.error.empty()) {
+                    slot.error = prepared.error;
+                }
+                spdlog::error("scene slot {} load failed: {}", index, slot.error);
+                slot.config.reset();
+                slot.manager.reset();
+                slot.state = SceneSlotState::kEmpty;
+                ++slot.generation;
+            }
+        }
+        if (slot.state == SceneSlotState::kReady && slot.manager != nullptr) {
+            slot.manager->tick(delta_seconds);
+        }
+    }
+}
+
+bool GameServer::commit_scene(std::uint32_t index, PreparedScene prepared) {
+    SceneSlot& slot = scene_slots_[index];
+    if (kernel_ == nullptr) {
+        slot.error = "no kernel";
+        return false;
+    }
+    slot.recipe = std::move(prepared.recipe_bytes);
+    slot.recipe_hash = slot.recipe.empty() ? 0u : prepared.terrain_recipe.heights_hash;
+    if (!slot.recipe.empty()) {
+        spdlog::info("scene slot {} generated seed={} heights_hash={:x} recipe_bytes={}",
+            index, prepared.terrain_recipe.recipe.seed, slot.recipe_hash, slot.recipe.size());
+    }
+    slot.config = std::make_unique<GameServerGameplayConfig>(std::move(prepared.config));
+    const GameServerGameplayConfig& config = *slot.config;
+    KernelStaticSceneSlotConfig scene{};
+    scene.struct_size = sizeof(scene);
+    scene.slot = index;
+    scene.artifact_bytes = prepared.collision_artifact.data();
+    scene.artifact_size = static_cast<std::uint32_t>(prepared.collision_artifact.size());
+    scene.scene_id = config.static_collision_scene.scene_id;
+    // The camp's collider id plus the slot: unique per slot, and clear of
+    // the camp's own.
+    scene.collider_id = config.static_collision_scene.collider_id + index;
+    scene.collision_layer = config.static_collision_scene.collision_layer;
+    scene.offset = config.scene_offset;
+    if (!Kernel_AddStaticSceneSlot(kernel_, &scene)) {
+        slot.error = "kernel refused the slot's static scene";
+        return false;
+    }
+    slot.manager = std::make_unique<AgentRuntimeManager>(kernel_, config);
+    slot.manager->set_scene_bounds(scene_slot_bounds(index));
+    slot.manager->set_shelter_director(&shelter_);
+    if (!slot.manager->preload_directors()) {
+        slot.error = "scene template's directors did not preload";
+        Kernel_RemoveStaticSceneSlot(kernel_, index);
+        return false;
+    }
+    if (!place_props_of(config)) {
+        spdlog::warn("scene slot {} props not placed", index);
+    }
+    slot.state = SceneSlotState::kReady;
+    spdlog::info(
+        "scene slot {} ready template={} generation={} offset_x={}",
+        index, slot.scene_template, slot.generation, config.scene_offset.x);
+    return true;
+}
+
+std::uint32_t GameServer::clear_scene_bounds(const SceneBounds& bounds) const {
+    std::uint32_t removed = 0;
+    const KernelVec3 camp_spawn = config_.player.has_spawn_position
+        ? config_.player.spawn_position
+        : KernelVec3{0.0f, 0.0f, 0.0f};
+    const KernelQuat facing{0.0f, 0.0f, 0.0f, 1.0f};
+    for (const std::uint16_t type : {static_cast<std::uint16_t>(KernelEntityType_Actor),
+             static_cast<std::uint16_t>(KernelEntityType_Prop),
+             static_cast<std::uint16_t>(KernelEntityType_Projectile)}) {
+        std::vector<KernelServerEntityState> states(256);
+        std::uint32_t count = 0;
+        while (true) {
+            for (KernelServerEntityState& state : states) state.struct_size = sizeof(state);
+            count = Kernel_ServerQueryEntities(
+                kernel_, type, states.data(), static_cast<std::uint32_t>(states.size()));
+            if (count < states.size() || states.size() >= 65536u) break;
+            states.resize(states.size() * 2);
+        }
+        for (std::uint32_t index = 0; index < count; ++index) {
+            const KernelServerEntityState& state = states[index];
+            if (!bounds.contains(state.position.x)) continue;
+            if (type == KernelEntityType_Actor && state.actor_type == KernelActorType_Player) {
+                Kernel_ServerSetEntityTransform(kernel_, state.net_id, &camp_spawn, &facing);
+                continue;
+            }
+            if (Kernel_ServerDestroyEntity(kernel_, state.net_id, KernelDespawnReason_Retired)) {
+                ++removed;
+            }
+        }
+    }
+    return removed;
+}
+
+bool GameServer::unload_scene(std::uint32_t index) {
+    if (index == 0u || index >= kSceneSlotCount ||
+        scene_slots_[index].state != SceneSlotState::kReady || kernel_ == nullptr) {
+        return false;
+    }
+    SceneSlot& slot = scene_slots_[index];
+    const std::uint32_t removed = clear_scene_bounds(scene_slot_bounds(index));
+    slot.manager.reset();
+    slot.config.reset();
+    Kernel_RemoveStaticSceneSlot(kernel_, index);
+    ++slot.generation;
+    slot.state = SceneSlotState::kEmpty;
+    spdlog::info(
+        "scene slot {} unloaded template={} removed={} generation={}",
+        index, slot.scene_template, removed, slot.generation);
+    return true;
+}
+
+SceneSlotState GameServer::scene_state(std::uint32_t slot) const {
+    if (slot == 0u) return SceneSlotState::kReady;
+    return slot < kSceneSlotCount ? scene_slots_[slot].state : SceneSlotState::kEmpty;
+}
+
+std::uint32_t GameServer::scene_generation(std::uint32_t slot) const {
+    return slot < kSceneSlotCount ? scene_slots_[slot].generation : 0u;
+}
+
+const std::string& GameServer::scene_error(std::uint32_t slot) const {
+    static const std::string kNone;
+    return slot < kSceneSlotCount ? scene_slots_[slot].error : kNone;
+}
+
+const AgentRuntimeManager* GameServer::scene_manager(std::uint32_t slot) const {
+    if (slot == 0u) return &agent_runtime_manager_;
+    if (slot >= kSceneSlotCount || scene_slots_[slot].state != SceneSlotState::kReady) return nullptr;
+    return scene_slots_[slot].manager.get();
+}
+
+const GameServerGameplayConfig* GameServer::scene_config(std::uint32_t slot) const {
+    if (slot == 0u || slot >= kSceneSlotCount ||
+        scene_slots_[slot].state != SceneSlotState::kReady) {
+        return nullptr;
+    }
+    return scene_slots_[slot].config.get();
 }
 
 }  // namespace network_example::game_server

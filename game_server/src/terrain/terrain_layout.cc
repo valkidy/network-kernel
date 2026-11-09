@@ -217,6 +217,11 @@ bool layout_stamps(TerrainRecipe* r, const TerrainLibrary& lib, const LayoutPara
 
     ClaimGrid reserved;
     reserved.init(size_x, size_z);
+    if (p.center_clear_m > 0.0) {
+        // The players' arrival; nothing is built over it.
+        reserved.add(Rect{size_x / 2.0 - p.center_clear_m, size_z / 2.0 - p.center_clear_m,
+            size_x / 2.0 + p.center_clear_m, size_z / 2.0 + p.center_clear_m});
+    }
     LatticeCache lattice;
     lattice.build(g, size_x, size_z);
     CliffLattice cliffs;

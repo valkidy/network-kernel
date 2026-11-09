@@ -4,7 +4,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <chrono>
 #include <cstring>
+#include <future>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -39,12 +41,16 @@ constexpr std::uint64_t kCapabilityFlags =
     GAME_SERVER_CAPABILITY_GAMEPLAY_CATALOG_BUNDLE |
     GAME_SERVER_CAPABILITY_LOADOUT_MESSAGES |
     GAME_SERVER_CAPABILITY_TERRAIN_QUERY |
-    GAME_SERVER_CAPABILITY_STATIC_SCENE_MESH_QUERY;
+    GAME_SERVER_CAPABILITY_STATIC_SCENE_MESH_QUERY |
+    GAME_SERVER_CAPABILITY_SCENE_SLOTS;
 
 // The terrain each kernel's last catalog load composed, for the client to draw
 // (GameServer_GetTerrainInfo and friends). Keyed by kernel because a pure
 // client has no GameServerHandle; replaced by every load into that kernel.
 struct TerrainView {
+    // Where the map's origin sits: zero for the camp, a level slot's offset
+    // (docs/SCENE_TABLE_PLAN.md S4).
+    float offset_x = 0.0f;
     network_example::game_server::terrain::HeightGrid heights;
     network_example::game_server::terrain::StoredRecipe recipe;
     std::vector<std::uint32_t> stamp_template_ids;      // per library stamp
@@ -54,6 +60,7 @@ struct TerrainView {
 // A mesh level's baked static scene, kept as the artifact and turned into
 // triangles the first time a client asks (GameServer_GetStaticSceneMeshInfo).
 struct StaticSceneView {
+    float offset_x = 0.0f;
     std::vector<std::uint8_t> artifact;
     std::once_flag extracted;
     bool ok = false;
@@ -89,23 +96,28 @@ std::mutex& static_scene_views_mutex() {
     return m;
 }
 
-std::map<const KernelHandle*, std::shared_ptr<StaticSceneView>>& static_scene_views() {
-    static std::map<const KernelHandle*, std::shared_ptr<StaticSceneView>> views;
+// Keyed by kernel and scene slot: slot 0 is the catalog's own map, the
+// others levels a client loaded (GameServer_ClientLoadSceneSlot).
+using SceneKey = std::pair<const KernelHandle*, std::uint32_t>;
+
+std::map<SceneKey, std::shared_ptr<StaticSceneView>>& static_scene_views() {
+    static std::map<SceneKey, std::shared_ptr<StaticSceneView>> views;
     return views;
 }
 
-void set_static_scene_view(const KernelHandle* kernel, std::shared_ptr<StaticSceneView> view) {
+void set_static_scene_view(
+    const KernelHandle* kernel, std::uint32_t slot, std::shared_ptr<StaticSceneView> view) {
     std::scoped_lock lock(static_scene_views_mutex());
     if (view) {
-        static_scene_views()[kernel] = std::move(view);
+        static_scene_views()[SceneKey{kernel, slot}] = std::move(view);
     } else {
-        static_scene_views().erase(kernel);
+        static_scene_views().erase(SceneKey{kernel, slot});
     }
 }
 
-std::shared_ptr<StaticSceneView> static_scene_view(const KernelHandle* kernel) {
+std::shared_ptr<StaticSceneView> static_scene_view(const KernelHandle* kernel, std::uint32_t slot) {
     std::scoped_lock lock(static_scene_views_mutex());
-    const auto it = static_scene_views().find(kernel);
+    const auto it = static_scene_views().find(SceneKey{kernel, slot});
     return it == static_scene_views().end() ? nullptr : it->second;
 }
 
@@ -114,24 +126,104 @@ std::mutex& terrain_views_mutex() {
     return m;
 }
 
-std::map<const KernelHandle*, std::shared_ptr<const TerrainView>>& terrain_views() {
-    static std::map<const KernelHandle*, std::shared_ptr<const TerrainView>> views;
+std::map<SceneKey, std::shared_ptr<const TerrainView>>& terrain_views() {
+    static std::map<SceneKey, std::shared_ptr<const TerrainView>> views;
     return views;
 }
 
-void set_terrain_view(const KernelHandle* kernel, std::shared_ptr<const TerrainView> view) {
+void set_terrain_view(
+    const KernelHandle* kernel, std::uint32_t slot, std::shared_ptr<const TerrainView> view) {
     std::scoped_lock lock(terrain_views_mutex());
     if (view) {
-        terrain_views()[kernel] = std::move(view);
+        terrain_views()[SceneKey{kernel, slot}] = std::move(view);
     } else {
-        terrain_views().erase(kernel);
+        terrain_views().erase(SceneKey{kernel, slot});
     }
 }
 
-std::shared_ptr<const TerrainView> terrain_view(const KernelHandle* kernel) {
+std::shared_ptr<const TerrainView> terrain_view(const KernelHandle* kernel, std::uint32_t slot) {
     std::scoped_lock lock(terrain_views_mutex());
-    const auto it = terrain_views().find(kernel);
+    const auto it = terrain_views().find(SceneKey{kernel, slot});
     return it == terrain_views().end() ? nullptr : it->second;
+}
+
+// The levels each kernel's last catalog load offers.
+std::mutex& scene_template_lists_mutex() {
+    static std::mutex m;
+    return m;
+}
+
+std::map<const KernelHandle*, std::vector<network_example::game_server::SceneTemplateRef>>& scene_template_lists() {
+    static std::map<const KernelHandle*, std::vector<network_example::game_server::SceneTemplateRef>> lists;
+    return lists;
+}
+
+// What a client is in the middle of for each level slot: recipes arriving in
+// chunks, and maps composing on a worker.
+constexpr float kRecipeRetrySeconds = 5.0f;
+constexpr int kRecipeMaxAttempts = 6;
+
+struct RecipeFetch {
+    std::uint32_t generation = 0;
+    bool requested = false;
+    float waited_seconds = 0.0f;
+    int attempts = 0;
+};
+
+struct ClientSlotLoad {
+    std::uint32_t generation = 0;
+    std::uint32_t flags = 0;
+    std::uint32_t status = GAME_SERVER_SCENE_LOAD_PENDING;
+    std::future<network_example::game_server::PreparedScene> future;
+};
+
+struct ClientSceneState {
+    network_example::game_server::SceneRecipeAssembler assembler;
+    std::map<std::uint32_t, RecipeFetch> fetches;
+    std::map<std::uint32_t, std::shared_ptr<ClientSlotLoad>> loads;
+};
+
+std::mutex& client_scene_mutex() {
+    static std::mutex m;
+    return m;
+}
+
+std::map<const KernelHandle*, ClientSceneState>& client_scene_states() {
+    static std::map<const KernelHandle*, ClientSceneState> states;
+    return states;
+}
+
+ClientSceneState& client_scene_state(const KernelHandle* kernel) {
+    return client_scene_states()[kernel];
+}
+
+// Every slot's views of `kernel`, for GameServer_ReleaseTerrain.
+void release_scene_views(const KernelHandle* kernel) {
+    {
+        std::map<std::uint32_t, std::shared_ptr<ClientSlotLoad>> abandoned;
+        std::scoped_lock lock(client_scene_mutex());
+        const auto found = client_scene_states().find(kernel);
+        if (found != client_scene_states().end()) {
+            abandoned = std::move(found->second.loads);
+            client_scene_states().erase(found);
+        }
+    }
+    {
+        std::scoped_lock lock(scene_template_lists_mutex());
+        scene_template_lists().erase(kernel);
+    }
+    {
+        std::scoped_lock lock(terrain_views_mutex());
+        auto& views = terrain_views();
+        for (auto it = views.begin(); it != views.end();) {
+            it = it->first.first == kernel ? views.erase(it) : std::next(it);
+        }
+    }
+    std::scoped_lock lock(static_scene_views_mutex());
+    auto& views = static_scene_views();
+    for (auto it = views.begin(); it != views.end();) {
+        it = it->first.first == kernel ? views.erase(it) : std::next(it);
+    }
 }
 
 void initialize_load_result(KernelGameplayCatalogLoadResult* out_result) {
@@ -336,8 +428,12 @@ bool load_gameplay_catalog_bundle(
         pending_static_scene_view = std::make_shared<StaticSceneView>();
         pending_static_scene_view->artifact = std::move(collision_scene_bytes);
     }
-    set_terrain_view(kernel, std::move(pending_terrain_view));
-    set_static_scene_view(kernel, std::move(pending_static_scene_view));
+    {
+        std::scoped_lock lock(scene_template_lists_mutex());
+        scene_template_lists()[kernel] = config.scene_templates;
+    }
+    set_terrain_view(kernel, 0u, std::move(pending_terrain_view));
+    set_static_scene_view(kernel, 0u, std::move(pending_static_scene_view));
     fill_load_result(out_result, config);
     if (out_config != nullptr) {
         *out_config = std::move(config);
@@ -463,7 +559,17 @@ GameServerHandle* GameServer_CreateWithGameplayCatalogFromMemory(
                 &config)) {
             return nullptr;
         }
-        return new GameServerHandle(kernel, std::move(config));
+        const bool has_levels = !config.scene_templates.empty();
+        auto handle = std::make_unique<GameServerHandle>(kernel, std::move(config));
+        if (has_levels) {
+            // A catalog with levels can open them; one without is unchanged.
+            network_example::game_server::SceneCatalogSource source;
+            source.bundle = std::make_shared<const std::vector<std::uint8_t>>(
+                bundle_bytes, bundle_bytes + bundle_size);
+            source.entry_path = entry_path;
+            handle->server.enable_scene_table(std::move(source));
+        }
+        return handle.release();
     } catch (const network_example::game_server::DataLoadError& error) {
         set_load_error(out_result, error);
         return nullptr;
@@ -551,11 +657,56 @@ void GameServer_DespawnAll(
     }
 }
 
-bool GameServer_GetTerrainInfo(KernelHandle* kernel, GameServerTerrainInfo* out_info) {
+}  // extern "C"
+
+namespace {
+
+// Registers a prepared level with the kernel (if asked) and keeps it for the
+// per-slot queries. On the Kernel_Update thread.
+bool commit_client_scene(
+    KernelHandle* kernel,
+    network_example::game_server::PreparedScene prepared,
+    std::uint32_t slot,
+    std::uint32_t flags) {
+    const network_example::game_server::GameServerGameplayConfig& config = prepared.config;
+    if ((flags & GAME_SERVER_SCENE_LOAD_REGISTER_COLLISION) != 0u) {
+        KernelStaticSceneSlotConfig scene{};
+        scene.struct_size = sizeof(scene);
+        scene.slot = slot;
+        scene.artifact_bytes = prepared.collision_artifact.data();
+        scene.artifact_size = static_cast<std::uint32_t>(prepared.collision_artifact.size());
+        scene.scene_id = config.static_collision_scene.scene_id;
+        scene.collider_id = config.static_collision_scene.collider_id + slot;
+        scene.collision_layer = config.static_collision_scene.collision_layer;
+        scene.offset = config.scene_offset;
+        if (!Kernel_AddStaticSceneSlot(kernel, &scene)) {
+            return false;
+        }
+    }
+    if (config.terrain.enabled) {
+        auto view = std::make_shared<TerrainView>();
+        view->offset_x = config.scene_offset.x;
+        view->heights = std::move(prepared.terrain_heights);
+        view->recipe = std::move(prepared.terrain_recipe);
+        view->stamp_template_ids = config.terrain.stamp_template_ids;
+        for (const auto& stamp : config.terrain.library.stamps) view->stamp_cells.push_back(stamp.cells_x);
+        set_terrain_view(kernel, slot, std::move(view));
+        set_static_scene_view(kernel, slot, nullptr);
+    } else {
+        auto view = std::make_shared<StaticSceneView>();
+        view->offset_x = config.scene_offset.x;
+        view->artifact = std::move(prepared.collision_artifact);
+        set_static_scene_view(kernel, slot, std::move(view));
+        set_terrain_view(kernel, slot, nullptr);
+    }
+    return true;
+}
+
+bool scene_terrain_info(KernelHandle* kernel, std::uint32_t slot, GameServerTerrainInfo* out_info) {
     if (kernel == nullptr || out_info == nullptr || out_info->struct_size < sizeof(GameServerTerrainInfo)) {
         return false;
     }
-    const std::shared_ptr<const TerrainView> view = terrain_view(kernel);
+    const std::shared_ptr<const TerrainView> view = terrain_view(kernel, slot);
     if (!view) {
         return false;
     }
@@ -566,7 +717,7 @@ bool GameServer_GetTerrainInfo(KernelHandle* kernel, GameServerTerrainInfo* out_
     out_info->samples_x = static_cast<std::uint32_t>(h.samples_x);
     out_info->samples_z = static_cast<std::uint32_t>(h.samples_z);
     out_info->cell_mm = static_cast<std::uint32_t>(network_example::game_server::terrain::kCellMm);
-    out_info->origin_x = static_cast<float>(-(h.samples_x - 1) * 0.15);
+    out_info->origin_x = view->offset_x + static_cast<float>(-(h.samples_x - 1) * 0.15);
     out_info->origin_z = static_cast<float>(-(h.samples_z - 1) * 0.15);
     out_info->min_height_cm = *lo;
     out_info->max_height_cm = *hi;
@@ -576,8 +727,9 @@ bool GameServer_GetTerrainInfo(KernelHandle* kernel, GameServerTerrainInfo* out_
     return true;
 }
 
-bool GameServer_CopyTerrainHeights(
+bool scene_terrain_heights(
     KernelHandle* kernel,
+    std::uint32_t slot,
     std::uint32_t x0,
     std::uint32_t z0,
     std::uint32_t width,
@@ -587,7 +739,7 @@ bool GameServer_CopyTerrainHeights(
     if (kernel == nullptr || out_cm == nullptr || width == 0 || depth == 0) {
         return false;
     }
-    const std::shared_ptr<const TerrainView> view = terrain_view(kernel);
+    const std::shared_ptr<const TerrainView> view = terrain_view(kernel, slot);
     if (!view) {
         return false;
     }
@@ -604,19 +756,20 @@ bool GameServer_CopyTerrainHeights(
     return true;
 }
 
-std::uint32_t GameServer_CopyTerrainPlacements(
+std::uint32_t scene_terrain_placements(
     KernelHandle* kernel,
+    std::uint32_t slot,
     GameServerTerrainPlacement* out_placements,
     std::uint32_t capacity) {
     if (kernel == nullptr) {
         return 0;
     }
-    const std::shared_ptr<const TerrainView> view = terrain_view(kernel);
+    const std::shared_ptr<const TerrainView> view = terrain_view(kernel, slot);
     if (!view) {
         return 0;
     }
     const auto& recipe = view->recipe.recipe;
-    const float ox = static_cast<float>(-recipe.cells_x * 0.15), oz = static_cast<float>(-recipe.cells_z * 0.15);
+    const float ox = view->offset_x + static_cast<float>(-recipe.cells_x * 0.15), oz = static_cast<float>(-recipe.cells_z * 0.15);
     const std::uint32_t total = static_cast<std::uint32_t>(recipe.placements.size());
     for (std::uint32_t k = 0; k < total && k < capacity && out_placements != nullptr; ++k) {
         const auto& p = recipe.placements[k];
@@ -634,19 +787,15 @@ std::uint32_t GameServer_CopyTerrainPlacements(
     return total;
 }
 
-void GameServer_ReleaseTerrain(KernelHandle* kernel) {
-    set_terrain_view(kernel, nullptr);
-    set_static_scene_view(kernel, nullptr);
-}
-
-bool GameServer_GetStaticSceneMeshInfo(
+bool scene_static_mesh_info(
     KernelHandle* kernel,
+    std::uint32_t slot,
     GameServerStaticSceneMeshInfo* out_info) {
     if (kernel == nullptr || out_info == nullptr ||
         out_info->struct_size < sizeof(GameServerStaticSceneMeshInfo)) {
         return false;
     }
-    const std::shared_ptr<StaticSceneView> view = static_scene_view(kernel);
+    const std::shared_ptr<StaticSceneView> view = static_scene_view(kernel, slot);
     if (!view || !view->extract()) {
         return false;
     }
@@ -654,13 +803,72 @@ bool GameServer_GetStaticSceneMeshInfo(
     out_info->struct_size = sizeof(GameServerStaticSceneMeshInfo);
     out_info->vertex_count = static_cast<std::uint32_t>(view->positions.size() / 3u);
     out_info->triangle_count = static_cast<std::uint32_t>(view->indices.size() / 3u);
-    out_info->min_x = view->min[0];
+    out_info->min_x = view->min[0] + view->offset_x;
     out_info->min_y = view->min[1];
     out_info->min_z = view->min[2];
-    out_info->max_x = view->max[0];
+    out_info->max_x = view->max[0] + view->offset_x;
     out_info->max_y = view->max[1];
     out_info->max_z = view->max[2];
     return true;
+}
+
+bool scene_static_mesh(
+    KernelHandle* kernel,
+    std::uint32_t slot,
+    float* out_positions,
+    std::uint32_t position_capacity,
+    std::uint32_t* out_indices,
+    std::uint32_t index_capacity) {
+    if (kernel == nullptr || out_positions == nullptr || out_indices == nullptr) {
+        return false;
+    }
+    const std::shared_ptr<StaticSceneView> view = static_scene_view(kernel, slot);
+    if (!view || !view->extract() || view->positions.size() > position_capacity ||
+        view->indices.size() > index_capacity) {
+        return false;
+    }
+    std::memcpy(out_positions, view->positions.data(), view->positions.size() * sizeof(float));
+    for (std::size_t k = 0; k < view->positions.size(); k += 3u) {
+        out_positions[k] += view->offset_x;
+    }
+    std::memcpy(out_indices, view->indices.data(), view->indices.size() * sizeof(std::uint32_t));
+    return true;
+}
+
+}  // namespace
+
+extern "C" {
+
+bool GameServer_GetTerrainInfo(KernelHandle* kernel, GameServerTerrainInfo* out_info) {
+    return scene_terrain_info(kernel, 0u, out_info);
+}
+
+bool GameServer_CopyTerrainHeights(
+    KernelHandle* kernel,
+    std::uint32_t x0,
+    std::uint32_t z0,
+    std::uint32_t width,
+    std::uint32_t depth,
+    std::int16_t* out_cm,
+    std::uint32_t out_count) {
+    return scene_terrain_heights(kernel, 0u, x0, z0, width, depth, out_cm, out_count);
+}
+
+std::uint32_t GameServer_CopyTerrainPlacements(
+    KernelHandle* kernel,
+    GameServerTerrainPlacement* out_placements,
+    std::uint32_t capacity) {
+    return scene_terrain_placements(kernel, 0u, out_placements, capacity);
+}
+
+void GameServer_ReleaseTerrain(KernelHandle* kernel) {
+    release_scene_views(kernel);
+}
+
+bool GameServer_GetStaticSceneMeshInfo(
+    KernelHandle* kernel,
+    GameServerStaticSceneMeshInfo* out_info) {
+    return scene_static_mesh_info(kernel, 0u, out_info);
 }
 
 bool GameServer_CopyStaticSceneMesh(
@@ -669,16 +877,259 @@ bool GameServer_CopyStaticSceneMesh(
     std::uint32_t position_capacity,
     std::uint32_t* out_indices,
     std::uint32_t index_capacity) {
-    if (kernel == nullptr || out_positions == nullptr || out_indices == nullptr) {
+    return scene_static_mesh(kernel, 0u, out_positions, position_capacity, out_indices, index_capacity);
+}
+
+bool GameServer_GetSceneTerrainInfo(
+    KernelHandle* kernel, uint32_t slot, GameServerTerrainInfo* out_info) {
+    return scene_terrain_info(kernel, slot, out_info);
+}
+
+bool GameServer_CopySceneTerrainHeights(
+    KernelHandle* kernel,
+    uint32_t slot,
+    uint32_t x0,
+    uint32_t z0,
+    uint32_t width,
+    uint32_t depth,
+    int16_t* out_cm,
+    uint32_t out_count) {
+    return scene_terrain_heights(kernel, slot, x0, z0, width, depth, out_cm, out_count);
+}
+
+uint32_t GameServer_CopySceneTerrainPlacements(
+    KernelHandle* kernel,
+    uint32_t slot,
+    GameServerTerrainPlacement* out_placements,
+    uint32_t capacity) {
+    return scene_terrain_placements(kernel, slot, out_placements, capacity);
+}
+
+bool GameServer_GetSceneStaticMeshInfo(
+    KernelHandle* kernel, uint32_t slot, GameServerStaticSceneMeshInfo* out_info) {
+    return scene_static_mesh_info(kernel, slot, out_info);
+}
+
+bool GameServer_CopySceneStaticMesh(
+    KernelHandle* kernel,
+    uint32_t slot,
+    float* out_positions,
+    uint32_t position_capacity,
+    uint32_t* out_indices,
+    uint32_t index_capacity) {
+    return scene_static_mesh(kernel, slot, out_positions, position_capacity, out_indices, index_capacity);
+}
+
+uint32_t GameServer_GetSceneTemplateCount(KernelHandle* kernel) {
+    std::scoped_lock lock(scene_template_lists_mutex());
+    const auto it = scene_template_lists().find(kernel);
+    return it == scene_template_lists().end() ? 0u : static_cast<uint32_t>(it->second.size());
+}
+
+bool GameServer_GetSceneTemplate(
+    KernelHandle* kernel,
+    uint32_t index,
+    GameServerSceneTemplateInfo* out_info) {
+    if (out_info == nullptr || out_info->struct_size < sizeof(GameServerSceneTemplateInfo)) {
         return false;
     }
-    const std::shared_ptr<StaticSceneView> view = static_scene_view(kernel);
-    if (!view || !view->extract() || view->positions.size() > position_capacity ||
-        view->indices.size() > index_capacity) {
+    std::scoped_lock lock(scene_template_lists_mutex());
+    const auto it = scene_template_lists().find(kernel);
+    if (it == scene_template_lists().end() || index >= it->second.size()) {
         return false;
     }
-    std::memcpy(out_positions, view->positions.data(), view->positions.size() * sizeof(float));
-    std::memcpy(out_indices, view->indices.data(), view->indices.size() * sizeof(std::uint32_t));
+    const network_example::game_server::SceneTemplateRef& ref = it->second[index];
+    *out_info = GameServerSceneTemplateInfo{};
+    out_info->struct_size = sizeof(GameServerSceneTemplateInfo);
+    out_info->template_id = ref.id;
+    copy_load_result_text(out_info->name, sizeof(out_info->name), ref.name);
+    copy_load_result_text(out_info->display_name, sizeof(out_info->display_name), ref.display_name);
+    copy_load_result_text(out_info->description, sizeof(out_info->description), ref.description);
+    return true;
+}
+
+bool GameServer_ClientLoadSceneSlot(
+    KernelHandle* kernel,
+    const uint8_t* bundle_bytes,
+    uint32_t bundle_size,
+    const char* entry_path,
+    const char* scene_template,
+    uint32_t slot,
+    uint32_t flags) {
+    namespace gs = network_example::game_server;
+    if (kernel == nullptr || bundle_bytes == nullptr || bundle_size == 0u ||
+        entry_path == nullptr || scene_template == nullptr ||
+        slot == 0u || slot >= gs::kSceneSlotCount) {
+        return false;
+    }
+    try {
+        gs::SceneCatalogSource source;
+        source.bundle = std::make_shared<const std::vector<std::uint8_t>>(
+            bundle_bytes, bundle_bytes + bundle_size);
+        source.entry_path = entry_path;
+        gs::PreparedScene prepared =
+            gs::prepare_scene(source, scene_template, slot, gs::TerrainRole::kClient);
+        if (!prepared.ok) {
+            std::fprintf(stderr, "GameServer_ClientLoadSceneSlot: %s\n", prepared.error.c_str());
+            return false;
+        }
+        return commit_client_scene(kernel, std::move(prepared), slot, flags);
+    } catch (...) {
+        return false;
+    }
+}
+
+bool GameServer_ClientAcceptSceneMessage(KernelHandle* kernel, const KernelGameMessage* message) {
+    if (kernel == nullptr || message == nullptr ||
+        message->message_type != GAME_SERVER_MESSAGE_SCENE_RECIPE_CHUNK) {
+        return false;
+    }
+    std::scoped_lock lock(client_scene_mutex());
+    client_scene_state(kernel).assembler.accept(
+        std::span<const std::uint8_t>(message->payload, message->payload_size));
+    return true;
+}
+
+uint32_t GameServer_ClientPumpSceneRecipe(
+    KernelHandle* kernel,
+    uint32_t slot,
+    uint32_t generation,
+    uint64_t recipe_hash,
+    float delta_seconds) {
+    namespace gs = network_example::game_server;
+    if (kernel == nullptr || slot == 0u || slot >= gs::kSceneSlotCount) {
+        return GAME_SERVER_SCENE_LOAD_FAILED;
+    }
+    std::scoped_lock lock(client_scene_mutex());
+    ClientSceneState& state = client_scene_state(kernel);
+    RecipeFetch& fetch = state.fetches[slot];
+    if (fetch.generation != generation) {
+        fetch = RecipeFetch{};
+        fetch.generation = generation;
+    }
+    if (const std::vector<std::uint8_t>* bytes = state.assembler.complete(slot, generation)) {
+        gs::terrain::StoredRecipe stored;
+        std::string error;
+        if (gs::terrain::parse_recipe(*bytes, &stored, &error) && stored.heights_hash == recipe_hash) {
+            return GAME_SERVER_SCENE_LOAD_READY;
+        }
+        // Whole but wrong: throw it away and ask again now.
+        state.assembler.forget(slot);
+        fetch.requested = false;
+    }
+    fetch.waited_seconds += delta_seconds;
+    if (!fetch.requested || fetch.waited_seconds >= kRecipeRetrySeconds) {
+        if (fetch.attempts >= kRecipeMaxAttempts) {
+            return GAME_SERVER_SCENE_LOAD_FAILED;
+        }
+        const std::uint8_t body[5] = {static_cast<std::uint8_t>(slot),
+            static_cast<std::uint8_t>(generation), static_cast<std::uint8_t>(generation >> 8),
+            static_cast<std::uint8_t>(generation >> 16), static_cast<std::uint8_t>(generation >> 24)};
+        if (Kernel_SendGameMessage(kernel, GAME_SERVER_MESSAGE_SCENE_RECIPE_REQUEST, body, 5u)) {
+            fetch.requested = true;
+            fetch.waited_seconds = 0.0f;
+            ++fetch.attempts;
+        }
+    }
+    return GAME_SERVER_SCENE_LOAD_PENDING;
+}
+
+bool GameServer_ClientBeginLoadSceneSlot(
+    KernelHandle* kernel,
+    const uint8_t* bundle_bytes,
+    uint32_t bundle_size,
+    const char* entry_path,
+    const char* scene_template,
+    uint32_t slot,
+    uint32_t generation,
+    uint32_t flags) {
+    namespace gs = network_example::game_server;
+    if (kernel == nullptr || bundle_bytes == nullptr || bundle_size == 0u ||
+        entry_path == nullptr || scene_template == nullptr ||
+        slot == 0u || slot >= gs::kSceneSlotCount) {
+        return false;
+    }
+    try {
+        std::vector<std::uint8_t> recipe;
+        std::shared_ptr<ClientSlotLoad> replaced;
+        auto load = std::make_shared<ClientSlotLoad>();
+        load->generation = generation;
+        load->flags = flags;
+        {
+            std::scoped_lock lock(client_scene_mutex());
+            ClientSceneState& state = client_scene_state(kernel);
+            if ((flags & GAME_SERVER_SCENE_LOAD_FROM_RECIPE) != 0u) {
+                const std::vector<std::uint8_t>* bytes = state.assembler.complete(slot, generation);
+                if (bytes == nullptr) return false;
+                recipe = *bytes;
+            }
+            replaced = state.loads[slot];
+            state.loads[slot] = load;
+        }
+        gs::SceneCatalogSource source;
+        source.bundle = std::make_shared<const std::vector<std::uint8_t>>(
+            bundle_bytes, bundle_bytes + bundle_size);
+        source.entry_path = entry_path;
+        load->future = std::async(
+            std::launch::async,
+            [source = std::move(source), name = std::string(scene_template), slot, recipe = std::move(recipe)]() {
+                return gs::prepare_scene(source, name, slot, gs::TerrainRole::kClient, recipe);
+            });
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+uint32_t GameServer_ClientPollSceneSlotLoad(KernelHandle* kernel, uint32_t slot, uint32_t generation) {
+    std::shared_ptr<ClientSlotLoad> load;
+    {
+        std::scoped_lock lock(client_scene_mutex());
+        ClientSceneState& state = client_scene_state(kernel);
+        const auto found = state.loads.find(slot);
+        if (found != state.loads.end()) load = found->second;
+    }
+    if (load == nullptr || load->generation != generation) {
+        return GAME_SERVER_SCENE_LOAD_FAILED;
+    }
+    if (load->status == GAME_SERVER_SCENE_LOAD_PENDING && load->future.valid() &&
+        load->future.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+        try {
+            network_example::game_server::PreparedScene prepared = load->future.get();
+            if (!prepared.ok) {
+                std::fprintf(stderr, "GameServer_ClientPollSceneSlotLoad: %s\n", prepared.error.c_str());
+            }
+            load->status = prepared.ok && commit_client_scene(kernel, std::move(prepared), slot, load->flags)
+                ? GAME_SERVER_SCENE_LOAD_READY
+                : GAME_SERVER_SCENE_LOAD_FAILED;
+        } catch (...) {
+            load->status = GAME_SERVER_SCENE_LOAD_FAILED;
+        }
+    }
+    return load->status;
+}
+
+bool GameServer_ClientUnloadSceneSlot(KernelHandle* kernel, uint32_t slot, uint32_t flags) {
+    if (kernel == nullptr || slot == 0u || slot >= network_example::game_server::kSceneSlotCount) {
+        return false;
+    }
+    std::shared_ptr<ClientSlotLoad> abandoned;  // waits for its worker outside the lock
+    {
+        std::scoped_lock lock(client_scene_mutex());
+        ClientSceneState& state = client_scene_state(kernel);
+        const auto found = state.loads.find(slot);
+        if (found != state.loads.end()) {
+            abandoned = found->second;
+            state.loads.erase(found);
+        }
+        state.fetches.erase(slot);
+        state.assembler.forget(slot);
+    }
+    set_terrain_view(kernel, slot, nullptr);
+    set_static_scene_view(kernel, slot, nullptr);
+    if ((flags & GAME_SERVER_SCENE_LOAD_REGISTER_COLLISION) != 0u) {
+        return Kernel_RemoveStaticSceneSlot(kernel, slot);
+    }
     return true;
 }
 

@@ -1,0 +1,27 @@
+# The camp's mesh map with its mission (game_rule) and no initial camp: a
+# level whose directors spawn, to load beside the camp and clear again,
+# complete or lose.
+id: 2
+name: level_composed_mission
+level:
+  display_name: Mission test
+navigation_mesh:
+  entry_path: mesh_assets/recast/composed_216m_ground_0001_seed1_collision.navmesh
+static_collision_scene:
+  entry_path: mesh_assets/jolt/composed_216m_ground_0001_seed1_collision.joltmesh
+preload_directors:
+  - game_rule
+patrols: []
+scene_props: []
+player:
+  spawn_position: {x: 106.8, y: 23.0, z: 77.0}
+  # One revive for the whole party, so a test can lose the level.
+  respawn: {team_revive_times: 1}
+agent_routes:
+  - id: 1
+    name: camp_perimeter
+    waypoints:
+      - {x: 91.0, y: 22.5, z: 82.0}
+      - {x: 130.8, y: 20.1, z: 82.0}
+      - {x: 130.8, y: 21.0, z: 62.0}
+      - {x: 91.0, y: 21.5, z: 62.0}
