@@ -2295,6 +2295,21 @@ cc_test(
     ],
 )
 
+# The scene table through the paths real servers start on: the C API a Unity
+# host uses, room ownership, and the ways out of a level
+# (docs/SCENE_TABLE_PLAYABLE_LOOP_PLAN.md L0).
+cc_test(
+    name = "scene_flow_startup_test",
+    size = "medium",
+    srcs = ["tests/scene_flow_startup_test.cc"],
+    data = ["//game_server/gameplay_catalog_bundle:bundle"],
+    deps = [
+        ":game_server",
+        ":game_server_bridge",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
 # The playable loop over the scene table (docs/SCENE_TABLE_PLAN.md S4/S6):
 # select, ready, gate, mission, return, and a lost level, with real clients,
 # as a listen host and as a dedicated server.

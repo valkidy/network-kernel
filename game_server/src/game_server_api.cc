@@ -490,7 +490,17 @@ GameServerHandle* GameServer_CreateWithGameplayCatalogFromMemory(
                 &config)) {
             return nullptr;
         }
-        return new GameServerHandle(kernel, std::move(config));
+        const bool has_levels = !config.scene_templates.empty();
+        auto handle = std::make_unique<GameServerHandle>(kernel, std::move(config));
+        if (has_levels) {
+            // A catalog with levels can open them; one without is unchanged.
+            network_example::game_server::SceneCatalogSource source;
+            source.bundle = std::make_shared<const std::vector<std::uint8_t>>(
+                bundle_bytes, bundle_bytes + bundle_size);
+            source.entry_path = entry_path;
+            handle->server.enable_scene_table(std::move(source));
+        }
+        return handle.release();
     } catch (const network_example::game_server::DataLoadError& error) {
         set_load_error(out_result, error);
         return nullptr;

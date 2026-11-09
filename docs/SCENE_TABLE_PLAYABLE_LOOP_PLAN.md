@@ -103,7 +103,9 @@ reinforce_budget: {...}
 
 每一步都有自己的 `claude/scene-table-*` 分支，從前一步疊上去。交付時說明 ABI、schema、catalog 格式和 `bundle.bytes` 的變動。
 
-### L0 接上正式啟動路徑
+### L0 接上正式啟動路徑（已完成，`claude/scene-table-l0`）
+
+已驗證：`scene_flow_startup_test`（走 Unity host 用的 C API，listen 和 dedicated）；實際執行 dedicated app 加 `--level`，玩家連上後關卡開啟、離線後關卡結束。`Kernel_ServerSendGameMessage` 送出失敗後的重試沒有直接測到（無法在測試中讓 GNS 送出失敗），定期補送有測到。`SCENE_STATE` 多了 `owner_net_id`，header 變成 29 B。
 
 | # | 工作 |
 |---|---|

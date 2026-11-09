@@ -63,7 +63,7 @@ void GameServer::handle_event(const KernelEvent& event) {
         // under way is in it, to load and then walk into.
         peer_players_[event.peer_id] = event.net_id;
         if (scene_table_enabled_) {
-            send_scene_state(event.peer_id);
+            broadcast_scene_state();
         }
         configure_player(event.net_id);
         if (kernel_ != nullptr && config_.player.has_spawn_position) {
@@ -80,6 +80,9 @@ void GameServer::handle_event(const KernelEvent& event) {
         players_.erase(event.net_id);
         peer_players_.erase(event.peer_id);
         level_ready_.erase(event.net_id);
+        if (scene_table_enabled_) {
+            broadcast_scene_state();  // the owner may have changed
+        }
         respawn_.on_player_left(event.net_id);
     } else if (event.type == KernelEventType_EntitySpawned) {
         stock_camp(event.net_id);

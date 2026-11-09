@@ -96,6 +96,12 @@ public:
     };
     // False unless the party is in the camp and the template exists.
     bool request_level(const std::string& scene_template);
+    // Development only (a dedicated server's --level): whenever the party is
+    // in the camp and someone is connected, open this level. Stops once a
+    // load has failed.
+    void set_auto_level(std::string scene_template) { auto_level_ = std::move(scene_template); }
+    // Who may open and abort levels; see SCENE_STATE's owner_net_id.
+    std::uint32_t level_owner_net_id() const;
     std::uint8_t scene_flow() const { return flow_; }
     std::uint8_t scene_outcome() const { return flow_outcome_; }
     const SceneGate& scene_gate() const { return gate_; }
@@ -140,8 +146,12 @@ private:
     void handle_scene_message(const KernelGameMessage& message);
     void tick_scene_flow(float delta_seconds);
     std::vector<std::uint8_t> encode_scene_state() const;
-    void send_scene_state(std::uint32_t peer) const;
-    void broadcast_scene_state() const;
+    // Marks every peer as owed the state and sends what it can; a send that
+    // fails stays owed and is tried again next tick.
+    void broadcast_scene_state();
+    void flush_scene_state();
+    // Everyone inside the level back at the camp spawn, the dead revived.
+    void return_level_players_to_camp(const std::vector<KernelServerEntityState>& players);
     void set_flow(std::uint8_t flow);
     // Ends the party's level: back to the camp's revives, the slot unloaded.
     void finish_level(std::uint8_t outcome);
@@ -186,6 +196,11 @@ private:
     std::set<std::uint32_t> level_ready_;
     float ready_wait_seconds_ = 0.0f;
     bool level_entered_ = false;
+    bool abort_level_requested_ = false;
+    float gate_open_seconds_ = 0.0f;
+    std::string auto_level_;
+    std::set<std::uint32_t> scene_state_owed_;
+    float scene_state_refresh_seconds_ = 0.0f;
 };
 
 }  // namespace network_example::game_server

@@ -97,6 +97,10 @@
  *   u8  gate_open            1 while a gate is open (camp -> level in
  *                            GATE_OPEN, level -> camp in RETURN_OPEN)
  *   f32 gate_x, gate_y, gate_z, gate_radius   world space
+ *   u32 owner_net_id         the player who may open and abort levels: a
+ *                            listen host's own player, or on a dedicated
+ *                            server the connected player with the lowest
+ *                            peer id; 0 with nobody connected
  *   u8  slot_count           level slots the client must have loaded, 0..7
  *   slot_count x {
  *     u8  slot
@@ -114,14 +118,20 @@
  *   u8  slot
  *   u32 generation
  *
- * SCENE_SELECT, client -> server. Asks for a level. Obeyed only from a listen
- * host's own player, and only while the party is in the camp (Q3); a
- * dedicated server takes a level from its operator instead.
+ * SCENE_SELECT, client -> server. Asks for a level. Obeyed only from the
+ * owner (see owner_net_id), and only while the party is in the camp.
  *   u16 template_index
+ *
+ * SCENE_ABORT, client -> server. Ends the party's level at once: everyone in
+ * it comes back to the camp alive and it unloads (outcome ABORTED). Obeyed
+ * only from the owner. Empty body.
+ *
+ * SCENE_STATE is also re-sent every few seconds, and until a send succeeds.
  */
 #define GAME_SERVER_MESSAGE_SCENE_STATE 4u
 #define GAME_SERVER_MESSAGE_SCENE_READY 5u
 #define GAME_SERVER_MESSAGE_SCENE_SELECT 6u
+#define GAME_SERVER_MESSAGE_SCENE_ABORT 7u
 
 #define GAME_SERVER_SCENE_FLOW_CAMP 0u
 #define GAME_SERVER_SCENE_FLOW_LOADING 1u
@@ -133,6 +143,8 @@
 #define GAME_SERVER_SCENE_OUTCOME_FAILED 2u
 /* The level never loaded. */
 #define GAME_SERVER_SCENE_OUTCOME_LOAD_FAILED 3u
+/* The owner ended it, nobody entered in time, or everyone left. */
+#define GAME_SERVER_SCENE_OUTCOME_ABORTED 4u
 
 /* GameServer_ClientLoadSceneSlot flags. */
 /* Add the slot's collision to the kernel (Kernel_AddStaticSceneSlot). A pure

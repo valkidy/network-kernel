@@ -23,6 +23,11 @@ constexpr KernelVec3 kGateOffset{3.0f, 0.0f, 0.0f};
 constexpr float kArrivalSpacing = 1.5f;
 constexpr float kGateHeightTolerance = 3.0f;
 constexpr std::size_t kMaxTemplateName = 32u;
+// A gate nobody has walked through closes after this long.
+constexpr float kGateUnusedTimeoutSeconds = 300.0f;
+// SCENE_STATE is idempotent and small: re-sent this often so a client that
+// missed one for any reason is never stuck on an old state.
+constexpr float kSceneStateRefreshSeconds = 5.0f;
 
 void put_u8(std::vector<std::uint8_t>* out, std::uint8_t v) { out->push_back(v); }
 void put_u16(std::vector<std::uint8_t>* out, std::uint16_t v) {
@@ -95,6 +100,14 @@ std::uint32_t GameServer::host_player_net_id() const {
     return local.player_net_id;
 }
 
+std::uint32_t GameServer::level_owner_net_id() const {
+    const std::uint32_t host = host_player_net_id();
+    if (host != 0u) return host;
+    // Peer ids only go up, so the lowest is whoever has been here longest;
+    // when that player leaves, the next one is the owner with nothing to track.
+    return peer_players_.empty() ? 0u : peer_players_.begin()->second;
+}
+
 AgentRuntimeManager& GameServer::manager_for_agent(std::uint32_t net_id) {
     for (SceneSlot& slot : scene_slots_) {
         if (slot.manager == nullptr) continue;
@@ -120,6 +133,8 @@ bool GameServer::request_level(const std::string& scene_template) {
     level_ready_.clear();
     ready_wait_seconds_ = 0.0f;
     level_entered_ = false;
+    abort_level_requested_ = false;
+    gate_open_seconds_ = 0.0f;
     flow_outcome_ = GAME_SERVER_SCENE_OUTCOME_NONE;
     gate_.open = false;
     set_flow(GAME_SERVER_SCENE_FLOW_LOADING);
@@ -138,13 +153,20 @@ void GameServer::handle_scene_message(const KernelGameMessage& message) {
             level_ready_.insert(message.player_net_id);
         }
     } else if (message.message_type == GAME_SERVER_MESSAGE_SCENE_SELECT && message.payload_size == 2u) {
-        const std::uint32_t host = host_player_net_id();
+        const std::uint32_t owner = level_owner_net_id();
         const std::uint16_t index = get_u16(message.payload);
-        if (host == 0u || message.player_net_id != host || index >= config_.scene_templates.size()) {
+        if (owner == 0u || message.player_net_id != owner || index >= config_.scene_templates.size()) {
             spdlog::warn("scene select refused peer={} index={}", message.peer, index);
             return;
         }
         request_level(config_.scene_templates[index].name);
+    } else if (message.message_type == GAME_SERVER_MESSAGE_SCENE_ABORT && message.payload_size == 0u) {
+        const std::uint32_t owner = level_owner_net_id();
+        if (owner == 0u || message.player_net_id != owner || flow_ == GAME_SERVER_SCENE_FLOW_CAMP) {
+            spdlog::warn("scene abort refused peer={}", message.peer);
+            return;
+        }
+        abort_level_requested_ = true;
     }
 }
 
@@ -160,6 +182,7 @@ std::vector<std::uint8_t> GameServer::encode_scene_state() const {
     put_f32(&out, gate_.position.y);
     put_f32(&out, gate_.position.z);
     put_f32(&out, gate_.radius);
+    put_u32(&out, level_owner_net_id());
     put_u8(&out, has_level ? 1u : 0u);
     if (has_level) {
         const std::string& name = config_.scene_templates[level_template_index_].name;
@@ -172,17 +195,43 @@ std::vector<std::uint8_t> GameServer::encode_scene_state() const {
     return out;
 }
 
-void GameServer::send_scene_state(std::uint32_t peer) const {
-    if (kernel_ == nullptr) return;
+void GameServer::flush_scene_state() {
+    if (kernel_ == nullptr || scene_state_owed_.empty()) return;
     const std::vector<std::uint8_t> body = encode_scene_state();
-    Kernel_ServerSendGameMessage(kernel_, peer, GAME_SERVER_MESSAGE_SCENE_STATE,
-        body.data(), static_cast<std::uint32_t>(body.size()));
+    for (auto it = scene_state_owed_.begin(); it != scene_state_owed_.end();) {
+        const bool gone = peer_players_.count(*it) == 0u;
+        if (gone || Kernel_ServerSendGameMessage(kernel_, *it, GAME_SERVER_MESSAGE_SCENE_STATE,
+                body.data(), static_cast<std::uint32_t>(body.size()))) {
+            it = scene_state_owed_.erase(it);
+        } else {
+            ++it;
+        }
+    }
 }
 
-void GameServer::broadcast_scene_state() const {
+void GameServer::broadcast_scene_state() {
     for (const auto& [peer, player] : peer_players_) {
         (void)player;
-        send_scene_state(peer);
+        scene_state_owed_.insert(peer);
+    }
+    flush_scene_state();
+}
+
+void GameServer::return_level_players_to_camp(const std::vector<KernelServerEntityState>& players) {
+    const SceneBounds level_bounds = scene_slot_bounds(kPartyLevelSlot);
+    std::uint32_t back = 0;
+    for (const KernelServerEntityState& player : players) {
+        if (!level_bounds.contains(player.position.x)) continue;
+        teleport(kernel_, player.net_id,
+            plus(spawn_of(config_), KernelVec3{0.0f, 0.0f, kArrivalSpacing * static_cast<float>(back++)}));
+        if (player.hp != 0u) continue;
+        KernelServerReviveInfo info{};
+        info.struct_size = sizeof(info);
+        info.net_id = player.net_id;
+        info.lift_meters = 0.0f;
+        if (Kernel_ServerReviveEntity(kernel_, &info)) {
+            configure_player(player.net_id, true);
+        }
     }
 }
 
@@ -198,6 +247,7 @@ void GameServer::finish_level(std::uint8_t outcome) {
     }
     level_ready_.clear();
     level_entered_ = false;
+    abort_level_requested_ = false;
     gate_.open = false;
     flow_outcome_ = outcome;
     spdlog::info("party level finished outcome={}", outcome);
@@ -205,8 +255,28 @@ void GameServer::finish_level(std::uint8_t outcome) {
 }
 
 void GameServer::tick_scene_flow(float delta_seconds) {
-    if (!scene_table_enabled_ || kernel_ == nullptr || flow_ == GAME_SERVER_SCENE_FLOW_CAMP) {
+    if (!scene_table_enabled_ || kernel_ == nullptr) {
         return;
+    }
+    scene_state_refresh_seconds_ += delta_seconds;
+    if (scene_state_refresh_seconds_ >= kSceneStateRefreshSeconds) {
+        scene_state_refresh_seconds_ = 0.0f;
+        for (const auto& [peer, player] : peer_players_) {
+            (void)player;
+            scene_state_owed_.insert(peer);
+        }
+    }
+    flush_scene_state();
+    if (flow_ == GAME_SERVER_SCENE_FLOW_CAMP) {
+        if (!auto_level_.empty() && !peer_players_.empty() &&
+            flow_outcome_ != GAME_SERVER_SCENE_OUTCOME_LOAD_FAILED) {
+            request_level(auto_level_);
+        }
+        return;
+    }
+    // Nobody left to play it (only a dedicated server can get here).
+    if (peer_players_.empty()) {
+        abort_level_requested_ = true;
     }
     const SceneSlotState slot_state = scene_state(kPartyLevelSlot);
     if (flow_ == GAME_SERVER_SCENE_FLOW_LOADING) {
@@ -215,6 +285,10 @@ void GameServer::tick_scene_flow(float delta_seconds) {
             return;
         }
         if (slot_state != SceneSlotState::kReady) return;
+        if (abort_level_requested_) {
+            finish_level(GAME_SERVER_SCENE_OUTCOME_ABORTED);
+            return;
+        }
         ready_wait_seconds_ += delta_seconds;
         bool everyone_ready = !peer_players_.empty();
         for (const auto& [peer, player] : peer_players_) {
@@ -242,6 +316,11 @@ void GameServer::tick_scene_flow(float delta_seconds) {
     const SceneBounds level_bounds = scene_slot_bounds(kPartyLevelSlot);
     const std::vector<KernelServerEntityState> players = player_states(kernel_);
     std::uint32_t arrivals = 0;
+    if (abort_level_requested_) {
+        return_level_players_to_camp(players);
+        finish_level(GAME_SERVER_SCENE_OUTCOME_ABORTED);
+        return;
+    }
 
     if (flow_ == GAME_SERVER_SCENE_FLOW_GATE_OPEN) {
         for (const KernelServerEntityState& player : players) {
@@ -260,6 +339,12 @@ void GameServer::tick_scene_flow(float delta_seconds) {
                 }))) {
             respawn_.reset(level->player.respawn);
             level_entered_ = true;
+        }
+        gate_open_seconds_ += delta_seconds;
+        if (!level_entered_ && gate_open_seconds_ >= kGateUnusedTimeoutSeconds) {
+            spdlog::info("party level gate unused for {} s; level cancelled", kGateUnusedTimeoutSeconds);
+            finish_level(GAME_SERVER_SCENE_OUTCOME_ABORTED);
+            return;
         }
         const auto& rules = level_ai->game_rule_director().runtimes();
         const bool completed = !rules.empty() &&
@@ -283,19 +368,7 @@ void GameServer::tick_scene_flow(float delta_seconds) {
             if (player.hp != 0u || respawn_.is_waiting(player.net_id)) anyone_alive = true;
         }
         if (level_entered_ && inside != 0u && !anyone_alive && respawn_.remaining_revives() == 0) {
-            std::uint32_t back = 0;
-            for (const KernelServerEntityState& player : players) {
-                if (!level_bounds.contains(player.position.x)) continue;
-                teleport(kernel_, player.net_id,
-                    plus(spawn_of(config_), KernelVec3{0.0f, 0.0f, kArrivalSpacing * static_cast<float>(back++)}));
-                KernelServerReviveInfo info{};
-                info.struct_size = sizeof(info);
-                info.net_id = player.net_id;
-                info.lift_meters = 0.0f;
-                if (Kernel_ServerReviveEntity(kernel_, &info)) {
-                    configure_player(player.net_id, true);
-                }
-            }
+            return_level_players_to_camp(players);
             finish_level(GAME_SERVER_SCENE_OUTCOME_FAILED);
         }
         return;

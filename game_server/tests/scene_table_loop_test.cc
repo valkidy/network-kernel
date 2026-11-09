@@ -93,14 +93,14 @@ SceneState decode_state(const KernelGameMessage& m) {
         std::memcpy(&v, &bits, sizeof(v));
         return v;
     };
-    require(m.payload_size >= 25u);
+    require(m.payload_size >= 29u);
     s.received = true;
     s.flow = p[0];
     s.outcome = p[6];
     s.gate_open = p[7] != 0u;
     s.gate = KernelVec3{f32(p + 8), f32(p + 12), f32(p + 16)};
-    std::uint32_t at = 25;
-    const std::uint32_t count = p[24];
+    std::uint32_t at = 29;
+    const std::uint32_t count = p[28];
     for (std::uint32_t k = 0; k < count; ++k) {
         const std::uint32_t slot = p[at];
         const std::uint32_t generation = u32(p + at + 1);
