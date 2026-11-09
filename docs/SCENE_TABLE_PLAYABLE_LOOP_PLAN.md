@@ -1,6 +1,6 @@
 # Scene table 後續計劃：可遊玩的關卡循環
 
-狀態：**計劃，待使用者確認第 9 節後開工。** 尚未實作。
+狀態：**計劃，第 9 節只剩 Q7 待定。** 尚未實作。
 分支：`claude/scene-table-s4`（`docs/SCENE_TABLE_PLAN.md` 的 S1–S4 已在這條分支上）。
 日期：2026-11-09。
 
@@ -23,7 +23,7 @@ S1–S4 已完成 kernel 的 slot、catalog 的 scene template、server 的關�
 | F7 | 回程傳送門在出生點往 +x 3 m |
 | F8 | 預設成功條件：擊敗 20 個敵人，成功時出現回程門 |
 | F9 | 失敗條件維持 S4：**隊伍重生次數用完且關卡內全員死亡**，直接回 camp |
-| F10 | 重生次數預設 = **小隊人數 × 5**（2 人小隊 = `team_revive_times: 10`） |
+| F10 | 重生次數預設 = **小隊人數 × 5**（2 人小隊 = `team_revive_times: 10`），中途加入者再加 5 次，**一場關卡累計發放上限 20** |
 | F11 | 先做 camp 的開關卡 prop（美術由使用者準備） |
 | F12 | 保留之後用 item 開啟特殊關卡（客製 recipe，例如活動關卡）的路 |
 | F13 | seed 開放成欄位，用一個約定的數字代表由系統隨機產生 |
@@ -107,7 +107,7 @@ reinforce_budget: {...}
 | # | 工作 |
 |---|---|
 | L0.1 | `GameServer_CreateWithGameplayCatalogFromMemory` 在 catalog 有 scene template 時啟用 scene table（沒有的話行為不變） |
-| L0.2 | `dedicated_server_app` 同樣啟用，並提供開關卡的方式（啟動參數 `--level=<name>`） |
+| L0.2 | `dedicated_server_app` 同樣啟用，開關卡的方式見第 9 節 Q7 |
 | L0.3 | `send_scene_state` 檢查送出結果，失敗就重試，並定期補送 |
 | L0.4 | 卡死的出口：host 可以取消關卡（新訊息 `SCENE_ABORT`）；傳送門開啟後一段時間沒人進就自動取消 |
 
@@ -130,7 +130,7 @@ reinforce_budget: {...}
 | # | 工作 |
 |---|---|
 | L2.1 | `objective.defeat_enemies`：用 `EntityDied` 計算該 slot 內敵方 agent 的死亡數，達標就開回程門 |
-| L2.2 | 重生次數：`revives_per_player`（預設 5），進入關卡時 = 小隊人數 × 5；有寫 `team_revive_times` 時以它為準 |
+| L2.2 | 重生次數：`revives_per_player`（預設 5）、`max_team_revives`（預設 20）。第一個人進入關卡時發放 min(連線玩家數 × 5, 20)；之後每位中途加入者再發 5 次。上限算的是**這場關卡累計發放的總數**，不是目前剩餘數，否則反覆進出仍能把次數補滿。有寫 `team_revive_times` 時以它為準，不再追加 |
 | L2.3 | `SCENE_STATE` 加上目前擊敗數和目標數，給 HUD 用 |
 
 完成條件：有 `objective` 用 objective，否則用 game rule 全部完成。
@@ -219,17 +219,27 @@ GameServer API 的新增都用 capability 判斷，不 bump。
 
 ---
 
-## 9. 待確認（已給預設值）
+## 9. 問題與決定（2026-11-09）
 
-| # | 問題 | 預設 |
+| # | 問題 | 決定 |
 |---|---|---|
 | Q1 | 隨機 seed 的約定數字 | `-1`，和 `team_revive_times: -1` 慣例一致 |
-| Q2 | bundle 的定義是否包含固定場景（camp、測試） | 包含 |
-| Q3 | 蟲巢標記怎麼來 | stamp 檔加 `nest_sites`；第一版沒有資料的 stamp 用中心點 |
-| Q4 | 「擊敗敵人」算什麼 | 只算敵方 agent 的死亡，蟲巢不算，被系統清掉的不算 |
-| Q5 | 小隊人數怎麼算 | 第一個人進入關卡時的連線玩家數；中途加入者再加 5 次 |
+| Q2 | bundle 是否包含固定場景（camp、測試） | 包含 |
+| Q3 | 蟲巢標記怎麼來 | stamp 檔加 `nest_sites`；沒有資料的 stamp 用中心點 |
+| Q4 | 「擊敗敵人」算什麼 | 只算敵方 agent 的死亡，蟲巢和被系統清掉的不算 |
+| Q5 | 小隊人數怎麼算 | 第一個人進入關卡時的連線玩家數；中途加入者再加 5 次；一場關卡累計發放上限 20 |
 | Q6 | 傳送門開啟後無人進入多久自動取消 | 5 分鐘 |
-| Q7 | dedicated 模式的開關卡方式 | 啟動參數 `--level=<name>`，關卡結束後回 camp 等待 |
+| Q7 | dedicated 模式的開關卡方式 | **待定**，見下 |
+
+**Q7：** dedicated 沒有 host 玩家，`SCENE_SELECT` 和開關卡 prop 都不會接受任何人。原本的預設（啟動時 `--level` 開一次）有問題：
+
+- 不帶 `--level`：server 停在 camp，沒有任何方法開關卡。
+- 帶 `--level`、開一次：啟動時沒有玩家，傳送門在 60 秒後開啟，5 分鐘後自動取消，之後回 camp 就再也開不了。
+
+候選做法：
+- **A（建議）：`--level` 視為輪替。** 只要隊伍在 camp 且至少有一位玩家，就自動開啟該關卡；不帶 `--level` 時停在 camp，並在 log 警告。
+- B：在 dedicated 上，開關卡 prop 開放給第一位連線的玩家（房主）。
+- C：只提供營運端指令。
 
 ---
 
