@@ -333,6 +333,24 @@ void GameServer::place_level_nests() {
     spdlog::info("level nests placed {} of {}", placed, level->level_nests.positions.size());
 }
 
+void GameServer::answer_level_select(const KernelEvent& event) const {
+    if (kernel_ == nullptr) return;
+    std::uint8_t result = GAME_SERVER_OPEN_UI_OK;
+    if (!scene_table_enabled_ || event.related_net_id != level_owner_net_id()) {
+        result = GAME_SERVER_OPEN_UI_NOT_OWNER;
+    } else if (flow_ != GAME_SERVER_SCENE_FLOW_CAMP) {
+        result = GAME_SERVER_OPEN_UI_BUSY;
+    }
+    std::vector<std::uint8_t> body;
+    put_u32(&body, GAME_SERVER_UI_LEVEL_SELECT);
+    put_u32(&body, event.net_id);
+    put_u8(&body, result);
+    if (!Kernel_ServerSendGameMessage(kernel_, event.peer_id, GAME_SERVER_MESSAGE_OPEN_UI,
+            body.data(), static_cast<std::uint32_t>(body.size()))) {
+        spdlog::warn("level select answer not sent peer={}", event.peer_id);
+    }
+}
+
 bool GameServer::level_objective_met() const {
     const GameServerGameplayConfig* level = scene_config(kPartyLevelSlot);
     const AgentRuntimeManager* level_ai = scene_manager(kPartyLevelSlot);

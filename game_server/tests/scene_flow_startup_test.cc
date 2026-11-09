@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -31,6 +32,7 @@
 #include "game_server/src/game_server.h"
 #include "game_server/src/gameplay_config.h"
 #include "game_server/src/scene_table.h"
+#include "physics/public/physics_world.h"
 
 namespace {
 
@@ -88,6 +90,7 @@ struct Follower {
     const std::vector<std::uint8_t>* bundle = nullptr;
     SceneState state;
     int states_received = 0;
+    std::vector<std::uint8_t> ui_results;
     std::map<std::uint32_t, std::uint32_t> loaded;
 
     void decode(const KernelGameMessage& m) {
@@ -126,6 +129,11 @@ struct Follower {
         while ((count = Kernel_PollGameMessages(kernel, messages, 8u)) != 0u) {
             for (std::uint32_t i = 0; i < count; ++i) {
                 if (messages[i].message_type == GAME_SERVER_MESSAGE_SCENE_STATE) decode(messages[i]);
+                if (messages[i].message_type == GAME_SERVER_MESSAGE_OPEN_UI) {
+                    require(messages[i].payload_size == 9u);
+                    require(u32_at(messages[i].payload) == GAME_SERVER_UI_LEVEL_SELECT);
+                    ui_results.push_back(messages[i].payload[8]);
+                }
             }
         }
         if (!state.received) return;
@@ -162,6 +170,7 @@ struct World {
     std::vector<Follower*> followers;
     const std::vector<std::uint8_t>* bundle = nullptr;
     std::uint16_t port = 0;
+    const char* entry = kEntry;
 
     void frame(bool sleep = true) {
         if (sleep) std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -217,7 +226,7 @@ struct World {
         }, 15.0));
         KernelGameplayCatalogLoadResult result{};
         require(Kernel_LoadGameplayCatalogFromMemory(
-            client, bundle->data(), static_cast<std::uint32_t>(bundle->size()), kEntry, &result));
+            client, bundle->data(), static_cast<std::uint32_t>(bundle->size()), entry, &result));
         require(Kernel_ContinueClientHandshake(client));
         auto* follower = new Follower{client, true, bundle};
         followers.push_back(follower);
@@ -256,31 +265,45 @@ void abort_level(KernelHandle* from) {
     require(Kernel_SendGameMessage(from, GAME_SERVER_MESSAGE_SCENE_ABORT, nullptr, 0u));
 }
 
+void activate(KernelHandle* from, std::uint32_t peer, std::uint32_t player, std::uint32_t prop, std::uint64_t id) {
+    KernelGameplayRequest request{};
+    request.struct_size = sizeof(request);
+    request.requester_peer = peer;
+    request.request_id = id;
+    request.instigator_net_id = player;
+    request.domain_action = KernelDomainAction_Activate;
+    request.target_net_id = prop;
+    request.requested_quantity = 1;
+    require(Kernel_SubmitGameplayRequest(from, &request));
+}
+
 // A server the way GameServer_CreateWithGameplayCatalogFromMemory makes one.
 struct CApiServer {
     KernelHandle* kernel = nullptr;
     GameServerHandle* game = nullptr;
 };
 
-CApiServer start_c_api(World* world, bool listen, std::uint16_t port, const std::vector<std::uint8_t>& bundle) {
+CApiServer start_c_api(
+    World* world, bool listen, std::uint16_t port, const std::vector<std::uint8_t>& bundle, const char* entry = kEntry) {
     CApiServer server;
     KernelConfig config = config_for(listen ? KernelMode_ListenServer : KernelMode_DedicatedServer);
     server.kernel = Kernel_Create(&config);
     require(server.kernel != nullptr);
     KernelGameplayCatalogLoadResult result{};
     server.game = GameServer_CreateWithGameplayCatalogFromMemory(
-        server.kernel, bundle.data(), static_cast<std::uint32_t>(bundle.size()), kEntry, &result);
+        server.kernel, bundle.data(), static_cast<std::uint32_t>(bundle.size()), entry, &result);
     if (server.game == nullptr) std::fprintf(stderr, "load: %s\n", result.diagnostic);
     require(server.game != nullptr);
     KernelGameplayCatalogSyncServerConfig serve{};
     serve.struct_size = sizeof(serve);
     serve.bundle_bytes = bundle.data();
     serve.bundle_size = static_cast<std::uint32_t>(bundle.size());
-    serve.entry_path = kEntry;
+    serve.entry_path = entry;
     serve.content_namespace = "scene_flow_startup_test";
     KernelGameplayCatalogManifest manifest{};
     manifest.struct_size = sizeof(manifest);
     require(Kernel_SetGameplayCatalogSyncBundle(server.kernel, &serve, &manifest));
+    world->entry = entry;
     require(listen ? Kernel_StartListenServer(server.kernel, port) : Kernel_StartDedicatedServer(server.kernel, port));
     world->server_kernel = server.kernel;
     world->listen = listen;
@@ -599,6 +622,84 @@ void joiner_with_level_out_of_revives(const std::vector<std::uint8_t>& bundle_by
     Kernel_Destroy(world.server_kernel);
 }
 
+// The real camp: its level terminal, activated the way a player would.
+void camp_level_terminal(const std::vector<std::uint8_t>& bundle, std::uint16_t index) {
+    World world;
+    const CApiServer server = start_c_api(&world, true, 8244, bundle, "gameplay_catalog.camp.yaml");
+    Follower host{server.kernel, false, &bundle};
+    world.followers.push_back(&host);
+    Follower* a = world.join();
+    const std::uint32_t host_player = player_of(server.kernel);
+    const std::uint32_t a_player = player_of(a->kernel);
+    world.settle(0.5);
+
+    // The terminal is there, standing on the ground; nothing hostile is.
+    std::vector<KernelServerEntityState> props(512);
+    for (auto& p : props) p.struct_size = sizeof(p);
+    props.resize(Kernel_ServerQueryEntities(server.kernel, KernelEntityType_Prop, props.data(), 512u));
+    const auto terminal = std::find_if(props.begin(), props.end(),
+        [](const KernelServerEntityState& p) { return p.entity_template_id == 231u; });
+    require(terminal != props.end());
+    const std::vector<std::uint8_t> artifact = gs::load_gameplay_bundle_entry_bytes(
+        bundle.data(), static_cast<std::uint32_t>(bundle.size()),
+        "mesh_assets/jolt/composed_216m_ground_0001_seed1_collision.joltmesh");
+    std::vector<float> positions;
+    std::vector<std::uint32_t> indices;
+    std::string error;
+    require(network_example::physics::static_scene_triangles(artifact, &positions, &indices, &error));
+    float ground = -1000.0f;
+    const float px = terminal->position.x;
+    const float pz = terminal->position.z;
+    for (std::size_t t = 0; t + 2 < indices.size(); t += 3) {
+        const float* a0 = &positions[indices[t] * 3u];
+        const float* b0 = &positions[indices[t + 1] * 3u];
+        const float* c0 = &positions[indices[t + 2] * 3u];
+        const float d = (b0[2] - c0[2]) * (a0[0] - c0[0]) + (c0[0] - b0[0]) * (a0[2] - c0[2]);
+        if (std::fabs(d) < 1e-6f) continue;
+        const float u = ((b0[2] - c0[2]) * (px - c0[0]) + (c0[0] - b0[0]) * (pz - c0[2])) / d;
+        const float v = ((c0[2] - a0[2]) * (px - c0[0]) + (a0[0] - c0[0]) * (pz - c0[2])) / d;
+        if (u < 0.0f || v < 0.0f || u + v > 1.0f) continue;
+        ground = std::max(ground, u * a0[1] + v * b0[1] + (1.0f - u - v) * c0[1]);
+    }
+    std::printf("terminal at (%.1f, %.2f, %.1f), ground %.2f\n", px, terminal->position.y, pz, ground);
+    require(std::fabs(terminal->position.y - ground) < 0.3f);
+    std::vector<KernelServerEntityState> actors(512);
+    for (auto& p : actors) p.struct_size = sizeof(p);
+    actors.resize(Kernel_ServerQueryEntities(server.kernel, KernelEntityType_Actor, actors.data(), 512u));
+    for (const auto& actor : actors) require(actor.actor_type != KernelActorType_Agent);
+
+    const std::uint32_t prop = terminal->net_id;
+    const KernelQuat facing{0.0f, 0.0f, 0.0f, 1.0f};
+    const KernelVec3 beside{px + 1.5f, terminal->position.y + 1.0f, pz};
+    require(Kernel_ServerSetEntityTransform(server.kernel, a_player, &beside, &facing));
+    require(Kernel_ServerSetEntityTransform(server.kernel, host_player, &beside, &facing));
+    world.settle(0.5);
+
+    // A guest asks and is told no; the host asks and may choose. Nobody went inside.
+    activate(a->kernel, 0u, a_player, prop, 1u);
+    require(world.until([&] { return !a->ui_results.empty(); }, 5.0));
+    require(a->ui_results.back() == GAME_SERVER_OPEN_UI_NOT_OWNER);
+    require(host.ui_results.empty());
+    activate(server.kernel, 1u, host_player, prop, 2u);
+    require(world.until([&] { return !host.ui_results.empty(); }, 5.0));
+    require(host.ui_results.back() == GAME_SERVER_OPEN_UI_OK);
+    world.settle(0.5);  // A shelter request lands a tick after the event.
+    KernelLocalShelterState shelter{};
+    shelter.struct_size = sizeof(shelter);
+    require(Kernel_GetLocalShelterState(server.kernel, &shelter));
+    require(shelter.shelter_net_id == 0u);
+
+    // Choosing from it opens the level; while it runs the list is unavailable.
+    select_level(server.kernel, index);
+    require(world.until([&] { return a->state.flow == GAME_SERVER_SCENE_FLOW_GATE_OPEN; }, 30.0));
+    activate(server.kernel, 1u, host_player, prop, 3u);
+    require(world.until([&] { return host.ui_results.size() == 2u; }, 5.0));
+    require(host.ui_results.back() == GAME_SERVER_OPEN_UI_BUSY);
+    std::printf("camp: the terminal answered guest, host and busy; nobody went inside\n");
+    world.followers.erase(std::find(world.followers.begin(), world.followers.end(), &host));
+    stop(&world, server);
+}
+
 }  // namespace
 
 int main() {
@@ -609,6 +710,7 @@ int main() {
     auto_level(bundle);
     objective_and_revives(bundle);
     joiner_with_level_out_of_revives(bundle);
+    camp_level_terminal(bundle, index);
     std::printf("scene_flow_startup_test passed\n");
     return 0;
 }

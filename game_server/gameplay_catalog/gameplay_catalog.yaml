@@ -155,6 +155,8 @@ map_variants:
     scene_props:
       - entity_template: initial_camp
         position: {x: 100.8, y: 20.6, z: 72.0}
+      - entity_template: level_terminal
+        position: {x: 106.8, y: 20.4, z: 82.0}
     player:
       spawn_position: {x: 106.8, y: 23.0, z: 77.0}
 # Levels (docs/SCENE_TABLE_PLAYABLE_LOOP_PLAN.md): one file per level,

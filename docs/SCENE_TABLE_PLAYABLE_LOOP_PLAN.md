@@ -183,7 +183,11 @@ reinforce_budget: {...}
 
 測試：多個 seed 下，出生點和傳送門都在地面上、蟲巢都在地面上、20 個敵人確實打得到。
 
-### L5 開關卡 prop
+### L5 開關卡 prop（已完成，`claude/scene-table-l5`）
+
+已驗證：`scene_flow_startup_test` 的 `camp_level_terminal`，在 `camp` 變體上用真實的 Activate 請求觸發：非房主收到 `NOT_OWNER`、房主收到 `OK` 而且沒有進入建築、選關後關卡開啟、關卡進行中收到 `BUSY`；prop 高度對照組好的地形網格，camp 裡沒有敵人。
+
+prop 是 `level_terminal`（entity template 231，目前沒有美術），ui_id 4（`GAME_SERVER_UI_LEVEL_SELECT`）。新訊息 `GAME_SERVER_MESSAGE_OPEN_UI` 11（S→C）：`u32 ui_id, u32 prop_net_id, u8 result`（0 OK、1 NOT_OWNER、2 BUSY）。被拒絕的玩家也會收到回應，讓 client 能顯示原因。
 
 | # | 工作 |
 |---|---|

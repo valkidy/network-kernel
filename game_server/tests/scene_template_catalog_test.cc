@@ -141,7 +141,7 @@ void bundle_templates() {
         gs::load_gameplay_config_from_bundle_memory(bundle.data(), size, "gameplay_catalog.camp.yaml");
     require(camp.preload_director_template_ids.empty());
     require(camp.patrols.empty());
-    require(camp.scene_props.size() == 1u);
+    require(camp.scene_props.size() == 2u);
     require(camp.scene_templates.size() == 4u);
     require(camp.weapons.catalog_hash != root.weapons.catalog_hash);
 

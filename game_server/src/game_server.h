@@ -158,6 +158,8 @@ private:
     // Someone joined after the party entered: their share of the revive pool.
     void grant_late_joiner_revives();
     bool level_objective_met() const;
+    // Someone activated the level list prop.
+    void answer_level_select(const KernelEvent& event) const;
     // A generated level's nests go up when the party first arrives.
     void place_level_nests();
     void flush_scene_state();

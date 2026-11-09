@@ -97,7 +97,12 @@ void GameServer::handle_event(const KernelEvent& event) {
     if (event.type == KernelEventType_EntityDied) {
         note_level_enemy_death(event.net_id);
     }
-    shelter_.handle_event(event);
+    if (event.type == KernelEventType_UiOpened && event.code == GAME_SERVER_UI_LEVEL_SELECT) {
+        // Not a building to go inside: the level list is the player's to see.
+        answer_level_select(event);
+    } else {
+        shelter_.handle_event(event);
+    }
     loadout_.handle_event(event);
     agent_runtime_manager_.handle_event(event);
     for (SceneSlot& slot : scene_slots_) {

@@ -144,6 +144,12 @@
  * GameServer_ClientPumpSceneRecipe sends it, and again if it does not arrive.
  *   u8  slot; u32 generation
  *
+ * OPEN_UI, server -> client. A prop asked to show this player an interface.
+ *   u32 ui_id                GAME_SERVER_UI_*
+ *   u32 prop_net_id
+ *   u8  result               GAME_SERVER_OPEN_UI_*: BUSY while a level is
+ *                            under way, NOT_OWNER for anyone but the owner
+ *
  * SCENE_LOAD_FAILED, client -> server. This client could not build the slot.
  * It stays out of the level; the party does not wait for it.
  *   u8  slot; u32 generation; u8 reason
@@ -155,6 +161,15 @@
 #define GAME_SERVER_MESSAGE_SCENE_RECIPE_CHUNK 8u
 #define GAME_SERVER_MESSAGE_SCENE_RECIPE_REQUEST 9u
 #define GAME_SERVER_MESSAGE_SCENE_LOAD_FAILED 10u
+#define GAME_SERVER_MESSAGE_OPEN_UI 11u
+
+/* The interface a prop's open_ui names (1 rest, 2 loadout and 3 camp are the
+ * buildings'): the level list. Answered with OPEN_UI, not by going inside. */
+#define GAME_SERVER_UI_LEVEL_SELECT 4u
+
+#define GAME_SERVER_OPEN_UI_OK 0u
+#define GAME_SERVER_OPEN_UI_NOT_OWNER 1u
+#define GAME_SERVER_OPEN_UI_BUSY 2u
 
 #define GAME_SERVER_SCENE_SOURCE_BUNDLE 0u
 #define GAME_SERVER_SCENE_SOURCE_RECIPE 1u
