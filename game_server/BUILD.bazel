@@ -2297,6 +2297,16 @@ cc_test(
     ],
 )
 
+# What a generated level puts on its map, over many seeds
+# (docs/SCENE_TABLE_PLAYABLE_LOOP_PLAN.md L4).
+cc_test(
+    name = "scene_level_content_test",
+    size = "medium",
+    srcs = ["tests/scene_level_content_test.cc"],
+    data = ["//game_server/gameplay_catalog_bundle:bundle"],
+    deps = [":game_server"],
+)
+
 # Opening a level by recipe: generation, chunked transfer, worker compose
 # (docs/SCENE_TABLE_PLAYABLE_LOOP_PLAN.md L3).
 cc_test(

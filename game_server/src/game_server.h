@@ -158,6 +158,8 @@ private:
     // Someone joined after the party entered: their share of the revive pool.
     void grant_late_joiner_revives();
     bool level_objective_met() const;
+    // A generated level's nests go up when the party first arrives.
+    void place_level_nests();
     void flush_scene_state();
     // Everyone inside the level back at the camp spawn, the dead revived.
     void return_level_players_to_camp(const std::vector<KernelServerEntityState>& players);

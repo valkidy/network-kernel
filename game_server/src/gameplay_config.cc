@@ -10126,7 +10126,8 @@ TerrainCatalogConfig terrain_catalog_from_yaml(
         if (n["wavelength"]) c.base.detail.wavelength_mm = mm(n["wavelength"].as<double>());
     }
     if (const YAML::Node n = t["layout"]) {
-        keys(n, {"base_step", "ring_slope_degrees", "min_ring", "max_ring"});
+        keys(n, {"base_step", "ring_slope_degrees", "min_ring", "max_ring", "center_clear"});
+        if (n["center_clear"]) c.layout.center_clear_m = n["center_clear"].as<double>();
         if (n["base_step"]) c.layout.base_step_m = n["base_step"].as<double>();
         if (n["ring_slope_degrees"]) c.layout.ring_slope_deg = n["ring_slope_degrees"].as<double>();
         if (n["min_ring"]) c.layout.min_ring_m = n["min_ring"].as<double>();
@@ -10156,11 +10157,11 @@ TerrainCatalogConfig terrain_catalog_from_yaml(
     // Stamps: one template per file, `<id>_stamp_<name>.yaml` naming its .hf.
     if (!document["stamp_template_dir"]) return fail("needs stamp_template_dir");
     const std::string dir = source.resolve_path(base_path, document["stamp_template_dir"]);
-    struct Loaded { std::uint32_t id; terrain::StampAsset stamp; };
+    struct Loaded { std::uint32_t id; terrain::StampAsset stamp; std::vector<StampSiteConfig> nest_sites; };
     std::vector<Loaded> stamps;
     for (const std::string& file : source.list_yaml_files(dir)) {
         const YAML::Node st = source.load_yaml(file);
-        reject_unknown_keys(st, {"id", "name", "heights"}, file, kind, KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+        reject_unknown_keys(st, {"id", "name", "heights", "nest_sites"}, file, kind, KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
         if (!st["id"] || !st["name"] || !st["heights"]) {
             throw std::runtime_error("stamp template requires id, name and heights: " + file);
         }
@@ -10174,10 +10175,22 @@ TerrainCatalogConfig terrain_catalog_from_yaml(
             if (l.id == id) throw std::runtime_error("duplicate stamp id " + std::to_string(id) + ": " + file);
         }
         const std::string heights = source.resolve_path(source.parent_path(file), st["heights"]);
-        Loaded l{id, {}};
+        Loaded l{id, {}, {}};
         std::string error;
         if (!terrain::parse_stamp(source.load_bytes(heights), name, &l.stamp, &error)) {
             throw std::runtime_error("stamp " + heights + ": " + error);
+        }
+        if (const YAML::Node sites = st["nest_sites"]) {
+            // Metres from the stamp's own low corner, before it is turned.
+            const float edge = static_cast<float>(l.stamp.cells_x) * 0.3f;
+            for (const YAML::Node& site : sites) {
+                reject_unknown_keys(site, {"x", "z"}, file, kind, KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+                StampSiteConfig parsed{site["x"].as<float>(), site["z"].as<float>()};
+                if (!(parsed.x >= 0.0f && parsed.x <= edge && parsed.z >= 0.0f && parsed.z <= edge)) {
+                    throw std::runtime_error("stamp nest site is outside the stamp: " + file);
+                }
+                l.nest_sites.push_back(parsed);
+            }
         }
         stamps.push_back(std::move(l));
     }
@@ -10185,6 +10198,7 @@ TerrainCatalogConfig terrain_catalog_from_yaml(
     if (stamps.empty()) return fail("stamp_template_dir holds no stamps");
     for (Loaded& l : stamps) {
         c.stamp_template_ids.push_back(l.id);
+        c.stamp_nest_sites.push_back(std::move(l.nest_sites));
         c.library.stamps.push_back(std::move(l.stamp));
     }
     const YAML::Node st = t["stamps"];
@@ -10250,7 +10264,7 @@ const std::initializer_list<const char*> kMapOverlayKeys = {
 
 // The keys a scene template file may set beyond the map overlay.
 const std::initializer_list<const char*> kSceneTemplateFileKeys = {
-    "id", "name", "level", "game_rule", "objective",
+    "id", "name", "level", "game_rule", "objective", "nests",
     "navigation_mesh", "static_collision_scene", "terrain", "stamp_template_dir",
     "map", "player", "scene_props", "scene_items", "agent_routes", "preload_directors",
     "patrols", "patrol_budget", "agent_budget", "reinforce_budget",
@@ -10512,6 +10526,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             "scene_template_dir",
             "game_rule",
             "objective",
+            "nests",
         },
         path,
         source.source_kind(),
@@ -10905,6 +10920,20 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             throw std::runtime_error("objective.defeat_enemies must be 1..65535: " + path);
         }
         config.objective.defeat_enemies = defeat;
+    }
+    if (const YAML::Node nests = document["nests"]) {
+        reject_unknown_keys(
+            nests, {"entity_template", "max_count"}, path, source.source_kind(),
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+        if (!nests["entity_template"] || !nests["max_count"]) {
+            throw std::runtime_error("nests needs entity_template and max_count: " + path);
+        }
+        config.level_nests.entity_template_id =
+            entity_template_ref_from_yaml(nests["entity_template"], config.entity_templates);
+        config.level_nests.max_count = nests["max_count"].as<std::uint32_t>();
+        if (config.level_nests.max_count == 0u) {
+            throw std::runtime_error("nests.max_count must be at least 1: " + path);
+        }
     }
     if (!scene_template.empty()) {
         // A level's revive pool scales with its party unless the level names a
@@ -12532,6 +12561,8 @@ std::uint64_t compute_gameplay_catalog_hash(
     hash_scalar(&hash, config.player.respawn.revives_per_player);
     hash_scalar(&hash, config.player.respawn.max_team_revives);
     hash_scalar(&hash, config.objective.defeat_enemies);
+    hash_scalar(&hash, config.level_nests.entity_template_id);
+    hash_scalar(&hash, config.level_nests.max_count);
     hash_scalar(&hash, config.player.has_spawn_position);
     hash_float(&hash, config.player.spawn_position.x);
     hash_float(&hash, config.player.spawn_position.y);

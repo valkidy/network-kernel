@@ -51,6 +51,8 @@ void offset_scene_config(GameServerGameplayConfig* config, std::uint32_t slot) {
     const KernelVec3 offset = scene_slot_offset(slot);
     config->scene_offset = offset;
     shift(&config->player.spawn_position, offset);
+    shift(&config->return_gate_position, offset);
+    for (KernelVec3& nest : config->level_nests.positions) shift(&nest, offset);
     for (ScenePropConfig& prop : config->scene_props) shift(&prop.position, offset);
     for (SceneItemConfig& item : config->scene_items) shift(&item.position, offset);
     for (AgentRouteConfig& route : config->agent_routes) {
@@ -77,6 +79,79 @@ void offset_scene_config(GameServerGameplayConfig* config, std::uint32_t slot) {
     }
     for (PatrolDefinitionConfig& patrol : config->patrols) {
         shift(&patrol.area.center, offset);
+    }
+}
+
+float terrain_ground_height(const terrain::HeightGrid& heights, float x, float z) {
+    const auto sample = [](float metres, std::int32_t samples) {
+        const long index = std::lround((metres + static_cast<float>(samples - 1) * 0.15f) / 0.3f);
+        return static_cast<std::int32_t>(std::clamp<long>(index, 0L, samples - 1L));
+    };
+    const std::int32_t i = sample(x, heights.samples_x);
+    const std::int32_t j = sample(z, heights.samples_z);
+    return static_cast<float>(heights.cm[static_cast<std::size_t>(j) * static_cast<std::size_t>(heights.samples_x) +
+        static_cast<std::size_t>(i)]) / 100.0f;
+}
+
+KernelVec3 stamp_site_on_map(
+    const terrain::TerrainRecipe& recipe,
+    const terrain::TerrainPlacement& placement,
+    const terrain::StampAsset& stamp,
+    const StampSiteConfig& site) {
+    const std::int32_t e = stamp.cells_x;
+    const std::int32_t want_x = std::clamp(static_cast<std::int32_t>(std::lround(site.x / 0.3f)), 0, e);
+    const std::int32_t want_z = std::clamp(static_cast<std::int32_t>(std::lround(site.z / 0.3f)), 0, e);
+    // turn_source maps map samples to stamp samples; the way back is the
+    // sample that maps to this one.
+    std::int32_t found_u = 0;
+    std::int32_t found_v = 0;
+    for (std::int32_t v = 0; v <= e; ++v) {
+        for (std::int32_t u = 0; u <= e; ++u) {
+            std::int32_t lx = 0;
+            std::int32_t lz = 0;
+            terrain::turn_source(u, v, e, placement.turns, placement.mirror, &lx, &lz);
+            if (lx == want_x && lz == want_z) {
+                found_u = u;
+                found_v = v;
+            }
+        }
+    }
+    return KernelVec3{
+        static_cast<float>((placement.x_cells + found_u) * 0.3 - recipe.cells_x * 0.15),
+        0.0f,
+        static_cast<float>((placement.z_cells + found_v) * 0.3 - recipe.cells_z * 0.15),
+    };
+}
+
+void place_level_content(
+    GameServerGameplayConfig* config,
+    const terrain::HeightGrid& heights,
+    const terrain::TerrainRecipe& recipe) {
+    PlayerGameplayDefinition& player = config->player;
+    if (!player.has_spawn_position) {
+        player.has_spawn_position = true;
+        player.spawn_position = KernelVec3{0.0f, terrain_ground_height(heights, 0.0f, 0.0f) + 1.5f, 0.0f};
+    }
+    const float gate_x = player.spawn_position.x + 3.0f;
+    config->has_return_gate_position = true;
+    config->return_gate_position = KernelVec3{
+        gate_x, terrain_ground_height(heights, gate_x, player.spawn_position.z), player.spawn_position.z};
+    LevelNestsConfig& nests = config->level_nests;
+    nests.positions.clear();
+    if (nests.entity_template_id == 0u) return;
+    for (const terrain::TerrainPlacement& placement : recipe.placements) {
+        const terrain::StampAsset& stamp = config->terrain.library.stamps[placement.stamp];
+        std::vector<StampSiteConfig> sites = config->terrain.stamp_nest_sites[placement.stamp];
+        if (sites.empty()) {
+            const float middle = static_cast<float>(stamp.cells_x) * 0.15f;
+            sites.push_back(StampSiteConfig{middle, middle});
+        }
+        for (const StampSiteConfig& site : sites) {
+            if (nests.positions.size() >= nests.max_count) return;
+            KernelVec3 at = stamp_site_on_map(recipe, placement, stamp, site);
+            at.y = terrain_ground_height(heights, at.x, at.z);
+            nests.positions.push_back(at);
+        }
     }
 }
 
@@ -107,7 +182,9 @@ PreparedScene prepare_scene(
             if (recipe.empty() && role == TerrainRole::kServer &&
                 config.terrain.seed == kTerrainSeedRandom) {
                 std::random_device device;
-                config.terrain.seed = static_cast<std::int32_t>(device() & 0x7fffffffu);
+                config.terrain.seed = source.seed_override.has_value()
+                    ? *source.seed_override
+                    : static_cast<std::int32_t>(device() & 0x7fffffffu);
             }
             PreparedTerrain prepared;
             std::string error;
@@ -120,6 +197,7 @@ PreparedScene prepare_scene(
             if (prepared.generated) {
                 out.recipe_bytes = terrain::write_recipe(prepared.recipe);
             }
+            place_level_content(&config, prepared.heights, prepared.recipe.recipe);
             out.terrain_heights = std::move(prepared.heights);
             out.terrain_recipe = std::move(prepared.recipe);
         } else {

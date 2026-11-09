@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -47,7 +48,27 @@ struct SceneCatalogSource {
     std::shared_ptr<const std::vector<std::uint8_t>> bundle;
     std::string entry_path;
     std::string catalog_file;
+    // Replaces a seed: -1 terrain's random seed (reproducing a map from the log).
+    std::optional<std::int32_t> seed_override;
 };
+
+// Height of the map at (x, z), metres; the map is centred on its own origin.
+float terrain_ground_height(const terrain::HeightGrid& heights, float x, float z);
+
+// Where a point of a placed stamp lands on the map (y unset), following the
+// recipe's turn and mirror.
+KernelVec3 stamp_site_on_map(
+    const terrain::TerrainRecipe& recipe,
+    const terrain::TerrainPlacement& placement,
+    const terrain::StampAsset& stamp,
+    const StampSiteConfig& site);
+
+// What a generated level derives from its map: the spawn (the map's centre,
+// unless authored), the return gate and the nest sites, all on the ground.
+void place_level_content(
+    GameServerGameplayConfig* config,
+    const terrain::HeightGrid& heights,
+    const terrain::TerrainRecipe& recipe);
 
 // A level ready to commit: its config, already moved to its slot (navmesh
 // artifact included), and the collision artifact the kernel slot takes.

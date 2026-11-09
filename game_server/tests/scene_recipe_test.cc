@@ -475,6 +475,44 @@ std::uint64_t run(bool listen, std::uint16_t port, const std::vector<std::uint8_
     abort_level(owner);
     require(world.until([&] { return a->state.flow == GAME_SERVER_SCENE_FLOW_CAMP && a->loads.empty(); }, 10.0));
 
+    if (!listen && std::getenv("NETWORK_KERNEL_FAKE_LAG_MS") == nullptr) {
+        // A whole generated level: nests go up on arrival, the objective is
+        // met, and the return gate stands where a player can walk through it.
+        select_level(owner, kRandomLevel);
+        require(world.until([&] {
+            return a->state.flow == GAME_SERVER_SCENE_FLOW_GATE_OPEN && a->ready(1u);
+        }, 60.0));
+        require(Kernel_ServerSetEntityTransform(server.kernel, a_player, &a->state.gate, &facing));
+        require(world.until([&] { return level.contains(world.state_of(a_player).position.x); }, 5.0));
+        const auto entities_of = [&](std::uint16_t type) {
+            std::vector<KernelServerEntityState> all(4096);
+            for (auto& one : all) one.struct_size = sizeof(one);
+            all.resize(Kernel_ServerQueryEntities(server.kernel, type, all.data(), static_cast<std::uint32_t>(all.size())));
+            std::vector<KernelServerEntityState> inside;
+            for (const auto& one : all) {
+                if (level.contains(one.position.x)) inside.push_back(one);
+            }
+            return inside;
+        };
+        require(world.until([&] { return !entities_of(KernelEntityType_Prop).empty(); }, 10.0));
+        std::printf("generated level: %zu nests up\n", entities_of(KernelEntityType_Prop).size());
+        require(world.until([&] {
+            for (const auto& s : entities_of(KernelEntityType_Actor)) {
+                if (s.actor_type == KernelActorType_Agent && s.hp != 0u && s.position.y > -5.0f) {
+                    const KernelVec3 under{s.position.x, -30.0f, s.position.z};
+                    Kernel_ServerSetEntityTransform(server.kernel, s.net_id, &under, &facing);
+                }
+            }
+            return a->state.flow == GAME_SERVER_SCENE_FLOW_RETURN_OPEN;
+        }, 60.0));
+        require(level.contains(a->state.gate.x));
+        require(Kernel_ServerSetEntityTransform(server.kernel, a_player, &a->state.gate, &facing));
+        require(world.until([&] { return a->state.flow == GAME_SERVER_SCENE_FLOW_CAMP; }, 10.0));
+        require(a->state.outcome == GAME_SERVER_SCENE_OUTCOME_COMPLETED);
+        require(world.until([&] { return a->loads.empty(); }, 5.0));
+        std::printf("generated level: cleared and back in the camp\n");
+    }
+
     if (!listen) {
         // The only player cannot build it: the party does not wait out the timeout.
         a->simulate_failure = true;

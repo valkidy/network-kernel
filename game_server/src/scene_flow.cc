@@ -305,6 +305,34 @@ void GameServer::grant_late_joiner_revives() {
     }
 }
 
+void GameServer::place_level_nests() {
+    const GameServerGameplayConfig* level = scene_config(kPartyLevelSlot);
+    const AgentRuntimeManager* level_ai = scene_manager(kPartyLevelSlot);
+    if (level == nullptr || level_ai == nullptr) return;
+    std::uint32_t placed = 0;
+    for (const KernelVec3& position : level->level_nests.positions) {
+        // Only where the party can walk to it: a nest on a walled-in stamp
+        // would be an enemy nobody can reach.
+        PatrolRouteRequest route;
+        route.start = spawn_of(*level);
+        route.end = position;
+        route.snap_half_extent_meters = 3.0f;
+        std::vector<KernelVec3> waypoints;
+        if (!level_ai->patrol_navigation().find_route(route, &waypoints)) {
+            spdlog::warn("level nest at ({}, {}, {}) is unreachable; skipped", position.x, position.y, position.z);
+            continue;
+        }
+        KernelServerEntityCreateInfo create{};
+        create.struct_size = sizeof(create);
+        create.entity_template_id = level->level_nests.entity_template_id;
+        create.position = position;
+        create.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+        std::uint32_t net_id = 0;
+        if (Kernel_ServerCreateEntity(kernel_, &create, &net_id)) ++placed;
+    }
+    spdlog::info("level nests placed {} of {}", placed, level->level_nests.positions.size());
+}
+
 bool GameServer::level_objective_met() const {
     const GameServerGameplayConfig* level = scene_config(kPartyLevelSlot);
     const AgentRuntimeManager* level_ai = scene_manager(kPartyLevelSlot);
@@ -461,6 +489,7 @@ void GameServer::tick_scene_flow(float delta_seconds) {
             }
             respawn_.reset(pool);
             level_entered_ = true;
+            place_level_nests();
         }
         gate_open_seconds_ += delta_seconds;
         if (!level_entered_ && gate_open_seconds_ >= kGateUnusedTimeoutSeconds) {
@@ -469,7 +498,9 @@ void GameServer::tick_scene_flow(float delta_seconds) {
             return;
         }
         if (level_objective_met()) {
-            gate_.position = plus(spawn_of(*level), kGateOffset);
+            gate_.position = level->has_return_gate_position
+                ? level->return_gate_position
+                : plus(spawn_of(*level), kGateOffset);
             flow_outcome_ = GAME_SERVER_SCENE_OUTCOME_COMPLETED;
             spdlog::info("party level completed; return gate open");
             set_flow(GAME_SERVER_SCENE_FLOW_RETURN_OPEN);

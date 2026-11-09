@@ -168,7 +168,11 @@ reinforce_budget: {...}
 
 測試：listen 和 dedicated 各跑一次動態關卡，含中途加入；在 100 ms、20% 遺失下再跑一次。
 
-### L4 動態地圖的內容擺放
+### L4 動態地圖的內容擺放（已完成，`claude/scene-table-l4`）
+
+已驗證：`scene_level_content_test`（30 個 seed：出生點和回程門在地面上、中央沒有 stamp、stamp 上的點落在組出來的地形對應位置、蟲巢都走得到）；`scene_recipe_test` 跑完一整關動態關卡。
+
+目前所有 stamp 都沒有 `nest_sites` 資料，蟲巢都放在 stamp 中心（Q3 的第一版做法）。出生點目前的高度取自同一張 ground map，所有 seed 都在同一層台地上。關卡新增 key：`nests: {entity_template, max_count}`、`terrain.layout.center_clear`；stamp 新增 `nest_sites`。走不到的蟲巢會略過並記 log。
 
 | # | 工作 |
 |---|---|
