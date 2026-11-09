@@ -542,14 +542,15 @@ public static class NetworkKernelManagedAbiSmoke
                 hostSyncStatus.manifest.content_namespace == "default",
                 "NetworkHost did not publish the loaded gameplay catalog bundle.");
             var hostEvents = new KernelEvent[16];
-            for (int tick = 0; tick < 8 && host.EnemyCount != 2; ++tick)
+            // How many depends on the shipped map; that any do shows GameServer ran.
+            for (int tick = 0; tick < 8 && host.EnemyCount == 0; ++tick)
             {
                 host.Update(1.0f / 30.0f, hostEvents);
             }
             Require(
                 host.IsLocalClientReady &&
                 host.LocalPlayerNetId != 0 &&
-                host.EnemyCount == 2,
+                host.EnemyCount > 0,
                 $"NetworkHost smoke failed: ready={host.IsLocalClientReady} " +
                 $"localPlayer={host.LocalPlayerNetId} enemyCount={host.EnemyCount}.");
             Require(
@@ -887,13 +888,16 @@ public static class NetworkKernelManagedAbiSmoke
         SetAndQueryWeapon(kernel, enemyNetId, HomingWeapon(), 6);
     }
 
+    // A catalog actor that has a skeleton and procedural legs.
+    private const uint BipedActorTemplateId = 23;
+
     private static void RequireSkeletonRenderStates(Kernel kernel)
     {
         var createInfo = new KernelServerEntityCreateInfo
         {
             entity_type = KernelEntityType.Actor,
             actor_type = KernelActorType.Agent,
-            entity_template_id = 20,
+            entity_template_id = BipedActorTemplateId,
             position = new KernelVec3(0.0f, 0.0f, 0.0f),
             rotation = new KernelQuat(0.0f, 0.0f, 0.0f, 1.0f),
         };
@@ -907,27 +911,32 @@ public static class NetworkKernelManagedAbiSmoke
 
         var buffer = new SkeletonRenderStateBuffer();
         Require(
-            kernel.GetSkeletonRenderStates(buffer) == 1 &&
-            buffer.StateCount == 1 &&
-            buffer.BoneTransformCount == 39,
+            kernel.GetSkeletonRenderStates(buffer) == 1 && buffer.StateCount == 1,
+            "Kernel_GetSkeletonRenderStates did not return the skeleton entity.");
+        Require(
+            KernelSkeletonManifestCatalog.TryGet(buffer.States[0].skeleton_asset_id, out KernelSkeletonManifest manifest),
+            "The rendered skeleton is not in the bundle's manifests.");
+        int boneCount = manifest.Bones.Length;
+        Require(
+            boneCount > 0 && buffer.BoneTransformCount == boneCount,
             "Kernel_GetSkeletonRenderStates did not resize and return a complete pose.");
         Require(
             buffer.States[0].entity_net_id == entityId &&
-            buffer.States[0].bone_count == 39 &&
+            buffer.States[0].bone_count == boneCount &&
             (buffer.States[0].pose_flags &
              KernelConstants.SkeletonPoseFlagProcedural) != 0,
             "Skeleton render state identity or pose flags were invalid.");
         Require(
-            buffer.GetBoneTransforms(buffer.States[0]).Count == 39,
+            buffer.GetBoneTransforms(buffer.States[0]).Count == boneCount,
             "Skeleton render-state bone segment was incomplete.");
 
         KernelSkeletonRenderState skeletonState = buffer.States[0];
-        var nativeBindPose = new KernelBoneLocalTransform[39];
+        var nativeBindPose = new KernelBoneLocalTransform[boneCount];
         Require(
             kernel.GetSkeletonBindPose(
                 skeletonState.skeleton_asset_id,
                 skeletonState.skeleton_content_hash,
-                nativeBindPose) == 39,
+                nativeBindPose) == boneCount,
             "Kernel_GetSkeletonBindPose did not return the complete native bind pose.");
         Require(
             kernel.GetSkeletonBindPose(
