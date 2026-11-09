@@ -119,6 +119,71 @@ namespace NetworkExample.Kernel
             }
         }
 
+        /// <summary>
+        /// Adds a static scene at runtime in slot 1 and up, at <paramref name="offset"/>,
+        /// to every physics world this kernel has. False, with nothing changed,
+        /// for slot 0, past the table, an occupied slot, a collider id in use, or
+        /// an artifact that does not load. Levels loaded through
+        /// <see cref="GameServerSceneTable"/> already do this.
+        /// </summary>
+        public bool AddStaticSceneSlot(
+            uint slot,
+            byte[] artifactBytes,
+            uint sceneId,
+            uint colliderId,
+            KernelVec3 offset,
+            uint collisionLayer = KernelConstants.StaticCollisionLayerTerrain)
+        {
+            ThrowIfDisposed();
+            RequireStaticSceneSlots();
+            if (artifactBytes == null)
+            {
+                throw new ArgumentNullException(nameof(artifactBytes));
+            }
+
+            GCHandle artifactHandle = GCHandle.Alloc(artifactBytes, GCHandleType.Pinned);
+            try
+            {
+                var config = new KernelStaticSceneSlotConfig
+                {
+                    struct_size = KernelStaticSceneSlotConfig.StructSize,
+                    slot = slot,
+                    artifact_bytes = artifactHandle.AddrOfPinnedObject(),
+                    artifact_size = (uint)artifactBytes.Length,
+                    scene_id = sceneId,
+                    collider_id = colliderId,
+                    collision_layer = collisionLayer,
+                    offset = offset,
+                };
+                return KernelNative.Kernel_AddStaticSceneSlot(handle, ref config);
+            }
+            finally
+            {
+                artifactHandle.Free();
+            }
+        }
+
+        /// <summary>
+        /// Empties a slot from 1 up. Whatever stood on it falls: clearing its
+        /// entities first is the caller's job. False for slot 0, past the table,
+        /// or an empty slot.
+        /// </summary>
+        public bool RemoveStaticSceneSlot(uint slot)
+        {
+            ThrowIfDisposed();
+            RequireStaticSceneSlots();
+            return KernelNative.Kernel_RemoveStaticSceneSlot(handle, slot);
+        }
+
+        private static void RequireStaticSceneSlots()
+        {
+            if ((KernelAbi.GetInfo().capability_flags & KernelConstants.CapabilityStaticSceneSlots) == 0UL)
+            {
+                throw new NotSupportedException(
+                    "The native kernel has no static scene slots (KERNEL_CAPABILITY_STATIC_SCENE_SLOTS).");
+            }
+        }
+
         public bool StartClientCatalogSync(
             string address,
             uint maxBundleSize,

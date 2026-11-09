@@ -258,6 +258,11 @@ namespace NetworkExample.Kernel.Editor
                 (GameServerAbi.GetInfo().capability_flags & GameServerConstants.CapabilityStaticSceneMeshQuery) != 0UL,
                 "Game server static scene mesh queries mismatch.");
             Require(
+                GameServerSceneTemplateInfo.StructSize == 364 &&
+                (int)System.Runtime.InteropServices.Marshal.OffsetOf<GameServerSceneTemplateInfo>("description") == 105 &&
+                (GameServerAbi.GetInfo().capability_flags & GameServerConstants.CapabilitySceneSlots) != 0UL,
+                "Game server scene table mismatch.");
+            Require(
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("status_direction_authored") == 132 &&
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("suspend_rise_speed") == 136 &&
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("suspend_drift_speed") == 140 &&

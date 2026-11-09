@@ -93,5 +93,109 @@ namespace NetworkExample.Kernel
             uint positionCapacity,
             [Out] uint[] outIndices,
             uint indexCapacity);
+
+        // The scene table, GameServerConstants.CapabilitySceneSlots.
+        [DllImport(KernelNative.LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern uint GameServer_GetSceneTemplateCount(IntPtr kernel);
+
+        [DllImport(KernelNative.LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool GameServer_GetSceneTemplate(
+            IntPtr kernel,
+            uint index,
+            ref GameServerSceneTemplateInfo outInfo);
+
+        [DllImport(KernelNative.LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool GameServer_ClientLoadSceneSlot(
+            IntPtr kernel,
+            [In] byte[] bundleBytes,
+            uint bundleSize,
+            [MarshalAs(UnmanagedType.LPStr)] string entryPath,
+            [MarshalAs(UnmanagedType.LPStr)] string sceneTemplate,
+            uint slot,
+            uint flags);
+
+        [DllImport(KernelNative.LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool GameServer_ClientUnloadSceneSlot(
+            IntPtr kernel,
+            uint slot,
+            uint flags);
+
+        [DllImport(KernelNative.LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool GameServer_ClientAcceptSceneMessage(
+            IntPtr kernel,
+            [In] ref KernelGameMessage message);
+
+        [DllImport(KernelNative.LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern uint GameServer_ClientPumpSceneRecipe(
+            IntPtr kernel,
+            uint slot,
+            uint generation,
+            ulong recipeHash,
+            float deltaSeconds);
+
+        [DllImport(KernelNative.LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool GameServer_ClientBeginLoadSceneSlot(
+            IntPtr kernel,
+            [In] byte[] bundleBytes,
+            uint bundleSize,
+            [MarshalAs(UnmanagedType.LPStr)] string entryPath,
+            [MarshalAs(UnmanagedType.LPStr)] string sceneTemplate,
+            uint slot,
+            uint generation,
+            uint flags);
+
+        [DllImport(KernelNative.LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern uint GameServer_ClientPollSceneSlotLoad(
+            IntPtr kernel,
+            uint slot,
+            uint generation);
+
+        [DllImport(KernelNative.LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool GameServer_GetSceneTerrainInfo(
+            IntPtr kernel,
+            uint slot,
+            ref GameServerTerrainInfo outInfo);
+
+        [DllImport(KernelNative.LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool GameServer_CopySceneTerrainHeights(
+            IntPtr kernel,
+            uint slot,
+            uint x0,
+            uint z0,
+            uint width,
+            uint depth,
+            [Out] short[] outCm,
+            uint outCount);
+
+        [DllImport(KernelNative.LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern uint GameServer_CopySceneTerrainPlacements(
+            IntPtr kernel,
+            uint slot,
+            [Out] GameServerTerrainPlacement[] outPlacements,
+            uint capacity);
+
+        [DllImport(KernelNative.LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool GameServer_GetSceneStaticMeshInfo(
+            IntPtr kernel,
+            uint slot,
+            ref GameServerStaticSceneMeshInfo outInfo);
+
+        [DllImport(KernelNative.LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool GameServer_CopySceneStaticMesh(
+            IntPtr kernel,
+            uint slot,
+            [Out] float[] outPositions,
+            uint positionCapacity,
+            [Out] uint[] outIndices,
+            uint indexCapacity);
     }
 }

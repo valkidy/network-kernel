@@ -99,6 +99,17 @@ namespace NetworkExample.Kernel
             IntPtr kernel,
             ref KernelStaticCollisionSceneConfig config);
 
+        // Additive within ABI 109, KernelConstants.CapabilityStaticSceneSlots.
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_AddStaticSceneSlot(
+            IntPtr kernel,
+            ref KernelStaticSceneSlotConfig config);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_RemoveStaticSceneSlot(IntPtr kernel, uint slot);
+
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         [return: MarshalAs(UnmanagedType.I1)]
         internal static extern bool Kernel_InvokeRpcCommand(

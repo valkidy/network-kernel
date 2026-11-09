@@ -22,12 +22,56 @@ namespace NetworkExample.Kernel
         // level's baked static collision scene as triangles, to draw. Optional,
         // like the terrain queries.
         public const ulong CapabilityStaticSceneMeshQuery = 0x0000000000000100UL;
+        // The scene table: the SCENE_* and OPEN_UI messages below and
+        // GameServerSceneTable. Optional, like the terrain queries.
+        public const ulong CapabilitySceneSlots = 0x0000000000000200UL;
 
         // KernelGameMessage.message_type values game_server sends and reads.
         // Bodies are little-endian and packed; see game_server_types.h.
         public const uint MessageLoadoutOffers = 1;   // server -> client
         public const uint MessageLoadoutSelect = 2;   // client -> server
         public const uint MessageLoadoutResult = 3;   // server -> client
+        public const uint MessageSceneState = 4;      // server -> client
+        public const uint MessageSceneReady = 5;      // client -> server
+        public const uint MessageSceneSelect = 6;     // client -> server
+        public const uint MessageSceneAbort = 7;      // client -> server
+        public const uint MessageSceneRecipeChunk = 8;    // server -> client
+        public const uint MessageSceneRecipeRequest = 9;  // client -> server
+        public const uint MessageSceneLoadFailed = 10;    // client -> server
+        public const uint MessageOpenUi = 11;         // server -> client
+
+        // The interface a prop's open_ui names when it means the level list.
+        public const uint UiLevelSelect = 4;
+
+        // OPEN_UI.result.
+        public const byte OpenUiOk = 0;
+        public const byte OpenUiNotOwner = 1;
+        public const byte OpenUiBusy = 2;
+
+        // Where a listed slot's map comes from.
+        public const byte SceneSourceBundle = 0;
+        public const byte SceneSourceRecipe = 1;
+
+        // ClientPumpSceneRecipe and ClientPollSceneSlotLoad.
+        public const uint SceneLoadPending = 0;
+        public const uint SceneLoadReady = 1;
+        public const uint SceneLoadFailed = 2;
+
+        public const byte SceneFlowCamp = 0;
+        public const byte SceneFlowLoading = 1;
+        public const byte SceneFlowGateOpen = 2;
+        public const byte SceneFlowReturnOpen = 3;
+
+        public const byte SceneOutcomeNone = 0;
+        public const byte SceneOutcomeCompleted = 1;
+        public const byte SceneOutcomeFailed = 2;
+        public const byte SceneOutcomeLoadFailed = 3;  // the level never loaded
+        public const byte SceneOutcomeAborted = 4;     // owner ended it, nobody came, or everyone left
+
+        // Scene load flags. A pure client sets RegisterCollision; a listen host
+        // does not, because its server side already added the slot.
+        public const uint SceneLoadRegisterCollision = 0x1;
+        public const uint SceneLoadFromRecipe = 0x2;  // use the recipe PumpSceneRecipe fetched
 
         // LOADOUT_RESULT.result.
         public const byte LoadoutResultApplied = 0;
@@ -63,6 +107,37 @@ namespace NetworkExample.Kernel
         public uint valid;
 
         public static uint StructSize => (uint)Marshal.SizeOf<GameServerWeaponTemplateInfo>();
+    }
+
+    // One level a catalog offers. The text fields are UTF-8; read them through
+    // Name, DisplayName and Description. 364 bytes.
+    [StructLayout(LayoutKind.Sequential)]
+    public struct GameServerSceneTemplateInfo
+    {
+        public uint struct_size;
+        public uint template_id;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 33)]
+        public byte[] name;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 64)]
+        public byte[] display_name;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 256)]
+        public byte[] description;
+
+        public string Name => Text(name);
+        public string DisplayName => Text(display_name);
+        public string Description => Text(description);
+
+        public static uint StructSize => (uint)Marshal.SizeOf<GameServerSceneTemplateInfo>();
+
+        private static string Text(byte[] bytes)
+        {
+            if (bytes == null)
+            {
+                return string.Empty;
+            }
+            int length = System.Array.IndexOf(bytes, (byte)0);
+            return System.Text.Encoding.UTF8.GetString(bytes, 0, length < 0 ? bytes.Length : length);
+        }
     }
 
     // A generated terrain level (catalog `terrain:`), as composed when the

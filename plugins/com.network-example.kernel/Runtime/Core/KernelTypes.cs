@@ -22,6 +22,8 @@ namespace NetworkExample.Kernel
         public const uint GameplayCatalogSyncDefaultTimeoutMs = 30000U;
         public const uint StaticCollisionSceneMaxBytes = 64U * 1024U * 1024U;
         public const uint StaticCollisionLayerTerrain = 1U;
+        // Slot 0 is the SetStaticCollisionScene scene; 1 up are added at runtime.
+        public const uint StaticSceneSlotCount = 8U;
         public const int MaxWeaponSlots = 4;
         public const int MaxSkeletonLegs = 8;
         public const int MaxFootholdCandidates = 8;
@@ -140,6 +142,8 @@ namespace NetworkExample.Kernel
         public const ulong CapabilityServerFallDeathHeight = 0x0008000000000000UL;
         public const ulong CapabilityServerDamageRecords = 0x0010000000000000UL;
         public const ulong CapabilityAgentCommands = 0x0020000000000000UL;
+        // Additive within ABI 109: AddStaticSceneSlot / RemoveStaticSceneSlot.
+        public const ulong CapabilityStaticSceneSlots = 0x0040000000000000UL;
         public const byte AgentCommandFlagPosition = 0x01;
         public const float FallDeathHeightMeters = -10.0f;
 
@@ -1159,6 +1163,22 @@ namespace NetworkExample.Kernel
 
         public static uint StructSize =>
             (uint)Marshal.SizeOf<KernelStaticCollisionSceneConfig>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct KernelStaticSceneSlotConfig
+    {
+        public uint struct_size;
+        public uint slot;
+        public IntPtr artifact_bytes;
+        public uint artifact_size;
+        public uint scene_id;
+        public uint collider_id;
+        public uint collision_layer;
+        public KernelVec3 offset;
+
+        public static uint StructSize =>
+            (uint)Marshal.SizeOf<KernelStaticSceneSlotConfig>();
     }
 
     [StructLayout(LayoutKind.Sequential)]
