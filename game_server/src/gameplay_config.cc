@@ -10079,8 +10079,14 @@ TerrainCatalogConfig terrain_catalog_from_yaml(
              "max_retries", "playable_margin", "fallback_recipe"});
     TerrainCatalogConfig c;
     c.enabled = true;
-    if (!t["map_size"] || !t["recipe"] || !t["ground_maps"] || !t["stamps"]) {
-        return fail("requires map_size, recipe, ground_maps and stamps");
+    if (t["seed"]) c.seed = t["seed"].as<std::int32_t>();
+    if (c.seed < kTerrainSeedRandom) return fail("seed must be -1 (random) or more");
+    const bool random = c.seed == kTerrainSeedRandom;
+    if (random && t["recipe"]) {
+        return fail("with seed -1 the server generates the map, so there is no recipe to name");
+    }
+    if (!t["map_size"] || (!t["recipe"] && !random) || !t["ground_maps"] || !t["stamps"]) {
+        return fail("requires map_size, recipe (unless seed is -1), ground_maps and stamps");
     }
     keys(t["map_size"], {"x", "z"});
     auto cells = [&](float metres) {
@@ -10092,8 +10098,7 @@ TerrainCatalogConfig terrain_catalog_from_yaml(
     };
     c.base.cells_x = cells(t["map_size"]["x"].as<float>());
     c.base.cells_z = cells(t["map_size"]["z"].as<float>());
-    c.recipe_entry_path = t["recipe"].as<std::string>();
-    if (t["seed"]) c.seed = t["seed"].as<std::int32_t>();
+    if (t["recipe"]) c.recipe_entry_path = t["recipe"].as<std::string>();
     if (t["max_retries"]) c.max_retries = t["max_retries"].as<std::int32_t>();
     if (t["playable_margin"]) c.playable_margin_meters = t["playable_margin"].as<float>();
     if (c.max_retries < 1) return fail("max_retries must be at least 1");

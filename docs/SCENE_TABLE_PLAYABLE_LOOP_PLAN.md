@@ -147,7 +147,14 @@ reinforce_budget: {...}
 
 完成條件：有 `objective` 用 objective，否則用 game rule 全部完成。
 
-### L3 用 recipe 開啟
+### L3 用 recipe 開啟（已完成，`claude/scene-table-l3`）
+
+已驗證：`scene_recipe_test`，listen 和 dedicated，加上在 100 ms、20% 遺失下各跑 3 次。
+
+和計劃的差異：
+- `SCENE_STATE` 在 server 端準備好之後才列出 slot（動態地圖之前沒有 recipe），client 因此從 server 準備完才開始載入，不再和 server 同時載入。
+- recipe 由 client 主動索取（`SCENE_RECIPE_REQUEST`），不由 server 推送：重傳、中途加入、重連走同一條路。
+- 測試用 216 m 地圖只有一段；多段的切割和重組由單元測試涵蓋（3,456 B，8 段，亂序、重複、被新傳輸取代）。
 
 | # | 工作 |
 |---|---|

@@ -152,6 +152,7 @@ private:
     // fails stays owed and is tried again next tick.
     void broadcast_scene_state();
     void mark_scene_state_owed();
+    void flush_scene_recipes();
     // An enemy agent of the party's level died: count it towards the objective.
     void note_level_enemy_death(std::uint32_t net_id);
     // Someone joined after the party entered: their share of the revive pool.
@@ -190,6 +191,9 @@ private:
         std::unique_ptr<GameServerGameplayConfig> config;
         // Holds `config` by value; built once the slot is committed.
         std::unique_ptr<AgentRuntimeManager> manager;
+        // The recipe when the server generated this map; clients fetch it.
+        std::vector<std::uint8_t> recipe;
+        std::uint64_t recipe_hash = 0;
     };
     bool scene_table_enabled_ = false;
     SceneCatalogSource scene_source_;
@@ -206,6 +210,10 @@ private:
     bool level_entered_ = false;
     bool abort_level_requested_ = false;
     std::uint32_t level_defeated_ = 0;
+    bool level_announced_ = false;
+    std::set<std::uint32_t> level_failed_;
+    std::set<std::uint32_t> recipe_owed_peers_;
+    std::uint32_t next_recipe_transfer_id_ = 1;
     std::int32_t level_revives_granted_ = 0;
     float gate_open_seconds_ = 0.0f;
     std::string auto_level_;

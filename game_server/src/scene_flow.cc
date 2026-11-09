@@ -137,6 +137,9 @@ bool GameServer::request_level(const std::string& scene_template) {
     gate_open_seconds_ = 0.0f;
     level_defeated_ = 0u;
     level_revives_granted_ = 0;
+    level_announced_ = false;
+    level_failed_.clear();
+    recipe_owed_peers_.clear();
     flow_outcome_ = GAME_SERVER_SCENE_OUTCOME_NONE;
     gate_.open = false;
     set_flow(GAME_SERVER_SCENE_FLOW_LOADING);
@@ -165,6 +168,18 @@ void GameServer::handle_scene_message(const KernelGameMessage& message) {
             return;
         }
         request_level(found->name);
+    } else if (message.message_type == GAME_SERVER_MESSAGE_SCENE_RECIPE_REQUEST && message.payload_size == 5u) {
+        if (message.payload[0] == kPartyLevelSlot &&
+            get_u32(message.payload + 1) == scene_generation(kPartyLevelSlot) &&
+            scene_state(kPartyLevelSlot) == SceneSlotState::kReady) {
+            recipe_owed_peers_.insert(message.peer);
+        }
+    } else if (message.message_type == GAME_SERVER_MESSAGE_SCENE_LOAD_FAILED && message.payload_size == 6u) {
+        if (message.payload[0] == kPartyLevelSlot && flow_ != GAME_SERVER_SCENE_FLOW_CAMP &&
+            get_u32(message.payload + 1) == scene_generation(kPartyLevelSlot) && message.player_net_id != 0u) {
+            spdlog::warn("player {} could not load the level, reason {}", message.player_net_id, message.payload[5]);
+            level_failed_.insert(message.player_net_id);
+        }
     } else if (message.message_type == GAME_SERVER_MESSAGE_SCENE_ABORT && message.payload_size == 0u) {
         const std::uint32_t owner = level_owner_net_id();
         if (owner == 0u || message.player_net_id != owner || flow_ == GAME_SERVER_SCENE_FLOW_CAMP) {
@@ -177,9 +192,11 @@ void GameServer::handle_scene_message(const KernelGameMessage& message) {
 
 std::vector<std::uint8_t> GameServer::encode_scene_state() const {
     std::vector<std::uint8_t> out;
-    const bool has_level = flow_ != GAME_SERVER_SCENE_FLOW_CAMP;
+    // Listed once the server has it: until then a generated map has no recipe.
+    const bool has_level = flow_ != GAME_SERVER_SCENE_FLOW_CAMP &&
+        scene_state(kPartyLevelSlot) == SceneSlotState::kReady;
     put_u8(&out, flow_);
-    put_u8(&out, has_level ? static_cast<std::uint8_t>(kPartyLevelSlot) : 0u);
+    put_u8(&out, flow_ != GAME_SERVER_SCENE_FLOW_CAMP ? static_cast<std::uint8_t>(kPartyLevelSlot) : 0u);
     put_u32(&out, scene_generation(kPartyLevelSlot));
     put_u8(&out, flow_outcome_);
     put_u8(&out, gate_.open ? 1u : 0u);
@@ -200,6 +217,10 @@ std::vector<std::uint8_t> GameServer::encode_scene_state() const {
         put_u8(&out, static_cast<std::uint8_t>(kPartyLevelSlot));
         put_u32(&out, scene_generation(kPartyLevelSlot));
         put_u16(&out, level_template_id_);
+        const SceneSlot& level_slot = scene_slots_[kPartyLevelSlot];
+        put_u8(&out, level_slot.recipe.empty() ? GAME_SERVER_SCENE_SOURCE_BUNDLE : GAME_SERVER_SCENE_SOURCE_RECIPE);
+        put_u32(&out, static_cast<std::uint32_t>(level_slot.recipe_hash));
+        put_u32(&out, static_cast<std::uint32_t>(level_slot.recipe_hash >> 32));
         put_u8(&out, static_cast<std::uint8_t>(name.size()));
         out.insert(out.end(), name.begin(), name.end());
     }
@@ -217,6 +238,36 @@ void GameServer::flush_scene_state() {
         } else {
             ++it;
         }
+    }
+}
+
+void GameServer::flush_scene_recipes() {
+    if (recipe_owed_peers_.empty()) return;
+    const SceneSlot& slot = scene_slots_[kPartyLevelSlot];
+    if (slot.state != SceneSlotState::kReady || slot.recipe.empty()) {
+        recipe_owed_peers_.clear();
+        return;
+    }
+    for (auto it = recipe_owed_peers_.begin(); it != recipe_owed_peers_.end();) {
+        bool sent = peer_players_.count(*it) != 0u;
+        if (sent) {
+            // A transfer is all or nothing: one that fails half way starts
+            // over next tick under a new id, which replaces the partial one.
+            const auto chunks = encode_scene_recipe_chunks(
+                kPartyLevelSlot, slot.generation, next_recipe_transfer_id_++, slot.recipe);
+            for (const std::vector<std::uint8_t>& chunk : chunks) {
+                if (!Kernel_ServerSendGameMessage(kernel_, *it, GAME_SERVER_MESSAGE_SCENE_RECIPE_CHUNK,
+                        chunk.data(), static_cast<std::uint32_t>(chunk.size()))) {
+                    sent = false;
+                    break;
+                }
+            }
+            if (!sent) {
+                ++it;
+                continue;
+            }
+        }
+        it = recipe_owed_peers_.erase(it);
     }
 }
 
@@ -299,6 +350,7 @@ void GameServer::finish_level(std::uint8_t outcome) {
     level_ready_.clear();
     level_entered_ = false;
     abort_level_requested_ = false;
+    recipe_owed_peers_.clear();
     gate_.open = false;
     flow_outcome_ = outcome;
     spdlog::info("party level finished outcome={}", outcome);
@@ -318,6 +370,7 @@ void GameServer::tick_scene_flow(float delta_seconds) {
         }
     }
     flush_scene_state();
+    flush_scene_recipes();
     if (flow_ == GAME_SERVER_SCENE_FLOW_CAMP) {
         if (!auto_level_.empty() && !peer_players_.empty() &&
             flow_outcome_ != GAME_SERVER_SCENE_OUTCOME_LOAD_FAILED) {
@@ -340,11 +393,22 @@ void GameServer::tick_scene_flow(float delta_seconds) {
             finish_level(GAME_SERVER_SCENE_OUTCOME_ABORTED);
             return;
         }
+        if (!level_announced_) {
+            level_announced_ = true;
+            broadcast_scene_state();
+        }
         ready_wait_seconds_ += delta_seconds;
         bool everyone_ready = !peer_players_.empty();
+        bool everyone_failed = !peer_players_.empty();
         for (const auto& [peer, player] : peer_players_) {
             (void)peer;
-            if (level_ready_.count(player) == 0u) everyone_ready = false;
+            const bool failed = level_failed_.count(player) != 0u;
+            if (level_ready_.count(player) == 0u && !failed) everyone_ready = false;
+            if (!failed) everyone_failed = false;
+        }
+        if (everyone_failed) {
+            finish_level(GAME_SERVER_SCENE_OUTCOME_LOAD_FAILED);
+            return;
         }
         if (everyone_ready || ready_wait_seconds_ >= kReadyTimeoutSeconds) {
             if (!everyone_ready) {

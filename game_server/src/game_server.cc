@@ -493,6 +493,8 @@ bool GameServer::load_scene(std::uint32_t slot, const std::string& scene_templat
     }
     SceneSlot& target = scene_slots_[slot];
     target.state = SceneSlotState::kLoading;
+    target.recipe.clear();
+    target.recipe_hash = 0u;
     target.scene_template = scene_template;
     target.error.clear();
     // Only immutable inputs cross: the shared bundle, names and the slot.
@@ -532,6 +534,12 @@ bool GameServer::commit_scene(std::uint32_t index, PreparedScene prepared) {
     if (kernel_ == nullptr) {
         slot.error = "no kernel";
         return false;
+    }
+    slot.recipe = std::move(prepared.recipe_bytes);
+    slot.recipe_hash = slot.recipe.empty() ? 0u : prepared.terrain_recipe.heights_hash;
+    if (!slot.recipe.empty()) {
+        spdlog::info("scene slot {} generated seed={} heights_hash={:x} recipe_bytes={}",
+            index, prepared.terrain_recipe.recipe.seed, slot.recipe_hash, slot.recipe.size());
     }
     slot.config = std::make_unique<GameServerGameplayConfig>(std::move(prepared.config));
     const GameServerGameplayConfig& config = *slot.config;

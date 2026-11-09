@@ -127,6 +127,10 @@ EXPORTS
     GameServer_GetSceneTemplateCount
     GameServer_GetSceneTemplate
     GameServer_ClientLoadSceneSlot
+    GameServer_ClientAcceptSceneMessage
+    GameServer_ClientPumpSceneRecipe
+    GameServer_ClientBeginLoadSceneSlot
+    GameServer_ClientPollSceneSlotLoad
     GameServer_ClientUnloadSceneSlot
     GameServer_GetSceneTerrainInfo
     GameServer_CopySceneTerrainHeights

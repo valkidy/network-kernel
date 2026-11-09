@@ -139,6 +139,37 @@ bool GameServer_ClientLoadSceneSlot(
 bool GameServer_ClientUnloadSceneSlot(KernelHandle* kernel, uint32_t slot, uint32_t flags);
 
 /*
+ * Loading without stopping the game (preferred over ClientLoadSceneSlot).
+ *
+ * Give every SCENE_RECIPE_CHUNK to ClientAcceptSceneMessage (true when it was
+ * one). For a slot whose source is RECIPE, call ClientPumpSceneRecipe each
+ * frame until it stops returning PENDING: it asks the server for the recipe,
+ * asks again if it does not arrive, checks it against recipe_hash and gives
+ * up after several tries.
+ *
+ * ClientBeginLoadSceneSlot composes on a worker thread (FROM_RECIPE to use
+ * the fetched recipe); ClientPollSceneSlotLoad reports it and, on the call
+ * that finds it finished, does what must happen on the Kernel_Update thread.
+ */
+bool GameServer_ClientAcceptSceneMessage(KernelHandle* kernel, const KernelGameMessage* message);
+uint32_t GameServer_ClientPumpSceneRecipe(
+    KernelHandle* kernel,
+    uint32_t slot,
+    uint32_t generation,
+    uint64_t recipe_hash,
+    float delta_seconds);
+bool GameServer_ClientBeginLoadSceneSlot(
+    KernelHandle* kernel,
+    const uint8_t* bundle_bytes,
+    uint32_t bundle_size,
+    const char* entry_path,
+    const char* scene_template,
+    uint32_t slot,
+    uint32_t generation,
+    uint32_t flags);
+uint32_t GameServer_ClientPollSceneSlotLoad(KernelHandle* kernel, uint32_t slot, uint32_t generation);
+
+/*
  * The terrain and mesh queries above, for any scene slot: slot 0 is what they
  * already return, a level slot what GameServer_ClientLoadSceneSlot loaded
  * into it. Positions are world space (the slot's offset included).

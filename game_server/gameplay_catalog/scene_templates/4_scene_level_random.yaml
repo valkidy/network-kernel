@@ -1,0 +1,23 @@
+# The camp's ground with a new stamp layout every time it opens: the server
+# generates the map and sends clients the recipe (seed -1).
+id: 4
+name: level_random
+level:
+  display_name: Random terrain test
+terrain:
+  map_size: {x: 216.0, z: 216.0}
+  seed: -1
+  ground_maps: [terrain_assets/ground_0001.nkgl]
+  stamps: {count: 12, min_count: 10}
+  terrace: {levels: 19, level_height: 1.2, black: 12.0, riser_slope_degrees: 28.0, cliff_share: 0.15, cliff_width: 0.3, cliff_wavelength: 25.0}
+  detail: {amplitude: 0.4, wavelength: 12.0}
+  layout: {base_step: 1.5, ring_slope_degrees: 30.0, min_ring: 4.0, max_ring: 24.0}
+  accept: {min_reach: 0.995, max_unreachable_area: 400.0, max_seam_breaks: 0, min_placed: 10}
+  max_retries: 8
+stamp_template_dir: stamp_templates
+preload_directors: []
+patrols: []
+scene_props: []
+agent_routes: []
+player:
+  spawn_position: {x: -1.2, y: 40.0, z: -31.0}

@@ -111,9 +111,9 @@ struct Follower {
         s.target = static_cast<std::uint16_t>(p[30] | (p[31] << 8));
         std::uint32_t at = 33;
         for (std::uint32_t k = 0; k < p[32]; ++k) {
-            const std::uint32_t name_length = p[at + 7];
-            s.slots[p[at]] = {u32_at(p + at + 1), std::string(reinterpret_cast<const char*>(p + at + 8), name_length)};
-            at += 8 + name_length;
+            const std::uint32_t name_length = p[at + 16];
+            s.slots[p[at]] = {u32_at(p + at + 1), std::string(reinterpret_cast<const char*>(p + at + 17), name_length)};
+            at += 17 + name_length;
         }
         require(at == m.payload_size);
         state = s;
@@ -327,13 +327,13 @@ void listen_host(const std::vector<std::uint8_t>& bundle, std::uint16_t index) {
     require(a->state.flow == GAME_SERVER_SCENE_FLOW_CAMP);
 
     // A client can list the levels from its own synced catalog.
-    require(GameServer_GetSceneTemplateCount(a->kernel) == 3u);
+    require(GameServer_GetSceneTemplateCount(a->kernel) == 4u);
     GameServerSceneTemplateInfo info{};
     info.struct_size = sizeof(info);
     require(GameServer_GetSceneTemplate(a->kernel, 1u, &info));
     require(info.template_id == index && std::string(info.name) == kLevel);
     require(std::string(info.display_name) == "Mission test");
-    require(!GameServer_GetSceneTemplate(a->kernel, 3u, &info));
+    require(!GameServer_GetSceneTemplate(a->kernel, 4u, &info));
 
     // The state is re-sent with nothing changing.
     const int before = a->states_received;

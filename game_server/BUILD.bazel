@@ -2297,6 +2297,20 @@ cc_test(
     ],
 )
 
+# Opening a level by recipe: generation, chunked transfer, worker compose
+# (docs/SCENE_TABLE_PLAYABLE_LOOP_PLAN.md L3).
+cc_test(
+    name = "scene_recipe_test",
+    size = "medium",
+    srcs = ["tests/scene_recipe_test.cc"],
+    data = ["//game_server/gameplay_catalog_bundle:bundle"],
+    deps = [
+        ":game_server",
+        ":game_server_bridge",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
 # The scene table through the paths real servers start on: the C API a Unity
 # host uses, room ownership, and the ways out of a level
 # (docs/SCENE_TABLE_PLAYABLE_LOOP_PLAN.md L0).

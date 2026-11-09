@@ -7,7 +7,9 @@
 // on a worker thread.
 
 #include <cstdint>
+#include <map>
 #include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -57,6 +59,9 @@ struct PreparedScene {
     // A terrain level's composed heights and recipe, for a client to draw.
     terrain::HeightGrid terrain_heights;
     terrain::StoredRecipe terrain_recipe;
+    // The NKTR recipe when this map was generated here rather than read from
+    // the bundle: what clients must be sent. Empty otherwise.
+    std::vector<std::uint8_t> recipe_bytes;
 };
 
 // Loads `scene_template` for `slot`: the template's config, its map (a
@@ -69,7 +74,39 @@ PreparedScene prepare_scene(
     const SceneCatalogSource& source,
     const std::string& scene_template,
     std::uint32_t slot,
-    TerrainRole role = TerrainRole::kServer);
+    TerrainRole role = TerrainRole::kServer,
+    std::span<const std::uint8_t> recipe = {});
+
+// A recipe in game messages (SCENE_RECIPE_CHUNK), and back. Reliable delivery
+// is GNS's; what these handle is a transfer that restarts, is replaced by a
+// newer one, or is abandoned half way.
+inline constexpr std::size_t kSceneRecipeChunkBytes = 480u;
+
+std::vector<std::vector<std::uint8_t>> encode_scene_recipe_chunks(
+    std::uint32_t slot,
+    std::uint32_t generation,
+    std::uint32_t transfer_id,
+    std::span<const std::uint8_t> recipe);
+
+class SceneRecipeAssembler {
+public:
+    // False for a malformed chunk. A chunk of an older generation or transfer
+    // than the one being assembled is ignored; a newer one replaces it.
+    bool accept(std::span<const std::uint8_t> body);
+    // The whole recipe, once every chunk of the slot's transfer has arrived.
+    const std::vector<std::uint8_t>* complete(std::uint32_t slot, std::uint32_t generation) const;
+    void forget(std::uint32_t slot);
+
+private:
+    struct Transfer {
+        std::uint32_t generation = 0;
+        std::uint32_t transfer_id = 0;
+        std::uint32_t received = 0;
+        std::vector<std::vector<std::uint8_t>> chunks;
+        std::vector<std::uint8_t> bytes;
+    };
+    std::map<std::uint32_t, Transfer> transfers_;
+};
 
 }  // namespace network_example::game_server
 

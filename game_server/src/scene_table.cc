@@ -1,7 +1,10 @@
 #include "game_server/src/scene_table.h"
 
 #include <cmath>
+#include <algorithm>
+#include <cstring>
 #include <exception>
+#include <random>
 #include <span>
 #include <utility>
 
@@ -81,7 +84,8 @@ PreparedScene prepare_scene(
     const SceneCatalogSource& source,
     const std::string& scene_template,
     std::uint32_t slot,
-    TerrainRole role) {
+    TerrainRole role,
+    std::span<const std::uint8_t> given_recipe) {
     PreparedScene out;
     try {
         if (slot == 0u || slot >= kSceneSlotCount) {
@@ -96,12 +100,15 @@ PreparedScene prepare_scene(
             : load_scene_template_config_from_catalog_file(source.catalog_file, scene_template);
         GameServerGameplayConfig& config = out.config;
         if (config.terrain.enabled) {
-            if (!from_bundle) {
-                out.error = "scene template " + scene_template +
-                    " is a terrain; its recipe is only in the bundle";
-                return out;
+            std::vector<std::uint8_t> recipe(given_recipe.begin(), given_recipe.end());
+            if (recipe.empty() && from_bundle) {
+                recipe = read_cooked_terrain_recipe(bytes, size, config.terrain);
             }
-            const std::vector<std::uint8_t> recipe = read_cooked_terrain_recipe(bytes, size, config.terrain);
+            if (recipe.empty() && role == TerrainRole::kServer &&
+                config.terrain.seed == kTerrainSeedRandom) {
+                std::random_device device;
+                config.terrain.seed = static_cast<std::int32_t>(device() & 0x7fffffffu);
+            }
             PreparedTerrain prepared;
             std::string error;
             if (!prepare_catalog_terrain(&config, std::span<const std::uint8_t>(recipe),
@@ -110,6 +117,9 @@ PreparedScene prepare_scene(
                 return out;
             }
             out.collision_artifact = std::move(prepared.collision_artifact);
+            if (prepared.generated) {
+                out.recipe_bytes = terrain::write_recipe(prepared.recipe);
+            }
             out.terrain_heights = std::move(prepared.heights);
             out.terrain_recipe = std::move(prepared.recipe);
         } else {
@@ -134,6 +144,90 @@ PreparedScene prepare_scene(
         out.error = "scene template " + scene_template + ": " + error.what();
     }
     return out;
+}
+
+std::vector<std::vector<std::uint8_t>> encode_scene_recipe_chunks(
+    std::uint32_t slot,
+    std::uint32_t generation,
+    std::uint32_t transfer_id,
+    std::span<const std::uint8_t> recipe) {
+    std::vector<std::vector<std::uint8_t>> chunks;
+    const std::size_t count = (recipe.size() + kSceneRecipeChunkBytes - 1u) / kSceneRecipeChunkBytes;
+    for (std::size_t index = 0; index < count; ++index) {
+        const std::size_t begin = index * kSceneRecipeChunkBytes;
+        const std::size_t length = std::min(kSceneRecipeChunkBytes, recipe.size() - begin);
+        std::vector<std::uint8_t> body;
+        body.reserve(13u + length);
+        body.push_back(static_cast<std::uint8_t>(slot));
+        const auto put32 = [&](std::uint32_t v) {
+            for (int k = 0; k < 4; ++k) body.push_back(static_cast<std::uint8_t>(v >> (8 * k)));
+        };
+        put32(generation);
+        put32(transfer_id);
+        body.push_back(static_cast<std::uint8_t>(index));
+        body.push_back(static_cast<std::uint8_t>(index >> 8));
+        body.push_back(static_cast<std::uint8_t>(count));
+        body.push_back(static_cast<std::uint8_t>(count >> 8));
+        body.insert(body.end(), recipe.begin() + static_cast<std::ptrdiff_t>(begin),
+            recipe.begin() + static_cast<std::ptrdiff_t>(begin + length));
+        chunks.push_back(std::move(body));
+    }
+    return chunks;
+}
+
+bool SceneRecipeAssembler::accept(std::span<const std::uint8_t> body) {
+    if (body.size() <= 13u) return false;
+    const auto u32 = [&](std::size_t at) {
+        return static_cast<std::uint32_t>(body[at]) | (static_cast<std::uint32_t>(body[at + 1]) << 8) |
+            (static_cast<std::uint32_t>(body[at + 2]) << 16) | (static_cast<std::uint32_t>(body[at + 3]) << 24);
+    };
+    const std::uint32_t slot = body[0];
+    const std::uint32_t generation = u32(1);
+    const std::uint32_t transfer_id = u32(5);
+    const std::uint32_t index = body[9] | (static_cast<std::uint32_t>(body[10]) << 8);
+    const std::uint32_t count = body[11] | (static_cast<std::uint32_t>(body[12]) << 8);
+    if (count == 0u || index >= count) return false;
+    auto found = transfers_.find(slot);
+    if (found != transfers_.end()) {
+        const Transfer& current = found->second;
+        if (generation < current.generation ||
+            (generation == current.generation && transfer_id < current.transfer_id)) {
+            return true;  // stale, not malformed
+        }
+    }
+    Transfer& transfer = transfers_[slot];
+    if (transfer.chunks.empty() || transfer.generation != generation ||
+        transfer.transfer_id != transfer_id || transfer.chunks.size() != count) {
+        transfer = Transfer{};
+        transfer.generation = generation;
+        transfer.transfer_id = transfer_id;
+        transfer.chunks.resize(count);
+    }
+    std::vector<std::uint8_t>& chunk = transfer.chunks[index];
+    if (!chunk.empty()) return true;  // a repeat
+    chunk.assign(body.begin() + 13, body.end());
+    ++transfer.received;
+    if (transfer.received == count) {
+        transfer.bytes.clear();
+        for (const std::vector<std::uint8_t>& part : transfer.chunks) {
+            transfer.bytes.insert(transfer.bytes.end(), part.begin(), part.end());
+        }
+    }
+    return true;
+}
+
+const std::vector<std::uint8_t>* SceneRecipeAssembler::complete(
+    std::uint32_t slot, std::uint32_t generation) const {
+    const auto found = transfers_.find(slot);
+    if (found == transfers_.end() || found->second.generation != generation ||
+        found->second.chunks.empty() || found->second.received != found->second.chunks.size()) {
+        return nullptr;
+    }
+    return &found->second.bytes;
+}
+
+void SceneRecipeAssembler::forget(std::uint32_t slot) {
+    transfers_.erase(slot);
 }
 
 }  // namespace network_example::game_server

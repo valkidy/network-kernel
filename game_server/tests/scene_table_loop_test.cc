@@ -104,9 +104,9 @@ SceneState decode_state(const KernelGameMessage& m) {
     for (std::uint32_t k = 0; k < count; ++k) {
         const std::uint32_t slot = p[at];
         const std::uint32_t generation = u32(p + at + 1);
-        const std::uint32_t name_length = p[at + 7];
-        s.slots[slot] = {generation, std::string(reinterpret_cast<const char*>(p + at + 8), name_length)};
-        at += 8 + name_length;
+        const std::uint32_t name_length = p[at + 16];
+        s.slots[slot] = {generation, std::string(reinterpret_cast<const char*>(p + at + 17), name_length)};
+        at += 17 + name_length;
     }
     require(at == m.payload_size);
     return s;

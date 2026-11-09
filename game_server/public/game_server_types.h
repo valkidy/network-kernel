@@ -109,12 +109,16 @@
  *     u8  slot
  *     u32 generation
  *     u16 template_id        its scene template's id
+ *     u8  source             GAME_SERVER_SCENE_SOURCE_*: in the bundle, or a
+ *                            recipe the client must first fetch
+ *     u64 recipe_hash        heights hash of that recipe; 0 for the bundle
  *     u8  name_length        1..32
  *     name_length bytes      the template's name, no terminator
  *   }
- *   A client loads each listed slot it does not have at that generation
- *   (GameServer_ClientLoadSceneSlot), answers SCENE_READY once it has, and
- *   unloads any it has that is not listed.
+ *   A slot is listed once the server has it ready. A client loads each listed
+ *   slot it does not have at that generation (BeginLoad, after PumpSceneRecipe
+ *   for a recipe), answers SCENE_READY once it has, and unloads any it has
+ *   that is not listed.
  *
  * SCENE_READY, client -> server. The slot's collision is in this client's
  * prediction world (art may still be loading).
@@ -130,11 +134,35 @@
  * only from the owner. Empty body.
  *
  * SCENE_STATE is also re-sent every few seconds, and until a send succeeds.
+ *
+ * SCENE_RECIPE_CHUNK, server -> client. One piece of a slot's recipe. Hand
+ * these to GameServer_ClientAcceptSceneMessage; nothing else reads them.
+ *   u8  slot; u32 generation; u32 transfer_id; u16 chunk_index; u16 chunk_count
+ *   the rest of the body: that chunk's bytes
+ *
+ * SCENE_RECIPE_REQUEST, client -> server. Send me this slot's recipe, whole.
+ * GameServer_ClientPumpSceneRecipe sends it, and again if it does not arrive.
+ *   u8  slot; u32 generation
+ *
+ * SCENE_LOAD_FAILED, client -> server. This client could not build the slot.
+ * It stays out of the level; the party does not wait for it.
+ *   u8  slot; u32 generation; u8 reason
  */
 #define GAME_SERVER_MESSAGE_SCENE_STATE 4u
 #define GAME_SERVER_MESSAGE_SCENE_READY 5u
 #define GAME_SERVER_MESSAGE_SCENE_SELECT 6u
 #define GAME_SERVER_MESSAGE_SCENE_ABORT 7u
+#define GAME_SERVER_MESSAGE_SCENE_RECIPE_CHUNK 8u
+#define GAME_SERVER_MESSAGE_SCENE_RECIPE_REQUEST 9u
+#define GAME_SERVER_MESSAGE_SCENE_LOAD_FAILED 10u
+
+#define GAME_SERVER_SCENE_SOURCE_BUNDLE 0u
+#define GAME_SERVER_SCENE_SOURCE_RECIPE 1u
+
+/* GameServer_ClientPumpSceneRecipe and PollSceneSlotLoad. */
+#define GAME_SERVER_SCENE_LOAD_PENDING 0u
+#define GAME_SERVER_SCENE_LOAD_READY 1u
+#define GAME_SERVER_SCENE_LOAD_FAILED 2u
 
 #define GAME_SERVER_SCENE_FLOW_CAMP 0u
 #define GAME_SERVER_SCENE_FLOW_LOADING 1u
@@ -154,6 +182,8 @@
  * client sets it; a listen host does not, because its server side already
  * added the slot to both of its worlds. */
 #define GAME_SERVER_SCENE_LOAD_REGISTER_COLLISION 0x1u
+/* Compose from the recipe PumpSceneRecipe fetched, not from the bundle. */
+#define GAME_SERVER_SCENE_LOAD_FROM_RECIPE 0x2u
 
 #ifdef __cplusplus
 extern "C" {

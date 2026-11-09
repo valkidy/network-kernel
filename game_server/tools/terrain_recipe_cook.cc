@@ -47,6 +47,10 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "terrain_recipe_cook: %s has no terrain\n", argv[2]);
             return 1;
         }
+        if (config.terrain.seed == gs::kTerrainSeedRandom) {
+            std::fprintf(stderr, "terrain_recipe_cook: %s has seed -1: it is generated when opened, not cooked\n", argv[2]);
+            return 1;
+        }
         gs::PreparedTerrain prepared;
         std::string error;
         const bool ok = gs::generate_catalog_terrain(config.terrain, &prepared, nullptr, &error);
