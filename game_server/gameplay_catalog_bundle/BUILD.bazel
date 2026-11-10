@@ -178,3 +178,14 @@ find "$$bundle_root" -exec touch -t 198001010000 {} +
 rm -rf "$$bundle_root"
 """,
 )
+
+# What a level editor may place, from the finished bundle in the same build:
+# names, ids, default grounding and collider bounds of every prop template
+# (docs/LEVEL_AUTHORING_TOOLS_PLAN.md P4). Ships beside bundle.bytes, not in it.
+genrule(
+    name = "placeable_registry",
+    srcs = [":bundle"],
+    outs = ["placeable_registry.json"],
+    cmd = "$(location //game_server:placeable_registry) $(location :bundle) gameplay_catalog.yaml $@",
+    tools = ["//game_server:placeable_registry"],
+)

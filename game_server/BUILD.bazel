@@ -51,6 +51,7 @@ cc_library(
         "src/patrol_navigation.cc",
         "src/patrol_targeting.cc",
         "src/respawn_scheduler.cc",
+        "src/placeable_registry.cc",
         "src/scene_placement.cc",
         "src/scene_table.cc",
         "src/scene_flow.cc",
@@ -78,6 +79,7 @@ cc_library(
         "src/game_server.h",
         "src/respawn_scheduler.h",
         "src/scene_bounds.h",
+        "src/placeable_registry.h",
         "src/scene_placement.h",
         "src/scene_table.h",
         "src/shelter_director.h",
@@ -2339,6 +2341,31 @@ cc_binary(
         "//engine/src/kernel:kernel_api",
         "//engine/src/physics:physics",
         "@recastnavigation//:detour",
+    ],
+)
+
+# The level editor's registry of placeable templates, written beside the
+# bundle (docs/LEVEL_AUTHORING_TOOLS_PLAN.md P4).
+cc_binary(
+    name = "placeable_registry",
+    srcs = ["tools/placeable_registry.cc"],
+    visibility = ["//game_server/gameplay_catalog_bundle:__pkg__"],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
+    name = "placeable_registry_test",
+    srcs = ["tests/placeable_registry_test.cc"],
+    data = [
+        "//game_server/gameplay_catalog_bundle:bundle",
+        "//game_server/gameplay_catalog_bundle:placeable_registry",
+    ],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
     ],
 )
 
