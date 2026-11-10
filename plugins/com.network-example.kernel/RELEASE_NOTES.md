@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- updates to catalog v20 with initial-camp startup and fixed scene templates, replacing map variants
+
+
+0.7.0 release notes:
+
 - adds runtime scene slots, asynchronous level loading and camp-terminal level selection
 
 
