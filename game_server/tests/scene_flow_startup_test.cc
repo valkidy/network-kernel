@@ -358,6 +358,14 @@ void listen_host(const std::vector<std::uint8_t>& bundle, std::uint16_t index) {
     require(std::string(info.display_name) == "Mission test");
     require(!GameServer_GetSceneTemplate(a->kernel, 4u, &info));
 
+    // The camp (0) and a test map (5) are scene templates but not levels:
+    // neither is listed above, and asking for one opens nothing.
+    for (const std::uint16_t not_a_level : {std::uint16_t{0}, std::uint16_t{5}}) {
+        select_level(server.kernel, not_a_level);
+        world.settle(0.5);
+        require(a->state.flow == GAME_SERVER_SCENE_FLOW_CAMP && a->state.slots.empty());
+    }
+
     // The state is re-sent with nothing changing.
     const int before = a->states_received;
     for (int i = 0; i < 400; ++i) world.frame();
@@ -625,7 +633,7 @@ void joiner_with_level_out_of_revives(const std::vector<std::uint8_t>& bundle_by
 // The real camp: its level terminal, activated the way a player would.
 void camp_level_terminal(const std::vector<std::uint8_t>& bundle, std::uint16_t index) {
     World world;
-    const CApiServer server = start_c_api(&world, true, 8244, bundle, "gameplay_catalog.camp.yaml");
+    const CApiServer server = start_c_api(&world, true, 8244, bundle, "gameplay_catalog.yaml");
     Follower host{server.kernel, false, &bundle};
     world.followers.push_back(&host);
     Follower* a = world.join();
@@ -700,6 +708,48 @@ void camp_level_terminal(const std::vector<std::uint8_t>& bundle, std::uint16_t 
     stop(&world, server);
 }
 
+// A level template as the start scene (docs/START_SCENE_PLAN.md Q1): its map,
+// game_rule and props run, but none of the level flow -- no objective, no
+// return gate, nothing to come back to.
+void level_as_start_scene(const std::vector<std::uint8_t>& bundle) {
+    World world;
+    const CApiServer server = start_c_api(&world, true, 8250, bundle, "gameplay_catalog.scene_3.yaml");
+    Follower host{server.kernel, false, &bundle};
+    world.followers.push_back(&host);
+    Follower* a = world.join();
+    const auto agents = [&] {
+        std::vector<KernelServerEntityState> all(512);
+        for (auto& one : all) one.struct_size = sizeof(one);
+        all.resize(Kernel_ServerQueryEntities(server.kernel, KernelEntityType_Actor, all.data(), 512u));
+        std::vector<KernelServerEntityState> out;
+        for (const auto& one : all) {
+            if (one.actor_type == KernelActorType_Agent && one.hp != 0u && one.position.y > -5.0f) out.push_back(one);
+        }
+        return out;
+    };
+    // Its game_rule puts enemies out, in slot 0.
+    require(world.until([&] { return !agents().empty(); }, 60.0));
+    for (const auto& one : agents()) require(gs::scene_slot_bounds(0u).contains(one.position.x));
+    // Kill well past its objective: the flow stays in the camp state with no target and no gate.
+    const KernelQuat facing{0.0f, 0.0f, 0.0f, 1.0f};
+    int killed = 0;
+    world.until([&] {
+        for (const auto& one : agents()) {
+            const KernelVec3 under{one.position.x, -30.0f, one.position.z};
+            if (Kernel_ServerSetEntityTransform(server.kernel, one.net_id, &under, &facing)) ++killed;
+        }
+        return killed >= 25;
+    }, 60.0);
+    world.settle(1.0);
+    std::printf("level as start scene: %d enemies killed, flow %u, target %u, gate %d\n",
+        killed, a->state.flow, a->state.target, a->state.gate_open ? 1 : 0);
+    require(killed >= 1);
+    require(a->state.flow == GAME_SERVER_SCENE_FLOW_CAMP);
+    require(a->state.target == 0u && !a->state.gate_open && a->state.slots.empty());
+    world.followers.erase(std::find(world.followers.begin(), world.followers.end(), &host));
+    stop(&world, server);
+}
+
 }  // namespace
 
 int main() {
@@ -711,6 +761,7 @@ int main() {
     objective_and_revives(bundle);
     joiner_with_level_out_of_revives(bundle);
     camp_level_terminal(bundle, index);
+    level_as_start_scene(bundle);
     std::printf("scene_flow_startup_test passed\n");
     return 0;
 }

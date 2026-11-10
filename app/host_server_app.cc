@@ -103,7 +103,8 @@ int RunHostServer(
     std::uint32_t physics_simulation,
     std::uint32_t physics_workers,
     std::uint32_t actor_blocking,
-    std::uint32_t frame_count) {
+    std::uint32_t frame_count,
+    std::int32_t start_scene) {
     log_native_build_info();
 
     network_example::game_server::GameServerGameplayConfig gameplay_config;
@@ -137,8 +138,10 @@ int RunHostServer(
             }
         } else {
             gameplay_config =
-                network_example::game_server::load_gameplay_config_from_catalog_file(
-                    gameplay_catalog_path);
+                start_scene >= 0
+                ? network_example::game_server::load_start_scene_config_from_catalog_file(
+                      gameplay_catalog_path, static_cast<std::uint16_t>(start_scene))
+                : network_example::game_server::load_gameplay_config_from_catalog_file(gameplay_catalog_path);
             // The same two entries the bundle branch pulls, named the same way
             // -- relative to the catalog -- which on disk means relative to the
             // file rather than to the archive root.

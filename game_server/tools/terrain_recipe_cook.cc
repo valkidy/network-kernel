@@ -5,7 +5,8 @@
 //
 //   terrain_recipe_cook <bundle.zip> <entry.yaml> <out.nktr> [<map_variant> | scene_template:<name>]
 //
-// With <map_variant>, cooks that one of the catalog's map_variants whichever
+// With <map_variant> (catalog_version 19 and older; version 20 has none),
+// cooks that one of the catalog's map_variants whichever
 // one its map_variant plays, so switching the catalog to a mesh map and back
 // never leaves the bundle without a recipe. With scene_template:<name>, cooks
 // that one of its scene_templates (docs/SCENE_TABLE_PLAN.md S2): every terrain

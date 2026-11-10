@@ -12,6 +12,8 @@ int RunHostServer(
     std::uint32_t physics_simulation,
     std::uint32_t physics_workers,
     std::uint32_t actor_blocking,
-    std::uint32_t frame_count);
+    std::uint32_t frame_count,
+    // As RunDedicatedServer's.
+    std::int32_t start_scene = -1);
 
 #endif  // APP_HOST_SERVER_APP_H_

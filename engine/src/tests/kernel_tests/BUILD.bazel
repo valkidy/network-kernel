@@ -310,6 +310,7 @@ cc_test(
     data = [
         "//engine/src/kernel:network_kernel_shared",
         "//game_server:gameplay_catalog_bundle_sources",
+        "//game_server/gameplay_catalog_bundle:bundle",
     ],
     deps = [
         "//engine/src/kernel:kernel_api",

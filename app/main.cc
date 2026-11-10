@@ -48,7 +48,11 @@ struct Options {
     bool actor_blocking_explicit = false;
     bool gameplay_catalog_explicit = false;
     bool max_players_explicit = false;
+    bool gameplay_catalog_entry_explicit = false;
     std::string level;
+    // --scene: the scene template slot 0 starts on; -1 for the catalog's own
+    // start_scene (0, the initial camp).
+    std::int32_t start_scene = -1;
 };
 
 void print_usage() {
@@ -58,6 +62,8 @@ void print_usage() {
         "[--gameplay-catalog=game_server/gameplay_catalog/gameplay_catalog.yaml] "
         "[--gameplay-catalog-bundle=path/to/bundle.zip] "
         "[--gameplay-catalog-entry=gameplay_catalog.yaml] "
+        "[--scene=<scene template id>] (servers; starts slot 0 on that template, "
+        "the initial camp (0) by default; not with --gameplay-catalog-entry) "
         "[--catalog-content-namespace=default] "
         "[--catalog-cache-dir=path] [--host-frames=12] "
         "[--network-stats=off|basic|detailed] "
@@ -275,6 +281,16 @@ bool parse_args(int argc, char** argv, Options* options) {
         }
         if (read_value(arg, "--gameplay-catalog-entry", &index, argc, argv, &value)) {
             options->gameplay_catalog_entry = value;
+            options->gameplay_catalog_entry_explicit = true;
+            continue;
+        }
+        if (read_value(arg, "--scene", &index, argc, argv, &value)) {
+            std::uint32_t scene = 0;
+            if (!parse_u32_allow_zero(value, &scene) || scene > 0xffffu) {
+                spdlog::error("invalid scene template id: {}", value);
+                return false;
+            }
+            options->start_scene = static_cast<std::int32_t>(scene);
             continue;
         }
         if (read_value(arg, "--catalog-content-namespace", &index, argc, argv, &value)) {
@@ -380,6 +396,22 @@ bool parse_args(int argc, char** argv, Options* options) {
         spdlog::error("--level is dedicated-server-only");
         return false;
     }
+    if (options->start_scene >= 0) {
+        if (options->mode == "client") {
+            spdlog::error("--scene is server-only: a client plays the scene its server names");
+            return false;
+        }
+        if (options->gameplay_catalog_entry_explicit) {
+            spdlog::error(
+                "--scene and --gameplay-catalog-entry both pick the start scene; give one "
+                "(--scene=N is --gameplay-catalog-entry=gameplay_catalog.scene_N.yaml)");
+            return false;
+        }
+        // The bundle carries one entry per template that can start a session
+        // (docs/START_SCENE_PLAN.md); a random level has none and opens from the camp.
+        options->gameplay_catalog_entry =
+            "gameplay_catalog.scene_" + std::to_string(options->start_scene) + ".yaml";
+    }
     return true;
 }
 
@@ -430,7 +462,8 @@ int main(int argc, char** argv) {
             options.actor_blocking,
             options.netcode_preset.c_str(),
             options.max_players,
-            options.level.c_str());
+            options.level.c_str(),
+            options.start_scene);
     }
     if (options.mode == "client") {
         return RunClient(
@@ -463,7 +496,8 @@ int main(int argc, char** argv) {
             options.physics_simulation,
             options.physics_workers,
             options.actor_blocking,
-            options.host_frames);
+            options.host_frames,
+            options.start_scene);
     }
 
     spdlog::error("unknown mode: {}", options.mode);

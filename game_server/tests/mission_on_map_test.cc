@@ -276,8 +276,8 @@ void play(
 
 int main() {
     const std::vector<std::uint8_t> bundle = read_bundle();
-    play(bundle, "gameplay_catalog.composed_mesh.yaml", 8072);
-    play(bundle, "gameplay_catalog.kernel_terrain.yaml", 8073);
+    play(bundle, "gameplay_catalog.scene_5.yaml", 8072);
+    play(bundle, "gameplay_catalog.scene_6.yaml", 8073);
     std::printf("mission_on_map_test passed\n");
     return 0;
 }
