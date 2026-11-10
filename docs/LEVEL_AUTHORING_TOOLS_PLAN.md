@@ -44,7 +44,8 @@
 | D6 | 事件解鎖的區域用一般的 static obstacle，而且必須是 **entity prop**（解鎖時移除，晚加入的玩家從 snapshot 得知）。 |
 | D7 | 會變的東西不是地形（kernel terrain 計畫 §8 的規則）。 |
 | D8 | registry 與 prefab 對照用**名稱**存，生成時以同一個 catalog 版本的數字 id 對起來（id 在合併時會重新編號）。 |
-| D9 | 空氣牆（`player_barrier`）是**永久**的：scene 載入時放好，執行中不移除，所以不需要開關或同步。之後會開放的區域一律用 D6 的 entity prop（看得見、也擋 NPC）。用途：地圖邊界、永遠不開放的區域。 |
+| D9 | scene 的空氣牆（`player_barriers:`）是**永久**的：scene 載入時放好，執行中不移除，所以不需要開關或同步。用途：地圖邊界、永遠不開放的區域。 |
+| D10 | 之後會開放、但不想讓玩家看見的牆，用 **entity 版 `player_barrier`**（P1b）：collider purpose `player_barrier` 的 prop，刪掉 entity 就開放，晚加入的玩家從 snapshot 得知。看得見、也擋 NPC 的解鎖牆照 D6。 |
 
 ### 2.2 待確認（附建議）
 
@@ -152,6 +153,7 @@ player_barriers: []                  # 同 3.1，stamp 本地座標
 | K4 | 新 export：`Kernel_SetStaticScenePlayerBarriers(kernel, slot, const KernelPlayerBarrierBox* boxes, uint32_t count)`，每次呼叫取代該 slot 的全部牆；`Kernel_RemoveStaticSceneSlot` 時一併移除。server world 和 client prediction world 都要加。放在新的 capability bit 後面（additive，不升 ABI 版本；挑 bit 時對照 `capability-bits-not-contiguous` 的教訓）。 |
 | K5 | 確認 character controller、hover、knockback 飛行、leap 這幾條移動路徑都用 actor 自己的移動 mask 查碰撞；任何一條如果寫死預設 mask，牆就會對它失效。 |
 | K6 | Windows `.def` 和 macOS `BUILD.bazel` 的 export 清單都要加（兩份清單）。 |
+| K7（P1b，選做） | collider purpose `player_barrier`：prop collider 的物理層現在寫死為 static obstacle（server 端 `push_collider_into_physics`、client 端 prediction proxy 各一處），各加一個分支讓這種 collider 進 `kPlayerBarrier`。不接受用在 actor 上。 |
 
 ## 5. game_server
 
@@ -222,9 +224,10 @@ player_barriers: []                  # 同 3.1，stamp 本地座標
 | P4 | G7：registry json | 產生的 json 和 catalog 一致（名稱、id、bounds） |
 | P5 | Unity：`SceneMarker`、`AirWall`、registry 下拉、檢查、stamp 匯出修正 | batchmode 自我測試（沿用 `AnnotationSelfTestBatch` 的做法）：匯出的檔案丟進 catalog 能直接載入 |
 | P6 | Unity：scene 匯出（mesh 模式，round-trip） | 用工具重做 `0_scene_initial_camp.yaml`，和現在的檔案比對 |
+| P1b（選做） | K7 加上 catalog 的 `player_barrier_wall` entity template（只有這個 collider，沒有 HP、不能互動）；Unity 端在 `NetworkPrefabCatalog` 綁一個空 prefab（使用者負責） | 延伸 `player_barrier_test`：prop 版擋玩家、不擋 NPC 和子彈；刪掉 entity 後玩家能通過；client prediction 一致 |
 | P7（第二階段） | G5、G6：terrain 手動擺放、recipe 自動 cook | 手擺的 terrain scene 不改 BUILD 就能 build 進 bundle 並載入 |
 
-P1 與 P3–P4 互不依賴，可以並行；P2 依賴 P1；P5–P6 依賴 P2–P4 的格式。
+P1 與 P3–P4 互不依賴，可以並行；P1b、P2 依賴 P1；P5–P6 依賴 P2–P4 的格式。
 
 ## 9. 版本影響
 
