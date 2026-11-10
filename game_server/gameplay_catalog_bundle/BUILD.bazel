@@ -118,10 +118,12 @@ rm -rf "$$bundle_root"
 """,
 )
 
-# The terrain level's recipe, generated (layout, checks, retries, fallback)
-# from the catalog's seed at build time, so every server and client of this
+# The kernel terrain map's recipe, generated (layout, checks, retries,
+# fallback) from its seed at build time, so every server and client of this
 # bundle composes the same map (docs/KERNEL_TERRAIN_IMPLEMENTATION_PLAN.md P3).
-# The report lists every attempt.
+# Cooked from scene template 6, which carries that map now
+# (docs/START_SCENE_PLAN.md step B); the path is its terrain.recipe. The
+# report lists every attempt.
 genrule(
     name = "terrain_recipe",
     srcs = [":bundle_uncooked"],
@@ -129,7 +131,7 @@ genrule(
         "gameplay_catalog.nktr",
         "terrain_recipe_report.txt",
     ],
-    cmd = "$(location //game_server:terrain_recipe_cook) $(location :bundle_uncooked) gameplay_catalog.yaml $(location gameplay_catalog.nktr) kernel_terrain > $(location terrain_recipe_report.txt)",
+    cmd = "$(location //game_server:terrain_recipe_cook) $(location :bundle_uncooked) gameplay_catalog.yaml $(location gameplay_catalog.nktr) scene_template:kernel_terrain_test > $(location terrain_recipe_report.txt)",
     tools = ["//game_server:terrain_recipe_cook"],
 )
 

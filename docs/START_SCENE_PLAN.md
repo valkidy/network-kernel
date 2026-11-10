@@ -80,7 +80,7 @@ template 本來就是一個完整的場景描述，所以 slot 0 也改用 templ
 |---|---|---|---|
 | P1 | 載入器：`start_scene`、id 0、`level:` 規則、slot 0 不能是 `seed: -1`、v20 拒絕 `map_variant(s)` | `scene_template_catalog_test` | 完成（`claude/start-scene-p1`） |
 | A | v19 下新增 template 0、5、6，和 variant 並存；載入器加「指定起始場景 id」（`load_start_scene_config_from_*`）；關卡清單和 `SCENE_SELECT` 只認 `level:`（原 P5 提前） | 三個 template 和對應 variant 的 catalog hash 相同；清單只列 4 個關卡；選 0 或 5 不會開關卡 | 完成（`claude/start-scene-a`） |
-| B | 地形 recipe 改從 template 6 烘焙（原 P3） | golden hash 不變 | |
+| B | 地形 recipe 改從 template 6 烘焙（原 P3） | recipe 和改動前逐 byte 相同（heights_hash `e03e9e899ec5c966`）；改 template 6 的 seed 時 recipe 跟著變 | 完成（`claude/start-scene-b`） |
 | C | 一次切換（原 P2 + P4 + P7）：root 升 v20、`start_scene: 0`、刪除 variant、bundle 產生 `gameplay_catalog.scene_<id>.yaml`、依賴任務地圖的測試改指定 template 5、variant 入口的引用改名 | 完整回歸只允許原本的 6 個失敗 | |
 | D | app 的 `--scene` 和 Q7 的衝突檢查（原 P6）；確認關卡 template 當 slot 0 時不跑關卡流程（原 P5 的 Q1 部分）；文件（原 P8） | 實際啟動 dedicated：`--scene=0`、`--scene=5`、`--scene=4`（應失敗）、`--scene` 加 `--gameplay-catalog-entry`（應失敗） | |
 
