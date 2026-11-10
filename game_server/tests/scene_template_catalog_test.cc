@@ -251,7 +251,7 @@ void catalog_rules() {
     refused(yaml, with(seed2, replaced(level, "preload_directors: []\n", "")), "needs preload_directors");
     refused(yaml, with(seed2, replaced(level, "name: level_terrain_seed2\n", "name: Level-Two\n")), "lower-case");
     refused(yaml, with(seed2, replaced(level, "name: level_terrain_seed2\n", "name: other_name\n")), "must be named");
-    refused(yaml, with(seed2, replaced(level, "id: 1\n", "id: 0\n")), "1..65535");
+    refused(yaml, with(seed2, replaced(level, "id: 1\n", "id: 70000\n")), "0..65535");
     refused(yaml, with(seed2, level + "unknown_key: 1\n"), "unknown_key");
     LevelFiles duplicate = levels;
     duplicate["2_scene_level_terrain_seed2.yaml"] = replaced(level, "id: 1\n", "id: 2\n");
@@ -264,11 +264,95 @@ void catalog_rules() {
     refused(yaml, with(seed2, no_map), "needs terrain or static_collision_scene");
 }
 
+// Catalog version 20 (docs/START_SCENE_PLAN.md): slot 0 is a scene template,
+// 0 by default, and map variants are gone.
+const char* kCamp =
+    "id: 0\n"
+    "name: initial_camp\n"
+    "navigation_mesh:\n"
+    "  entry_path: mesh_assets/recast/composed_216m_ground_0001_seed1_collision.navmesh\n"
+    "static_collision_scene:\n"
+    "  entry_path: mesh_assets/jolt/composed_216m_ground_0001_seed1_collision.joltmesh\n"
+    "preload_directors: []\n"
+    "patrols: []\n"
+    "scene_props:\n"
+    "  - entity_template: initial_camp\n"
+    "    position: {x: 100.8, y: 20.6, z: 72.0}\n"
+    "  - entity_template: level_terminal\n"
+    "    position: {x: 106.8, y: 20.4, z: 82.0}\n"
+    "player:\n"
+    "  spawn_position: {x: 106.8, y: 23.0, z: 77.0}\n";
+
+gs::GameServerGameplayConfig load_or_die(const std::string& yaml, const LevelFiles& levels) {
+    try {
+        return gs::load_gameplay_config_from_catalog_file(write_catalog(yaml, levels));
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "load failed: %s\n", e.what());
+        std::exit(1);
+    }
+}
+
+void start_scene_rules() {
+    const std::string v19 = shipping_yaml();
+    const std::size_t from = v19.find("map_variant: ");
+    const std::size_t to = v19.find("scene_template_dir:");
+    require(from != std::string::npos && to > from);
+    std::string yaml = v19;
+    yaml.erase(from, to - from);
+    yaml = replaced(yaml, "catalog_version: 19", "catalog_version: 20");
+    LevelFiles levels = shipping_levels();
+    levels["0_scene_initial_camp.yaml"] = kCamp;
+
+    // Nothing named: the camp, with its two props and none of the root's mission.
+    const gs::GameServerGameplayConfig camp = load_or_die(yaml, levels);
+    require(camp.start_scene == "initial_camp");
+    require(camp.scene_template.empty());
+    require(camp.scene_props.size() == 2u);
+    require(camp.preload_director_template_ids.empty());
+    require(camp.player.spawn_position.x == 106.8f);
+    require(camp.scene_templates.front().id == 0u && !camp.scene_templates.front().is_level);
+    require(std::all_of(camp.scene_templates.begin() + 1, camp.scene_templates.end(),
+        [](const gs::SceneTemplateRef& t) { return t.is_level; }));
+
+    // Another start scene: a level's map and mission, but no level revive pool.
+    const std::string at_mission = replaced(yaml, "scene_template_dir:", "start_scene: 2\nscene_template_dir:");
+    const gs::GameServerGameplayConfig mission = load_or_die(at_mission, levels);
+    require(mission.start_scene == "level_composed_mission");
+    require(!mission.preload_director_template_ids.empty());
+    require(mission.scene_props.empty());
+    const std::string at_seed2 = replaced(yaml, "scene_template_dir:", "start_scene: 1\nscene_template_dir:");
+    const gs::GameServerGameplayConfig seed2_start = load_or_die(at_seed2, levels);
+    require(seed2_start.start_scene == "level_terrain_seed2");
+    require(seed2_start.player.respawn.revives_per_player == 0);
+    const gs::GameServerGameplayConfig seed2_level =
+        gs::load_scene_template_config_from_catalog_file(write_catalog(at_seed2, levels), "level_terrain_seed2");
+    require(seed2_level.player.respawn.revives_per_player == 5);
+    // Asking for a level wins over the start scene.
+    require(seed2_level.scene_template == "level_terrain_seed2" && seed2_level.start_scene.empty());
+    std::printf("start scene: camp by default, any fixed map by id, a level when asked\n");
+
+    refused(yaml + "map_variant: camp\n", levels, "gone in catalog_version 20");
+    refused(replaced(v19, "scene_template_dir:", "start_scene: 0\nscene_template_dir:"), levels,
+        "start_scene needs catalog_version 20");
+    refused(replaced(yaml, "scene_template_dir:", "start_scene: 99\nscene_template_dir:"), levels,
+        "start_scene 99 is not a scene template");
+    refused(replaced(yaml, "scene_template_dir:", "start_scene: 4\nscene_template_dir:"), levels, "random terrain");
+    LevelFiles no_camp = levels;
+    no_camp.erase("0_scene_initial_camp.yaml");
+    refused(yaml, no_camp, "scene template 0, the initial camp, is missing");
+    LevelFiles camp_level = levels;
+    camp_level["0_scene_initial_camp.yaml"] = std::string(kCamp) + "level:\n  display_name: Camp\n";
+    refused(yaml, camp_level, "cannot have a level: block");
+    refused(replaced(replaced(yaml, "scene_template_dir: scene_templates\n", ""), "catalog_version: 20",
+        "catalog_version: 20\nstart_scene: 0"), levels, "start_scene needs scene_template_dir");
+}
+
 }  // namespace
 
 int main() {
     bundle_templates();
     catalog_rules();
+    start_scene_rules();
     std::printf("scene_template_catalog_test passed\n");
     return 0;
 }

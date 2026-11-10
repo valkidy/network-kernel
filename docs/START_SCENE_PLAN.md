@@ -85,6 +85,17 @@ template 本來就是一個完整的場景描述，所以 slot 0 也改用 templ
 | P7 | 測試遷移：預設入口的測試改用 template 5（或它真正需要的場景）；引用 variant 入口的 14 處改名 | 完整回歸：只允許原本的 6 個已知失敗 |
 | P8 | 文件：`gameplay_catalog.yaml` 的註解、[SCENE_TABLE_UNITY_HANDOFF.md](SCENE_TABLE_UNITY_HANDOFF.md) 第 2 節第 1 項改成「預設入口就是 camp，不用改」 | 人工檢查 |
 
+**狀態：** P1 已完成（`claude/start-scene-p1`）。載入器支援 v20 的 `start_scene`、id 0 和 `level:` 旗標（`SceneTemplateRef::is_level`）；v19 的 catalog 行為不變，所以出貨的 catalog 在 P2 之前照常可用。catalog hash 多了 `start_scene` 一欄，client 和 server 用同一版就會相符。
+
+**最終驗收（使用者 2026-11-10 指定）：** 全部做完後，用下面這條預設指令啟動 dedicated server，玩家連上後必須在 initial camp（出生點在 camp、看得到 `initial_camp` 和 `level_terminal`、沒有敵人）：
+
+```text
+--mode=dedicated_server
+--port=7801
+--gameplay-catalog-bundle=game_server/gameplay_catalog_bundle/bundle.zip
+--gameplay-catalog-entry=gameplay_catalog.yaml
+```
+
 P1–P6 每一步跑單一相關測試（smoke-first）。P7 是唯一需要完整回歸的步驟，也是成本最高的一步。
 
 ### P7 的範圍

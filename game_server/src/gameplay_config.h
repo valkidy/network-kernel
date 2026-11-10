@@ -676,6 +676,8 @@ struct SceneTemplateRef {
     std::string display_name;
     std::string description;
     std::string overlay_yaml;
+    // It has a level: block, so a player may pick it from the level list.
+    bool is_level = false;
 };
 
 struct StaticCollisionSceneConfig {
@@ -786,6 +788,11 @@ struct GameServerGameplayConfig {
     // The template this config was loaded as; empty for the catalog's own
     // map (the camp, slot 0).
     std::string scene_template;
+    // From catalog_version 20: the template slot 0 plays (start_scene:, 0 --
+    // the initial camp -- by default). Empty for a level and for older
+    // catalogs. A level template played here runs its map, game_rule,
+    // patrols and props, but none of the level flow.
+    std::string start_scene;
     // Where this config's map sits in the world: zero for the camp, the
     // slot's offset for a level (offset_scene_config, scene_table.h). Every
     // position above is already in world space; the navmesh, baked at the

@@ -10306,8 +10306,9 @@ std::vector<LoadedSceneTemplate> read_scene_templates(
             throw std::runtime_error("scene template needs id and name: " + file);
         }
         const std::uint32_t id = node["id"].as<std::uint32_t>();
-        if (id == 0u || id > 0xffffu) {
-            throw std::runtime_error("scene template id must be 1..65535: " + file);
+        // 0 is the start scene (docs/START_SCENE_PLAN.md).
+        if (id > 0xffffu) {
+            throw std::runtime_error("scene template id must be 0..65535: " + file);
         }
         const std::string name = node["name"].as<std::string>();
         const bool name_ok = !name.empty() &&
@@ -10337,6 +10338,7 @@ std::vector<LoadedSceneTemplate> read_scene_templates(
         ref.id = static_cast<std::uint16_t>(id);
         ref.name = name;
         if (const YAML::Node level = node["level"]) {
+            ref.is_level = true;
             reject_unknown_keys(
                 level, {"display_name", "description"}, file, source_kind,
                 KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
@@ -10375,7 +10377,8 @@ YAML::Node apply_scene_template(
     YAML::Node out(YAML::NodeType::Map);
     for (const auto& entry : document) {
         const std::string key = entry.first.as<std::string>();
-        if (key != "map_variant" && key != "map_variants" && key != "scene_template_dir") {
+        if (key != "map_variant" && key != "map_variants" && key != "scene_template_dir" &&
+            key != "start_scene") {
             out[key] = entry.second;
         }
     }
@@ -10479,6 +10482,53 @@ YAML::Node apply_map_variant(
     return out;
 }
 
+// From catalog_version 20 the map is a scene template (docs/START_SCENE_PLAN.md):
+// `start_scene:` names the one slot 0 plays, 0 -- the initial camp -- when it
+// is left out, and map variants are gone. Id 0 must exist and is never a
+// level. Clients get slot 0 only from the bundle, so the start scene cannot
+// be a random (seed -1) terrain: a random level is opened from the camp.
+// Returns the start scene's name; empty for a catalog without levels.
+std::string resolve_start_scene(
+    const YAML::Node& raw,
+    const std::vector<LoadedSceneTemplate>& templates,
+    const std::string& path) {
+    if (raw["map_variant"] || raw["map_variants"]) {
+        throw std::runtime_error(
+            "map_variant and map_variants are gone in catalog_version 20; "
+            "the map is a scene template chosen by start_scene: " + path);
+    }
+    if (!raw["scene_template_dir"]) {
+        if (raw["start_scene"]) {
+            throw std::runtime_error("start_scene needs scene_template_dir: " + path);
+        }
+        return {};
+    }
+    const auto by_id = [&](std::uint32_t id) {
+        return std::find_if(templates.begin(), templates.end(),
+            [id](const LoadedSceneTemplate& t) { return t.ref.id == id; });
+    };
+    const auto camp = by_id(0u);
+    if (camp == templates.end()) {
+        throw std::runtime_error("scene template 0, the initial camp, is missing: " + path);
+    }
+    if (camp->ref.is_level) {
+        throw std::runtime_error(
+            "scene template 0 (" + camp->ref.name + ") is the camp and cannot have a level: block: " + path);
+    }
+    const std::uint32_t id = raw["start_scene"] ? raw["start_scene"].as<std::uint32_t>() : 0u;
+    const auto chosen = by_id(id);
+    if (chosen == templates.end()) {
+        throw std::runtime_error("start_scene " + std::to_string(id) + " is not a scene template: " + path);
+    }
+    const YAML::Node terrain = chosen->file["terrain"];
+    if (terrain && terrain.IsMap() && terrain["seed"] && terrain["seed"].as<std::int64_t>() < 0) {
+        throw std::runtime_error(
+            "start_scene " + chosen->ref.name + " is a random terrain (seed -1); a start scene must be "
+            "a mesh or a fixed seed, and a random level opens from the camp: " + path);
+    }
+    return chosen->ref.name;
+}
+
 GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     const GameplayConfigSource& source,
     const std::string& path,
@@ -10486,9 +10536,22 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     const std::string& scene_template = {}) {
     const YAML::Node raw = source.load_yaml(path);
     const std::vector<LoadedSceneTemplate> scene_templates = read_scene_templates(source, raw, path);
-    const YAML::Node document = scene_template.empty()
-        ? apply_map_variant(raw, map_variant, path, source.source_kind())
-        : apply_scene_template(raw, scene_templates, scene_template, path);
+    const std::uint32_t raw_version =
+        raw["catalog_version"] ? raw["catalog_version"].as<std::uint32_t>() : 0u;
+    std::string start_scene;
+    if (raw_version >= 20u) {
+        start_scene = resolve_start_scene(raw, scene_templates, path);
+    } else if (raw["start_scene"]) {
+        throw std::runtime_error("start_scene needs catalog_version 20 or later: " + path);
+    }
+    if (!scene_template.empty() || !map_variant.empty()) {
+        start_scene.clear();  // asked for a level, or the recipe cook's variant
+    }
+    const YAML::Node document = !scene_template.empty()
+        ? apply_scene_template(raw, scene_templates, scene_template, path)
+        : !start_scene.empty()
+        ? apply_scene_template(raw, scene_templates, start_scene, path)
+        : apply_map_variant(raw, map_variant, path, source.source_kind());
     reject_unknown_keys(
         document,
         {
@@ -10575,6 +10638,9 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     const std::uint32_t catalog_version =
         document["catalog_version"] ? document["catalog_version"].as<std::uint32_t>()
                                     : 1u;
+    // 20 made the map a scene template: start_scene picks slot 0's (0, the
+    // initial camp, by default), map_variant / map_variants are refused, and
+    // a template id may be 0 (docs/START_SCENE_PLAN.md).
     // 19 moved scene templates into scene_template_dir, one file per level
     // (read above; a catalog with them must say 19, so an older loader stops
     // on the version rather than an unknown key).
@@ -10592,7 +10658,8 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
         catalog_version != 12u && catalog_version != 13u &&
         catalog_version != 14u && catalog_version != 15u &&
         catalog_version != 16u && catalog_version != 17u &&
-        catalog_version != 18u && catalog_version != 19u) {
+        catalog_version != 18u && catalog_version != 19u &&
+        catalog_version != 20u) {
         throw DataLoadError(
             KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNSUPPORTED_CATALOG_VERSION,
             "unsupported catalog_version: " + std::to_string(catalog_version),
@@ -10952,6 +11019,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
         }
     }
     config.scene_template = scene_template;
+    config.start_scene = start_scene;
 
     const std::vector<std::string> errors = validate_gameplay_config(config);
     if (!errors.empty()) {
@@ -12699,6 +12767,7 @@ std::uint64_t compute_gameplay_catalog_hash(
         hash_string(&hash, scene.overlay_yaml);
     }
     hash_string(&hash, config.scene_template);
+    hash_string(&hash, config.start_scene);
     std::vector<SkeletonAssetConfig> skeleton_assets = config.skeleton_assets;
     std::sort(
         skeleton_assets.begin(),
