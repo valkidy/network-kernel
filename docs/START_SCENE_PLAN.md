@@ -82,7 +82,7 @@ template 本來就是一個完整的場景描述，所以 slot 0 也改用 templ
 | A | v19 下新增 template 0、5、6，和 variant 並存；載入器加「指定起始場景 id」（`load_start_scene_config_from_*`）；關卡清單和 `SCENE_SELECT` 只認 `level:`（原 P5 提前） | 三個 template 和對應 variant 的 catalog hash 相同；清單只列 4 個關卡；選 0 或 5 不會開關卡 | 完成（`claude/start-scene-a`） |
 | B | 地形 recipe 改從 template 6 烘焙（原 P3） | recipe 和改動前逐 byte 相同（heights_hash `e03e9e899ec5c966`）；改 template 6 的 seed 時 recipe 跟著變 | 完成（`claude/start-scene-b`） |
 | C | 一次切換（原 P2 + P4 + P7）：root 升 v20、`start_scene: 0`、刪除 variant、bundle 產生 `gameplay_catalog.scene_<id>.yaml`、依賴任務地圖的測試改指定 template 5、variant 入口的引用改名 | 完整回歸只允許原本的 6 個失敗 | 完成（`claude/start-scene-c`） |
-| D | app 的 `--scene` 和 Q7 的衝突檢查（原 P6）；確認關卡 template 當 slot 0 時不跑關卡流程（原 P5 的 Q1 部分）；文件（原 P8） | 實際啟動 dedicated：`--scene=0`、`--scene=5`、`--scene=4`（應失敗）、`--scene` 加 `--gameplay-catalog-entry`（應失敗） | |
+| D | app 的 `--scene` 和 Q7 的衝突檢查（原 P6）；確認關卡 template 當 slot 0 時不跑關卡流程（原 P5 的 Q1 部分）；文件（原 P8） | 實際啟動 dedicated：`--scene=0`、`--scene=5`、`--scene=4`（應失敗）、`--scene` 加 `--gameplay-catalog-entry`（應失敗） | 完成（`claude/start-scene-d`） |
 
 **最終驗收（使用者 2026-11-10 指定）：** 全部做完後，用下面這條預設指令啟動 dedicated server，玩家連上後必須在 initial camp（出生點在 camp、看得到 `initial_camp` 和 `level_terminal`、沒有敵人）：
 
@@ -92,6 +92,10 @@ template 本來就是一個完整的場景描述，所以 slot 0 也改用 templ
 --gameplay-catalog-bundle=game_server/gameplay_catalog_bundle/bundle.zip
 --gameplay-catalog-entry=gameplay_catalog.yaml
 ```
+
+**驗收結果（2026-11-10，`claude/start-scene-d`）：通過。** 用上面這條指令實際啟動 dedicated server，再用暫時的 client（未 commit）連上：server 給的入口是 `gameplay_catalog.yaml`，玩家出生在 (106.8, 20.4, 77.0)，看得到 `initial_camp`（219）和 `level_terminal`（231），8 秒內沒有敵人，`SCENE_STATE` 是 camp 狀態而且玩家是房主。對照組 `--scene=5` 看不到 terminal，判定為不在 camp。
+
+**D 的實測：** `--scene=0`、`--scene=5` 正常啟動；`--scene=4` 以「bundle 沒有 `gameplay_catalog.scene_4.yaml`」失敗；`--scene` 加 `--gameplay-catalog-entry`、client 加 `--scene` 都在參數檢查時失敗。file 模式（`--gameplay-catalog=`）在原始碼目錄下不論有沒有 `--scene` 都會失敗，因為產生的 skeleton 檔不在原始碼目錄，這是原本就有的限制；`--scene` 在 file 模式用的載入函式已由單元測試涵蓋。Q1 由 `scene_flow_startup_test` 的 `level_as_start_scene` 驗證：template 3 當起始場景時 game_rule 照常出兵，殺 25 個敵人後仍沒有目標、回程門或關卡 slot。
 
 每一步先跑相關的單一測試（smoke-first）；C 和最後的驗收跑完整回歸。
 
