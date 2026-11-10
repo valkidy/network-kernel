@@ -162,7 +162,7 @@ void GameServer::handle_scene_message(const KernelGameMessage& message) {
         const std::uint16_t id = get_u16(message.payload);
         const auto found = std::find_if(
             config_.scene_templates.begin(), config_.scene_templates.end(),
-            [id](const SceneTemplateRef& ref) { return ref.id == id; });
+            [id](const SceneTemplateRef& ref) { return ref.id == id && ref.is_level; });
         if (owner == 0u || message.player_net_id != owner || found == config_.scene_templates.end()) {
             spdlog::warn("scene select refused peer={} id={}", message.peer, id);
             return;

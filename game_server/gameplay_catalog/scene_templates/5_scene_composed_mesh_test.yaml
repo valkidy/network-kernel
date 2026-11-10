@@ -1,0 +1,24 @@
+# The map most tests were written against: the composed mesh with the root's
+# mission (game_rule) and patrols, the initial camp, and the camp perimeter
+# route. A copy of what the composed_mesh map variant was; not a level.
+id: 5
+name: composed_mesh_test
+navigation_mesh:
+  entry_path: mesh_assets/recast/composed_216m_ground_0001_seed1_collision.navmesh
+static_collision_scene:
+  entry_path: mesh_assets/jolt/composed_216m_ground_0001_seed1_collision.joltmesh
+preload_directors:
+  - game_rule
+scene_props:
+  - entity_template: initial_camp
+    position: {x: 100.8, y: 20.6, z: 72.0}
+player:
+  spawn_position: {x: 106.8, y: 23.0, z: 77.0}
+agent_routes:
+  - id: 1
+    name: camp_perimeter
+    waypoints:
+      - {x: 91.0, y: 22.5, z: 82.0}
+      - {x: 130.8, y: 20.1, z: 82.0}
+      - {x: 130.8, y: 21.0, z: 62.0}
+      - {x: 91.0, y: 21.5, z: 62.0}

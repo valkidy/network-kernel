@@ -1,0 +1,19 @@
+# The initial camp, where every session starts (docs/START_SCENE_PLAN.md): the
+# composed mesh map with no random seed, nothing hostile, and the props the
+# game flow runs on -- the initial camp and the level terminal. No level:
+# block, so it is never offered as a level.
+id: 0
+name: initial_camp
+navigation_mesh:
+  entry_path: mesh_assets/recast/composed_216m_ground_0001_seed1_collision.navmesh
+static_collision_scene:
+  entry_path: mesh_assets/jolt/composed_216m_ground_0001_seed1_collision.joltmesh
+preload_directors: []
+patrols: []
+scene_props:
+  - entity_template: initial_camp
+    position: {x: 100.8, y: 20.6, z: 72.0}
+  - entity_template: level_terminal
+    position: {x: 106.8, y: 20.4, z: 82.0}
+player:
+  spawn_position: {x: 106.8, y: 23.0, z: 77.0}

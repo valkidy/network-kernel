@@ -74,18 +74,15 @@ template 本來就是一個完整的場景描述，所以 slot 0 也改用 templ
 
 ## 5. 步驟
 
-| # | 工作 | 驗證 |
-|---|---|---|
-| P1 | 載入器：`start_scene`、id 0、`level:` 規則、slot 0 不能是 `seed: -1`、拒絕 `map_variant(s)`、catalog v20 | `scene_template_catalog_test` 新增案例：預設套用 id 0、明確指定的 template 優先、各種錯誤都有拒絕 |
-| P2 | 內容：新增 `0_scene_initial_camp`，`camp` variant 的內容搬進去；`composed_mesh`、`kernel_terrain` 原樣改成 template 5、6；刪除 `map_variants`；root 寫 `start_scene: 0` | template 0 和舊 `camp` variant 載入後的 config hash 相同；5、6 分別和舊 variant 相同（hash 不包含 scene template 名稱時才可比，否則逐欄比） |
-| P3 | 地形 recipe：`terrain_recipe` 改成烘焙 template 6（`terrain_recipe_cook` 已支援 `scene_template:<name>`），輸出路徑由 template 的 `terrain.recipe` 決定 | 地形 golden hash 測試不變：seed 和參數原樣搬過去，hash 必須完全一樣 |
-| P4 | bundle：產生 `gameplay_catalog.scene_<id>.yaml`，移除 variant 入口 | 檢查入口清單；client 經 catalog sync 用 `scene_5` 入口啟動，地圖正確 |
-| P5 | 關卡清單和選關只認 `level:`；確認 slot 0 是關卡 template 時不會跑關卡流程（Q1） | `scene_flow_startup_test` 新增：選 template 0 或 5 被拒絕；用 template 2 當 slot 0 時 game_rule 有跑、沒有回程門也沒有蟲巢 |
-| P6 | app：`--scene`、Q7 的衝突檢查、說明文字；`--level` 不變 | 實際啟動 dedicated：`--scene=0`、`--scene=5`、`--scene=4`（應失敗）、`--scene` 加 `--gameplay-catalog-entry`（應失敗） |
-| P7 | 測試遷移：預設入口的測試改用 template 5（或它真正需要的場景）；引用 variant 入口的 14 處改名 | 完整回歸：只允許原本的 6 個已知失敗 |
-| P8 | 文件：`gameplay_catalog.yaml` 的註解、[SCENE_TABLE_UNITY_HANDOFF.md](SCENE_TABLE_UNITY_HANDOFF.md) 第 2 節第 1 項改成「預設入口就是 camp，不用改」 | 人工檢查 |
+原本的 P1–P8 中，P2（移除 variant）、P4（bundle 入口）、P7（測試遷移）互相依賴，任何一個單獨做都會讓分支壞掉：bundle 的 sed 檢查會失敗、地形 recipe 烘焙找不到 variant、約 24 個測試的地圖被換掉。使用者在 2026-11-10 同意改成下面的順序，每個 commit 都能通過測試。
 
-**狀態：** P1 已完成（`claude/start-scene-p1`）。載入器支援 v20 的 `start_scene`、id 0 和 `level:` 旗標（`SceneTemplateRef::is_level`）；v19 的 catalog 行為不變，所以出貨的 catalog 在 P2 之前照常可用。catalog hash 多了 `start_scene` 一欄，client 和 server 用同一版就會相符。
+| # | 工作 | 驗證 | 狀態 |
+|---|---|---|---|
+| P1 | 載入器：`start_scene`、id 0、`level:` 規則、slot 0 不能是 `seed: -1`、v20 拒絕 `map_variant(s)` | `scene_template_catalog_test` | 完成（`claude/start-scene-p1`） |
+| A | v19 下新增 template 0、5、6，和 variant 並存；載入器加「指定起始場景 id」（`load_start_scene_config_from_*`）；關卡清單和 `SCENE_SELECT` 只認 `level:`（原 P5 提前） | 三個 template 和對應 variant 的 catalog hash 相同；清單只列 4 個關卡；選 0 或 5 不會開關卡 | 完成（`claude/start-scene-a`） |
+| B | 地形 recipe 改從 template 6 烘焙（原 P3） | golden hash 不變 | |
+| C | 一次切換（原 P2 + P4 + P7）：root 升 v20、`start_scene: 0`、刪除 variant、bundle 產生 `gameplay_catalog.scene_<id>.yaml`、依賴任務地圖的測試改指定 template 5、variant 入口的引用改名 | 完整回歸只允許原本的 6 個失敗 | |
+| D | app 的 `--scene` 和 Q7 的衝突檢查（原 P6）；確認關卡 template 當 slot 0 時不跑關卡流程（原 P5 的 Q1 部分）；文件（原 P8） | 實際啟動 dedicated：`--scene=0`、`--scene=5`、`--scene=4`（應失敗）、`--scene` 加 `--gameplay-catalog-entry`（應失敗） | |
 
 **最終驗收（使用者 2026-11-10 指定）：** 全部做完後，用下面這條預設指令啟動 dedicated server，玩家連上後必須在 initial camp（出生點在 camp、看得到 `initial_camp` 和 `level_terminal`、沒有敵人）：
 
@@ -96,9 +93,9 @@ template 本來就是一個完整的場景描述，所以 slot 0 也改用 templ
 --gameplay-catalog-entry=gameplay_catalog.yaml
 ```
 
-P1–P6 每一步跑單一相關測試（smoke-first）。P7 是唯一需要完整回歸的步驟，也是成本最高的一步。
+每一步先跑相關的單一測試（smoke-first）；C 和最後的驗收跑完整回歸。
 
-### P7 的範圍
+### C 的測試遷移範圍
 
 47 個測試檔用預設入口 `gameplay_catalog.yaml`。粗估其中約 24 個提到 director、巡邏或座標（grep 只代表有提到，不一定依賴）。預設場景從任務地圖換成 camp 後，最直接的遷移是讓這些測試改用 template 5，行為和現在完全一樣。之後若要讓測試改用更貼切的場景，另外再做。
 

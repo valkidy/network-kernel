@@ -430,7 +430,12 @@ bool load_gameplay_catalog_bundle(
     }
     {
         std::scoped_lock lock(scene_template_lists_mutex());
-        scene_template_lists()[kernel] = config.scene_templates;
+        // Only levels are listed: the camp and test maps are not for picking.
+        std::vector<network_example::game_server::SceneTemplateRef> levels;
+        for (const auto& ref : config.scene_templates) {
+            if (ref.is_level) levels.push_back(ref);
+        }
+        scene_template_lists()[kernel] = std::move(levels);
     }
     set_terrain_view(kernel, 0u, std::move(pending_terrain_view));
     set_static_scene_view(kernel, 0u, std::move(pending_static_scene_view));

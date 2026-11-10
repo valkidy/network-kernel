@@ -872,6 +872,18 @@ GameServerGameplayConfig load_scene_template_config_from_bundle_memory(
 GameServerGameplayConfig load_scene_template_config_from_catalog_file(
     const std::string& path,
     const std::string& scene_template);
+// The catalog with scene template `start_scene` in slot 0 in place of the one
+// it names (docs/START_SCENE_PLAN.md): a test's map, or a server's --scene. A
+// start scene, not a level, so no level revive pool. Throws for an id the
+// catalog does not define or a random terrain.
+GameServerGameplayConfig load_start_scene_config_from_bundle_memory(
+    const std::uint8_t* bundle_bytes,
+    std::uint32_t bundle_size,
+    const std::string& entry_path,
+    std::uint16_t start_scene);
+GameServerGameplayConfig load_start_scene_config_from_catalog_file(
+    const std::string& path,
+    std::uint16_t start_scene);
 std::vector<std::uint8_t> load_gameplay_bundle_entry_bytes(
     const std::uint8_t* bundle_bytes,
     std::uint32_t bundle_size,

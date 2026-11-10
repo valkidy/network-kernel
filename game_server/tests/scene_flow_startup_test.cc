@@ -358,6 +358,14 @@ void listen_host(const std::vector<std::uint8_t>& bundle, std::uint16_t index) {
     require(std::string(info.display_name) == "Mission test");
     require(!GameServer_GetSceneTemplate(a->kernel, 4u, &info));
 
+    // The camp (0) and a test map (5) are scene templates but not levels:
+    // neither is listed above, and asking for one opens nothing.
+    for (const std::uint16_t not_a_level : {std::uint16_t{0}, std::uint16_t{5}}) {
+        select_level(server.kernel, not_a_level);
+        world.settle(0.5);
+        require(a->state.flow == GAME_SERVER_SCENE_FLOW_CAMP && a->state.slots.empty());
+    }
+
     // The state is re-sent with nothing changing.
     const int before = a->states_received;
     for (int i = 0; i < 400; ++i) world.frame();

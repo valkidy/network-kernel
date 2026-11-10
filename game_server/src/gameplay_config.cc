@@ -10482,6 +10482,25 @@ YAML::Node apply_map_variant(
     return out;
 }
 
+// The template a start scene id names, if it can be one.
+std::string start_scene_name(
+    const std::vector<LoadedSceneTemplate>& templates,
+    std::uint32_t id,
+    const std::string& path) {
+    const auto chosen = std::find_if(templates.begin(), templates.end(),
+        [id](const LoadedSceneTemplate& t) { return t.ref.id == id; });
+    if (chosen == templates.end()) {
+        throw std::runtime_error("start_scene " + std::to_string(id) + " is not a scene template: " + path);
+    }
+    const YAML::Node terrain = chosen->file["terrain"];
+    if (terrain && terrain.IsMap() && terrain["seed"] && terrain["seed"].as<std::int64_t>() < 0) {
+        throw std::runtime_error(
+            "start_scene " + chosen->ref.name + " is a random terrain (seed -1); a start scene must be "
+            "a mesh or a fixed seed, and a random level opens from the camp: " + path);
+    }
+    return chosen->ref.name;
+}
+
 // From catalog_version 20 the map is a scene template (docs/START_SCENE_PLAN.md):
 // `start_scene:` names the one slot 0 plays, 0 -- the initial camp -- when it
 // is left out, and map variants are gone. Id 0 must exist and is never a
@@ -10515,25 +10534,16 @@ std::string resolve_start_scene(
         throw std::runtime_error(
             "scene template 0 (" + camp->ref.name + ") is the camp and cannot have a level: block: " + path);
     }
-    const std::uint32_t id = raw["start_scene"] ? raw["start_scene"].as<std::uint32_t>() : 0u;
-    const auto chosen = by_id(id);
-    if (chosen == templates.end()) {
-        throw std::runtime_error("start_scene " + std::to_string(id) + " is not a scene template: " + path);
-    }
-    const YAML::Node terrain = chosen->file["terrain"];
-    if (terrain && terrain.IsMap() && terrain["seed"] && terrain["seed"].as<std::int64_t>() < 0) {
-        throw std::runtime_error(
-            "start_scene " + chosen->ref.name + " is a random terrain (seed -1); a start scene must be "
-            "a mesh or a fixed seed, and a random level opens from the camp: " + path);
-    }
-    return chosen->ref.name;
+    return start_scene_name(
+        templates, raw["start_scene"] ? raw["start_scene"].as<std::uint32_t>() : 0u, path);
 }
 
 GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     const GameplayConfigSource& source,
     const std::string& path,
     const std::string& map_variant = {},
-    const std::string& scene_template = {}) {
+    const std::string& scene_template = {},
+    std::int32_t start_scene_override = -1) {
     const YAML::Node raw = source.load_yaml(path);
     const std::vector<LoadedSceneTemplate> scene_templates = read_scene_templates(source, raw, path);
     const std::uint32_t raw_version =
@@ -10543,6 +10553,14 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
         start_scene = resolve_start_scene(raw, scene_templates, path);
     } else if (raw["start_scene"]) {
         throw std::runtime_error("start_scene needs catalog_version 20 or later: " + path);
+    }
+    if (start_scene_override >= 0) {
+        // The caller picks slot 0's template (a test, or a server's --scene).
+        if (!raw["scene_template_dir"]) {
+            throw std::runtime_error("a start scene was asked for, but the catalog has no scene_template_dir: " + path);
+        }
+        start_scene = start_scene_name(
+            scene_templates, static_cast<std::uint32_t>(start_scene_override), path);
     }
     if (!scene_template.empty() || !map_variant.empty()) {
         start_scene.clear();  // asked for a level, or the recipe cook's variant
@@ -12889,6 +12907,22 @@ GameServerGameplayConfig load_scene_template_config_from_bundle_memory(
     }
     const MemoryZipGameplayConfigSource source(bundle_bytes, bundle_size);
     return load_gameplay_config_from_catalog_source(source, entry_path, {}, scene_template);
+}
+
+GameServerGameplayConfig load_start_scene_config_from_bundle_memory(
+    const std::uint8_t* bundle_bytes,
+    std::uint32_t bundle_size,
+    const std::string& entry_path,
+    std::uint16_t start_scene) {
+    const MemoryZipGameplayConfigSource source(bundle_bytes, bundle_size);
+    return load_gameplay_config_from_catalog_source(source, entry_path, {}, {}, start_scene);
+}
+
+GameServerGameplayConfig load_start_scene_config_from_catalog_file(
+    const std::string& path,
+    std::uint16_t start_scene) {
+    const FilesystemGameplayConfigSource source;
+    return load_gameplay_config_from_catalog_source(source, path, {}, {}, start_scene);
 }
 
 GameServerGameplayConfig load_scene_template_config_from_catalog_file(
