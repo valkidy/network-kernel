@@ -984,6 +984,11 @@ std::uint32_t movement_collision_layer_token_from_yaml(
     if (token == "limb") {
         return KERNEL_MOVEMENT_LAYER_LIMB;
     }
+    // A scene's invisible edge walls. Only what names it is stopped -- the
+    // player -- so agents keep walking where they always did.
+    if (token == "player_barrier") {
+        return KERNEL_MOVEMENT_LAYER_PLAYER_BARRIER;
+    }
     throw std::runtime_error("unsupported movement collision_mask: " + token);
 }
 

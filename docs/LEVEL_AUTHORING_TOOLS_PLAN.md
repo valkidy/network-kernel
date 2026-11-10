@@ -217,8 +217,8 @@ player_barriers: []                  # 同 3.1，stamp 本地座標
 
 | 步驟 | 內容 | 測試 |
 |---|---|---|
-| P0 | 量玩家跳躍頂點，定 Q4 的預設值 | 量測，記在這份文件 |
-| P1 | K1–K6：`player_barrier` 層與 export | 新增 `player_barrier_test`：玩家被擋；同位置的 NPC、子彈、視線穿過；hover 的玩家從 15 m 越過；移除 slot 後牆消失；server 與 client prediction 結果一致 |
+| P0 | 量玩家跳躍頂點，定 Q4 的預設值 | **完成（2026-11-10）**：遊戲沒有跳躍（engine 和 game_server 都沒有 jump 輸入或跳躍速度），玩家往上只有 0.4 m 的 `step_height`，其餘都來自擊飛、龍捲風和魔毯。4 m 維持不變：遠高於跨階和 capsule，遠低於魔毯的 15 m |
+| P1 | K1–K6：`player_barrier` 層與 export | **完成（`claude/player-barrier-p1`）**。`player_barrier_test` 驗證了：牆只對帶該 layer 的查詢可見，gameplay 的 catch-all mask 和移動預設 mask 都看不到；server、listen host 的兩個 world、client 在 Welcome 前後都有牆；取代、清除、隨 slot 移除；各種錯誤輸入不改變現狀；玩家帶 layer 時停在接觸點（5.13 m，理論 5.15 m），不帶時走完 15 m。**沒有驗證**：真的 NPC agent（用預設 mask 的玩家代替）、端到端的子彈和視線（只在查詢 filter 層驗證）、hover 從 15 m 越過，以及兩個 process 的 client prediction |
 | P2 | G1–G3：`scene_props` 旋轉/grounded、`player_barriers`、`map_edge_barrier`；camp 加四面牆 | `scene_template_catalog_test` 加格式案例；camp 邊界走出去被擋的端到端測試（listen 與 dedicated） |
 | P3 | G4：stamp `sites`、`per_map_limits` | 多個 seed 下：抽選可重現、上限成立、全部 grounded 的物件站在地上 |
 | P4 | G7：registry json | 產生的 json 和 catalog 一致（名稱、id、bounds） |

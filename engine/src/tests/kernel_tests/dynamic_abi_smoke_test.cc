@@ -409,6 +409,10 @@ int main() {
         load_symbol<bool(KernelHandle*, std::uint32_t)>(
             library,
             "Kernel_RemoveStaticSceneSlot");
+    auto* kernel_set_static_scene_player_barriers =
+        load_symbol<bool(KernelHandle*, const KernelStaticScenePlayerBarriersConfig*)>(
+            library,
+            "Kernel_SetStaticScenePlayerBarriers");
     auto* kernel_server_query_damage_records =
         load_symbol<std::uint32_t(KernelHandle*, KernelDamageRecord*, std::uint32_t)>(
             library,
@@ -571,6 +575,9 @@ int main() {
         (abi_info.capability_flags & KERNEL_CAPABILITY_STATIC_SCENE_SLOTS) != 0);
     require(!kernel_add_static_scene_slot(nullptr, nullptr));
     require(!kernel_remove_static_scene_slot(nullptr, 1u));
+    require(
+        (abi_info.capability_flags & KERNEL_CAPABILITY_PLAYER_BARRIERS) != 0);
+    require(!kernel_set_static_scene_player_barriers(nullptr, nullptr));
     require(
         (abi_info.capability_flags & KERNEL_CAPABILITY_SERVER_DAMAGE_RECORDS) != 0);
     require(kernel_server_query_damage_records(nullptr, nullptr, 0u) == 0u);

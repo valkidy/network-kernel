@@ -21,6 +21,13 @@ enum class CollisionLayer : std::uint32_t {
     // A query that does not ask for limbs must be able to skip all of them, and
     // it can: they are the only occupants of their own broad phase layer.
     kActorLimb = 1u << 4u,
+    // An invisible wall that only stops movement (docs/LEVEL_AUTHORING_TOOLS_PLAN.md
+    // K1): static boxes a scene places at its edges. In no aggregate mask, so
+    // projectiles, hitscan, vision and every movement mask that does not name it
+    // pass straight through; an actor opts in by naming it in its own movement
+    // mask. Alone in its broad phase layer, so a query that does not ask for it
+    // skips every barrier at once.
+    kPlayerBarrier = 1u << 5u,
 };
 
 constexpr std::uint32_t collision_layer_bit(CollisionLayer layer) {
@@ -54,6 +61,7 @@ enum class CollisionObjectKind : std::uint8_t {
     kActorMovement,
     // Appended, and must stay appended: object_kind_mask is a bit per kind.
     kActorLimb,
+    kPlayerBarrier,
 };
 
 enum class CollisionShapeType : std::uint8_t {

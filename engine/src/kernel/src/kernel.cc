@@ -2439,6 +2439,151 @@ bool KernelEngine::load_static_scene_slots(
             return false;
         }
     }
+    for (std::uint32_t index = 0; index < KERNEL_STATIC_SCENE_SLOT_COUNT; ++index) {
+        if (!load_player_barriers(world, index, error)) {
+            *error = "slot " + std::to_string(index) + " player barriers: " + *error;
+            return false;
+        }
+    }
+    return true;
+}
+
+namespace {
+
+// Barrier bodies sit in a range of their own, clear of entity colliders
+// (counted up from 1), the scene table's ids and the prediction proxies
+// (0xc0000000 up): slot in bits 16-19, box index below.
+constexpr std::uint32_t kPlayerBarrierColliderIdBase = 0xb0000000u;
+
+std::uint32_t player_barrier_collider_id(std::uint32_t slot, std::size_t index) {
+    return kPlayerBarrierColliderIdBase | (slot << 16u) |
+        static_cast<std::uint32_t>(index);
+}
+
+static_assert(KERNEL_STATIC_SCENE_SLOT_COUNT <= 16u, "slot must fit bits 16-19");
+static_assert(KERNEL_MAX_PLAYER_BARRIERS_PER_SLOT <= 0x10000u, "index must fit bits 0-15");
+
+bool player_barrier_box_valid(const KernelPlayerBarrierBox& box) {
+    const auto extent_ok = [](float value) {
+        return std::isfinite(value) && value > 0.0f &&
+            value <= KERNEL_MAX_PLAYER_BARRIER_HALF_EXTENT;
+    };
+    return std::isfinite(box.center.x) && std::isfinite(box.center.y) &&
+        std::isfinite(box.center.z) && std::isfinite(box.yaw_radians) &&
+        extent_ok(box.half_extents.x) && extent_ok(box.half_extents.y) &&
+        extent_ok(box.half_extents.z);
+}
+
+}  // namespace
+
+bool KernelEngine::load_player_barriers(
+    physics::PhysicsWorld* world,
+    std::uint32_t slot,
+    std::string* error) const {
+    const StaticSceneSlot& scene = static_scene_slots_[slot];
+    for (std::size_t index = 0; index < scene.player_barriers.size(); ++index) {
+        const KernelPlayerBarrierBox& box = scene.player_barriers[index];
+        physics::CollisionObjectDescriptor object{};
+        object.identity.collider_id = player_barrier_collider_id(slot, index);
+        object.identity.kind = physics::CollisionObjectKind::kPlayerBarrier;
+        object.identity.layer = physics::CollisionLayer::kPlayerBarrier;
+        object.identity.scene_id = scene.scene_id;
+        object.shape.type = physics::CollisionShapeType::kBox;
+        object.shape.half_extents =
+            glm::vec3(box.half_extents.x, box.half_extents.y, box.half_extents.z);
+        object.position =
+            scene.offset + glm::vec3(box.center.x, box.center.y, box.center.z);
+        object.rotation =
+            glm::angleAxis(box.yaw_radians, glm::vec3(0.0f, 1.0f, 0.0f));
+        if (!world->upsert_object(object, error)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void KernelEngine::remove_player_barriers(
+    physics::PhysicsWorld* world,
+    std::uint32_t slot,
+    std::size_t count) {
+    for (std::size_t index = 0; index < count; ++index) {
+        world->remove_object(player_barrier_collider_id(slot, index));
+    }
+}
+
+bool KernelEngine::set_static_scene_player_barriers(
+    const KernelStaticScenePlayerBarriersConfig& config) {
+    if (config.slot >= KERNEL_STATIC_SCENE_SLOT_COUNT) {
+        spdlog::error(
+            "Kernel_SetStaticScenePlayerBarriers rejected: slot={} must be 0..{}",
+            config.slot,
+            KERNEL_STATIC_SCENE_SLOT_COUNT - 1u);
+        return false;
+    }
+    StaticSceneSlot& target = static_scene_slots_[config.slot];
+    if (config.slot != 0u && target.artifact.empty()) {
+        spdlog::error(
+            "Kernel_SetStaticScenePlayerBarriers rejected: slot={} is empty",
+            config.slot);
+        return false;
+    }
+    if (config.box_count > KERNEL_MAX_PLAYER_BARRIERS_PER_SLOT ||
+        (config.box_count != 0u && config.boxes == nullptr)) {
+        spdlog::error(
+            "Kernel_SetStaticScenePlayerBarriers rejected: slot={} box_count={} "
+            "(at most {}, and boxes must be given)",
+            config.slot,
+            config.box_count,
+            KERNEL_MAX_PLAYER_BARRIERS_PER_SLOT);
+        return false;
+    }
+    std::vector<KernelPlayerBarrierBox> boxes(
+        config.boxes, config.boxes + config.box_count);
+    for (std::size_t index = 0; index < boxes.size(); ++index) {
+        if (!player_barrier_box_valid(boxes[index])) {
+            spdlog::error(
+                "Kernel_SetStaticScenePlayerBarriers rejected: slot={} box={} is "
+                "not finite or its half extents are not in (0, {}]",
+                config.slot,
+                index,
+                KERNEL_MAX_PLAYER_BARRIER_HALF_EXTENT);
+            return false;
+        }
+    }
+
+    std::vector<physics::PhysicsWorld*> worlds;
+    if (physics_world_ != nullptr) {
+        worlds.push_back(physics_world_.get());
+    }
+    if (prediction_physics_world_ != nullptr) {
+        worlds.push_back(prediction_physics_world_.get());
+    }
+    const std::size_t previous_count = target.player_barriers.size();
+    std::vector<KernelPlayerBarrierBox> previous = std::move(target.player_barriers);
+    target.player_barriers = std::move(boxes);
+    for (physics::PhysicsWorld* world : worlds) {
+        remove_player_barriers(world, config.slot, previous_count);
+        std::string error;
+        if (!load_player_barriers(world, config.slot, &error)) {
+            // Validation above leaves only an allocation failure here; put
+            // every world back the way it was rather than half-applied.
+            spdlog::error(
+                "Kernel_SetStaticScenePlayerBarriers rejected: slot={} does not "
+                "load: {}",
+                config.slot,
+                error);
+            for (physics::PhysicsWorld* other : worlds) {
+                remove_player_barriers(
+                    other, config.slot, target.player_barriers.size());
+            }
+            target.player_barriers = std::move(previous);
+            for (physics::PhysicsWorld* other : worlds) {
+                std::string ignored;
+                load_player_barriers(other, config.slot, &ignored);
+            }
+            return false;
+        }
+    }
     return true;
 }
 
@@ -2541,11 +2686,14 @@ bool KernelEngine::remove_static_scene_slot(std::uint32_t slot) {
         return false;
     }
     const std::uint32_t collider_id = static_scene_slots_[slot].collider_id;
+    const std::size_t barrier_count = static_scene_slots_[slot].player_barriers.size();
     if (physics_world_ != nullptr) {
         physics_world_->remove_object(collider_id);
+        remove_player_barriers(physics_world_.get(), slot, barrier_count);
     }
     if (prediction_physics_world_ != nullptr) {
         prediction_physics_world_->remove_object(collider_id);
+        remove_player_barriers(prediction_physics_world_.get(), slot, barrier_count);
     }
     static_scene_slots_[slot] = StaticSceneSlot{};
     return true;

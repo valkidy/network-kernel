@@ -128,6 +128,23 @@ bool Kernel_AddStaticSceneSlot(
 
 bool Kernel_RemoveStaticSceneSlot(KernelHandle* kernel, uint32_t slot);
 
+/*
+ * Player barriers (see KernelPlayerBarrierBox). Additive within ABI 109,
+ * behind KERNEL_CAPABILITY_PLAYER_BARRIERS.
+ *
+ * Replaces every barrier `slot` has, in every physics world the kernel has
+ * and in any built later, like the slot's scene. Slot 0 takes barriers at any
+ * time; slots 1 and up only while occupied, and Kernel_RemoveStaticSceneSlot
+ * takes their barriers with them. False -- and nothing changes -- past the
+ * table, for an empty slot from 1 up, for more than
+ * KERNEL_MAX_PLAYER_BARRIERS_PER_SLOT boxes, for boxes == NULL with a
+ * non-zero box_count, or for any box that is not finite or whose half extents
+ * are not in (0, KERNEL_MAX_PLAYER_BARRIER_HALF_EXTENT].
+ */
+bool Kernel_SetStaticScenePlayerBarriers(
+    KernelHandle* kernel,
+    const KernelStaticScenePlayerBarriersConfig* config);
+
 bool Kernel_InvokeRpcCommand(
     KernelHandle* kernel,
     const char* request_json,

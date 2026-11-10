@@ -155,6 +155,22 @@ the table, occupied, a collider id another slot or the world already uses, an
 artifact that does not load -- changes nothing. Removing a slot takes its
 terrain out from under whatever stands on it; clearing that is the caller's.
 
+`Kernel_SetStaticScenePlayerBarriers` and `KERNEL_MOVEMENT_LAYER_PLAYER_BARRIER`
+(`0x20`) are additive within ABI 109, behind `KERNEL_CAPABILITY_PLAYER_BARRIERS`
+(`0x0080000000000000`), with `KernelStaticScenePlayerBarriersConfig`
+(struct_size, slot, box pointer, box_count) and `KernelPlayerBarrierBox` (28 B:
+center, half_extents, yaw_radians). A barrier is an invisible upright box that
+stops only movement (docs/LEVEL_AUTHORING_TOOLS_PLAN.md): it sits on its own
+physics layer, outside every gameplay query mask and outside
+`KERNEL_MOVEMENT_MASK_DEFAULT`, so projectiles, hitscan, vision and every actor
+that does not name the layer in its movement mask pass through it. The call
+replaces all of a slot's barriers (box_count 0 clears them); boxes are in the
+slot's coordinates, its offset added. Like the slot itself they reach every
+physics world the kernel has and any built later, and leave with
+`Kernel_RemoveStaticSceneSlot`. Slot 0 takes barriers at any time, slots 1 and
+up only while occupied; at most `KERNEL_MAX_PLAYER_BARRIERS_PER_SLOT` (256)
+boxes, each finite with half extents in (0, 4096]. A refusal changes nothing.
+
 ABI 92 adds `Kernel_ServerReviveEntity`, `KernelServerReviveInfo` (16 B) and
 `KERNEL_CAPABILITY_SERVER_ENTITY_REVIVE`. It brings back an entity whose health
 is zero out of a non-zero maximum, and refuses anything alive. In one call: full

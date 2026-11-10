@@ -156,6 +156,28 @@ bool Kernel_RemoveStaticSceneSlot(KernelHandle* kernel, uint32_t slot) {
     });
 }
 
+bool Kernel_SetStaticScenePlayerBarriers(
+    KernelHandle* kernel,
+    const KernelStaticScenePlayerBarriersConfig* config) {
+    return abi_call("Kernel_SetStaticScenePlayerBarriers", false, [&]() {
+        if (kernel == nullptr || kernel->engine == nullptr || config == nullptr) {
+            spdlog::error(
+                "Kernel_SetStaticScenePlayerBarriers rejected: invalid kernel "
+                "handle or config");
+            return false;
+        }
+        if (config->struct_size < sizeof(KernelStaticScenePlayerBarriersConfig)) {
+            spdlog::error(
+                "Kernel_SetStaticScenePlayerBarriers rejected: struct_size={} "
+                "required={}",
+                config->struct_size,
+                sizeof(KernelStaticScenePlayerBarriersConfig));
+            return false;
+        }
+        return kernel->engine->set_static_scene_player_barriers(*config);
+    });
+}
+
 bool Kernel_InvokeRpcCommand(
     KernelHandle* kernel,
     const char* request_json,
@@ -340,7 +362,8 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             KERNEL_CAPABILITY_SERVER_FALL_DEATH_HEIGHT |
             KERNEL_CAPABILITY_SERVER_DAMAGE_RECORDS |
             KERNEL_CAPABILITY_AGENT_COMMANDS |
-            KERNEL_CAPABILITY_STATIC_SCENE_SLOTS;
+            KERNEL_CAPABILITY_STATIC_SCENE_SLOTS |
+            KERNEL_CAPABILITY_PLAYER_BARRIERS;
         return true;
     });
 }
