@@ -2352,6 +2352,17 @@ cc_binary(
 # A player stands on a static scene slot's terrain as on the camp's
 # (docs/SCENE_TABLE_PLAN.md S1); a real listen host from the shipping bundle.
 cc_test(
+    name = "stamp_sites_test",
+    size = "medium",
+    srcs = ["tests/stamp_sites_test.cc"],
+    data = ["//game_server/gameplay_catalog_bundle:bundle"],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
     name = "scene_placement_test",
     srcs = ["tests/scene_placement_test.cc"],
     data = ["//game_server/gameplay_catalog_bundle:bundle"],
@@ -2380,7 +2391,11 @@ cc_test(
     size = "medium",
     srcs = ["tests/scene_level_content_test.cc"],
     data = ["//game_server/gameplay_catalog_bundle:bundle"],
-    deps = [":game_server"],
+    # The kernel too; without it this test never linked.
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
 )
 
 # Opening a level by recipe: generation, chunked transfer, worker compose

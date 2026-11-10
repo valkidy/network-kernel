@@ -422,6 +422,101 @@ void level_authoring_keys() {
         "non-zero quaternion");
 }
 
+// Stamp sites in the stamp yaml (docs/LEVEL_AUTHORING_TOOLS_PLAN.md §3.2): the
+// test catalog's stamp folder becomes a copy whose first stamp is edited, and
+// the random level -- the one that composes stamps -- is loaded from it.
+void stamp_site_keys() {
+    namespace fs = std::filesystem;
+    const std::string yaml = shipping_yaml();
+    const LevelFiles levels = shipping_levels();
+    const fs::path file = write_catalog(yaml, levels);
+    const fs::path stamps = file.parent_path() / "stamp_templates";
+    const fs::path real = fs::absolute("game_server/gameplay_catalog/stamp_templates");
+    const std::string stamp_file = "1_stamp_fortress_0001.yaml";
+    std::string original;
+    {
+        std::ifstream in(real / stamp_file);
+        std::stringstream text;
+        text << in.rdbuf();
+        original = text.str();
+    }
+    const auto with_stamp = [&](const std::string& text) {
+        fs::remove_all(stamps);
+        fs::create_directories(stamps);
+        for (const fs::directory_entry& e : fs::directory_iterator(real)) {
+            fs::copy_file(e.path(), stamps / e.path().filename());
+        }
+        std::ofstream(stamps / stamp_file, std::ios::trunc) << text;
+    };
+    const auto level = [&]() {
+        return gs::load_scene_template_config_from_catalog_file(file.string(), "level_random");
+    };
+    const auto refused_stamp = [&](const std::string& text, const std::string& expected) {
+        with_stamp(text);
+        std::string why;
+        try {
+            level();
+        } catch (const std::exception& e) {
+            why = e.what();
+        }
+        std::printf("refused stamp: %s\n", why.substr(0, why.find(": /")).c_str());
+        require(!why.empty() && why.find(expected) != std::string::npos);
+    };
+
+    const std::string sites =
+        "sites:\n"
+        "  - name: courtyard\n"
+        "    position: {x: 12.0, y: 0.0, z: 12.0}\n"
+        "    yaw_degrees: 90\n"
+        "    options:\n"
+        "      - {weight: 10}\n"
+        "      - {weight: 20, entity_template: gingerbread_nest}\n"
+        "      - {weight: 70, entity_template: initial_camp, grounded: false}\n"
+        "  - name: gate\n"
+        "    options:\n"
+        "      - {entity_template: level_terminal, position: {x: 3, y: 6, z: 12}, rotation: {x: 0, y: 0, z: 0, w: 1}}\n"
+        "per_map_limits:\n"
+        "  level_terminal: {max: 1}\n"
+        "player_barriers:\n"
+        "  - {center: {x: 12, y: 2, z: 3}, half_extents: {x: 4, y: 2, z: 0.5}}\n";
+    with_stamp(original + sites);
+    const gs::GameServerGameplayConfig config = level();
+    const gs::StampContentConfig& content = config.terrain.stamp_contents.front();
+    require(config.terrain.stamp_template_ids.front() == 1u);
+    require(content.has_sites && content.sites.size() == 2u);
+    const gs::StampSiteDefinition& courtyard = content.sites[0];
+    require(courtyard.options.size() == 3u);
+    require(courtyard.options[0].entity_template_id == 0u);  // nothing
+    require(courtyard.options[1].entity_template_id != 0u);
+    // The site's position, facing and grounding fill what an option leaves out.
+    require(courtyard.options[2].position.x == 12.0f && courtyard.options[2].grounded == false);
+    require(courtyard.options[1].grounded);
+    require(std::fabs(courtyard.options[1].rotation.y - 0.70710677f) < 1e-5f);
+    require(content.sites[1].options[0].position.y == 6.0f);
+    require(content.per_map_limits.size() == 1u && content.per_map_limits[0].max == 1u &&
+        content.per_map_limits[0].entity_template_id != 0u);
+    require(content.player_barriers.size() == 1u);
+    // The other stamps author nothing, and keep the old centre nest.
+    require(!config.terrain.stamp_contents.back().has_sites);
+    std::printf("stamp sites: options, defaults, limits and barriers load\n");
+
+    refused_stamp(original + "nest_sites:\n  - {x: 12, z: 12}\n", "nest_sites");
+    refused_stamp(original + replaced(sites, "entity_template: initial_camp", "entity_template: no_such_thing"),
+        "unknown entity_template name");
+    refused_stamp(original + replaced(sites, "position: {x: 12.0, y: 0.0, z: 12.0}", "position: {x: 1.0, y: 0.0, z: 12.0}"),
+        "2 m rim");
+    refused_stamp(original + replaced(sites, "{weight: 10}", "{weight: 0}"), "weight must be at least 1");
+    refused_stamp(original + replaced(sites, "level_terminal: {max: 1}", "level_terminal: {min: 2, max: 1}"),
+        "min over max");
+    refused_stamp(original + replaced(sites, "yaw_degrees: 90\n", "yaw_degrees: 90\n    rotation: {x: 0, y: 0, z: 0, w: 1}\n"),
+        "both rotation and yaw_degrees");
+    refused_stamp(original + "sites:\n  - name: empty\n    options: []\n", "needs at least one option");
+
+    // Put the shared folder back for anything after this.
+    fs::remove_all(stamps);
+    fs::create_directory_symlink(real, stamps);
+}
+
 }  // namespace
 
 int main() {
@@ -430,6 +525,7 @@ int main() {
     catalog_rules();
     start_scene_rules();
     level_authoring_keys();
+    stamp_site_keys();
     std::printf("scene_template_catalog_test passed\n");
     return 0;
 }

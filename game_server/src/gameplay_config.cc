@@ -1188,6 +1188,37 @@ bool finite_vec3_value(const KernelVec3& value) {
         std::isfinite(value.z);
 }
 
+constexpr float kDegreesToRadians = 3.14159265358979323846f / 180.0f;
+
+// `rotation: {x, y, z, w}`, normalised; `what` names the owner in errors.
+KernelQuat rotation_from_yaml(const YAML::Node& rotation, const std::string& what) {
+    if (!rotation.IsMap() || !rotation["x"] || !rotation["y"] || !rotation["z"] ||
+        !rotation["w"] || rotation.size() != 4u) {
+        throw std::runtime_error(what + " rotation needs exactly x, y, z and w");
+    }
+    const float x = rotation["x"].as<float>();
+    const float y = rotation["y"].as<float>();
+    const float z = rotation["z"].as<float>();
+    const float w = rotation["w"].as<float>();
+    const float length = std::sqrt(x * x + y * y + z * z + w * w);
+    if (!std::isfinite(length) || length < 1e-6f) {
+        throw std::runtime_error(what + " rotation must be a finite, non-zero quaternion");
+    }
+    return KernelQuat{x / length, y / length, z / length, w / length};
+}
+
+// A turn of `degrees` about +y.
+KernelQuat yaw_rotation(float degrees) {
+    const float half = degrees * kDegreesToRadians * 0.5f;
+    return KernelQuat{0.0f, std::sin(half), 0.0f, std::cos(half)};
+}
+
+// One `player_barriers:` entry (docs/LEVEL_AUTHORING_TOOLS_PLAN.md G2).
+KernelPlayerBarrierBox player_barrier_from_yaml(
+    const YAML::Node& barrier,
+    const std::string& path,
+    std::uint32_t source_kind);
+
 float vec3_length_squared(const KernelVec3& value) {
     return value.x * value.x + value.y * value.y + value.z * value.z;
 }
@@ -10066,6 +10097,119 @@ GameServerGameplayConfig load_gameplay_config_from_weapon_template_source(
 }
 
 // `terrain:` and the stamps under `stamp_template_dir`, assets read whole.
+// A stamp's `sites:`, `per_map_limits:` and `player_barriers:`
+// (docs/LEVEL_AUTHORING_TOOLS_PLAN.md §3.2), in the stamp's own frame. Template
+// names stay names here: entity templates load after the terrain, and
+// resolve_stamp_content_templates turns them into ids.
+StampContentConfig stamp_content_from_yaml(
+    const YAML::Node& st,
+    const terrain::StampAsset& stamp,
+    const std::string& file,
+    std::uint32_t kind) {
+    StampContentConfig content;
+    const float edge = static_cast<float>(stamp.cells_x) * 0.3f;
+    // The outer 2 m meets the ground around the stamp, so its height is not
+    // the stamp's own (plan §8 rule 4).
+    constexpr float kRim = 2.0f;
+    const auto inside = [&](const KernelVec3& at) {
+        return at.x >= kRim && at.x <= edge - kRim && at.z >= kRim && at.z <= edge - kRim &&
+            std::isfinite(at.y);
+    };
+    const auto rotation_of = [&](const YAML::Node& node, KernelQuat fallback, const std::string& what) {
+        if (node["rotation"] && node["yaw_degrees"]) {
+            throw std::runtime_error(what + " names both rotation and yaw_degrees: " + file);
+        }
+        if (node["rotation"]) return rotation_from_yaml(node["rotation"], what + " (" + file + ")");
+        if (node["yaw_degrees"]) return yaw_rotation(node["yaw_degrees"].as<float>());
+        return fallback;
+    };
+    if (const YAML::Node sites = st["sites"]) {
+        if (!sites.IsSequence()) throw std::runtime_error("stamp sites must be a sequence: " + file);
+        content.has_sites = true;
+        for (const YAML::Node& site : sites) {
+            reject_unknown_keys(site, {"name", "position", "yaw_degrees", "rotation", "grounded", "options"},
+                file, kind, KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+            StampSiteDefinition parsed;
+            parsed.name = site["name"] ? site["name"].as<std::string>() : std::string{};
+            const std::string what = "stamp site " + (parsed.name.empty() ? std::string("(unnamed)") : parsed.name);
+            const bool has_position = static_cast<bool>(site["position"]);
+            const KernelVec3 position = has_position ? vec3_from_yaml(site["position"]) : KernelVec3{};
+            const KernelQuat rotation = rotation_of(site, KernelQuat{0.0f, 0.0f, 0.0f, 1.0f}, what);
+            const bool grounded = site["grounded"] ? site["grounded"].as<bool>() : true;
+            const YAML::Node options = site["options"];
+            if (!options || !options.IsSequence() || options.size() == 0u) {
+                throw std::runtime_error(what + " needs at least one option: " + file);
+            }
+            std::uint64_t total = 0;
+            for (const YAML::Node& option : options) {
+                reject_unknown_keys(option,
+                    {"weight", "entity_template", "position", "yaw_degrees", "rotation", "grounded"},
+                    file, kind, KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+                StampSiteOptionConfig o;
+                o.weight = option["weight"] ? option["weight"].as<std::uint32_t>() : 1u;
+                if (o.weight == 0u) throw std::runtime_error(what + " option weight must be at least 1: " + file);
+                total += o.weight;
+                if (option["entity_template"]) o.entity_template = option["entity_template"].as<std::string>();
+                if (option["position"]) {
+                    o.position = vec3_from_yaml(option["position"]);
+                } else if (has_position) {
+                    o.position = position;
+                } else if (!o.entity_template.empty()) {
+                    throw std::runtime_error(what + " option needs a position, or the site one: " + file);
+                }
+                o.rotation = rotation_of(option, rotation, what);
+                o.grounded = option["grounded"] ? option["grounded"].as<bool>() : grounded;
+                if (!o.entity_template.empty() && !inside(o.position)) {
+                    throw std::runtime_error(what + " is outside the stamp or in its 2 m rim: " + file);
+                }
+                parsed.options.push_back(std::move(o));
+            }
+            if (total > 0xffffffffu) throw std::runtime_error(what + " weights are too large: " + file);
+            content.sites.push_back(std::move(parsed));
+        }
+    }
+    if (const YAML::Node limits = st["per_map_limits"]) {
+        if (!limits.IsMap()) throw std::runtime_error("stamp per_map_limits must be a mapping: " + file);
+        for (const auto& entry : limits) {
+            reject_unknown_keys(entry.second, {"min", "max"}, file, kind,
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+            StampPlacementLimit limit;
+            limit.entity_template = entry.first.as<std::string>();
+            if (entry.second["min"]) limit.min = entry.second["min"].as<std::uint32_t>();
+            if (entry.second["max"]) limit.max = entry.second["max"].as<std::uint32_t>();
+            if (limit.min > limit.max) {
+                throw std::runtime_error("stamp per_map_limits " + limit.entity_template + " has min over max: " + file);
+            }
+            content.per_map_limits.push_back(std::move(limit));
+        }
+    }
+    if (const YAML::Node barriers = st["player_barriers"]) {
+        if (!barriers.IsSequence()) throw std::runtime_error("stamp player_barriers must be a sequence: " + file);
+        for (const YAML::Node& barrier : barriers) {
+            content.player_barriers.push_back(player_barrier_from_yaml(barrier, file, kind));
+        }
+    }
+    return content;
+}
+
+// Names in the stamps' contents to entity template ids; unknown names refuse
+// the catalog, as anywhere else a template is named.
+void resolve_stamp_content_templates(GameServerGameplayConfig* config) {
+    for (StampContentConfig& content : config->terrain.stamp_contents) {
+        for (StampSiteDefinition& site : content.sites) {
+            for (StampSiteOptionConfig& option : site.options) {
+                if (option.entity_template.empty()) continue;
+                option.entity_template_id = entity_template_ref_from_yaml(
+                    YAML::Node(option.entity_template), config->entity_templates);
+            }
+        }
+        for (StampPlacementLimit& limit : content.per_map_limits) {
+            limit.entity_template_id = entity_template_ref_from_yaml(
+                YAML::Node(limit.entity_template), config->entity_templates);
+        }
+    }
+}
+
 TerrainCatalogConfig terrain_catalog_from_yaml(
     const GameplayConfigSource& source,
     const std::string& base_path,
@@ -10162,11 +10306,11 @@ TerrainCatalogConfig terrain_catalog_from_yaml(
     // Stamps: one template per file, `<id>_stamp_<name>.yaml` naming its .hf.
     if (!document["stamp_template_dir"]) return fail("needs stamp_template_dir");
     const std::string dir = source.resolve_path(base_path, document["stamp_template_dir"]);
-    struct Loaded { std::uint32_t id; terrain::StampAsset stamp; std::vector<StampSiteConfig> nest_sites; };
+    struct Loaded { std::uint32_t id; terrain::StampAsset stamp; StampContentConfig content; };
     std::vector<Loaded> stamps;
     for (const std::string& file : source.list_yaml_files(dir)) {
         const YAML::Node st = source.load_yaml(file);
-        reject_unknown_keys(st, {"id", "name", "heights", "nest_sites"}, file, kind, KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+        reject_unknown_keys(st, {"id", "name", "heights", "sites", "per_map_limits", "player_barriers"}, file, kind, KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
         if (!st["id"] || !st["name"] || !st["heights"]) {
             throw std::runtime_error("stamp template requires id, name and heights: " + file);
         }
@@ -10185,25 +10329,14 @@ TerrainCatalogConfig terrain_catalog_from_yaml(
         if (!terrain::parse_stamp(source.load_bytes(heights), name, &l.stamp, &error)) {
             throw std::runtime_error("stamp " + heights + ": " + error);
         }
-        if (const YAML::Node sites = st["nest_sites"]) {
-            // Metres from the stamp's own low corner, before it is turned.
-            const float edge = static_cast<float>(l.stamp.cells_x) * 0.3f;
-            for (const YAML::Node& site : sites) {
-                reject_unknown_keys(site, {"x", "z"}, file, kind, KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
-                StampSiteConfig parsed{site["x"].as<float>(), site["z"].as<float>()};
-                if (!(parsed.x >= 0.0f && parsed.x <= edge && parsed.z >= 0.0f && parsed.z <= edge)) {
-                    throw std::runtime_error("stamp nest site is outside the stamp: " + file);
-                }
-                l.nest_sites.push_back(parsed);
-            }
-        }
+        l.content = stamp_content_from_yaml(st, l.stamp, file, kind);
         stamps.push_back(std::move(l));
     }
     std::sort(stamps.begin(), stamps.end(), [](const Loaded& a, const Loaded& b) { return a.id < b.id; });
     if (stamps.empty()) return fail("stamp_template_dir holds no stamps");
     for (Loaded& l : stamps) {
         c.stamp_template_ids.push_back(l.id);
-        c.stamp_nest_sites.push_back(std::move(l.nest_sites));
+        c.stamp_contents.push_back(std::move(l.content));
         c.library.stamps.push_back(std::move(l.stamp));
     }
     const YAML::Node st = t["stamps"];
@@ -10993,6 +11126,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
         actor_templates_from_entity_templates(config.entity_templates);
 
     apply_catalog_player_config(document, &config);
+    resolve_stamp_content_templates(&config);
     apply_catalog_scene_props_config(
         document, &config, path, source.source_kind());
     apply_catalog_director_preload_config(document, &config);
@@ -11330,6 +11464,36 @@ void apply_default_non_weapon_config(GameServerGameplayConfig* config) {
     apply_default_actor_templates(config);
 }
 
+KernelPlayerBarrierBox player_barrier_from_yaml(
+    const YAML::Node& barrier,
+    const std::string& path,
+    std::uint32_t source_kind) {
+    reject_unknown_keys(
+        barrier, {"center", "half_extents", "yaw_degrees"}, path, source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+    if (!barrier["center"] || !barrier["half_extents"]) {
+        throw std::runtime_error("player barrier needs center and half_extents: " + path);
+    }
+    KernelPlayerBarrierBox box{};
+    box.center = vec3_from_yaml(barrier["center"]);
+    box.half_extents = vec3_from_yaml(barrier["half_extents"]);
+    const float yaw_degrees =
+        barrier["yaw_degrees"] ? barrier["yaw_degrees"].as<float>() : 0.0f;
+    box.yaw_radians = yaw_degrees * kDegreesToRadians;
+    const auto extent_ok = [](float value) {
+        return std::isfinite(value) && value > 0.0f &&
+            value <= KERNEL_MAX_PLAYER_BARRIER_HALF_EXTENT;
+    };
+    if (!finite_vec3_value(box.center) || !std::isfinite(box.yaw_radians) ||
+        !extent_ok(box.half_extents.x) || !extent_ok(box.half_extents.y) ||
+        !extent_ok(box.half_extents.z)) {
+        throw std::runtime_error(
+            "player barrier must be finite with half extents in (0, " +
+            std::to_string(KERNEL_MAX_PLAYER_BARRIER_HALF_EXTENT) + "]: " + path);
+    }
+    return box;
+}
+
 void apply_catalog_scene_props_config(
     const YAML::Node& document,
     GameServerGameplayConfig* config,
@@ -11358,18 +11522,7 @@ void apply_catalog_scene_props_config(
             reject_unknown_keys(
                 rotation, {"x", "y", "z", "w"}, path, source_kind,
                 KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
-            if (!rotation["x"] || !rotation["y"] || !rotation["z"] || !rotation["w"]) {
-                throw std::runtime_error("scene prop rotation needs x, y, z and w: " + path);
-            }
-            const float x = rotation["x"].as<float>();
-            const float y = rotation["y"].as<float>();
-            const float z = rotation["z"].as<float>();
-            const float w = rotation["w"].as<float>();
-            const float length = std::sqrt(x * x + y * y + z * z + w * w);
-            if (!std::isfinite(length) || length < 1e-6f) {
-                throw std::runtime_error("scene prop rotation must be a finite, non-zero quaternion: " + path);
-            }
-            scene_prop.rotation = KernelQuat{x / length, y / length, z / length, w / length};
+            scene_prop.rotation = rotation_from_yaml(rotation, "scene prop (" + path + ")");
         }
         if (const YAML::Node grounded = prop["grounded"]) {
             scene_prop.grounded = grounded.as<bool>();
@@ -11382,30 +11535,7 @@ void apply_catalog_scene_props_config(
             throw std::runtime_error("player_barriers must be a sequence: " + path);
         }
         for (const YAML::Node& barrier : barriers) {
-            reject_unknown_keys(
-                barrier, {"center", "half_extents", "yaw_degrees"}, path, source_kind,
-                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
-            if (!barrier["center"] || !barrier["half_extents"]) {
-                throw std::runtime_error("player barrier needs center and half_extents: " + path);
-            }
-            KernelPlayerBarrierBox box{};
-            box.center = vec3_from_yaml(barrier["center"]);
-            box.half_extents = vec3_from_yaml(barrier["half_extents"]);
-            const float yaw_degrees =
-                barrier["yaw_degrees"] ? barrier["yaw_degrees"].as<float>() : 0.0f;
-            box.yaw_radians = yaw_degrees * 3.14159265358979323846f / 180.0f;
-            const auto extent_ok = [](float value) {
-                return std::isfinite(value) && value > 0.0f &&
-                    value <= KERNEL_MAX_PLAYER_BARRIER_HALF_EXTENT;
-            };
-            if (!finite_vec3_value(box.center) || !std::isfinite(box.yaw_radians) ||
-                !extent_ok(box.half_extents.x) || !extent_ok(box.half_extents.y) ||
-                !extent_ok(box.half_extents.z)) {
-                throw std::runtime_error(
-                    "player barrier must be finite with half extents in (0, " +
-                    std::to_string(KERNEL_MAX_PLAYER_BARRIER_HALF_EXTENT) + "]: " + path);
-            }
-            config->player_barriers.push_back(box);
+            config->player_barriers.push_back(player_barrier_from_yaml(barrier, path, source_kind));
         }
     }
     if (const YAML::Node edge = document["map_edge_barrier"]) {
@@ -12875,6 +13005,41 @@ std::uint64_t compute_gameplay_catalog_hash(
     if (config.terrain.enabled) {
         hash_string(&hash, config.terrain.recipe_entry_path);
         hash_scalar(&hash, terrain::terrain_library_hash(config.terrain.library));
+        // Stamp barriers are predicted against; their sites decide what a
+        // level holds. Both ends must read the same.
+        for (const StampContentConfig& content : config.terrain.stamp_contents) {
+            hash_scalar(&hash, static_cast<std::uint32_t>(content.has_sites));
+            hash_scalar(&hash, static_cast<std::uint32_t>(content.sites.size()));
+            for (const StampSiteDefinition& site : content.sites) {
+                hash_scalar(&hash, static_cast<std::uint32_t>(site.options.size()));
+                for (const StampSiteOptionConfig& option : site.options) {
+                    hash_scalar(&hash, option.weight);
+                    hash_scalar(&hash, option.entity_template_id);
+                    hash_float(&hash, option.position.x);
+                    hash_float(&hash, option.position.y);
+                    hash_float(&hash, option.position.z);
+                    hash_float(&hash, option.rotation.x);
+                    hash_float(&hash, option.rotation.y);
+                    hash_float(&hash, option.rotation.z);
+                    hash_float(&hash, option.rotation.w);
+                    hash_scalar(&hash, static_cast<std::uint32_t>(option.grounded));
+                }
+            }
+            for (const StampPlacementLimit& limit : content.per_map_limits) {
+                hash_scalar(&hash, limit.entity_template_id);
+                hash_scalar(&hash, limit.min);
+                hash_scalar(&hash, limit.max);
+            }
+            for (const KernelPlayerBarrierBox& box : content.player_barriers) {
+                hash_float(&hash, box.center.x);
+                hash_float(&hash, box.center.y);
+                hash_float(&hash, box.center.z);
+                hash_float(&hash, box.half_extents.x);
+                hash_float(&hash, box.half_extents.y);
+                hash_float(&hash, box.half_extents.z);
+                hash_float(&hash, box.yaw_radians);
+            }
+        }
     }
     hash_scalar(&hash, config.static_collision_scene.scene_id);
     hash_scalar(&hash, config.static_collision_scene.collider_id);

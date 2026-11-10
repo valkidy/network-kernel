@@ -644,6 +644,44 @@ struct StampSiteConfig {
     float z = 0.0f;
 };
 
+// One thing a stamp site may hold (docs/LEVEL_AUTHORING_TOOLS_PLAN.md §3.2),
+// with the site's position, rotation and grounded filled in where the option
+// names none. In the stamp's own frame: metres from its low corner, y from its
+// border, before the placement's turn and mirror.
+struct StampSiteOptionConfig {
+    std::uint32_t weight = 1;
+    // Empty: this option puts nothing there.
+    std::string entity_template;
+    std::uint32_t entity_template_id = 0;  // resolved once entity templates load
+    KernelVec3 position{};
+    KernelQuat rotation{0.0f, 0.0f, 0.0f, 1.0f};
+    bool grounded = true;
+};
+
+// A site draws one of its options per placed stamp.
+struct StampSiteDefinition {
+    std::string name;
+    std::vector<StampSiteOptionConfig> options;
+};
+
+// How many of a template one map may hold, across every stamp placed on it.
+struct StampPlacementLimit {
+    std::string entity_template;
+    std::uint32_t entity_template_id = 0;
+    std::uint32_t min = 0;
+    std::uint32_t max = 0xffffffffu;
+};
+
+// What a stamp puts on the map beyond its heights.
+struct StampContentConfig {
+    // False: the stamp authors no `sites:`, and a level's nests fall back to
+    // its centre as before.
+    bool has_sites = false;
+    std::vector<StampSiteDefinition> sites;
+    std::vector<StampPlacementLimit> per_map_limits;
+    std::vector<KernelPlayerBarrierBox> player_barriers;  // stamp frame
+};
+
 // `terrain.seed: -1`: the server picks a seed each time the map is opened,
 // and sends clients the resulting recipe.
 constexpr std::int32_t kTerrainSeedRandom = -1;
@@ -661,7 +699,7 @@ struct TerrainCatalogConfig {
     float playable_margin_meters = 0.0f;
     terrain::TerrainLibrary library;
     std::vector<std::uint32_t> stamp_template_ids;   // per library stamp, ascending
-    std::vector<std::vector<StampSiteConfig>> stamp_nest_sites;  // per library stamp; empty = its centre
+    std::vector<StampContentConfig> stamp_contents;  // per library stamp
     std::vector<std::uint8_t> fallback_recipe;       // NKTR, optional
 };
 
