@@ -8,6 +8,8 @@
 #include <utility>
 #include <vector>
 
+#include "game_server/src/scene_placement.h"
+
 namespace network_example::game_server {
 
 GameServer::GameServer(KernelHandle* kernel, GameServerGameplayConfig config)
@@ -160,7 +162,7 @@ bool GameServer::place_props_of(const GameServerGameplayConfig& config) const {
         create.entity_type = KernelEntityType_Prop;
         create.entity_template_id = scene_prop.entity_template_id;
         create.position = scene_prop.position;
-        create.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+        create.rotation = scene_prop.rotation;
         std::uint32_t net_id = 0;
         if (!Kernel_ServerCreateEntity(kernel_, &create, &net_id)) {
             if (&scene_prop == &config.scene_props.front()) {
@@ -561,6 +563,11 @@ bool GameServer::commit_scene(std::uint32_t index, PreparedScene prepared) {
     scene.offset = config.scene_offset;
     if (!Kernel_AddStaticSceneSlot(kernel_, &scene)) {
         slot.error = "kernel refused the slot's static scene";
+        return false;
+    }
+    if (!register_player_barriers(kernel_, index, config)) {
+        slot.error = "kernel refused the slot's player barriers";
+        Kernel_RemoveStaticSceneSlot(kernel_, index);
         return false;
     }
     slot.manager = std::make_unique<AgentRuntimeManager>(kernel_, config);

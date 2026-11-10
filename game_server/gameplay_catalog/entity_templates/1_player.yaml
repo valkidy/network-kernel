@@ -42,7 +42,9 @@ movement:
   # legged rig's own bones stop the player instead of letting them walk through
   # the legs of something whose body they cannot pass. Limbs are opt-in: this is
   # the only place that asks for them, and every other actor is unaffected.
-  collision_mask: terrain | static_obstacle | actor | limb
+  # player_barrier: a scene's invisible edge walls (player_barriers,
+  # map_edge_barrier) stop the player and nothing else.
+  collision_mask: terrain | static_obstacle | actor | limb | player_barrier
 weapon_slots:
   - 13 # 3
   - 14 # 1

@@ -8,6 +8,7 @@
 #include <span>
 #include <utility>
 
+#include "game_server/src/scene_placement.h"
 #include "game_server/src/terrain_catalog.h"
 
 namespace network_example::game_server {
@@ -214,6 +215,17 @@ PreparedScene prepare_scene(
         }
         if (out.collision_artifact.empty()) {
             out.error = "scene template " + scene_template + " has no collision scene";
+            return out;
+        }
+        // In the scene's own coordinates, before the slot's offset: the
+        // ground is the template's, and the kernel adds the offset to the
+        // barriers itself.
+        const SceneGround ground = config.terrain.enabled
+            ? SceneGround{&out.terrain_heights, {}}
+            : SceneGround{nullptr, out.collision_artifact};
+        std::string placement_error;
+        if (!finish_scene_placement(&config, ground, &placement_error)) {
+            out.error = "scene template " + scene_template + ": " + placement_error;
             return out;
         }
         offset_scene_config(&config, slot);

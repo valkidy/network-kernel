@@ -694,6 +694,27 @@ struct StaticCollisionSceneConfig {
 struct ScenePropConfig {
     std::uint32_t entity_template_id = 0;
     KernelVec3 position{};
+    // catalog_version 21 (docs/LEVEL_AUTHORING_TOOLS_PLAN.md G1). Identity
+    // unless authored; normalised at load.
+    KernelQuat rotation{0.0f, 0.0f, 0.0f, 1.0f};
+    // When set, finish_scene_placement puts position.y on the ground under
+    // (x, z) and refuses a prop that has none. Off by default: a y the author
+    // measured stays exactly where it was.
+    bool grounded = false;
+};
+
+// `map_edge_barrier:` (catalog_version 21, plan G2): player barriers along the
+// map's rectangle, laid out by finish_scene_placement from the ground at the
+// edge -- each segment's wall reaches `height` above the highest ground in it.
+struct MapEdgeBarrierConfig {
+    bool enabled = false;
+    float height_meters = 4.0f;
+    float thickness_meters = 1.0f;
+    // Along each edge; grown when the map's perimeter would need more boxes
+    // than a slot takes.
+    float segment_meters = 6.0f;
+    // How far inside the rectangle the wall's outer face stands.
+    float inset_meters = 0.0f;
 };
 
 // An item lying on the map from the start (`scene_items:`), placed alongside
@@ -740,6 +761,12 @@ struct GameServerGameplayConfig {
     ReinforceBudgetConfig reinforce_budget;
     std::vector<ScenePropConfig> scene_props;
     std::vector<SceneItemConfig> scene_items;
+    // `player_barriers:` as authored, in the scene's own coordinates, and the
+    // map-edge rule; resolved_player_barriers is both laid out against the
+    // scene's ground (finish_scene_placement), which is what the kernel gets.
+    std::vector<KernelPlayerBarrierBox> player_barriers;
+    MapEdgeBarrierConfig map_edge_barrier;
+    std::vector<KernelPlayerBarrierBox> resolved_player_barriers;
     // Every agent on the server. Spawners that fill room when there is room --
     // patrols, nests, on_alert -- are held to it; mission and world rules and
     // action-graph spawns count toward it but are never refused, so it is a

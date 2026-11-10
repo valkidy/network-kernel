@@ -17,3 +17,7 @@ scene_props:
     position: {x: 106.8, y: 20.4, z: 82.0}
 player:
   spawn_position: {x: 106.8, y: 23.0, z: 77.0}
+# Invisible walls round the map's edge, 4 m above the highest ground of each
+# stretch, so a player cannot walk off it; agents are not stopped, and a
+# player flying over them still falls and respawns as before.
+map_edge_barrier: {height: 4.0}

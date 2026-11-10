@@ -1,6 +1,8 @@
 # 19: scene_template_dir (docs/SCENE_TABLE_PLAYABLE_LOOP_PLAN.md).
 # 20: start_scene; map_variant / map_variants removed (docs/START_SCENE_PLAN.md).
-catalog_version: 20
+# 21: scene_props rotation / grounded, player_barriers, map_edge_barrier
+#     (docs/LEVEL_AUTHORING_TOOLS_PLAN.md).
+catalog_version: 21
 prop_population_rules:
   - id: 1
     name: temporary_deployable

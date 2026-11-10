@@ -12,6 +12,7 @@
 #include <spdlog/spdlog.h>
 
 #include "game_server/src/game_server.h"
+#include "game_server/src/scene_placement.h"
 #include "game_server/src/terrain_catalog.h"
 #include "client_app.h"
 #include "kernel/public/kernel_api.h"
@@ -195,7 +196,23 @@ int RunHostServer(
                 prepared.recipe.heights_hash,
                 prepared.collision_artifact.size(),
                 gameplay_config.navigation_mesh.artifact.size());
+            if (!gs::finish_scene_placement(
+                    &gameplay_config, gs::SceneGround{&prepared.heights, {}}, &terrain_error)) {
+                spdlog::error("scene placement: {}", terrain_error);
+                return 1;
+            }
             collision_scene_bytes = std::move(prepared.collision_artifact);
+        } else {
+            // Grounded props and player barriers against the mesh's own
+            // triangles (docs/LEVEL_AUTHORING_TOOLS_PLAN.md G1/G2).
+            std::string placement_error;
+            if (!network_example::game_server::finish_scene_placement(
+                    &gameplay_config,
+                    network_example::game_server::SceneGround{nullptr, collision_scene_bytes},
+                    &placement_error)) {
+                spdlog::error("scene placement: {}", placement_error);
+                return 1;
+            }
         }
     } catch (const network_example::game_server::DataLoadError& error) {
         spdlog::error(
@@ -247,6 +264,12 @@ int RunHostServer(
             gameplay_config.static_collision_scene.collision_layer;
         if (!Kernel_SetStaticCollisionScene(kernel, &scene_config)) {
             spdlog::error("failed to register static collision scene");
+            Kernel_Destroy(kernel);
+            return 1;
+        }
+        if (!network_example::game_server::register_player_barriers(
+                kernel, 0u, gameplay_config)) {
+            spdlog::error("failed to register the scene's player barriers");
             Kernel_Destroy(kernel);
             return 1;
         }

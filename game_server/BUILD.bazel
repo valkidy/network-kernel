@@ -51,6 +51,7 @@ cc_library(
         "src/patrol_navigation.cc",
         "src/patrol_targeting.cc",
         "src/respawn_scheduler.cc",
+        "src/scene_placement.cc",
         "src/scene_table.cc",
         "src/scene_flow.cc",
         "src/shelter_director.cc",
@@ -77,6 +78,7 @@ cc_library(
         "src/game_server.h",
         "src/respawn_scheduler.h",
         "src/scene_bounds.h",
+        "src/scene_placement.h",
         "src/scene_table.h",
         "src/shelter_director.h",
         "src/loadout_director.h",
@@ -98,6 +100,7 @@ cc_library(
         "//engine/components/ai:ai",
         "//engine/src/kernel:kernel_api",
         "//engine/src/kernel:kernel_api_internal",
+        "//engine/src/physics:physics",
         "@recastnavigation//:detour",
         "@spdlog//:spdlog",
         "@zip_archive//:zip",
@@ -2349,6 +2352,17 @@ cc_binary(
 # A player stands on a static scene slot's terrain as on the camp's
 # (docs/SCENE_TABLE_PLAN.md S1); a real listen host from the shipping bundle.
 cc_test(
+    name = "scene_placement_test",
+    srcs = ["tests/scene_placement_test.cc"],
+    data = ["//game_server/gameplay_catalog_bundle:bundle"],
+    deps = [
+        ":game_server",
+        ":game_server_bridge",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
     name = "static_scene_slot_grounding_test",
     srcs = ["tests/static_scene_slot_grounding_test.cc"],
     data = ["//game_server/gameplay_catalog_bundle:bundle"],
@@ -2460,7 +2474,12 @@ cc_test(
         "//game_server/gameplay_catalog/skeleton_assets:simplified_tripod_assets",
         "//game_server/gameplay_catalog_bundle:bundle",
     ],
-    deps = [":game_server"],
+    # The kernel too: game_server's objects that loading pulls in call it, and
+    # without it this test never linked.
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
 )
 
 cc_test(

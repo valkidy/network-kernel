@@ -10265,6 +10265,8 @@ const std::initializer_list<const char*> kMapOverlayKeys = {
     "patrol_budget",
     "agent_budget",
     "reinforce_budget",
+    "player_barriers",
+    "map_edge_barrier",
 };
 
 // The keys a scene template file may set beyond the map overlay.
@@ -10273,6 +10275,7 @@ const std::initializer_list<const char*> kSceneTemplateFileKeys = {
     "navigation_mesh", "static_collision_scene", "terrain", "stamp_template_dir",
     "map", "player", "scene_props", "scene_items", "agent_routes", "preload_directors",
     "patrols", "patrol_budget", "agent_budget", "reinforce_budget",
+    "player_barriers", "map_edge_barrier",
 };
 
 struct LoadedSceneTemplate {
@@ -10607,6 +10610,8 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             "map",
             "scene_props",
             "scene_items",
+            "player_barriers",
+            "map_edge_barrier",
             "agent_routes",
             "agent_commands",
             "terrain",
@@ -10684,7 +10689,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
         catalog_version != 14u && catalog_version != 15u &&
         catalog_version != 16u && catalog_version != 17u &&
         catalog_version != 18u && catalog_version != 19u &&
-        catalog_version != 20u) {
+        catalog_version != 20u && catalog_version != 21u) {
         throw DataLoadError(
             KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNSUPPORTED_CATALOG_VERSION,
             "unsupported catalog_version: " + std::to_string(catalog_version),
@@ -11337,7 +11342,7 @@ void apply_catalog_scene_props_config(
     for (const YAML::Node& prop : props ? props : YAML::Node(YAML::NodeType::Sequence)) {
         reject_unknown_keys(
             prop,
-            {"entity_template", "position"},
+            {"entity_template", "position", "rotation", "grounded"},
             path,
             source_kind,
             KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
@@ -11349,7 +11354,78 @@ void apply_catalog_scene_props_config(
         scene_prop.entity_template_id = entity_template_ref_from_yaml(
             prop["entity_template"], config->entity_templates);
         scene_prop.position = vec3_from_yaml(prop["position"]);
+        if (const YAML::Node rotation = prop["rotation"]) {
+            reject_unknown_keys(
+                rotation, {"x", "y", "z", "w"}, path, source_kind,
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+            if (!rotation["x"] || !rotation["y"] || !rotation["z"] || !rotation["w"]) {
+                throw std::runtime_error("scene prop rotation needs x, y, z and w: " + path);
+            }
+            const float x = rotation["x"].as<float>();
+            const float y = rotation["y"].as<float>();
+            const float z = rotation["z"].as<float>();
+            const float w = rotation["w"].as<float>();
+            const float length = std::sqrt(x * x + y * y + z * z + w * w);
+            if (!std::isfinite(length) || length < 1e-6f) {
+                throw std::runtime_error("scene prop rotation must be a finite, non-zero quaternion: " + path);
+            }
+            scene_prop.rotation = KernelQuat{x / length, y / length, z / length, w / length};
+        }
+        if (const YAML::Node grounded = prop["grounded"]) {
+            scene_prop.grounded = grounded.as<bool>();
+        }
         config->scene_props.push_back(scene_prop);
+    }
+    // Player barriers (docs/LEVEL_AUTHORING_TOOLS_PLAN.md G2).
+    if (const YAML::Node barriers = document["player_barriers"]) {
+        if (!barriers.IsSequence()) {
+            throw std::runtime_error("player_barriers must be a sequence: " + path);
+        }
+        for (const YAML::Node& barrier : barriers) {
+            reject_unknown_keys(
+                barrier, {"center", "half_extents", "yaw_degrees"}, path, source_kind,
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+            if (!barrier["center"] || !barrier["half_extents"]) {
+                throw std::runtime_error("player barrier needs center and half_extents: " + path);
+            }
+            KernelPlayerBarrierBox box{};
+            box.center = vec3_from_yaml(barrier["center"]);
+            box.half_extents = vec3_from_yaml(barrier["half_extents"]);
+            const float yaw_degrees =
+                barrier["yaw_degrees"] ? barrier["yaw_degrees"].as<float>() : 0.0f;
+            box.yaw_radians = yaw_degrees * 3.14159265358979323846f / 180.0f;
+            const auto extent_ok = [](float value) {
+                return std::isfinite(value) && value > 0.0f &&
+                    value <= KERNEL_MAX_PLAYER_BARRIER_HALF_EXTENT;
+            };
+            if (!finite_vec3_value(box.center) || !std::isfinite(box.yaw_radians) ||
+                !extent_ok(box.half_extents.x) || !extent_ok(box.half_extents.y) ||
+                !extent_ok(box.half_extents.z)) {
+                throw std::runtime_error(
+                    "player barrier must be finite with half extents in (0, " +
+                    std::to_string(KERNEL_MAX_PLAYER_BARRIER_HALF_EXTENT) + "]: " + path);
+            }
+            config->player_barriers.push_back(box);
+        }
+    }
+    if (const YAML::Node edge = document["map_edge_barrier"]) {
+        reject_unknown_keys(
+            edge, {"height", "thickness", "segment", "inset"}, path, source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+        MapEdgeBarrierConfig& rule = config->map_edge_barrier;
+        rule.enabled = true;
+        if (edge["height"]) rule.height_meters = edge["height"].as<float>();
+        if (edge["thickness"]) rule.thickness_meters = edge["thickness"].as<float>();
+        if (edge["segment"]) rule.segment_meters = edge["segment"].as<float>();
+        if (edge["inset"]) rule.inset_meters = edge["inset"].as<float>();
+        const auto positive = [](float value) { return std::isfinite(value) && value > 0.0f; };
+        if (!positive(rule.height_meters) || !positive(rule.thickness_meters) ||
+            !positive(rule.segment_meters) || !std::isfinite(rule.inset_meters) ||
+            rule.inset_meters < 0.0f) {
+            throw std::runtime_error(
+                "map_edge_barrier needs positive height, thickness and segment and an "
+                "inset of at least 0: " + path);
+        }
     }
     if (const YAML::Node items = document["scene_items"]) {
         if (!items.IsSequence()) {
@@ -12646,7 +12722,28 @@ std::uint64_t compute_gameplay_catalog_hash(
         hash_float(&hash, scene_prop.position.x);
         hash_float(&hash, scene_prop.position.y);
         hash_float(&hash, scene_prop.position.z);
+        hash_float(&hash, scene_prop.rotation.x);
+        hash_float(&hash, scene_prop.rotation.y);
+        hash_float(&hash, scene_prop.rotation.z);
+        hash_float(&hash, scene_prop.rotation.w);
+        hash_scalar(&hash, static_cast<std::uint32_t>(scene_prop.grounded));
     }
+    // Barriers are predicted against, so both ends must agree on them.
+    hash_scalar(&hash, static_cast<std::uint32_t>(config.player_barriers.size()));
+    for (const KernelPlayerBarrierBox& box : config.player_barriers) {
+        hash_float(&hash, box.center.x);
+        hash_float(&hash, box.center.y);
+        hash_float(&hash, box.center.z);
+        hash_float(&hash, box.half_extents.x);
+        hash_float(&hash, box.half_extents.y);
+        hash_float(&hash, box.half_extents.z);
+        hash_float(&hash, box.yaw_radians);
+    }
+    hash_scalar(&hash, static_cast<std::uint32_t>(config.map_edge_barrier.enabled));
+    hash_float(&hash, config.map_edge_barrier.height_meters);
+    hash_float(&hash, config.map_edge_barrier.thickness_meters);
+    hash_float(&hash, config.map_edge_barrier.segment_meters);
+    hash_float(&hash, config.map_edge_barrier.inset_meters);
     hash_float(&hash, config.player.respawn.delay_seconds);
     hash_float(&hash, config.player.respawn.height_offset_meters);
     hash_float(&hash, config.player.respawn.invulnerable_seconds);

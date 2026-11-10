@@ -8,6 +8,7 @@
 //   say, the version it needs, and that the catalog hash follows the
 //   templates although the root never loads them.
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -127,7 +128,7 @@ void bundle_templates() {
 
     // The default entry starts on the initial camp: nothing hostile.
     const gs::GameServerGameplayConfig root = gs::load_gameplay_config_from_bundle_memory(bundle.data(), size, kEntry);
-    require(root.weapons.catalog_version == 20u);
+    require(root.weapons.catalog_version == 21u);
     require(root.scene_template.empty());
     require(root.start_scene == "initial_camp");
     require(root.preload_director_template_ids.empty());
@@ -277,7 +278,7 @@ void catalog_rules() {
     require(loads(yaml, levels, &why, &again));
     require(again == shipping_hash);
 
-    refused(replaced(yaml, "catalog_version: 20", "catalog_version: 18"), levels, "catalog_version 20");
+    refused(replaced(yaml, "catalog_version: 21", "catalog_version: 18"), levels, "catalog_version 20");
     refused(yaml, with(seed2, replaced(level, "preload_directors: []\n", "")), "needs preload_directors");
     refused(yaml, with(seed2, replaced(level, "name: level_terrain_seed2\n", "name: Level-Two\n")), "lower-case");
     refused(yaml, with(seed2, replaced(level, "name: level_terrain_seed2\n", "name: other_name\n")), "must be named");
@@ -339,7 +340,7 @@ void start_scene_rules() {
     std::printf("start scene: camp by default, any fixed map by id, a level when asked\n");
 
     refused(yaml + "map_variant: camp\n", levels, "gone in catalog_version 20");
-    refused(replaced(yaml, "catalog_version: 20", "catalog_version: 19"), levels, "start_scene needs catalog_version 20");
+    refused(replaced(yaml, "catalog_version: 21", "catalog_version: 19"), levels, "start_scene needs catalog_version 20");
     refused(starting_on("99"), levels, "start_scene 99 is not a scene template");
     refused(starting_on("4"), levels, "random terrain");
     LevelFiles no_camp = levels;
@@ -356,6 +357,71 @@ void start_scene_rules() {
     refused(yaml, no_directors, "needs preload_directors");
 }
 
+// Catalog version 21 (docs/LEVEL_AUTHORING_TOOLS_PLAN.md G1/G2): a scene prop's
+// rotation and grounded flag, authored player barriers and the map-edge rule,
+// all on the camp, which the start scene loads in full.
+void level_authoring_keys() {
+    const std::string yaml = shipping_yaml();
+    const LevelFiles levels = shipping_levels();
+    const std::string camp_file = "0_scene_initial_camp.yaml";
+    const std::string camp_text = levels.at(camp_file);
+    const auto with_camp = [&](const std::string& text) {
+        LevelFiles files = levels;
+        files[camp_file] = text;
+        return files;
+    };
+
+    // The shipping camp: edge walls on, nothing else authored.
+    const gs::GameServerGameplayConfig shipping = load_or_die(yaml, levels);
+    require(shipping.map_edge_barrier.enabled);
+    require(shipping.map_edge_barrier.height_meters == 4.0f);
+    require(shipping.player_barriers.empty());
+    for (const gs::ScenePropConfig& prop : shipping.scene_props) {
+        require(!prop.grounded);
+        require(prop.rotation.w == 1.0f);
+    }
+
+    const std::string authored = replaced(camp_text,
+        "  - entity_template: level_terminal\n    position: {x: 106.8, y: 20.4, z: 82.0}\n",
+        "  - entity_template: level_terminal\n    position: {x: 106.8, y: 20.4, z: 82.0}\n"
+        "    rotation: {x: 0.0, y: 2.0, z: 0.0, w: 0.0}\n    grounded: true\n") +
+        "player_barriers:\n"
+        "  - {center: {x: 100.0, y: 22.0, z: 66.0}, half_extents: {x: 6.0, y: 2.0, z: 0.25}, yaw_degrees: 90}\n";
+    std::uint64_t authored_hash = 0;
+    std::string why;
+    require(loads(yaml, with_camp(authored), &why, &authored_hash));
+    const gs::GameServerGameplayConfig config = load_or_die(yaml, with_camp(authored));
+    const gs::ScenePropConfig& terminal = config.scene_props.back();
+    require(terminal.grounded);
+    // Normalised: (0, 2, 0, 0) is a half turn about +y.
+    require(terminal.rotation.y == 1.0f && terminal.rotation.w == 0.0f);
+    require(config.player_barriers.size() == 1u);
+    require(std::fabs(config.player_barriers[0].yaw_radians - 1.5707964f) < 1e-5f);
+    std::uint64_t shipping_hash = 0;
+    require(loads(yaml, levels, &why, &shipping_hash));
+    // Barriers are predicted against: both ends must see a change in them.
+    require(authored_hash != shipping_hash);
+    std::printf("level authoring: rotation, grounded and barriers load and are hashed\n");
+
+    refused(yaml, with_camp(camp_text + "player_barriers: {}\n"), "player_barriers must be a sequence");
+    refused(yaml, with_camp(camp_text + "player_barriers:\n  - {center: {x: 0, y: 0, z: 0}}\n"),
+        "needs center and half_extents");
+    refused(yaml, with_camp(camp_text +
+        "player_barriers:\n  - {center: {x: 0, y: 0, z: 0}, half_extents: {x: 0, y: 1, z: 1}}\n"),
+        "half extents in (0,");
+    refused(yaml, with_camp(camp_text +
+        "player_barriers:\n  - {center: {x: 0, y: 0, z: 0}, half_extents: {x: 1, y: 1, z: 1}, tilt: 3}\n"),
+        "tilt");
+    refused(yaml, with_camp(replaced(camp_text, "map_edge_barrier: {height: 4.0}", "map_edge_barrier: {height: 0.0}")),
+        "map_edge_barrier needs positive");
+    refused(yaml, with_camp(replaced(camp_text, "map_edge_barrier: {height: 4.0}", "map_edge_barrier: {height: 4.0, colour: red}")),
+        "colour");
+    refused(yaml, with_camp(replaced(camp_text,
+        "    position: {x: 106.8, y: 20.4, z: 82.0}\n",
+        "    position: {x: 106.8, y: 20.4, z: 82.0}\n    rotation: {x: 0, y: 0, z: 0, w: 0}\n")),
+        "non-zero quaternion");
+}
+
 }  // namespace
 
 int main() {
@@ -363,6 +429,7 @@ int main() {
     start_scene_entries();
     catalog_rules();
     start_scene_rules();
+    level_authoring_keys();
     std::printf("scene_template_catalog_test passed\n");
     return 0;
 }
