@@ -845,7 +845,11 @@ struct DataLoadError : public std::runtime_error {
     std::int32_t column = -1;
 };
 
+// The shipped catalog from the source tree, playing its start scene (the
+// initial camp), or the scene template `start_scene` in its place -- 5 is the
+// composed mesh map with the mission that most tests were written against.
 GameServerGameplayConfig default_game_server_gameplay_config();
+GameServerGameplayConfig default_game_server_gameplay_config(std::uint16_t start_scene);
 std::uint64_t compute_gameplay_catalog_hash(const WeaponCatalogConfig& weapons);
 std::uint64_t compute_gameplay_catalog_hash(
     const GameServerGameplayConfig& config);
@@ -854,7 +858,8 @@ GameServerGameplayConfig load_gameplay_config_from_weapon_template_directory(
 GameServerGameplayConfig load_gameplay_config_from_catalog_file(
     const std::string& path);
 // `map_variant`, when set, plays that one of the catalog's map_variants
-// instead of the one its map_variant names (the terrain recipe cook).
+// instead of the one its map_variant names (catalog_version 19 and older;
+// version 20 picks its map with start_scene).
 GameServerGameplayConfig load_gameplay_config_from_bundle_memory(
     const std::uint8_t* bundle_bytes,
     std::uint32_t bundle_size,

@@ -19,12 +19,6 @@ for src in $(SRCS); do
       ;;
     */gameplay_catalog.yaml)
       cp "$$src" "$$bundle_root/gameplay_catalog.yaml"
-      # One entry per map variant, the catalog with map_variant set to it, so
-      # a server picks the map by entry path without a rebuild.
-      for variant in kernel_terrain composed_mesh camp; do
-        sed "s/^map_variant: .*/map_variant: $$variant/" "$$src" > "$$bundle_root/gameplay_catalog.$$variant.yaml"
-        grep -q "^map_variant: $$variant$$" "$$bundle_root/gameplay_catalog.$$variant.yaml"
-      done
       ;;
     */weapon_templates/*.yaml)
       cp "$$src" "$$bundle_root/weapon_templates/$$(basename "$$src")"
@@ -74,6 +68,20 @@ for src in $(SRCS); do
       cp "$$src" "$$bundle_root/skeleton_assets/generated/$$(basename "$$src")"
       ;;
   esac
+done
+# One entry per scene template that can start a session, the catalog with
+# start_scene set to it, so a server picks its first map by entry path
+# without a rebuild (docs/START_SCENE_PLAN.md). A random terrain (seed -1)
+# cannot start one.
+for scene in "$$bundle_root"/scene_templates/*.yaml; do
+  id="$$(basename "$$scene")"
+  id="$${id%%_scene_*}"
+  if grep -q "^  seed: -1" "$$scene"; then
+    continue
+  fi
+  entry="$$bundle_root/gameplay_catalog.scene_$$id.yaml"
+  sed "s/^start_scene: .*/start_scene: $$id/" "$$bundle_root/gameplay_catalog.yaml" > "$$entry"
+  grep -q "^start_scene: $$id$$" "$$entry"
 done
 # Normalize entry timestamps and ordering so the archive is byte-reproducible:
 # clients key their catalog cache by the bundle SHA-256, so build-time mtimes

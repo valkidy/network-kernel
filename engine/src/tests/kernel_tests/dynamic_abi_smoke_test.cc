@@ -534,6 +534,9 @@ int main() {
             "GameServer_CreateWithWeaponTemplateDirectory");
     auto* game_server_destroy =
         load_symbol<void(GameServerHandle*)>(library, "GameServer_Destroy");
+    auto* game_server_create_with_catalog =
+        load_symbol<GameServerHandle*(KernelHandle*, const std::uint8_t*, std::uint32_t, const char*,
+            KernelGameplayCatalogLoadResult*)>(library, "GameServer_CreateWithGameplayCatalogFromMemory");
     auto* game_server_handle_event =
         load_symbol<void(GameServerHandle*, const KernelEvent*)>(
             library,
@@ -767,9 +770,37 @@ int main() {
     require(kernel != nullptr);
     require(kernel_get_skeleton_bind_pose(
                kernel, 999u, UINT64_C(1), nullptr, 0u) == 0u);
-    require(kernel_start_listen_server(kernel, 8047));
-    GameServerHandle* game_server = game_server_create(kernel);
+    // GameServer_Create plays the catalog's start scene, the initial camp,
+    // which has nobody to fight; the enemy checks below need the composed
+    // mesh map with its mission, the bundle's template 5 entry.
+    // On a kernel of its own: the camp's collision scene stays registered
+    // after the server goes, and a kernel takes one.
+    KernelHandle* camp_kernel = kernel_create(&config);
+    require(camp_kernel != nullptr);
+    GameServerHandle* camp_server = game_server_create(camp_kernel);
+    require(camp_server != nullptr);
+    game_server_destroy(camp_server);
+    kernel_destroy(camp_kernel);
+    const std::vector<std::uint8_t> bundle = [] {
+        FILE* file = std::fopen("game_server/gameplay_catalog_bundle/bundle.zip", "rb");
+        require(file != nullptr);
+        std::vector<std::uint8_t> bytes;
+        std::uint8_t chunk[65536];
+        std::size_t got = 0;
+        while ((got = std::fread(chunk, 1, sizeof(chunk), file)) != 0) bytes.insert(bytes.end(), chunk, chunk + got);
+        std::fclose(file);
+        return bytes;
+    }();
+    KernelGameplayCatalogLoadResult catalog_result{};
+    catalog_result.struct_size = sizeof(catalog_result);
+    GameServerHandle* game_server = game_server_create_with_catalog(
+        kernel, bundle.data(), static_cast<std::uint32_t>(bundle.size()),
+        "gameplay_catalog.scene_5.yaml", &catalog_result);
+    if (game_server == nullptr) std::fprintf(stderr, "catalog: %s\n", catalog_result.diagnostic);
     require(game_server != nullptr);
+    // After the catalog: a kernel takes its static scene before it starts.
+    require(kernel_start_listen_server(kernel, 8047));
+
     require(game_server_create_with_weapon_template_directory(kernel, nullptr) == nullptr);
     GameServerWeaponTemplateInfo template_info{};
     template_info.struct_size = sizeof(template_info);

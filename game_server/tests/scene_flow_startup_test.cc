@@ -633,7 +633,7 @@ void joiner_with_level_out_of_revives(const std::vector<std::uint8_t>& bundle_by
 // The real camp: its level terminal, activated the way a player would.
 void camp_level_terminal(const std::vector<std::uint8_t>& bundle, std::uint16_t index) {
     World world;
-    const CApiServer server = start_c_api(&world, true, 8244, bundle, "gameplay_catalog.camp.yaml");
+    const CApiServer server = start_c_api(&world, true, 8244, bundle, "gameplay_catalog.yaml");
     Follower host{server.kernel, false, &bundle};
     world.followers.push_back(&host);
     Follower* a = world.join();

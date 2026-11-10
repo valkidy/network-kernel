@@ -81,7 +81,7 @@ template 本來就是一個完整的場景描述，所以 slot 0 也改用 templ
 | P1 | 載入器：`start_scene`、id 0、`level:` 規則、slot 0 不能是 `seed: -1`、v20 拒絕 `map_variant(s)` | `scene_template_catalog_test` | 完成（`claude/start-scene-p1`） |
 | A | v19 下新增 template 0、5、6，和 variant 並存；載入器加「指定起始場景 id」（`load_start_scene_config_from_*`）；關卡清單和 `SCENE_SELECT` 只認 `level:`（原 P5 提前） | 三個 template 和對應 variant 的 catalog hash 相同；清單只列 4 個關卡；選 0 或 5 不會開關卡 | 完成（`claude/start-scene-a`） |
 | B | 地形 recipe 改從 template 6 烘焙（原 P3） | recipe 和改動前逐 byte 相同（heights_hash `e03e9e899ec5c966`）；改 template 6 的 seed 時 recipe 跟著變 | 完成（`claude/start-scene-b`） |
-| C | 一次切換（原 P2 + P4 + P7）：root 升 v20、`start_scene: 0`、刪除 variant、bundle 產生 `gameplay_catalog.scene_<id>.yaml`、依賴任務地圖的測試改指定 template 5、variant 入口的引用改名 | 完整回歸只允許原本的 6 個失敗 | |
+| C | 一次切換（原 P2 + P4 + P7）：root 升 v20、`start_scene: 0`、刪除 variant、bundle 產生 `gameplay_catalog.scene_<id>.yaml`、依賴任務地圖的測試改指定 template 5、variant 入口的引用改名 | 完整回歸只允許原本的 6 個失敗 | 完成（`claude/start-scene-c`） |
 | D | app 的 `--scene` 和 Q7 的衝突檢查（原 P6）；確認關卡 template 當 slot 0 時不跑關卡流程（原 P5 的 Q1 部分）；文件（原 P8） | 實際啟動 dedicated：`--scene=0`、`--scene=5`、`--scene=4`（應失敗）、`--scene` 加 `--gameplay-catalog-entry`（應失敗） | |
 
 **最終驗收（使用者 2026-11-10 指定）：** 全部做完後，用下面這條預設指令啟動 dedicated server，玩家連上後必須在 initial camp（出生點在 camp、看得到 `initial_camp` 和 `level_terminal`、沒有敵人）：
@@ -94,6 +94,15 @@ template 本來就是一個完整的場景描述，所以 slot 0 也改用 templ
 ```
 
 每一步先跑相關的單一測試（smoke-first）；C 和最後的驗收跑完整回歸。
+
+### C 的結果
+
+- **測試 data**：62 個測試的 data glob 原本沒有 `scene_templates/`。v19 時找不到 template 只是沒有關卡，v20 起 template 0 是必要的，所以全部補上。
+- **改用 template 5 的測試**（依賴舊預設任務地圖）：`ai_agent_command`、`ai_controller_spec`、`alert_spawner`、`gameplay_config`、`gingerbread_door_stack`、`pass_giant_route`、`patrol_catalog`、`shipping_catalog_flow`、`game_server_api`（敵人那段改在獨立 kernel 上）、`dynamic_abi_smoke`（同上）。新增 `default_game_server_gameplay_config(start_scene)`。
+- **入口改名**：`mission_on_map`、`static_scene_slot_grounding`、`terrain_catalog`、`scene_flow_startup`、`scene_playable_loop`。
+- **改寫**：`scene_template_catalog_test` 改測 v20；`terrain_catalog_test` 的地形規則改成修改 template 6。
+- **規則調整**：「必須宣告 director」只要求有 `level:` 的關卡。這條規則是為了防止 root 的任務漏進關卡；template 5 不是關卡，可以像舊 `composed_mesh` variant 一樣沿用 root 的任務。
+- **建立順序**：用 catalog 建立 game server（`GameServer_CreateWithGameplayCatalogFromMemory`）必須在 kernel 啟動之前，否則 kernel 會拒絕註冊靜態場景。
 
 ### C 的測試遷移範圍
 

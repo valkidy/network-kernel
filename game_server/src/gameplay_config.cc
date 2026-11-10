@@ -10278,9 +10278,9 @@ struct LoadedSceneTemplate {
 // `scene_template_dir:` (docs/SCENE_TABLE_PLAYABLE_LOOP_PLAN.md L1): one file
 // per level, <id>_scene_<name>.yaml, each an overlay with the same keys as a
 // map variant plus who it is. Each must say which map it is (terrain:, or
-// static_collision_scene:) and which directors it runs (preload_directors:,
-// [] for none, and/or its own game_rule:), so nothing of the root's own map
-// -- its mission above all -- leaks into a level. Checked whole here;
+// static_collision_scene:); a level must also say which directors it runs
+// (preload_directors:, [] for none, and/or its own game_rule:), so nothing of
+// the root's own map -- its mission above all -- leaks into a level. Checked whole here;
 // resolved into a config only when asked for one. Sorted by id, which is what
 // goes on the wire.
 std::vector<LoadedSceneTemplate> read_scene_templates(
@@ -10331,7 +10331,9 @@ std::vector<LoadedSceneTemplate> read_scene_templates(
         if (!node["terrain"] && !node["static_collision_scene"]) {
             throw std::runtime_error("scene template " + name + " needs terrain or static_collision_scene: " + file);
         }
-        if (!node["preload_directors"] && !node["game_rule"]) {
+        // A level says which directors it runs, so the root's mission never
+        // leaks into one. A start scene may play the root's (the test maps do).
+        if (node["level"] && !node["preload_directors"] && !node["game_rule"]) {
             throw std::runtime_error("scene template " + name + " needs preload_directors ([] for none) or game_rule: " + file);
         }
         SceneTemplateRef ref;
@@ -12874,6 +12876,10 @@ std::uint64_t compute_gameplay_catalog_hash(
 
 GameServerGameplayConfig default_game_server_gameplay_config() {
     return load_gameplay_config_from_catalog_file(kDefaultGameplayCatalogPath);
+}
+
+GameServerGameplayConfig default_game_server_gameplay_config(std::uint16_t start_scene) {
+    return load_start_scene_config_from_catalog_file(kDefaultGameplayCatalogPath, start_scene);
 }
 
 GameServerGameplayConfig load_gameplay_config_from_weapon_template_directory(

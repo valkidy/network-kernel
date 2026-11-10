@@ -45,8 +45,9 @@ fs::path catalog_root() {
 }
 
 gs::GameServerGameplayConfig load(const fs::path& root) {
-    return gs::load_gameplay_config_from_catalog_file(
-        (root / "gameplay_catalog.yaml").string());
+    // The composed mesh map with its mission (docs/START_SCENE_PLAN.md).
+    return gs::load_start_scene_config_from_catalog_file(
+        (root / "gameplay_catalog.yaml").string(), 5u);
 }
 
 void write_yaml(const fs::path& path, const YAML::Node& node) {

@@ -220,39 +220,36 @@ std::vector<std::uint8_t> make_store_zip(
 }
 
 // The collision mesh the catalog names, read from the catalog itself so the
-// missing-entry check follows the terrain the game actually ships with.
-// The static scene's entry_path as the shipping catalog plays it: under
-// map_variants.<map_variant> when the catalog has variants, at the root
-// otherwise. Read off the text by indentation (two spaces a level), since this
-// test sees only the public API.
+// missing-entry check follows the map the game actually starts on: the
+// static scene's entry_path in the scene template start_scene names (0 when
+// left out; docs/START_SCENE_PLAN.md). Read off the text by indentation (two
+// spaces a level), since this test sees only the public API.
 std::string static_collision_entry_path() {
-    std::istringstream catalog(read_text_file(
-        runfiles_root() / "game_server" / "gameplay_catalog" /
-        "gameplay_catalog.yaml"));
-    std::vector<std::string> lines;
-    std::string variant;
+    const std::filesystem::path catalog_dir = runfiles_root() / "game_server" / "gameplay_catalog";
+    std::istringstream catalog(read_text_file(catalog_dir / "gameplay_catalog.yaml"));
+    std::string start = "0";
     for (std::string line; std::getline(catalog, line);) {
+        if (line.rfind("start_scene:", 0) == 0) {
+            const std::size_t value = line.find_first_not_of(' ', 12);
+            if (value != std::string::npos) start = line.substr(value, line.find_first_of(" #", value) - value);
+        }
+    }
+    std::filesystem::path scene;
+    for (const auto& entry : std::filesystem::directory_iterator(catalog_dir / "scene_templates")) {
+        if (entry.path().filename().string().rfind(start + "_scene_", 0) == 0) scene = entry.path();
+    }
+    if (scene.empty()) return std::string();
+    std::istringstream text(read_text_file(scene));
+    std::vector<std::string> path;
+    const std::vector<std::string> want = {"static_collision_scene", "entry_path"};
+    for (std::string line; std::getline(text, line);) {
         const std::size_t hash = line.find('#');
         if (hash != std::string::npos) line.erase(hash);
         while (!line.empty() && line.back() == ' ') line.pop_back();
-        if (line.empty()) continue;
-        if (line.rfind("map_variant:", 0) == 0) {
-            const std::size_t value = line.find_first_not_of(' ', 12);
-            variant = value == std::string::npos ? std::string() : line.substr(value);
-        }
-        lines.push_back(line);
-    }
-    std::vector<std::string> want;
-    if (!variant.empty()) {
-        want = {"map_variants", variant};
-    }
-    want.push_back("static_collision_scene");
-    want.push_back("entry_path");
-    std::vector<std::string> path;
-    for (const std::string& line : lines) {
         const std::size_t indent = line.find_first_not_of(' ');
+        if (indent == std::string::npos) continue;
         const std::size_t colon = line.find(':', indent);
-        if (indent == std::string::npos || colon == std::string::npos || line[indent] == '-') continue;
+        if (colon == std::string::npos || line[indent] == '-') continue;
         path.resize(indent / 2);
         path.push_back(line.substr(indent, colon - indent));
         if (path == want) {
@@ -371,11 +368,16 @@ std::uint32_t count_yaml_files(const std::filesystem::path& directory) {
 std::vector<std::uint8_t> make_gameplay_bundle_zip() {
     const std::filesystem::path root = runfiles_root();
     std::vector<std::pair<std::string, std::string>> files;
-    files.push_back({
-        "gameplay_catalog.yaml",
-        read_text_file(
-            root / "game_server" / "gameplay_catalog" /
-            "gameplay_catalog.yaml")});
+    const std::string root_yaml = read_text_file(
+        root / "game_server" / "gameplay_catalog" / "gameplay_catalog.yaml");
+    files.push_back({"gameplay_catalog.yaml", root_yaml});
+    // The entry the real bundle derives for template 5, the composed mesh map
+    // with its mission (docs/START_SCENE_PLAN.md): where the enemies are.
+    const std::size_t start = root_yaml.find("\nstart_scene: 0\n");
+    require(start != std::string::npos);
+    std::string mission_yaml = root_yaml;
+    mission_yaml.replace(start, 15, "\nstart_scene: 5\n");
+    files.push_back({"gameplay_catalog.scene_5.yaml", mission_yaml});
 
     // Enumerated rather than listed by hand. This fixture's whole point is a
     // bundle complete except for the collision mesh, and hardcoded lists drift
@@ -392,6 +394,7 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip() {
         "projectile_templates",
         "sp_attack_templates",
         "patrol_templates",
+        "scene_templates",
     };
     for (const std::string& directory : template_dirs) {
         const std::filesystem::path source =
@@ -522,7 +525,7 @@ int main() {
     require(loaded_catalog);
     require(load_result.status == KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS);
     require(load_result.error_code == KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_NONE);
-    require(load_result.catalog_version == 19);
+    require(load_result.catalog_version == 20);
     require(load_result.catalog_hash != 0);
     require(load_result.projectile_template_count > 0);
     require(
@@ -680,29 +683,48 @@ int main() {
                inventory_items.data(),
                static_cast<std::uint32_t>(inventory_items.size())) ==
            loadout.size());
-    // Enemies come from the catalog's game_rule director: it waits for a
-    // player, places the nests, and the nests' spawners put gingerbread out.
-    // So the client stays connected until they do, and the count is whatever
-    // the mission produces rather than a number this test would have to track.
-    int frames_until_enemies = 0;
-    while (frames_until_enemies < kMaxFramesUntilEnemies &&
-           (GameServer_GetEnemyCount(game_server) == 0 ||
-            query_enemy_count(kernel) == 0)) {
-        run_game_server_frames(kernel, game_server, 1);
-        Kernel_Update(catalog_client, 1.0f / 30.0f);
-        ++frames_until_enemies;
-    }
-    require(GameServer_GetEnemyCount(game_server) > 0);
-    require(query_enemy_count(kernel) > 0);
-    Kernel_Destroy(catalog_client);
-
-    GameServer_DespawnAll(game_server, KernelDespawnReason_Destroyed);
-    GameServer_Tick(game_server, 1.0f / 30.0f);
+    // GameServer_Create plays the catalog's start scene, the initial camp:
+    // nobody to fight.
+    run_game_server_frames(kernel, game_server, 30);
     require(GameServer_GetEnemyCount(game_server) == 0);
-    Kernel_Update(kernel, 1.0f / 30.0f);
-    require(query_enemy_count(kernel) == 0);
-
+    Kernel_Destroy(catalog_client);
     GameServer_Destroy(game_server);
+
+    // The mission is template 5's (docs/START_SCENE_PLAN.md), on a listen
+    // kernel of its own, since a catalog's static scene goes in before the
+    // kernel starts. Enemies come from its game_rule director: it waits for
+    // a player (the host's own), places the nests, and the nests' spawners
+    // put gingerbread out. The count is whatever the mission produces rather
+    // than a number this test would have to track.
+    {
+        KernelConfig mission_config = config;
+        mission_config.mode = KernelMode_ListenServer;
+        KernelHandle* mission_kernel = Kernel_Create(&mission_config);
+        require(mission_kernel != nullptr);
+        KernelGameplayCatalogLoadResult mission_result{};
+        mission_result.struct_size = sizeof(mission_result);
+        GameServerHandle* mission = GameServer_CreateWithGameplayCatalogFromMemory(
+            mission_kernel, gameplay_bundle.data(), static_cast<std::uint32_t>(gameplay_bundle.size()),
+            "gameplay_catalog.scene_5.yaml", &mission_result);
+        if (mission == nullptr) std::fprintf(stderr, "mission catalog: %s\n", mission_result.diagnostic);
+        require(mission != nullptr);
+        require(Kernel_StartListenServer(mission_kernel, 8049));
+        int frames_until_enemies = 0;
+        while (frames_until_enemies < kMaxFramesUntilEnemies &&
+               (GameServer_GetEnemyCount(mission) == 0 || query_enemy_count(mission_kernel) == 0)) {
+            run_game_server_frames(mission_kernel, mission, 1);
+            ++frames_until_enemies;
+        }
+        require(GameServer_GetEnemyCount(mission) > 0);
+        require(query_enemy_count(mission_kernel) > 0);
+        GameServer_DespawnAll(mission, KernelDespawnReason_Destroyed);
+        GameServer_Tick(mission, 1.0f / 30.0f);
+        require(GameServer_GetEnemyCount(mission) == 0);
+        Kernel_Update(mission_kernel, 1.0f / 30.0f);
+        require(query_enemy_count(mission_kernel) == 0);
+        GameServer_Destroy(mission);
+        Kernel_Destroy(mission_kernel);
+    }
     game_server = nullptr;
 
     const std::filesystem::path template_dir =
