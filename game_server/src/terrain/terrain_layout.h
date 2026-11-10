@@ -76,4 +76,27 @@ std::vector<double> stamp_openness(const StampAsset& stamp);
 bool layout_stamps(TerrainRecipe* recipe, const TerrainLibrary& library, const LayoutParams& params,
     LayoutReport* report, std::string* error);
 
+// A stamp placed by hand (docs/LEVEL_AUTHORING_TOOLS_PLAN.md G5): where its
+// footprint's low corner goes on the 0.3 m grid, its turn and mirror, and
+// optionally its base; without one the base is the layout's own rule (midway
+// between the lowest and highest ground around_m out).
+struct FixedPlacement {
+    std::uint32_t stamp = 0;                 // index into the library
+    std::int32_t x_cells = 0;
+    std::int32_t z_cells = 0;
+    std::uint8_t turns = 0;
+    bool mirror = false;
+    bool has_base = false;
+    std::int32_t base_cm = 0;
+};
+
+// Fills recipe->placements with `fixed`, each given the base and ring the
+// layout would give it (ring from ring_slope, at least min_ring). Refused --
+// false with *error naming the placement -- when a footprint leaves the map,
+// needs a ring wider than max_ring, overlaps another's claim or the centre
+// clearance, or its claim crosses a cliff: a hand-placed map is fixed, so
+// those are the author's to fix, not the generator's to work around.
+bool place_fixed_stamps(TerrainRecipe* recipe, const TerrainLibrary& library, const LayoutParams& params,
+    const std::vector<FixedPlacement>& fixed, LayoutReport* report, std::string* error);
+
 }  // namespace network_example::game_server::terrain

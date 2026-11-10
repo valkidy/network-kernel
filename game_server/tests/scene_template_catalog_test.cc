@@ -135,7 +135,7 @@ void bundle_templates() {
     require(root.patrols.empty());
     require(root.scene_props.size() == 2u);
     // 0 the camp, 1-4 levels, 5-6 the test maps; only the levels are levels.
-    require(root.scene_templates.size() == 7u);
+    require(root.scene_templates.size() == 8u);
     for (const gs::SceneTemplateRef& t : root.scene_templates) require(t.is_level == (t.id >= 1u && t.id <= 4u));
     require(root.scene_templates[1].id == 1u && root.scene_templates[1].name == kLevel);
     require(root.scene_templates[2].id == 2u && root.scene_templates[3].id == 3u);
@@ -517,6 +517,53 @@ void stamp_site_keys() {
     fs::create_directory_symlink(real, stamps);
 }
 
+// terrain.placements (docs/LEVEL_AUTHORING_TOOLS_PLAN.md G5), on the shipping
+// hand-placed template: what it may not be combined with, and what it names.
+void placement_keys() {
+    const std::string yaml = shipping_yaml();
+    const LevelFiles levels = shipping_levels();
+    const std::string file = "8_scene_placed_terrain_test.yaml";
+    const std::string text = levels.at(file);
+    const auto with = [&](const std::string& changed) {
+        LevelFiles files = levels;
+        files[file] = changed;
+        return files;
+    };
+    const auto load = [&](const LevelFiles& files, std::string* why) {
+        try {
+            const gs::GameServerGameplayConfig c =
+                gs::load_scene_template_config_from_catalog_file(write_catalog(yaml, files), "placed_terrain_test");
+            return c.terrain.fixed_placements.has_value() ? static_cast<int>(c.terrain.fixed_placements->size()) : -1;
+        } catch (const std::exception& e) {
+            *why = e.what();
+            return -2;
+        }
+    };
+    std::string why;
+    require(load(levels, &why) == 12);
+    const gs::GameServerGameplayConfig placed =
+        gs::load_scene_template_config_from_catalog_file(write_catalog(yaml, levels), "placed_terrain_test");
+    // Centre (78, 54) of a 36 m stamp on a 216 m map: low corner at 168 m, 144 m.
+    const gs::terrain::FixedPlacement& first = placed.terrain.fixed_placements->front();
+    require(first.x_cells == 560 && first.z_cells == 480 && first.turns == 1 && first.mirror && !first.has_base);
+    std::printf("placements: 12 load, centres become low corners\n");
+
+    const auto refused_with = [&](const std::string& changed, const std::string& expected) {
+        std::string reason;
+        require(load(with(changed), &reason) == -2);
+        std::printf("refused placements: %s\n", reason.substr(0, reason.find(": /")).c_str());
+        require(reason.find(expected) != std::string::npos);
+    };
+    refused_with(replaced(text, "  ground_maps:", "  stamps: {count: 3}\n  ground_maps:"), "do not apply");
+    refused_with(replaced(text, "  ground_maps:", "  max_retries: 2\n  ground_maps:"), "do not apply");
+    refused_with(replaced(text, "{stamp: depression_0001,", "{stamp: no_such_stamp,"), "has no template");
+    refused_with(replaced(text, "turns: 1, mirror: true}", "turns: 5, mirror: true}"), "turns must be 0..3");
+    refused_with(replaced(text, "{stamp: depression_0001, position: {x: 78.0, z: 54.0},",
+        "{stamp: depression_0001, position: {x: 78.0, y: 1.0, z: 54.0},"), "y");
+    refused_with(replaced(replaced(text, "  seed: 1\n", "  seed: -1\n"), "  recipe: terrain/placed_terrain_test.nktr\n", ""),
+        "seed -1 does not apply");
+}
+
 }  // namespace
 
 int main() {
@@ -526,6 +573,7 @@ int main() {
     start_scene_rules();
     level_authoring_keys();
     stamp_site_keys();
+    placement_keys();
     std::printf("scene_template_catalog_test passed\n");
     return 0;
 }

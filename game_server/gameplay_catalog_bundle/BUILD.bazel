@@ -126,33 +126,33 @@ rm -rf "$$bundle_root"
 """,
 )
 
-# The kernel terrain map's recipe, generated (layout, checks, retries,
-# fallback) from its seed at build time, so every server and client of this
-# bundle composes the same map (docs/KERNEL_TERRAIN_IMPLEMENTATION_PLAN.md P3).
-# Cooked from scene template 6, which carries that map now
-# (docs/START_SCENE_PLAN.md step B); the path is its terrain.recipe. The
-# report lists every attempt.
+# Every terrain scene template's recipe, generated (layout or hand-placed
+# stamps, checks, retries, fallback) from its seed at build time, so every
+# server and client of this bundle composes the same map
+# (docs/KERNEL_TERRAIN_IMPLEMENTATION_PLAN.md P3). One rule for all of them
+# (docs/LEVEL_AUTHORING_TOOLS_PLAN.md G6): each lands at the path its
+# terrain.recipe names, so a new terrain template needs no rule of its own.
+# Templates with seed -1 are generated when opened instead. The report lists
+# every attempt of every template. The archive always holds terrain/, so it is
+# never empty.
 genrule(
-    name = "terrain_recipe",
+    name = "terrain_recipes",
     srcs = [":bundle_uncooked"],
     outs = [
-        "gameplay_catalog.nktr",
-        "terrain_recipe_report.txt",
+        "terrain_recipes.zip",
+        "terrain_recipes_report.txt",
     ],
-    cmd = "$(location //game_server:terrain_recipe_cook) $(location :bundle_uncooked) gameplay_catalog.yaml $(location gameplay_catalog.nktr) scene_template:kernel_terrain_test > $(location terrain_recipe_report.txt)",
-    tools = ["//game_server:terrain_recipe_cook"],
-)
-
-# One recipe per terrain scene template (docs/SCENE_TABLE_PLAN.md S2), at the
-# path the template's terrain.recipe names.
-genrule(
-    name = "terrain_recipe_level_terrain_seed2",
-    srcs = [":bundle_uncooked"],
-    outs = [
-        "level_terrain_seed2.nktr",
-        "terrain_recipe_level_terrain_seed2_report.txt",
-    ],
-    cmd = "$(location //game_server:terrain_recipe_cook) $(location :bundle_uncooked) gameplay_catalog.yaml $(location level_terrain_seed2.nktr) scene_template:level_terrain_seed2 > $(location terrain_recipe_level_terrain_seed2_report.txt)",
+    cmd = """
+set -euo pipefail
+out_path="$$(pwd)/$(location terrain_recipes.zip)"
+recipes_root="$(@D)/terrain_recipes_root"
+rm -rf "$${recipes_root:?}"
+mkdir -p "$$recipes_root/terrain"
+$(location //game_server:terrain_recipe_cook) --all $(location :bundle_uncooked) gameplay_catalog.yaml "$$recipes_root" > $(location terrain_recipes_report.txt)
+find "$$recipes_root" -exec touch -t 198001010000 {} +
+(cd "$$recipes_root" && find . -mindepth 1 | sed 's|^\\./||' | LC_ALL=C sort | /usr/bin/zip -q -X -@ "$$out_path")
+rm -rf "$${recipes_root:?}"
+""",
     tools = ["//game_server:terrain_recipe_cook"],
 )
 
@@ -160,8 +160,7 @@ genrule(
     name = "bundle",
     srcs = [
         ":bundle_uncooked",
-        ":gameplay_catalog.nktr",
-        ":level_terrain_seed2.nktr",
+        ":terrain_recipes.zip",
     ],
     outs = ["bundle.zip"],
     cmd = """
@@ -171,8 +170,7 @@ bundle_root="$(@D)/cooked_bundle_root"
 rm -rf "$$bundle_root"
 mkdir -p "$$bundle_root/terrain"
 /usr/bin/unzip -q "$(location :bundle_uncooked)" -d "$$bundle_root"
-cp "$(location :gameplay_catalog.nktr)" "$$bundle_root/terrain/gameplay_catalog.nktr"
-cp "$(location :level_terrain_seed2.nktr)" "$$bundle_root/terrain/level_terrain_seed2.nktr"
+/usr/bin/unzip -q -o "$(location :terrain_recipes.zip)" -d "$$bundle_root"
 find "$$bundle_root" -exec touch -t 198001010000 {} +
 (cd "$$bundle_root" && find . -mindepth 1 | sed 's|^\\./||' | LC_ALL=C sort | /usr/bin/zip -q -X -@ "$$out_path")
 rm -rf "$$bundle_root"

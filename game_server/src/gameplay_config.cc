@@ -10224,7 +10224,7 @@ TerrainCatalogConfig terrain_catalog_from_yaml(
     auto fail = [&](const std::string& message) -> TerrainCatalogConfig {
         throw std::runtime_error("terrain " + message + ": " + path);
     };
-    keys(t, {"map_size", "seed", "recipe", "ground_maps", "stamps", "terrace", "detail", "layout", "accept",
+    keys(t, {"map_size", "seed", "recipe", "ground_maps", "stamps", "placements", "terrace", "detail", "layout", "accept",
              "max_retries", "playable_margin", "fallback_recipe"});
     TerrainCatalogConfig c;
     c.enabled = true;
@@ -10234,8 +10234,15 @@ TerrainCatalogConfig terrain_catalog_from_yaml(
     if (random && t["recipe"]) {
         return fail("with seed -1 the server generates the map, so there is no recipe to name");
     }
-    if (!t["map_size"] || (!t["recipe"] && !random) || !t["ground_maps"] || !t["stamps"]) {
-        return fail("requires map_size, recipe (unless seed is -1), ground_maps and stamps");
+    // A hand-placed map (docs/LEVEL_AUTHORING_TOOLS_PLAN.md G5) names its
+    // stamps where they go; the layout's own knobs mean nothing for it.
+    const bool placed = static_cast<bool>(t["placements"]);
+    if (placed && (t["stamps"] || t["max_retries"] || t["fallback_recipe"])) {
+        return fail("with placements the stamps are where they are put: stamps, max_retries and fallback_recipe do not apply");
+    }
+    if (placed && random) return fail("placements make a fixed map: seed -1 does not apply");
+    if (!t["map_size"] || (!t["recipe"] && !random) || !t["ground_maps"] || (!t["stamps"] && !placed)) {
+        return fail("requires map_size, recipe (unless seed is -1), ground_maps and stamps (or placements)");
     }
     keys(t["map_size"], {"x", "z"});
     auto cells = [&](float metres) {
@@ -10339,9 +10346,45 @@ TerrainCatalogConfig terrain_catalog_from_yaml(
         c.stamp_contents.push_back(std::move(l.content));
         c.library.stamps.push_back(std::move(l.stamp));
     }
-    const YAML::Node st = t["stamps"];
+    if (placed) {
+        const YAML::Node list = t["placements"];
+        if (!list.IsSequence() || list.size() == 0u) return fail("placements must be a non-empty sequence");
+        const double half_x = c.base.cells_x * 0.15, half_z = c.base.cells_z * 0.15;
+        std::vector<terrain::FixedPlacement> fixed;
+        for (const YAML::Node& n : list) {
+            keys(n, {"stamp", "position", "turns", "mirror", "base"});
+            if (!n["stamp"] || !n["position"]) return fail("placement needs stamp and position");
+            keys(n["position"], {"x", "z"});
+            const std::string name = n["stamp"].as<std::string>();
+            const auto found = std::find_if(c.library.stamps.begin(), c.library.stamps.end(),
+                [&](const terrain::StampAsset& a) { return a.name == name; });
+            if (found == c.library.stamps.end()) return fail("placement names stamp " + name + ", which has no template");
+            terrain::FixedPlacement f;
+            f.stamp = static_cast<std::uint32_t>(found - c.library.stamps.begin());
+            // position is the stamp's centre in the map's frame (centred on
+            // the origin, like every other position in the scene); the recipe
+            // wants its low corner in 0.3 m cells from the map's corner.
+            const double cx = n["position"]["x"].as<double>(), cz = n["position"]["z"].as<double>();
+            const double edge = found->cells_x * 0.3;
+            f.x_cells = static_cast<std::int32_t>(std::llround((cx + half_x - edge / 2.0) / 0.3));
+            f.z_cells = static_cast<std::int32_t>(std::llround((cz + half_z - edge / 2.0) / 0.3));
+            const std::int32_t turns = n["turns"] ? n["turns"].as<std::int32_t>() : 0;
+            if (turns < 0 || turns > 3) return fail("placement turns must be 0..3");
+            f.turns = static_cast<std::uint8_t>(turns);
+            f.mirror = n["mirror"] ? n["mirror"].as<bool>() : false;
+            if (n["base"]) {
+                f.has_base = true;
+                f.base_cm = static_cast<std::int32_t>(std::llround(n["base"].as<double>() * 100.0));
+            }
+            fixed.push_back(f);
+        }
+        c.fixed_placements = std::move(fixed);
+        c.layout.stamp_count = static_cast<std::int32_t>(c.fixed_placements->size());
+    }
+    const YAML::Node st = placed ? YAML::Node(YAML::NodeType::Map) : t["stamps"];
     keys(st, {"count", "min_count", "pool"});
-    if (!st["count"]) return fail("stamps requires count");
+    if (!placed && !st["count"]) return fail("stamps requires count");
+    if (!placed) {
     c.layout.stamp_count = st["count"].as<std::int32_t>();
     if (st["min_count"]) c.min_stamp_count = st["min_count"].as<std::int32_t>();
     if (c.layout.stamp_count < 0 || c.min_stamp_count < 0 || c.min_stamp_count > c.layout.stamp_count) {
@@ -10354,6 +10397,7 @@ TerrainCatalogConfig terrain_catalog_from_yaml(
             if (it == c.stamp_template_ids.end()) fail("stamps pool names stamp " + std::to_string(id) + ", which has no template");
             c.layout.stamp_pool.push_back(static_cast<std::uint32_t>(it - c.stamp_template_ids.begin()));
         }
+    }
     }
     if (t["fallback_recipe"]) {
         c.fallback_recipe = source.load_bytes(source.resolve_path(base_path, t["fallback_recipe"]));
@@ -13005,6 +13049,16 @@ std::uint64_t compute_gameplay_catalog_hash(
     if (config.terrain.enabled) {
         hash_string(&hash, config.terrain.recipe_entry_path);
         hash_scalar(&hash, terrain::terrain_library_hash(config.terrain.library));
+        if (config.terrain.fixed_placements.has_value()) {
+            for (const terrain::FixedPlacement& f : *config.terrain.fixed_placements) {
+                hash_scalar(&hash, f.stamp);
+                hash_scalar(&hash, static_cast<std::uint32_t>(f.x_cells));
+                hash_scalar(&hash, static_cast<std::uint32_t>(f.z_cells));
+                hash_scalar(&hash, static_cast<std::uint32_t>(f.turns) | (f.mirror ? 0x100u : 0u) |
+                    (f.has_base ? 0x200u : 0u));
+                hash_scalar(&hash, static_cast<std::uint32_t>(f.base_cm));
+            }
+        }
         // Stamp barriers are predicted against; their sites decide what a
         // level holds. Both ends must read the same.
         for (const StampContentConfig& content : config.terrain.stamp_contents) {

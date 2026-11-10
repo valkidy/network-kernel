@@ -43,6 +43,10 @@ struct GenerateRequest {
     NavBakeParams nav;
     std::optional<TerrainRecipe> fallback;
     std::uint64_t fallback_hash = 0;
+    // Hand-placed stamps (terrain.placements): one "fixed" attempt with these
+    // instead of the layout, held to the same checks, never retried -- a fixed
+    // map either passes or is the author's to fix.
+    std::optional<std::vector<FixedPlacement>> fixed;
 };
 
 struct AttemptReport {
@@ -56,7 +60,7 @@ struct AttemptReport {
     std::string reason;                      // why it was turned down
 };
 
-enum class GenerateOutcome { kGenerated, kRelaxed, kFallback, kFailed };
+enum class GenerateOutcome { kGenerated, kRelaxed, kFallback, kFixed, kFailed };
 
 struct GenerateResult {
     GenerateOutcome outcome = GenerateOutcome::kFailed;

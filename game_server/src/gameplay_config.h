@@ -701,6 +701,9 @@ struct TerrainCatalogConfig {
     std::vector<std::uint32_t> stamp_template_ids;   // per library stamp, ascending
     std::vector<StampContentConfig> stamp_contents;  // per library stamp
     std::vector<std::uint8_t> fallback_recipe;       // NKTR, optional
+    // `placements:` (docs/LEVEL_AUTHORING_TOOLS_PLAN.md G5): a hand-placed map,
+    // composed from exactly these instead of the layout.
+    std::optional<std::vector<terrain::FixedPlacement>> fixed_placements;
 };
 
 // One of the catalog's `scene_templates` (docs/SCENE_TABLE_PLAN.md S2): a

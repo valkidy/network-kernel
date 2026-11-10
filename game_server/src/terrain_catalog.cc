@@ -62,6 +62,7 @@ bool generate_catalog_terrain(const TerrainCatalogConfig& t, PreparedTerrain* ou
     req.min_stamp_count = t.min_stamp_count;
     req.max_retries = t.max_retries;
     req.accept = t.accept;
+    req.fixed = t.fixed_placements;
     const std::uint64_t library_hash = terrain::terrain_library_hash(t.library);
     if (!t.fallback_recipe.empty()) {
         terrain::StoredRecipe fb;
