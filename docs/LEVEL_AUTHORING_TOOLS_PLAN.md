@@ -1,6 +1,6 @@
 # 關卡編輯工具：scene 與 stamp 的編輯、匯出與打包
 
-狀態：計畫草稿（2026-11-10），以 main 26736476 為準。Q1–Q5 已照建議決定；Q6（含空氣牆層的命名）確認後才開始實作。
+狀態：計畫草稿（2026-11-10），以 main 26736476 為準。Q1–Q6 已全部決定，可以開始實作。
 
 ## 0. 目標
 
@@ -44,6 +44,7 @@
 | D6 | 事件解鎖的區域用一般的 static obstacle，而且必須是 **entity prop**（解鎖時移除，晚加入的玩家從 snapshot 得知）。 |
 | D7 | 會變的東西不是地形（kernel terrain 計畫 §8 的規則）。 |
 | D8 | registry 與 prefab 對照用**名稱**存，生成時以同一個 catalog 版本的數字 id 對起來（id 在合併時會重新編號）。 |
+| D9 | 空氣牆（`player_barrier`）是**永久**的：scene 載入時放好，執行中不移除，所以不需要開關或同步。之後會開放的區域一律用 D6 的 entity prop（看得見、也擋 NPC）。用途：地圖邊界、永遠不開放的區域。 |
 
 ### 2.2 待確認（附建議）
 
@@ -53,8 +54,8 @@
 | Q2 | terrain 模式的固定場景要不要能手動擺 stamp？ | **要**。新增 `terrain.placements:`；有它就跳過 layout，但照樣跑 `accept` 檢查。否則固定場景只能挑 seed，無法照設計擺。 | 已決定（2026-11-10） |
 | Q3 | registry 與 preview 從哪裡開始？ | **先只用 collider 外框預覽**（不需要 prefab）。registry 由 build bundle 時一併產生的 json 提供；prefab 預覽之後再評估是搬到 unity-network-example，還是抽成共用 package。 | 已決定（2026-11-10） |
 | Q4 | 空氣牆的高度預設值？ | **4 m**：高於玩家的跳躍頂點，遠低於魔毯的 15 m。實作時先量跳躍頂點再定。 | 已決定（2026-11-10） |
-| Q5 | 一般地圖的邊界要手擺還是自動？ | 兩者都提供：scene 可手擺；另加 `map_boundary: {height}`，由 game_server 沿地圖矩形自動放四面牆。 | 已決定（2026-11-10） |
-| Q6 | 空氣牆的 mask 在牆上設定，還是在 actor 上設定？ | **在 actor 上**，和現有的移動 mask 一致：牆屬於新的 `boundary` 層，玩家的 template 把 `boundary` 加進自己的移動 mask，NPC 的預設 mask 不含它。牆本身只標「我是 boundary」。 | 待確認 |
+| Q5 | 一般地圖的邊界要手擺還是自動？ | 兩者都提供：scene 可手擺；另加 `map_edge_barrier: {height}`，由 game_server 沿地圖矩形自動放四面牆。 | 已決定（2026-11-10） |
+| Q6 | 空氣牆的 mask 在牆上設定，還是在 actor 上設定？層叫什麼？ | **在 actor 上**，和現有的移動 mask 一致：牆屬於新的 `player_barrier` 層，玩家的 template 把 `player_barrier` 加進自己的移動 mask，NPC 的預設 mask 不含它。牆本身只標「我是 player_barrier」。 | 已決定（2026-11-10），名稱選 `player_barrier` |
 
 ## 3. 資料格式
 
@@ -78,11 +79,11 @@ scene_props:
     rotation: {x: 0.7071, y: 0, z: 0, w: 0.7071}
     grounded: false                         # 例：空中、朝下的門
 
-boundary_walls:                             # 新增：空氣牆
+player_barriers:                             # 新增：空氣牆
   - center: {x: 100.8, y: 22.6, z: 66.0}
     half_extents: {x: 6.0, y: 2.0, z: 0.25}
     yaw_degrees: 0
-map_boundary: {height: 4.0}                 # 新增，選填：沿地圖矩形自動放四面牆
+map_edge_barrier: {height: 4.0}                 # 新增，選填：沿地圖矩形自動放四面牆
 
 player:
   spawn_position: {x: 106.8, y: 23.0, z: 77.0}
@@ -91,7 +92,7 @@ player:
 - `grounded: true`：放置時用地面高度覆蓋 y，並檢查腳下有地面；找不到地面就載入失敗並說明原因（現在沒有任何生成路徑檢查地面）。
 - `grounded: false`：完全照寫的 position 和 rotation。
 - 空氣牆一律是 box，用 `yaw_degrees`（牆是直立的，不需要完整旋轉）。
-- 編輯工具只管 `scene_props`、`boundary_walls`、`map_boundary`、`player.spawn_position`、`agent_routes`，以及 mesh 模式的地面路徑。`patrols`、`preload_directors`、`level`、`objective`、`nests` 這些手寫欄位，工具讀入後原樣保留（見 6.3）。
+- 編輯工具只管 `scene_props`、`player_barriers`、`map_edge_barrier`、`player.spawn_position`、`agent_routes`，以及 mesh 模式的地面路徑。`patrols`、`preload_directors`、`level`、`objective`、`nests` 這些手寫欄位，工具讀入後原樣保留（見 6.3）。
 
 ### 3.2 stamp template（catalog v21）
 
@@ -116,7 +117,7 @@ sites:
       - {weight: 1, entity_template: level_gate, position: {x: 22, y: 6, z: 12}, rotation: {...}, grounded: false}
 per_map_limits:                     # 同一張地圖的總數上限 / 下限（依 entity_template）
   level_gate: {min: 0, max: 1}
-boundary_walls: []                  # 同 3.1，stamp 本地座標
+player_barriers: []                  # 同 3.1，stamp 本地座標
 ```
 
 - 一個 site 抽出一個 option；option 可以覆寫 site 的位置和旋轉，所以 (g)-1 和 (g)-2 用同一個結構。
@@ -141,14 +142,14 @@ boundary_walls: []                  # 同 3.1，stamp 本地座標
 - 預設 grounded 先依 entity_type 決定（prop = true），之後 template 可加一個選填的 `placement: {grounded: false}` 覆寫。
 - Unity 端的下拉選單只列 registry 裡的名稱，所以不會打錯字。
 
-## 4. kernel（engine）：`boundary` 層
+## 4. kernel（engine）：`player_barrier` 層
 
 | 步驟 | 內容 |
 |---|---|
-| K1 | `physics::CollisionLayer::kBoundary`（新 bit）、`CollisionObjectKind::kBoundary`（附加在最後）、新的 Jolt object layer，放在 static world broad phase。 |
-| K2 | `kCollisionMaskAll` **不含** `kBoundary`，所以子彈、hitscan、視線、area effect 都查不到。`kMovementCollisionMask`（預設）也不含，所以沒設定的 actor 不會被擋。 |
-| K3 | 公開 ABI：`KERNEL_MOVEMENT_LAYER_BOUNDARY`；移動 mask 的 YAML token `boundary`；加進 `KERNEL_MOVEMENT_MASK_SUPPORTED`，**不加進** `KERNEL_MOVEMENT_MASK_DEFAULT`。 |
-| K4 | 新 export：`Kernel_SetStaticSceneBoundaries(kernel, slot, const KernelBoundaryBox* boxes, uint32_t count)`，每次呼叫取代該 slot 的全部牆；`Kernel_RemoveStaticSceneSlot` 時一併移除。server world 和 client prediction world 都要加。放在新的 capability bit 後面（additive，不升 ABI 版本；挑 bit 時對照 `capability-bits-not-contiguous` 的教訓）。 |
+| K1 | `physics::CollisionLayer::kPlayerBarrier`（新 bit）、`CollisionObjectKind::kPlayerBarrier`（附加在最後）、新的 Jolt object layer，放在 static world broad phase。 |
+| K2 | `kCollisionMaskAll` **不含** `kPlayerBarrier`，所以子彈、hitscan、視線、area effect 都查不到。`kMovementCollisionMask`（預設）也不含，所以沒設定的 actor 不會被擋。 |
+| K3 | 公開 ABI：`KERNEL_MOVEMENT_LAYER_PLAYER_BARRIER`；移動 mask 的 YAML token `player_barrier`；加進 `KERNEL_MOVEMENT_MASK_SUPPORTED`，**不加進** `KERNEL_MOVEMENT_MASK_DEFAULT`。 |
+| K4 | 新 export：`Kernel_SetStaticScenePlayerBarriers(kernel, slot, const KernelPlayerBarrierBox* boxes, uint32_t count)`，每次呼叫取代該 slot 的全部牆；`Kernel_RemoveStaticSceneSlot` 時一併移除。server world 和 client prediction world 都要加。放在新的 capability bit 後面（additive，不升 ABI 版本；挑 bit 時對照 `capability-bits-not-contiguous` 的教訓）。 |
 | K5 | 確認 character controller、hover、knockback 飛行、leap 這幾條移動路徑都用 actor 自己的移動 mask 查碰撞；任何一條如果寫死預設 mask，牆就會對它失效。 |
 | K6 | Windows `.def` 和 macOS `BUILD.bazel` 的 export 清單都要加（兩份清單）。 |
 
@@ -157,9 +158,9 @@ boundary_walls: []                  # 同 3.1，stamp 本地座標
 | 步驟 | 內容 |
 |---|---|
 | G1 | `scene_props` 讀 `rotation`、`grounded`；`grounded` 時以地面高度覆蓋 y，找不到地面就載入失敗。 |
-| G2 | `boundary_walls`、`map_boundary` 讀入後，在 slot 載入時呼叫 `Kernel_SetStaticSceneBoundaries`。server 和 client 都經過 `prepare_scene`，所以兩端走同一條路。slot 0（camp）也要套用。 |
-| G3 | player template 的移動 mask 加上 `boundary`。 |
-| G4 | stamp `sites`、`per_map_limits`、stamp 內的 `boundary_walls`；取代 `nest_sites`。 |
+| G2 | `player_barriers`、`map_edge_barrier` 讀入後，在 slot 載入時呼叫 `Kernel_SetStaticScenePlayerBarriers`。server 和 client 都經過 `prepare_scene`，所以兩端走同一條路。slot 0（camp）也要套用。 |
+| G3 | player template 的移動 mask 加上 `player_barrier`。 |
+| G4 | stamp `sites`、`per_map_limits`、stamp 內的 `player_barriers`；取代 `nest_sites`。 |
 | G5（第二階段） | `terrain.placements:`：手動指定 stamp 擺放，跳過 layout，照跑 `accept`。 |
 | G6（第二階段） | 固定 seed 的 terrain recipe 改成**對所有 terrain scene template 自動 cook**（一條 genrule 掃過 bundle 裡的 template），不再每個 template 手寫一條。 |
 | G7 | build bundle 時輸出 `placeable_registry.json`（3.3）。 |
@@ -173,7 +174,7 @@ boundary_walls: []                  # 同 3.1，stamp 本地座標
   - grounded（預設取 registry）
   - stamp 用：options（加權清單）、site 名稱
 - gizmo：依 registry 的 bounds 畫線框和朝向箭頭。
-- `AirWall` component：BoxCollider 只用來在場景裡調整尺寸。gizmo 用半透明色顯示，匯出時轉成 `boundary_walls`。
+- `AirWall` component：BoxCollider 只用來在場景裡調整尺寸。gizmo 用半透明色顯示，匯出時轉成 `player_barriers`。
 - **`MeshStampSampler` 的 Skip 規則要排除 `AirWall` 和 `SceneMarker`**，否則它們的 collider 會被當成地形取樣。
 - 取代現有的名稱前綴（`bld_`、`prop_`…）。前綴打錯字會靜默失效，這正是要避免的。
 
@@ -194,7 +195,7 @@ boundary_walls: []                  # 同 3.1，stamp 本地座標
 | scene（terrain，第二階段） | `<id>_scene_<name>.yaml`（含 `terrain.placements`） | `scene_templates/` |
 
 - scene 匯出會先讀入現有的 yaml（如果有），只改工具負責的欄位，其他欄位原樣保留（round-trip）。
-- 碰撞 OBJ 只包含地面和會擋人的靜態幾何；空氣牆不進 OBJ（它是 `boundary` 層，不是 terrain）。
+- 碰撞 OBJ 只包含地面和會擋人的靜態幾何；空氣牆不進 OBJ（它是 `player_barrier` 層，不是 terrain）。
 - `StampExporter` 現在輸出的 metadata（`size_m`、`rim_m`…）改成寫在另一份報告檔，不放進 stamp yaml。
 
 ### 6.4 registry 匯入
@@ -215,8 +216,8 @@ boundary_walls: []                  # 同 3.1，stamp 本地座標
 | 步驟 | 內容 | 測試 |
 |---|---|---|
 | P0 | 量玩家跳躍頂點，定 Q4 的預設值 | 量測，記在這份文件 |
-| P1 | K1–K6：`boundary` 層與 export | 新增 `boundary_wall_test`：玩家被擋；同位置的 NPC、子彈、視線穿過；hover 的玩家從 15 m 越過；移除 slot 後牆消失；server 與 client prediction 結果一致 |
-| P2 | G1–G3：`scene_props` 旋轉/grounded、`boundary_walls`、`map_boundary`；camp 加四面牆 | `scene_template_catalog_test` 加格式案例；camp 邊界走出去被擋的端到端測試（listen 與 dedicated） |
+| P1 | K1–K6：`player_barrier` 層與 export | 新增 `player_barrier_test`：玩家被擋；同位置的 NPC、子彈、視線穿過；hover 的玩家從 15 m 越過；移除 slot 後牆消失；server 與 client prediction 結果一致 |
+| P2 | G1–G3：`scene_props` 旋轉/grounded、`player_barriers`、`map_edge_barrier`；camp 加四面牆 | `scene_template_catalog_test` 加格式案例；camp 邊界走出去被擋的端到端測試（listen 與 dedicated） |
 | P3 | G4：stamp `sites`、`per_map_limits` | 多個 seed 下：抽選可重現、上限成立、全部 grounded 的物件站在地上 |
 | P4 | G7：registry json | 產生的 json 和 catalog 一致（名稱、id、bounds） |
 | P5 | Unity：`SceneMarker`、`AirWall`、registry 下拉、檢查、stamp 匯出修正 | batchmode 自我測試（沿用 `AnnotationSelfTestBatch` 的做法）：匯出的檔案丟進 catalog 能直接載入 |
@@ -229,9 +230,9 @@ P1 與 P3–P4 互不依賴，可以並行；P2 依賴 P1；P5–P6 依賴 P2–
 
 | 項目 | 影響 |
 |---|---|
-| ABI | **有新增**（additive）：`KERNEL_MOVEMENT_LAYER_BOUNDARY`、`Kernel_SetStaticSceneBoundaries`、新 capability bit。依現有規則不升 ABI 版本，但 package 的 native library 要重 build。 |
+| ABI | **有新增**（additive）：`KERNEL_MOVEMENT_LAYER_PLAYER_BARRIER`、`Kernel_SetStaticScenePlayerBarriers`、新 capability bit。依現有規則不升 ABI 版本，但 package 的 native library 要重 build。 |
 | snapshot schema | 不變（牆是 scene 資料，不是 entity）。 |
-| catalog 格式 | **v21**：`scene_props.rotation/grounded`、`boundary_walls`、`map_boundary`、stamp `sites`/`per_map_limits`，移除 `nest_sites`；第二階段加 `terrain.placements`。Unity client 要等 package 重 build 才能讀新 catalog。 |
+| catalog 格式 | **v21**：`scene_props.rotation/grounded`、`player_barriers`、`map_edge_barrier`、stamp `sites`/`per_map_limits`，移除 `nest_sites`；第二階段加 `terrain.placements`。Unity client 要等 package 重 build 才能讀新 catalog。 |
 | `bundle.bytes` | 需要更新（新的 catalog 格式、新的 camp 牆）。package 的 build 與更新由使用者執行。 |
 | C# | 如果 client 端只經過 native 的 `ClientLoadSceneSlot`，C# 不需要新 binding；P1 實作時確認，需要的話放在獨立的 `claude/*-csharp` 分支。 |
 
