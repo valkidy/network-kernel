@@ -1,0 +1,47 @@
+# The kernel-generated terrain (seed 1) with its own mission and the initial
+# camp. A copy of what the kernel_terrain map variant was; not a level. Its
+# recipe is the one the bundle cooks at terrain.recipe.
+id: 6
+name: kernel_terrain_test
+# A 216 m painted ground (ground_0001, 19 terrace levels) with the four
+# prototype stamps laid out on it. The recipe that places them is cooked
+# into the bundle at bundle build time (//game_server:terrain_recipe_cook),
+# from `seed`; every client composes the same heightfield from it. The
+# heightfield is the static collision scene, so that names ids and a layer
+# but no mesh; the server bakes its navmesh from the same heights.
+terrain:
+  map_size: {x: 216.0, z: 216.0}
+  seed: 1
+  recipe: terrain/gameplay_catalog.nktr
+  # ground_0001 as terrace levels on the 0.3 m grid (NKGL), cooked from
+  # its 16-bit export by //game_server:terrain_ground_levels.
+  ground_maps: [terrain_assets/ground_0001.nkgl]
+  stamps: {count: 12, min_count: 10}
+  terrace: {levels: 19, level_height: 1.2, black: 12.0, riser_slope_degrees: 28.0, cliff_share: 0.15, cliff_width: 0.3, cliff_wavelength: 25.0}
+  detail: {amplitude: 0.4, wavelength: 12.0}
+  layout: {base_step: 1.5, ring_slope_degrees: 30.0, min_ring: 4.0, max_ring: 24.0}
+  accept: {min_reach: 0.995, max_unreachable_area: 400.0, max_seam_breaks: 0, min_placed: 10}
+  max_retries: 8
+stamp_template_dir: stamp_templates
+# Its own mission: the root's game_rule has positions on another map.
+preload_directors:
+  - game_rule_kernel_terrain
+# The initial camp on the flattest ground near the middle: a terrace floor
+# at y 20.4-20.6 m around (-7.2, -36), measured off the composed heights.
+scene_props:
+  - entity_template: initial_camp
+    position: {x: -7.2, y: 20.6, z: -36.0}
+player:
+  # ~7 m from the camp on the same floor (20.4 m), dropped from a little
+  # above it; the controller settles it onto the ground.
+  spawn_position: {x: -1.2, y: 23.0, z: -31.0}
+# A loop round the camp's terrace (heights are the ground there). Each leg
+# is pathed over the navmesh, which walks it round the cliff south of it.
+agent_routes:
+  - id: 1
+    name: camp_perimeter
+    waypoints:
+      - {x: -17.0, y: 22.5, z: -26.0}
+      - {x: 22.8, y: 20.1, z: -26.0}
+      - {x: 22.8, y: 21.0, z: -46.0}
+      - {x: -17.0, y: 21.5, z: -46.0}

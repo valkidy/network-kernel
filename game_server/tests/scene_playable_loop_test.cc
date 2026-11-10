@@ -39,7 +39,7 @@ void require_impl(bool condition, int line, const char* text) {
 }
 #define require(condition) require_impl((condition), __LINE__, #condition)
 
-constexpr const char* kEntry = "gameplay_catalog.camp.yaml";
+constexpr const char* kEntry = "gameplay_catalog.yaml";
 constexpr std::uint16_t kRandomLevel = 4u;
 constexpr std::uint32_t kTerminalTemplate = 231u;
 constexpr float kDt = 1.0f / 30.0f;

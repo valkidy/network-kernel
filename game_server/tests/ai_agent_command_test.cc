@@ -105,7 +105,7 @@ const gs::AgentRuntimeState& agent_of(const gs::AgentRuntimeManager& manager, st
 }
 
 gs::GameServerGameplayConfig quiet_config() {
-    gs::GameServerGameplayConfig config = gs::default_game_server_gameplay_config();
+    gs::GameServerGameplayConfig config = gs::default_game_server_gameplay_config(5);
     config.preload_director_template_ids.clear();
     config.game_rules.clear();
     config.world_rule_spawns.clear();

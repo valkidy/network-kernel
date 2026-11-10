@@ -219,7 +219,8 @@ int RunDedicatedServer(
     std::uint32_t actor_blocking,
     const char* netcode_preset,
     std::uint32_t max_players,
-    const char* level) {
+    const char* level,
+    std::int32_t start_scene) {
     log_dedicated_server_build_info(
         physics_simulation,
         physics_workers,
@@ -261,9 +262,11 @@ int RunDedicatedServer(
                 gameplay_config.weapons.catalog_version,
                 gameplay_config.weapons.catalog_hash);
         } else {
-            gameplay_config =
-                network_example::game_server::load_gameplay_config_from_catalog_file(
-                    gameplay_catalog_path);
+            gameplay_config = start_scene >= 0
+                ? network_example::game_server::load_start_scene_config_from_catalog_file(
+                      gameplay_catalog_path, static_cast<std::uint16_t>(start_scene))
+                : network_example::game_server::load_gameplay_config_from_catalog_file(
+                      gameplay_catalog_path);
             // The same two entries the bundle branch pulls, named the same way
             // -- relative to the catalog -- which on disk means relative to the
             // file rather than to the archive root.

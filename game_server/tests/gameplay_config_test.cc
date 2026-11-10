@@ -610,7 +610,7 @@ std::string sentry_grunt_entity_template_yaml(std::string entity_type) {
 
 int main() {
     const network_example::game_server::GameServerGameplayConfig config =
-        network_example::game_server::default_game_server_gameplay_config();
+        network_example::game_server::default_game_server_gameplay_config(5);
     // actor_templates follows the enumerated file order, so the two templates the
     // cases below mutate are located by id rather than assumed to sort first.
     const auto actor_index_by_id = [&config](std::uint32_t id) -> std::size_t {
@@ -667,8 +667,11 @@ int main() {
         read_text_file("game_server/gameplay_catalog/entity_templates/2_sentry_grunt.yaml");
     const std::string production_quadruped_yaml =
         read_text_file("game_server/gameplay_catalog/entity_templates/21_quadruped_actor.yaml");
-    const std::string production_catalog_yaml =
-        read_text_file("game_server/gameplay_catalog/gameplay_catalog.yaml");
+    // Template 5 plays the root's directors, which these cases edit
+    // (docs/START_SCENE_PLAN.md); the camp names its own.
+    const std::string production_catalog_yaml = replace_once(
+        read_text_file("game_server/gameplay_catalog/gameplay_catalog.yaml"),
+        "\nstart_scene: 0\n", "\nstart_scene: 5\n");
     const auto load_with_catalog = [&](const std::string& catalog_yaml) {
         const std::vector<std::uint8_t> bundle = make_gameplay_bundle_zip(
             production_sentry_yaml,
@@ -1552,7 +1555,7 @@ int main() {
     require(
         config.static_collision_scene.collision_layer ==
         KERNEL_STATIC_COLLISION_LAYER_TERRAIN);
-    require(config.weapons.catalog_version == 19);
+    require(config.weapons.catalog_version == 20);
     require(config.prop_population_rules.size() == 3u);
     require(config.prop_population_rules[0].name == "temporary_deployable");
     require(
@@ -3015,7 +3018,7 @@ int main() {
     // pull_* block.
     {
         const auto shipped =
-            network_example::game_server::default_game_server_gameplay_config();
+            network_example::game_server::default_game_server_gameplay_config(5);
         bool found_pull_blast = false;
         for (const auto& projectile : shipped.projectile_templates) {
             if (projectile.name != "pull_blast") continue;
@@ -3143,10 +3146,11 @@ int main() {
 
     const std::vector<std::uint8_t> gameplay_bundle = make_gameplay_bundle_zip();
     const network_example::game_server::GameServerGameplayConfig bundle_config =
-        network_example::game_server::load_gameplay_config_from_bundle_memory(
+        network_example::game_server::load_start_scene_config_from_bundle_memory(
             gameplay_bundle.data(),
             static_cast<std::uint32_t>(gameplay_bundle.size()),
-            "gameplay_catalog.yaml");
+            "gameplay_catalog.yaml",
+            5u);
     require(bundle_config.weapons.catalog_hash == config.weapons.catalog_hash);
     require(bundle_config.colliders.templates.size() == config.colliders.templates.size());
     require(bundle_config.colliders.bindings.empty());
@@ -3417,20 +3421,21 @@ int main() {
             }});
     const network_example::game_server::GameServerGameplayConfig
         binary_bundle_config =
-            network_example::game_server::load_gameplay_config_from_bundle_memory(
+            network_example::game_server::load_start_scene_config_from_bundle_memory(
                 bundle_with_large_binary.data(),
                 static_cast<std::uint32_t>(bundle_with_large_binary.size()),
-                "gameplay_catalog.yaml");
+                "gameplay_catalog.yaml",
+                5u);
     require(binary_bundle_config.weapons.catalog_hash == config.weapons.catalog_hash);
 
     const std::vector<std::uint8_t> generated_bundle = read_binary_file(
         (runfiles_root() / "game_server" / "gameplay_catalog_bundle" / "bundle.zip")
             .string());
     const network_example::game_server::GameServerGameplayConfig generated_bundle_config =
-        network_example::game_server::load_gameplay_config_from_bundle_memory(
+        network_example::game_server::load_start_scene_config_from_bundle_memory(
             generated_bundle.data(),
             static_cast<std::uint32_t>(generated_bundle.size()),
-            "gameplay_catalog.yaml");
+            "gameplay_catalog.yaml", 5u);
     require(generated_bundle_config.weapons.catalog_hash == config.weapons.catalog_hash);
     require(
         generated_bundle_config.projectile_templates.size() ==

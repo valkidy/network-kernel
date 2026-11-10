@@ -14,6 +14,9 @@ int RunDedicatedServer(
     std::uint32_t actor_blocking,
     const char* netcode_preset,
     std::uint32_t max_players,
-    const char* level);
+    const char* level,
+    // The scene template slot 0 starts on when loading a catalog file (a
+    // bundle picks it by entry path); -1 for the catalog's own start_scene.
+    std::int32_t start_scene = -1);
 
 #endif  // APP_DEDICATED_SERVER_APP_H_

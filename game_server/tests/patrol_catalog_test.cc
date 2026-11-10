@@ -79,7 +79,12 @@ public:
         root_ = fs::path(tmp != nullptr ? tmp : "/tmp") / "patrol_catalog";
         fs::remove_all(root_);
         fs::copy(kCatalogDir, root_, fs::copy_options::recursive);
+        // The composed mesh map with its mission and patrols, which these
+        // cases were written against (docs/START_SCENE_PLAN.md).
         catalog_ = read_file(root_ / "gameplay_catalog.yaml");
+        require(catalog_.find("\nstart_scene: 0\n") != std::string::npos);
+        catalog_.replace(catalog_.find("\nstart_scene: 0\n"), 15, "\nstart_scene: 5\n");
+        write_file(root_ / "gameplay_catalog.yaml", catalog_);
     }
 
     const fs::path& root() const { return root_; }

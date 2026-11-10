@@ -676,6 +676,8 @@ struct SceneTemplateRef {
     std::string display_name;
     std::string description;
     std::string overlay_yaml;
+    // It has a level: block, so a player may pick it from the level list.
+    bool is_level = false;
 };
 
 struct StaticCollisionSceneConfig {
@@ -786,6 +788,11 @@ struct GameServerGameplayConfig {
     // The template this config was loaded as; empty for the catalog's own
     // map (the camp, slot 0).
     std::string scene_template;
+    // From catalog_version 20: the template slot 0 plays (start_scene:, 0 --
+    // the initial camp -- by default). Empty for a level and for older
+    // catalogs. A level template played here runs its map, game_rule,
+    // patrols and props, but none of the level flow.
+    std::string start_scene;
     // Where this config's map sits in the world: zero for the camp, the
     // slot's offset for a level (offset_scene_config, scene_table.h). Every
     // position above is already in world space; the navmesh, baked at the
@@ -838,7 +845,11 @@ struct DataLoadError : public std::runtime_error {
     std::int32_t column = -1;
 };
 
+// The shipped catalog from the source tree, playing its start scene (the
+// initial camp), or the scene template `start_scene` in its place -- 5 is the
+// composed mesh map with the mission that most tests were written against.
 GameServerGameplayConfig default_game_server_gameplay_config();
+GameServerGameplayConfig default_game_server_gameplay_config(std::uint16_t start_scene);
 std::uint64_t compute_gameplay_catalog_hash(const WeaponCatalogConfig& weapons);
 std::uint64_t compute_gameplay_catalog_hash(
     const GameServerGameplayConfig& config);
@@ -847,7 +858,8 @@ GameServerGameplayConfig load_gameplay_config_from_weapon_template_directory(
 GameServerGameplayConfig load_gameplay_config_from_catalog_file(
     const std::string& path);
 // `map_variant`, when set, plays that one of the catalog's map_variants
-// instead of the one its map_variant names (the terrain recipe cook).
+// instead of the one its map_variant names (catalog_version 19 and older;
+// version 20 picks its map with start_scene).
 GameServerGameplayConfig load_gameplay_config_from_bundle_memory(
     const std::uint8_t* bundle_bytes,
     std::uint32_t bundle_size,
@@ -865,6 +877,18 @@ GameServerGameplayConfig load_scene_template_config_from_bundle_memory(
 GameServerGameplayConfig load_scene_template_config_from_catalog_file(
     const std::string& path,
     const std::string& scene_template);
+// The catalog with scene template `start_scene` in slot 0 in place of the one
+// it names (docs/START_SCENE_PLAN.md): a test's map, or a server's --scene. A
+// start scene, not a level, so no level revive pool. Throws for an id the
+// catalog does not define or a random terrain.
+GameServerGameplayConfig load_start_scene_config_from_bundle_memory(
+    const std::uint8_t* bundle_bytes,
+    std::uint32_t bundle_size,
+    const std::string& entry_path,
+    std::uint16_t start_scene);
+GameServerGameplayConfig load_start_scene_config_from_catalog_file(
+    const std::string& path,
+    std::uint16_t start_scene);
 std::vector<std::uint8_t> load_gameplay_bundle_entry_bytes(
     const std::uint8_t* bundle_bytes,
     std::uint32_t bundle_size,

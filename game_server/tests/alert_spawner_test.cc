@@ -101,7 +101,12 @@ public:
         root_ = fs::path(tmp != nullptr ? tmp : "/tmp") / "alert_spawner_catalog";
         fs::remove_all(root_);
         fs::copy(kCatalogDir, root_, fs::copy_options::recursive);
+        // The composed mesh map with its mission, which these cases were
+        // written against (docs/START_SCENE_PLAN.md).
         shipping_catalog_ = read_file(root_ / "gameplay_catalog.yaml");
+        require(shipping_catalog_.find("\nstart_scene: 0\n") != std::string::npos);
+        shipping_catalog_.replace(shipping_catalog_.find("\nstart_scene: 0\n"), 15, "\nstart_scene: 5\n");
+        write_file(root_ / "gameplay_catalog.yaml", shipping_catalog_);
         grunt_ = read_file(root_ / kGruntFile);
         nest_ = read_file(root_ / kNestFile);
         for (const char* file : kShippedCallerFiles) {
