@@ -1,6 +1,6 @@
 # 關卡編輯工具：scene 與 stamp 的編輯、匯出與打包
 
-狀態：計畫草稿（2026-11-10），以 main 26736476 為準。第 2.2 節的問題確認後才開始實作。
+狀態：計畫草稿（2026-11-10），以 main 26736476 為準。Q1、Q3、Q4、Q5 已照建議決定；Q2、Q6 確認後才開始實作。
 
 ## 0. 目標
 
@@ -47,14 +47,14 @@
 
 ### 2.2 待確認（附建議）
 
-| # | 問題 | 建議 |
-|---|---|---|
-| Q1 | scene 編輯工具第一版要支援哪些地面模式？ | **mesh 和 terrain 都支援，但分兩階段**：先做 mesh（camp 就是 mesh），terrain 放第二階段。標記和匯出共用同一層，只有地面的匯出不同。 |
-| Q2 | terrain 模式的固定場景要不要能手動擺 stamp？ | **要**。新增 `terrain.placements:`；有它就跳過 layout，但照樣跑 `accept` 檢查。否則固定場景只能挑 seed，無法照設計擺。 |
-| Q3 | registry 與 preview 從哪裡開始？ | **先只用 collider 外框預覽**（不需要 prefab）。registry 由 build bundle 時一併產生的 json 提供；prefab 預覽之後再評估是搬到 unity-network-example，還是抽成共用 package。 |
-| Q4 | 空氣牆的高度預設值？ | **4 m**：高於玩家的跳躍頂點，遠低於魔毯的 15 m。實作時先量跳躍頂點再定。 |
-| Q5 | 一般地圖的邊界要手擺還是自動？ | 兩者都提供：scene 可手擺；另加 `map_boundary: {height}`，由 game_server 沿地圖矩形自動放四面牆。 |
-| Q6 | 空氣牆的 mask 在牆上設定，還是在 actor 上設定？ | **在 actor 上**，和現有的移動 mask 一致：牆屬於新的 `boundary` 層，玩家的 template 把 `boundary` 加進自己的移動 mask，NPC 的預設 mask 不含它。牆本身只標「我是 boundary」。 |
+| # | 問題 | 建議 | 狀態 |
+|---|---|---|---|
+| Q1 | scene 編輯工具第一版要支援哪些地面模式？ | **mesh 和 terrain 都支援，但分兩階段**：先做 mesh（camp 就是 mesh），terrain 放第二階段。標記和匯出共用同一層，只有地面的匯出不同。 | 已決定（2026-11-10） |
+| Q2 | terrain 模式的固定場景要不要能手動擺 stamp？ | **要**。新增 `terrain.placements:`；有它就跳過 layout，但照樣跑 `accept` 檢查。否則固定場景只能挑 seed，無法照設計擺。 | 待確認 |
+| Q3 | registry 與 preview 從哪裡開始？ | **先只用 collider 外框預覽**（不需要 prefab）。registry 由 build bundle 時一併產生的 json 提供；prefab 預覽之後再評估是搬到 unity-network-example，還是抽成共用 package。 | 已決定（2026-11-10） |
+| Q4 | 空氣牆的高度預設值？ | **4 m**：高於玩家的跳躍頂點，遠低於魔毯的 15 m。實作時先量跳躍頂點再定。 | 已決定（2026-11-10） |
+| Q5 | 一般地圖的邊界要手擺還是自動？ | 兩者都提供：scene 可手擺；另加 `map_boundary: {height}`，由 game_server 沿地圖矩形自動放四面牆。 | 已決定（2026-11-10） |
+| Q6 | 空氣牆的 mask 在牆上設定，還是在 actor 上設定？ | **在 actor 上**，和現有的移動 mask 一致：牆屬於新的 `boundary` 層，玩家的 template 把 `boundary` 加進自己的移動 mask，NPC 的預設 mask 不含它。牆本身只標「我是 boundary」。 | 待確認 |
 
 ## 3. 資料格式
 
