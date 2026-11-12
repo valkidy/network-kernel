@@ -77,6 +77,8 @@ public:
         quiet.game_rules.clear();
         quiet.world_rule_spawns.clear();
         quiet.patrols.clear();
+        // The camp's props stand at the origin, where this arena is.
+        quiet.scene_props.clear();
         KernelConfig kernel_config{};
         kernel_config.mode = KernelMode_DedicatedServer;
         kernel_config.tick.server_tick_rate = 30;

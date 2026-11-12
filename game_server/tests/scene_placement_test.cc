@@ -142,8 +142,8 @@ std::vector<std::uint8_t> read_file(const char* path) {
 
 constexpr const char* kEntry = "gameplay_catalog.yaml";
 constexpr float kDt = 1.0f / 30.0f;
-// The composed mesh runs 0..216 on x; the east wall's inner face is 1 m in.
-constexpr float kEastEdge = 216.0f;
+// The camp ground runs -12..12 on x (0..1.5 m up); the east wall's inner face is 1 m in.
+constexpr float kEastEdge = 12.0f;
 
 struct Host {
     KernelHandle* kernel = nullptr;
@@ -203,13 +203,13 @@ KernelVec3 walk_east(const std::vector<std::uint8_t>& bundle, std::uint16_t port
             host.kernel, host.player,
             KERNEL_MOVEMENT_MASK_DEFAULT | KERNEL_MOVEMENT_LAYER_LIMB));
     }
-    const KernelVec3 drop{kEastEdge - 3.0f, 80.0f, 77.0f};
+    const KernelVec3 drop{kEastEdge - 3.0f, 20.0f, -3.0f};
     const KernelQuat facing{0.0f, 0.0f, 0.0f, 1.0f};
     require(Kernel_ServerSetEntityTransform(host.kernel, host.player, &drop, &facing));
     for (int i = 0; i < 150; ++i) host.frame(KernelVec2{0.0f, 0.0f});
     const KernelVec3 landed = host.position();
     // Grounded control: it is standing on the map, not still falling.
-    require(landed.y > 0.0f && landed.y < 79.0f);
+    require(landed.y > -0.5f && landed.y < 19.0f);
     for (int i = 0; i < 90; ++i) host.frame(KernelVec2{1.0f, 0.0f});
     const KernelVec3 ended = host.position();
     std::printf("%s: landed (%.2f, %.2f) -> ended (%.2f, %.2f, %.2f)\n",

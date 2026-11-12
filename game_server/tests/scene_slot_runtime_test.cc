@@ -208,7 +208,8 @@ int main() {
     const gs::GameServerGameplayConfig* level = server.scene_config(1u);
     require(level != nullptr);
     require(level->scene_offset.x == gs::kSceneSlotSpacing);
-    require(level->player.spawn_position.x == config.player.spawn_position.x + gs::kSceneSlotSpacing);
+    // Template 2's own spawn (106.8, its 2_scene_*.yaml), moved to slot 1.
+    require(level->player.spawn_position.x == 106.8f + gs::kSceneSlotSpacing);
     require(host.entities_in(slot1) == 0u);  // nothing until a player is there
     host.teleport_player(level->player.spawn_position);
     host.frames(300);

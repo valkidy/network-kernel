@@ -155,13 +155,13 @@ gs::PreparedTerrain config_and_prepare(const std::vector<std::uint8_t>& bundle) 
     require(error.find("different stamp") != std::string::npos);
     std::printf("other library refused: %s\n", error.c_str());
 
-    // The default entry starts on the initial camp, the composed mesh map:
+    // The default entry starts on the initial camp, its 24 m mesh ground:
     // the baked mesh and its navmesh, no terrain. Template 6's entry is the
     // terrain; template 5's is the mesh again.
     const gs::GameServerGameplayConfig shipping = load(bundle, "gameplay_catalog.yaml");
     require(!shipping.terrain.enabled && !shipping.static_collision_scene.entry_path.empty());
     require(!shipping.navigation_mesh.entry_path.empty() && !shipping.map.playable_bounds.authored);
-    require(shipping.player.has_spawn_position && shipping.player.spawn_position.x == 106.8f && shipping.player.actor_template_id != 0);
+    require(shipping.player.has_spawn_position && shipping.player.spawn_position.x == 4.05f && shipping.player.actor_template_id != 0);
     require(load(bundle, "gameplay_catalog.scene_6.yaml").terrain.enabled);
     require(!load(bundle, "gameplay_catalog.scene_5.yaml").terrain.enabled);
     return pc;

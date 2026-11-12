@@ -320,7 +320,7 @@ void start_scene_rules() {
     require(camp.scene_template.empty());
     require(camp.scene_props.size() == 2u);
     require(camp.preload_director_template_ids.empty());
-    require(camp.player.spawn_position.x == 106.8f);
+    require(camp.player.spawn_position.x == 4.05f);
     require(camp.scene_templates.front().id == 0u && !camp.scene_templates.front().is_level);
     for (const gs::SceneTemplateRef& t : camp.scene_templates) require(t.is_level == (t.id >= 1u && t.id <= 4u));
 
@@ -371,22 +371,22 @@ void level_authoring_keys() {
         return files;
     };
 
-    // The shipping camp: edge walls on, nothing else authored.
+    // The shipping camp (exported from unity-terrain-example): edge walls on,
+    // both props grounded, the terminal turned 60 degrees, no hand-placed walls.
     const gs::GameServerGameplayConfig shipping = load_or_die(yaml, levels);
     require(shipping.map_edge_barrier.enabled);
     require(shipping.map_edge_barrier.height_meters == 4.0f);
     require(shipping.player_barriers.empty());
-    for (const gs::ScenePropConfig& prop : shipping.scene_props) {
-        require(!prop.grounded);
-        require(prop.rotation.w == 1.0f);
-    }
+    require(shipping.scene_props.size() == 2u);
+    for (const gs::ScenePropConfig& prop : shipping.scene_props) require(prop.grounded);
+    require(shipping.scene_props.front().rotation.w == 1.0f);
+    require(std::fabs(shipping.scene_props.back().rotation.y - 0.5f) < 1e-5f);
 
-    const std::string authored = replaced(camp_text,
-        "  - entity_template: level_terminal\n    position: {x: 106.8, y: 20.4, z: 82.0}\n",
-        "  - entity_template: level_terminal\n    position: {x: 106.8, y: 20.4, z: 82.0}\n"
-        "    rotation: {x: 0.0, y: 2.0, z: 0.0, w: 0.0}\n    grounded: true\n") +
+    const std::string terminal_rotation = "    rotation: {x: 0.0, y: 0.5, z: 0.0, w: 0.866025}\n";
+    const std::string authored = replaced(camp_text, terminal_rotation,
+        "    rotation: {x: 0.0, y: 2.0, z: 0.0, w: 0.0}\n") +
         "player_barriers:\n"
-        "  - {center: {x: 100.0, y: 22.0, z: 66.0}, half_extents: {x: 6.0, y: 2.0, z: 0.25}, yaw_degrees: 90}\n";
+        "  - {center: {x: 0.0, y: 2.0, z: -6.0}, half_extents: {x: 6.0, y: 2.0, z: 0.25}, yaw_degrees: 90}\n";
     std::uint64_t authored_hash = 0;
     std::string why;
     require(loads(yaml, with_camp(authored), &why, &authored_hash));
@@ -416,9 +416,7 @@ void level_authoring_keys() {
         "map_edge_barrier needs positive");
     refused(yaml, with_camp(replaced(camp_text, "map_edge_barrier: {height: 4.0}", "map_edge_barrier: {height: 4.0, colour: red}")),
         "colour");
-    refused(yaml, with_camp(replaced(camp_text,
-        "    position: {x: 106.8, y: 20.4, z: 82.0}\n",
-        "    position: {x: 106.8, y: 20.4, z: 82.0}\n    rotation: {x: 0, y: 0, z: 0, w: 0}\n")),
+    refused(yaml, with_camp(replaced(camp_text, terminal_rotation, "    rotation: {x: 0, y: 0, z: 0, w: 0}\n")),
         "non-zero quaternion");
 }
 

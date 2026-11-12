@@ -71,6 +71,22 @@ fs::path catalog_root() {
     return fs::path(test_srcdir) / test_workspace / "game_server" / "gameplay_catalog";
 }
 
+// The shipping catalog on the composed 216 m map and its cliffs, which the
+// camp no longer stands on (templates 2 and 5 still do). The camp's two props
+// stay: they land in this map's corner, far from every spot here, and the
+// ledge leap (C) does not happen without them -- the entity count shifts
+// something the leap depends on.
+gs::GameServerGameplayConfig composed_map_config() {
+    gs::GameServerGameplayConfig config = gs::default_game_server_gameplay_config();
+    config.static_collision_scene.entry_path =
+        "mesh_assets/jolt/composed_216m_ground_0001_seed1_collision.joltmesh";
+    config.navigation_mesh.entry_path =
+        "mesh_assets/recast/composed_216m_ground_0001_seed1_collision.navmesh";
+    // The camp's spawn is off this map; template 2's is on it.
+    config.player.spawn_position = KernelVec3{106.8f, 23.0f, 77.0f};
+    return config;
+}
+
 std::vector<std::uint8_t> read_file(const fs::path& path) {
     std::ifstream file(path, std::ios::binary);
     require(file.good());
@@ -96,7 +112,7 @@ struct Rig {
     std::array<KernelEvent, 256> events{};
 
     Rig(bool with_navmesh, std::uint16_t port) {
-        config = gs::default_game_server_gameplay_config();
+        config = composed_map_config();
         config.game_rules.clear();
         config.world_rule_spawns.clear();
         config.patrols.clear();
@@ -493,7 +509,7 @@ int main() {
         // spends at most 8 of these a tick.
         gs::PatrolNavigation navigation;
         std::string error;
-        const gs::GameServerGameplayConfig config = gs::default_game_server_gameplay_config();
+        const gs::GameServerGameplayConfig config = composed_map_config();
         require(navigation.load(read_file(catalog_root() / config.navigation_mesh.entry_path), &error));
         gs::PatrolRouteRequest request;
         request.start = kBelowTheCliff;
@@ -535,7 +551,7 @@ int main() {
 
     // A walkable slope with a real climb, searched for so a rebake moves it. Its
     // unit is to the player's +x, because it looks down its local -x.
-    const gs::GameServerGameplayConfig config = gs::default_game_server_gameplay_config();
+    const gs::GameServerGameplayConfig config = composed_map_config();
     gs::PatrolNavigation navigation;
     std::string error;
     require(navigation.load(read_file(catalog_root() / config.navigation_mesh.entry_path), &error));
