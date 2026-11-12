@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- updates the initial camp to an island with player barriers along its painted coast
+
+
+0.7.0 release notes:
+
 - adds managed player-barrier bindings and refreshes native plugins and authored terrain bundles
 
 
