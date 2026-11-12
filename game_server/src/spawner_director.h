@@ -32,6 +32,14 @@ namespace network_example::game_server {
 // arriving can never release a unit that is still inside one.
 inline constexpr float kSpawnerEntryArrivalMeters = 0.3f;
 
+// How far apart, sideways, the members of one wave leave the same door. One
+// exit for everyone put each unit walking the same line from the same start
+// onto the same point, bit for bit -- and two bodies on one point were shoved
+// together at ~24 m/s. A little over a gingerbread's capsule (0.8 m), so
+// neighbours come out side by side even when each stops the arrival tolerance
+// short.
+inline constexpr float kSpawnerExitSpacingMeters = 1.0f;
+
 // One door: where a unit is put, and where it has to reach before it is the
 // AI's. Both are authored relative to the carrier and turned by its rotation,
 // so a nest that has been placed facing anywhere puts its units out of the side
@@ -40,6 +48,13 @@ struct SpawnerEntryExit {
     KernelVec3 start{0.0f, 0.0f, 0.0f};
     KernelVec3 exit{0.0f, 0.0f, 0.0f};
 };
+
+// Where the `member`th unit sent through `door` in one wave walks to, in the
+// carrier's frame: the authored exit for the first, then alternating either
+// side of it across the door's direction (+1, -1, +2, ... spacings). Along the
+// door it is unchanged, so every exit stays as clear of the carrier as the
+// authored one.
+KernelVec3 spawner_member_exit(const SpawnerEntryExit& door, std::uint32_t member);
 
 // Walking out of the thing that spawned you.
 //

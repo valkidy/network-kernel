@@ -261,20 +261,37 @@ int main() {
             wave[index],
             position.x, position.y, position.z,
             horizontal_distance(nest_position, position));
-        // 4. At the authored door, within the tolerance the walk stops on, and
-        //    nowhere along the line to the player: a chaser would have taken
-        //    them towards the player, which is the opposite side of the nest.
-        //    Asserted against the exit the catalog carries rather than a
-        //    hardcoded axis, so re-siting the door to match a model moves this
-        //    test with it.
+        // 4. At its own exit of the authored door, within the tolerance the
+        //    walk stops on, and nowhere along the line to the player: a chaser
+        //    would have taken them towards the player, which is the opposite
+        //    side of the nest. Asserted against the exit the catalog carries
+        //    rather than a hardcoded axis, so re-siting the door to match a
+        //    model moves this test with it. The nest sits at the origin facing
+        //    +x, so its local points are world points.
+        const KernelVec3 own_exit = network_example::game_server::spawner_member_exit(
+            entry.exits.front(), static_cast<std::uint32_t>(index));
         require(
-            horizontal_distance(authored_exit, position) <
+            horizontal_distance(own_exit, position) <
             network_example::game_server::kSpawnerEntryArrivalMeters + 0.2f);
         // 5. And therefore clear of the nest's own collider, which the catalog
         //    checks every exit against.
         require(
             horizontal_distance(nest_position, position) >
             horizontal_distance(nest_position, authored_exit) - 1.0f);
+    }
+
+    // 6. Each released onto a spot of its own. One exit for the whole wave
+    //    put two units walking the same line onto the same point, bit for
+    //    bit, and two bodies on one point were pushed together at ~24 m/s
+    //    (gameplay clip of 2026-11-13). Neighbours may each stop up to the
+    //    arrival tolerance short, so that comes off the spacing twice.
+    for (std::size_t a = 0; a < wave.size(); ++a) {
+        for (std::size_t b = a + 1; b < wave.size(); ++b) {
+            require(
+                horizontal_distance(release_positions[a], release_positions[b]) >
+                network_example::game_server::kSpawnerExitSpacingMeters -
+                    2.0f * network_example::game_server::kSpawnerEntryArrivalMeters);
+        }
     }
 
     Kernel_Destroy(kernel);
