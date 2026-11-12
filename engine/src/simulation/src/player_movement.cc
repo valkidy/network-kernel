@@ -615,6 +615,68 @@ void simulate_actor_movement(
     keep_newest_input_per_key(&latest_input_by_net_id);
     keep_newest_input_per_key(&latest_input_by_owner);
 
+    // Actors standing on the bit-identical spot, each given a different way
+    // out. Every actor below steps against the bodies as they stood at the
+    // start of the tick, so two capsules sharing a position each find the
+    // other's body exactly on top of themselves -- and the push-out Jolt picks
+    // for that degenerate contact is the same for both. Both were shoved the
+    // full overlap the same way, ended the tick together again, and repeated:
+    // a nest's pair released onto one point moved as one body at ~24 m/s with
+    // nobody driving it. Starting each member a centimetre off the spot, spread
+    // round a circle in net id order, turns the contact into an ordinary
+    // overlap that pushes them apart. Only the solver's start moves; the pass
+    // stays independent of the order it runs in.
+    thread_local std::vector<std::pair<NetId, glm::vec3>> coincident_offsets;
+    coincident_offsets.clear();
+    {
+        thread_local std::vector<std::pair<glm::vec3, NetId>> spots;
+        spots.clear();
+        for (const entt::entity entity : actors) {
+            spots.emplace_back(
+                view.get<Transform>(entity).position,
+                view.get<NetworkIdentity>(entity).net_id);
+        }
+        // Stable on a net-id-ordered list: members keep net id order.
+        std::stable_sort(
+            spots.begin(),
+            spots.end(),
+            [](const std::pair<glm::vec3, NetId>& lhs,
+               const std::pair<glm::vec3, NetId>& rhs) {
+                if (lhs.first.x != rhs.first.x) return lhs.first.x < rhs.first.x;
+                if (lhs.first.y != rhs.first.y) return lhs.first.y < rhs.first.y;
+                return lhs.first.z < rhs.first.z;
+            });
+        constexpr float kCoincidentNudgeMeters = 0.01f;
+        constexpr float kTwoPi = 6.28318530717958647692f;
+        for (std::size_t first = 0; first < spots.size();) {
+            std::size_t end = first + 1;
+            while (end < spots.size() && spots[end].first == spots[first].first) {
+                ++end;
+            }
+            const std::size_t count = end - first;
+            if (count > 1) {
+                for (std::size_t member = 0; member < count; ++member) {
+                    const float angle = kTwoPi * static_cast<float>(member) /
+                        static_cast<float>(count);
+                    coincident_offsets.emplace_back(
+                        spots[first + member].second,
+                        glm::vec3{
+                            std::cos(angle) * kCoincidentNudgeMeters,
+                            0.0f,
+                            std::sin(angle) * kCoincidentNudgeMeters});
+                }
+            }
+            first = end;
+        }
+        std::sort(
+            coincident_offsets.begin(),
+            coincident_offsets.end(),
+            [](const std::pair<NetId, glm::vec3>& lhs,
+               const std::pair<NetId, glm::vec3>& rhs) {
+                return lhs.first < rhs.first;
+            });
+    }
+
     std::vector<BufferedMovementResult> buffered;
     buffered.reserve(actors.size());
     for (const entt::entity entity : actors) {
@@ -834,6 +896,19 @@ void simulate_actor_movement(
             }
             movement_solver::CharacterMovementState state{};
             state.position = transform.position;
+            if (!coincident_offsets.empty()) {
+                const auto nudge = std::lower_bound(
+                    coincident_offsets.begin(),
+                    coincident_offsets.end(),
+                    identity.net_id,
+                    [](const std::pair<NetId, glm::vec3>& entry, NetId wanted) {
+                        return entry.first < wanted;
+                    });
+                if (nudge != coincident_offsets.end() &&
+                    nudge->first == identity.net_id) {
+                    state.position += nudge->second;
+                }
+            }
             // When procedural locomotion owns body height, the controller runs
             // off its own vertical anchor rather than the transform's y. They
             // are answers to different questions: the transform carries the

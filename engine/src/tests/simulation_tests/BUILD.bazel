@@ -245,3 +245,9 @@ cc_test(
     srcs = ["player_hover_movement_test.cc"],
     deps = ["//engine/src/kernel:kernel"],
 )
+
+cc_test(
+    name = "coincident_actors_test",
+    srcs = ["coincident_actors_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
