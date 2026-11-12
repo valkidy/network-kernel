@@ -2373,7 +2373,12 @@ cc_binary(
     name = "terrain_recipe_cook",
     srcs = ["tools/terrain_recipe_cook.cc"],
     visibility = ["//game_server/gameplay_catalog_bundle:__pkg__"],
-    deps = [":game_server"],
+    # The kernel too: :game_server calls into it, and only an optimised
+    # (dead-stripped) tool build links without it.
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
 )
 
 # A player stands on a static scene slot's terrain as on the camp's
@@ -2564,7 +2569,10 @@ cc_test(
 cc_binary(
     name = "terrain_obj_export",
     srcs = ["tools/terrain_obj_export.cc"],
-    deps = [":game_server"],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
 )
 
 # Gray ground map (NKGM) -> terrace levels on the 0.3 m grid (NKGL):
