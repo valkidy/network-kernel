@@ -50,6 +50,32 @@ bool entity_alive(KernelHandle* kernel, std::uint32_t net_id) {
 
 }  // namespace
 
+KernelVec3 spawner_member_exit(const SpawnerEntryExit& door, std::uint32_t member) {
+    if (member == 0u) {
+        return door.exit;
+    }
+    // Sideways is horizontal and square to the walk; a door authored with no
+    // horizontal run has no sideways, and takes the carrier's z.
+    float side_x = -(door.exit.z - door.start.z);
+    float side_z = door.exit.x - door.start.x;
+    const float length = std::sqrt(side_x * side_x + side_z * side_z);
+    if (length > 0.0001f) {
+        side_x /= length;
+        side_z /= length;
+    } else {
+        side_x = 0.0f;
+        side_z = 1.0f;
+    }
+    // 1, 2, 3, 4, ... -> +1, -1, +2, -2, ...
+    const float rank = static_cast<float>((member + 1u) / 2u);
+    const float sign = (member % 2u) == 1u ? 1.0f : -1.0f;
+    const float offset = sign * rank * kSpawnerExitSpacingMeters;
+    return KernelVec3{
+        door.exit.x + side_x * offset,
+        door.exit.y,
+        door.exit.z + side_z * offset};
+}
+
 std::string validate_spawner_config(const SpawnerConfig& spawner) {
     const std::string composition_error = validate_spawn_composition(
         spawner.composition, spawner.count_min, spawner.count_max);
@@ -576,8 +602,14 @@ std::uint32_t SpawnerDirector::emit_wave(
                         spawner.entry.movement_collision_mask)) {
                     SpawnerEntryRequest request;
                     request.net_id = net_id;
-                    request.exit =
-                        carrier_world_point(carrier_state, door->exit);
+                    // Its own exit: doors are dealt round robin, so this is
+                    // the unit's place among those sent through this door.
+                    request.exit = carrier_world_point(
+                        carrier_state,
+                        spawner_member_exit(
+                            *door,
+                            created / static_cast<std::uint32_t>(
+                                spawner.entry.exits.size())));
                     request.hold_ticks =
                         created * spawner.entry.stagger_ticks;
                     request.max_ticks = spawner.entry.max_ticks;
