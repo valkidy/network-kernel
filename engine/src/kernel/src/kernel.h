@@ -164,6 +164,8 @@ public:
         const KernelStaticCollisionSceneConfig& config);
     bool add_static_scene_slot(const KernelStaticSceneSlotConfig& config);
     bool remove_static_scene_slot(std::uint32_t slot);
+    bool set_static_scene_player_barriers(
+        const KernelStaticScenePlayerBarriersConfig& config);
     bool set_gameplay_catalog_sync_bundle(
         const KernelGameplayCatalogSyncServerConfig& config,
         KernelGameplayCatalogManifest* out_manifest);
@@ -1011,11 +1013,21 @@ private:
     void commit_static_collision_scene(
         std::vector<std::uint8_t> scene,
         const KernelStaticCollisionSceneConfig& config);
-    // Loads every occupied slot into `world`; false (with the first error)
-    // if one does not load.
+    // Loads every occupied slot, and every slot's player barriers, into
+    // `world`; false (with the first error) if one does not load.
     bool load_static_scene_slots(
         physics::PhysicsWorld* world,
         std::string* error) const;
+    // Puts `slot`'s player barriers into `world`, replacing any already there.
+    bool load_player_barriers(
+        physics::PhysicsWorld* world,
+        std::uint32_t slot,
+        std::string* error) const;
+    // Takes `count` barrier bodies of `slot` out of `world`.
+    static void remove_player_barriers(
+        physics::PhysicsWorld* world,
+        std::uint32_t slot,
+        std::size_t count);
     void diagnose_client_snapshot_metadata_waits();
     std::uint32_t local_knockdown_recovery_ticks() const;
     void adopt_authoritative_impulse_lockout(
@@ -1655,6 +1667,10 @@ private:
         std::uint32_t collider_id = 0;
         std::uint32_t collision_layer = 0;
         glm::vec3 offset{0.0f};
+        // Kernel_SetStaticScenePlayerBarriers. Kept apart from the scene's
+        // own fields so slot 0's barriers survive the camp scene being set
+        // after them; box i is the body player_barrier_collider_id(slot, i).
+        std::vector<KernelPlayerBarrierBox> player_barriers;
     };
     std::array<StaticSceneSlot, KERNEL_STATIC_SCENE_SLOT_COUNT> static_scene_slots_{};
     std::unique_ptr<physics::PhysicsWorld> physics_world_;

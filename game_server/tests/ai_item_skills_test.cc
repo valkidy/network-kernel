@@ -138,6 +138,8 @@ int main() {
     config.game_rules.clear();
     config.world_rule_spawns.clear();
     config.patrols.clear();
+    // The camp's props stand at the origin, where this arena is.
+    config.scene_props.clear();
     config.preload_director_template_ids.clear();
     KernelConfig kernel_config{};
     kernel_config.mode = KernelMode_DedicatedServer;

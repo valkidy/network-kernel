@@ -54,6 +54,36 @@ std::int32_t attempt_seed(std::int32_t seed, std::int32_t attempt) {
 
 bool generate_terrain(const GenerateRequest& req, const TerrainLibrary& lib, GenerateResult* out, std::string* error) {
     *out = GenerateResult{};
+    if (req.fixed.has_value()) {
+        AttemptReport a;
+        a.stage = "fixed";
+        a.seed = req.seed;
+        TerrainRecipe r = req.base;
+        r.seed = req.seed;
+        const auto t0 = Clock::now();
+        if (!place_fixed_stamps(&r, lib, req.layout, *req.fixed, &a.layout, error)) return false;
+        a.layout_ms = ms_since(t0);
+        HeightGrid h;
+        dtNavMesh* mesh = evaluate(r, lib, req.nav, &h, &a, error);
+        if (mesh == nullptr) return false;
+        AcceptRules rules = req.accept;
+        rules.min_placed = a.layout.placed;  // every one of them, by construction
+        a.reason = turned_down(a.check, a.layout, rules, a.layout.placed);
+        a.accepted = a.reason.empty();
+        out->attempts.push_back(a);
+        if (!a.accepted) {
+            dtFreeNavMesh(mesh);
+            out->outcome = GenerateOutcome::kFailed;
+            *error = "the hand-placed map does not pass its checks: " + a.reason;
+            return false;
+        }
+        out->outcome = GenerateOutcome::kFixed;
+        out->recipe = std::move(r);
+        out->heights = std::move(h);
+        out->hash = height_grid_hash(out->heights);
+        out->navmesh = mesh;
+        return true;
+    }
     struct Stage { const char* name; std::int32_t stamps; GenerateOutcome outcome; };
     std::vector<Stage> stages{{"retry", req.layout.stamp_count, GenerateOutcome::kGenerated}};
     if (req.min_stamp_count > 0 && req.min_stamp_count < req.layout.stamp_count) {

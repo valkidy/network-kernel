@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "game_server/src/gameplay_config.h"
+#include "game_server/src/scene_placement.h"
 #include "game_server/src/terrain_catalog.h"
 #include "physics/public/physics_world.h"
 #include "game_server/src/game_server.h"
@@ -371,6 +372,17 @@ bool load_gameplay_catalog_bundle(
                 KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
             return false;
         }
+        if (!gs::finish_scene_placement(&config, gs::SceneGround{&prepared.heights, {}}, &error)) {
+            set_load_error(
+                out_result,
+                KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_KERNEL_REJECTED_CATALOG,
+                error.c_str(),
+                "",
+                "scene_props",
+                KERNEL_GAMEPLAY_CATALOG_LOAD_SOURCE_BUNDLE,
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+            return false;
+        }
         collision_scene_bytes = std::move(prepared.collision_artifact);
         auto view = std::make_shared<TerrainView>();
         view->heights = std::move(prepared.heights);
@@ -378,6 +390,24 @@ bool load_gameplay_catalog_bundle(
         view->stamp_template_ids = config.terrain.stamp_template_ids;
         for (const auto& stamp : config.terrain.library.stamps) view->stamp_cells.push_back(stamp.cells_x);
         pending_terrain_view = std::move(view);
+    } else if (!collision_scene_bytes.empty()) {
+        // Grounded props and player barriers against the mesh's triangles
+        // (docs/LEVEL_AUTHORING_TOOLS_PLAN.md G1/G2), the same on every end.
+        std::string error;
+        if (!network_example::game_server::finish_scene_placement(
+                &config,
+                network_example::game_server::SceneGround{nullptr, collision_scene_bytes},
+                &error)) {
+            set_load_error(
+                out_result,
+                KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_KERNEL_REJECTED_CATALOG,
+                error.c_str(),
+                static_scene.entry_path.c_str(),
+                "scene_props",
+                KERNEL_GAMEPLAY_CATALOG_LOAD_SOURCE_BUNDLE,
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+            return false;
+        }
     }
 
     if (!collision_scene_bytes.empty()) {
@@ -419,6 +449,18 @@ bool load_gameplay_catalog_bundle(
             out_result,
             KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_KERNEL_REJECTED_CATALOG,
             "kernel rejected gameplay catalog");
+        return false;
+    }
+
+    if (!network_example::game_server::register_player_barriers(kernel, 0u, config)) {
+        set_load_error(
+            out_result,
+            KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_KERNEL_REJECTED_CATALOG,
+            "kernel rejected the scene's player barriers",
+            "",
+            "player_barriers",
+            KERNEL_GAMEPLAY_CATALOG_LOAD_SOURCE_BUNDLE,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
         return false;
     }
 
@@ -685,6 +727,10 @@ bool commit_client_scene(
         scene.collision_layer = config.static_collision_scene.collision_layer;
         scene.offset = config.scene_offset;
         if (!Kernel_AddStaticSceneSlot(kernel, &scene)) {
+            return false;
+        }
+        if (!network_example::game_server::register_player_barriers(kernel, slot, config)) {
+            Kernel_RemoveStaticSceneSlot(kernel, slot);
             return false;
         }
     }

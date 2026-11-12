@@ -650,7 +650,7 @@ void camp_level_terminal(const std::vector<std::uint8_t>& bundle, std::uint16_t 
     require(terminal != props.end());
     const std::vector<std::uint8_t> artifact = gs::load_gameplay_bundle_entry_bytes(
         bundle.data(), static_cast<std::uint32_t>(bundle.size()),
-        "mesh_assets/jolt/composed_216m_ground_0001_seed1_collision.joltmesh");
+        "mesh_assets/jolt/initial_camp_collision.joltmesh");
     std::vector<float> positions;
     std::vector<std::uint32_t> indices;
     std::string error;

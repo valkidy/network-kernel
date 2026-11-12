@@ -525,7 +525,7 @@ int main() {
     require(loaded_catalog);
     require(load_result.status == KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS);
     require(load_result.error_code == KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_NONE);
-    require(load_result.catalog_version == 20);
+    require(load_result.catalog_version == 21);
     require(load_result.catalog_hash != 0);
     require(load_result.projectile_template_count > 0);
     require(

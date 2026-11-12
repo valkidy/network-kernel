@@ -8,6 +8,7 @@
 //   say, the version it needs, and that the catalog hash follows the
 //   templates although the root never loads them.
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -127,14 +128,14 @@ void bundle_templates() {
 
     // The default entry starts on the initial camp: nothing hostile.
     const gs::GameServerGameplayConfig root = gs::load_gameplay_config_from_bundle_memory(bundle.data(), size, kEntry);
-    require(root.weapons.catalog_version == 20u);
+    require(root.weapons.catalog_version == 21u);
     require(root.scene_template.empty());
     require(root.start_scene == "initial_camp");
     require(root.preload_director_template_ids.empty());
     require(root.patrols.empty());
     require(root.scene_props.size() == 2u);
     // 0 the camp, 1-4 levels, 5-6 the test maps; only the levels are levels.
-    require(root.scene_templates.size() == 7u);
+    require(root.scene_templates.size() == 8u);
     for (const gs::SceneTemplateRef& t : root.scene_templates) require(t.is_level == (t.id >= 1u && t.id <= 4u));
     require(root.scene_templates[1].id == 1u && root.scene_templates[1].name == kLevel);
     require(root.scene_templates[2].id == 2u && root.scene_templates[3].id == 3u);
@@ -277,7 +278,7 @@ void catalog_rules() {
     require(loads(yaml, levels, &why, &again));
     require(again == shipping_hash);
 
-    refused(replaced(yaml, "catalog_version: 20", "catalog_version: 18"), levels, "catalog_version 20");
+    refused(replaced(yaml, "catalog_version: 21", "catalog_version: 18"), levels, "catalog_version 20");
     refused(yaml, with(seed2, replaced(level, "preload_directors: []\n", "")), "needs preload_directors");
     refused(yaml, with(seed2, replaced(level, "name: level_terrain_seed2\n", "name: Level-Two\n")), "lower-case");
     refused(yaml, with(seed2, replaced(level, "name: level_terrain_seed2\n", "name: other_name\n")), "must be named");
@@ -319,7 +320,7 @@ void start_scene_rules() {
     require(camp.scene_template.empty());
     require(camp.scene_props.size() == 2u);
     require(camp.preload_director_template_ids.empty());
-    require(camp.player.spawn_position.x == 106.8f);
+    require(camp.player.spawn_position.x == 4.05f);
     require(camp.scene_templates.front().id == 0u && !camp.scene_templates.front().is_level);
     for (const gs::SceneTemplateRef& t : camp.scene_templates) require(t.is_level == (t.id >= 1u && t.id <= 4u));
 
@@ -339,7 +340,7 @@ void start_scene_rules() {
     std::printf("start scene: camp by default, any fixed map by id, a level when asked\n");
 
     refused(yaml + "map_variant: camp\n", levels, "gone in catalog_version 20");
-    refused(replaced(yaml, "catalog_version: 20", "catalog_version: 19"), levels, "start_scene needs catalog_version 20");
+    refused(replaced(yaml, "catalog_version: 21", "catalog_version: 19"), levels, "start_scene needs catalog_version 20");
     refused(starting_on("99"), levels, "start_scene 99 is not a scene template");
     refused(starting_on("4"), levels, "random terrain");
     LevelFiles no_camp = levels;
@@ -356,6 +357,211 @@ void start_scene_rules() {
     refused(yaml, no_directors, "needs preload_directors");
 }
 
+// Catalog version 21 (docs/LEVEL_AUTHORING_TOOLS_PLAN.md G1/G2): a scene prop's
+// rotation and grounded flag, authored player barriers and the map-edge rule,
+// all on the camp, which the start scene loads in full.
+void level_authoring_keys() {
+    const std::string yaml = shipping_yaml();
+    const LevelFiles levels = shipping_levels();
+    const std::string camp_file = "0_scene_initial_camp.yaml";
+    const std::string camp_text = levels.at(camp_file);
+    const auto with_camp = [&](const std::string& text) {
+        LevelFiles files = levels;
+        files[camp_file] = text;
+        return files;
+    };
+
+    // The shipping camp (exported from unity-terrain-example): edge walls on,
+    // both props grounded, the terminal turned 60 degrees, no hand-placed walls.
+    const gs::GameServerGameplayConfig shipping = load_or_die(yaml, levels);
+    require(shipping.map_edge_barrier.enabled);
+    require(shipping.map_edge_barrier.height_meters == 4.0f);
+    require(shipping.player_barriers.empty());
+    require(shipping.scene_props.size() == 2u);
+    for (const gs::ScenePropConfig& prop : shipping.scene_props) require(prop.grounded);
+    require(shipping.scene_props.front().rotation.w == 1.0f);
+    require(std::fabs(shipping.scene_props.back().rotation.y - 0.5f) < 1e-5f);
+
+    const std::string terminal_rotation = "    rotation: {x: 0.0, y: 0.5, z: 0.0, w: 0.866025}\n";
+    const std::string authored = replaced(camp_text, terminal_rotation,
+        "    rotation: {x: 0.0, y: 2.0, z: 0.0, w: 0.0}\n") +
+        "player_barriers:\n"
+        "  - {center: {x: 0.0, y: 2.0, z: -6.0}, half_extents: {x: 6.0, y: 2.0, z: 0.25}, yaw_degrees: 90}\n";
+    std::uint64_t authored_hash = 0;
+    std::string why;
+    require(loads(yaml, with_camp(authored), &why, &authored_hash));
+    const gs::GameServerGameplayConfig config = load_or_die(yaml, with_camp(authored));
+    const gs::ScenePropConfig& terminal = config.scene_props.back();
+    require(terminal.grounded);
+    // Normalised: (0, 2, 0, 0) is a half turn about +y.
+    require(terminal.rotation.y == 1.0f && terminal.rotation.w == 0.0f);
+    require(config.player_barriers.size() == 1u);
+    require(std::fabs(config.player_barriers[0].yaw_radians - 1.5707964f) < 1e-5f);
+    std::uint64_t shipping_hash = 0;
+    require(loads(yaml, levels, &why, &shipping_hash));
+    // Barriers are predicted against: both ends must see a change in them.
+    require(authored_hash != shipping_hash);
+    std::printf("level authoring: rotation, grounded and barriers load and are hashed\n");
+
+    refused(yaml, with_camp(camp_text + "player_barriers: {}\n"), "player_barriers must be a sequence");
+    refused(yaml, with_camp(camp_text + "player_barriers:\n  - {center: {x: 0, y: 0, z: 0}}\n"),
+        "needs center and half_extents");
+    refused(yaml, with_camp(camp_text +
+        "player_barriers:\n  - {center: {x: 0, y: 0, z: 0}, half_extents: {x: 0, y: 1, z: 1}}\n"),
+        "half extents in (0,");
+    refused(yaml, with_camp(camp_text +
+        "player_barriers:\n  - {center: {x: 0, y: 0, z: 0}, half_extents: {x: 1, y: 1, z: 1}, tilt: 3}\n"),
+        "tilt");
+    refused(yaml, with_camp(replaced(camp_text, "map_edge_barrier: {height: 4.0}", "map_edge_barrier: {height: 0.0}")),
+        "map_edge_barrier needs positive");
+    refused(yaml, with_camp(replaced(camp_text, "map_edge_barrier: {height: 4.0}", "map_edge_barrier: {height: 4.0, colour: red}")),
+        "colour");
+    refused(yaml, with_camp(replaced(camp_text, terminal_rotation, "    rotation: {x: 0, y: 0, z: 0, w: 0}\n")),
+        "non-zero quaternion");
+}
+
+// Stamp sites in the stamp yaml (docs/LEVEL_AUTHORING_TOOLS_PLAN.md §3.2): the
+// test catalog's stamp folder becomes a copy whose first stamp is edited, and
+// the random level -- the one that composes stamps -- is loaded from it.
+void stamp_site_keys() {
+    namespace fs = std::filesystem;
+    const std::string yaml = shipping_yaml();
+    const LevelFiles levels = shipping_levels();
+    const fs::path file = write_catalog(yaml, levels);
+    const fs::path stamps = file.parent_path() / "stamp_templates";
+    const fs::path real = fs::absolute("game_server/gameplay_catalog/stamp_templates");
+    const std::string stamp_file = "1_stamp_fortress_0001.yaml";
+    std::string original;
+    {
+        std::ifstream in(real / stamp_file);
+        std::stringstream text;
+        text << in.rdbuf();
+        original = text.str();
+    }
+    const auto with_stamp = [&](const std::string& text) {
+        fs::remove_all(stamps);
+        fs::create_directories(stamps);
+        for (const fs::directory_entry& e : fs::directory_iterator(real)) {
+            fs::copy_file(e.path(), stamps / e.path().filename());
+        }
+        std::ofstream(stamps / stamp_file, std::ios::trunc) << text;
+    };
+    const auto level = [&]() {
+        return gs::load_scene_template_config_from_catalog_file(file.string(), "level_random");
+    };
+    const auto refused_stamp = [&](const std::string& text, const std::string& expected) {
+        with_stamp(text);
+        std::string why;
+        try {
+            level();
+        } catch (const std::exception& e) {
+            why = e.what();
+        }
+        std::printf("refused stamp: %s\n", why.substr(0, why.find(": /")).c_str());
+        require(!why.empty() && why.find(expected) != std::string::npos);
+    };
+
+    const std::string sites =
+        "sites:\n"
+        "  - name: courtyard\n"
+        "    position: {x: 12.0, y: 0.0, z: 12.0}\n"
+        "    yaw_degrees: 90\n"
+        "    options:\n"
+        "      - {weight: 10}\n"
+        "      - {weight: 20, entity_template: gingerbread_nest}\n"
+        "      - {weight: 70, entity_template: initial_camp, grounded: false}\n"
+        "  - name: gate\n"
+        "    options:\n"
+        "      - {entity_template: level_terminal, position: {x: 3, y: 6, z: 12}, rotation: {x: 0, y: 0, z: 0, w: 1}}\n"
+        "per_map_limits:\n"
+        "  level_terminal: {max: 1}\n"
+        "player_barriers:\n"
+        "  - {center: {x: 12, y: 2, z: 3}, half_extents: {x: 4, y: 2, z: 0.5}}\n";
+    with_stamp(original + sites);
+    const gs::GameServerGameplayConfig config = level();
+    const gs::StampContentConfig& content = config.terrain.stamp_contents.front();
+    require(config.terrain.stamp_template_ids.front() == 1u);
+    require(content.has_sites && content.sites.size() == 2u);
+    const gs::StampSiteDefinition& courtyard = content.sites[0];
+    require(courtyard.options.size() == 3u);
+    require(courtyard.options[0].entity_template_id == 0u);  // nothing
+    require(courtyard.options[1].entity_template_id != 0u);
+    // The site's position, facing and grounding fill what an option leaves out.
+    require(courtyard.options[2].position.x == 12.0f && courtyard.options[2].grounded == false);
+    require(courtyard.options[1].grounded);
+    require(std::fabs(courtyard.options[1].rotation.y - 0.70710677f) < 1e-5f);
+    require(content.sites[1].options[0].position.y == 6.0f);
+    require(content.per_map_limits.size() == 1u && content.per_map_limits[0].max == 1u &&
+        content.per_map_limits[0].entity_template_id != 0u);
+    require(content.player_barriers.size() == 1u);
+    // The other stamps author nothing, and keep the old centre nest.
+    require(!config.terrain.stamp_contents.back().has_sites);
+    std::printf("stamp sites: options, defaults, limits and barriers load\n");
+
+    refused_stamp(original + "nest_sites:\n  - {x: 12, z: 12}\n", "nest_sites");
+    refused_stamp(original + replaced(sites, "entity_template: initial_camp", "entity_template: no_such_thing"),
+        "unknown entity_template name");
+    refused_stamp(original + replaced(sites, "position: {x: 12.0, y: 0.0, z: 12.0}", "position: {x: 1.0, y: 0.0, z: 12.0}"),
+        "2 m rim");
+    refused_stamp(original + replaced(sites, "{weight: 10}", "{weight: 0}"), "weight must be at least 1");
+    refused_stamp(original + replaced(sites, "level_terminal: {max: 1}", "level_terminal: {min: 2, max: 1}"),
+        "min over max");
+    refused_stamp(original + replaced(sites, "yaw_degrees: 90\n", "yaw_degrees: 90\n    rotation: {x: 0, y: 0, z: 0, w: 1}\n"),
+        "both rotation and yaw_degrees");
+    refused_stamp(original + "sites:\n  - name: empty\n    options: []\n", "needs at least one option");
+
+    // Put the shared folder back for anything after this.
+    fs::remove_all(stamps);
+    fs::create_directory_symlink(real, stamps);
+}
+
+// terrain.placements (docs/LEVEL_AUTHORING_TOOLS_PLAN.md G5), on the shipping
+// hand-placed template: what it may not be combined with, and what it names.
+void placement_keys() {
+    const std::string yaml = shipping_yaml();
+    const LevelFiles levels = shipping_levels();
+    const std::string file = "8_scene_placed_terrain_test.yaml";
+    const std::string text = levels.at(file);
+    const auto with = [&](const std::string& changed) {
+        LevelFiles files = levels;
+        files[file] = changed;
+        return files;
+    };
+    const auto load = [&](const LevelFiles& files, std::string* why) {
+        try {
+            const gs::GameServerGameplayConfig c =
+                gs::load_scene_template_config_from_catalog_file(write_catalog(yaml, files), "placed_terrain_test");
+            return c.terrain.fixed_placements.has_value() ? static_cast<int>(c.terrain.fixed_placements->size()) : -1;
+        } catch (const std::exception& e) {
+            *why = e.what();
+            return -2;
+        }
+    };
+    std::string why;
+    require(load(levels, &why) == 12);
+    const gs::GameServerGameplayConfig placed =
+        gs::load_scene_template_config_from_catalog_file(write_catalog(yaml, levels), "placed_terrain_test");
+    // Centre (78, 54) of a 36 m stamp on a 216 m map: low corner at 168 m, 144 m.
+    const gs::terrain::FixedPlacement& first = placed.terrain.fixed_placements->front();
+    require(first.x_cells == 560 && first.z_cells == 480 && first.turns == 1 && first.mirror && !first.has_base);
+    std::printf("placements: 12 load, centres become low corners\n");
+
+    const auto refused_with = [&](const std::string& changed, const std::string& expected) {
+        std::string reason;
+        require(load(with(changed), &reason) == -2);
+        std::printf("refused placements: %s\n", reason.substr(0, reason.find(": /")).c_str());
+        require(reason.find(expected) != std::string::npos);
+    };
+    refused_with(replaced(text, "  ground_maps:", "  stamps: {count: 3}\n  ground_maps:"), "do not apply");
+    refused_with(replaced(text, "  ground_maps:", "  max_retries: 2\n  ground_maps:"), "do not apply");
+    refused_with(replaced(text, "{stamp: depression_0001,", "{stamp: no_such_stamp,"), "has no template");
+    refused_with(replaced(text, "turns: 1, mirror: true}", "turns: 5, mirror: true}"), "turns must be 0..3");
+    refused_with(replaced(text, "{stamp: depression_0001, position: {x: 78.0, z: 54.0},",
+        "{stamp: depression_0001, position: {x: 78.0, y: 1.0, z: 54.0},"), "y");
+    refused_with(replaced(replaced(text, "  seed: 1\n", "  seed: -1\n"), "  recipe: terrain/placed_terrain_test.nktr\n", ""),
+        "seed -1 does not apply");
+}
+
 }  // namespace
 
 int main() {
@@ -363,6 +569,9 @@ int main() {
     start_scene_entries();
     catalog_rules();
     start_scene_rules();
+    level_authoring_keys();
+    stamp_site_keys();
+    placement_keys();
     std::printf("scene_template_catalog_test passed\n");
     return 0;
 }

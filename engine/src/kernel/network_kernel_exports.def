@@ -91,6 +91,7 @@ EXPORTS
     Kernel_ServerSetFallDeathHeight
     Kernel_AddStaticSceneSlot
     Kernel_RemoveStaticSceneSlot
+    Kernel_SetStaticScenePlayerBarriers
     Kernel_ServerQueryDamageRecords
     Kernel_ServerSubmitEntityInput
     Kernel_ServerSetEntityCombatState

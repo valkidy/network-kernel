@@ -322,4 +322,81 @@ bool layout_stamps(TerrainRecipe* r, const TerrainLibrary& lib, const LayoutPara
     return true;
 }
 
+bool place_fixed_stamps(TerrainRecipe* r, const TerrainLibrary& lib, const LayoutParams& p,
+    const std::vector<FixedPlacement>& fixed, LayoutReport* report, std::string* error) {
+    *report = LayoutReport{};
+    r->placements.clear();
+    const double tan_ring = std::tan(p.ring_slope_deg * 3.14159265358979323846 / 180.0);
+    r->ring_tan_q16 = static_cast<std::int64_t>(std::llround(tan_ring * 65536.0));
+    std::vector<std::int32_t> terrace;
+    if (!build_terrace_mm(*r, lib, &terrace, error)) {
+        return false;
+    }
+    const GroundSampler g{&terrace, r->cells_x + 1, r->cells_z + 1};
+    const double size_x = r->cells_x * kCellM, size_z = r->cells_z * kCellM;
+    CliffLattice cliffs;
+    cliffs.build(g, size_x, size_z, p);
+    std::vector<Rect> claims;
+    if (p.center_clear_m > 0.0) {
+        claims.push_back(Rect{size_x / 2.0 - p.center_clear_m, size_z / 2.0 - p.center_clear_m,
+            size_x / 2.0 + p.center_clear_m, size_z / 2.0 + p.center_clear_m});
+    }
+    report->picked = static_cast<std::int32_t>(fixed.size());
+    for (std::size_t k = 0; k < fixed.size(); ++k) {
+        const FixedPlacement& f = fixed[k];
+        const auto refuse = [&](const std::string& why) {
+            *error = "placement " + std::to_string(k) + " (" +
+                (f.stamp < lib.stamps.size() ? lib.stamps[f.stamp].name : std::string("?")) + "): " + why;
+            return false;
+        };
+        if (f.stamp >= lib.stamps.size() || lib.stamps[f.stamp].cells_x != lib.stamps[f.stamp].cells_z) {
+            return refuse("names a missing or non-square stamp");
+        }
+        if (f.turns > 3u) return refuse("turns must be 0..3");
+        const StampAsset& s = lib.stamps[f.stamp];
+        const double e = s.cells_x * kCellM;
+        const double x = f.x_cells * kCellM, z = f.z_cells * kCellM;
+        if (f.x_cells < 0 || f.z_cells < 0 || f.x_cells + s.cells_x > r->cells_x || f.z_cells + s.cells_z > r->cells_z) {
+            return refuse("its footprint leaves the map");
+        }
+        double lowest = 0;
+        for (const std::int16_t v : s.cm) lowest = std::min(lowest, v / 100.0);
+        const double a = p.around_m;
+        double lo = std::numeric_limits<double>::max(), hi = -lo;
+        for (double t = -a; t <= e + a + 1e-9; t += 2.0) {
+            for (const double h : {g.at(x + t, z - a), g.at(x + t, z + e + a), g.at(x - a, z + t), g.at(x + e + a, z + t)}) {
+                lo = std::min(lo, h);
+                hi = std::max(hi, h);
+            }
+        }
+        double base = f.has_base ? f.base_cm / 100.0 : round_half_even((lo + hi) / 2.0 / p.base_step_m) * p.base_step_m;
+        const double min_base = p.min_floor_m - lowest;
+        if (!f.has_base && base < min_base) base = std::ceil(min_base / p.base_step_m) * p.base_step_m;
+        if (base < min_base) return refuse("its base leaves the stamp's lowest point under the floor");
+        const double delta = std::max(hi - base, base - lo);
+        const double ring = std::max(p.min_ring_m, delta / tan_ring + 1.0);
+        if (ring > p.max_ring_m) {
+            return refuse("needs a " + std::to_string(ring) + " m ring to meet the ground; max_ring is " +
+                std::to_string(p.max_ring_m) + " m (move it, or give it a base)");
+        }
+        const Rect claim{x - ring, z - ring, x + e + ring, z + e + ring};
+        for (const Rect& other : claims) {
+            if (claim.overlaps(other)) return refuse("its ring overlaps another placement or the centre clearance");
+        }
+        if (cliffs.crosses(claim)) return refuse("its ring crosses a cliff");
+        claims.push_back(claim);
+        TerrainPlacement tp;
+        tp.stamp = f.stamp;
+        tp.x_cells = f.x_cells;
+        tp.z_cells = f.z_cells;
+        tp.base_cm = static_cast<std::int32_t>(std::llround(base * 100.0));
+        tp.ring_mm = static_cast<std::int32_t>(std::llround(ring * 1000.0));
+        tp.turns = f.turns;
+        tp.mirror = f.mirror;
+        r->placements.push_back(tp);
+    }
+    report->placed = static_cast<std::int32_t>(r->placements.size());
+    return true;
+}
+
 }  // namespace network_example::game_server::terrain

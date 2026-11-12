@@ -57,6 +57,10 @@ static_assert(
         physics::collision_layer_bit(physics::CollisionLayer::kActorLimb),
     "movement layer bits must match physics::CollisionLayer");
 static_assert(
+    KERNEL_MOVEMENT_LAYER_PLAYER_BARRIER ==
+        physics::collision_layer_bit(physics::CollisionLayer::kPlayerBarrier),
+    "movement layer bits must match physics::CollisionLayer");
+static_assert(
     KERNEL_MOVEMENT_MASK_DEFAULT == physics::kMovementCollisionMask,
     "the default movement mask must match the engine default");
 // hit_zone's neutral value is spelled three times -- once for the ABI, once for
@@ -74,6 +78,15 @@ static_assert(
 static_assert(
     (KERNEL_MOVEMENT_MASK_DEFAULT & KERNEL_MOVEMENT_LAYER_LIMB) == 0u,
     "limbs must stay opt-in");
+// A barrier stops only what names it: in the default, every agent would be
+// walled in with the players.
+static_assert(
+    (KERNEL_MOVEMENT_MASK_DEFAULT & KERNEL_MOVEMENT_LAYER_PLAYER_BARRIER) == 0u,
+    "player barriers must stay opt-in");
+static_assert(
+    (physics::kCollisionMaskAll &
+     physics::collision_layer_bit(physics::CollisionLayer::kPlayerBarrier)) == 0u,
+    "player barriers must stay out of every gameplay query");
 
 // collision_mask is the authored MovementState::movement_collision_mask, where
 // zero means "whatever the engine has always used" -- terrain, static obstacles

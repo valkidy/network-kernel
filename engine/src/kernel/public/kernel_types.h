@@ -535,6 +535,10 @@
  * table, docs/SCENE_TABLE_PLAN.md). Additive within ABI 109: check this flag,
  * not the version, before calling them. */
 #define KERNEL_CAPABILITY_STATIC_SCENE_SLOTS UINT64_C(0x0040000000000000)
+/* Kernel_SetStaticScenePlayerBarriers and KERNEL_MOVEMENT_LAYER_PLAYER_BARRIER
+ * (docs/LEVEL_AUTHORING_TOOLS_PLAN.md). Additive within ABI 109: check this
+ * flag, not the version, before calling it or authoring the layer. */
+#define KERNEL_CAPABILITY_PLAYER_BARRIERS UINT64_C(0x0080000000000000)
 
 #define KERNEL_SKELETON_RENDER_STATUS_SUCCESS UINT32_C(0)
 #define KERNEL_SKELETON_RENDER_STATUS_INSUFFICIENT_CAPACITY UINT32_C(1)
@@ -616,6 +620,14 @@ typedef enum KernelFootholdQueryType {
  */
 #define KERNEL_MOVEMENT_LAYER_LIMB UINT32_C(0x00000010)
 /*
+ * Player barriers (KernelPlayerBarrierBox): invisible walls a scene puts at
+ * its edges. Absent from KERNEL_MOVEMENT_MASK_DEFAULT, so only a template that
+ * names this layer -- the player's -- is stopped by them; every other actor
+ * walks through. Additive within ABI 109, with
+ * KERNEL_CAPABILITY_PLAYER_BARRIERS.
+ */
+#define KERNEL_MOVEMENT_LAYER_PLAYER_BARRIER UINT32_C(0x00000020)
+/*
  * What zero means: the mask an actor gets when its template authors none.
  */
 #define KERNEL_MOVEMENT_MASK_DEFAULT \
@@ -628,7 +640,8 @@ typedef enum KernelFootholdQueryType {
  * authored mask collides with.
  */
 #define KERNEL_MOVEMENT_MASK_SUPPORTED \
-    (KERNEL_MOVEMENT_MASK_DEFAULT | KERNEL_MOVEMENT_LAYER_LIMB)
+    (KERNEL_MOVEMENT_MASK_DEFAULT | KERNEL_MOVEMENT_LAYER_LIMB | \
+     KERNEL_MOVEMENT_LAYER_PLAYER_BARRIER)
 
 /*
  * Visual flags are composable presentation hints, never gameplay authority.
@@ -1860,6 +1873,32 @@ typedef struct KernelStaticSceneSlotConfig {
     uint32_t collision_layer;
     KernelVec3 offset;
 } KernelStaticSceneSlotConfig;
+
+/* Player barriers: invisible walls that stop only movement
+ * (docs/LEVEL_AUTHORING_TOOLS_PLAN.md K4), behind
+ * KERNEL_CAPABILITY_PLAYER_BARRIERS. Each is an upright box in the slot's own
+ * coordinates -- the slot's offset is added, as for its artifact -- turned
+ * yaw_radians about +y. A box lives on KERNEL_MOVEMENT_LAYER_PLAYER_BARRIER
+ * and nothing else sees it: no projectile, hitscan, vision ray or navmesh,
+ * and no actor whose movement mask leaves that layer out. */
+#define KERNEL_MAX_PLAYER_BARRIERS_PER_SLOT 256u
+#define KERNEL_MAX_PLAYER_BARRIER_HALF_EXTENT 4096.0f
+
+typedef struct KernelPlayerBarrierBox {
+    KernelVec3 center;
+    /* Each finite and in (0, KERNEL_MAX_PLAYER_BARRIER_HALF_EXTENT]. */
+    KernelVec3 half_extents;
+    float yaw_radians;
+} KernelPlayerBarrierBox;
+
+/* Kernel_SetStaticScenePlayerBarriers replaces every barrier `slot` has with
+ * `boxes` (box_count of them; zero clears the slot's barriers). */
+typedef struct KernelStaticScenePlayerBarriersConfig {
+    uint32_t struct_size;
+    uint32_t slot;
+    const KernelPlayerBarrierBox* boxes;
+    uint32_t box_count;
+} KernelStaticScenePlayerBarriersConfig;
 
 typedef struct KernelGameplayCatalogLoadOptions {
     uint32_t struct_size;

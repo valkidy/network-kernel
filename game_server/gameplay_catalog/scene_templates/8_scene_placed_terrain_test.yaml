@@ -1,0 +1,41 @@
+# The kernel-terrain map with its stamps placed by hand
+# (docs/LEVEL_AUTHORING_TOOLS_PLAN.md P7): the twelve stamps template 6's seed-1
+# layout chose, written as terrain.placements. Not a level. It shows a
+# hand-placed terrain needs no BUILD rule -- the bundle build cooks every fixed
+# terrain template -- and terrain_placements_test holds it to composing exactly
+# template 6's map: the base and ring a hand placement gets are the layout's.
+id: 8
+name: placed_terrain_test
+terrain:
+  map_size: {x: 216.0, z: 216.0}
+  # With placements the seed only drives the ground's detail noise.
+  seed: 1
+  recipe: terrain/placed_terrain_test.nktr
+  ground_maps: [terrain_assets/ground_0001.nkgl]
+  # Each stamp's centre in the map's frame (centred on the origin), its
+  # quarter turns and mirror; base and ring follow the layout's rule.
+  placements:
+    - {stamp: depression_0001, position: {x: 78.0, z: 54.0}, turns: 1, mirror: true}
+    - {stamp: fortress_0001, position: {x: 0.0, z: -60.0}, turns: 3}
+    - {stamp: fortress_0001, position: {x: -36.0, z: -48.0}, turns: 3}
+    - {stamp: fortress_0001, position: {x: 72.0, z: 12.0}, turns: 0, mirror: true}
+    - {stamp: fortress_0001, position: {x: -84.0, z: -60.0}, turns: 3}
+    - {stamp: fortress_0002, position: {x: -84.0, z: 72.0}, turns: 3}
+    - {stamp: fortress_0002, position: {x: 84.0, z: -24.0}, turns: 1}
+    - {stamp: l_concave_0001, position: {x: -36.0, z: -84.0}, turns: 3}
+    - {stamp: l_concave_0001, position: {x: 84.0, z: -60.0}, turns: 3}
+    - {stamp: l_concave_0001, position: {x: -36.0, z: 84.0}, turns: 0}
+    - {stamp: l_concave_0001, position: {x: -72.0, z: 0.0}, turns: 2}
+    - {stamp: l_concave_0001, position: {x: 36.0, z: 12.0}, turns: 0, mirror: true}
+  terrace: {levels: 19, level_height: 1.2, black: 12.0, riser_slope_degrees: 28.0, cliff_share: 0.15, cliff_width: 0.3, cliff_wavelength: 25.0}
+  detail: {amplitude: 0.4, wavelength: 12.0}
+  layout: {base_step: 1.5, ring_slope_degrees: 30.0, min_ring: 4.0, max_ring: 24.0}
+  accept: {min_reach: 0.995, max_unreachable_area: 400.0, max_seam_breaks: 0}
+stamp_template_dir: stamp_templates
+preload_directors: []
+patrols: []
+scene_props:
+  - entity_template: initial_camp
+    position: {x: -7.2, y: 20.6, z: -36.0}
+player:
+  spawn_position: {x: -1.2, y: 23.0, z: -31.0}

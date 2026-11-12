@@ -52,6 +52,7 @@ constexpr JPH::ObjectLayer kDamageableNeutralObjectLayer = 4;
 constexpr JPH::ObjectLayer kDamageableUnclassifiedObjectLayer = 5;
 constexpr JPH::ObjectLayer kOtherMovingObjectLayer = 6;
 constexpr JPH::ObjectLayer kActorLimbObjectLayer = 7;
+constexpr JPH::ObjectLayer kPlayerBarrierObjectLayer = 8;
 constexpr JPH::BroadPhaseLayer kStaticWorldBroadPhaseLayer(0);
 constexpr JPH::BroadPhaseLayer kDamageableActorBroadPhaseLayer(1);
 constexpr JPH::BroadPhaseLayer kOtherMovingBroadPhaseLayer(2);
@@ -60,6 +61,9 @@ constexpr JPH::BroadPhaseLayer kOtherMovingBroadPhaseLayer(2);
 // capsule, so folding them in would make every foothold ray and every movement
 // sweep walk that subtree; alone, they cost one ShouldCollide to skip entirely.
 constexpr JPH::BroadPhaseLayer kActorLimbBroadPhaseLayer(3);
+// Player barriers likewise: every projectile, hitscan and vision ray in the
+// game skips them, and alone they cost those queries one ShouldCollide.
+constexpr JPH::BroadPhaseLayer kPlayerBarrierBroadPhaseLayer(4);
 
 std::uint64_t jolt_version_id() {
     using JPH::uint64;
@@ -68,7 +72,7 @@ std::uint64_t jolt_version_id() {
 
 class BroadPhaseLayers final : public JPH::BroadPhaseLayerInterface {
 public:
-    std::uint32_t GetNumBroadPhaseLayers() const override { return 4; }
+    std::uint32_t GetNumBroadPhaseLayers() const override { return 5; }
 
     JPH::BroadPhaseLayer GetBroadPhaseLayer(JPH::ObjectLayer layer) const override {
         if (layer == kTerrainObjectLayer) {
@@ -81,6 +85,9 @@ public:
         }
         if (layer == kActorLimbObjectLayer) {
             return kActorLimbBroadPhaseLayer;
+        }
+        if (layer == kPlayerBarrierObjectLayer) {
+            return kPlayerBarrierBroadPhaseLayer;
         }
         return kOtherMovingBroadPhaseLayer;
     }
@@ -157,6 +164,11 @@ public:
                 (filter_.collision_mask &
                  collision_layer_bit(CollisionLayer::kActorLimb)) != 0 &&
                 kind_enabled(filter_, CollisionObjectKind::kActorLimb);
+        } else if (layer == kPlayerBarrierBroadPhaseLayer) {
+            accepted =
+                (filter_.collision_mask &
+                 collision_layer_bit(CollisionLayer::kPlayerBarrier)) != 0 &&
+                kind_enabled(filter_, CollisionObjectKind::kPlayerBarrier);
         }
         if (stats_ != nullptr && accepted) {
             ++stats_->broadphase_layers_accepted;
@@ -211,6 +223,10 @@ public:
         } else if (layer == kActorLimbObjectLayer) {
             accepted = accepts_physical(
                 CollisionLayer::kActorLimb, CollisionObjectKind::kActorLimb);
+        } else if (layer == kPlayerBarrierObjectLayer) {
+            accepted = accepts_physical(
+                CollisionLayer::kPlayerBarrier,
+                CollisionObjectKind::kPlayerBarrier);
         }
         if (stats_ != nullptr && accepted) {
             ++stats_->object_layers_accepted;
@@ -255,6 +271,9 @@ JPH::ObjectLayer object_layer_for(const CollisionObjectIdentity& identity) {
     }
     if (identity.layer == CollisionLayer::kActorLimb) {
         return kActorLimbObjectLayer;
+    }
+    if (identity.layer == CollisionLayer::kPlayerBarrier) {
+        return kPlayerBarrierObjectLayer;
     }
     if (identity.layer != CollisionLayer::kDamageable) {
         return kOtherMovingObjectLayer;

@@ -644,6 +644,44 @@ struct StampSiteConfig {
     float z = 0.0f;
 };
 
+// One thing a stamp site may hold (docs/LEVEL_AUTHORING_TOOLS_PLAN.md §3.2),
+// with the site's position, rotation and grounded filled in where the option
+// names none. In the stamp's own frame: metres from its low corner, y from its
+// border, before the placement's turn and mirror.
+struct StampSiteOptionConfig {
+    std::uint32_t weight = 1;
+    // Empty: this option puts nothing there.
+    std::string entity_template;
+    std::uint32_t entity_template_id = 0;  // resolved once entity templates load
+    KernelVec3 position{};
+    KernelQuat rotation{0.0f, 0.0f, 0.0f, 1.0f};
+    bool grounded = true;
+};
+
+// A site draws one of its options per placed stamp.
+struct StampSiteDefinition {
+    std::string name;
+    std::vector<StampSiteOptionConfig> options;
+};
+
+// How many of a template one map may hold, across every stamp placed on it.
+struct StampPlacementLimit {
+    std::string entity_template;
+    std::uint32_t entity_template_id = 0;
+    std::uint32_t min = 0;
+    std::uint32_t max = 0xffffffffu;
+};
+
+// What a stamp puts on the map beyond its heights.
+struct StampContentConfig {
+    // False: the stamp authors no `sites:`, and a level's nests fall back to
+    // its centre as before.
+    bool has_sites = false;
+    std::vector<StampSiteDefinition> sites;
+    std::vector<StampPlacementLimit> per_map_limits;
+    std::vector<KernelPlayerBarrierBox> player_barriers;  // stamp frame
+};
+
 // `terrain.seed: -1`: the server picks a seed each time the map is opened,
 // and sends clients the resulting recipe.
 constexpr std::int32_t kTerrainSeedRandom = -1;
@@ -661,8 +699,11 @@ struct TerrainCatalogConfig {
     float playable_margin_meters = 0.0f;
     terrain::TerrainLibrary library;
     std::vector<std::uint32_t> stamp_template_ids;   // per library stamp, ascending
-    std::vector<std::vector<StampSiteConfig>> stamp_nest_sites;  // per library stamp; empty = its centre
+    std::vector<StampContentConfig> stamp_contents;  // per library stamp
     std::vector<std::uint8_t> fallback_recipe;       // NKTR, optional
+    // `placements:` (docs/LEVEL_AUTHORING_TOOLS_PLAN.md G5): a hand-placed map,
+    // composed from exactly these instead of the layout.
+    std::optional<std::vector<terrain::FixedPlacement>> fixed_placements;
 };
 
 // One of the catalog's `scene_templates` (docs/SCENE_TABLE_PLAN.md S2): a
@@ -694,6 +735,27 @@ struct StaticCollisionSceneConfig {
 struct ScenePropConfig {
     std::uint32_t entity_template_id = 0;
     KernelVec3 position{};
+    // catalog_version 21 (docs/LEVEL_AUTHORING_TOOLS_PLAN.md G1). Identity
+    // unless authored; normalised at load.
+    KernelQuat rotation{0.0f, 0.0f, 0.0f, 1.0f};
+    // When set, finish_scene_placement puts position.y on the ground under
+    // (x, z) and refuses a prop that has none. Off by default: a y the author
+    // measured stays exactly where it was.
+    bool grounded = false;
+};
+
+// `map_edge_barrier:` (catalog_version 21, plan G2): player barriers along the
+// map's rectangle, laid out by finish_scene_placement from the ground at the
+// edge -- each segment's wall reaches `height` above the highest ground in it.
+struct MapEdgeBarrierConfig {
+    bool enabled = false;
+    float height_meters = 4.0f;
+    float thickness_meters = 1.0f;
+    // Along each edge; grown when the map's perimeter would need more boxes
+    // than a slot takes.
+    float segment_meters = 6.0f;
+    // How far inside the rectangle the wall's outer face stands.
+    float inset_meters = 0.0f;
 };
 
 // An item lying on the map from the start (`scene_items:`), placed alongside
@@ -740,6 +802,12 @@ struct GameServerGameplayConfig {
     ReinforceBudgetConfig reinforce_budget;
     std::vector<ScenePropConfig> scene_props;
     std::vector<SceneItemConfig> scene_items;
+    // `player_barriers:` as authored, in the scene's own coordinates, and the
+    // map-edge rule; resolved_player_barriers is both laid out against the
+    // scene's ground (finish_scene_placement), which is what the kernel gets.
+    std::vector<KernelPlayerBarrierBox> player_barriers;
+    MapEdgeBarrierConfig map_edge_barrier;
+    std::vector<KernelPlayerBarrierBox> resolved_player_barriers;
     // Every agent on the server. Spawners that fill room when there is room --
     // patrols, nests, on_alert -- are held to it; mission and world rules and
     // action-graph spawns count toward it but are never refused, so it is a

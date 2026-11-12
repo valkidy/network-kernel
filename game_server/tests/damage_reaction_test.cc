@@ -86,6 +86,8 @@ int main() {
     gs::GameServerGameplayConfig config = gs::default_game_server_gameplay_config();
     config.game_rules.clear();
     config.world_rule_spawns.clear();
+    // The camp's props stand at the origin, where this arena is.
+    config.scene_props.clear();
     config.patrols.clear();
     KernelConfig kernel_config{};
     kernel_config.mode = KernelMode_DedicatedServer;

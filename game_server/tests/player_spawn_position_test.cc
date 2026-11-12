@@ -122,8 +122,8 @@ int main() {
     require(std::abs(state.position.x - spawn.x) < 0.5f);
     require(std::abs(state.position.z - spawn.z) < 0.5f);
     // Settled onto the ground, not sunk through it or still dropping: the
-    // camp's terrace floor under the spawn is ~20.4 m.
-    require(state.position.y > 19.8f && state.position.y < 21.0f);
+    // camp's ground under the spawn is ~0.35 m, the spawn 2 m.
+    require(state.position.y > 0.0f && state.position.y < 1.0f);
     require((state.visual_flags & KERNEL_VISUAL_FLAG_GROUNDED) != 0u);
 
     Kernel_Destroy(kernel);

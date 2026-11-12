@@ -1,19 +1,29 @@
-# The initial camp, where every session starts (docs/START_SCENE_PLAN.md): the
-# composed mesh map with no random seed, nothing hostile, and the props the
+# The initial camp, where every session starts (docs/START_SCENE_PLAN.md): a
+# 24 m mesh ground with no random seed, nothing hostile, and the props the
 # game flow runs on -- the initial camp and the level terminal. No level:
-# block, so it is never offered as a level.
+# block, so it is never offered as a level. Authored in unity-terrain-example
+# (Tools > Level Authoring > Export Selected Scene).
 id: 0
 name: initial_camp
 navigation_mesh:
-  entry_path: mesh_assets/recast/composed_216m_ground_0001_seed1_collision.navmesh
+  entry_path: mesh_assets/recast/initial_camp_collision.navmesh
 static_collision_scene:
-  entry_path: mesh_assets/jolt/composed_216m_ground_0001_seed1_collision.joltmesh
+  entry_path: mesh_assets/jolt/initial_camp_collision.joltmesh
+# Empty on purpose: a scene template that leaves these out takes the root
+# catalog's mission directors and patrols, and the camp has no enemies.
 preload_directors: []
 patrols: []
 scene_props:
   - entity_template: initial_camp
-    position: {x: 100.8, y: 20.6, z: 72.0}
+    position: {x: 0.0, y: 0.0, z: 0.0}
+    grounded: true
   - entity_template: level_terminal
-    position: {x: 106.8, y: 20.4, z: 82.0}
+    position: {x: 5.0, y: 0.0, z: 6.0}
+    rotation: {x: 0.0, y: 0.5, z: 0.0, w: 0.866025}
+    grounded: true
 player:
-  spawn_position: {x: 106.8, y: 23.0, z: 77.0}
+  spawn_position: {x: 4.05, y: 2.0, z: -3.0}
+# Invisible walls round the map's edge, 4 m above the highest ground of each
+# stretch, so a player cannot walk off it; agents are not stopped, and a
+# player flying over them still falls and respawns as before.
+map_edge_barrier: {height: 4.0}

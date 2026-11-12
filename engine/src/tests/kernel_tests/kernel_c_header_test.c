@@ -243,6 +243,12 @@ _Static_assert(
     (KERNEL_MOVEMENT_MASK_SUPPORTED & KERNEL_MOVEMENT_LAYER_LIMB) != 0u,
     "limbs are authorable");
 _Static_assert(
+    (KERNEL_MOVEMENT_MASK_DEFAULT & KERNEL_MOVEMENT_LAYER_PLAYER_BARRIER) == 0u,
+    "player barriers stay out of what zero selects");
+_Static_assert(
+    (KERNEL_MOVEMENT_MASK_SUPPORTED & KERNEL_MOVEMENT_LAYER_PLAYER_BARRIER) != 0u,
+    "player barriers are authorable");
+_Static_assert(
     offsetof(RenderEntityState, beam_end) >
         offsetof(RenderEntityState, carrier_entity_id),
     "beam endpoint is appended");
@@ -483,6 +489,9 @@ int main(void) {
     require((KERNEL_COLLISION_MASK_DAMAGEABLE & KERNEL_COLLISION_LAYER_LIMB) == 0u);
     require(KERNEL_MOVEMENT_LAYER_LIMB == (1u << 4));
     require((KERNEL_MOVEMENT_MASK_DEFAULT & KERNEL_MOVEMENT_LAYER_LIMB) == 0u);
+    require(KERNEL_MOVEMENT_LAYER_PLAYER_BARRIER == (1u << 5));
+    require(sizeof(KernelPlayerBarrierBox) == 7u * sizeof(float));
+    require(KERNEL_MAX_PLAYER_BARRIERS_PER_SLOT > 0u);
     require(sizeof(KernelSkeletonColliderDefinition) > 0u);
     require(KERNEL_MAX_SKELETON_COLLIDERS > 0u);
     require(KernelColliderPurpose_Limb == (1u << 5));

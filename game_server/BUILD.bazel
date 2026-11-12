@@ -51,6 +51,8 @@ cc_library(
         "src/patrol_navigation.cc",
         "src/patrol_targeting.cc",
         "src/respawn_scheduler.cc",
+        "src/placeable_registry.cc",
+        "src/scene_placement.cc",
         "src/scene_table.cc",
         "src/scene_flow.cc",
         "src/shelter_director.cc",
@@ -77,6 +79,8 @@ cc_library(
         "src/game_server.h",
         "src/respawn_scheduler.h",
         "src/scene_bounds.h",
+        "src/placeable_registry.h",
+        "src/scene_placement.h",
         "src/scene_table.h",
         "src/shelter_director.h",
         "src/loadout_director.h",
@@ -98,6 +102,7 @@ cc_library(
         "//engine/components/ai:ai",
         "//engine/src/kernel:kernel_api",
         "//engine/src/kernel:kernel_api_internal",
+        "//engine/src/physics:physics",
         "@recastnavigation//:detour",
         "@spdlog//:spdlog",
         "@zip_archive//:zip",
@@ -2339,15 +2344,78 @@ cc_binary(
     ],
 )
 
+# The level editor's registry of placeable templates, written beside the
+# bundle (docs/LEVEL_AUTHORING_TOOLS_PLAN.md P4).
+cc_binary(
+    name = "placeable_registry",
+    srcs = ["tools/placeable_registry.cc"],
+    visibility = ["//game_server/gameplay_catalog_bundle:__pkg__"],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
+    name = "placeable_registry_test",
+    srcs = ["tests/placeable_registry_test.cc"],
+    data = [
+        "//game_server/gameplay_catalog_bundle:bundle",
+        "//game_server/gameplay_catalog_bundle:placeable_registry",
+    ],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
 cc_binary(
     name = "terrain_recipe_cook",
     srcs = ["tools/terrain_recipe_cook.cc"],
     visibility = ["//game_server/gameplay_catalog_bundle:__pkg__"],
-    deps = [":game_server"],
+    # The kernel too: :game_server calls into it, and only an optimised
+    # (dead-stripped) tool build links without it.
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
 )
 
 # A player stands on a static scene slot's terrain as on the camp's
 # (docs/SCENE_TABLE_PLAN.md S1); a real listen host from the shipping bundle.
+cc_test(
+    name = "terrain_placements_test",
+    size = "medium",
+    srcs = ["tests/terrain_placements_test.cc"],
+    data = ["//game_server/gameplay_catalog_bundle:bundle"],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
+    name = "stamp_sites_test",
+    size = "medium",
+    srcs = ["tests/stamp_sites_test.cc"],
+    data = ["//game_server/gameplay_catalog_bundle:bundle"],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
+    name = "scene_placement_test",
+    srcs = ["tests/scene_placement_test.cc"],
+    data = ["//game_server/gameplay_catalog_bundle:bundle"],
+    deps = [
+        ":game_server",
+        ":game_server_bridge",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
 cc_test(
     name = "static_scene_slot_grounding_test",
     srcs = ["tests/static_scene_slot_grounding_test.cc"],
@@ -2366,7 +2434,11 @@ cc_test(
     size = "medium",
     srcs = ["tests/scene_level_content_test.cc"],
     data = ["//game_server/gameplay_catalog_bundle:bundle"],
-    deps = [":game_server"],
+    # The kernel too; without it this test never linked.
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
 )
 
 # Opening a level by recipe: generation, chunked transfer, worker compose
@@ -2460,7 +2532,12 @@ cc_test(
         "//game_server/gameplay_catalog/skeleton_assets:simplified_tripod_assets",
         "//game_server/gameplay_catalog_bundle:bundle",
     ],
-    deps = [":game_server"],
+    # The kernel too: game_server's objects that loading pulls in call it, and
+    # without it this test never linked.
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
 )
 
 cc_test(
@@ -2492,7 +2569,10 @@ cc_test(
 cc_binary(
     name = "terrain_obj_export",
     srcs = ["tools/terrain_obj_export.cc"],
-    deps = [":game_server"],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
 )
 
 # Gray ground map (NKGM) -> terrace levels on the 0.3 m grid (NKGL):

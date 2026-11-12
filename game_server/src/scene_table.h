@@ -64,8 +64,19 @@ KernelVec3 stamp_site_on_map(
     const StampSiteConfig& site);
 
 // What a generated level derives from its map: the spawn (the map's centre,
-// unless authored), the return gate and the nest sites, all on the ground.
+// unless authored), the return gate, and what its stamps hold
+// (place_stamp_contents).
 void place_level_content(
+    GameServerGameplayConfig* config,
+    const terrain::HeightGrid& heights,
+    const terrain::TerrainRecipe& recipe);
+
+// The placed stamps' sites, per-map limits and barriers
+// (docs/LEVEL_AUTHORING_TOOLS_PLAN.md G4), drawn from the recipe's seed: nests
+// into level_nests, other picks into scene_props, barriers into
+// player_barriers, all in the map's frame. Throws when a per-map minimum
+// cannot be met.
+void place_stamp_contents(
     GameServerGameplayConfig* config,
     const terrain::HeightGrid& heights,
     const terrain::TerrainRecipe& recipe);
