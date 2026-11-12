@@ -240,7 +240,10 @@ struct Chase {
 
 // Where the report's member stood when it broke off, with the player below.
 constexpr KernelVec3 kOnTheEdge{110.9f, 25.0f, 49.5f};
-constexpr KernelVec3 kPlayerBelow{88.4f, 12.0f, 41.9f};
+// A metre nearer than the report's 88.4: the member stands 10.7 m above, and
+// vision range counts height now, so from there the player was 26.05 m off --
+// just outside the 26 m cone. This is a test of the walk back, not of range.
+constexpr KernelVec3 kPlayerBelow{89.4f, 12.0f, 41.9f};
 constexpr KernelVec3 kPlayerGone{20.0f, 40.0f, -60.0f};
 
 Chase chase_down_and_back(bool with_navmesh, std::uint16_t port, int ticks) {
