@@ -175,6 +175,46 @@ namespace NetworkExample.Kernel
             return KernelNative.Kernel_RemoveStaticSceneSlot(handle, slot);
         }
 
+        /// <summary>
+        /// Replaces a slot's invisible player movement barriers in slot-local
+        /// coordinates. An empty array clears them. Slot 0 is always accepted;
+        /// higher slots must be occupied. False leaves existing barriers intact.
+        /// </summary>
+        public bool SetStaticScenePlayerBarriers(uint slot, KernelPlayerBarrierBox[] boxes)
+        {
+            ThrowIfDisposed();
+            if ((KernelAbi.GetInfo().capability_flags & KernelConstants.CapabilityPlayerBarriers) == 0UL)
+            {
+                throw new NotSupportedException(
+                    "The native kernel has no player barriers (KERNEL_CAPABILITY_PLAYER_BARRIERS).");
+            }
+            if (boxes == null)
+            {
+                throw new ArgumentNullException(nameof(boxes));
+            }
+            if ((uint)boxes.Length > KernelConstants.MaxPlayerBarriersPerSlot)
+            {
+                throw new ArgumentOutOfRangeException(nameof(boxes));
+            }
+
+            GCHandle boxesHandle = GCHandle.Alloc(boxes, GCHandleType.Pinned);
+            try
+            {
+                var config = new KernelStaticScenePlayerBarriersConfig
+                {
+                    struct_size = KernelStaticScenePlayerBarriersConfig.StructSize,
+                    slot = slot,
+                    boxes = boxes.Length == 0 ? IntPtr.Zero : boxesHandle.AddrOfPinnedObject(),
+                    box_count = (uint)boxes.Length,
+                };
+                return KernelNative.Kernel_SetStaticScenePlayerBarriers(handle, ref config);
+            }
+            finally
+            {
+                boxesHandle.Free();
+            }
+        }
+
         private static void RequireStaticSceneSlots()
         {
             if ((KernelAbi.GetInfo().capability_flags & KernelConstants.CapabilityStaticSceneSlots) == 0UL)

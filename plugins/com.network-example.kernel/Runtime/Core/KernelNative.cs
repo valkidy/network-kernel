@@ -112,6 +112,12 @@ namespace NetworkExample.Kernel
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_SetStaticScenePlayerBarriers(
+            IntPtr kernel,
+            ref KernelStaticScenePlayerBarriersConfig config);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
         internal static extern bool Kernel_InvokeRpcCommand(
             IntPtr kernel,
             [In] byte[] requestJson,

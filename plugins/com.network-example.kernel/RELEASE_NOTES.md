@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- adds managed player-barrier bindings and refreshes native plugins and authored terrain bundles
+
+
+0.7.0 release notes:
+
 - updates to catalog v20 with initial-camp startup and fixed scene templates, replacing map variants
 
 

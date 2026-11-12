@@ -28,6 +28,15 @@ namespace NetworkExample.Kernel.Editor
             KernelAbiInfo info = KernelAbi.GetInfo();
             Require(KernelConstants.AbiVersion == 109, "Managed kernel ABI version was not v109.");
             Require(
+                KernelPlayerBarrierBox.StructSize == 28 &&
+                KernelConstants.MovementLayerPlayerBarrier == 0x00000020U &&
+                KernelConstants.MovementMaskSupported == 0x0000003bU &&
+                (KernelConstants.MovementMaskDefault & KernelConstants.MovementLayerPlayerBarrier) == 0U,
+                "Player barrier layout or movement layer mismatch.");
+            Require(
+                (info.capability_flags & KernelConstants.CapabilityPlayerBarriers) != 0UL,
+                "Kernel player barrier capability was missing.");
+            Require(
                 KernelLocalWeaponState.StructSize == 20 &&
                 info.local_weapon_state_size == KernelLocalWeaponState.StructSize,
                 "Kernel local weapon state layout was not 20 bytes.");
@@ -343,6 +352,20 @@ namespace NetworkExample.Kernel.Editor
 
             using (var kernel = new Kernel(KernelConfig.CreateDefault(KernelMode.ListenServer)))
             {
+                var barrier = new KernelPlayerBarrierBox
+                {
+                    half_extents = new KernelVec3 { x = 1.0f, y = 2.0f, z = 1.0f },
+                };
+                Require(
+                    kernel.SetStaticScenePlayerBarriers(0, new[] { barrier }),
+                    "Setting slot-zero player barriers failed.");
+                barrier.half_extents.x = 0.0f;
+                Require(
+                    !kernel.SetStaticScenePlayerBarriers(0, new[] { barrier }),
+                    "A degenerate player barrier was accepted.");
+                Require(
+                    kernel.SetStaticScenePlayerBarriers(0, Array.Empty<KernelPlayerBarrierBox>()),
+                    "Clearing slot-zero player barriers failed.");
                 Require(
                     kernel.ServerQueryDamageRecords(null) == 0 &&
                     kernel.ServerSetFallDeathHeight(KernelConstants.FallDeathHeightMeters) &&

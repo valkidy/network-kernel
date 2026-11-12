@@ -144,6 +144,9 @@ namespace NetworkExample.Kernel
         public const ulong CapabilityAgentCommands = 0x0020000000000000UL;
         // Additive within ABI 109: AddStaticSceneSlot / RemoveStaticSceneSlot.
         public const ulong CapabilityStaticSceneSlots = 0x0040000000000000UL;
+        public const ulong CapabilityPlayerBarriers = 0x0080000000000000UL;
+        public const uint MaxPlayerBarriersPerSlot = 256U;
+        public const float MaxPlayerBarrierHalfExtent = 4096.0f;
         public const byte AgentCommandFlagPosition = 0x01;
         public const float FallDeathHeightMeters = -10.0f;
 
@@ -228,12 +231,14 @@ namespace NetworkExample.Kernel
         // MovementMaskDefault: a legged actor contributes a dozen boxes where
         // every other actor contributes one capsule, so limbs stay opt-in.
         public const uint MovementLayerLimb = 0x00000010U;
+        // Invisible movement walls, opted into by the player's template.
+        public const uint MovementLayerPlayerBarrier = 0x00000020U;
         // What a mask of zero selects.
         public const uint MovementMaskDefault =
             MovementLayerTerrain | MovementLayerStaticObstacle | MovementLayerActor;
         // What may be authored, which is a superset of the default.
         public const uint MovementMaskSupported =
-            MovementMaskDefault | MovementLayerLimb;
+            MovementMaskDefault | MovementLayerLimb | MovementLayerPlayerBarrier;
 
         public const uint VisualFlagMoving = 0x00000001U;
         public const uint VisualFlagReloading = 0x00000002U;
@@ -1179,6 +1184,28 @@ namespace NetworkExample.Kernel
 
         public static uint StructSize =>
             (uint)Marshal.SizeOf<KernelStaticSceneSlotConfig>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelPlayerBarrierBox
+    {
+        public KernelVec3 center;
+        public KernelVec3 half_extents;
+        public float yaw_radians;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelPlayerBarrierBox>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct KernelStaticScenePlayerBarriersConfig
+    {
+        public uint struct_size;
+        public uint slot;
+        public IntPtr boxes;
+        public uint box_count;
+
+        public static uint StructSize =>
+            (uint)Marshal.SizeOf<KernelStaticScenePlayerBarriersConfig>();
     }
 
     [StructLayout(LayoutKind.Sequential)]
