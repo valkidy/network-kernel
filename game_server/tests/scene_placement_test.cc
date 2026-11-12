@@ -2,9 +2,9 @@
 // scene props land on the scene's ground, and map_edge_barrier lays player
 // barriers along the map's rectangle. Then the shipping camp end to end
 // through the public API, the way the Unity host loads it: the host's player
-// walks at the map's east edge and is stopped there, while the same walk with
-// player_barrier struck from its movement mask -- what every agent has --
-// carries it over the edge. That control is what shows the wall, not the
+// walks from its spawn four ways and never leaves the map, while the same
+// walks with player_barrier struck from its movement mask -- what every agent
+// has -- carry it over an edge. That control is what shows the walls, not the
 // ground, did the stopping.
 
 #include <cmath>
@@ -142,8 +142,6 @@ std::vector<std::uint8_t> read_file(const char* path) {
 
 constexpr const char* kEntry = "gameplay_catalog.yaml";
 constexpr float kDt = 1.0f / 30.0f;
-// The camp ground runs -12..12 on x (0..1.5 m up); the east wall's inner face is 1 m in.
-constexpr float kEastEdge = 12.0f;
 
 struct Host {
     KernelHandle* kernel = nullptr;
@@ -174,9 +172,17 @@ struct Host {
     }
 };
 
-// Drops the host's player 3 m in from the east edge, lets it land, walks it
-// east for 3 s, and reports where it ended.
-KernelVec3 walk_east(const std::vector<std::uint8_t>& bundle, std::uint16_t port, bool strike_barrier) {
+// Where the walks from the camp's spawn ended. The camp is exported from
+// unity-terrain-example and its shape changes with every re-authoring, so
+// nothing here knows where its edge is: the player walks from wherever it
+// spawned, one way after another, until it stops (a wall, a prop) or drops
+// off the map.
+struct Walks {
+    int fell = 0;
+    int held = 0;
+};
+
+Walks walk_from_spawn(const std::vector<std::uint8_t>& bundle, std::uint16_t port, bool strike_barrier) {
     KernelConfig kernel_config{};
     kernel_config.mode = KernelMode_ListenServer;
     kernel_config.tick.server_tick_rate = 30;
@@ -196,43 +202,63 @@ KernelVec3 walk_east(const std::vector<std::uint8_t>& bundle, std::uint16_t port
     require(Kernel_GetLocalPlayerInfo(host.kernel, &local));
     host.player = local.player_net_id;
     require(host.player != 0u);
-    for (int i = 0; i < 10; ++i) host.frame(KernelVec2{0.0f, 0.0f});
-
+    // Struck once the player has joined: joining sets the template's mask.
+    for (int i = 0; i < 60; ++i) host.frame(KernelVec2{0.0f, 0.0f});
     if (strike_barrier) {
         require(Kernel_ServerSetEntityMovementCollisionMask(
             host.kernel, host.player,
             KERNEL_MOVEMENT_MASK_DEFAULT | KERNEL_MOVEMENT_LAYER_LIMB));
     }
-    const KernelVec3 drop{kEastEdge - 3.0f, 20.0f, -3.0f};
+    const KernelVec3 spawn = host.position();
+    // Grounded control: it is standing on the map, not falling off it.
+    require(spawn.y > -5.0f);
+
+    Walks walks;
     const KernelQuat facing{0.0f, 0.0f, 0.0f, 1.0f};
-    require(Kernel_ServerSetEntityTransform(host.kernel, host.player, &drop, &facing));
-    for (int i = 0; i < 150; ++i) host.frame(KernelVec2{0.0f, 0.0f});
-    const KernelVec3 landed = host.position();
-    // Grounded control: it is standing on the map, not still falling.
-    require(landed.y > -0.5f && landed.y < 19.0f);
-    for (int i = 0; i < 90; ++i) host.frame(KernelVec2{1.0f, 0.0f});
-    const KernelVec3 ended = host.position();
-    std::printf("%s: landed (%.2f, %.2f) -> ended (%.2f, %.2f, %.2f)\n",
-        strike_barrier ? "no barrier layer" : "player mask",
-        landed.x, landed.y, ended.x, ended.y, ended.z);
+    const KernelVec2 ways[4] = {{1.0f, 0.0f}, {-1.0f, 0.0f}, {0.0f, 1.0f}, {0.0f, -1.0f}};
+    for (const KernelVec2& way : ways) {
+        const KernelVec3 back{spawn.x, spawn.y + 0.5f, spawn.z};
+        require(Kernel_ServerSetEntityTransform(host.kernel, host.player, &back, &facing));
+        for (int i = 0; i < 30; ++i) host.frame(KernelVec2{0.0f, 0.0f});
+        const KernelVec3 start = host.position();
+        KernelVec3 last = start;
+        bool fell = false;
+        int still = 0;
+        // 60 s: far past any wall of a map a camp could be; a walk pressed
+        // along a slanted wall slides until it settles in a corner.
+        for (int i = 0; i < 1800 && still < 15; ++i) {
+            host.frame(way);
+            const KernelVec3 at = host.position();
+            if (at.y < start.y - 3.0f) {
+                fell = true;
+                break;
+            }
+            const float moved = std::hypot(at.x - last.x, at.z - last.z);
+            still = moved < 0.005f ? still + 1 : 0;
+            last = at;
+        }
+        std::printf("%s: walk (%.0f, %.0f) from (%.2f, %.2f) %s at (%.2f, %.2f, %.2f)\n",
+            strike_barrier ? "no barrier layer" : "player mask", way.x, way.y, start.x, start.z,
+            fell ? "fell" : "held", last.x, last.y, last.z);
+        ++(fell ? walks.fell : walks.held);
+    }
     GameServer_Destroy(host.game);
     Kernel_Destroy(host.kernel);
-    return ended;
+    return walks;
 }
 
 void camp_edge() {
     const std::vector<std::uint8_t> bundle = read_file("game_server/gameplay_catalog_bundle/bundle.zip");
     // Kernel tests bind real ports; 8246-8247 are unused elsewhere (test-port-collisions).
-    const KernelVec3 stopped = walk_east(bundle, 8246, false);
-    const KernelVec3 carried = walk_east(bundle, 8247, true);
-    // The wall's inner face is 1 m in from the edge; the capsule rests a
-    // radius short of it.
-    require(stopped.x < kEastEdge - 1.0f);
-    require(stopped.x > kEastEdge - 2.0f);
-    // Without the layer the same walk goes off the map.
-    require(carried.x > kEastEdge);
-    std::printf("camp: the edge wall stops the player at x=%.2f; without the layer it walks to %.2f\n",
-        stopped.x, carried.x);
+    const Walks walled = walk_from_spawn(bundle, 8246, false);
+    const Walks open = walk_from_spawn(bundle, 8247, true);
+    // Whichever way the player walks, the camp's edge walls keep it on.
+    require(walled.fell == 0);
+    // Control: without the barrier layer some walk goes off the map, so the
+    // walks do reach an edge and a fall is seen.
+    require(open.fell > 0);
+    std::printf("camp: the edge walls hold the player on all 4 walks; without the layer %d of 4 fall off\n",
+        open.fell);
 }
 
 }  // namespace

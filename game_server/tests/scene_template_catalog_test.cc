@@ -60,6 +60,35 @@ std::string replaced(std::string text, const std::string& from, const std::strin
     return text;
 }
 
+// `text` without its top-level `key:` block (the key line and the indented or
+// blank lines under it), wherever it sits; unchanged if it has none.
+std::string without_key(const std::string& text, const std::string& key) {
+    std::string out;
+    bool dropping = false;
+    std::size_t at = 0;
+    while (at < text.size()) {
+        std::size_t end = text.find('\n', at);
+        end = end == std::string::npos ? text.size() : end + 1u;
+        const std::string line = text.substr(at, end - at);
+        at = end;
+        const bool top = !line.empty() && line[0] != ' ' && line[0] != '\n';
+        if (top) dropping = line.rfind(key + ":", 0) == 0;
+        if (!dropping) out += line;
+    }
+    return out;
+}
+
+// Whether `config` places a prop of the entity template `name`.
+bool has_prop(const gs::GameServerGameplayConfig& config, const std::string& name) {
+    for (const gs::EntityTemplateConfig& t : config.entity_templates) {
+        if (t.name != name) continue;
+        for (const gs::ScenePropConfig& prop : config.scene_props) {
+            if (prop.entity_template_id == t.actor_template_id) return true;
+        }
+    }
+    return false;
+}
+
 // The catalog from a directory: the root yaml and the level files as given,
 // next to links to the real catalog's other folders (its paths are relative
 // to the catalog, like the bundle's).
@@ -313,14 +342,17 @@ void start_scene_rules() {
         return replaced(yaml, "\nstart_scene: 0\n", "\nstart_scene: " + id + "\n");
     };
 
-    // Nothing named: the camp, with its two props and none of the root's mission.
+    // Nothing named: the camp, with the props the game flow runs on and none
+    // of the root's mission.
     const gs::GameServerGameplayConfig camp =
         load_or_die(replaced(yaml, "\nstart_scene: 0\n", "\n"), levels);
     require(camp.start_scene == "initial_camp");
     require(camp.scene_template.empty());
-    require(camp.scene_props.size() == 2u);
+    require(has_prop(camp, "initial_camp") && has_prop(camp, "level_terminal"));
+    require(camp.patrols.empty());
     require(camp.preload_director_template_ids.empty());
-    require(camp.player.spawn_position.x == 4.05f);
+    // The root names no spawn, so having one says it is the camp's.
+    require(camp.player.has_spawn_position);
     require(camp.scene_templates.front().id == 0u && !camp.scene_templates.front().is_level);
     for (const gs::SceneTemplateRef& t : camp.scene_templates) require(t.is_level == (t.id >= 1u && t.id <= 4u));
 
@@ -371,19 +403,37 @@ void level_authoring_keys() {
         return files;
     };
 
-    // The shipping camp (exported from unity-terrain-example): edge walls on,
-    // both props grounded, the terminal turned 60 degrees, no hand-placed walls.
+    // The shipping camp is exported from unity-terrain-example and changes
+    // whenever it is re-authored, so only what the game flow needs of it is
+    // checked here: the camp and the terminal, and a wall at its edge (the
+    // bounding-rectangle rule or walls along its outline).
     const gs::GameServerGameplayConfig shipping = load_or_die(yaml, levels);
-    require(shipping.map_edge_barrier.enabled);
-    require(shipping.map_edge_barrier.height_meters == 4.0f);
-    require(shipping.player_barriers.empty());
-    require(shipping.scene_props.size() == 2u);
-    for (const gs::ScenePropConfig& prop : shipping.scene_props) require(prop.grounded);
-    require(shipping.scene_props.front().rotation.w == 1.0f);
-    require(std::fabs(shipping.scene_props.back().rotation.y - 0.5f) < 1e-5f);
+    require(shipping.map_edge_barrier.enabled || !shipping.player_barriers.empty());
+    require(has_prop(shipping, "initial_camp") && has_prop(shipping, "level_terminal"));
+
+    // The keys themselves on a fixed camp: the shipping one with its
+    // authored keys replaced, so nothing below reads what was exported.
+    const std::string fixture = without_key(without_key(without_key(camp_text,
+        "scene_props"), "player_barriers"), "map_edge_barrier") +
+        "scene_props:\n"
+        "  - entity_template: initial_camp\n"
+        "    position: {x: 0.0, y: 0.0, z: 0.0}\n"
+        "    grounded: true\n"
+        "  - entity_template: level_terminal\n"
+        "    position: {x: 5.0, y: 0.0, z: 6.0}\n"
+        "    rotation: {x: 0.0, y: 0.5, z: 0.0, w: 0.866025}\n"
+        "    grounded: true\n"
+        "map_edge_barrier: {height: 4.0}\n";
+    const gs::GameServerGameplayConfig fixed = load_or_die(yaml, with_camp(fixture));
+    require(fixed.map_edge_barrier.enabled && fixed.map_edge_barrier.height_meters == 4.0f);
+    require(fixed.player_barriers.empty());
+    require(fixed.scene_props.size() == 2u);
+    for (const gs::ScenePropConfig& prop : fixed.scene_props) require(prop.grounded);
+    require(fixed.scene_props.front().rotation.w == 1.0f);
+    require(std::fabs(fixed.scene_props.back().rotation.y - 0.5f) < 1e-5f);
 
     const std::string terminal_rotation = "    rotation: {x: 0.0, y: 0.5, z: 0.0, w: 0.866025}\n";
-    const std::string authored = replaced(camp_text, terminal_rotation,
+    const std::string authored = replaced(fixture, terminal_rotation,
         "    rotation: {x: 0.0, y: 2.0, z: 0.0, w: 0.0}\n") +
         "player_barriers:\n"
         "  - {center: {x: 0.0, y: 2.0, z: -6.0}, half_extents: {x: 6.0, y: 2.0, z: 0.25}, yaw_degrees: 90}\n";
@@ -397,26 +447,26 @@ void level_authoring_keys() {
     require(terminal.rotation.y == 1.0f && terminal.rotation.w == 0.0f);
     require(config.player_barriers.size() == 1u);
     require(std::fabs(config.player_barriers[0].yaw_radians - 1.5707964f) < 1e-5f);
-    std::uint64_t shipping_hash = 0;
-    require(loads(yaml, levels, &why, &shipping_hash));
+    std::uint64_t fixed_hash = 0;
+    require(loads(yaml, with_camp(fixture), &why, &fixed_hash));
     // Barriers are predicted against: both ends must see a change in them.
-    require(authored_hash != shipping_hash);
+    require(authored_hash != fixed_hash);
     std::printf("level authoring: rotation, grounded and barriers load and are hashed\n");
 
-    refused(yaml, with_camp(camp_text + "player_barriers: {}\n"), "player_barriers must be a sequence");
-    refused(yaml, with_camp(camp_text + "player_barriers:\n  - {center: {x: 0, y: 0, z: 0}}\n"),
+    refused(yaml, with_camp(fixture + "player_barriers: {}\n"), "player_barriers must be a sequence");
+    refused(yaml, with_camp(fixture + "player_barriers:\n  - {center: {x: 0, y: 0, z: 0}}\n"),
         "needs center and half_extents");
-    refused(yaml, with_camp(camp_text +
+    refused(yaml, with_camp(fixture +
         "player_barriers:\n  - {center: {x: 0, y: 0, z: 0}, half_extents: {x: 0, y: 1, z: 1}}\n"),
         "half extents in (0,");
-    refused(yaml, with_camp(camp_text +
+    refused(yaml, with_camp(fixture +
         "player_barriers:\n  - {center: {x: 0, y: 0, z: 0}, half_extents: {x: 1, y: 1, z: 1}, tilt: 3}\n"),
         "tilt");
-    refused(yaml, with_camp(replaced(camp_text, "map_edge_barrier: {height: 4.0}", "map_edge_barrier: {height: 0.0}")),
+    refused(yaml, with_camp(replaced(fixture, "map_edge_barrier: {height: 4.0}", "map_edge_barrier: {height: 0.0}")),
         "map_edge_barrier needs positive");
-    refused(yaml, with_camp(replaced(camp_text, "map_edge_barrier: {height: 4.0}", "map_edge_barrier: {height: 4.0, colour: red}")),
+    refused(yaml, with_camp(replaced(fixture, "map_edge_barrier: {height: 4.0}", "map_edge_barrier: {height: 4.0, colour: red}")),
         "colour");
-    refused(yaml, with_camp(replaced(camp_text, terminal_rotation, "    rotation: {x: 0, y: 0, z: 0, w: 0}\n")),
+    refused(yaml, with_camp(replaced(fixture, terminal_rotation, "    rotation: {x: 0, y: 0, z: 0, w: 0}\n")),
         "non-zero quaternion");
 }
 

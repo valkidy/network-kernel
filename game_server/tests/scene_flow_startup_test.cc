@@ -648,9 +648,11 @@ void camp_level_terminal(const std::vector<std::uint8_t>& bundle, std::uint16_t 
     const auto terminal = std::find_if(props.begin(), props.end(),
         [](const KernelServerEntityState& p) { return p.entity_template_id == 231u; });
     require(terminal != props.end());
+    // The camp's own ground, whatever its exported name.
+    const gs::GameServerGameplayConfig camp = gs::load_gameplay_config_from_bundle_memory(
+        bundle.data(), static_cast<std::uint32_t>(bundle.size()), "gameplay_catalog.yaml");
     const std::vector<std::uint8_t> artifact = gs::load_gameplay_bundle_entry_bytes(
-        bundle.data(), static_cast<std::uint32_t>(bundle.size()),
-        "mesh_assets/jolt/initial_camp_collision.joltmesh");
+        bundle.data(), static_cast<std::uint32_t>(bundle.size()), camp.static_collision_scene.entry_path);
     std::vector<float> positions;
     std::vector<std::uint32_t> indices;
     std::string error;
