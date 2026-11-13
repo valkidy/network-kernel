@@ -7,8 +7,8 @@ name: gingerbread_archery_warband
 where:
   mode: around_players
   ring: {min_meters: 50.0, max_meters: 60.0}
-  # Under the warrior's 20 m vision, so by default the squad engages and the
-  # player has to step aside to avoid it.
+  # Well inside the archer's 34 m cone, so by default the squad engages and
+  # the player has to step aside to avoid it.
   pass_within_meters: 15.0
   exit_spread_degrees: 30.0
   # The squad leash: players closer than this are one target.
@@ -20,46 +20,41 @@ where:
   # A minute with nothing near a group puts it ahead of everyone's second
   # squad, ceiling or not.
   floor_interval_ticks: 1800
-seed: 7717
+# Its own seed: warband 1 runs beside this one in the random level, and two
+# definitions sharing a seed draw the same size, composition and route for
+# every squad -- two squads walking on top of each other.
+seed: 7723
 # Every 30 s at 30 Hz. A finished squad retires and gives its place back.
 interval_ticks: 900
-# By the size of the group a squad is aimed at. Floors plus capacity within
-# each tier, as before: the floors have to fit the tier's smallest squad and
-# the ceilings fill its largest, or the catalog refuses to load. A loner's
-# tier has no warrior or mage floor because the full warband's floors alone
-# are six bodies.
-#
-# The loner's tier was 4-6 and is now 2.5-3 times that, 10-18: a squad big
-# enough to be a fight for one player on the terrain map. It is now larger
-# than the two-player tier and close to the three-player one; those were left
-# as they were.
+# By the size of the group a squad is aimed at. Archers in place of warband
+# 1's warriors and mages, so each tier's archer range is those two ranges
+# added and its count is unchanged. Floors plus capacity within each tier: the
+# floors have to fit the tier's smallest squad and the ceilings fill its
+# largest, or the catalog refuses to load.
 squad_by_group_size:
   - members: {min: 1, max: 1}
     count: {min: 10, max: 18}
     composition:
-      - {entity_template: gingerbread_warrior, min: 1, max: 3}
-      - {entity_template: gingerbread_mage, min: 0, max: 2}
+      - {entity_template: gingerbread_archer, min: 1, max: 5}
       - {entity_template: gingerbread, min: 6, max: 13}
   - members: {min: 2, max: 2}
     count: {min: 6, max: 9}
     composition:
-      - {entity_template: gingerbread_warrior, min: 1, max: 3}
-      - {entity_template: gingerbread_mage, min: 0, max: 2}
+      - {entity_template: gingerbread_archer, min: 1, max: 5}
       - {entity_template: gingerbread, min: 4, max: 8}
-  # Three or more: the warband as it was.
   - members: {min: 3}
     count: {min: 8, max: 12}
     composition:
-      - {entity_template: gingerbread_warrior, min: 1, max: 5}
-      - {entity_template: gingerbread_mage, min: 1, max: 3}
+      - {entity_template: gingerbread_archer, min: 2, max: 8}
       - {entity_template: gingerbread, min: 4, max: 8}
 # Three abreast, so 12 members stand four ranks deep -- about 5 m of
 # column behind the squad's point. The rank width is not authored; it is
 # kRankWidth in formation_offsets.
 formation_spacing_meters: 1.5
-# Below the slowest member's patrol speed. gingerbread walks at 1.26 m/s
-# and the warrior at 1.20; a cursor faster than either would leave that
-# member behind its slot for the whole route.
+# Below the slowest member's patrol speed, move speed times its squad
+# input_magnitude: the archer at 2.0 x 0.5 = 1.0 m/s (gingerbread 5.0 x 0.45 =
+# 2.25). A cursor faster than that would leave the archers behind their slots
+# for the whole route.
 advance_speed_meters_per_second: 0.9
 waypoint_radius_meters: 0.5
 # Ten seconds standing at the end of the route before the squad goes, so it
