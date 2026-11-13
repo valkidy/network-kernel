@@ -1,0 +1,18 @@
+# Three arrows per press, one after another along the same line -- a volley in
+# time, not a fan (no burst_count / burst_spread on the weapon). A press action
+# runs to max_commit_count on its own; each commit fires along the actor's
+# current aim_direction, which the AI keeps re-solving while the target stays
+# visible.
+#
+# 0.3 s draw before the first arrow, then one every 0.2 s: the volley spans
+# 0.7 s from press to last arrow.
+id: 4134
+name: gingerbread_archer_arrow_fire
+trigger_mode: press
+flags: [cancel_on_death, cancel_on_weapon_change, cancel_before_first_commit]
+ammo_cost_per_commit: 1
+commit_offset_ticks: 9
+commit_interval_ticks: 6
+max_commit_count: 3
+recovery_ticks: 30
+hold_input_timeout_ticks: 0

@@ -1,0 +1,13 @@
+# Single-direction three-shot volley of parabolic arrows. The three arrows come
+# from the fire action (max_commit_count 3), not from burst_count, so they leave
+# one after another along one line instead of fanning out at once.
+#
+# The magazine must stay a multiple of 3: a volley that starts with fewer
+# arrows than commits fails its later commits (EffectFailed) mid-volley.
+id: 24
+name: Gingerbread Archer Arrow
+weapon_type: projectile
+magazine_size: 6
+fire_action_template: gingerbread_archer_arrow_fire
+reload_action_template: gingerbread_archer_arrow_reload
+projectile_template: gingerbread_archer_arrow
