@@ -25,6 +25,11 @@ GameServer::GameServer(KernelHandle* kernel, GameServerGameplayConfig config)
               configure_player_inventory(player, *actor_template, true) &&
               configure_player_weapons(player, true);
       }) {
+    // The camp's level gate ends, for a config never laid out against its
+    // ground (finish_scene_placement does both when it is).
+    if (!config_.level_gate.resolved) {
+        fill_level_gate_defaults(&config_);
+    }
     // Hunters leave alone a player a tent hides (AI plan Q3).
     agent_runtime_manager_.set_shelter_director(&shelter_);
     load_kernel_gameplay_catalog(kernel_, config_);

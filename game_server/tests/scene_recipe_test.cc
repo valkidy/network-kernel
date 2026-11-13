@@ -25,6 +25,7 @@
 #include "game_server/src/gameplay_config.h"
 #include "game_server/src/scene_table.h"
 #include "game_server/src/terrain/terrain_recipe.h"
+#include "game_server/tests/scene_state_wire.h"
 
 namespace {
 
@@ -92,22 +93,20 @@ struct Follower {
     std::map<std::uint32_t, Load> loads;
 
     void decode(const KernelGameMessage& m) {
-        require(m.payload_size >= 33u);
         const std::uint8_t* p = m.payload;
+        scene_state_wire::Header h;
+        require(scene_state_wire::read_header(p, m.payload_size, &h));
         SceneState s;
         s.received = true;
-        s.flow = p[0];
-        s.generation = u32_at(p + 2);
-        s.outcome = p[6];
-        const auto f = [&](std::uint32_t at) {
-            const std::uint32_t bits = u32_at(p + at);
-            float v;
-            std::memcpy(&v, &bits, sizeof(v));
-            return v;
-        };
-        s.gate = KernelVec3{f(8), f(12), f(16)};
-        std::uint32_t at = 33;
-        for (std::uint32_t k = 0; k < p[32]; ++k) {
+        s.flow = h.flow;
+        s.generation = h.generation;
+        s.outcome = h.outcome;
+        // Where to stand to go through whichever gate is open.
+        if (const scene_state_wire::Gate* open = scene_state_wire::open_gate(h)) {
+            s.gate = scene_state_wire::step_in(*open);
+        }
+        std::uint32_t at = scene_state_wire::kSlotsAt;
+        for (std::uint32_t k = 0; k < h.slot_count; ++k) {
             SlotEntry e;
             e.generation = u32_at(p + at + 1);
             e.source = p[at + 7];

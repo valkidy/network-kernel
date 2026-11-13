@@ -37,6 +37,7 @@
 #include "game_server/src/game_server.h"
 #include "game_server/src/gameplay_config.h"
 #include "game_server/src/scene_table.h"
+#include "game_server/tests/scene_state_wire.h"
 
 namespace {
 
@@ -76,6 +77,8 @@ struct SceneState {
     std::uint8_t outcome = 0;
     bool gate_open = false;
     KernelVec3 gate{};
+    scene_state_wire::Gate level_gate;
+    scene_state_wire::Gate return_gate;
     // slot -> (generation, template name)
     std::map<std::uint32_t, std::pair<std::uint32_t, std::string>> slots;
 };
@@ -93,14 +96,20 @@ SceneState decode_state(const KernelGameMessage& m) {
         std::memcpy(&v, &bits, sizeof(v));
         return v;
     };
-    require(m.payload_size >= 33u);
+    scene_state_wire::Header h;
+    require(scene_state_wire::read_header(p, m.payload_size, &h));
+    (void)f32;
     s.received = true;
-    s.flow = p[0];
-    s.outcome = p[6];
-    s.gate_open = p[7] != 0u;
-    s.gate = KernelVec3{f32(p + 8), f32(p + 12), f32(p + 16)};
-    std::uint32_t at = 33;
-    const std::uint32_t count = p[32];
+    s.flow = h.flow;
+    s.outcome = h.outcome;
+    s.level_gate = h.level_gate;
+    s.return_gate = h.return_gate;
+    // Where to stand to go through whichever gate is open.
+    const scene_state_wire::Gate* open = scene_state_wire::open_gate(h);
+    s.gate_open = open != nullptr;
+    if (open != nullptr) s.gate = scene_state_wire::step_in(*open);
+    std::uint32_t at = scene_state_wire::kSlotsAt;
+    const std::uint32_t count = h.slot_count;
     for (std::uint32_t k = 0; k < count; ++k) {
         const std::uint32_t slot = p[at];
         const std::uint32_t generation = u32(p + at + 1);
@@ -370,7 +379,17 @@ void run(bool listen, std::uint16_t port) {
     std::printf("late joiner B followed into the level\n");
 
     // Clear the mission: every actor and prop in the level that is not a
-    // player (nests are props), until the mission is done.
+    // player (nests are props) or a level gate's portal or exit, until the
+    // mission is done.
+    const auto is_gate = [&](std::uint32_t net_id) {
+        for (const auto* gate : {&server.level_gate(), &server.return_gate()}) {
+            if (gate->entrance_net_id != 0u &&
+                (net_id == gate->entrance_net_id || net_id == gate->entrance_net_id + 1u)) {
+                return true;
+            }
+        }
+        return false;
+    };
     const auto clear_level = [&] {
         for (const std::uint16_t type : {static_cast<std::uint16_t>(KernelEntityType_Actor),
                  static_cast<std::uint16_t>(KernelEntityType_Prop)}) {
@@ -380,6 +399,7 @@ void run(bool listen, std::uint16_t port) {
                 world.server_kernel, type, states.data(), static_cast<std::uint32_t>(states.size()));
             for (std::uint32_t k = 0; k < n; ++k) {
                 if (states[k].actor_type == KernelActorType_Player) continue;
+                if (is_gate(states[k].net_id)) continue;
                 if (level_bounds.contains(states[k].position.x)) {
                     Kernel_ServerDestroyEntity(world.server_kernel, states[k].net_id, KernelDespawnReason_Destroyed);
                 }

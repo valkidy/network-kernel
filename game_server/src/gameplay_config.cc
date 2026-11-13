@@ -10444,6 +10444,7 @@ const std::initializer_list<const char*> kMapOverlayKeys = {
     "reinforce_budget",
     "player_barriers",
     "map_edge_barrier",
+    "level_gate",
 };
 
 // The keys a scene template file may set beyond the map overlay.
@@ -10452,7 +10453,7 @@ const std::initializer_list<const char*> kSceneTemplateFileKeys = {
     "navigation_mesh", "static_collision_scene", "terrain", "stamp_template_dir",
     "map", "player", "scene_props", "scene_items", "agent_routes", "preload_directors",
     "patrols", "patrol_budget", "agent_budget", "reinforce_budget",
-    "player_barriers", "map_edge_barrier",
+    "player_barriers", "map_edge_barrier", "level_gate",
 };
 
 struct LoadedSceneTemplate {
@@ -10800,6 +10801,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             "scene_items",
             "player_barriers",
             "map_edge_barrier",
+            "level_gate",
             "agent_routes",
             "agent_commands",
             "terrain",
@@ -11611,6 +11613,37 @@ void apply_catalog_scene_props_config(
                 "map_edge_barrier needs positive height, thickness and segment and an "
                 "inset of at least 0: " + path);
         }
+    }
+    if (const YAML::Node gate = document["level_gate"]) {
+        reject_unknown_keys(
+            gate, {"entrance", "arrival"}, path, source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+        const auto pose = [&](const char* key, SceneGatePose* out) {
+            const YAML::Node node = gate[key];
+            if (!node) return;
+            reject_unknown_keys(
+                node, {"position", "forward"}, path, source_kind,
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+            if (!node["position"] || !node["forward"]) {
+                throw std::runtime_error(
+                    std::string("level_gate.") + key + " needs position and forward: " + path);
+            }
+            const KernelVec3 position = vec3_from_yaml(node["position"]);
+            KernelVec3 forward = vec3_from_yaml(node["forward"]);
+            // A gate stands upright: only its heading counts.
+            const float length = std::sqrt(forward.x * forward.x + forward.z * forward.z);
+            if (!std::isfinite(position.x) || !std::isfinite(position.y) ||
+                !std::isfinite(position.z) || !std::isfinite(length) || length < 0.0001f ||
+                !std::isfinite(forward.y) || std::fabs(forward.y) > 0.0001f) {
+                throw std::runtime_error(
+                    std::string("level_gate.") + key +
+                    " needs a finite position and a non-zero level forward (y 0): " + path);
+            }
+            forward = KernelVec3{forward.x / length, 0.0f, forward.z / length};
+            *out = SceneGatePose{true, position, forward};
+        };
+        pose("entrance", &config->level_gate.entrance);
+        pose("arrival", &config->level_gate.arrival);
     }
     if (const YAML::Node items = document["scene_items"]) {
         if (!items.IsSequence()) {
@@ -12923,6 +12956,14 @@ std::uint64_t compute_gameplay_catalog_hash(
         hash_float(&hash, box.half_extents.y);
         hash_float(&hash, box.half_extents.z);
         hash_float(&hash, box.yaw_radians);
+    }
+    for (const SceneGatePose* gate : {&config.level_gate.entrance, &config.level_gate.arrival}) {
+        hash_scalar(&hash, static_cast<std::uint32_t>(gate->authored));
+        hash_float(&hash, gate->position.x);
+        hash_float(&hash, gate->position.y);
+        hash_float(&hash, gate->position.z);
+        hash_float(&hash, gate->forward.x);
+        hash_float(&hash, gate->forward.z);
     }
     hash_scalar(&hash, static_cast<std::uint32_t>(config.map_edge_barrier.enabled));
     hash_float(&hash, config.map_edge_barrier.height_meters);

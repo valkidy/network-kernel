@@ -54,7 +54,8 @@ void offset_scene_config(GameServerGameplayConfig* config, std::uint32_t slot) {
     const KernelVec3 offset = scene_slot_offset(slot);
     config->scene_offset = offset;
     shift(&config->player.spawn_position, offset);
-    shift(&config->return_gate_position, offset);
+    shift(&config->level_gate.entrance.position, offset);
+    shift(&config->level_gate.arrival.position, offset);
     for (KernelVec3& nest : config->level_nests.positions) shift(&nest, offset);
     for (ScenePropConfig& prop : config->scene_props) shift(&prop.position, offset);
     for (SceneItemConfig& item : config->scene_items) shift(&item.position, offset);
@@ -404,10 +405,6 @@ void place_level_content(
         player.has_spawn_position = true;
         player.spawn_position = KernelVec3{0.0f, terrain_ground_height(heights, 0.0f, 0.0f) + 1.5f, 0.0f};
     }
-    const float gate_x = player.spawn_position.x + 3.0f;
-    config->has_return_gate_position = true;
-    config->return_gate_position = KernelVec3{
-        gate_x, terrain_ground_height(heights, gate_x, player.spawn_position.z), player.spawn_position.z};
     LevelNestsConfig& nests = config->level_nests;
     nests.positions.clear();
     place_stamp_contents(config, heights, recipe);

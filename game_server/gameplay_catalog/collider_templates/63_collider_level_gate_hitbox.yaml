@@ -1,0 +1,14 @@
+# A level gate's frame: the door slab behind the gate, as portal_hitbox is for
+# a thrown portal, at the level gate's size (Unity gate_portal_entrance: a door
+# 2.6 m wide and 5.2 m tall, 0.3 m deep behind its screen). Local +z is the way
+# a player walks through; the open side, the gate, faces -z. Its bottom sits on
+# the ground (center.y == half_extents.y).
+#
+# docs/PORTAL_PLAN.md 6.7.
+id: 63
+name: level_gate_hitbox
+shape: oriented_box
+center: {x: 0.0, y: 2.6, z: 0.15}
+half_extents: {x: 1.3, y: 2.6, z: 0.15}
+purpose: hit
+layer: damageable

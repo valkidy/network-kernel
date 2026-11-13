@@ -89,10 +89,17 @@ public:
     // every player in the level dead fails it: they come back to the camp
     // alive and the level unloads. Every change is broadcast as SCENE_STATE.
     static constexpr std::uint32_t kPartyLevelSlot = 1u;
+    // One way between the camp and the party's level (docs/PORTAL_PLAN.md
+    // 6.7): a level_gate_entrance portal while OPEN, only announced while
+    // PENDING. `exit` is where its arrivals step out -- the exit prop's place
+    // once the portal stands -- and the forwards are the way through.
     struct SceneGate {
-        bool open = false;
-        KernelVec3 position{0.0f, 0.0f, 0.0f};
-        float radius = 2.0f;
+        std::uint8_t state = GAME_SERVER_SCENE_GATE_NONE;
+        std::uint32_t entrance_net_id = 0;
+        KernelVec3 entrance{0.0f, 0.0f, 0.0f};
+        KernelVec3 entrance_forward{1.0f, 0.0f, 0.0f};
+        KernelVec3 exit{0.0f, 0.0f, 0.0f};
+        KernelVec3 exit_forward{1.0f, 0.0f, 0.0f};
     };
     // False unless the party is in the camp and the template exists.
     bool request_level(const std::string& scene_template);
@@ -104,7 +111,9 @@ public:
     std::uint32_t level_owner_net_id() const;
     std::uint8_t scene_flow() const { return flow_; }
     std::uint8_t scene_outcome() const { return flow_outcome_; }
-    const SceneGate& scene_gate() const { return gate_; }
+    // Camp -> level, and level -> camp.
+    const SceneGate& level_gate() const { return level_gate_; }
+    const SceneGate& return_gate() const { return return_gate_; }
     // Players who reported SCENE_READY for the party's current level.
     std::size_t scene_ready_count() const { return level_ready_.size(); }
     std::int32_t remaining_revives() const { return respawn_.remaining_revives(); }
@@ -166,6 +175,14 @@ private:
     // Everyone inside the level back at the camp spawn, the dead revived.
     void return_level_players_to_camp(const std::vector<KernelServerEntityState>& players);
     void set_flow(std::uint8_t flow);
+    // Stands `gate` up as a level_gate_entrance at its entrance, sending to
+    // its exit. False, logged, when the kernel refuses it.
+    bool open_scene_gate(SceneGate* gate);
+    // Takes `gate`'s portal down (Retired), if it has one, and forgets it.
+    void close_scene_gate(SceneGate* gate);
+    // Holds back from every portal the players not ready for the party's
+    // level; with `everyone_free`, lets everyone go.
+    void update_portal_blocks(bool everyone_free);
     // Ends the party's level: back to the camp's revives, the slot unloaded.
     void finish_level(std::uint8_t outcome);
     std::uint32_t host_player_net_id() const;
@@ -206,7 +223,11 @@ private:
     std::uint8_t flow_ = GAME_SERVER_SCENE_FLOW_CAMP;
     std::uint8_t flow_outcome_ = GAME_SERVER_SCENE_OUTCOME_NONE;
     std::uint16_t level_template_id_ = 0;
-    SceneGate gate_;
+    SceneGate level_gate_;
+    SceneGate return_gate_;
+    // Players the server holds back from every portal: not ready for the
+    // party's level (Kernel_ServerSetEntityPortalBlocked).
+    std::set<std::uint32_t> portal_blocked_;
     // Player net id of each peer, for messages; peer 1 is a listen host's own.
     std::map<std::uint32_t, std::uint32_t> peer_players_;
     std::set<std::uint32_t> level_ready_;
