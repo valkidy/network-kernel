@@ -423,7 +423,9 @@ std::uint64_t run(bool listen, std::uint16_t port, const std::vector<std::uint8_
     info.struct_size = sizeof(info);
     require(GameServer_GetSceneTerrainInfo(a->kernel, 1u, &info));
     require(info.heights_hash == first.hash);
-    require(info.origin_x > gs::kSceneSlotSpacing - 200.0f);
+    // In slot 1, not the camp's slot 0: the map's corner sits half a map west
+    // of the slot centre, and slots are far wider than any map.
+    require(info.origin_x > gs::kSceneSlotSpacing * 0.5f && info.origin_x < gs::kSceneSlotSpacing);
     if (listen) {
         GameServerTerrainInfo host_info{};
         host_info.struct_size = sizeof(host_info);

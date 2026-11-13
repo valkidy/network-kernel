@@ -113,7 +113,8 @@ int main() {
         int reachable = 0;
         for (const KernelVec3& nest : config.level_nests.positions) {
             require(std::fabs(nest.y - ground(nest.x, nest.z)) < 0.01f);
-            require(std::fabs(nest.x - offset) < 108.0f && std::fabs(nest.z) < 108.0f);
+            // Inside the map: level_random is 864 m a side, centred on the slot.
+            require(std::fabs(nest.x - offset) < 432.0f && std::fabs(nest.z) < 432.0f);
             gs::PatrolRouteRequest route;
             route.start = spawn;
             route.end = nest;
