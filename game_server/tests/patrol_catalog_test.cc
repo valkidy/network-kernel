@@ -83,7 +83,7 @@ public:
         // cases were written against (docs/START_SCENE_PLAN.md).
         catalog_ = read_file(root_ / "gameplay_catalog.yaml");
         require(catalog_.find("\nstart_scene: 0\n") != std::string::npos);
-        catalog_.replace(catalog_.find("\nstart_scene: 0\n"), 15, "\nstart_scene: 5\n");
+        catalog_.replace(catalog_.find("\nstart_scene: 0\n"), 15, "\nstart_scene: 100\n");
         write_file(root_ / "gameplay_catalog.yaml", catalog_);
     }
 

@@ -87,7 +87,7 @@ std::uint32_t create_player(KernelHandle* kernel) {
 
 int main() {
     const network_example::game_server::GameServerGameplayConfig config =
-        network_example::game_server::default_game_server_gameplay_config(5);
+        network_example::game_server::default_game_server_gameplay_config(100);
 
     const std::uint32_t nest_template = template_id_of(config, "gingerbread_nest");
     const std::uint32_t gingerbread_template =

@@ -58,7 +58,7 @@ skeleton_manifests_dir: skeleton_assets/generated
 # entry the server names. A random terrain (seed -1) cannot start one; it is
 # opened from the camp.
 #
-# The composed mesh templates (0, 2, 3, 5) and the kernel terrain one (6) are
+# The composed mesh templates (0, 2, 3, 100) and the kernel terrain one (101) are
 # the same map. The mesh is the Unity prototype's seed-1 compose of it,
 # exported as an OBJ and baked like any hand-made map (mesh_assets/raw, x and
 # z 0..216); the kernel terrain is the kernel composing the same recipe

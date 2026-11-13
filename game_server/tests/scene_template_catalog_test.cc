@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <iterator>
 #include <map>
+#include <utility>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -163,18 +164,40 @@ void bundle_templates() {
     require(root.preload_director_template_ids.empty());
     require(root.patrols.empty());
     require(root.scene_props.size() == 2u);
-    // 0 the camp, 1-4 levels, 5-6 the test maps; only the levels are levels.
-    require(root.scene_templates.size() == 8u);
-    for (const gs::SceneTemplateRef& t : root.scene_templates) require(t.is_level == (t.id >= 1u && t.id <= 4u));
+    // 0 the camp, 1-7 levels (4-7 the random level at 216, 432, 648 and
+    // 864 m), 100-102 the test maps; only the levels are levels.
+    require(root.scene_templates.size() == 11u);
+    for (const gs::SceneTemplateRef& t : root.scene_templates) require(t.is_level == (t.id >= 1u && t.id <= 7u));
+    // In id order, which is what goes on the wire -- not the directory's
+    // lexical order, which puts 100_ before 1_.
+    for (std::size_t i = 1; i < root.scene_templates.size(); ++i) {
+        require(root.scene_templates[i - 1].id < root.scene_templates[i].id);
+    }
+    // Each template loads as itself. Sorting the loaded files by id once
+    // overwrote one template's YAML with another's (YAML::Node assignment
+    // writes through), and level_terrain_seed2 and level_random both came
+    // out as placed_terrain_test, as soon as the ids stopped listing in order.
+    const auto terrain_of = [&](const char* name) {
+        return gs::load_scene_template_config_from_bundle_memory(bundle.data(), size, kEntry, name).terrain;
+    };
+    require(terrain_of("level_terrain_seed2").recipe_entry_path == "terrain/level_terrain_seed2.nktr");
+    require(terrain_of("placed_terrain_test").recipe_entry_path == "terrain/placed_terrain_test.nktr");
+    require(terrain_of("kernel_terrain_test").recipe_entry_path == "terrain/gameplay_catalog.nktr");
+    for (const auto& [name, cells] : std::vector<std::pair<const char*, std::int32_t>>{
+             {"level_random", 720}, {"level_random_432", 1440}, {"level_random_648", 2160}, {"level_random_864", 2880}}) {
+        const gs::TerrainCatalogConfig terrain = terrain_of(name);
+        require(terrain.seed == gs::kTerrainSeedRandom);
+        require(terrain.base.cells_x == cells && terrain.base.cells_z == cells);
+    }
     require(root.scene_templates[1].id == 1u && root.scene_templates[1].name == kLevel);
     require(root.scene_templates[2].id == 2u && root.scene_templates[3].id == 3u);
     require(root.scene_templates[1].display_name == "Terrain test (seed 2)");
     require(root.scene_templates[3].description == "One nest and the warband.");
     require(!root.scene_templates[1].overlay_yaml.empty());
 
-    // Template 5, the map the tests were written against, plays the root's mission.
+    // Template 100, the map the tests were written against, plays the root's mission.
     const gs::GameServerGameplayConfig mission =
-        gs::load_gameplay_config_from_bundle_memory(bundle.data(), size, "gameplay_catalog.scene_5.yaml");
+        gs::load_gameplay_config_from_bundle_memory(bundle.data(), size, "gameplay_catalog.scene_100.yaml");
     require(mission.start_scene == "composed_mesh_test");
     require(!mission.preload_director_template_ids.empty());
     require(mission.weapons.catalog_hash != root.weapons.catalog_hash);
@@ -235,7 +258,7 @@ void bundle_templates() {
     require(!level_map.generated);
 
     gs::GameServerGameplayConfig terrain_camp = gs::load_gameplay_config_from_bundle_memory(
-        bundle.data(), size, "gameplay_catalog.scene_6.yaml");
+        bundle.data(), size, "gameplay_catalog.scene_101.yaml");
     const std::vector<std::uint8_t> camp_recipe =
         gs::read_cooked_terrain_recipe(bundle.data(), size, terrain_camp.terrain);
     gs::PreparedTerrain camp_map;
@@ -250,7 +273,7 @@ void bundle_templates() {
 void start_scene_entries() {
     const std::vector<std::uint8_t> bundle = read_file("game_server/gameplay_catalog_bundle/bundle.zip");
     const auto size = static_cast<std::uint32_t>(bundle.size());
-    for (const std::uint16_t id : {0, 1, 2, 3, 5, 6}) {
+    for (const std::uint16_t id : {0, 1, 2, 3, 100, 101}) {
         const std::string entry = "gameplay_catalog.scene_" + std::to_string(id) + ".yaml";
         const gs::GameServerGameplayConfig from_entry = gs::load_gameplay_config_from_bundle_memory(bundle.data(), size, entry);
         const gs::GameServerGameplayConfig asked = gs::load_start_scene_config_from_bundle_memory(bundle.data(), size, kEntry, id);
@@ -259,15 +282,19 @@ void start_scene_entries() {
     }
     require(gs::load_gameplay_config_from_bundle_memory(bundle.data(), size, "gameplay_catalog.scene_0.yaml").weapons.catalog_hash ==
         gs::load_gameplay_config_from_bundle_memory(bundle.data(), size, kEntry).weapons.catalog_hash);
-    bool random_has_none = false;
-    try {
-        // The file itself, not a load: loading a random start scene throws too.
-        gs::load_gameplay_bundle_entry_bytes(bundle.data(), size, "gameplay_catalog.scene_4.yaml");
-    } catch (const std::exception&) {
-        random_has_none = true;
+    // The random levels (4-7, one per size) have none.
+    for (const std::uint16_t id : {4, 5, 6, 7}) {
+        bool random_has_none = false;
+        try {
+            // The file itself, not a load: loading a random start scene throws too.
+            gs::load_gameplay_bundle_entry_bytes(
+                bundle.data(), size, "gameplay_catalog.scene_" + std::to_string(id) + ".yaml");
+        } catch (const std::exception&) {
+            random_has_none = true;
+        }
+        require(random_has_none);
     }
-    require(random_has_none);
-    std::printf("start scene entries: 0, 1, 2, 3, 5, 6 each play their template; 4 has none\n");
+    std::printf("start scene entries: 0, 1, 2, 3, 100, 101 each play their template; 4-7 have none\n");
 }
 
 void catalog_rules() {
@@ -354,7 +381,7 @@ void start_scene_rules() {
     // The root names no spawn, so having one says it is the camp's.
     require(camp.player.has_spawn_position);
     require(camp.scene_templates.front().id == 0u && !camp.scene_templates.front().is_level);
-    for (const gs::SceneTemplateRef& t : camp.scene_templates) require(t.is_level == (t.id >= 1u && t.id <= 4u));
+    for (const gs::SceneTemplateRef& t : camp.scene_templates) require(t.is_level == (t.id >= 1u && t.id <= 7u));
 
     // Another start scene: a level's map and mission, but no level revive pool.
     const gs::GameServerGameplayConfig mission = load_or_die(starting_on("2"), levels);
@@ -570,7 +597,7 @@ void stamp_site_keys() {
 void placement_keys() {
     const std::string yaml = shipping_yaml();
     const LevelFiles levels = shipping_levels();
-    const std::string file = "8_scene_placed_terrain_test.yaml";
+    const std::string file = "102_scene_placed_terrain_test.yaml";
     const std::string text = levels.at(file);
     const auto with = [&](const std::string& changed) {
         LevelFiles files = levels;

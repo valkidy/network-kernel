@@ -105,7 +105,7 @@ public:
         // written against (docs/START_SCENE_PLAN.md).
         shipping_catalog_ = read_file(root_ / "gameplay_catalog.yaml");
         require(shipping_catalog_.find("\nstart_scene: 0\n") != std::string::npos);
-        shipping_catalog_.replace(shipping_catalog_.find("\nstart_scene: 0\n"), 15, "\nstart_scene: 5\n");
+        shipping_catalog_.replace(shipping_catalog_.find("\nstart_scene: 0\n"), 15, "\nstart_scene: 100\n");
         write_file(root_ / "gameplay_catalog.yaml", shipping_catalog_);
         grunt_ = read_file(root_ / kGruntFile);
         nest_ = read_file(root_ / kNestFile);

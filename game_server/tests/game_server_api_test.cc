@@ -376,8 +376,8 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip() {
     const std::size_t start = root_yaml.find("\nstart_scene: 0\n");
     require(start != std::string::npos);
     std::string mission_yaml = root_yaml;
-    mission_yaml.replace(start, 15, "\nstart_scene: 5\n");
-    files.push_back({"gameplay_catalog.scene_5.yaml", mission_yaml});
+    mission_yaml.replace(start, 15, "\nstart_scene: 100\n");
+    files.push_back({"gameplay_catalog.scene_100.yaml", mission_yaml});
 
     // Enumerated rather than listed by hand. This fixture's whole point is a
     // bundle complete except for the collision mesh, and hardcoded lists drift
@@ -690,7 +690,7 @@ int main() {
     Kernel_Destroy(catalog_client);
     GameServer_Destroy(game_server);
 
-    // The mission is template 5's (docs/START_SCENE_PLAN.md), on a listen
+    // The mission is template 100's (docs/START_SCENE_PLAN.md), on a listen
     // kernel of its own, since a catalog's static scene goes in before the
     // kernel starts. Enemies come from its game_rule director: it waits for
     // a player (the host's own), places the nests, and the nests' spawners
@@ -705,7 +705,7 @@ int main() {
         mission_result.struct_size = sizeof(mission_result);
         GameServerHandle* mission = GameServer_CreateWithGameplayCatalogFromMemory(
             mission_kernel, gameplay_bundle.data(), static_cast<std::uint32_t>(gameplay_bundle.size()),
-            "gameplay_catalog.scene_5.yaml", &mission_result);
+            "gameplay_catalog.scene_100.yaml", &mission_result);
         if (mission == nullptr) std::fprintf(stderr, "mission catalog: %s\n", mission_result.diagnostic);
         require(mission != nullptr);
         require(Kernel_StartListenServer(mission_kernel, 8049));
