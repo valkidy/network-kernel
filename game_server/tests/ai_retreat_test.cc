@@ -120,7 +120,8 @@ void catalog_checks() {
     require(std::abs(gs::find_actor_template(*defaulted, 31u)
                          ->chaser.retreat.target_distance_meters - 19.8f) < 1e-4f);
 
-    // As shipped (R4): the mage and the drone back off; nothing else does.
+    // As shipped (R4): the mage, the archer and the drone back off; nothing
+    // else does.
     const auto shipped = load_after("as shipped", kMage, [](YAML::Node&) {});
     require(shipped.has_value());
     for (const gs::ActorTemplateConfig& actor : shipped->entity_templates) {
@@ -128,6 +129,11 @@ void catalog_checks() {
         if (actor.name == "gingerbread_mage") {
             require(tuning.trigger_distance_meters == 8.0f);
             require(tuning.target_distance_meters == 19.0f);
+            require(tuning.max_ticks == 330u && tuning.cooldown_ticks == 150u);
+            require(tuning.fire_while_retreating);
+        } else if (actor.name == "gingerbread_archer") {
+            require(tuning.trigger_distance_meters == 10.0f);
+            require(tuning.target_distance_meters == 21.0f);
             require(tuning.max_ticks == 330u && tuning.cooldown_ticks == 150u);
             require(tuning.fire_while_retreating);
         } else if (actor.name == "beam_drone") {
