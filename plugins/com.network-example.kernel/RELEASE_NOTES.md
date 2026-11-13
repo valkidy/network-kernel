@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- adds four random-level sizes, moves test scenes to IDs 100-102, and fixes scene-template sorting
+
+
+0.7.0 release notes:
+
 - updates the initial camp to an island with player barriers along its painted coast
 
 
