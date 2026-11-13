@@ -321,6 +321,26 @@ triggers:
   - 被 block 的玩家貼著門走 60 tick 不會被送走；解除後 2 tick 內抵達出口、面向 +x。
   - mutation check：拿掉 overlap 判斷裡的 block，解除後玩家留在原地（已經算在門內，不會再觸發 on_enter），測試失敗。
 
+### 6.7 關卡傳送門改用 kernel portal（2026-11-14，分支 `claude/level-gate-portals`，接在 `claude/portal-create-override` 之後）
+
+- **目的**：camp 與關卡之間的門，改成和丟出去的傳送門同一套：kernel 的 trigger 門面、`ActorTeleported`、grace 與 immunity，Unity 端沿用同一套穿門演出（Unity 專案的關卡傳送門規劃 K2）。取代 SCENE_TABLE_PLAN §5 的「game_server 區域」做法（2 m 圓形範圍，`Kernel_ServerSetEntityTransform` 直接搬人）。
+- **Catalog**（`bundle.bytes` 要更新）：
+  - `63_collider_level_gate_hitbox`（門框 2.6 × 5.2 × 0.3 m）、`64_collider_level_gate_gate`（門面 2.3 × 5.04 m，前後各 0.1 m）、`65_collider_level_gate_exit_footprint`。尺寸對應 Unity 的 `gate_portal_entrance` / `gate_portal_exit`。
+  - `232_prop_level_gate_entrance`、`233_prop_level_gate_exit`。入口沒有 health、lifetime、population group，只收玩家。template 裡的目的地只是佔位，game_server 一律用 `Kernel_ServerCreatePortal` 指定。
+  - scene template 新增可選的 `level_gate: {entrance: {position, forward}, arrival: {position, forward}}`。entrance 是離開這個 scene 的門（camp 的通往關卡，關卡的通往 camp），arrival 是從另一邊過來的人走出來的地方。沒寫的話：entrance 在玩家出生點 +x 3 m、面向 +x；arrival 在出生點、面向 −x（背對 entrance）。兩者都由 `finish_scene_placement` 放到地面上。forward 必須水平。取代 `return_gate_position`。
+- **game_server 流程**：
+  - SCENE_SELECT 後：去程門 PENDING（camp 端位置已知）。關卡 slot ready 時補上去程門的出口（關卡 arrival），並宣告回程門 PENDING（關卡 entrance → camp arrival）。
+  - 全員 ready（或逾時）：先對沒 ready 的玩家 `Kernel_ServerSetEntityPortalBlocked`，再生成去程門的入口 portal，進入 GATE_OPEN。中途加入的玩家在 ready 前一樣被擋。
+  - 達成目標：去程門以 `Retired` 移除，生成回程門的入口 portal，進入 RETURN_OPEN；關卡裡沒有玩家時結束。
+  - 結束（任何 outcome）：兩個門都移除、解除所有 block。中止或失敗的強制送回仍用 `Kernel_ServerSetEntityTransform`。
+  - 拿不到 template 或 kernel 拒絕時記 error：去程門中止關卡（ABORTED），回程門直接把玩家送回 camp。
+- **SCENE_STATE schema 變動**（`GAME_SERVER_ABI_VERSION` 5 → 6，client 與 server 必須同版）：拿掉 `gate_open` 和 gate 的位置、半徑，改成兩筆門記錄（去程、回程），每筆 53 bytes：state（`GAME_SERVER_SCENE_GATE_NONE/PENDING/OPEN`）、入口 net id、入口位置與 forward、出口位置與 forward。OPEN 時出口位置是出口 prop 的實際位置。完整格式見 `game_server_types.h`。
+- **已知行為**：
+  - 多人同時進門會抵達同一個出口點（和丟出去的傳送門一樣）。
+  - 沒 ready 的玩家在 GATE_OPEN 期間也進不了別的傳送門（block 是對所有 portal）。
+  - 手動或 `clear_scene_bounds` 以外的方式刪掉門，流程不會補回來。
+- **測試**：`scene_table_loop_test`、`scene_flow_startup_test`、`scene_playable_loop_test` 改讀新格式（共用 `tests/scene_state_wire.h`），站到門面前讓 kernel portal 送人，涵蓋去程、中途加入、回程、失敗、中止。`scene_level_content_test` 檢查關卡的 entrance 與 arrival 的預設位置、朝向、地面高度。
+
 ---
 
 ## 7. 尚未量測的風險

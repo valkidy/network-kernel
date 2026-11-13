@@ -181,6 +181,7 @@ Empty ──load──▶ Loading ──server 準備好 + 全隊 ready──▶
 - **和 Q4 的差異：** 原定逾時就踢掉，但 kernel 沒有踢人的 API，所以改成：逾時照樣開門，**沒回 ready 的玩家走不進傳送門**，等他 ready 了才能進。
 
 **傳送門（和 S4.5 的差異）：**
+> **2026-11-14 起改用 kernel portal**（`level_gate_entrance`，game_server 以 `Kernel_ServerCreatePortal` 生成；`SCENE_STATE` 改為兩筆門記錄），見 docs/PORTAL_PLAN.md §6.7。以下是第一版的紀錄。
 - 傳送門是 **game_server 的區域**，不是 kernel 的 portal entity。原因是 kernel portal 的目的地寫死在 template 裡，換關卡、換 slot 都要另一個 template。
 - server 每 tick 檢查：活著、已 ready、站在門的半徑內（2 m，高度差 3 m 內）的玩家，用 `Kernel_ServerSetEntityTransform` 送到目的地。Unity 從 `SCENE_STATE` 的位置畫門。
 - **第一版的門位置：** 出發點出生點往 +x 3 m（camp 的門在 camp 出生點旁，回程門在關卡出生點旁）。之後再加 catalog 欄位。

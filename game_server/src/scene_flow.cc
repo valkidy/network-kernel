@@ -17,11 +17,11 @@ namespace {
 // Players a level may wait for before its gate opens anyway (Q4). One who has
 // not reported ready by then still cannot go through; nobody is kicked.
 constexpr float kReadyTimeoutSeconds = 60.0f;
-// Where a gate stands: this far along +x from the spawn it leads away from.
-constexpr KernelVec3 kGateOffset{3.0f, 0.0f, 0.0f};
-// Arrivals are spread along z so a party does not land in one spot.
+// Players sent home without a gate (abort, a lost level) are spread along z
+// so a party does not land in one spot.
 constexpr float kArrivalSpacing = 1.5f;
-constexpr float kGateHeightTolerance = 3.0f;
+// The portal a level gate is (docs/PORTAL_PLAN.md 6.7).
+constexpr const char* kLevelGateTemplate = "level_gate_entrance";
 constexpr std::size_t kMaxTemplateName = 32u;
 // A gate nobody has walked through closes after this long.
 constexpr float kGateUnusedTimeoutSeconds = 300.0f;
@@ -58,11 +58,33 @@ KernelVec3 spawn_of(const GameServerGameplayConfig& config) {
     return config.player.has_spawn_position ? config.player.spawn_position : config.scene_offset;
 }
 
-bool at_gate(const GameServer::SceneGate& gate, const KernelVec3& p) {
-    const float dx = p.x - gate.position.x;
-    const float dz = p.z - gate.position.z;
-    return gate.open && dx * dx + dz * dz <= gate.radius * gate.radius &&
-        std::fabs(p.y - gate.position.y) <= kGateHeightTolerance;
+// Upright, local +z along `forward`: the kernel's yaw_rotation_from_direction.
+KernelQuat yaw_facing(const KernelVec3& forward) {
+    const float yaw = std::atan2(forward.x, forward.z);
+    return KernelQuat{0.0f, std::sin(yaw * 0.5f), 0.0f, std::cos(yaw * 0.5f)};
+}
+
+// A gate announced at this end of the way, leading to that one; PENDING.
+GameServer::SceneGate pending_gate(const SceneGatePose& from, const SceneGatePose* to) {
+    GameServer::SceneGate gate;
+    gate.state = GAME_SERVER_SCENE_GATE_PENDING;
+    gate.entrance = from.position;
+    gate.entrance_forward = from.forward;
+    if (to != nullptr) {
+        gate.exit = to->position;
+        gate.exit_forward = to->forward;
+    }
+    return gate;
+}
+
+void put_gate(std::vector<std::uint8_t>* out, const GameServer::SceneGate& gate) {
+    put_u8(out, gate.state);
+    put_u32(out, gate.entrance_net_id);
+    for (const KernelVec3* v : {&gate.entrance, &gate.entrance_forward, &gate.exit, &gate.exit_forward}) {
+        put_f32(out, v->x);
+        put_f32(out, v->y);
+        put_f32(out, v->z);
+    }
 }
 
 std::vector<KernelServerEntityState> player_states(KernelHandle* kernel) {
@@ -141,7 +163,11 @@ bool GameServer::request_level(const std::string& scene_template) {
     level_failed_.clear();
     recipe_owed_peers_.clear();
     flow_outcome_ = GAME_SERVER_SCENE_OUTCOME_NONE;
-    gate_.open = false;
+    close_scene_gate(&level_gate_);
+    close_scene_gate(&return_gate_);
+    // Where the way in will stand, from the start; where it leads once the
+    // level is ready.
+    level_gate_ = pending_gate(config_.level_gate.entrance, nullptr);
     set_flow(GAME_SERVER_SCENE_FLOW_LOADING);
     spdlog::info("party level requested template={} generation={}",
         scene_template, scene_generation(kPartyLevelSlot));
@@ -199,15 +225,12 @@ std::vector<std::uint8_t> GameServer::encode_scene_state() const {
     put_u8(&out, flow_ != GAME_SERVER_SCENE_FLOW_CAMP ? static_cast<std::uint8_t>(kPartyLevelSlot) : 0u);
     put_u32(&out, scene_generation(kPartyLevelSlot));
     put_u8(&out, flow_outcome_);
-    put_u8(&out, gate_.open ? 1u : 0u);
-    put_f32(&out, gate_.position.x);
-    put_f32(&out, gate_.position.y);
-    put_f32(&out, gate_.position.z);
-    put_f32(&out, gate_.radius);
     put_u32(&out, level_owner_net_id());
     const GameServerGameplayConfig* level_config = scene_config(kPartyLevelSlot);
     put_u16(&out, static_cast<std::uint16_t>(std::min<std::uint32_t>(level_defeated_, 0xffffu)));
     put_u16(&out, static_cast<std::uint16_t>(level_config != nullptr ? level_config->objective.defeat_enemies : 0u));
+    put_gate(&out, level_gate_);
+    put_gate(&out, return_gate_);
     put_u8(&out, has_level ? 1u : 0u);
     if (has_level) {
         const auto found = std::find_if(
@@ -388,6 +411,72 @@ void GameServer::set_flow(std::uint8_t flow) {
     broadcast_scene_state();
 }
 
+bool GameServer::open_scene_gate(SceneGate* gate) {
+    const auto found = std::find_if(
+        config_.entity_templates.begin(), config_.entity_templates.end(),
+        [](const EntityTemplateConfig& t) { return t.name == kLevelGateTemplate; });
+    if (found == config_.entity_templates.end()) {
+        spdlog::error("the catalog has no {}: no level gate can open", kLevelGateTemplate);
+        return false;
+    }
+    KernelServerPortalCreateInfo create{};
+    create.struct_size = sizeof(create);
+    create.entity_template_id = found->actor_template_id;
+    create.position = gate->entrance;
+    create.rotation = yaw_facing(gate->entrance_forward);
+    create.destination = gate->exit;
+    create.forward = gate->exit_forward;
+    std::uint32_t net_id = 0;
+    std::uint32_t exit_id = 0;
+    if (!Kernel_ServerCreatePortal(kernel_, &create, &net_id, &exit_id)) {
+        spdlog::error("level gate refused by the kernel at ({}, {}, {})",
+            gate->entrance.x, gate->entrance.y, gate->entrance.z);
+        return false;
+    }
+    gate->state = GAME_SERVER_SCENE_GATE_OPEN;
+    gate->entrance_net_id = net_id;
+    // Where the exit stands in the end: grounded, and beside another exit if
+    // one was there. Arrivals come out on it.
+    KernelServerEntityState exit{};
+    exit.struct_size = sizeof(exit);
+    if (exit_id != 0u && Kernel_ServerGetEntityState(kernel_, exit_id, &exit)) {
+        gate->exit = exit.position;
+    }
+    spdlog::info("level gate {} open at ({}, {}, {}) to ({}, {}, {})", net_id,
+        gate->entrance.x, gate->entrance.y, gate->entrance.z,
+        gate->exit.x, gate->exit.y, gate->exit.z);
+    return true;
+}
+
+void GameServer::close_scene_gate(SceneGate* gate) {
+    if (gate->entrance_net_id != 0u && kernel_ != nullptr) {
+        (void)Kernel_ServerDestroyEntity(kernel_, gate->entrance_net_id, KernelDespawnReason_Retired);
+    }
+    *gate = SceneGate{};
+}
+
+void GameServer::update_portal_blocks(bool everyone_free) {
+    if (kernel_ == nullptr) return;
+    std::set<std::uint32_t> held;
+    if (!everyone_free) {
+        for (const auto& [peer, player] : peer_players_) {
+            (void)peer;
+            if (level_ready_.count(player) == 0u) held.insert(player);
+        }
+    }
+    for (const std::uint32_t player : portal_blocked_) {
+        if (held.count(player) == 0u) {
+            (void)Kernel_ServerSetEntityPortalBlocked(kernel_, player, 0u);
+        }
+    }
+    for (const std::uint32_t player : held) {
+        if (portal_blocked_.count(player) == 0u) {
+            (void)Kernel_ServerSetEntityPortalBlocked(kernel_, player, 1u);
+        }
+    }
+    portal_blocked_ = std::move(held);
+}
+
 void GameServer::finish_level(std::uint8_t outcome) {
     respawn_.reset(config_.player.respawn);
     if (scene_state(kPartyLevelSlot) == SceneSlotState::kReady) {
@@ -397,7 +486,9 @@ void GameServer::finish_level(std::uint8_t outcome) {
     level_entered_ = false;
     abort_level_requested_ = false;
     recipe_owed_peers_.clear();
-    gate_.open = false;
+    close_scene_gate(&level_gate_);
+    close_scene_gate(&return_gate_);
+    update_portal_blocks(true);
     flow_outcome_ = outcome;
     spdlog::info("party level finished outcome={}", outcome);
     set_flow(GAME_SERVER_SCENE_FLOW_CAMP);
@@ -441,6 +532,13 @@ void GameServer::tick_scene_flow(float delta_seconds) {
         }
         if (!level_announced_) {
             level_announced_ = true;
+            // The level's ends of the way are known now: where the way in
+            // comes out, and where the way back will stand.
+            if (const GameServerGameplayConfig* level = scene_config(kPartyLevelSlot)) {
+                level_gate_.exit = level->level_gate.arrival.position;
+                level_gate_.exit_forward = level->level_gate.arrival.forward;
+                return_gate_ = pending_gate(level->level_gate.entrance, &config_.level_gate.arrival);
+            }
             broadcast_scene_state();
         }
         ready_wait_seconds_ += delta_seconds;
@@ -461,8 +559,12 @@ void GameServer::tick_scene_flow(float delta_seconds) {
                 spdlog::warn("party level gate opens without every player ready ({} of {})",
                     level_ready_.size(), peer_players_.size());
             }
-            gate_.open = true;
-            gate_.position = plus(spawn_of(config_), kGateOffset);
+            // Nobody unready may go through, from the portal's first tick.
+            update_portal_blocks(false);
+            if (!open_scene_gate(&level_gate_)) {
+                finish_level(GAME_SERVER_SCENE_OUTCOME_ABORTED);
+                return;
+            }
             set_flow(GAME_SERVER_SCENE_FLOW_GATE_OPEN);
         }
         return;
@@ -476,7 +578,6 @@ void GameServer::tick_scene_flow(float delta_seconds) {
     }
     const SceneBounds level_bounds = scene_slot_bounds(kPartyLevelSlot);
     const std::vector<KernelServerEntityState> players = player_states(kernel_);
-    std::uint32_t arrivals = 0;
     if (abort_level_requested_) {
         return_level_players_to_camp(players);
         finish_level(GAME_SERVER_SCENE_OUTCOME_ABORTED);
@@ -484,20 +585,15 @@ void GameServer::tick_scene_flow(float delta_seconds) {
     }
 
     if (flow_ == GAME_SERVER_SCENE_FLOW_GATE_OPEN) {
-        for (const KernelServerEntityState& player : players) {
-            if (player.hp == 0u || level_ready_.count(player.net_id) == 0u ||
-                !at_gate(gate_, player.position)) {
-                continue;
-            }
-            teleport(kernel_, player.net_id,
-                plus(spawn_of(*level), KernelVec3{0.0f, 0.0f, kArrivalSpacing * static_cast<float>(arrivals++)}));
-        }
+        // The gate itself is the kernel's portal; the server only says who
+        // is not ready for it. A late joiner is held back until ready too.
+        update_portal_blocks(false);
         // The party's revives are the level's from the moment anyone is in
         // it -- through the gate or any other way.
-        if (!level_entered_ && (arrivals != 0u ||
+        if (!level_entered_ &&
                 std::any_of(players.begin(), players.end(), [&](const KernelServerEntityState& p) {
                     return level_bounds.contains(p.position.x);
-                }))) {
+                })) {
             PlayerRespawnConfig pool = level->player.respawn;
             if (pool.revives_per_player > 0) {
                 level_revives_granted_ = std::min(
@@ -516,10 +612,18 @@ void GameServer::tick_scene_flow(float delta_seconds) {
             return;
         }
         if (level_objective_met()) {
-            gate_.position = level->has_return_gate_position
-                ? level->return_gate_position
-                : plus(spawn_of(*level), kGateOffset);
+            // The way in closes; the way back opens where it was announced.
+            close_scene_gate(&level_gate_);
+            if (return_gate_.state == GAME_SERVER_SCENE_GATE_NONE) {
+                return_gate_ = pending_gate(level->level_gate.entrance, &config_.level_gate.arrival);
+            }
             flow_outcome_ = GAME_SERVER_SCENE_OUTCOME_COMPLETED;
+            if (!open_scene_gate(&return_gate_)) {
+                // No way back: bring them home anyway.
+                return_level_players_to_camp(players);
+                finish_level(GAME_SERVER_SCENE_OUTCOME_COMPLETED);
+                return;
+            }
             spdlog::info("party level completed; return gate open");
             set_flow(GAME_SERVER_SCENE_FLOW_RETURN_OPEN);
             return;
@@ -541,15 +645,11 @@ void GameServer::tick_scene_flow(float delta_seconds) {
     }
 
     if (flow_ == GAME_SERVER_SCENE_FLOW_RETURN_OPEN) {
+        // The return gate is the kernel's portal; the level ends once the
+        // last player has left it, through the gate or any other way.
         std::uint32_t inside = 0;
         for (const KernelServerEntityState& player : players) {
-            if (!level_bounds.contains(player.position.x)) continue;
-            if (player.hp != 0u && at_gate(gate_, player.position)) {
-                teleport(kernel_, player.net_id,
-                    plus(spawn_of(config_), KernelVec3{0.0f, 0.0f, kArrivalSpacing * static_cast<float>(arrivals++)}));
-                continue;
-            }
-            ++inside;
+            if (level_bounds.contains(player.position.x)) ++inside;
         }
         if (inside == 0u) {
             finish_level(GAME_SERVER_SCENE_OUTCOME_COMPLETED);

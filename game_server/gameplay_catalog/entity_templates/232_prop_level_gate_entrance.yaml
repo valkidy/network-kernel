@@ -1,0 +1,38 @@
+# The way between the camp and a level: a portal that game_server stands up
+# itself (Kernel_ServerCreatePortal) when the party's level is ready, at the
+# scene's level_gate entrance, and sends through to the other scene's level_gate
+# arrival. Never thrown, never placed by a scene; game_server removes it
+# (Retired) when the level moves on.
+#
+# The destination and forward below are only placeholders: game_server always
+# gives its own. A level_gate_entrance created any other way sends its
+# arrivals to the world's origin.
+#
+# Unlike portal_entrance it has no health (nothing may break the way home),
+# no lifetime and no population group (a thrown portal never evicts it).
+#
+# docs/PORTAL_PLAN.md 6.7, docs/SCENE_TABLE_PLAN.md.
+id: 232
+name: level_gate_entrance
+entity_type: prop
+force_resistance: 1000.0
+physics:
+  collider_template: level_gate_hitbox
+  trigger_collider_template: level_gate_gate
+portal:
+  exit_template: level_gate_exit
+  destination: {x: 0.0, y: 0.0, z: 0.0}
+  forward: {x: 0.0, y: 0.0, z: 1.0}
+  # As portal_entrance: a second on the arrival cannot bounce a player back
+  # every tick, and an arrival is unhurt while its client draws the way in.
+  arrival_grace_ticks: 30
+  arrival_immunity_ticks: 60
+triggers:
+  on_enter:
+    collision_mask: player_side
+    # Players only: no enemy follows the party into the camp, and no allied
+    # sentry wanders into a level.
+    instigators: players
+    action_graph: action_teleport
+    parameters:
+      target: event.instigator

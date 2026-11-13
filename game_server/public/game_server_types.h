@@ -6,7 +6,7 @@
 
 #include "kernel/public/kernel_types.h"
 
-#define GAME_SERVER_ABI_VERSION 5u
+#define GAME_SERVER_ABI_VERSION 6u
 
 #define GAME_SERVER_CAPABILITY_ENEMY_MANAGER UINT64_C(0x0000000000000001)
 #define GAME_SERVER_CAPABILITY_EVENT_HANDLING UINT64_C(0x0000000000000002)
@@ -95,15 +95,30 @@
  *   u8  level_slot           the party's level slot, 0 for none
  *   u32 level_generation
  *   u8  outcome              GAME_SERVER_SCENE_OUTCOME_*: how the last level ended
- *   u8  gate_open            1 while a gate is open (camp -> level in
- *                            GATE_OPEN, level -> camp in RETURN_OPEN)
- *   f32 gate_x, gate_y, gate_z, gate_radius   world space
  *   u32 owner_net_id         the player who may open and abort levels: a
  *                            listen host's own player, or on a dedicated
  *                            server the connected player with the lowest
  *                            peer id; 0 with nobody connected
  *   u16 enemies_defeated     towards the level's objective
  *   u16 enemies_target       0 when the level has no such objective
+ *   2 x gate {               the level gate (camp -> level), then the return
+ *                            gate (level -> camp); GAME_SERVER_ABI_VERSION 6
+ *     u8  state              GAME_SERVER_SCENE_GATE_*
+ *     u32 entrance_net_id    its level_gate_entrance portal while OPEN, else 0;
+ *                            the exit prop is this plus one
+ *     f32 entrance x, y, z   where the entrance stands, on the ground
+ *     f32 entrance forward x, y, z   the way a player walks into it
+ *     f32 exit x, y, z       where its arrivals step out: the exit prop's
+ *                            place while OPEN; zero while the level gate is
+ *                            PENDING and its level is not yet ready
+ *     f32 exit forward x, y, z       the way an arrival faces
+ *   }
+ *   The level gate is PENDING from SCENE_SELECT until the party's gate opens,
+ *   then OPEN until the level's objective is met; the return gate is PENDING
+ *   from the level being ready, OPEN from RETURN_OPEN until the level ends.
+ *   A portal goes in when it is walked into from the front, a player whose
+ *   client has not reported SCENE_READY excepted; it is the kernel's, and
+ *   ActorTeleported says who went through.
  *   u8  slot_count           level slots the client must have loaded, 0..7
  *   slot_count x {
  *     u8  slot
@@ -183,6 +198,12 @@
 #define GAME_SERVER_SCENE_FLOW_LOADING 1u
 #define GAME_SERVER_SCENE_FLOW_GATE_OPEN 2u
 #define GAME_SERVER_SCENE_FLOW_RETURN_OPEN 3u
+
+/* SCENE_STATE gate.state. PENDING: announced, its portal not up yet (the level
+ * is loading, or the return gate waits for the objective). */
+#define GAME_SERVER_SCENE_GATE_NONE 0u
+#define GAME_SERVER_SCENE_GATE_PENDING 1u
+#define GAME_SERVER_SCENE_GATE_OPEN 2u
 
 #define GAME_SERVER_SCENE_OUTCOME_NONE 0u
 #define GAME_SERVER_SCENE_OUTCOME_COMPLETED 1u
