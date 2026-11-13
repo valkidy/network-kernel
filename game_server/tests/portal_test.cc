@@ -26,6 +26,7 @@
 
 #include <array>
 #include <cmath>
+#include <limits>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -286,10 +287,95 @@ private:
     KernelHandle* kernel_ = nullptr;
 };
 
+// A portal the server places (Kernel_ServerCreatePortal): its exit and its
+// arrivals at the destination the server gave, facing the forward it gave, and
+// an actor the server blocks (Kernel_ServerSetEntityPortalBlocked) left at the
+// gate until it is unblocked.
+void check_server_placed_portal(const GameServerGameplayConfig& config) {
+    World world(config);
+    KernelHandle* kernel = world.kernel();
+    const KernelVec3 there{-30.0f, 0.0f, 30.0f};
+    KernelServerPortalCreateInfo create{};
+    create.struct_size = sizeof(create);
+    create.owner_peer = kPeer;
+    create.entity_template_id = entity_template_id_of(config, "portal_entrance");
+    create.position = KernelVec3{};
+    create.rotation = kIdentityRotation;
+    create.destination = there;
+    // Not unit length: the kernel normalizes it.
+    create.forward = KernelVec3{2.0f, 0.0f, 0.0f};
+
+    std::uint32_t net_id = 0;
+    std::uint32_t exit_id = 0;
+    const auto refused = [&](KernelServerPortalCreateInfo info) {
+        return !Kernel_ServerCreatePortal(kernel, &info, &net_id, &exit_id);
+    };
+    KernelServerPortalCreateInfo bad = create;
+    bad.forward = KernelVec3{0.0f, 1.0f, 0.0f};
+    require(refused(bad));  // facing up
+    bad = create;
+    bad.forward = KernelVec3{};
+    require(refused(bad));  // no heading at all
+    bad = create;
+    bad.destination.x = std::numeric_limits<float>::quiet_NaN();
+    require(refused(bad));
+    bad = create;
+    bad.entity_template_id = entity_template_id_of(config, "portal_exit");
+    require(refused(bad));  // a prop, but not a portal
+    bad = create;
+    bad.struct_size = sizeof(bad) - 4u;
+    require(refused(bad));
+    require(!Kernel_ServerCreatePortal(kernel, &create, nullptr, nullptr));
+    require(net_id == 0u && exit_id == 0u);
+
+    require(Kernel_ServerCreatePortal(kernel, &create, &net_id, &exit_id));
+    require(net_id != 0u);
+    require(exit_id == net_id + 1u);
+    world.step(1);
+    const KernelServerEntityState exit_state = world.state(exit_id);
+    const KernelVec3 exit_facing = forward_of(exit_state.rotation);
+    std::printf("server-placed portal %u: exit %u at (%.2f, %.2f, %.2f), facing (%.2f, %.2f)\n",
+                net_id, exit_id, exit_state.position.x, exit_state.position.y,
+                exit_state.position.z, exit_facing.x, exit_facing.z);
+    require(horizontal_distance(exit_state.position, there) < 0.05f);
+    require(exit_facing.x > 0.99f);
+    // The template's destination is left alone.
+    require(world.props_near(kDestination, 5.0f, 0u).empty());
+
+    const std::uint32_t player = world.player(KernelVec3{0.0f, 0.0f, -3.0f});
+    world.step(10);
+    require(!Kernel_ServerSetEntityPortalBlocked(kernel, net_id, 1u));  // a prop
+    require(!Kernel_ServerSetEntityPortalBlocked(kernel, 0u, 1u));
+    require(!Kernel_ServerSetEntityPortalBlocked(kernel, 0x7fffffffu, 1u));
+    require(Kernel_ServerSetEntityPortalBlocked(kernel, player, 1u));
+    for (int tick = 0; tick < 60; ++tick) {
+        world.walk(player, KernelVec2{0.0f, 1.0f});
+    }
+    const KernelServerEntityState held = world.state(player);
+    std::printf("blocked, pressed to the gate at (%.2f, %.2f, %.2f)\n",
+                held.position.x, held.position.y, held.position.z);
+    // Against the frame, its capsule (radius 0.35) well into the gate, which
+    // reaches 0.1 m out from it.
+    require(held.position.z > -0.4f);
+    require(horizontal_distance(held.position, there) > 20.0f);
+
+    // Unblocked where it stands: that is walking in.
+    require(Kernel_ServerSetEntityPortalBlocked(kernel, player, 0u));
+    world.step(2);
+    const KernelServerEntityState arrived = world.state(player);
+    const KernelVec3 facing = forward_of(arrived.rotation);
+    std::printf("unblocked: at (%.2f, %.2f, %.2f), facing (%.2f, %.2f)\n",
+                arrived.position.x, arrived.position.y, arrived.position.z,
+                facing.x, facing.z);
+    require(horizontal_distance(arrived.position, exit_state.position) < 0.05f);
+    require(facing.x > 0.99f);
+}
+
 }  // namespace
 
 int main() {
     const GameServerGameplayConfig config = load_catalog();
+    check_server_placed_portal(config);
     World world(config);
     // The exit is the entity with the entrance's net id plus one: a prop with
     // no health (max_hp 0), in the row of exits at the destination.

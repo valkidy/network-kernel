@@ -306,6 +306,21 @@ triggers:
   - 朝下的傳送門保留 y 20。
   - mutation check：關掉 grounding，測試失敗（舊行為會把出口放到 5 m 外的下坡處）。
 
+### 6.6 由 server 放置的傳送門（2026-11-14，分支 `claude/portal-create-override`，從 `main` 開出）
+
+- **目的**：讓關卡傳送門（scene table 的 gate）改用 kernel portal，見 Unity 專案的關卡傳送門規劃（K1）。目的地在執行期才知道（關卡載入到哪個 slot），不能寫死在 template。
+- **新增 export**（ABI 109 內的追加，`KERNEL_CAPABILITY_SERVER_PORTALS` = `0x0100000000000000`）：
+  - `Kernel_ServerCreatePortal(kernel, KernelServerPortalCreateInfo*, out_net_id, out_exit_net_id)`：用 portal template 生成入口，但 `destination` 和 `forward` 由 server 指定。出口、grace、immunity、出口錯開都和 template 生成的一樣；出口仍是入口 net id + 1。驗證規則和 catalog 相同：目的地有限、forward 非零且水平或朝下（kernel 會正規化）。
+  - `Kernel_ServerSetEntityPortalBlocked(kernel, net_id, blocked)`：被標記的 actor 不算在任何傳送門的門內，和 arrival grace 相同。解除時如果還站在門內，下一個 tick 就會被送走。其他 trigger 不受影響。只接受 actor。
+- `KernelServerPortalCreateInfo` 64 bytes。沒有改到既有的 struct；client 不呼叫這兩個 export。
+- **client 的限制**：client 只能從 template 讀目的地（`Kernel_GetPortalDefinition`），所以 server 放置的傳送門，目的地要另外送（之後由 `SCENE_STATE` 帶）。
+- **沒有 snapshot 或 packet schema 變動**；catalog 沒改，`bundle.bytes` 不用更新。這兩個 export 由 game_server（C++）呼叫，Unity 的 C# binding 不需要跟著改。
+- **測試**：`portal_test` 新增 `check_server_placed_portal`：
+  - 五種錯誤輸入都被拒絕（朝上、零向量、NaN、不是傳送門的 prop、struct_size 太小），也不寫出 net id。
+  - 出口在 server 指定的 (-30, 0, 30)、面向 +x；template 的目的地沒有出口。
+  - 被 block 的玩家貼著門走 60 tick 不會被送走；解除後 2 tick 內抵達出口、面向 +x。
+  - mutation check：拿掉 overlap 判斷裡的 block，解除後玩家留在原地（已經算在門內，不會再觸發 on_enter），測試失敗。
+
 ---
 
 ## 7. 尚未量測的風險
