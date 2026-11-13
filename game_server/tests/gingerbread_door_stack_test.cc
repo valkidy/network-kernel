@@ -80,7 +80,7 @@ std::uint32_t template_id_of(
 
 int main() {
     network_example::game_server::GameServerGameplayConfig config =
-        network_example::game_server::default_game_server_gameplay_config(5);
+        network_example::game_server::default_game_server_gameplay_config(100);
     // The shipping player spawn and map belong to the shipping map, not this
     // flat 200 m plane: its spawn (106.8, 77) is past the plane's east edge, so
     // the host would fall, respawn 50 m up, and draw a patrol up there with

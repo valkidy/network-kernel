@@ -350,17 +350,17 @@ void listen_host(const std::vector<std::uint8_t>& bundle, std::uint16_t index) {
     require(a->state.flow == GAME_SERVER_SCENE_FLOW_CAMP);
 
     // A client can list the levels from its own synced catalog.
-    require(GameServer_GetSceneTemplateCount(a->kernel) == 4u);
+    require(GameServer_GetSceneTemplateCount(a->kernel) == 7u);
     GameServerSceneTemplateInfo info{};
     info.struct_size = sizeof(info);
     require(GameServer_GetSceneTemplate(a->kernel, 1u, &info));
     require(info.template_id == index && std::string(info.name) == kLevel);
     require(std::string(info.display_name) == "Mission test");
-    require(!GameServer_GetSceneTemplate(a->kernel, 4u, &info));
+    require(!GameServer_GetSceneTemplate(a->kernel, 7u, &info));
 
-    // The camp (0) and a test map (5) are scene templates but not levels:
+    // The camp (0) and a test map (100) are scene templates but not levels:
     // neither is listed above, and asking for one opens nothing.
-    for (const std::uint16_t not_a_level : {std::uint16_t{0}, std::uint16_t{5}}) {
+    for (const std::uint16_t not_a_level : {std::uint16_t{0}, std::uint16_t{100}}) {
         select_level(server.kernel, not_a_level);
         world.settle(0.5);
         require(a->state.flow == GAME_SERVER_SCENE_FLOW_CAMP && a->state.slots.empty());

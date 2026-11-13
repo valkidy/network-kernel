@@ -10543,10 +10543,21 @@ std::vector<LoadedSceneTemplate> read_scene_templates(
         }
         loaded.push_back(LoadedSceneTemplate{std::move(ref), node});
     }
-    std::sort(loaded.begin(), loaded.end(), [](const LoadedSceneTemplate& a, const LoadedSceneTemplate& b) {
-        return a.ref.id < b.ref.id;
+    // Sorted by index, then copied: never std::sort the templates themselves.
+    // YAML::Node's assignment does not rebind, it writes through to the node
+    // it already refers to (set_ref), so the swaps a sort makes overwrite one
+    // template's file with another's. It went unseen while the directory
+    // listing (lexical) happened to be id order; "100_..." lists before
+    // "1_...", and level_terrain_seed2 then loaded template 102's terrain.
+    std::vector<std::size_t> order(loaded.size());
+    for (std::size_t i = 0; i < order.size(); ++i) order[i] = i;
+    std::sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
+        return loaded[a].ref.id < loaded[b].ref.id;
     });
-    return loaded;
+    std::vector<LoadedSceneTemplate> sorted;
+    sorted.reserve(loaded.size());
+    for (const std::size_t i : order) sorted.push_back(loaded[i]);
+    return sorted;
 }
 
 // The catalog root with one scene template laid over it the way a map

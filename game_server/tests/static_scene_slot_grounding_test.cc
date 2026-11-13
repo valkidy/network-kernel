@@ -34,7 +34,7 @@ void require_impl(bool condition, int line, const char* text) {
 }
 #define require(condition) require_impl((condition), __LINE__, #condition)
 
-constexpr const char* kEntry = "gameplay_catalog.scene_5.yaml";
+constexpr const char* kEntry = "gameplay_catalog.scene_100.yaml";
 // Kernel tests bind real ports; 8238 is unused elsewhere (test-port-collisions).
 constexpr std::uint16_t kPort = 8238;
 constexpr float kSlotSpacing = 4096.0f;

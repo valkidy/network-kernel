@@ -1,7 +1,7 @@
 // Hand-placed terrain (docs/LEVEL_AUTHORING_TOOLS_PLAN.md P7):
-//   - scene template 8 places, by hand, the very stamps template 6's seed-1
+//   - scene template 102 places, by hand, the very stamps template 101's seed-1
 //     layout chose; the bundle build cooked it with no rule of its own (G6),
-//     and it composes to template 6's map exactly -- same placements, bases,
+//     and it composes to template 101's map exactly -- same placements, bases,
 //     rings and heights hash -- so the hand path gives a stamp the base and
 //     ring the layout would;
 //   - a placement the generator cannot honour is refused with the reason,
@@ -84,7 +84,7 @@ int main() {
         }
     }
     require(eight.heights_hash == six.heights_hash);
-    std::printf("hand-placed template 8 composes to template 6's map: %zu placements, heights %016llx\n",
+    std::printf("hand-placed template 8 composes to template 101's map: %zu placements, heights %016llx\n",
         eight.recipe.placements.size(), static_cast<unsigned long long>(eight.heights_hash));
 
     // Refused, with the reason, rather than moved.

@@ -1,5 +1,5 @@
 // The terrain level end to end through the catalog (implementation plan P3):
-// the bundle's gameplay_catalog.scene_6.yaml (scene template 6, the kernel terrain) with its
+// the bundle's gameplay_catalog.scene_101.yaml (scene template 101, the kernel terrain) with its
 // cooked recipe loads, the
 // client and server prepare paths compose the recorded map, a Unity Host
 // (GameServer_CreateWithGameplayCatalogFromMemory) and a pure client
@@ -36,12 +36,12 @@ void require_impl(bool condition, int line, const char* text) {
 }
 #define require(expr) require_impl(static_cast<bool>(expr), __LINE__, #expr)
 
-// The shipping catalog starting on scene template 6, the kernel terrain, as
+// The shipping catalog starting on scene template 101, the kernel terrain, as
 // the entry the bundle build derives for it (gameplay_catalog.yaml with
 // start_scene set; docs/START_SCENE_PLAN.md).
-constexpr const char* kEntry = "gameplay_catalog.scene_6.yaml";
+constexpr const char* kEntry = "gameplay_catalog.scene_101.yaml";
 constexpr const char* kRecipe = "terrain/gameplay_catalog.nktr";
-constexpr const char* kTerrainTemplate = "scene_templates/6_scene_kernel_terrain_test.yaml";
+constexpr const char* kTerrainTemplate = "scene_templates/101_scene_kernel_terrain_test.yaml";
 
 std::vector<std::uint8_t> read_bundle(const char* file = "game_server/gameplay_catalog_bundle/bundle.zip") {
     std::ifstream s(file, std::ios::binary);
@@ -61,7 +61,7 @@ gs::GameServerGameplayConfig load(const std::vector<std::uint8_t>& bundle, const
 // The catalog from a directory: the edited yaml next to links to the real
 // catalog's folders (its paths are relative to the catalog, like the bundle's).
 // The catalog from a directory: `yaml` as its root and `terrain_template` as
-// scene template 6, the rest the shipped files.
+// scene template 101, the rest the shipped files.
 bool loads(const std::string& yaml, const std::string& terrain_template, std::string* why) {
     namespace fs = std::filesystem;
     const char* tmp = std::getenv("TEST_TMPDIR");
@@ -157,13 +157,13 @@ gs::PreparedTerrain config_and_prepare(const std::vector<std::uint8_t>& bundle) 
 
     // The default entry starts on the initial camp, its mesh ground:
     // the baked mesh and its navmesh, no terrain. Template 6's entry is the
-    // terrain; template 5's is the mesh again.
+    // terrain; template 100's is the mesh again.
     const gs::GameServerGameplayConfig shipping = load(bundle, "gameplay_catalog.yaml");
     require(!shipping.terrain.enabled && !shipping.static_collision_scene.entry_path.empty());
     require(!shipping.navigation_mesh.entry_path.empty() && !shipping.map.playable_bounds.authored);
     require(shipping.player.has_spawn_position && shipping.player.actor_template_id != 0);
-    require(load(bundle, "gameplay_catalog.scene_6.yaml").terrain.enabled);
-    require(!load(bundle, "gameplay_catalog.scene_5.yaml").terrain.enabled);
+    require(load(bundle, "gameplay_catalog.scene_101.yaml").terrain.enabled);
+    require(!load(bundle, "gameplay_catalog.scene_100.yaml").terrain.enabled);
     return pc;
 }
 
@@ -321,7 +321,7 @@ void static_scene_mesh_paths(const std::vector<std::uint8_t>& bundle) {
     require(host != nullptr);
     KernelGameplayCatalogLoadResult result{};
     GameServerHandle* game_server = GameServer_CreateWithGameplayCatalogFromMemory(
-        host, bundle.data(), static_cast<std::uint32_t>(bundle.size()), "gameplay_catalog.scene_5.yaml", &result);
+        host, bundle.data(), static_cast<std::uint32_t>(bundle.size()), "gameplay_catalog.scene_100.yaml", &result);
     if (game_server == nullptr) std::fprintf(stderr, "mesh host load: %s\n", result.diagnostic);
     require(game_server != nullptr);
     GameServerTerrainInfo no_terrain{};
