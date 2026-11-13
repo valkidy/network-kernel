@@ -27,13 +27,24 @@ void simulate_status_effects(KernelEngine& engine, std::uint64_t server_time_us)
 void settle_status_suspensions(KernelEngine& engine);
 struct ConfirmedDamage;
 
+// Where a portal created at run time sends its arrivals, in place of its
+// template's destination and forward (Kernel_ServerCreatePortal). forward is
+// unit length, level or downward.
+struct PortalPlacement {
+    glm::vec3 destination{0.0f};
+    glm::vec3 forward{0.0f, 0.0f, 1.0f};
+};
+
 class EntityLifecycleSystem {
 public:
+    // A portal template's entity brings its exit; `portal` replaces the
+    // template's destination and forward, and is ignored for anything else.
     bool create_entity(
         KernelEngine& engine,
         const KernelServerEntityCreateInfo& create_info,
         NetId* out_net_id,
-        bool publish_snapshot = true) const;
+        bool publish_snapshot = true,
+        const PortalPlacement* portal = nullptr) const;
 
     bool destroy_entity(
         KernelEngine& engine,

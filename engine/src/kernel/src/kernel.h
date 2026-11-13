@@ -276,6 +276,10 @@ public:
     bool server_create_entity(
         const KernelServerEntityCreateInfo& create_info,
         NetId* out_net_id);
+    bool server_create_portal(
+        const KernelServerPortalCreateInfo& create_info,
+        NetId* out_net_id,
+        NetId* out_exit_net_id);
     bool server_activate_entity(
         const KernelServerEntityActivateInfo& activate_info);
     bool server_clear_inventory_container(KernelInventoryContainerId container_id);
@@ -416,6 +420,7 @@ public:
         NetId net_id,
         std::uint32_t movement_collision_mask);
     bool server_set_fall_death_height(float height_meters);
+    bool server_set_entity_portal_blocked(NetId net_id, bool blocked);
     float fall_death_height() const { return fall_death_height_; }
     bool server_submit_entity_input(NetId net_id, const KernelPlayerInput& input);
     bool server_enqueue_entity_transform(

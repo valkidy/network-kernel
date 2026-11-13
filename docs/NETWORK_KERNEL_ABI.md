@@ -171,6 +171,25 @@ physics world the kernel has and any built later, and leave with
 up only while occupied; at most `KERNEL_MAX_PLAYER_BARRIERS_PER_SLOT` (256)
 boxes, each finite with half extents in (0, 4096]. A refusal changes nothing.
 
+`Kernel_ServerCreatePortal` and `Kernel_ServerSetEntityPortalBlocked` are
+additive within ABI 109, behind `KERNEL_CAPABILITY_SERVER_PORTALS`
+(`0x0100000000000000`), with `KernelServerPortalCreateInfo` (64 B: struct_size,
+owner_peer, entity_template_id, position, rotation, destination, forward). The
+first creates a portal prop as `Kernel_ServerCreateEntity` would, with the
+destination and forward the server gives in place of its template's; its exit
+template, arrival grace and immunity are still the template's, its exit is still
+its net id plus one (also returned through the optional `out_exit_net_id`), and
+`find_clear_exit_spot` still sets that exit beside another one. The template
+must have a portal block, the destination must be finite and forward non-zero
+and level or downward (it is normalized). The second marks an actor no portal
+takes: it is outside every portal's gate, as in the arrival grace, until
+cleared, so clearing it while it stands in a gate sends it through on the next
+tick. Other trigger volumes are unaffected. Only actors are accepted. No
+existing struct changes, and a client never calls either. A client still reads
+a portal's destination from its template (`Kernel_GetPortalDefinition`), so for
+a server-placed portal it has to learn the destination another way (the scene
+table's `SCENE_STATE`).
+
 ABI 92 adds `Kernel_ServerReviveEntity`, `KernelServerReviveInfo` (16 B) and
 `KERNEL_CAPABILITY_SERVER_ENTITY_REVIVE`. It brings back an entity whose health
 is zero out of a non-zero maximum, and refuses anything alive. In one call: full

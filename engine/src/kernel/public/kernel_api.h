@@ -357,6 +357,36 @@ bool Kernel_ServerCreateEntity(
     const KernelServerEntityCreateInfo* create_info,
     uint32_t* out_net_id);
 
+/*
+ * Creates a portal as Kernel_ServerCreateEntity would, but sending whoever walks
+ * into it to create_info->destination, facing create_info->forward, instead of
+ * where its template says (KERNEL_CAPABILITY_SERVER_PORTALS). For a server that
+ * decides destinations at run time: a level gate whose level is loaded into a
+ * slot. Its exit comes with it, as with any portal, standing at the destination
+ * or, when another exit is there, beside it; the exit's net id is the portal's
+ * plus one and is also written to out_exit_net_id when that is not null (0 if
+ * the template has no exit). Rejected unless the template is a portal, the
+ * destination is finite and forward is non-zero and level or downward.
+ */
+bool Kernel_ServerCreatePortal(
+    KernelHandle* kernel,
+    const KernelServerPortalCreateInfo* create_info,
+    uint32_t* out_net_id,
+    uint32_t* out_exit_net_id);
+
+/*
+ * While blocked is non-zero, no portal takes this actor: it does not count as
+ * inside a portal's gate, as during the arrival grace. Cleared, it is taken on
+ * the next tick if it still stands in one. Other trigger volumes are
+ * unaffected. For a server whose portal leads somewhere a player's client is not
+ * ready for. Rejected unless net_id is an actor. Kept until cleared or the actor
+ * is destroyed (KERNEL_CAPABILITY_SERVER_PORTALS).
+ */
+bool Kernel_ServerSetEntityPortalBlocked(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    uint32_t blocked);
+
 bool Kernel_ServerCreateInventoryContainer(
     KernelHandle* kernel,
     uint32_t owner_entity_id,

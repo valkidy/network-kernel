@@ -6288,6 +6288,57 @@ bool KernelEngine::server_create_entity(
     return EntityLifecycleSystem{}.create_entity(*this, create_info, out_net_id);
 }
 
+bool KernelEngine::server_create_portal(
+    const KernelServerPortalCreateInfo& create_info,
+    NetId* out_net_id,
+    NetId* out_exit_net_id) {
+    if (!running_ || !is_server_mode(config_.mode) || out_net_id == nullptr ||
+        create_info.struct_size < sizeof(KernelServerPortalCreateInfo)) {
+        return false;
+    }
+    const KernelEntityTemplateDefinition* entity_template =
+        find_entity_template(entity_templates_, create_info.entity_template_id);
+    if (entity_template == nullptr ||
+        entity_template->entity_type != KernelEntityType_Prop ||
+        entity_template->portal.struct_size == 0u) {
+        return false;
+    }
+    // The catalog's rule for a template's portal block: somewhere finite,
+    // facing level or down -- an arrival facing up has nowhere to go.
+    const glm::vec3 destination = from_kernel_vec3(create_info.destination);
+    const glm::vec3 forward = from_kernel_vec3(create_info.forward);
+    const float length = glm::length(forward);
+    if (!std::isfinite(destination.x) || !std::isfinite(destination.y) ||
+        !std::isfinite(destination.z) || !std::isfinite(length) ||
+        length < 0.0001f || forward.y > 0.0f) {
+        return false;
+    }
+    const PortalPlacement placement{destination, forward / length};
+
+    KernelServerEntityCreateInfo entity{};
+    entity.struct_size = sizeof(entity);
+    entity.entity_type = KernelEntityType_Prop;
+    entity.owner_peer = create_info.owner_peer;
+    entity.position = create_info.position;
+    entity.rotation = create_info.rotation;
+    entity.entity_template_id = create_info.entity_template_id;
+    NetId net_id = 0;
+    if (!EntityLifecycleSystem{}.create_entity(
+            *this, entity, &net_id, true, &placement)) {
+        return false;
+    }
+    *out_net_id = net_id;
+    if (out_exit_net_id != nullptr) {
+        *out_exit_net_id = 0u;
+        if (const std::optional<entt::entity> portal = world_.find_entity(net_id)) {
+            if (const PortalLink* link = world_.registry().try_get<PortalLink>(*portal)) {
+                *out_exit_net_id = link->exit_net_id;
+            }
+        }
+    }
+    return true;
+}
+
 bool KernelEngine::server_activate_entity(
     const KernelServerEntityActivateInfo& activate_info) {
     return ActivationSystem{}.activate_entity(*this, activate_info);
@@ -7265,6 +7316,25 @@ bool KernelEngine::server_set_fall_death_height(float height_meters) {
         return false;
     }
     fall_death_height_ = height_meters;
+    return true;
+}
+
+bool KernelEngine::server_set_entity_portal_blocked(NetId net_id, bool blocked) {
+    if (!running_ || !is_server_mode(config_.mode) || net_id == 0) {
+        return false;
+    }
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (!entity.has_value() || !world_.registry().all_of<EntityKind>(*entity) ||
+        world_.registry().get<EntityKind>(*entity).type != EntityType::kActor) {
+        return false;
+    }
+    // Read by the overlap pass, which treats a blocked actor as outside every
+    // portal's gate, so clearing it while standing in one is entering.
+    if (blocked) {
+        world_.registry().emplace_or_replace<PortalBlocked>(*entity);
+    } else {
+        world_.registry().remove<PortalBlocked>(*entity);
+    }
     return true;
 }
 

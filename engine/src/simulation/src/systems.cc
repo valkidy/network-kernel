@@ -2060,7 +2060,8 @@ bool EntityLifecycleSystem::create_entity(
     KernelEngine& engine,
     const KernelServerEntityCreateInfo& create_info,
     NetId* out_net_id,
-    bool publish_snapshot) const {
+    bool publish_snapshot,
+    const PortalPlacement* portal_placement) const {
     if (!engine.running_ || !is_server_mode(engine.config_.mode) ||
         out_net_id == nullptr ||
         create_info.struct_size < sizeof(KernelServerEntityCreateInfo)) {
@@ -2338,10 +2339,14 @@ bool EntityLifecycleSystem::create_entity(
     if (entity_template != nullptr && type == EntityType::kProp &&
         entity_template->portal.struct_size != 0u) {
         const KernelPortalDefinition& portal = entity_template->portal;
+        // A server-placed portal goes where the server says; the rest of its
+        // behaviour is the template's.
         PortalLink link{
             0u,
-            from_kernel_vec3(portal.destination),
-            from_kernel_vec3(portal.forward),
+            portal_placement != nullptr ? portal_placement->destination
+                                        : from_kernel_vec3(portal.destination),
+            portal_placement != nullptr ? portal_placement->forward
+                                        : from_kernel_vec3(portal.forward),
             portal.arrival_grace_ticks,
             portal.arrival_immunity_ticks,
         };
@@ -2350,7 +2355,7 @@ bool EntityLifecycleSystem::create_entity(
             exit_info.struct_size = sizeof(exit_info);
             exit_info.entity_template_id = portal.exit_entity_template_id;
             exit_info.owner_peer = create_info.owner_peer;
-            exit_info.position = portal.destination;
+            exit_info.position = to_kernel_vec3(link.destination);
             exit_info.rotation = yaw_rotation_from_direction(link.forward);
             // Nothing may be created between the portal and its exit: the
             // exit's net id is the portal's plus one, and clients pair them
@@ -2822,8 +2827,12 @@ void OverlapTriggerSystem::update(
             registry.all_of<Sheltered>(*actor)) {
             return false;
         }
-        // Just arrived through a portal: no portal takes it yet.
+        // Just arrived through a portal, or held back by the server: no portal
+        // takes it yet.
         if (portal) {
+            if (registry.all_of<PortalBlocked>(*actor)) {
+                return false;
+            }
             if (const PortalArrivalGrace* grace =
                     registry.try_get<PortalArrivalGrace>(*actor);
                 grace != nullptr && engine.current_tick() < grace->until_tick) {
@@ -4065,7 +4074,7 @@ void EntityStateSystem::teleport_through_portal(
     }
     const Health* health = registry.try_get<Health>(*target);
     if ((health != nullptr && health->max_hp != 0u && health->hp == 0u) ||
-        registry.all_of<Sheltered>(*target)) {
+        registry.any_of<Sheltered, PortalBlocked>(*target)) {
         return;
     }
     const PortalLink link = registry.get<PortalLink>(*portal);
