@@ -1,0 +1,12 @@
+# Sized from Projectile_BulletArrow.glb (Unity client, Resources/Projectiles):
+# the shaft is 0.63 m long and the crossed fletching 0.23 m across (+-0.114).
+# Colliders do not turn with the flight direction, so only the cross-section is
+# modelled here: at 26 m/s the arrow sweeps 0.87 m per tick, more than its own
+# length, and the sweep is what covers the shaft.
+id: 62
+name: gingerbread_archer_arrow
+shape: sphere
+center: {x: 0.0, y: 0.0, z: 0.0}
+radius: 0.12
+purpose: damage
+layer: projectile

@@ -1,0 +1,11 @@
+# A little past the mage's 30 m: the archer fights from further out (resume
+# distance 22 m), and the cone has to reach past that with room to spare or the
+# archer loses sight of the target on the same tick it stops to shoot.
+id: 61
+name: gingerbread_archer_vision_cone
+shape: cone
+center: {x: 0.0, y: 0.0, z: 0.0}
+range: 34.0
+fov_degrees: 90.0
+purpose: vision
+layer: agent_vision
