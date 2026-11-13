@@ -853,6 +853,44 @@ namespace NetworkExample.Kernel
             return KernelNative.Kernel_ServerCreateEntity(handle, ref createInfo, out netId);
         }
 
+        /// <summary>
+        /// Creates a portal whose arrivals go to createInfo.destination, facing
+        /// createInfo.forward, instead of its template's. Its exit is netId + 1,
+        /// also returned as exitNetId (0 when the template has no exit). False
+        /// when the native library lacks CapabilityServerPortals, the template is
+        /// not a portal, or the destination or forward is refused.
+        /// </summary>
+        public bool ServerCreatePortal(
+            KernelServerPortalCreateInfo createInfo,
+            out uint netId,
+            out uint exitNetId)
+        {
+            ThrowIfDisposed();
+            netId = 0;
+            exitNetId = 0;
+            if ((KernelAbi.GetInfo().capability_flags & KernelConstants.CapabilityServerPortals) == 0UL)
+            {
+                return false;
+            }
+            createInfo.struct_size = KernelServerPortalCreateInfo.StructSize;
+            return KernelNative.Kernel_ServerCreatePortal(handle, ref createInfo, out netId, out exitNetId);
+        }
+
+        /// <summary>
+        /// While blocked, no portal takes this actor; cleared, it goes through on
+        /// the next tick if it still stands in a portal's gate. Actors only.
+        /// False when the native library lacks CapabilityServerPortals.
+        /// </summary>
+        public bool ServerSetEntityPortalBlocked(uint netId, bool blocked)
+        {
+            ThrowIfDisposed();
+            if ((KernelAbi.GetInfo().capability_flags & KernelConstants.CapabilityServerPortals) == 0UL)
+            {
+                return false;
+            }
+            return KernelNative.Kernel_ServerSetEntityPortalBlocked(handle, netId, blocked ? 1U : 0U);
+        }
+
         public bool ServerCreateInventoryContainer(
             uint ownerEntityId,
             uint slotCapacity,

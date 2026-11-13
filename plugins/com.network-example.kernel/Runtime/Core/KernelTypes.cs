@@ -145,6 +145,8 @@ namespace NetworkExample.Kernel
         // Additive within ABI 109: AddStaticSceneSlot / RemoveStaticSceneSlot.
         public const ulong CapabilityStaticSceneSlots = 0x0040000000000000UL;
         public const ulong CapabilityPlayerBarriers = 0x0080000000000000UL;
+        // Additive within ABI 109: ServerCreatePortal / ServerSetEntityPortalBlocked.
+        public const ulong CapabilityServerPortals = 0x0100000000000000UL;
         public const uint MaxPlayerBarriersPerSlot = 256U;
         public const float MaxPlayerBarrierHalfExtent = 4096.0f;
         public const byte AgentCommandFlagPosition = 0x01;
@@ -1695,6 +1697,25 @@ namespace NetworkExample.Kernel
         public uint entity_template_id;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelServerEntityCreateInfo>();
+    }
+
+    // Kernel_ServerCreatePortal's arguments (CapabilityServerPortals): a portal
+    // of entity_template_id at position/rotation that sends its arrivals to
+    // destination, facing forward, instead of where its template says. forward
+    // must be non-zero and level or downward (y <= 0); the kernel normalizes it.
+    // 64 bytes.
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelServerPortalCreateInfo
+    {
+        public uint struct_size;
+        public uint owner_peer;
+        public uint entity_template_id;
+        public KernelVec3 position;
+        public KernelQuat rotation;
+        public KernelVec3 destination;
+        public KernelVec3 forward;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelServerPortalCreateInfo>();
     }
 
     // Kernel_ServerReviveEntity's arguments. Only a dead entity is revived:

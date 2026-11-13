@@ -4,7 +4,7 @@ namespace NetworkExample.Kernel
 {
     public static class GameServerConstants
     {
-        public const uint AbiVersion = 5;
+        public const uint AbiVersion = 6;
 
         public const ulong CapabilityEnemyManager = 0x0000000000000001UL;
         public const ulong CapabilityEventHandling = 0x0000000000000002UL;
@@ -61,6 +61,12 @@ namespace NetworkExample.Kernel
         public const byte SceneFlowLoading = 1;
         public const byte SceneFlowGateOpen = 2;
         public const byte SceneFlowReturnOpen = 3;
+
+        // SCENE_STATE gate state (GameServerSceneGate.State). Pending: announced,
+        // its portal not up yet.
+        public const byte SceneGateNone = 0;
+        public const byte SceneGatePending = 1;
+        public const byte SceneGateOpen = 2;
 
         public const byte SceneOutcomeNone = 0;
         public const byte SceneOutcomeCompleted = 1;

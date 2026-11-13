@@ -26,26 +26,109 @@ namespace NetworkExample.Kernel
         }
     }
 
+    // One way between the camp and the party's level in a SCENE_STATE: a
+    // level_gate_entrance portal while Open, only announced while Pending.
+    // EntranceForward is the way a player walks into it, Exit where its
+    // arrivals step out (the exit prop's place while Open; zero for the level
+    // gate until its level is ready) and ExitForward the way they face. The
+    // exit prop's net id is EntranceNetId + 1.
+    public readonly struct GameServerSceneGate
+    {
+        public const int WireBytes = 53;
+
+        public readonly byte State;
+        public readonly uint EntranceNetId;
+        public readonly KernelVec3 Entrance;
+        public readonly KernelVec3 EntranceForward;
+        public readonly KernelVec3 Exit;
+        public readonly KernelVec3 ExitForward;
+
+        public GameServerSceneGate(
+            byte state,
+            uint entranceNetId,
+            KernelVec3 entrance,
+            KernelVec3 entranceForward,
+            KernelVec3 exit,
+            KernelVec3 exitForward)
+        {
+            State = state;
+            EntranceNetId = entranceNetId;
+            Entrance = entrance;
+            EntranceForward = entranceForward;
+            Exit = exit;
+            ExitForward = exitForward;
+        }
+
+        public bool IsOpen => State == GameServerConstants.SceneGateOpen;
+        public bool IsPending => State == GameServerConstants.SceneGatePending;
+        public bool IsAnnounced => State != GameServerConstants.SceneGateNone;
+
+        internal static GameServerSceneGate Read(byte[] p, int at)
+        {
+            return new GameServerSceneGate(
+                p[at],
+                BitConverter.ToUInt32(p, at + 1),
+                ReadVec3(p, at + 5),
+                ReadVec3(p, at + 17),
+                ReadVec3(p, at + 29),
+                ReadVec3(p, at + 41));
+        }
+
+        private static KernelVec3 ReadVec3(byte[] p, int at)
+        {
+            return new KernelVec3(
+                BitConverter.ToSingle(p, at),
+                BitConverter.ToSingle(p, at + 4),
+                BitConverter.ToSingle(p, at + 8));
+        }
+    }
+
     // The whole scene state. It is sent on joining, on every change and again
     // every few seconds, so reconcile to the latest instead of following steps:
     // load each listed slot not held at that generation, answer SendSceneReady,
     // and unload any held slot that is no longer listed.
     public sealed class GameServerSceneState
     {
-        private const int HeaderBytes = 33;
+        // flow, slot, generation, outcome, owner, defeated, target; then the
+        // two gates, then slot_count (GameServer ABI 6).
+        private const int FixedBytes = 15;
+        private const int SlotCountAt = FixedBytes + 2 * GameServerSceneGate.WireBytes;
+        private const int HeaderBytes = SlotCountAt + 1;
         private const int SlotHeaderBytes = 17;
+        // Half the width of a level gate's opening (the level_gate_gate
+        // collider), for callers still sizing a marker by GateRadius.
+        private const float LevelGateHalfWidth = 1.15f;
 
         public byte Flow { get; private set; }
         public uint LevelSlot { get; private set; }
         public uint LevelGeneration { get; private set; }
         public byte Outcome { get; private set; }
-        public bool GateOpen { get; private set; }
-        public KernelVec3 GatePosition { get; private set; }
-        public float GateRadius { get; private set; }
+        // Camp -> level: Pending from the level being asked for, Open from
+        // SceneFlowGateOpen until the objective is met.
+        public GameServerSceneGate LevelGate { get; private set; }
+        // Level -> camp: Pending from the level being ready, Open in
+        // SceneFlowReturnOpen.
+        public GameServerSceneGate ReturnGate { get; private set; }
         public uint OwnerNetId { get; private set; }
         public ushort EnemiesDefeated { get; private set; }
         public ushort EnemiesTarget { get; private set; }
         public IReadOnlyList<GameServerSceneSlot> Slots { get; private set; }
+
+        // The gate that is open now: the level gate, else the return gate.
+        public bool TryGetOpenGate(out GameServerSceneGate gate)
+        {
+            gate = LevelGate.IsOpen ? LevelGate : ReturnGate;
+            return gate.IsOpen;
+        }
+
+        [Obsolete("Read LevelGate and ReturnGate (GameServer ABI 6).")]
+        public bool GateOpen => LevelGate.IsOpen || ReturnGate.IsOpen;
+
+        [Obsolete("Read LevelGate.Entrance or ReturnGate.Entrance (GameServer ABI 6).")]
+        public KernelVec3 GatePosition => TryGetOpenGate(out GameServerSceneGate gate) ? gate.Entrance : default;
+
+        [Obsolete("A level gate is a portal, not a circle; this is half its opening's width.")]
+        public float GateRadius => LevelGateHalfWidth;
 
         // False for any other message or a malformed body.
         public static bool TryDecode(in KernelGameMessage message, out GameServerSceneState state)
@@ -59,9 +142,10 @@ namespace NetworkExample.Kernel
                 return false;
             }
 
-            var slots = new List<GameServerSceneSlot>(p[32]);
+            int slotCount = p[SlotCountAt];
+            var slots = new List<GameServerSceneSlot>(slotCount);
             int at = HeaderBytes;
-            for (int index = 0; index < p[32]; ++index)
+            for (int index = 0; index < slotCount; ++index)
             {
                 if (size - at < SlotHeaderBytes || size - at - SlotHeaderBytes < p[at + 16])
                 {
@@ -88,15 +172,11 @@ namespace NetworkExample.Kernel
                 LevelSlot = p[1],
                 LevelGeneration = BitConverter.ToUInt32(p, 2),
                 Outcome = p[6],
-                GateOpen = p[7] != 0,
-                GatePosition = new KernelVec3(
-                    BitConverter.ToSingle(p, 8),
-                    BitConverter.ToSingle(p, 12),
-                    BitConverter.ToSingle(p, 16)),
-                GateRadius = BitConverter.ToSingle(p, 20),
-                OwnerNetId = BitConverter.ToUInt32(p, 24),
-                EnemiesDefeated = BitConverter.ToUInt16(p, 28),
-                EnemiesTarget = BitConverter.ToUInt16(p, 30),
+                OwnerNetId = BitConverter.ToUInt32(p, 7),
+                EnemiesDefeated = BitConverter.ToUInt16(p, 11),
+                EnemiesTarget = BitConverter.ToUInt16(p, 13),
+                LevelGate = GameServerSceneGate.Read(p, FixedBytes),
+                ReturnGate = GameServerSceneGate.Read(p, FixedBytes + GameServerSceneGate.WireBytes),
                 Slots = slots,
             };
             return true;

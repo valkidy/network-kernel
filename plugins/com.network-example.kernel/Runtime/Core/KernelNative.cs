@@ -352,6 +352,21 @@ namespace NetworkExample.Kernel
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_ServerCreatePortal(
+            IntPtr kernel,
+            ref KernelServerPortalCreateInfo createInfo,
+            out uint outNetId,
+            out uint outExitNetId);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_ServerSetEntityPortalBlocked(
+            IntPtr kernel,
+            uint netId,
+            uint blocked);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
         internal static extern bool Kernel_ServerCreateInventoryContainer(
             IntPtr kernel,
             uint ownerEntityId,

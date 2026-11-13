@@ -394,11 +394,28 @@ public static class NetworkKernelManagedAbiSmoke
             KernelColliderShapeType.Capsule == (KernelColliderShapeType)5 &&
             KernelColliderShapeType.Cylinder == (KernelColliderShapeType)6,
             "Kernel capsule and cylinder collider enum mismatch.");
+        Require(
+            KernelServerPortalCreateInfo.StructSize == 64 &&
+            (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelServerPortalCreateInfo>("position") == 12 &&
+            (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelServerPortalCreateInfo>("rotation") == 24 &&
+            (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelServerPortalCreateInfo>("destination") == 40 &&
+            (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelServerPortalCreateInfo>("forward") == 52 &&
+            (info.capability_flags & KernelConstants.CapabilityServerPortals) != 0UL &&
+            GameServerConstants.AbiVersion == 6 &&
+            GameServerConstants.SceneGateNone == 0 &&
+            GameServerConstants.SceneGatePending == 1 &&
+            GameServerConstants.SceneGateOpen == 2,
+            "Kernel server portal or scene gate ABI mismatch.");
+        RequireSceneStateGates();
         RequireLANDiscovery();
         byte[] catalogBundleBytes = LoadGameplayCatalogBundleBytes();
 
         using (var kernel = new Kernel(KernelConfig.CreateDefault(KernelMode.ListenServer)))
         {
+            Require(
+                !kernel.ServerCreatePortal(new KernelServerPortalCreateInfo(), out _, out _) &&
+                !kernel.ServerSetEntityPortalBlocked(0U, true),
+                "Kernel server portal validation failed.");
             var barrier = new KernelPlayerBarrierBox
             {
                 half_extents = new KernelVec3 { x = 1.0f, y = 2.0f, z = 1.0f },
@@ -688,6 +705,149 @@ public static class NetworkKernelManagedAbiSmoke
             state.hp == 77,
             "Control-plane RPC did not update entity health.");
     }
+
+    // SCENE_STATE as GameServer ABI 6 sends it: the fixed part, the level gate,
+
+    // the return gate, then the slots. A body in the ABI 5 layout is refused.
+
+    private static void RequireSceneStateGates()
+
+    {
+
+        var payload = new byte[KernelConstants.MaxGameMessageBytes];
+
+        int at = 0;
+
+        void U8(byte v) { payload[at++] = v; }
+
+        void U16(ushort v) { System.BitConverter.GetBytes(v).CopyTo(payload, at); at += 2; }
+
+        void U32(uint v) { System.BitConverter.GetBytes(v).CopyTo(payload, at); at += 4; }
+
+        void F3(float x, float y, float z)
+
+        {
+
+            foreach (float v in new[] { x, y, z }) { System.BitConverter.GetBytes(v).CopyTo(payload, at); at += 4; }
+
+        }
+
+        U8(GameServerConstants.SceneFlowGateOpen);
+
+        U8(1);
+
+        U32(3U);
+
+        U8(GameServerConstants.SceneOutcomeNone);
+
+        U32(9U);
+
+        U16(4);
+
+        U16(20);
+
+        U8(GameServerConstants.SceneGateOpen);
+
+        U32(41U);
+
+        F3(7.05f, 0.5f, -3.0f);
+
+        F3(1.0f, 0.0f, 0.0f);
+
+        F3(4100.0f, 20.0f, 0.0f);
+
+        F3(-1.0f, 0.0f, 0.0f);
+
+        U8(GameServerConstants.SceneGatePending);
+
+        U32(0U);
+
+        F3(4103.0f, 19.5f, 0.0f);
+
+        F3(1.0f, 0.0f, 0.0f);
+
+        F3(4.05f, 0.5f, -3.0f);
+
+        F3(-1.0f, 0.0f, 0.0f);
+
+        U8(1);
+
+        U8(1);
+
+        U32(3U);
+
+        U16(5);
+
+        U8(GameServerConstants.SceneSourceBundle);
+
+        U32(0U);
+
+        U32(0U);
+
+        U8(3);
+
+        U8((byte)'l');
+
+        U8((byte)'v');
+
+        U8((byte)'l');
+
+        var message = new KernelGameMessage
+
+        {
+
+            struct_size = KernelGameMessage.StructSize,
+
+            message_type = GameServerConstants.MessageSceneState,
+
+            payload_size = (uint)at,
+
+            payload = payload,
+
+        };
+
+        Require(
+
+            at == 142 &&
+
+            GameServerSceneState.TryDecode(in message, out GameServerSceneState state) &&
+
+            state.Flow == GameServerConstants.SceneFlowGateOpen &&
+
+            state.LevelSlot == 1U && state.LevelGeneration == 3U &&
+
+            state.OwnerNetId == 9U && state.EnemiesDefeated == 4 && state.EnemiesTarget == 20 &&
+
+            state.LevelGate.IsOpen && state.LevelGate.EntranceNetId == 41U &&
+
+            state.LevelGate.Entrance.x == 7.05f && state.LevelGate.Entrance.z == -3.0f &&
+
+            state.LevelGate.EntranceForward.x == 1.0f &&
+
+            state.LevelGate.Exit.x == 4100.0f && state.LevelGate.ExitForward.x == -1.0f &&
+
+            state.ReturnGate.IsPending && state.ReturnGate.EntranceNetId == 0U &&
+
+            state.ReturnGate.Entrance.x == 4103.0f && state.ReturnGate.Exit.x == 4.05f &&
+
+            state.TryGetOpenGate(out GameServerSceneGate open) && open.EntranceNetId == 41U &&
+
+            state.Slots.Count == 1 && state.Slots[0].TemplateId == 5 && state.Slots[0].Name == "lvl",
+
+            "SCENE_STATE gate records did not decode.");
+
+        // The ABI 5 body (33 bytes, no slots) is too short now.
+
+        message.payload_size = 33U;
+
+        Require(
+
+            !GameServerSceneState.TryDecode(in message, out _),
+
+            "SCENE_STATE accepted the ABI 5 layout.");
+
+    }
+
 
     private static void RequireLANDiscovery()
     {
