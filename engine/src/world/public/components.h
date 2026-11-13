@@ -1134,6 +1134,11 @@ struct PortalArrivalGrace {
     std::uint32_t until_tick = 0;
 };
 
+// An actor the server has said no portal may take
+// (Kernel_ServerSetEntityPortalBlocked): it is never inside a portal's gate
+// until cleared.
+struct PortalBlocked {};
+
 // A prop's trigger volume and the actors in it as of the last tick, sorted.
 // The volume itself is a collider with the trigger purpose that is never a
 // physics body; OverlapTriggerSystem queries with its shape every tick.

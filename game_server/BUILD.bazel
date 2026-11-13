@@ -2475,7 +2475,10 @@ cc_test(
 cc_test(
     name = "scene_recipe_test",
     size = "medium",
-    srcs = ["tests/scene_recipe_test.cc"],
+    srcs = [
+        "tests/scene_recipe_test.cc",
+        "tests/scene_state_wire.h",
+    ],
     data = ["//game_server/gameplay_catalog_bundle:bundle"],
     deps = [
         ":game_server",
@@ -2490,7 +2493,10 @@ cc_test(
 cc_test(
     name = "scene_flow_startup_test",
     size = "medium",
-    srcs = ["tests/scene_flow_startup_test.cc"],
+    srcs = [
+        "tests/scene_flow_startup_test.cc",
+        "tests/scene_state_wire.h",
+    ],
     data = ["//game_server/gameplay_catalog_bundle:bundle"],
     deps = [
         ":game_server",
@@ -2504,7 +2510,10 @@ cc_test(
 cc_test(
     name = "scene_playable_loop_test",
     size = "large",
-    srcs = ["tests/scene_playable_loop_test.cc"],
+    srcs = [
+        "tests/scene_playable_loop_test.cc",
+        "tests/scene_state_wire.h",
+    ],
     data = ["//game_server/gameplay_catalog_bundle:bundle"],
     deps = [
         ":game_server",
@@ -2519,7 +2528,10 @@ cc_test(
 cc_test(
     name = "scene_table_loop_test",
     size = "medium",
-    srcs = ["tests/scene_table_loop_test.cc"],
+    srcs = [
+        "tests/scene_table_loop_test.cc",
+        "tests/scene_state_wire.h",
+    ],
     data = ["//game_server/gameplay_catalog_bundle:bundle"],
     deps = [
         ":game_server",

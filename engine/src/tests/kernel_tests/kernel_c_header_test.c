@@ -144,6 +144,20 @@ _Static_assert(
           KERNEL_CAPABILITY_GAME_MESSAGES)) == 0,
     "the fall death height is additive within ABI 108, on a bit of its own");
 _Static_assert(
+    KERNEL_CAPABILITY_SERVER_PORTALS == UINT64_C(0x0100000000000000) &&
+        (KERNEL_CAPABILITY_SERVER_PORTALS &
+         (KERNEL_CAPABILITY_PLAYER_BARRIERS | KERNEL_CAPABILITY_STATIC_SCENE_SLOTS |
+          KERNEL_CAPABILITY_AGENT_COMMANDS | KERNEL_CAPABILITY_SERVER_DAMAGE_RECORDS |
+          KERNEL_CAPABILITY_SERVER_FALL_DEATH_HEIGHT)) == 0,
+    "server portals are additive within ABI 109, on a bit of its own");
+_Static_assert(
+    sizeof(KernelServerPortalCreateInfo) == 64u &&
+        offsetof(KernelServerPortalCreateInfo, position) == 12u &&
+        offsetof(KernelServerPortalCreateInfo, rotation) == 24u &&
+        offsetof(KernelServerPortalCreateInfo, destination) == 40u &&
+        offsetof(KernelServerPortalCreateInfo, forward) == 52u,
+    "KernelServerPortalCreateInfo is 64 bytes");
+_Static_assert(
     KERNEL_CAPABILITY_SERVER_DAMAGE_RECORDS == UINT64_C(0x0010000000000000) &&
         (KERNEL_CAPABILITY_SERVER_DAMAGE_RECORDS &
          (KERNEL_CAPABILITY_LOG_CAPTURE | KERNEL_CAPABILITY_LOCAL_SHELTER_STATE |

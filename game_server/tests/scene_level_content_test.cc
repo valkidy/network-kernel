@@ -78,11 +78,17 @@ void check_level(const std::shared_ptr<const std::vector<std::uint8_t>>& bundle,
             require(x0 >= clear || x0 + edge <= -clear || z0 >= clear || z0 + edge <= -clear);
         }
 
-        // The gate: 3 m along +x, on the ground.
-        require(config.has_return_gate_position);
-        const KernelVec3 gate = config.return_gate_position;
+        // The way back: 3 m along +x, facing +x, on the ground; the way in
+        // comes out on the spawn, facing away from it.
+        const gs::SceneGatePose& way_back = config.level_gate.entrance;
+        const KernelVec3 gate = way_back.position;
         require(gate.x == spawn.x + 3.0f && gate.z == spawn.z);
         require(std::fabs(gate.y - ground(gate.x, gate.z)) < 0.01f);
+        require(way_back.forward.x == 1.0f && way_back.forward.z == 0.0f);
+        const gs::SceneGatePose& way_in = config.level_gate.arrival;
+        require(way_in.position.x == spawn.x && way_in.position.z == spawn.z);
+        require(std::fabs(way_in.position.y - ground(spawn.x, spawn.z)) < 0.01f);
+        require(way_in.forward.x == -1.0f);
 
         // Stamp points land where the composed map really has that stamp.
         for (const gs::terrain::TerrainPlacement& p : recipe.placements) {

@@ -19,6 +19,8 @@ constexpr float kWallFootMeters = 1.0f;
 // A grounded prop lands on the highest surface at most this far above where
 // it was authored: a prop authored on a floor under a bridge stays under it.
 constexpr float kGroundSearchAboveMeters = 2.0f;
+// An unauthored level gate entrance stands this far along +x from the spawn.
+constexpr float kLevelGateOffsetMeters = 3.0f;
 
 struct Triangle {
     KernelVec3 a;
@@ -94,6 +96,22 @@ std::optional<float> ground_under(const GroundModel& ground, float x, float y, f
 }
 
 }  // namespace
+
+void fill_level_gate_defaults(GameServerGameplayConfig* config) {
+    const KernelVec3 spawn = config->player.has_spawn_position
+        ? config->player.spawn_position
+        : config->scene_offset;
+    LevelGateConfig& gate = config->level_gate;
+    if (!gate.entrance.authored) {
+        gate.entrance.position = KernelVec3{spawn.x + kLevelGateOffsetMeters, spawn.y, spawn.z};
+        gate.entrance.forward = KernelVec3{1.0f, 0.0f, 0.0f};
+    }
+    if (!gate.arrival.authored) {
+        gate.arrival.position = spawn;
+        gate.arrival.forward = KernelVec3{-1.0f, 0.0f, 0.0f};
+    }
+    gate.resolved = true;
+}
 
 std::vector<KernelPlayerBarrierBox> map_edge_barriers(
     const MapEdgeBarrierConfig& rule,
@@ -195,6 +213,18 @@ bool finish_scene_placement(
             return false;
         }
         prop.position.y = *y;
+    }
+
+    // The level gate's two ends (docs/PORTAL_PLAN.md 6.7): unauthored ones
+    // from the spawn, then both on the ground. With no ground under one, it
+    // keeps its height; the kernel grounds an exit itself.
+    fill_level_gate_defaults(config);
+    LevelGateConfig& gate = config->level_gate;
+    for (SceneGatePose* end : {&gate.entrance, &gate.arrival}) {
+        if (const std::optional<float> y =
+                ground_under(model, end->position.x, end->position.y, end->position.z)) {
+            end->position.y = *y;
+        }
     }
 
     config->resolved_player_barriers = config->player_barriers;

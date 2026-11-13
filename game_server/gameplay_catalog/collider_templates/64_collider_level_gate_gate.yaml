@@ -1,0 +1,14 @@
+# A level gate's gate: the trigger volume in front of the frame, exactly the
+# screen the Unity client draws on it (2.3 m wide, 5.04 m tall, from the
+# ground), 0.1 m out from the frame and 0.1 m into it, as portal_gate is for a
+# thrown portal: a player is taken as their capsule all but touches the screen.
+# Its top is 16 cm under the frame's, so nobody standing on the frame is taken.
+#
+# docs/PORTAL_PLAN.md 6.7, D13, D15.
+id: 64
+name: level_gate_gate
+shape: oriented_box
+center: {x: 0.0, y: 2.52, z: 0.0}
+half_extents: {x: 1.15, y: 2.52, z: 0.1}
+purpose: trigger
+layer: neutral

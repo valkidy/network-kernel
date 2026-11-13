@@ -747,6 +747,27 @@ struct ScenePropConfig {
 // `map_edge_barrier:` (catalog_version 21, plan G2): player barriers along the
 // map's rectangle, laid out by finish_scene_placement from the ground at the
 // edge -- each segment's wall reaches `height` above the highest ground in it.
+// One end of the way between the camp and a level (docs/PORTAL_PLAN.md 6.7):
+// where it stands and the way a player walks through it, level, unit length.
+struct SceneGatePose {
+    bool authored = false;
+    KernelVec3 position{0.0f, 0.0f, 0.0f};
+    KernelVec3 forward{1.0f, 0.0f, 0.0f};
+};
+
+// A scene's `level_gate:`. `entrance` is the level gate that leads out of this
+// scene -- the camp's into the party's level, a level's back to the camp --
+// and `arrival` is where those coming in from the other scene step out. Either
+// may be left out: finish_scene_placement puts an unauthored entrance 3 m
+// along +x from the player spawn, facing +x, and an unauthored arrival on the
+// spawn, facing -x (away from the entrance), then sets both on the ground.
+struct LevelGateConfig {
+    SceneGatePose entrance;
+    SceneGatePose arrival;
+    // Set once the unauthored ends are filled in (fill_level_gate_defaults).
+    bool resolved = false;
+};
+
 struct MapEdgeBarrierConfig {
     bool enabled = false;
     float height_meters = 4.0f;
@@ -868,9 +889,8 @@ struct GameServerGameplayConfig {
     KernelVec3 scene_offset{0.0f, 0.0f, 0.0f};
     LevelObjectiveConfig objective;
     LevelNestsConfig level_nests;
-    // Where a generated level's way back stands, on its ground.
-    bool has_return_gate_position = false;
-    KernelVec3 return_gate_position{0.0f, 0.0f, 0.0f};
+    // The way out of this scene and the way in (docs/PORTAL_PLAN.md 6.7).
+    LevelGateConfig level_gate;
 };
 
 struct KernelGameplayCatalogStorage {

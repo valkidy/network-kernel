@@ -539,6 +539,11 @@
  * (docs/LEVEL_AUTHORING_TOOLS_PLAN.md). Additive within ABI 109: check this
  * flag, not the version, before calling it or authoring the layer. */
 #define KERNEL_CAPABILITY_PLAYER_BARRIERS UINT64_C(0x0080000000000000)
+/* Kernel_ServerCreatePortal and Kernel_ServerSetEntityPortalBlocked: a portal
+ * whose destination the server picks at run time, and actors a portal will not
+ * take. Additive within ABI 109: check this flag, not the version, before
+ * calling them. */
+#define KERNEL_CAPABILITY_SERVER_PORTALS UINT64_C(0x0100000000000000)
 
 #define KERNEL_SKELETON_RENDER_STATUS_SUCCESS UINT32_C(0)
 #define KERNEL_SKELETON_RENDER_STATUS_INSUFFICIENT_CAPACITY UINT32_C(1)
@@ -2075,6 +2080,25 @@ typedef struct KernelServerEntityCreateInfo {
     uint32_t actor_template_id;
     uint32_t entity_template_id;
 } KernelServerEntityCreateInfo;
+
+/*
+ * Kernel_ServerCreatePortal's arguments (KERNEL_CAPABILITY_SERVER_PORTALS).
+ * entity_template_id names a portal prop template (one with a
+ * KernelPortalDefinition); position, rotation and owner_peer are as in
+ * KernelServerEntityCreateInfo. destination and forward stand in for the
+ * template's: forward must be non-zero and level or downward (y <= 0), and is
+ * normalized. The template's exit template, arrival grace and arrival immunity
+ * still apply. 64 bytes.
+ */
+typedef struct KernelServerPortalCreateInfo {
+    uint32_t struct_size;
+    uint32_t owner_peer;
+    uint32_t entity_template_id;
+    KernelVec3 position;
+    KernelQuat rotation;
+    KernelVec3 destination;
+    KernelVec3 forward;
+} KernelServerPortalCreateInfo;
 
 /*
  * Kernel_ServerReviveEntity's arguments. Only a dead entity (health zero out of

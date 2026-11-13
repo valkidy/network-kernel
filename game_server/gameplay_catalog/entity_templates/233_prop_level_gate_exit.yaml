@@ -1,0 +1,10 @@
+# Where a level gate comes out: only something to see, as portal_exit is for a
+# thrown portal. The kernel spawns it with its level_gate_entrance and removes
+# it, for the same reason, when the gate goes.
+#
+# docs/PORTAL_PLAN.md 6.7.
+id: 233
+name: level_gate_exit
+entity_type: prop
+physics:
+  trigger_collider_template: level_gate_exit_footprint

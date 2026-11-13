@@ -1,0 +1,12 @@
+# Where a level gate's exit stands and the room an arrival needs, as
+# portal_exit_footprint is for a thrown portal, as wide as the level gate's
+# frame. Trigger-only: no body, but placement keeps other exits off it.
+#
+# docs/PORTAL_PLAN.md 6.7.
+id: 65
+name: level_gate_exit_footprint
+shape: oriented_box
+center: {x: 0.0, y: 1.0, z: 0.0}
+half_extents: {x: 1.3, y: 1.0, z: 1.0}
+purpose: trigger
+layer: neutral

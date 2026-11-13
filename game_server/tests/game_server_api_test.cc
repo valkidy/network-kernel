@@ -447,7 +447,7 @@ int main() {
     require(GameServer_GetAbiInfo(&info, sizeof(info)));
     require(info.struct_size == sizeof(GameServerAbiInfo));
     require(info.abi_version == GAME_SERVER_ABI_VERSION);
-    require(info.abi_version == 5u);
+    require(info.abi_version == 6u);
     require((info.capability_flags & GAME_SERVER_CAPABILITY_ENEMY_MANAGER) != 0);
     require((info.capability_flags & GAME_SERVER_CAPABILITY_EVENT_HANDLING) != 0);
     require((info.capability_flags & GAME_SERVER_CAPABILITY_DESPAWN_ALL) != 0);

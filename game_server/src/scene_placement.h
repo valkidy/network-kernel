@@ -34,6 +34,12 @@ bool finish_scene_placement(
     const SceneGround& ground,
     std::string* error);
 
+// Fills in the level gate ends a scene leaves out (LevelGateConfig): the
+// entrance 3 m along +x from the player spawn, facing +x; the arrival on the
+// spawn, facing -x. Not grounded -- finish_scene_placement, which calls this,
+// does that. Marks the gate resolved.
+void fill_level_gate_defaults(GameServerGameplayConfig* config);
+
 // Hands config.resolved_player_barriers to the kernel for `slot` (nothing to do
 // when there are none). After the slot's static scene is registered. Inline so
 // only its callers -- which link the kernel already -- reference the export;

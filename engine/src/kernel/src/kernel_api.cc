@@ -363,7 +363,8 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             KERNEL_CAPABILITY_SERVER_DAMAGE_RECORDS |
             KERNEL_CAPABILITY_AGENT_COMMANDS |
             KERNEL_CAPABILITY_STATIC_SCENE_SLOTS |
-            KERNEL_CAPABILITY_PLAYER_BARRIERS;
+            KERNEL_CAPABILITY_PLAYER_BARRIERS |
+            KERNEL_CAPABILITY_SERVER_PORTALS;
         return true;
     });
 }
@@ -950,6 +951,28 @@ bool Kernel_ServerCreateEntity(
     return abi_call("Kernel_ServerCreateEntity", false, [&]() {
         return kernel != nullptr && create_info != nullptr &&
                kernel->engine->server_create_entity(*create_info, out_net_id);
+    });
+}
+
+bool Kernel_ServerCreatePortal(
+    KernelHandle* kernel,
+    const KernelServerPortalCreateInfo* create_info,
+    uint32_t* out_net_id,
+    uint32_t* out_exit_net_id) {
+    return abi_call("Kernel_ServerCreatePortal", false, [&]() {
+        return kernel != nullptr && create_info != nullptr &&
+               kernel->engine->server_create_portal(
+                   *create_info, out_net_id, out_exit_net_id);
+    });
+}
+
+bool Kernel_ServerSetEntityPortalBlocked(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    uint32_t blocked) {
+    return abi_call("Kernel_ServerSetEntityPortalBlocked", false, [&]() {
+        return kernel != nullptr &&
+               kernel->engine->server_set_entity_portal_blocked(net_id, blocked != 0u);
     });
 }
 

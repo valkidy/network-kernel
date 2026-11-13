@@ -55,6 +55,7 @@ EXPORTS
     Kernel_GetColliderTemplates
     Kernel_GetColliderBindings
     Kernel_ServerCreateEntity
+    Kernel_ServerCreatePortal
     Kernel_ServerCreateInventoryContainer
     Kernel_ServerClearInventoryContainer
     Kernel_ServerCreateInventoryItem
@@ -89,6 +90,7 @@ EXPORTS
     Kernel_ServerReviveEntity
     Kernel_ServerSetEntityMovementCollisionMask
     Kernel_ServerSetFallDeathHeight
+    Kernel_ServerSetEntityPortalBlocked
     Kernel_AddStaticSceneSlot
     Kernel_RemoveStaticSceneSlot
     Kernel_SetStaticScenePlayerBarriers
