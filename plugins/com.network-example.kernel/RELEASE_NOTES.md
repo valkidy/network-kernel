@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- adds server-placed level gate portals and portal blocking with GameServer ABI 6 scene gate records
+
+
+0.7.0 release notes:
+
 - adds four random-level sizes, moves test scenes to IDs 100-102, and fixes scene-template sorting
 
 
