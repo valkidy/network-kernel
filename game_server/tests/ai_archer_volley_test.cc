@@ -4,8 +4,9 @@
 // skill range -- the archer has to:
 //   - spend ammo three at a time, each volley's three arrows within the fire
 //     action's 9 + 2 * 6 = 21 ticks of its first,
-//   - and land arrows on the player, which proves the ballistic solver aimed
-//     the arc (a flat aim_dir from 15 m lands the arrow ~1.6 m short).
+//   - land arrows on the player, which proves the ballistic solver aimed
+//     the arc (a flat aim_dir from 15 m lands the arrow ~1.6 m short),
+//   - and keep shooting for as long as the fight lasts (reserve ammo).
 
 #include <array>
 #include <cstdint>
@@ -154,7 +155,9 @@ int main() {
 
     std::vector<int> shot_ticks;
     std::uint32_t arrow_hits = 0;
-    constexpr int kTicks = 600;
+    // 80 s: past the 42 arrows a default reserve of 6 magazines would hold
+    // (~38 s of shooting), so an archer that runs dry fails the check below.
+    constexpr int kTicks = 2400;
     for (int tick = 0; tick < kTicks; ++tick) {
         // Kept alive, so the fight lasts the whole window.
         require(Kernel_ServerSetEntityHealth(kernel, player, full_hp));
@@ -184,6 +187,10 @@ int main() {
         require(shot_ticks[volley + 2] - shot_ticks[volley + 1] == 6);
     }
     require(arrow_hits > 0u);
+    // Still shooting at the end of the fight: an agent cannot pick up ammo, so
+    // a finite reserve leaves it standing in range doing nothing.
+    std::printf("[archer] last arrow at tick %d\n", shot_ticks.back());
+    require(shot_ticks.back() > kTicks - 300);
 
     Kernel_Destroy(kernel);
     std::printf("ai_archer_volley_test passed\n");
