@@ -1,0 +1,17 @@
+# The arrowhead. Projectile_BulletArrow.glb (Unity client, Resources/Projectiles)
+# is pivoted on the middle of its head, and the client prefab draws it at
+# twice the GLB's size: the head runs 0.18 m ahead of the projectile's
+# position and 0.18 m behind it (0.23 m either side), the shaft trails 0.91 m
+# further back. A collider centre is added to the position unrotated -- it does
+# not turn with the flight direction -- so the sphere has to sit on the pivot,
+# and the model is what was moved to put the head there.
+#
+# The shaft is not modelled: at 26 m/s the arrow sweeps 0.87 m per tick, and
+# the sweep is what covers it.
+id: 62
+name: gingerbread_archer_arrow
+shape: sphere
+center: {x: 0.0, y: 0.0, z: 0.0}
+radius: 0.4
+purpose: damage
+layer: projectile

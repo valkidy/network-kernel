@@ -1,10 +1,10 @@
 # The kernel-terrain map with its stamps placed by hand
-# (docs/LEVEL_AUTHORING_TOOLS_PLAN.md P7): the twelve stamps template 6's seed-1
+# (docs/LEVEL_AUTHORING_TOOLS_PLAN.md P7): the twelve stamps template 101's seed-1
 # layout chose, written as terrain.placements. Not a level. It shows a
 # hand-placed terrain needs no BUILD rule -- the bundle build cooks every fixed
 # terrain template -- and terrain_placements_test holds it to composing exactly
-# template 6's map: the base and ring a hand placement gets are the layout's.
-id: 8
+# template 101's map: the base and ring a hand placement gets are the layout's.
+id: 102
 name: placed_terrain_test
 terrain:
   map_size: {x: 216.0, z: 216.0}

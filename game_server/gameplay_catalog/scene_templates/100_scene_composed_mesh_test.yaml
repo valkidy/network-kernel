@@ -2,7 +2,7 @@
 # mission (its preload_directors, game_rule) and patrols, the initial camp,
 # and the camp perimeter route. A copy of what the composed_mesh map variant
 # was; not a level, so it may play the root's directors.
-id: 5
+id: 100
 name: composed_mesh_test
 navigation_mesh:
   entry_path: mesh_assets/recast/composed_216m_ground_0001_seed1_collision.navmesh

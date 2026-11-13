@@ -1,0 +1,70 @@
+id: 4
+name: gingerbread_archery_warband
+# Aimed at players rather than at the map: a squad starts 50-60 m from a
+# group of them, past the kernel's 44 m relevance exit so nobody sees it
+# appear, and walks a route that passes within 15 m of where they stood.
+# docs/PLAYER_TARGETED_PATROL_PLAN.md has the reasoning behind every number.
+where:
+  mode: around_players
+  ring: {min_meters: 50.0, max_meters: 60.0}
+  # Well inside the archer's 34 m cone, so by default the squad engages and
+  # the player has to step aside to avoid it.
+  pass_within_meters: 15.0
+  exit_spread_degrees: 30.0
+  # The squad leash: players closer than this are one target.
+  group_radius_meters: 18.0
+  # A trio may have three squads near it, a loner one; and 1.5 per player
+  # across the server, rounded up.
+  groups_per_member: 1.0
+  groups_per_player: 1.5
+  # A minute with nothing near a group puts it ahead of everyone's second
+  # squad, ceiling or not.
+  floor_interval_ticks: 1800
+# Its own seed: warband 1 runs beside this one in the random level, and two
+# definitions sharing a seed draw the same size, composition and route for
+# every squad -- two squads walking on top of each other.
+seed: 7723
+# Every 30 s at 30 Hz. A finished squad retires and gives its place back.
+interval_ticks: 900
+# By the size of the group a squad is aimed at. Archers in place of warband
+# 1's warriors and mages, so each tier's archer range is those two ranges
+# added and its count is unchanged. Floors plus capacity within each tier: the
+# floors have to fit the tier's smallest squad and the ceilings fill its
+# largest, or the catalog refuses to load.
+squad_by_group_size:
+  - members: {min: 1, max: 1}
+    count: {min: 10, max: 18}
+    composition:
+      - {entity_template: gingerbread_archer, min: 1, max: 5}
+      - {entity_template: gingerbread, min: 6, max: 13}
+  - members: {min: 2, max: 2}
+    count: {min: 6, max: 9}
+    composition:
+      - {entity_template: gingerbread_archer, min: 1, max: 5}
+      - {entity_template: gingerbread, min: 4, max: 8}
+  - members: {min: 3}
+    count: {min: 8, max: 12}
+    composition:
+      - {entity_template: gingerbread_archer, min: 2, max: 8}
+      - {entity_template: gingerbread, min: 4, max: 8}
+# Three abreast, so 12 members stand four ranks deep -- about 5 m of
+# column behind the squad's point. The rank width is not authored; it is
+# kRankWidth in formation_offsets.
+formation_spacing_meters: 1.5
+# Below the slowest member's patrol speed, move speed times its squad
+# input_magnitude: the archer at 2.0 x 0.5 = 1.0 m/s (gingerbread 5.0 x 0.45 =
+# 2.25). A cursor faster than that would leave the archers behind their slots
+# for the whole route.
+advance_speed_meters_per_second: 0.9
+waypoint_radius_meters: 0.5
+# Ten seconds standing at the end of the route before the squad goes, so it
+# does not vanish in front of whoever walked it down.
+despawn_linger_ticks: 300
+# And gone early if nobody is within 120 m, which on a 200 m map means a
+# squad on the far side of it. Never while it is fighting.
+despawn_distance_meters: 120.0
+# Four times the straight line before a start/end pair is thrown back. On
+# this flat map every route is the straight line, so nothing is ever
+# rejected; the number is here for the map that is not flat.
+max_detour_ratio: 4.0
+route_attempts: 8

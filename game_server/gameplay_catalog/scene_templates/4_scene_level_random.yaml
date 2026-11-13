@@ -19,6 +19,6 @@ preload_directors: []
 objective: {defeat_enemies: 20}
 nests: {entity_template: gingerbread_nest, max_count: 4}
 patrols:
-  - ids: [1]
+  - ids: [1, 4]
 scene_props: []
 agent_routes: []

@@ -1,0 +1,22 @@
+# The archer's arrow. Parabolic, which is what turns the AI's ballistic solver
+# on for weapon 24 (see the mage's grenade shell): the agent submits a low-arc
+# aim_dir with a positive Y component, and the arrow leaves at that direction
+# times `speed`. Reach on flat ground is v^2/g ~ 69 m, far past the vision cone.
+# Unlike the shell it damages what it strikes directly -- nothing spawns on
+# impact.
+id: 41
+name: gingerbread_archer_arrow
+damage: 20
+sync_mode: local_predicted_deterministic
+collider_template: gingerbread_archer_arrow
+movement_model: parabolic
+hit_response: destroy
+damage_shape: direct_hit
+speed: 26.0
+lifetime_ticks: 150
+collision_mask: player_side | terrain | static_obstacle
+max_hit_count: 1
+gravity:
+  x: 0.0
+  y: -9.81
+  z: 0.0

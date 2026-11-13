@@ -30,9 +30,7 @@ void require_impl(bool condition, int line, const char* text) {
 #define require(condition) require_impl((condition), __LINE__, #condition)
 
 constexpr const char* kEntry = "gameplay_catalog.yaml";
-constexpr const char* kLevel = "level_random";
 constexpr std::uint32_t kSlot = 1u;
-constexpr int kSeeds = 30;
 
 std::vector<std::uint8_t> read_bundle() {
     std::ifstream in("game_server/gameplay_catalog_bundle/bundle.zip", std::ios::binary);
@@ -40,23 +38,27 @@ std::vector<std::uint8_t> read_bundle() {
     return std::vector<std::uint8_t>(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
 }
 
-}  // namespace
-
-int main() {
-    auto bundle = std::make_shared<const std::vector<std::uint8_t>>(read_bundle());
+// One random level, generated from `seeds` seeds, which must come out
+// `size_meters` a side.
+void check_level(const std::shared_ptr<const std::vector<std::uint8_t>>& bundle, const char* level,
+    float size_meters, int seeds) {
+    std::printf("=== %s (%.0f m)\n", level, size_meters);
     int nests_total = 0;
     int reachable_total = 0;
     int stamps_checked = 0;
-    for (int seed = 1; seed <= kSeeds; ++seed) {
+    for (int seed = 1; seed <= seeds; ++seed) {
         gs::SceneCatalogSource source;
         source.bundle = bundle;
         source.entry_path = kEntry;
         source.seed_override = seed;
-        gs::PreparedScene scene = gs::prepare_scene(source, kLevel, kSlot);
-        if (!scene.ok) std::fprintf(stderr, "seed %d: %s\n", seed, scene.error.c_str());
+        gs::PreparedScene scene = gs::prepare_scene(source, level, kSlot);
+        if (!scene.ok) std::fprintf(stderr, "%s seed %d: %s\n", level, seed, scene.error.c_str());
         require(scene.ok);
         const gs::GameServerGameplayConfig& config = scene.config;
         const gs::terrain::TerrainRecipe& recipe = scene.terrain_recipe.recipe;
+        require(std::fabs(static_cast<float>(recipe.cells_x) * 0.3f - size_meters) < 0.01f);
+        require(std::fabs(static_cast<float>(recipe.cells_z) * 0.3f - size_meters) < 0.01f);
+        const float half = size_meters * 0.5f;
         const float offset = gs::kSceneSlotSpacing;
         const auto ground = [&](float world_x, float z) {
             return gs::terrain_ground_height(scene.terrain_heights, world_x - offset, z);
@@ -113,7 +115,8 @@ int main() {
         int reachable = 0;
         for (const KernelVec3& nest : config.level_nests.positions) {
             require(std::fabs(nest.y - ground(nest.x, nest.z)) < 0.01f);
-            require(std::fabs(nest.x - offset) < 108.0f && std::fabs(nest.z) < 108.0f);
+            // Inside the map, which is centred on the slot.
+            require(std::fabs(nest.x - offset) < half && std::fabs(nest.z) < half);
             gs::PatrolRouteRequest route;
             route.start = spawn;
             route.end = nest;
@@ -127,7 +130,21 @@ int main() {
             config.level_nests.positions.size(), reachable, spawn.y);
         require(reachable >= 1);
     }
-    std::printf("%d seeds: %d stamp points matched, %d of %d nests reachable\n", kSeeds, stamps_checked, reachable_total, nests_total);
+    std::printf("%s, %d seeds: %d stamp points matched, %d of %d nests reachable\n", level, seeds, stamps_checked,
+        reachable_total, nests_total);
+}
+
+}  // namespace
+
+int main() {
+    auto bundle = std::make_shared<const std::vector<std::uint8_t>>(read_bundle());
+    // Every size of the random level (scene templates 4-7). The 216 m one gets
+    // the most seeds; a big map costs up to ~1.6 s a seed, so the others get a
+    // few each.
+    check_level(bundle, "level_random", 216.0f, 30);
+    check_level(bundle, "level_random_432", 432.0f, 5);
+    check_level(bundle, "level_random_648", 648.0f, 5);
+    check_level(bundle, "level_random_864", 864.0f, 5);
     std::printf("scene_level_content_test passed\n");
     return 0;
 }

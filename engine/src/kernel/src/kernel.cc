@@ -15662,7 +15662,14 @@ void KernelEngine::update_vision_states(float delta_seconds) {
             glm::vec3 delta = candidate.position - origin;
             delta.y = 0.0f;
             const float distance_squared = glm::dot(delta, delta);
-            if (distance_squared > cone_range * cone_range) {
+            // The range counts height; the angle below does not. Flattened,
+            // a player revived 50 m overhead was seen from 2 m away and chased
+            // round underneath. Height goes feet to feet, so the cone's eye
+            // does not shave the reach on level ground, and a flyer's level
+            // cone keeps the ground under it in view.
+            const float rise =
+                candidate.position.y - agent_transform.position.y;
+            if (distance_squared + rise * rise > cone_range * cone_range) {
                 continue;
             }
 

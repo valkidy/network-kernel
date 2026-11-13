@@ -1,7 +1,7 @@
 # The kernel-generated terrain (seed 1) with its own mission and the initial
 # camp. A copy of what the kernel_terrain map variant was; not a level. Its
 # recipe is the one the bundle cooks at terrain.recipe.
-id: 6
+id: 101
 name: kernel_terrain_test
 # A 216 m painted ground (ground_0001, 19 terrace levels) with the four
 # prototype stamps laid out on it. The recipe that places them is cooked

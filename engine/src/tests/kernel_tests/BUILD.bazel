@@ -593,3 +593,9 @@ cc_test(
     srcs = ["hover_prediction_test.cc"],
     deps = ["//engine/src/kernel:kernel"],
 )
+
+cc_test(
+    name = "vision_range_height_test",
+    srcs = ["vision_range_height_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)

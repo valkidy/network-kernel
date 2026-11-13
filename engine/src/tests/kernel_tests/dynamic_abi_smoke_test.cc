@@ -802,7 +802,7 @@ int main() {
     catalog_result.struct_size = sizeof(catalog_result);
     GameServerHandle* game_server = game_server_create_with_catalog(
         kernel, bundle.data(), static_cast<std::uint32_t>(bundle.size()),
-        "gameplay_catalog.scene_5.yaml", &catalog_result);
+        "gameplay_catalog.scene_100.yaml", &catalog_result);
     if (game_server == nullptr) std::fprintf(stderr, "catalog: %s\n", catalog_result.diagnostic);
     require(game_server != nullptr);
     // After the catalog: a kernel takes its static scene before it starts.

@@ -88,7 +88,7 @@ std::vector<KernelServerEntityState> giants(
 
 int main() {
     network_example::game_server::GameServerGameplayConfig config =
-        network_example::game_server::default_game_server_gameplay_config(5);
+        network_example::game_server::default_game_server_gameplay_config(100);
     require(!config.navigation_mesh.entry_path.empty());
     config.navigation_mesh.artifact =
         read_catalog_file(config.navigation_mesh.entry_path);
