@@ -97,6 +97,13 @@ const network_example::game_server::AgentRuntimeState* find_agent(
 }  // namespace
 
 int main() {
+    // Slots: the lowest one nobody holds, so a lost unit's slot is reused
+    // before the line grows.
+    require(network_example::game_server::spawner_free_exit_slot({}) == 0u);
+    require(network_example::game_server::spawner_free_exit_slot({0u, 1u, 2u}) == 3u);
+    require(network_example::game_server::spawner_free_exit_slot({0u, 2u, 3u}) == 1u);
+    require(network_example::game_server::spawner_free_exit_slot({1u, 2u}) == 0u);
+
     const network_example::game_server::GameServerGameplayConfig config =
         network_example::game_server::default_game_server_gameplay_config();
     const std::uint32_t nest_template = template_id_of(config, "gingerbread_nest");
@@ -289,6 +296,70 @@ int main() {
         for (std::size_t b = a + 1; b < wave.size(); ++b) {
             require(
                 horizontal_distance(release_positions[a], release_positions[b]) >
+                network_example::game_server::kSpawnerExitSpacingMeters -
+                    2.0f * network_example::game_server::kSpawnerEntryArrivalMeters);
+        }
+    }
+
+    // 7. The next wave comes out onto spots of its own too, not onto the
+    //    first wave's. A guard keeps its release spot as its post. Per-wave
+    //    slots put every wave on the same few spots, and twelve guards spent
+    //    minutes shoving for four posts (issue_20261117_234647). This holds
+    //    only while the first wave is alive to hold its slots, so that is
+    //    required first.
+    const std::uint32_t first_count = spawner.spawned_unit_count();
+    for (int tick = 0; tick < 600 && spawner.spawned_unit_count() == first_count;
+         ++tick) {
+        step();
+    }
+    require(spawner.spawned_unit_count() > first_count);
+    for (const std::uint32_t net_id : wave) {
+        KernelServerEntityState state{};
+        state.struct_size = sizeof(state);
+        require(Kernel_ServerGetEntityState(kernel, net_id, &state));
+    }
+    std::vector<std::uint32_t> second_wave;
+    for (const std::uint32_t net_id : spawner.instances().front().spawned_net_ids) {
+        if (std::find(wave.begin(), wave.end(), net_id) == wave.end()) {
+            second_wave.push_back(net_id);
+        }
+    }
+    require(!second_wave.empty());
+    std::vector<bool> second_released(second_wave.size(), false);
+    std::vector<KernelVec3> second_positions(second_wave.size(), KernelVec3{});
+    for (std::uint32_t tick = 0; tick < walk_budget; ++tick) {
+        step();
+        for (std::size_t index = 0; index < second_wave.size(); ++index) {
+            const network_example::game_server::AgentRuntimeState* agent =
+                find_agent(game_server.agent_runtime_manager(), second_wave[index]);
+            require(agent != nullptr);
+            if (second_released[index] || agent->entry.active) {
+                continue;
+            }
+            second_released[index] = true;
+            second_positions[index] = position_of(kernel, second_wave[index]);
+        }
+    }
+    for (std::size_t index = 0; index < second_wave.size(); ++index) {
+        require(second_released[index]);
+        const KernelVec3 position = second_positions[index];
+        std::fprintf(
+            stderr,
+            "  second wave net_id=%u released at (%.2f, %.2f, %.2f)\n",
+            second_wave[index],
+            position.x, position.y, position.z);
+        // Slots 0..wave-1 are held, so this wave takes the ones after them.
+        const KernelVec3 own_exit = network_example::game_server::spawner_member_exit(
+            entry.exits.front(), static_cast<std::uint32_t>(wave.size() + index));
+        require(
+            horizontal_distance(own_exit, position) <
+            network_example::game_server::kSpawnerEntryArrivalMeters + 0.2f);
+        for (std::size_t first = 0; first < wave.size(); ++first) {
+            const KernelVec3 first_exit =
+                network_example::game_server::spawner_member_exit(
+                    entry.exits.front(), static_cast<std::uint32_t>(first));
+            require(
+                horizontal_distance(first_exit, position) >
                 network_example::game_server::kSpawnerExitSpacingMeters -
                     2.0f * network_example::game_server::kSpawnerEntryArrivalMeters);
         }

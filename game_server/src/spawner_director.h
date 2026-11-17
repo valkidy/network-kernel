@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "game_server/src/agent_budget.h"
@@ -55,6 +56,14 @@ struct SpawnerEntryExit {
 // door it is unchanged, so every exit stays as clear of the carrier as the
 // authored one.
 KernelVec3 spawner_member_exit(const SpawnerEntryExit& door, std::uint32_t member);
+
+// The lowest exit slot that none of `held` takes. A carrier deals its slots
+// across every unit it still has alive, not per wave. A guard keeps the spot
+// it was released on as its post. With slots counted per wave, every wave came
+// out onto the same few spots, and a nest's twelve guards spent minutes
+// shoving each other for four posts, standing on each other's heads
+// (issue_20261117_234647).
+std::uint32_t spawner_free_exit_slot(const std::vector<std::uint32_t>& held);
 
 // Walking out of the thing that spawned you.
 //
@@ -213,6 +222,10 @@ public:
         // what a player has just fought their way through, at the moment they
         // destroy the nest, is worse than any population it would save.
         std::vector<std::uint32_t> spawned_net_ids;
+        // The exit slot each unit walked out to, as {net id, slot}. Pruned to
+        // spawned_net_ids whenever a wave is dealt, so a slot comes free when
+        // its unit is lost.
+        std::vector<std::pair<std::uint32_t, std::uint32_t>> exit_slots;
     };
 
     const std::vector<SpawnerCarrierConfig>& carriers() const;
