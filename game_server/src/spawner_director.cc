@@ -76,6 +76,14 @@ KernelVec3 spawner_member_exit(const SpawnerEntryExit& door, std::uint32_t membe
         door.exit.z + side_z * offset};
 }
 
+std::uint32_t spawner_free_exit_slot(const std::vector<std::uint32_t>& held) {
+    std::uint32_t slot = 0;
+    while (std::find(held.begin(), held.end(), slot) != held.end()) {
+        ++slot;
+    }
+    return slot;
+}
+
 std::string validate_spawner_config(const SpawnerConfig& spawner) {
     const std::string composition_error = validate_spawn_composition(
         spawner.composition, spawner.count_min, spawner.count_max);
@@ -550,14 +558,40 @@ std::uint32_t SpawnerDirector::emit_wave(
         draw_spawn_composition(spawner.composition, count, random_state);
     const bool walks_out =
         spawner.entry.authored && !spawner.entry.exits.empty();
+    // Slots held by units this carrier has lost come free first.
+    std::vector<std::pair<std::uint32_t, std::uint32_t>>& exit_slots =
+        instance->exit_slots;
+    exit_slots.erase(
+        std::remove_if(
+            exit_slots.begin(),
+            exit_slots.end(),
+            [instance](const std::pair<std::uint32_t, std::uint32_t>& held) {
+                return std::find(
+                           instance->spawned_net_ids.begin(),
+                           instance->spawned_net_ids.end(),
+                           held.first) == instance->spawned_net_ids.end();
+            }),
+        exit_slots.end());
+    std::vector<std::uint32_t> held_slots;
+    held_slots.reserve(exit_slots.size() + count);
+    for (const std::pair<std::uint32_t, std::uint32_t>& held : exit_slots) {
+        held_slots.push_back(held.second);
+    }
     std::uint32_t created = 0;
     for (std::size_t entry = 0; entry < drawn.size(); ++entry) {
         for (std::uint32_t unit = 0; unit < drawn[entry]; ++unit) {
-            // Doors are dealt round robin across the whole wave, so a
-            // carrier that names two of them puts half its units through
-            // each rather than queueing everyone at the first.
+            // Doors are dealt round robin over the slots, so a carrier
+            // that names two of them puts half its units through each
+            // rather than queueing everyone at the first. Slots are dealt
+            // across every unit still alive, not per wave: a guard's post
+            // is where it was released, so a slot reused while its last
+            // holder stands there makes two guards fight over one post.
+            const std::uint32_t slot =
+                walks_out ? spawner_free_exit_slot(held_slots) : 0u;
+            const std::uint32_t door_count =
+                walks_out ? static_cast<std::uint32_t>(spawner.entry.exits.size()) : 1u;
             const SpawnerEntryExit* door = walks_out
-                ? &spawner.entry.exits[created % spawner.entry.exits.size()]
+                ? &spawner.entry.exits[slot % door_count]
                 : nullptr;
             KernelServerEntityCreateInfo create_info{};
             create_info.struct_size = sizeof(create_info);
@@ -602,14 +636,13 @@ std::uint32_t SpawnerDirector::emit_wave(
                         spawner.entry.movement_collision_mask)) {
                     SpawnerEntryRequest request;
                     request.net_id = net_id;
-                    // Its own exit: doors are dealt round robin, so this is
-                    // the unit's place among those sent through this door.
+                    // Its own exit: doors are dealt round robin over the
+                    // slots, so this is the slot's place at its door.
                     request.exit = carrier_world_point(
                         carrier_state,
-                        spawner_member_exit(
-                            *door,
-                            created / static_cast<std::uint32_t>(
-                                spawner.entry.exits.size())));
+                        spawner_member_exit(*door, slot / door_count));
+                    held_slots.push_back(slot);
+                    exit_slots.emplace_back(net_id, slot);
                     request.hold_ticks =
                         created * spawner.entry.stagger_ticks;
                     request.max_ticks = spawner.entry.max_ticks;
