@@ -1254,8 +1254,10 @@ namespace NetworkExample.Kernel
         public uint damage_stagger_authored;
         public float damage_stagger;
 
-        // spawn_projectile only; zero preserves the template lifetime and single spawn.
+        // spawn_projectile or spawn_entity; zero preserves the template lifetime.
+        // A spawned actor expires as Destroyed, a prop as Expired (ABI 109).
         public uint spawn_lifetime_ticks;
+        // spawn_projectile only; zero repeat_count_max means a single spawn.
         public byte repeat_count_min;
         public byte repeat_count_max;
         public ushort reserved3;

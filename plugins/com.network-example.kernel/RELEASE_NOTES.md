@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- adds the summon giant bottle, summoned-actor lifetimes and summoner-follow behavior
+
+
+0.7.0 release notes:
+
 - adds server-placed level gate portals and portal blocking with GameServer ABI 6 scene gate records
 
 
