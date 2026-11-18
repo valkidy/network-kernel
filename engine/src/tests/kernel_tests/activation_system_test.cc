@@ -768,10 +768,10 @@ void prop_lifetime_expires_without_affecting_permanent_props() {
     require(engine.server_create_entity(
         create_info(301, KernelVec3{}), &permanent_id));
     network_example::EntityLifecycleSystem lifecycle;
-    lifecycle.update_prop_lifetimes(engine);
-    lifecycle.update_prop_lifetimes(engine);
+    lifecycle.update_entity_lifetimes(engine);
+    lifecycle.update_entity_lifetimes(engine);
     require(engine.world_.find_entity(expiring_id).has_value());
-    lifecycle.update_prop_lifetimes(engine);
+    lifecycle.update_entity_lifetimes(engine);
     require(!engine.world_.find_entity(expiring_id).has_value());
     require(engine.world_.find_entity(permanent_id).has_value());
     require(

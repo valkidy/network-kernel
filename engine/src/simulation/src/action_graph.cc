@@ -481,6 +481,7 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
                 action.spawn_item_quantity,
                 *condition,
                 action.spawn_placement,
+                action.spawn_lifetime_ticks,
             });
             binding.parameters.push_back({
                 template_name,
@@ -1394,6 +1395,7 @@ bool evaluate_action_graph(
                 spawn->quantity,
                 provenance,
                 spawn->placement,
+                spawn->lifetime_ticks,
             });
             continue;
         }

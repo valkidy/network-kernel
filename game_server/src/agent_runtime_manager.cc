@@ -38,7 +38,8 @@ bool runs_chaser(AgentControllerRole role) {
            role == AgentControllerRole::kPatrol ||
            role == AgentControllerRole::kSquad ||
            role == AgentControllerRole::kHunter ||
-           role == AgentControllerRole::kLockTarget;
+           role == AgentControllerRole::kLockTarget ||
+           role == AgentControllerRole::kFollow;
 }
 
 // How to fire one weapon: its own ballistic aim when its projectile arcs, and
@@ -192,6 +193,7 @@ AgentRuntimeManager::AgentControllerBinding AgentRuntimeManager::make_binding(
             chaser.squad = actor_template.squad;
             chaser.guard = actor_template.guard;
             chaser.patrol = actor_template.patrol;
+            chaser.follow = actor_template.follow;
             for (const AgentSkillConfig& skill : actor_template.skills) {
                 if (skill.type != AgentSkillType::kWeapon) {
                     continue;
@@ -642,6 +644,120 @@ void AgentRuntimeManager::update_hunters(const ActorStateView& actors) {
     }
 }
 
+void AgentRuntimeManager::update_follows(const ActorStateView& actors) {
+    const auto find_state = [&](std::uint32_t net_id) -> const KernelServerEntityState* {
+        for (std::uint32_t index = 0; index < actors.count; ++index) {
+            if (actors.states[index].net_id == net_id) return &actors.states[index];
+        }
+        return nullptr;
+    };
+    for (AgentRuntimeState& agent : agents_) {
+        if (agent.controller_role != AgentControllerRole::kFollow || agent.patrol.has_slot ||
+            agent.entry.active) {
+            continue;
+        }
+        // A template's default follow takes the player its peer is: its
+        // summoner's (E1). Nobody's agent has nobody to follow.
+        if (agent.follow_owner == 0u && agent.owner_peer != 0u) {
+            for (std::uint32_t index = 0; index < actors.count; ++index) {
+                const KernelServerEntityState& candidate = actors.states[index];
+                if (candidate.actor_type == kActorTypePlayer &&
+                    candidate.owner_peer == agent.owner_peer) {
+                    agent.follow_owner = candidate.net_id;
+                    break;
+                }
+            }
+        }
+        const KernelServerEntityState* owner =
+            agent.follow_owner == 0u ? nullptr : find_state(agent.follow_owner);
+        if (owner == nullptr) {
+            // Never had one, or it left the world -- a disconnect, which a
+            // reconnect does not undo (Q6): a guard where it stands, for good
+            // (Q3). Unchecked and without dropping the fight, as a hunter
+            // turning guard is.
+            AgentControllerSpec guard;
+            guard.role = AgentControllerRole::kGuard;
+            apply_behavior(&agent, guard, 0u);
+            continue;
+        }
+        // A dead owner is dormant, still in the world: it holds where it is
+        // until the revive (Q3).
+        agent.follow_owner_alive = owner->valid != 0u && owner->hp != 0u &&
+            (owner->visual_flags & KERNEL_VISUAL_FLAG_DEAD) == 0u;
+        agent.follow_owner_position = owner->position;
+        // The leash measures how far a chase has drawn it from its owner.
+        agent.patrol.leash_anchor = owner->position;
+        if (agent.sentry.state != AgentSentryState::kIdle || !agent.follow_owner_alive ||
+            agent.follow_holding) {
+            agent.seek_path.clear();
+            agent.seek_next = 0;
+            agent.follow_repath_in = 0;
+            continue;
+        }
+        // Walking: re-path on its cadence, or at once when the owner has got
+        // well away from where the path ends.
+        constexpr float kOwnerMovedMeters = 3.0f;
+        if (agent.follow_repath_in > 0u) {
+            --agent.follow_repath_in;
+        }
+        if (!agent.seek_path.empty() && agent.follow_repath_in > 0u &&
+            agent_steering::horizontal_distance(agent.follow_path_goal, owner->position) <=
+                kOwnerMovedMeters) {
+            continue;
+        }
+        const ActorTemplateConfig* actor_template =
+            find_actor_template(config_, agent.actor_template_id);
+        agent.follow_repath_in =
+            actor_template != nullptr ? actor_template->follow.repath_ticks : 30u;
+        agent.follow_path_goal = owner->position;
+        agent.seek_path.clear();
+        agent.seek_next = 0;
+        PatrolRouteRequest request;
+        request.start = agent.position;
+        request.end = owner->position;
+        request.snap_half_extent_meters = 2.0f;
+        if (!patrol_navigation_.valid() ||
+            !patrol_navigation_.find_route(request, &agent.seek_path) ||
+            agent.seek_path.empty()) {
+            agent.seek_path.assign(1, owner->position);
+        }
+    }
+}
+
+void AgentRuntimeManager::retire_extra_summons(const std::vector<std::uint32_t>& discovered) {
+    for (const std::uint32_t net_id : discovered) {
+        const std::size_t index = agent_index_.find(net_id);
+        if (index == AgentIndex::kNotFound) {
+            continue;
+        }
+        const AgentRuntimeState& summon = agents_[index];
+        const ActorTemplateConfig* actor_template =
+            find_actor_template(config_, summon.actor_template_id);
+        if (actor_template == nullptr || actor_template->summon_max_per_owner == 0u) {
+            continue;
+        }
+        // The same player's other summons, oldest first (net ids only grow).
+        std::vector<std::uint32_t> others;
+        for (const AgentRuntimeState& other : agents_) {
+            if (other.net_id == net_id || other.owner_peer != summon.owner_peer) {
+                continue;
+            }
+            const ActorTemplateConfig* other_template =
+                find_actor_template(config_, other.actor_template_id);
+            if (other_template != nullptr && other_template->summon_max_per_owner != 0u) {
+                others.push_back(other.net_id);
+            }
+        }
+        std::sort(others.begin(), others.end());
+        // The new one stays: it is where its player wants it now. The old one
+        // goes the way a summon running out does, as Destroyed (E3).
+        const std::size_t keep = actor_template->summon_max_per_owner - 1u;
+        for (std::size_t old = 0; old + keep < others.size(); ++old) {
+            (void)Kernel_ServerDestroyEntity(kernel_, others[old], KernelDespawnReason_Destroyed);
+        }
+    }
+}
+
 void AgentRuntimeManager::update_guard_homes() {
     for (AgentRuntimeState& agent : agents_) {
         if (agent.controller_role != AgentControllerRole::kGuard || agent.patrol.has_slot ||
@@ -1072,6 +1188,17 @@ BehaviorSwitchResult AgentRuntimeManager::check_behavior(
         !lockable(agent, spec.target_net_id)) {
         return BehaviorSwitchResult::kInvalidData;
     }
+    if (result == BehaviorSwitchResult::kAccepted &&
+        spec.role == AgentControllerRole::kFollow) {
+        // Only a living player is followed.
+        KernelServerEntityState owner{};
+        owner.struct_size = sizeof(owner);
+        if (!Kernel_ServerGetEntityState(kernel_, spec.owner_net_id, &owner) ||
+            owner.valid == 0u || owner.actor_type != kActorTypePlayer || owner.hp == 0u ||
+            (owner.visual_flags & KERNEL_VISUAL_FLAG_DEAD) != 0u) {
+            return BehaviorSwitchResult::kInvalidData;
+        }
+    }
     return result;
 }
 
@@ -1123,6 +1250,9 @@ void AgentRuntimeManager::apply_behavior(
         if (actor_template != nullptr) {
             agent.hunter = actor_template->hunter;
         }
+    }
+    if (spec.role == AgentControllerRole::kFollow) {
+        agent.follow_owner = spec.owner_net_id;
     }
     if (spec.role == AgentControllerRole::kLockTarget) {
         const ActorTemplateConfig* actor_template =
@@ -1362,6 +1492,7 @@ void AgentRuntimeManager::tick(float delta_seconds) {
     update_hunters(actors);
     update_lock_targets(actors);
     update_guard_homes();
+    update_follows(actors);
     update_squad_returns();
     // Still on the post-director snapshot: nothing between it and here creates,
     // destroys or moves an entity, so it is what a per-agent query would return.
@@ -1479,6 +1610,7 @@ bool AgentRuntimeManager::preload_directors() {
 }
 
 void AgentRuntimeManager::sync_agents_from_kernel(const ActorStateView& actors) {
+    std::vector<std::uint32_t> discovered_summons;
     std::vector<AgentRuntimeState> next_agents;
     next_agents.reserve(actors.count);
     for (std::uint32_t index = 0; index < actors.count; ++index) {
@@ -1499,6 +1631,7 @@ void AgentRuntimeManager::sync_agents_from_kernel(const ActorStateView& actors) 
         agent.max_hp = state.max_hp;
         agent.animation_state = state.animation_state;
         agent.sentry.self_id = state.net_id;
+        agent.owner_peer = state.owner_peer;
         if (discovered_agent) {
             // An actor template is immutable, so this is resolved once rather
             // than every tick. state.actor_template_id is what the entity was
@@ -1526,11 +1659,16 @@ void AgentRuntimeManager::sync_agents_from_kernel(const ActorStateView& actors) 
                                 return skill.type == AgentSkillType::kItem;
                             });
             apply_weapon_mechanics(state.net_id, state.actor_template_id);
+            if (actor_template != nullptr && actor_template->summon_max_per_owner != 0u &&
+                state.owner_peer != 0u) {
+                discovered_summons.push_back(state.net_id);
+            }
         }
         next_agents.push_back(agent);
     }
     agents_ = std::move(next_agents);
     agent_index_.rebuild(agents_);
+    retire_extra_summons(discovered_summons);
 }
 
 bool AgentRuntimeManager::apply_weapon_mechanics(

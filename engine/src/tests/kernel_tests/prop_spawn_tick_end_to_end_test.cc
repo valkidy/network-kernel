@@ -126,7 +126,10 @@ int main() {
         glm::vec3{2.0f, 0.0f, 0.0f});
     server.world_.registry().emplace_or_replace<ne::PropLifecycle>(
         *server.world_.find_entity(prop),
-        ne::PropLifecycle{spawn_tick, 5400u, 0u});
+        ne::PropLifecycle{spawn_tick, 0u});
+    server.world_.registry().emplace_or_replace<ne::EntityLifetime>(
+        *server.world_.find_entity(prop),
+        ne::EntityLifetime{5400u});
     for (int index = 0; index < 4; ++index) {
         pump();
     }

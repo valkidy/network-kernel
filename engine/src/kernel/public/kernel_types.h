@@ -1299,10 +1299,14 @@ typedef struct KernelActionDefinition {
     uint32_t damage_stagger_authored;
     float damage_stagger;
     /*
-     * spawn_projectile only; zero on every other action.
+     * spawn_projectile only; zero on every other action -- except
+     * spawn_lifetime_ticks, which a spawn_entity may set too (additive within
+     * ABI 109, docs/SUMMON_FOLLOW_PLAN.md E3).
      *
      * spawn_lifetime_ticks replaces the spawned template's lifetime; zero
-     * keeps it. repeat_count_max zero is a single spawn. Otherwise the action
+     * keeps it. What a spawn_entity spawns expires at the end of it: an actor
+     * despawns as KernelDespawnReason_Destroyed, a prop as
+     * KernelDespawnReason_Expired. repeat_count_max zero is a single spawn. Otherwise the action
      * spawns a count picked in [repeat_count_min, repeat_count_max], at most
      * KERNEL_MAX_ACTION_REPEAT: each lands within repeat_scatter_radius of the
      * event position, uniformly over the disc, and each lives an extra

@@ -60,6 +60,10 @@ loadout:
       quantity: 1
     - item_template: fungible_hover_potion
       quantity: 3
+    # One: a player has one summoned giant at a time, and a second throw sends
+    # the first away (docs/SUMMON_FOLLOW_PLAN.md Q5).
+    - item_template: fungible_summon_giant_bottle
+      quantity: 1
   weapons:
     - stateful_weapon_rifle
     - stateful_weapon_shotgun

@@ -134,7 +134,9 @@ int main() {
     const gs::ActorTemplateConfig* allied = gs::find_actor_template(config, allied_id);
     require(allied != nullptr);
     require(allied->vision.camp == KernelAgentCamp_PlayerSide);
-    require(allied->default_controller_role == gs::AgentControllerRole::kGuard);
+    // It follows its summoner (docs/SUMMON_FOLLOW_PLAN.md §6); this test puts
+    // it down directly, nobody's, so it has nobody to follow and is a guard.
+    require(allied->default_controller_role == gs::AgentControllerRole::kFollow);
 
     KernelConfig kernel_config{};
     kernel_config.mode = KernelMode_DedicatedServer;
@@ -171,6 +173,8 @@ int main() {
     // catches up to four. The player is in that sweep's reach; only the mask
     // keeps it whole.
     const std::uint32_t giant = create(kernel, allied_id, {0.0f, 0.0f, 0.0f});
+    run(2);
+    require(agent_of(manager, giant).controller_role == gs::AgentControllerRole::kGuard);
     const std::uint32_t player = create_player(kernel, config, {3.0f, 0.5f, 0.0f});
     const std::uint32_t enemy = create(kernel, gingerbread_id, {10.0f, 0.0f, 0.0f});
     const auto alive = [&](std::uint32_t net_id) {
