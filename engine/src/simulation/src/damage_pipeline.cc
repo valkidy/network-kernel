@@ -185,11 +185,14 @@ std::vector<ConfirmedDamage> DamagePipeline::drain_ready_damage(
 
         const NetworkIdentity& target_identity =
             world.registry().get<NetworkIdentity>(*target_entity);
-        const bool delay_for_defense =
-            request.source_peer == 0 && is_player_entity(world, *target_entity);
+        const bool target_is_player = is_player_entity(world, *target_entity);
+        const bool delay_for_defense = request.source_peer == 0 && target_is_player;
+        // Only a player dodges or parries. Anything else that carries a peer --
+        // an ally a player summoned, which inherits the summoner's -- would
+        // otherwise share that player's defence windows, matched by peer below.
         PendingDamage pending{
             request.target_net_id,
-            target_identity.owner_peer,
+            target_is_player ? target_identity.owner_peer : 0u,
             request.source_net_id,
             request.source_peer,
             request.source_code,

@@ -51,7 +51,8 @@ public:
         NetId net_id,
         std::uint32_t reason) const;
 
-    void update_prop_lifetimes(KernelEngine& engine) const;
+    // Counts down every EntityLifetime and despawns what reaches zero.
+    void update_entity_lifetimes(KernelEngine& engine) const;
 
     // Everything that has fallen below the kill floor. A
     // living actor's health is zeroed and its death appended to

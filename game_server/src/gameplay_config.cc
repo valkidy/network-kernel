@@ -2303,13 +2303,14 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 "ui_id is only supported on open_ui: " + path);
         }
         if ((action["lifetime_ticks"] &&
-             compiled_action.action_type != "spawn_projectile") ||
+             compiled_action.action_type != "spawn_projectile" &&
+             compiled_action.action_type != "spawn_entity") ||
             (action["repeat"] &&
              compiled_action.action_type != "spawn_projectile" &&
              compiled_action.action_type != "lock_strike")) {
             throw std::runtime_error(
                 "repeat is only supported on spawn_projectile and lock_strike, "
-                "lifetime_ticks only on spawn_projectile: " + path);
+                "lifetime_ticks only on spawn_projectile and spawn_entity: " + path);
         }
         if (action["when"]) {
             const std::string condition = action["when"].as<std::string>();
@@ -2442,6 +2443,20 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
             }
             compiled_action.owner_parameter =
                 parameter_reference_from_yaml(action["owner"], "owner");
+            // How long what it spawns lasts, literal or params.<name>; the
+            // spawned template's own lifetime, if any, otherwise
+            // (docs/SUMMON_FOLLOW_PLAN.md E3).
+            compiled_action.spawn_lifetime_ticks_parameter =
+                optional_parameter_reference(action["lifetime_ticks"]);
+            if (action["lifetime_ticks"] &&
+                compiled_action.spawn_lifetime_ticks_parameter.empty()) {
+                compiled_action.spawn_lifetime_ticks =
+                    action["lifetime_ticks"].as<std::uint32_t>();
+                if (compiled_action.spawn_lifetime_ticks == 0u) {
+                    throw std::runtime_error(
+                        "spawn_entity lifetime_ticks must be at least 1: " + path);
+                }
+            }
             compiled_action.spawn_placement_parameter =
                 optional_parameter_reference(action["placement"]);
             if (action["placement"] &&
@@ -9157,6 +9172,15 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
                     KernelEventVec3Source_Direction;
             }
             compiled_action.owner_source = entity_ref_source(owner);
+            compiled_action.spawn_lifetime_ticks = action.spawn_lifetime_ticks;
+            if (!action.spawn_lifetime_ticks_parameter.empty()) {
+                compiled_action.spawn_lifetime_ticks = bound_uint32(
+                    binding, *graph, action.spawn_lifetime_ticks_parameter);
+                if (compiled_action.spawn_lifetime_ticks == 0u) {
+                    throw std::runtime_error(
+                        "spawn_entity lifetime_ticks must be at least 1: " + graph->id);
+                }
+            }
             compiled_action.spawn_placement = action.spawn_placement;
             if (!action.spawn_placement_parameter.empty()) {
                 const std::string placement = trigger_parameter_value(

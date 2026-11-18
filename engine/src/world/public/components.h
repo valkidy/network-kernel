@@ -716,9 +716,20 @@ struct ThrownPropMotion {
     NetId thrower_net_id = 0;
 };
 
+// Ticks left before an entity expires (docs/SUMMON_FOLLOW_PLAN.md E3): a
+// prop whose template has a lifetime, or anything a spawn_entity gave one. On
+// the last tick an actor despawns as Destroyed -- the client reads it as a
+// kill, as for an enemy -- and a prop as Expired, which the client does not
+// read as broken.
+struct EntityLifetime {
+    std::uint32_t remaining_ticks = 0;
+};
+
+// What a prop is to its population group, and when it appeared. Its presence
+// is also what sends a spawn tick to the client (render state, spawn packet),
+// so it is a prop's alone.
 struct PropLifecycle {
     std::uint32_t spawn_tick = 0;
-    std::uint32_t remaining_lifetime_ticks = 0;
     std::uint32_t population_group_id = 0;
     // KernelPropDefinition::importance: lower goes first when the group is
     // over its cap.
@@ -1068,6 +1079,8 @@ struct ActionSpawnEntityDefinition {
     // KERNEL_SPAWN_PLACEMENT_*, a plain integer like ActionApplyPullDefinition
     // ::mode; EXACT is zero.
     std::uint32_t placement = 0;
+    // How long what it spawns lasts; zero keeps the spawned template's own.
+    std::uint32_t lifetime_ticks = 0;
 };
 
 using ActionGraphAction = std::variant<

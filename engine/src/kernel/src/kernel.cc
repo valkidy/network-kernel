@@ -14855,7 +14855,7 @@ void KernelEngine::simulate_tick() {
     }
     std::sort(actors_before_tick.begin(), actors_before_tick.end());
     world_.collider_registry().expire_tick_lifetimes();
-    EntityLifecycleSystem{}.update_prop_lifetimes(*this);
+    EntityLifecycleSystem{}.update_entity_lifetimes(*this);
     const std::size_t queue_depth = command_queue_.size();
     const std::size_t processed_command_count = drain_simulation_commands();
     sync_weapon_loadouts();
