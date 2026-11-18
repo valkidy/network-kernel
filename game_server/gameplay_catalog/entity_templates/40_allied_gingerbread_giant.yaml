@@ -35,11 +35,19 @@ vision:
   # 35 m and 140 degrees, not the grunts' 12 m and 90: see the cone's own file.
   collider_template: gingerbread_giant_vision_cone
 ai:
-  # A guard (AI behavior plan B8); a spawn source that gives it a route makes
-  # it a patrol, which walks the route. Either way it
-  # fights whatever it sees with an arm sweep. Without a route it stands and
-  # looks around. Melee, so it closes to 5 m and holds there.
-  default_behavior: guard
+  # Follows the player who summoned it -- the one whose peer it carries --
+  # and fights whatever it sees on the way with an arm sweep
+  # (docs/SUMMON_FOLLOW_PLAN.md §6). One nobody summoned has nobody to follow
+  # and is a guard. Melee, so it closes to 5 m and holds there.
+  default_behavior: follow
+  # One per player: a second summon sends the first away (Q5).
+  summon:
+    max_per_owner: 1
+  behaviors:
+    # Stops 6 m from its owner, sets off again past 10 m, and breaks off a
+    # chase 25 m from them (Q2). Its body is 16 m wide; nearer would crowd
+    # them.
+    follow: {stop_meters: 6.0, resume_meters: 10.0, leash_meters: 25.0, repath_ticks: 30}
   profile: monster_sim
   perception:
     alert_ticks: 90

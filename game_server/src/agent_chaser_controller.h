@@ -191,6 +191,19 @@ struct AgentLeashTuning {
     float leash_resume_meters = 0.0f;
 };
 
+// `behaviors.follow` (docs/SUMMON_FOLLOW_PLAN.md §6): holds still within
+// stop_meters of its owner and sets off again past resume_meters. Its leash
+// is measured from the owner, not from where a chase began: dragged
+// leash_meters from them it breaks off and walks back to within
+// resume_meters.
+struct AgentFollowTuning {
+    float stop_meters = 6.0f;
+    float resume_meters = 10.0f;
+    AgentLeashTuning leash{25.0f, 10.0f};
+    // How often it re-paths to where its owner has got to while walking.
+    std::uint32_t repath_ticks = 30;
+};
+
 struct AgentChaserConfig {
     // Detection, alert timing, forgetting, and firing are the sentry's.
     AgentSentryConfig sentry;
@@ -200,6 +213,7 @@ struct AgentChaserConfig {
     // switches to (docs/AI_BEHAVIOR_PLAN.md). A hunter is leashed as a guard.
     AgentLeashTuning guard;
     AgentLeashTuning patrol;
+    AgentFollowTuning follow;
     // Its weapon skills, in authored order. Left empty, the controller makes
     // one from sentry.weapon_id reaching chase.attack_range_meters -- what a
     // config built in code (the tests) means.

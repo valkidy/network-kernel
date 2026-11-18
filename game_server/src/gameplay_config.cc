@@ -498,6 +498,12 @@ void hash_actor_template(
     hash_scalar(hash, actor_template.lock_target.repath_ticks);
     hash_scalar(hash, static_cast<std::uint32_t>(actor_template.lock_target.target_relations));
     hash_scalar(hash, actor_template.remote_command_min_switch_interval_ticks);
+    hash_float(hash, actor_template.follow.stop_meters);
+    hash_float(hash, actor_template.follow.resume_meters);
+    hash_float(hash, actor_template.follow.leash.leash_meters);
+    hash_float(hash, actor_template.follow.leash.leash_resume_meters);
+    hash_scalar(hash, actor_template.follow.repath_ticks);
+    hash_scalar(hash, actor_template.summon_max_per_owner);
     hash_float(hash, actor_template.guard.leash_meters);
     hash_float(hash, actor_template.guard.leash_resume_meters);
     hash_float(hash, actor_template.patrol.leash_meters);
@@ -3867,6 +3873,10 @@ AgentControllerSpec controller_spec_from_yaml(
             throw std::runtime_error(
                 where + " behavior.type lock_target: a spawn source has no target "
                 "to give it; set_behavior makes one");
+        } else if (type == "follow") {
+            throw std::runtime_error(
+                where + " behavior.type follow: a spawn source has no owner to give "
+                "it; a template defaults to it, and follows its summoner");
         } else if (type == "garrison") {
             throw std::runtime_error(
                 where + " behavior.type garrison was renamed (AI behavior plan B8): "
@@ -4139,7 +4149,22 @@ void ai_role_from_yaml(
             "behaviors",
             "skills",
             "remote_command",
+            "summon",
         });
+        if (const YAML::Node summon = ai["summon"]) {
+            // A summon is a player's (docs/SUMMON_FOLLOW_PLAN.md Q5).
+            if (actor_template->vision.camp != KernelAgentCamp_PlayerSide) {
+                fail("summon is only for a player_side template");
+            }
+            reject(summon, {"max_per_owner"});
+            if (!summon["max_per_owner"]) {
+                fail("summon requires max_per_owner");
+            }
+            actor_template->summon_max_per_owner = summon["max_per_owner"].as<std::uint32_t>();
+            if (actor_template->summon_max_per_owner == 0u) {
+                fail("summon max_per_owner must be at least 1");
+            }
+        }
         if (const YAML::Node remote = ai["remote_command"]) {
             // Only what a player can command takes commands (B13).
             if (actor_template->vision.camp != KernelAgentCamp_PlayerSide) {
@@ -4169,6 +4194,12 @@ void ai_role_from_yaml(
         } else if (behavior == "lock_target") {
             fail("default_behavior lock_target: a template has no target; "
                  "set_behavior makes one");
+        } else if (behavior == "follow") {
+            // It follows the player whose peer it carries -- its summoner's.
+            if (actor_template->vision.camp != KernelAgentCamp_PlayerSide) {
+                fail("default_behavior follow is only for a player_side template");
+            }
+            actor_template->default_controller_role = AgentControllerRole::kFollow;
         } else if (behavior == "garrison") {
             fail("default_behavior garrison was renamed (AI behavior plan B8): guard");
         } else {
@@ -4201,7 +4232,31 @@ void ai_role_from_yaml(
             if (sentry) {
                 fail("sentry takes no behaviors block");
             }
-            reject(behaviors, {"squad", "guard", "patrol", "hunter", "lock_target"});
+            reject(behaviors, {"squad", "guard", "patrol", "hunter", "lock_target", "follow"});
+            if (const YAML::Node follow = behaviors["follow"]) {
+                reject(follow, {"stop_meters", "resume_meters", "leash_meters", "repath_ticks"});
+                AgentFollowTuning& tuning = actor_template->follow;
+                if (follow["stop_meters"]) tuning.stop_meters = follow["stop_meters"].as<float>();
+                if (follow["resume_meters"]) {
+                    tuning.resume_meters = follow["resume_meters"].as<float>();
+                }
+                if (follow["leash_meters"]) {
+                    tuning.leash.leash_meters = follow["leash_meters"].as<float>();
+                }
+                if (follow["repath_ticks"]) {
+                    tuning.repath_ticks = follow["repath_ticks"].as<std::uint32_t>();
+                }
+                // It walks back from the leash to where it would set off again.
+                tuning.leash.leash_resume_meters = tuning.resume_meters;
+                if (!std::isfinite(tuning.stop_meters) || !std::isfinite(tuning.resume_meters) ||
+                    !std::isfinite(tuning.leash.leash_meters) || tuning.stop_meters <= 0.0f ||
+                    tuning.resume_meters <= tuning.stop_meters ||
+                    tuning.leash.leash_meters <= tuning.resume_meters ||
+                    tuning.repath_ticks == 0u) {
+                    fail("behaviors.follow needs 0 < stop_meters < resume_meters < "
+                         "leash_meters and repath_ticks of at least 1");
+                }
+            }
             if (const YAML::Node lock = behaviors["lock_target"]) {
                 reject(lock, {"on_target_lost", "give_up_ticks", "repath_ticks",
                               "target_relations"});

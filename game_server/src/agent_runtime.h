@@ -126,6 +126,10 @@ enum class AgentControllerRole : std::uint8_t {
     // is gone or it gives up (docs/AI_BEHAVIOR_PLAN.md §5.1). Only
     // set_behavior makes one: nothing authored knows a target's net id.
     kLockTarget,
+    // Follows its owner -- the player whose peer it carries, or one
+    // set_behavior names -- and fights what it meets on the way
+    // (docs/SUMMON_FOLLOW_PLAN.md §6). With no owner it is a guard.
+    kFollow,
 };
 
 // Who a hunter goes after (D10).
@@ -192,10 +196,13 @@ struct AgentControllerSpec {
     // takes where it first goes idle (B4).
     bool has_anchor = false;
     KernelVec3 anchor{0.0f, 0.0f, 0.0f};
+    // kFollow only, and required there when set_behavior makes one: whom to
+    // follow. A template's default follow takes the player its peer is.
+    std::uint32_t owner_net_id = 0;
 
     bool empty() const {
         return role == AgentControllerRole::kNone && route.empty() && !has_hunter &&
-            target_net_id == 0u && !has_anchor;
+            target_net_id == 0u && !has_anchor && owner_net_id == 0u;
     }
 
 };
@@ -389,6 +396,18 @@ struct AgentRuntimeState {
     // idle, which then sets it to where it stands.
     bool has_guard_anchor = false;
     KernelVec3 guard_anchor{0.0f, 0.0f, 0.0f};
+    // The peer the kernel says it belongs to: its summoner's, for a summon
+    // (docs/SUMMON_FOLLOW_PLAN.md E1); zero for the server's own agents.
+    std::uint32_t owner_peer = 0;
+    // Follow only (§6): who it follows, read each tick off the actor
+    // snapshot; whether it is holding still near them; and when it next
+    // re-paths to where they have got to (it walks seek_path).
+    std::uint32_t follow_owner = 0;
+    bool follow_owner_alive = false;
+    KernelVec3 follow_owner_position{0.0f, 0.0f, 0.0f};
+    bool follow_holding = false;
+    std::uint32_t follow_repath_in = 0;
+    KernelVec3 follow_path_goal{0.0f, 0.0f, 0.0f};
     // Lock_target only: its tuning, who it is after, and how long it has gone
     // without seeing them.
     AgentLockTargetTuning lock_tuning{};

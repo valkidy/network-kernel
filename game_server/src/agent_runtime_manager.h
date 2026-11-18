@@ -126,6 +126,13 @@ private:
     // Paths every idle guard away from its post back to it, once per time it
     // goes idle there; the path is dropped whenever it is doing anything else.
     void update_guard_homes();
+    // Finds every follower's owner, keeps its leash anchored on them and paths
+    // it towards them; one whose owner is gone, or never was, turns guard
+    // (docs/SUMMON_FOLLOW_PLAN.md §6, Q3).
+    void update_follows(const ActorStateView& actors);
+    // The oldest of a player's summons past its template's max_per_owner, for
+    // each summon `discovered` this tick: they go as Destroyed (Q5).
+    void retire_extra_summons(const std::vector<std::uint32_t>& discovered);
     // Finds a way back for every squad member away from its slot whose straight
     // line there is cut, and gives up a Return that is going nowhere.
     void update_squad_returns();
