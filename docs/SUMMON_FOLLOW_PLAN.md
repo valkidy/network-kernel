@@ -54,7 +54,21 @@
   **所有**傷害上（`damage_pipeline.cc:66、213、219、314、326`）。召喚的巨人帶了玩家的 peer 後，會共享玩家的
   閃避與格擋窗口。改為只有玩家 entity 才帶 `target_peer`（其他為 0）。
 
-兩者都不改 ABI、snapshot 或 packet schema。
+- **E3 actor 也能有存在時間（選項 B，2026-11-18 決定）**：
+  - 從 `PropLifecycle` 抽出通用的 `EntityLifetime { remaining_ticks }`，任何 entity 都能掛；
+    `update_prop_lifetimes` 改為掃描它，到期一樣以 `KernelDespawnReason_Expired` 銷毀（`destroy_entity_with_context`
+    本來就能處理 actor）。
+  - `PropLifecycle` 保留 `spawn_tick`、population group、importance、`cleanup_runs_on_destroy`，維持 prop
+    專用：render state 與網路 spawn 封包都用「有沒有 `PropLifecycle`」決定要不要帶 spawn tick
+    （`render_state_builder.cc:78`、`kernel.cc:16135`），actor 掛上它會改變 client 看到的內容。
+  - `spawn_entity` 允許寫 `lifetime_ticks`：沿用已存在的 `KernelActionDefinition.spawn_lifetime_ticks`
+    （目前只給 spawn_projectile，`gameplay_config.cc:2305` 會拒絕其他動作），**不改 struct layout**，C# mirror
+    不用動；`kernel_types.h` 的「spawn_projectile only」說明要一起改。spawn 出來的 entity 在 lifetime 大於 0
+    時掛上 `EntityLifetime`。
+  - 時間上限因此寫在召喚瓶的 graph 參數裡（只有被召喚的那隻會到期），不放在巨人的 template。
+  - 待決：spawn 的 `lifetime_ticks` 是否也覆寫 prop template 的 `lifetime_ticks`（例如冰塊的存在時間依來源不同）。
+
+三者都不改 ABI、snapshot 或 packet schema。
 
 ### 4.2 agent 帶玩家 `owner_peer` 的影響（逐一確認過）
 
@@ -102,12 +116,20 @@ ai:
     follow: {stop_meters: 6.0, resume_meters: 10.0, leash_meters: 25.0, repath_ticks: 30}
   summon:                         # 只有 player_side template 能寫
     max_per_owner: 1              # 已有一隻時，新召喚的取代舊的（舊的 despawn）
-    lifetime_ticks: 3600          # 120 s @ 30 Hz，到時 despawn
 ```
 
-- **召喚上限與存在時間**（Q5）：每個玩家同時最多 1 隻；再召喚時新的生出來、舊的 despawn。存在時間
-  120 s（3600 ticks @ 30 Hz）。kernel 的 lifetime 只支援 prop 和 projectile，所以由 game_server 用自己的
-  tick 計數，到時呼叫 `Kernel_ServerDestroyEntity`。「主人」依 `owner_peer` 對應的玩家計算。
+召喚瓶 prop 的 graph 參數（E3）：
+
+```yaml
+    parameters:
+      template: allied_gingerbread_giant
+      owner: self
+      lifetime_ticks: 3600        # 120 s @ 30 Hz；kernel 到期以 Expired 銷毀
+```
+
+- **召喚上限與存在時間**（Q5）：每個玩家同時最多 1 隻；再召喚時新的生出來、舊的由 game_server 以
+  `Kernel_ServerDestroyEntity(..., KernelDespawnReason_Expired)` 移除（「主人」依 `owner_peer` 對應的玩家計算，
+  所以這部分仍在 game_server）。存在時間 120 s（3600 ticks @ 30 Hz）由 kernel 的 `EntityLifetime` 管理（E3）。
 
 - **速度**：巨人 2.5 m/s、轉向 45°/s，玩家 5 m/s，一定會落後；**接受落後**，不加速也不傳送（Q4）。
 - 舊對話中寵物的「繞圈」「特殊 Idle 動畫」巨人用不到；以後需要時可加在 `behaviors.follow`。
@@ -118,7 +140,7 @@ ai:
 
 | 階段 | 內容 | ABI / schema | 驗證 |
 |---|---|---|---|
-| F1 | E1、E2 | 不變 | kernel 測試：丟瓶子生出的 entity 帶丟的人的 peer（依 Q1 的範圍）；玩家閃避時召喚物照樣受傷；3005 的敵人依 Q1 的決定 |
+| F1 | E1、E2、E3 | 不變 | kernel 測試：丟瓶子生出的 entity 帶丟的人的 peer（依 Q1 的範圍）；玩家閃避時召喚物照樣受傷；3005 的敵人依 Q1 的決定 |
 | F2 | 召喚道具（catalog） | 不變；**catalog 新增 template，`bundle.bytes` 要更新** | 丟道具 → 落地 → 生出友軍巨人、帶丟的人的 peer；template 不合法時的整批放棄 |
 | F3 | `FollowBehavior`、召喚上限與存在時間 | 不變；**`behaviors.follow`、`summon` 是新的 catalog key**：Unity package 要重建（見 memory：catalog format change needs package） | 跟隨（停 / 走的雙門檻、跟著主人轉彎）、跟隨中接戰、leash 拉回、主人死亡守著 / 復活續跟、斷線轉 guard、第二次召喚取代第一隻、3600 ticks 後 despawn、legged 巨人不吃到玩家的 input |
 | F4 | Unity 端（道具 / prop / 巨人的 view、`behaviors.follow` 與 `summon` 的 package 重建），使用者處理 | — | — |
@@ -146,6 +168,22 @@ ai:
 | Q2 | 跟隨距離 | stop 6 m / resume 10 m / leash 25 m（`behaviors.follow`，可調） |
 | Q3 | 主人死亡或斷線 | 死亡：原地守著，復活後繼續跟；斷線：永久轉 guard |
 | Q4 | 巨人跟不上 | 接受落後 |
-| Q5 | 召喚限制 | 每個玩家最多 1 隻，新的取代舊的；道具丟出即消耗；存在時間 120 s（3600 ticks） |
+| Q5 | 召喚限制 | 每個玩家最多 1 隻，新的取代舊的；道具丟出即消耗；存在時間 120 s（3600 ticks），由 kernel 管理（E3，選項 B） |
 | Q6 | 重連 | 不認回，視同斷線 |
 | Q7 | remote command 的 Follow | 不做；F4 只剩 Unity 端 |
+
+---
+
+## 10. client 的表現（Unity main c3c789e，2026-11-18 確認）
+
+- **agent 目前沒有死亡動畫**，敵我都一樣：agent 的 `death_policy` 是 Default，hp 歸零的那個 tick 就以
+  `Destroyed` despawn（只有玩家 `dormant` 留在世界上），client 看不到 dead flag。
+- `NetworkRenderStateApplier`：actor 以 `Destroyed` 消失時視為被殺（`IsKill`），在最後位置留下 splat 血跡，
+  模型立刻移除；以 `Expired` 消失時不算被殺，**直接移除，連 splat 都沒有**。prop 才有 collapse 的消失效果。
+- `NetworkActorView` 的死亡表現看的是 dead flag（`IsDead`），只有 dormant 的玩家會用到。
+- 「到期不跑 `on_destroy_entity`」是 server 端的 graph，與 client 的表現無關。
+- **若要巨人有死亡 / 解散的表現**（Unity 端，使用者處理）：
+  - client：actor 以 `Destroyed` 消失時，複製模型播死亡動畫或淡出（同 prop 的 collapse 做法）；以 `Expired`
+    消失時播另一種「解散」表現。不需要 kernel 改動。
+  - kernel：新增會停留 N ticks 的 death policy，讓 client 看得到 dead flag 再 despawn。要加 enum 值，影響所有
+    agent 的死亡流程，不建議只為了巨人做。
