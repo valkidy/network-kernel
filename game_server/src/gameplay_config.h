@@ -373,6 +373,12 @@ struct ActorTemplateConfig {
     // ai.remote_command.min_switch_interval_ticks (B11): how soon after one
     // agent command changed its behavior another may. Player-side only.
     std::uint32_t remote_command_min_switch_interval_ticks = 10;
+    // behaviors.follow (docs/SUMMON_FOLLOW_PLAN.md §6).
+    AgentFollowTuning follow{};
+    // ai.summon.max_per_owner (Q5): how many of a player's summons may be
+    // alive at once; one more and the oldest goes. Zero is no limit and not
+    // a summon. Player-side only.
+    std::uint32_t summon_max_per_owner = 0;
     // ai.skills, as authored. Resolved into the weapon, attack range, leap and
     // charge above once every sp_attack template is known.
     std::vector<AgentSkillConfig> skills;

@@ -131,6 +131,27 @@ void a_dodge_at_the_arrival_cancels_the_hit() {
     }
 }
 
+// Only a player dodges. An ally that carries the player's peer -- one the
+// player summoned (docs/SUMMON_FOLLOW_PLAN.md E2) -- takes the hit while the
+// player dodges it; the player, dodging the same instant, does not.
+void a_players_dodge_covers_only_the_player() {
+    ne::World world;
+    const ne::NetId player = spawn_player(world);
+    const ne::NetId summoned = spawn_enemy(world);
+    world.registry().get<ne::NetworkIdentity>(*world.find_entity(summoned)).owner_peer =
+        kTargetPeer;
+    ne::DamagePipeline pipeline;
+    require(pipeline.submit_damage_request(missile(player, 20)));
+    require(pipeline.submit_damage_request(missile(summoned, 20)));
+    KernelPlayerInput dodge{};
+    dodge.buttons = InputButton_Dodge;
+    const std::uint64_t pressed = 20 * kTickUs - 50000u;
+    pipeline.ingest_defensive_input(kTargetPeer, dodge, pressed, pressed, true);
+    confirm_at(world, pipeline, 20);
+    require(hp(world, player) == 100);
+    require(hp(world, summoned) == 70);
+}
+
 void a_cancelled_hit_never_lands() {
     ne::World world;
     const ne::NetId target = spawn_enemy(world);
@@ -172,6 +193,7 @@ int main() {
     a_scheduled_hit_lands_on_its_tick_and_not_before();
     a_scheduled_hit_takes_no_defensive_grace();
     a_dodge_at_the_arrival_cancels_the_hit();
+    a_players_dodge_covers_only_the_player();
     a_cancelled_hit_never_lands();
     a_hit_on_a_dead_target_lands_nothing();
     std::puts("scheduled_damage_test passed");

@@ -49,14 +49,18 @@ inline bool damage_stagger_is_authorable(const KernelActionDefinition& action) {
         action.damage_stagger_authored, action.damage_stagger);
 }
 
-// A spawn_projectile action's lifetime override and repeat, or their absence
-// on any other action. Without a repeat there is nothing to scatter or
-// stagger, so those must be zero too rather than quietly ignored.
+// A spawn_projectile action's lifetime override and repeat, a spawn_entity's
+// lifetime, or their absence on any other action. Without a repeat there is
+// nothing to scatter or stagger, so those must be zero too rather than
+// quietly ignored.
 inline bool spawn_repeat_is_authorable(const KernelActionDefinition& action) {
     const bool repeat_absent = action.repeat_count_max == 0u &&
         action.repeat_count_min == 0u &&
         action.repeat_scatter_radius == 0.0f &&
         action.repeat_stagger_lifetime_ticks == 0u;
+    if (action.action_type == KernelEntityTriggerActionType_SpawnEntity) {
+        return repeat_absent;
+    }
     if (action.action_type != KernelEntityTriggerActionType_SpawnProjectile) {
         return repeat_absent && action.spawn_lifetime_ticks == 0u;
     }
@@ -318,6 +322,8 @@ struct ActionSpawnEntityCommand {
     ActionExecutionProvenance provenance;
     // KERNEL_SPAWN_PLACEMENT_*.
     std::uint32_t placement = 0;
+    // Zero keeps the spawned template's own lifetime.
+    std::uint32_t lifetime_ticks = 0;
 };
 
 // The destination is resolved when the command commits, from where the

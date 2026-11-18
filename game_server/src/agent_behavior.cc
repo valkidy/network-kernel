@@ -239,7 +239,8 @@ protected:
 class GuardBehavior : public LeashedBehavior {
 public:
     BehaviorSwitchResult validate(const AgentControllerSpec& spec) const override {
-        if (!spec.route.empty() || spec.has_hunter || spec.target_net_id != 0u) {
+        if (!spec.route.empty() || spec.has_hunter || spec.target_net_id != 0u ||
+            spec.owner_net_id != 0u) {
             return BehaviorSwitchResult::kInvalidData;
         }
         if (spec.has_anchor &&
@@ -300,7 +301,7 @@ class PatrolBehavior final : public LeashedBehavior {
 public:
     BehaviorSwitchResult validate(const AgentControllerSpec& spec) const override {
         if (spec.route.size() < 2u || spec.has_hunter || spec.target_net_id != 0u ||
-            spec.has_anchor) {
+            spec.has_anchor || spec.owner_net_id != 0u) {
             return BehaviorSwitchResult::kInvalidData;
         }
         for (const KernelVec3& point : spec.route) {
@@ -339,7 +340,8 @@ protected:
 class HunterBehavior final : public GuardBehavior {
 public:
     BehaviorSwitchResult validate(const AgentControllerSpec& spec) const override {
-        return spec.route.empty() && spec.target_net_id == 0u && !spec.has_anchor
+        return spec.route.empty() && spec.target_net_id == 0u && !spec.has_anchor &&
+                spec.owner_net_id == 0u
             ? BehaviorSwitchResult::kAccepted
             : BehaviorSwitchResult::kInvalidData;
     }
@@ -378,7 +380,7 @@ public:
         // Whether the target exists, lives and may be locked is the runtime's
         // to check: it is the one that can see the world.
         return spec.target_net_id != 0u && spec.route.empty() && !spec.has_hunter &&
-                !spec.has_anchor
+                !spec.has_anchor && spec.owner_net_id == 0u
             ? BehaviorSwitchResult::kAccepted
             : BehaviorSwitchResult::kInvalidData;
     }
@@ -421,11 +423,83 @@ public:
     }
 };
 
+// Follows its owner (docs/SUMMON_FOLLOW_PLAN.md §6): holds still within
+// stop_meters of them, and past resume_meters walks back along the path the
+// runtime found to where they have got to. Seeing anything on the way engages
+// as from any Idle; the runtime keeps the leash anchored on the owner, so a
+// chase that drags it leash_meters from them is broken off and Return walks it
+// back to them. While its owner is dead it holds where it is.
+class FollowBehavior final : public LeashedBehavior {
+public:
+    BehaviorSwitchResult validate(const AgentControllerSpec& spec) const override {
+        // Whether the owner is a living player is the runtime's to check.
+        return spec.owner_net_id != 0u && spec.route.empty() && !spec.has_hunter &&
+                spec.target_net_id == 0u && !spec.has_anchor
+            ? BehaviorSwitchResult::kAccepted
+            : BehaviorSwitchResult::kInvalidData;
+    }
+
+    void enter(AgentRuntimeState& agent) const override {
+        agent.follow_holding = false;
+        agent.follow_repath_in = 0;
+        agent.seek_path.clear();
+        agent.seek_next = 0;
+    }
+
+    void exit(AgentRuntimeState& agent) const override {
+        agent.follow_owner = 0u;
+        agent.follow_owner_alive = false;
+        agent.follow_holding = false;
+        agent.seek_path.clear();
+        agent.seek_next = 0;
+    }
+
+    void on_idle(AgentRuntimeState& agent, AgentBehaviorStep& step) const override {
+        if (!agent.follow_owner_alive) {
+            look_around(agent, step);
+            return;
+        }
+        const AgentFollowTuning& follow = step.config.follow;
+        const float distance = agent_steering::horizontal_distance(
+            agent.position, agent.follow_owner_position);
+        // Two thresholds, or one parked on the boundary would set off and
+        // stop every tick.
+        if (agent.follow_holding) {
+            agent.follow_holding = distance <= follow.resume_meters;
+        } else {
+            agent.follow_holding = distance <= follow.stop_meters;
+        }
+        if (agent.follow_holding) {
+            look_around(agent, step);
+            return;
+        }
+        while (agent.seek_next < agent.seek_path.size() &&
+               agent_steering::horizontal_distance(
+                   agent.position, agent.seek_path[agent.seek_next]) <=
+                   kGuardAnchorArrivalMeters) {
+            ++agent.seek_next;
+        }
+        // Past the path's last corner: straight at the owner.
+        const KernelVec3& toward = agent.seek_next < agent.seek_path.size()
+            ? agent.seek_path[agent.seek_next]
+            : agent.follow_owner_position;
+        step.move = agent_steering::horizontal_move_toward(
+            agent.position, toward, step.config.chase.input_magnitude);
+        face_toward(agent, toward, step);
+    }
+
+protected:
+    const AgentLeashTuning& leash(const AgentChaserConfig& config) const override {
+        return config.follow.leash;
+    }
+};
+
 const SquadBehavior kSquad;
 const GuardBehavior kGuard;
 const PatrolBehavior kPatrol;
 const HunterBehavior kHunter;
 const LockTargetBehavior kLockTarget;
+const FollowBehavior kFollow;
 
 }  // namespace
 
@@ -441,6 +515,8 @@ const AgentBehavior* agent_behavior_for_role(AgentControllerRole role) {
             return &kHunter;
         case AgentControllerRole::kLockTarget:
             return &kLockTarget;
+        case AgentControllerRole::kFollow:
+            return &kFollow;
         case AgentControllerRole::kNone:
         case AgentControllerRole::kSentry:
             break;

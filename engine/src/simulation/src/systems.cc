@@ -228,6 +228,19 @@ const KernelEntityTemplateDefinition* find_entity_template(
     return found == templates.end() ? nullptr : &*found;
 }
 
+// Whether `entity_template_id` makes an actor on the player's side, by the
+// camp its template's vision carries (copied from its actor template).
+bool spawns_player_side_actor(
+    const std::vector<KernelEntityTemplateDefinition>& entity_templates,
+    std::uint32_t entity_template_id) {
+    const KernelEntityTemplateDefinition* entity_template =
+        find_entity_template(entity_templates, entity_template_id);
+    return entity_template != nullptr &&
+        entity_template->entity_type == KernelEntityType_Actor &&
+        entity_template->vision.struct_size >= sizeof(KernelAgentVisionConfig) &&
+        entity_template->vision.camp == KernelAgentCamp_PlayerSide;
+}
+
 std::optional<CompiledActionGraphBinding> compile_entity_trigger_binding(
     const KernelActionTriggerDefinition& trigger,
     TriggerEventType event_type) {
@@ -1713,6 +1726,16 @@ bool execute_action_graph_commands(
         create_info.entity_template_id = spawn.entity_template_id;
         create_info.owner_peer =
             world.registry().get<NetworkIdentity>(owner).owner_peer;
+        // A player-side actor spawned by something that is nobody's -- a
+        // bottle out of an inventory -- is whoever set the graph off: a
+        // thrown bottle's collision carries its thrower's peer
+        // (docs/SUMMON_FOLLOW_PLAN.md E1). Only a player-side actor: an enemy
+        // a bottle spawns stays nobody's, or its thrower could not lock onto
+        // it (lock-on skips what its own peer owns).
+        if (create_info.owner_peer == 0u && spawn.provenance.owner_peer != 0u &&
+            spawns_player_side_actor(entity_templates, spawn.entity_template_id)) {
+            create_info.owner_peer = spawn.provenance.owner_peer;
+        }
         create_info.position = to_kernel_vec3(spawn.position);
         create_info.rotation = yaw_rotation_from_direction(spawn.direction);
         NetId spawned_net_id = 0;
@@ -1723,6 +1746,14 @@ bool execute_action_graph_commands(
         // Placed by its own hit volume, so it is created first, where it was
         // asked for, and moved once that volume can be swept; nothing is
         // published in between.
+        // The spawn's own lifetime replaces the template's (E3).
+        if (spawn.lifetime_ticks != 0u) {
+            if (const std::optional<entt::entity> spawned =
+                    world.find_entity(spawned_net_id)) {
+                world.registry().emplace_or_replace<EntityLifetime>(
+                    *spawned, EntityLifetime{spawn.lifetime_ticks});
+            }
+        }
         if (spawn.placement == KERNEL_SPAWN_PLACEMENT_CLEAR) {
             if (const std::optional<glm::vec3> clear = find_clear_spawn_spot(
                     world,
@@ -2125,10 +2156,13 @@ bool EntityLifecycleSystem::create_entity(
                     *entity,
                     PropLifecycle{
                         engine.tick_loop_.current_tick(),
-                        entity_template->prop.lifetime_ticks,
                         entity_template->prop.population_group_id,
                         entity_template->prop.importance,
                     });
+            }
+            if (entity_template->prop.lifetime_ticks != 0u) {
+                registry.emplace_or_replace<EntityLifetime>(
+                    *entity, EntityLifetime{entity_template->prop.lifetime_ticks});
             }
         }
         if (type == EntityType::kActor && actor_type == ActorType::kPlayer) {
@@ -3040,36 +3074,53 @@ bool cleanup_runs_on_destroy(
 
 }  // namespace
 
-void EntityLifecycleSystem::update_prop_lifetimes(
+void EntityLifecycleSystem::update_entity_lifetimes(
     KernelEngine& engine) const {
-    std::vector<std::pair<NetId, std::uint32_t>> expired;
-    auto view = engine.world_.registry().view<NetworkIdentity, PropLifecycle>();
+    struct Expiry {
+        NetId net_id = 0;
+        bool actor = false;
+        std::uint32_t population_group_id = 0;
+        bool operator<(const Expiry& other) const { return net_id < other.net_id; }
+    };
+    std::vector<Expiry> expired;
+    entt::registry& registry = engine.world_.registry();
+    auto view = registry.view<NetworkIdentity, EntityLifetime>();
     for (const entt::entity entity : view) {
-        PropLifecycle& lifecycle = view.get<PropLifecycle>(entity);
-        if (lifecycle.remaining_lifetime_ticks == 0u) {
+        EntityLifetime& lifetime = view.get<EntityLifetime>(entity);
+        if (lifetime.remaining_ticks == 0u) {
             continue;
         }
-        --lifecycle.remaining_lifetime_ticks;
-        if (lifecycle.remaining_lifetime_ticks == 0u) {
-            expired.emplace_back(
+        --lifetime.remaining_ticks;
+        if (lifetime.remaining_ticks == 0u) {
+            const EntityKind* kind = registry.try_get<EntityKind>(entity);
+            const PropLifecycle* lifecycle = registry.try_get<PropLifecycle>(entity);
+            expired.push_back(Expiry{
                 view.get<NetworkIdentity>(entity).net_id,
-                lifecycle.population_group_id);
+                kind != nullptr && kind->type == EntityType::kActor,
+                lifecycle == nullptr ? 0u : lifecycle->population_group_id,
+            });
         }
     }
     std::sort(expired.begin(), expired.end());
-    for (const auto& [net_id, population_group_id] : expired) {
+    for (const Expiry& expiry : expired) {
         // Lifecycle expiry is resource cleanup and bypasses gameplay
-        // on_destroy_entity graphs, unless the group opts in (a building that
-        // throws its occupants clear as it folds away). The catalog keeps such
-        // a graph from spawning into any group, so this cannot cascade.
+        // on_destroy_entity graphs, unless a prop's group opts in (a building
+        // that throws its occupants clear as it folds away). The catalog keeps
+        // such a graph from spawning into any group, so this cannot cascade.
+        //
+        // An actor goes as Destroyed: the client reads that, for an actor, as
+        // a kill -- a splat where it stood and its model gone at once, as for
+        // an enemy killed -- which is what a summon running out should look
+        // like. A prop goes as Expired, because the client reads a prop
+        // Destroyed as broken and shatters it.
         (void)destroy_entity_with_context(
             engine,
-            net_id,
-            KernelDespawnReason_Expired,
+            expiry.net_id,
+            expiry.actor ? KernelDespawnReason_Destroyed : KernelDespawnReason_Expired,
             0u,
             0u,
             nullptr,
-            cleanup_runs_on_destroy(engine, population_group_id));
+            !expiry.actor && cleanup_runs_on_destroy(engine, expiry.population_group_id));
     }
 }
 

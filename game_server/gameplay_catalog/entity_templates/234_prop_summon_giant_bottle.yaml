@@ -1,0 +1,27 @@
+# A bottle that summons an allied gingerbread giant where it lands, for the
+# player who threw it (docs/SUMMON_FOLLOW_PLAN.md F2). Thrown out of an
+# inventory it is nobody's, so the giant takes its thrower's peer (E1); it
+# lasts 120 s and then goes as an enemy killed does (E3).
+id: 234
+name: summon_giant_bottle
+entity_type: prop
+health:
+  hp: 1
+  max_hp: 1
+physics:
+  collider_template: collision_damage_prop_hitbox
+triggers:
+  on_collision:
+    collision_mask: terrain | static_obstacle | actor
+    action_graph: action_spawn_entity_and_damage_self
+    parameters:
+      template: allied_gingerbread_giant
+      position: event.position
+      direction: event.direction
+      owner: self
+      source: self
+      self_damage: 1
+      # On open ground near where it broke: the giant's box is 16 m wide.
+      placement: clear
+      # 120 s at 30 Hz.
+      lifetime_ticks: 3600
