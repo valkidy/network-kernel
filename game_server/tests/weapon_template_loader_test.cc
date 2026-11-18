@@ -1959,7 +1959,7 @@ void catalog_file_loads_colliders() {
     const network_example::game_server::GameServerGameplayConfig config =
         network_example::game_server::load_gameplay_config_from_catalog_file(
             catalog_file.string());
-    require(config.weapons.catalog_version == 19);
+    require(config.weapons.catalog_version == 21);
     require(config.weapons.catalog_hash != 0);
     // Every collider_templates/*.yaml; counted, since the directory grows.
     std::size_t collider_files = 0;
@@ -2063,16 +2063,18 @@ void weapons_name_their_own_reload_action() {
                reload_of(network_example::game_server::kWeaponHomingMissile)) == 60);
 
     // Distinct templates, and none of them the catalog's shared fallback --
-    // except the grunts' claw (10) and slam (11) and the warrior's charge horns
-    // (20), which name `shared_reload` themselves: a bottomless AI weapon has
-    // no reload of its own to author.
+    // except the grunts' claw (10) and slam (11), the warrior's charge horns
+    // (20) and the giant's sweep and its allied twin's (22, 23), which name
+    // `shared_reload` themselves: a bottomless AI weapon has no reload of its
+    // own to author.
     require(reload_of(network_example::game_server::kWeaponRifle) !=
            reload_of(network_example::game_server::kWeaponShotgun));
     for (std::size_t id = 0; id < config.weapons.definitions.size(); ++id) {
         if (!config.weapons.configured[id]) {
             continue;
         }
-        const bool names_shared_reload = id == 10u || id == 11u || id == 20u;
+        const bool names_shared_reload =
+            id == 10u || id == 11u || id == 20u || id == 22u || id == 23u;
         require(
             (config.weapons.definitions[id].reload_action_template_id == 4199u) ==
             names_shared_reload);
