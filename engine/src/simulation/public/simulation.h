@@ -476,6 +476,26 @@ std::optional<float> ground_height_below(
     float max_distance,
     bool static_world_only = false);
 
+// Whether the entity's movement capsule can fly a leap's arc -- `launch` from
+// `from`, landing on `to` on its airtime_ticks-th step -- without striking a
+// wall or a ceiling of the static world (terrain and static obstacles within
+// its own mask). Walkable floors never block: the one it leaves and the one it
+// lands on are part of the arc. A face it touches but moves away from does not
+// block either. True when there is no physics world or capsule to ask.
+//
+// The movement step strips the velocity a wall stops, and the leap's lockout
+// keeps what is left: an arc into a cliff becomes a launch straight up.
+bool leap_arc_clear(
+    World& world,
+    NetId net_id,
+    const glm::vec3& from,
+    const glm::vec3& to,
+    const glm::vec3& launch,
+    const glm::quat& rotation,
+    std::uint32_t airtime_ticks,
+    float gravity_y,
+    float fixed_delta_seconds);
+
 // Arms the drop for every actor whose last status suspension has ended since
 // the last call: velocity zeroed, straight down, out of its own control, until
 // it lands -- a free-fall ImpulseLockout whose ceiling is the fall to the floor

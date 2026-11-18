@@ -326,6 +326,43 @@ void refused_unless_a_grounded_free_agent_with_ground_to_land_on() {
     require(!fixture.leap(glm::vec3{-5.0f, 0.0f, 0.0f}, 20u));
 }
 
+// issue_20261118_221520: a gingerbread at the foot of a pit wall leapt at a
+// player on the rim, the wall stripped the horizontal speed on the first step,
+// and it flew 12 m straight up and fell back. The arc is swept first now.
+void refused_when_the_arc_runs_into_a_wall() {
+    // A 5 m cliff from x = 1 on, its top the landing.
+    const Box cliff{glm::vec3{6.5f, 2.5f, 0.0f}, glm::vec3{5.5f, 2.5f, 5.0f}};
+    {
+        // At its foot: the capsule's front is 5 cm from the face.
+        Fixture foot(glm::vec3{0.6f, 0.0f, 0.0f}, false, {cliff});
+        const std::uint32_t airtime =
+            leap_airtime_ticks(5.4f, 5.0f, 1.0f, 0.0f, kGravity, kTick);
+        require(!foot.leap(glm::vec3{6.0f, 5.0f, 0.0f}, airtime));
+        require(!foot.world.registry().all_of<LeapLockout>(foot.entity));
+        require(foot.world.registry().get<Velocity>(foot.entity).linear ==
+                glm::vec3{0.0f});
+        // Leaping away from the face it touches is not into it.
+        require(foot.leap(glm::vec3{-5.0f, 0.0f, 0.0f}, 20u));
+    }
+    {
+        // Under a roof: the rise is what is blocked.
+        Fixture roofed(glm::vec3{0.0f}, false,
+                       {Box{glm::vec3{0.0f, 3.0f, 0.0f}, glm::vec3{2.0f, 0.2f, 2.0f}}});
+        require(!roofed.leap(glm::vec3{8.0f, 0.0f, 0.0f},
+                             leap_airtime_ticks(8.0f, 0.0f, 4.9f, 0.0f, kGravity, kTick)));
+    }
+    // Far enough back, the same cliff is cleared and landed on.
+    Fixture back(glm::vec3{-8.0f, 0.0f, 0.0f}, false, {cliff});
+    const std::uint32_t airtime =
+        leap_airtime_ticks(12.0f, 5.0f, 2.0f, 0.0f, kGravity, kTick);
+    require(back.leap(glm::vec3{4.0f, 5.0f, 0.0f}, airtime));
+    const LeapLockout lockout = back.world.registry().get<LeapLockout>(back.entity);
+    require(back.fly_from(lockout.armed_tick, airtime + 10u, glm::vec2{0.0f}) ==
+            lockout.landing_tick);
+    require(nearly(back.position().x, 4.0f, 0.05f));
+    require(nearly(back.position().y, 5.0f, 0.05f));
+}
+
 // What apply_impulse does to a target, through the command batch.
 void knock_back(Fixture& fixture, std::uint32_t lockout_ticks) {
     ActionApplyImpulseCommand impulse{};
@@ -454,6 +491,7 @@ int main() {
     lands_on_the_solved_spot_on_the_solved_tick();
     landing_is_not_a_knockdown_and_nothing_is_refused_in_the_air();
     refused_unless_a_grounded_free_agent_with_ground_to_land_on();
+    refused_when_the_arc_runs_into_a_wall();
     a_knockback_ends_the_leap_and_owns_the_flight();
     death_ends_the_leap();
     the_anchor_replays_to_the_authoritys_landing();
