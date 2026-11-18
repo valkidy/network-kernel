@@ -3868,6 +3868,13 @@ bool EntityStateSystem::start_leap(
     if (launch.y + movement.gravity.y * engine.fixed_delta_seconds() <= 0.0f) {
         return false;
     }
+    // An arc through a wall -- a target up a cliff it stands at the foot of --
+    // loses its horizontal speed on the first step and goes straight up.
+    if (!leap_arc_clear(
+            world, net_id, transform.position, to, launch, transform.rotation,
+            airtime_ticks, movement.gravity.y, engine.fixed_delta_seconds())) {
+        return false;
+    }
     registry.get<Velocity>(*entity).linear = launch;
     // Commands drain ahead of movement, so this tick's step is the flight's
     // first and step N lands on tick + N - 1. Two past that for the ceiling,

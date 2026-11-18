@@ -350,6 +350,24 @@ struct AgentRuntimeState {
     // start another.
     std::uint32_t leap_ticks_to_landing = 0;
     std::uint32_t leap_cooldown_ticks = 0;
+    // Chaser only. A leap was just asked for and the kernel's flag has not
+    // been read since: the next tick tells whether it armed or was refused.
+    // up_a_ledge and the destination are what a refusal backs off for.
+    bool leap_awaiting_arm = false;
+    bool leap_up_a_ledge = false;
+    KernelVec3 leap_destination{0.0f, 0.0f, 0.0f};
+    // Chaser only. A leap up a ledge refused at its foot -- the arc ran into
+    // the riser -- backs straight off from the target for a run-up first:
+    // ticks of it left (zero: none), where it started, and how far it goes.
+    // runup_spent: this approach has had its run-up; another refusal waits out
+    // the cooldown instead of backing off again.
+    std::uint32_t leap_runup_ticks = 0;
+    std::uint32_t leap_runup_total_ticks = 0;
+    // How far it had backed at the last progress check.
+    float leap_runup_window_meters = 0.0f;
+    KernelVec3 leap_runup_start{0.0f, 0.0f, 0.0f};
+    float leap_runup_meters = 0.0f;
+    bool leap_runup_spent = false;
     // Chaser only. Ticks of wind-up left before a charge is released; ticks
     // the run it released may still take (zero once the kernel's flag shows
     // it ended); the line it runs along; and ticks until another may start.

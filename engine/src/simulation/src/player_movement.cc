@@ -1305,6 +1305,79 @@ std::optional<float> ground_height_below(
     return position.y - max_distance * ground.collision.fraction;
 }
 
+bool leap_arc_clear(
+    World& world,
+    NetId net_id,
+    const glm::vec3& from,
+    const glm::vec3& to,
+    const glm::vec3& launch,
+    const glm::quat& rotation,
+    std::uint32_t airtime_ticks,
+    float gravity_y,
+    float fixed_delta_seconds) {
+    // Ticks between the samples the capsule is swept through. The arc bends
+    // little over a tenth of a second, and a leap is armed at most once per
+    // cooldown, so this is ~20 casts a leap.
+    constexpr std::uint32_t kStrideTicks = 3u;
+    physics::PhysicsWorld* physics_world = world.collision_world();
+    const ColliderInstance* collider = physics_world == nullptr
+        ? nullptr
+        : find_movement_capsule(world, net_id);
+    const std::optional<entt::entity> entity = world.find_entity(net_id);
+    const MovementState* movement = entity.has_value()
+        ? world.registry().try_get<MovementState>(*entity)
+        : nullptr;
+    if (collider == nullptr || movement == nullptr || airtime_ticks == 0u) {
+        return true;
+    }
+    physics::ShapeCastRequest request{};
+    request.shape = movement_shape(*collider);
+    request.rotation = rotation;
+    request.filter = movement_filter(
+        collider->entity_net_id, collider->collider_id,
+        movement->movement_collision_mask);
+    // Only what stays put: an actor in the way now has moved by the time the
+    // arc reaches it, and the flight shoves past actors anyway.
+    request.filter.collision_mask &=
+        physics::collision_layer_bit(physics::CollisionLayer::kTerrain) |
+        physics::collision_layer_bit(physics::CollisionLayer::kStaticObstacle);
+    if (request.filter.collision_mask == 0u) {
+        return true;
+    }
+    const float walkable_normal_y =
+        std::cos(glm::radians(movement->max_slope_degrees));
+    glm::vec3 at = from;
+    for (std::uint32_t n = kStrideTicks;; n += kStrideTicks) {
+        // The last segment ends on the destination itself, not on the tick
+        // boundary after it, which is already below the floor it lands on.
+        const bool last = n >= airtime_ticks;
+        const glm::vec3 next = last
+            ? to
+            : knockback_flight_position_at(
+                  from, launch, gravity_y, fixed_delta_seconds,
+                  static_cast<float>(n) * fixed_delta_seconds);
+        request.start = at;
+        request.displacement = next - at;
+        for (const physics::CollisionHit& hit :
+             physics_world->shape_cast_all(request)) {
+            // Floors are where it may come down -- the one it leaves, the one
+            // it lands on, a ledge top it drops onto early -- not what stops it.
+            if (hit.normal.y >= walkable_normal_y) {
+                continue;
+            }
+            // A face it is touching and moving away from or along.
+            if (glm::dot(hit.normal, request.displacement) >= 0.0f) {
+                continue;
+            }
+            return false;
+        }
+        if (last) {
+            return true;
+        }
+        at = next;
+    }
+}
+
 std::vector<std::pair<NetId, float>> settle_status_suspensions(
     World& world,
     std::uint32_t current_tick,
