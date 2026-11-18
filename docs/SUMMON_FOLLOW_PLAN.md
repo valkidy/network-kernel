@@ -48,7 +48,8 @@
 ### 4.1 改動
 
 - **E1 spawn 繼承 peer**：`systems.cc:1714` 改為 owner entity 的 `owner_peer` 為 0 時，用
-  `spawn.provenance.owner_peer`。套用範圍見待決 Q1。
+  `spawn.provenance.owner_peer`。**只在生出 `player_side` 的 actor 時套用**（Q1）：測試瓶 3005 生出的
+  敵人維持 0，玩家照樣鎖得到。
 - **E2 防禦動作只配對玩家**：`DamagePipeline` 的 dodge / parry 依「目標的 `owner_peer`」配對，而且套用在
   **所有**傷害上（`damage_pipeline.cc:66、213、219、314、326`）。召喚的巨人帶了玩家的 peer 後，會共享玩家的
   閃避與格擋窗口。改為只有玩家 entity 才帶 `target_peer`（其他為 0）。
@@ -71,7 +72,7 @@
 
 - **prop**：新的瓶子 prop，`on_collision` → `action_spawn_entity_and_damage_self`，
   `template: allied_gingerbread_giant`、`owner: self`（E1 讓它繼承丟的人的 peer）、`spawn_placement: clear`。
-- **item**：throwable，參考 3005 的寫法。
+- **item**：throwable，**丟出即消耗**（fungible、可堆疊，Q5），參考 3005 的寫法。
 - 整批驗證：spawn 前會先驗證整批動作，巨人 template 只要有一項不合法就整批放棄（巨人沒出來、瓶子也沒自毀，
   卡在地上）。要有測試蓋到。
 - id 依當時 catalog 的空號決定，並和其他分支對號碼。
@@ -90,7 +91,8 @@
   重算一次（同 guard 走回崗位、hunter 的 Seek）。
 - **看到敵人時**：共用狀態機，照常接戰（目標 (a)）。
 - **leash**：以主人為中心。追擊把它拉離主人超過 `leash_meters` 就放手，Return 走回主人身邊。
-- **主人消失**：依待決 Q3。
+- **主人死亡**：原地守著（guard，崗位為當下位置），主人復活後繼續跟隨（Q3）。
+- **主人斷線**：永久轉成 guard，站在當下位置（Q3）。重連後不認回新的主人（Q6）。
 - **YAML 草案**：
 
 ```yaml
@@ -98,9 +100,16 @@ ai:
   default_behavior: follow        # 只有 player_side template 能寫
   behaviors:
     follow: {stop_meters: 6.0, resume_meters: 10.0, leash_meters: 25.0, repath_ticks: 30}
+  summon:                         # 只有 player_side template 能寫
+    max_per_owner: 1              # 已有一隻時，新召喚的取代舊的（舊的 despawn）
+    lifetime_ticks: 3600          # 120 s @ 30 Hz，到時 despawn
 ```
 
-- **限制**：巨人 2.5 m/s、轉向 45°/s，玩家 5 m/s，一定會落後；是否補救見 Q4。
+- **召喚上限與存在時間**（Q5）：每個玩家同時最多 1 隻；再召喚時新的生出來、舊的 despawn。存在時間
+  120 s（3600 ticks @ 30 Hz）。kernel 的 lifetime 只支援 prop 和 projectile，所以由 game_server 用自己的
+  tick 計數，到時呼叫 `Kernel_ServerDestroyEntity`。「主人」依 `owner_peer` 對應的玩家計算。
+
+- **速度**：巨人 2.5 m/s、轉向 45°/s，玩家 5 m/s，一定會落後；**接受落後**，不加速也不傳送（Q4）。
 - 舊對話中寵物的「繞圈」「特殊 Idle 動畫」巨人用不到；以後需要時可加在 `behaviors.follow`。
 
 ---
@@ -111,8 +120,8 @@ ai:
 |---|---|---|---|
 | F1 | E1、E2 | 不變 | kernel 測試：丟瓶子生出的 entity 帶丟的人的 peer（依 Q1 的範圍）；玩家閃避時召喚物照樣受傷；3005 的敵人依 Q1 的決定 |
 | F2 | 召喚道具（catalog） | 不變；**catalog 新增 template，`bundle.bytes` 要更新** | 丟道具 → 落地 → 生出友軍巨人、帶丟的人的 peer；template 不合法時的整批放棄 |
-| F3 | `FollowBehavior` | 不變；**`behaviors.follow` 是新的 catalog key**：Unity package 要重建（見 memory：catalog format change needs package） | 跟隨（停 / 走的雙門檻、跟著主人轉彎）、跟隨中接戰、leash 拉回、主人消失的處理、legged 巨人不吃到玩家的 input |
-| F4（選做） | remote command 的 Follow、Unity 端 | 指令 enum 加值（C# mirror 要跟） | 依需要 |
+| F3 | `FollowBehavior`、召喚上限與存在時間 | 不變；**`behaviors.follow`、`summon` 是新的 catalog key**：Unity package 要重建（見 memory：catalog format change needs package） | 跟隨（停 / 走的雙門檻、跟著主人轉彎）、跟隨中接戰、leash 拉回、主人死亡守著 / 復活續跟、斷線轉 guard、第二次召喚取代第一隻、3600 ticks 後 despawn、legged 巨人不吃到玩家的 input |
+| F4 | Unity 端（道具 / prop / 巨人的 view、`behaviors.follow` 與 `summon` 的 package 重建），使用者處理 | — | — |
 
 ---
 
@@ -129,14 +138,14 @@ ai:
 
 ---
 
-## 9. 待決事項
+## 9. 已決事項（2026-11-18）
 
-| # | 問題 | 選項 |
+| # | 問題 | 決定 |
 |---|---|---|
-| Q1 | E1 套用範圍 | (a) 一律套用：測試瓶 3005 生出的敵人也會帶玩家的 peer，玩家鎖不到它；(b) **只有生出 `player_side` actor 時才套用**（建議），敵人不受影響 |
-| Q2 | 跟隨距離 | `stop_meters` / `resume_meters` / `leash_meters` 的預設值（草案 6 / 10 / 25 m） |
-| Q3 | 主人死亡或斷線 | (a) 原地轉 guard；(b) 主人死亡時守在原地，復活後繼續跟；(c) 消失 / despawn |
-| Q4 | 巨人跟不上 | (a) 接受落後；(b) 離太遠時提高移動速度；(c) 離太遠時傳送到主人附近 |
-| Q5 | 召喚的限制 | 每個玩家同時最多幾隻？道具是否消耗、冷卻多久？巨人有沒有存在時間上限？ |
-| Q6 | 重連 | 重連後 peer 和 net_id 都會變，舊的巨人要不要認回新的主人？ |
-| Q7 | remote command | 要不要能下 Follow 指令（F4）？ |
+| Q1 | E1 套用範圍 | 只在生出 `player_side` 的 actor 時套用 |
+| Q2 | 跟隨距離 | stop 6 m / resume 10 m / leash 25 m（`behaviors.follow`，可調） |
+| Q3 | 主人死亡或斷線 | 死亡：原地守著，復活後繼續跟；斷線：永久轉 guard |
+| Q4 | 巨人跟不上 | 接受落後 |
+| Q5 | 召喚限制 | 每個玩家最多 1 隻，新的取代舊的；道具丟出即消耗；存在時間 120 s（3600 ticks） |
+| Q6 | 重連 | 不認回，視同斷線 |
+| Q7 | remote command 的 Follow | 不做；F4 只剩 Unity 端 |
