@@ -136,6 +136,45 @@ std::uint32_t leap_airtime_ticks(
     return ticks < 2.0f ? 2u : static_cast<std::uint32_t>(ticks);
 }
 
+// How far to back straight off from a ledge's riser, standing at its foot, for
+// a leap `climb` metres up onto a spot `ahead` metres away to clear the edge:
+// the least run-up whose arc is `clearance` over the top where the capsule's
+// front reaches the face, plus a margin, or zero if none inside the band does.
+//
+// The riser is taken to stand where the agent does -- a refusal at the foot
+// is what asks -- and the arc is the one the kernel solves: horizontal speed
+// constant, so the face is crossed at fraction f = b / (b + ahead) of the
+// airtime T, where the height is climb*f + (-g*T^2/2)*f*(1-f). The kernel's
+// own sweep still has the last word.
+float ledge_runup_meters(
+    const AgentLeapTuning& leap,
+    float climb,
+    float ahead,
+    float gravity_y,
+    float fixed_delta_seconds) {
+    constexpr float kClearanceMeters = 0.5f;
+    constexpr float kMarginMeters = 0.5f;
+    constexpr float kStepMeters = 0.25f;
+    if (!(climb > 0.0f) || !(gravity_y < 0.0f) || !(fixed_delta_seconds > 0.0f)) {
+        return 0.0f;
+    }
+    for (float back = kStepMeters;
+         ahead + back + kMarginMeters <= leap.max_distance_meters;
+         back += kStepMeters) {
+        const float across = ahead + back;
+        const float seconds = static_cast<float>(leap_airtime_ticks(
+            leap, across, climb, gravity_y, fixed_delta_seconds)) *
+            fixed_delta_seconds;
+        const float f = back / across;
+        const float height =
+            climb * f + -gravity_y * seconds * seconds * 0.5f * f * (1.0f - f);
+        if (height >= climb + kClearanceMeters) {
+            return back + kMarginMeters;
+        }
+    }
+    return 0.0f;
+}
+
 // Starts a leap at the target if it is in the band and the agent is free to.
 // The landing spot is fixed here, at lift-off: a target that moves after the
 // agent commits is where the leap misses. Returns whether one was enqueued;
@@ -223,6 +262,90 @@ bool try_start_leap(
     }
     agent->leap_ticks_to_landing = airtime;
     agent->leap_cooldown_ticks = airtime + leap.cooldown_ticks;
+    agent->leap_awaiting_arm = true;
+    agent->leap_up_a_ledge = up_a_ledge;
+    agent->leap_destination = destination;
+    return true;
+}
+
+// What the tick after a leap was asked for says: armed, or refused. A leap up
+// a ledge refused for the first time on this approach gets a run-up -- the
+// arc from the foot of a riser runs into it -- and the leap is free to go
+// again the moment the run-up is done. Any other refusal waits out the
+// cooldown it was given.
+void read_leap_arming(
+    const AgentChaserConfig& config,
+    float fixed_delta_seconds,
+    bool armed,
+    AgentRuntimeState* agent) {
+    if (!agent->leap_awaiting_arm) {
+        return;
+    }
+    agent->leap_awaiting_arm = false;
+    if (armed) {
+        agent->leap_runup_spent = false;
+        return;
+    }
+    if (!agent->leap_up_a_ledge || agent->leap_runup_spent) {
+        agent->leap_runup_spent = false;
+        return;
+    }
+    const float back = ledge_runup_meters(
+        config.chase.leap,
+        agent->leap_destination.y - agent->position.y,
+        agent_steering::horizontal_distance(agent->position, agent->leap_destination),
+        config.gravity_y,
+        fixed_delta_seconds);
+    if (back <= 0.0f || config.sentry.move_speed_meters_per_second <= 0.0f) {
+        return;
+    }
+    agent->leap_runup_spent = true;
+    agent->leap_runup_start = agent->position;
+    agent->leap_runup_meters = back;
+    // Twice the walk it should take, and a second besides.
+    agent->leap_runup_ticks = static_cast<std::uint32_t>(std::ceil(
+        2.0f * back / (config.sentry.move_speed_meters_per_second * fixed_delta_seconds))) +
+        static_cast<std::uint32_t>(std::ceil(1.0f / fixed_delta_seconds));
+    agent->leap_runup_total_ticks = agent->leap_runup_ticks;
+    agent->leap_runup_window_meters = 0.0f;
+    agent->leap_cooldown_ticks = 0u;
+}
+
+// One tick of a run-up: straight away from the target, until it has backed
+// off far enough, its ticks are spent, or it has stopped making ground (a
+// wall behind it). Returns whether it is still backing off; on the tick it
+// ends, the leap may go at once.
+bool step_ledge_runup(
+    const KernelVec3& target_position,
+    AgentRuntimeState* agent,
+    KernelVec2* move) {
+    if (agent->leap_runup_ticks == 0u) {
+        return false;
+    }
+    // How often progress is checked, and the least it must have made since
+    // the last check, in metres.
+    constexpr std::uint32_t kStallWindowTicks = 15u;
+    constexpr float kStallMeters = 0.3f;
+    const float backed =
+        agent_steering::horizontal_distance(agent->position, agent->leap_runup_start);
+    const std::uint32_t elapsed = agent->leap_runup_total_ticks - agent->leap_runup_ticks;
+    if (elapsed > 0u && elapsed % kStallWindowTicks == 0u) {
+        if (backed - agent->leap_runup_window_meters < kStallMeters) {
+            agent->leap_runup_ticks = 0u;
+            return false;
+        }
+        agent->leap_runup_window_meters = backed;
+    }
+    const float dx = agent->position.x - target_position.x;
+    const float dz = agent->position.z - target_position.z;
+    const float length = std::hypot(dx, dz);
+    --agent->leap_runup_ticks;
+    if (backed >= agent->leap_runup_meters || length < 0.0001f ||
+        agent->leap_runup_ticks == 0u) {
+        agent->leap_runup_ticks = 0u;
+        return false;
+    }
+    *move = KernelVec2{dx / length, dz / length};
     return true;
 }
 
@@ -845,6 +968,9 @@ void AgentChaserController::tick(
                 agent.leap_ticks_to_landing = 0u;
             }
         }
+        read_leap_arming(
+            config_, delta_seconds,
+            (entity_state.visual_flags & KERNEL_VISUAL_FLAG_LEAPING) != 0u, &agent);
         if (agent.leap_cooldown_ticks > 0u) {
             --agent.leap_cooldown_ticks;
         }
@@ -1145,8 +1271,11 @@ void AgentChaserController::tick(
                 retreat_ran = true;
                 // A charge is tried ahead of a leap: winding one up roots the
                 // agent from this tick, and a leap must not carry it off.
-                // Neither starts while it backs away.
+                // Neither starts while it backs away, nor during a run-up for
+                // a ledge leap; the tick the run-up ends, the leap may go.
                 if (agent.retreating) {
+                } else if (target_state != nullptr &&
+                    step_ledge_runup(target_state->position, &agent, &move)) {
                 } else if (target_state != nullptr &&
                     try_start_charge(
                         config_, &agent, entity_state, target_state->position)) {
