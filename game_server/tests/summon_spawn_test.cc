@@ -7,8 +7,8 @@
 // running out despawns as Destroyed, the way an enemy killed does.
 //
 // The shipped catalog with two test files added to a copy of it: a bottle
-// (and its item) that spawns the allied giant for 90 ticks through a graph
-// that passes lifetime_ticks on. The shipped test bottle 3005, which spawns a
+// (and its item) that spawns the allied giant for 90 ticks through the shared
+// action_spawn_entity_and_damage_self. The shipped test bottle 3005, which spawns a
 // chaser_grunt, is the enemy case.
 //
 // F2: the shipped summon bottle (item 3037) does the same for 120 s, and one
@@ -75,8 +75,8 @@ void write_yaml(const fs::path& path, const YAML::Node& node) {
     require(file.good());
 }
 
-// A copy of the shipped catalog with the summon bottle, its item and its
-// graph added.
+// A copy of the shipped catalog with a 90-tick summon bottle and its item
+// added.
 fs::path catalog_with_summon_bottle() {
     const char* tmp = std::getenv("TEST_TMPDIR");
     require(tmp != nullptr);
@@ -85,22 +85,11 @@ fs::path catalog_with_summon_bottle() {
     fs::copy(runfiles_root() / "game_server" / "gameplay_catalog", root,
              fs::copy_options::recursive);
 
-    YAML::Node graph = YAML::LoadFile(
-        (root / "action_graph_templates" / "common" /
-         "action_spawn_entity_and_damage_self.yaml").string());
-    graph["id"] = "action_test_summon_and_damage_self";
-    graph["parameters"]["lifetime_ticks"] = YAML::Node(YAML::NodeType::Null);
-    graph["actions"][0]["lifetime_ticks"] = "params.lifetime_ticks";
-    write_yaml(root / "action_graph_templates" / "common" /
-                   "action_test_summon_and_damage_self.yaml",
-               graph);
-
     YAML::Node prop = YAML::LoadFile(
         (root / "entity_templates" / "206_prop_test_bottle_spawn_enemy.yaml").string());
     prop["id"] = 299;
     prop["name"] = "test_bottle_summon_ally";
     YAML::Node trigger = prop["triggers"]["on_collision"];
-    trigger["action_graph"] = "action_test_summon_and_damage_self";
     trigger["parameters"]["template"] = "allied_gingerbread_giant";
     trigger["parameters"]["placement"] = "clear";
     trigger["parameters"]["lifetime_ticks"] = kSummonLifetimeTicks;

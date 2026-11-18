@@ -2449,19 +2449,16 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
             }
             compiled_action.owner_parameter =
                 parameter_reference_from_yaml(action["owner"], "owner");
-            // How long what it spawns lasts, literal or params.<name>; the
-            // spawned template's own lifetime, if any, otherwise
-            // (docs/SUMMON_FOLLOW_PLAN.md E3).
+            // How long what it spawns lasts, literal or params.<name>; zero
+            // keeps the spawned template's own lifetime, if any
+            // (docs/SUMMON_FOLLOW_PLAN.md E3) -- so a shared spawn graph can
+            // default it to zero and only a summon need say otherwise.
             compiled_action.spawn_lifetime_ticks_parameter =
                 optional_parameter_reference(action["lifetime_ticks"]);
             if (action["lifetime_ticks"] &&
                 compiled_action.spawn_lifetime_ticks_parameter.empty()) {
                 compiled_action.spawn_lifetime_ticks =
                     action["lifetime_ticks"].as<std::uint32_t>();
-                if (compiled_action.spawn_lifetime_ticks == 0u) {
-                    throw std::runtime_error(
-                        "spawn_entity lifetime_ticks must be at least 1: " + path);
-                }
             }
             compiled_action.spawn_placement_parameter =
                 optional_parameter_reference(action["placement"]);
@@ -9227,15 +9224,10 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
                     KernelEventVec3Source_Direction;
             }
             compiled_action.owner_source = entity_ref_source(owner);
-            compiled_action.spawn_lifetime_ticks = action.spawn_lifetime_ticks;
-            if (!action.spawn_lifetime_ticks_parameter.empty()) {
-                compiled_action.spawn_lifetime_ticks = bound_uint32(
-                    binding, *graph, action.spawn_lifetime_ticks_parameter);
-                if (compiled_action.spawn_lifetime_ticks == 0u) {
-                    throw std::runtime_error(
-                        "spawn_entity lifetime_ticks must be at least 1: " + graph->id);
-                }
-            }
+            compiled_action.spawn_lifetime_ticks =
+                action.spawn_lifetime_ticks_parameter.empty()
+                ? action.spawn_lifetime_ticks
+                : bound_uint32(binding, *graph, action.spawn_lifetime_ticks_parameter);
             compiled_action.spawn_placement = action.spawn_placement;
             if (!action.spawn_placement_parameter.empty()) {
                 const std::string placement = trigger_parameter_value(

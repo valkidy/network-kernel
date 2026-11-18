@@ -13,7 +13,7 @@ physics:
 triggers:
   on_collision:
     collision_mask: terrain | static_obstacle | actor
-    action_graph: action_summon_and_damage_self
+    action_graph: action_spawn_entity_and_damage_self
     parameters:
       template: allied_gingerbread_giant
       position: event.position
