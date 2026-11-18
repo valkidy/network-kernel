@@ -1,0 +1,19 @@
+# Inventory half of summon_giant_bottle. Identity-preserving throw, so the
+# prop that lands is the bottle thrown, and breaking it on landing spends it:
+# one giant per bottle.
+id: 3037
+name: fungible_summon_giant_bottle
+mode: fungible
+max_stack: 3
+capabilities: [pickupable, throwable]
+entity_template: summon_giant_bottle
+world_interaction:
+  range: 3.0
+  line_of_sight_required: false
+throw:
+  mode: identity_preserving
+  trajectory_projectile: grenade_shell
+use:
+  quantity_cost: 0
+  cooldown_ticks: 0
+  destroy_when_empty: false

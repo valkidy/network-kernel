@@ -10,6 +10,9 @@
 // (and its item) that spawns the allied giant for 90 ticks through a graph
 // that passes lifetime_ticks on. The shipped test bottle 3005, which spawns a
 // chaser_grunt, is the enemy case.
+//
+// F2: the shipped summon bottle (item 3037) does the same for 120 s, and one
+// throw spends one bottle of the stack.
 
 #include <algorithm>
 #include <array>
@@ -44,6 +47,8 @@ constexpr float kTickSeconds = 1.0f / 30.0f;
 constexpr std::uint32_t kSummonLifetimeTicks = 90;
 constexpr std::uint32_t kSummonItemId = 3999;
 constexpr std::uint32_t kEnemyItemId = 3005;
+constexpr std::uint32_t kShippedSummonItemId = 3037;
+constexpr std::uint32_t kShippedSummonLifetimeTicks = 3600;
 
 fs::path runfiles_root() {
     const char* test_srcdir = std::getenv("TEST_SRCDIR");
@@ -266,6 +271,64 @@ int main() {
     // its lifetime.
     require(ticks - spawned_at + 1u >= kSummonLifetimeTicks);
     require(ticks - spawned_at <= kSummonLifetimeTicks + 1u);
+
+    // F2: the shipped bottle. A stack of two; one throw spends one.
+    const auto bottles_left = [&]() {
+        std::array<KernelItemInstanceView, 8> slots{};
+        for (KernelItemInstanceView& slot : slots) slot.struct_size = sizeof(slot);
+        const std::uint32_t count = Kernel_CopyInventorySlots(
+            kernel, container, slots.data(), static_cast<std::uint32_t>(slots.size()));
+        std::uint32_t left = 0;
+        for (std::uint32_t i = 0; i < count; ++i) {
+            if (slots[i].item_template_id == kShippedSummonItemId) left += slots[i].quantity;
+        }
+        return left;
+    };
+    KernelItemInstanceId stack = 0;
+    require(Kernel_ServerCreateInventoryItem(
+        kernel, kShippedSummonItemId, 2u, container, &stack));
+    require(bottles_left() == 2u);
+    KernelGameplayRequest summon{};
+    summon.struct_size = sizeof(summon);
+    summon.requester_peer = local.peer_id != 0u ? local.peer_id : 1u;
+    summon.request_id = 3u;
+    summon.instigator_net_id = player;
+    summon.domain_action = KernelDomainAction_Throw;
+    summon.requested_quantity = 1;
+    summon.selected_item_instance_id = stack;
+    summon.throw_direction = KernelVec3{0.0f, -0.24f, 0.97f};
+    require(Kernel_ServerSubmitGameplayRequest(kernel, &summon));
+    std::uint32_t shipped = 0;
+    std::uint32_t shipped_owner_peer = 0;
+    std::uint32_t shipped_at = 0;
+    for (int tick = 0; tick < 120 && shipped == 0u; ++tick) {
+        step();
+        if (const KernelServerEntityState* found = find_actor(allied_id)) {
+            shipped = found->net_id;
+            shipped_owner_peer = found->owner_peer;
+            shipped_at = ticks;
+        }
+    }
+    std::printf("[summon] shipped bottle: giant %u owner_peer %u, %u bottle(s) left\n",
+                shipped, shipped_owner_peer, bottles_left());
+    require(shipped != 0u);
+    require(shipped_owner_peer == player_peer);
+    require(bottles_left() == 1u);
+    bool shipped_gone = false;
+    while (!shipped_gone && ticks < shipped_at + kShippedSummonLifetimeTicks + 30u) {
+        step();
+        shipped_gone = std::any_of(destroyed.begin(), destroyed.end(),
+                                   [&](const auto& e) { return e.first == shipped; });
+    }
+    const auto shipped_entry = std::find_if(
+        destroyed.begin(), destroyed.end(),
+        [&](const auto& candidate) { return candidate.first == shipped; });
+    require(shipped_entry != destroyed.end());
+    std::printf("[summon] shipped giant gone after %u ticks, reason %u\n",
+                ticks - shipped_at, shipped_entry->second);
+    require(shipped_entry->second == KernelDespawnReason_Destroyed);
+    require(ticks - shipped_at + 1u >= kShippedSummonLifetimeTicks);
+    require(ticks - shipped_at <= kShippedSummonLifetimeTicks + 1u);
     Kernel_Destroy(kernel);
     std::printf("summon_spawn_test passed\n");
     return 0;

@@ -1,0 +1,26 @@
+# Summons `template` where a thrown prop landed, for `lifetime_ticks`, then
+# damages the prop itself (`source`) so it breaks (docs/SUMMON_FOLLOW_PLAN.md
+# F2). action_spawn_entity_and_damage_self with a lifetime: a player-side
+# actor it spawns for a prop that is nobody's belongs to whoever threw it
+# (E1), and goes, when its time is up, the way an enemy killed does (E3).
+id: action_summon_and_damage_self
+parameters:
+  template: null
+  position: null
+  direction: null
+  owner: null
+  source: null
+  self_damage: 1
+  placement: clear
+  lifetime_ticks: null
+actions:
+  - type: spawn_entity
+    entity_template: params.template
+    position: params.position
+    direction: params.direction
+    owner: params.owner
+    placement: params.placement
+    lifetime_ticks: params.lifetime_ticks
+  - type: apply_damage
+    target: params.source
+    amount: params.self_damage
