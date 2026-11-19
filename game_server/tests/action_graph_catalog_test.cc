@@ -865,22 +865,46 @@ void surface_normal_spawn_direction_is_impact_and_standard_only() {
         {"event.surface_normal needs a standard projectile", "shockwave_blast"}));
 }
 
-// The shipped water jet (provisional ids 37/38) holds the invariants its push
-// depends on (docs/WATER_JET_PLAN.md D9, D10): the bolt strikes only the world
-// and spawns along the struck face; the column carries that face in a nonzero
-// heading the world never parks, is built on clients, and pushes along it
-// with a lift.
+// The shipped water jet holds the invariants its push depends on
+// (docs/WATER_JET_PLAN.md D9, D10): a surface strike (ABI 110) lands its mark
+// on the chosen face with the face's normal as its direction, the mark expires
+// into the column along that direction; the column carries the face in a
+// nonzero heading the world never parks, is built on clients, and pushes along
+// it with a lift.
 void the_water_jet_holds_its_push_invariants() {
     const gs::KernelGameplayCatalogStorage storage =
         built(shipped_catalog() / "gameplay_catalog.yaml");
-    const KernelProjectileMechanicsDefinition& bolt = compiled_projectile(storage, 37u);
-    require(bolt.projectile_type == KernelProjectileType_Standard);
-    require(bolt.collision_mask ==
-            (KERNEL_COLLISION_LAYER_TERRAIN | KERNEL_COLLISION_LAYER_STATIC_OBSTACLE));
-    const KernelActionDefinition& spawn = bolt.projectile_impact_trigger.actions[0];
+    const gs::GameServerGameplayConfig config =
+        gs::load_gameplay_config_from_catalog_file(
+            (shipped_catalog() / "gameplay_catalog.yaml").string());
+    const KernelWeaponMechanicsDefinition& jet = config.weapons.definitions[21];
+    require(jet.fire_mode == KernelWeaponFireMode_TargetedStrikeSurface);
+    require(jet.max_range == 45.0f);
+    require(jet.projectile_template_id == 50u);
+    const KernelProjectileMechanicsDefinition& marker = compiled_projectile(storage, 50u);
+    require(marker.speed == 0.0f);
+    require(marker.sync_mode == KernelProjectileSyncMode_ServerSnapshotOnly);
+    const KernelActionDefinition& spawn = marker.expired_trigger.actions[0];
     require(spawn.action_type == KernelEntityTriggerActionType_SpawnProjectile);
     require(spawn.spawn_projectile_template_id == 38u);
-    require(spawn.direction_source == KernelEventVec3Source_SurfaceNormal);
+    require(spawn.direction_source == KernelEventVec3Source_Direction);
+
+    // strike_target is a targeted strike's alone, and only ground or surface.
+    const fs::path weapon = shipped_catalog() / "weapon_templates" / "21_weapon_water_jet.yaml";
+    require(refused_for(
+        catalog_with(
+            "strike_target_unknown",
+            {{"weapon_templates/21_weapon_water_jet.yaml",
+              with_replaced(weapon, "\nstrike_target: surface", "\nstrike_target: wall")}}),
+        {"strike_target must be ground or surface"}));
+    require(refused_for(
+        catalog_with(
+            "strike_target_on_projectile",
+            {{"weapon_templates/0_weapon_ice_lance.yaml",
+              with_replaced(
+                  shipped_catalog() / "weapon_templates" / "0_weapon_ice_lance.yaml",
+                  "weapon_type: hitscan", "weapon_type: hitscan\nstrike_target: surface")}}),
+        {"strike_target is only supported on targeted_strike weapons"}));
 
     const KernelProjectileMechanicsDefinition& column = compiled_projectile(storage, 38u);
     require(column.projectile_type == KernelProjectileType_AreaEffect);

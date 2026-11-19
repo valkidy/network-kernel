@@ -25,6 +25,10 @@ _Static_assert(
             offsetof(KernelActionDefinition, possibility_percent) + 1u,
     "ABI 110: possibility_percent is the old reserved1 byte, layout unchanged");
 _Static_assert(
+    KernelWeaponFireMode_TargetedStrikeSurface == 7 &&
+        KernelWeaponFireMode_LockMissile == 6,
+    "ABI 110: the surface strike is an appended fire mode");
+_Static_assert(
     KernelEntityTriggerActionType_ApplyHoverMovement == 17 &&
         KERNEL_VISUAL_FLAG_HOVERING == 0x00004000u,
     "ABI 109: the hover action type and visual flag are appended");

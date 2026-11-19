@@ -1683,6 +1683,9 @@ WeaponFireMode to_weapon_fire_mode(std::uint8_t fire_mode) {
     if (fire_mode == KernelWeaponFireMode_TargetedStrike) {
         return WeaponFireMode::kTargetedStrike;
     }
+    if (fire_mode == KernelWeaponFireMode_TargetedStrikeSurface) {
+        return WeaponFireMode::kTargetedStrikeSurface;
+    }
     if (fire_mode == KernelWeaponFireMode_LockInstant) {
         return WeaponFireMode::kLockInstant;
     }
@@ -2076,12 +2079,13 @@ bool validate_weapon_mechanics(const KernelWeaponMechanicsDefinition& definition
         definition.magazine_size == 0 ||
         (definition.fire_mode != KernelWeaponFireMode_Projectile &&
          definition.fire_mode != KernelWeaponFireMode_TargetedStrike &&
+         definition.fire_mode != KernelWeaponFireMode_TargetedStrikeSurface &&
          definition.damage == 0) ||
         definition.fire_action_template_id == 0u ||
         definition.reload_action_template_id == 0u) {
         return false;
     }
-    if (definition.fire_mode > KernelWeaponFireMode_LockMissile) {
+    if (definition.fire_mode > KernelWeaponFireMode_TargetedStrikeSurface) {
         return false;
     }
     if (definition.fire_mode == KernelWeaponFireMode_Projectile) {
@@ -2089,7 +2093,8 @@ bool validate_weapon_mechanics(const KernelWeaponMechanicsDefinition& definition
     }
     // What lands usually deals no damage itself -- a marker whose expiry, or
     // a meteor whose impact, does -- so damage is not required here either.
-    if (definition.fire_mode == KernelWeaponFireMode_TargetedStrike) {
+    if (definition.fire_mode == KernelWeaponFireMode_TargetedStrike ||
+        definition.fire_mode == KernelWeaponFireMode_TargetedStrikeSurface) {
         return definition.projectile_template_id != 0 &&
                definition.max_range > 0.0f;
     }

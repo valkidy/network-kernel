@@ -850,17 +850,19 @@ bool validate_weapon_mechanics(
         weapon.magazine_size == 0 ||
         (weapon.fire_mode != KernelWeaponFireMode_Projectile &&
          weapon.fire_mode != KernelWeaponFireMode_TargetedStrike &&
+         weapon.fire_mode != KernelWeaponFireMode_TargetedStrikeSurface &&
          weapon.damage == 0) ||
         weapon.fire_action_template_id == 0u ||
         weapon.reload_action_template_id == 0u ||
-        weapon.fire_mode > KernelWeaponFireMode_LockMissile) {
+        weapon.fire_mode > KernelWeaponFireMode_TargetedStrikeSurface) {
         return false;
     }
     if (weapon.fire_mode == KernelWeaponFireMode_Projectile) {
         return weapon.projectile_template_id != 0;
     }
     // Mirrors validate_weapon_mechanics on the kernel side.
-    if (weapon.fire_mode == KernelWeaponFireMode_TargetedStrike) {
+    if (weapon.fire_mode == KernelWeaponFireMode_TargetedStrike ||
+        weapon.fire_mode == KernelWeaponFireMode_TargetedStrikeSurface) {
         return weapon.projectile_template_id != 0 && weapon.max_range > 0.0f;
     }
     // A melee weapon's reach is the cone on the collider template it names, so
@@ -3335,6 +3337,7 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
             "fire_action_template",
             "reload_action_template",
             "category",
+            "strike_target",
         },
         path,
         source_kind,
@@ -3346,6 +3349,10 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
             ? node["reserve_magazines"].as<std::uint16_t>()
             : kDefaultReserveMagazines;
     const std::string type = node["weapon_type"].as<std::string>();
+    if (node["strike_target"] && type != "targeted_strike") {
+        throw std::runtime_error(
+            "strike_target is only supported on targeted_strike weapons: " + path);
+    }
     if (type == "hitscan" || type == "shotgun") {
         if (node["projectile"] || node["area_effect"] || node["beam"]) {
             throw std::runtime_error(
@@ -3415,7 +3422,18 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
         KernelWeaponMechanicsDefinition weapon{};
         weapon.struct_size = sizeof(KernelWeaponMechanicsDefinition);
         weapon.weapon_id = id;
-        weapon.fire_mode = KernelWeaponFireMode_TargetedStrike;
+        // strike_target: ground (the default, under the reticle) or surface
+        // (the first wall or floor along the aim, docs/PLAYER_WEAPON_REVAMP_PLAN.md I3).
+        const std::string strike_target =
+            node["strike_target"] ? node["strike_target"].as<std::string>() : "ground";
+        if (strike_target == "ground") {
+            weapon.fire_mode = KernelWeaponFireMode_TargetedStrike;
+        } else if (strike_target == "surface") {
+            weapon.fire_mode = KernelWeaponFireMode_TargetedStrikeSurface;
+        } else {
+            throw std::runtime_error(
+                "targeted_strike strike_target must be ground or surface: " + strike_target);
+        }
         weapon.magazine_size = magazine_size;
         weapon.reserve_magazines = reserve_magazines;
         weapon.max_range = node["max_range"].as<float>();
@@ -13617,7 +13635,8 @@ void validate_derived_projectiles(
                 "a weapon cannot fire a derived projectile; it needs a "
                 "replicated root: " + fired->name);
         }
-        if (weapon.fire_mode == KernelWeaponFireMode_TargetedStrike) {
+        if (weapon.fire_mode == KernelWeaponFireMode_TargetedStrike ||
+            weapon.fire_mode == KernelWeaponFireMode_TargetedStrikeSurface) {
             strike_roots.push_back(weapon.projectile_template_id);
         }
     }
@@ -14113,7 +14132,8 @@ std::vector<std::string> validate_gameplay_config(
         // A targeted strike lands a marker, which collides with nothing and
         // so has no collider to bind.
         if (config.weapons.collider_template_ids[index] == 0 &&
-            weapon.fire_mode != KernelWeaponFireMode_TargetedStrike) {
+            weapon.fire_mode != KernelWeaponFireMode_TargetedStrike &&
+            weapon.fire_mode != KernelWeaponFireMode_TargetedStrikeSurface) {
             errors.push_back("weapon collider template binding must be valid");
         }
     }
@@ -14590,7 +14610,8 @@ std::vector<std::string> validate_gameplay_config(
         const KernelWeaponMechanicsDefinition& weapon =
             config.weapons.definitions[id];
         if ((weapon.fire_mode == KernelWeaponFireMode_Projectile ||
-             weapon.fire_mode == KernelWeaponFireMode_TargetedStrike) &&
+             weapon.fire_mode == KernelWeaponFireMode_TargetedStrike ||
+             weapon.fire_mode == KernelWeaponFireMode_TargetedStrikeSurface) &&
             std::find(
                 projectile_template_ids.begin(),
                 projectile_template_ids.end(),

@@ -12,6 +12,9 @@
  *     salt, the action's index, the event's target, the status instance and
  *     the server tick; 0 (what every older catalog wrote) and 100 always run
  *     it. Same size and layout, but a managed mirror must rename the field.
+ *     KernelWeaponFireMode gained _TargetedStrikeSurface (7, I3): a targeted
+ *     strike that lands on the first wall or floor along the aim, or on the
+ *     ground under the end of its reach, carrying that face's normal.
  * 109: player hover (docs/PLAYER_HOVER_PLAN.md).
  *     KernelEntityTriggerActionType gained _ApplyHoverMovement, a status
  *     on_apply action: while the instance stands a character-controller
@@ -1716,6 +1719,17 @@ typedef enum KernelWeaponFireMode {
      * nothing spends no ammunition.
      */
     KernelWeaponFireMode_LockMissile = 6,
+    /*
+     * A targeted strike (ABI 110) that lands on a surface rather than under
+     * the reticle: one ray along the aim, up to max_range, through actors,
+     * against terrain and static obstacles. The first face it meets -- a wall
+     * or a floor -- is the target. Meeting none, the point at max_range is
+     * dropped straight down onto the ground below it. Finding neither is a
+     * refusal, spending nothing. The projectile is spawned on the point with
+     * the face's normal as its direction (up for the dropped point), so what
+     * it becomes can push off that face.
+     */
+    KernelWeaponFireMode_TargetedStrikeSurface = 7,
 } KernelWeaponFireMode;
 
 typedef enum KernelProjectileMotionModel {

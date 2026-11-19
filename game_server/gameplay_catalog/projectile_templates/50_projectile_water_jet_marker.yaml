@@ -1,0 +1,20 @@
+# Water Jet's mark. The surface strike spawns it on the chosen face with that
+# face's normal as its direction; speed 0, so its expiry still points along
+# the normal, and the column is raised along it after the 30-tick telegraph.
+id: 50
+name: water_jet_marker
+type: standard
+damage: 0
+damage_shape: none
+speed: 0.0
+collision_mask: none
+sync_mode: server_snapshot_only
+lifetime_ticks: 30
+triggers:
+  on_expired:
+    action_graph: action_spawn_projectile
+    parameters:
+      template: water_jet_column
+      position: event.position
+      # The face's normal, which the surface strike gave the marker.
+      direction: event.direction

@@ -362,7 +362,15 @@ enum class WeaponFireMode : std::uint8_t {
     // Locks the same way, then schedules one certain hit per commit on the
     // (commit_index % locked)-th nearest, landing after a flight.
     kLockMissile = 6,
+    // A targeted strike landing on the first face along the aim, or on the
+    // ground under the end of its reach; the projectile carries the normal.
+    kTargetedStrikeSurface = 7,
 };
+
+inline constexpr bool is_targeted_strike(WeaponFireMode mode) {
+    return mode == WeaponFireMode::kTargetedStrike ||
+        mode == WeaponFireMode::kTargetedStrikeSurface;
+}
 
 enum class ProjectileMotionModel : std::uint8_t {
     kLinear = 0,

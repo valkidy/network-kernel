@@ -1050,10 +1050,14 @@ void simulate_weapons(
             // any ammunition or cooldown is spent on it.
             const RuntimeProjectileTemplate* strike_template = nullptr;
             std::optional<glm::vec3> strike_target;
-            if (definition->mode == WeaponFireMode::kTargetedStrike) {
+            // A surface strike spawns its projectile along the face's normal;
+            // a ground strike along the aim, as before.
+            std::optional<glm::vec3> strike_direction;
+            if (is_targeted_strike(definition->mode)) {
                 strike_template = world.find_projectile_template(
                     definition->projectile_template_id);
-                if (strike_template != nullptr) {
+                if (strike_template != nullptr &&
+                    definition->mode == WeaponFireMode::kTargetedStrike) {
                     strike_target = resolve_strike_target(
                         world,
                         context.rewind_frame,
@@ -1062,6 +1066,19 @@ void simulate_weapons(
                             player_view.get<Transform>(player_entity)),
                         input_aim_to_world(queued_input.input),
                         definition->max_range);
+                } else if (strike_template != nullptr) {
+                    const std::optional<SurfaceStrikeTarget> surface =
+                        resolve_surface_strike_target(
+                            world.collision_world(),
+                            player_identity.net_id,
+                            projectile_launch_position(
+                                player_view.get<Transform>(player_entity)),
+                            input_aim_to_world(queued_input.input),
+                            definition->max_range);
+                    if (surface.has_value()) {
+                        strike_target = surface->point;
+                        strike_direction = surface->normal;
+                    }
                 }
                 if (!strike_target.has_value()) {
                     push_action_outcome(
@@ -1211,7 +1228,7 @@ void simulate_weapons(
                         damage_pipeline,
                         context.lock_missile_launches);
                 }
-            } else if (definition->mode == WeaponFireMode::kTargetedStrike) {
+            } else if (is_targeted_strike(definition->mode)) {
                 (void)spawn_projectile_at(
                     world,
                     *strike_template,
@@ -1220,7 +1237,7 @@ void simulate_weapons(
                     definition->id,
                     queued_input.input.action_intent.action_instance_id,
                     *strike_target,
-                    direction,
+                    strike_direction.value_or(direction),
                     current_tick,
                     context.fixed_delta_seconds,
                     events);
@@ -1438,6 +1455,47 @@ void simulate_hitscan_weapons(
             0.0f,
             0},
         events);
+}
+
+std::optional<SurfaceStrikeTarget> resolve_surface_strike_target(
+    const physics::PhysicsWorld* collision_world,
+    NetId shooter_net_id,
+    const glm::vec3& origin,
+    const glm::vec3& direction,
+    float max_range) {
+    if (collision_world == nullptr || !(max_range > 0.0f) ||
+        glm::dot(direction, direction) < 1e-8f) {
+        return std::nullopt;
+    }
+    constexpr std::uint32_t kGroundMask =
+        KERNEL_COLLISION_LAYER_TERRAIN | KERNEL_COLLISION_LAYER_STATIC_OBSTACLE;
+    const glm::vec3 aim = glm::normalize(direction);
+
+    // The first face along the aim: a wall straight ahead or the floor the
+    // aim comes down on (plan D4), whichever it meets first.
+    physics::RayCastRequest ray{};
+    ray.origin = origin;
+    ray.direction = aim;
+    ray.max_distance = max_range;
+    ray.filter = collision_filter_from_mask(kGroundMask);
+    ray.filter.ignored_entity_net_id = shooter_net_id;
+    physics::CollisionHit hit{};
+    if (collision_world->ray_cast_closest(ray, &hit)) {
+        return SurfaceStrikeTarget{hit.position, hit.normal};
+    }
+
+    // Nothing in reach: the ground under the end of it.
+    physics::RayCastRequest drop{};
+    drop.origin = origin + aim * max_range;
+    drop.direction = glm::vec3{0.0f, -1.0f, 0.0f};
+    drop.max_distance = max_range;
+    drop.filter = collision_filter_from_mask(kGroundMask);
+    drop.filter.ignored_entity_net_id = shooter_net_id;
+    physics::CollisionHit ground{};
+    if (collision_world->ray_cast_closest(drop, &ground)) {
+        return SurfaceStrikeTarget{ground.position, ground.normal};
+    }
+    return std::nullopt;
 }
 
 }  // namespace network_example

@@ -200,6 +200,33 @@ Usually what lands is a **marker** (below) that expires into the real thing, so
 the delay doubles as a telegraph every client sees. A `launch: descent`
 template may also be landed directly.
 
+#### strike_target: surface
+
+`strike_target` picks what the strike lands on. `ground` (the default) is the
+two rays above. `surface` (ABI 110, the Water Jet) is a different rule:
+
+1. One ray along the aim, up to `max_range`, against terrain and static
+   obstacles only. Actors do not stop it.
+2. The first face it meets, wall or floor, is the target.
+3. Meeting none, the point at `max_range` is dropped straight down (at most
+   `max_range`) onto the ground, and that is the target.
+4. Neither: the shot is refused, spending nothing.
+
+The projectile is spawned on the target with the **face's normal as its
+direction** (up for a dropped point). A speed-0 marker keeps that direction
+to its expiry, so `direction: event.direction` in its `on_expired` binding
+hands the normal on: the water jet's column pushes off the face that way.
+
+```yaml
+weapon_type: targeted_strike
+strike_target: surface
+max_range: 45.0
+projectile_template: water_jet_marker
+```
+
+`strike_target` on any other weapon type is a load error. A client preview
+of the reticle has to run the same rays to agree with the server.
+
 ## Projectile template
 
 The weapon's shot. `damage` is always the top-level key, whatever the type.

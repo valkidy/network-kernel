@@ -293,6 +293,23 @@ std::vector<glm::vec3> projectile_burst_directions(
     const glm::vec3& direction,
     const WeaponMechanicsDefinition& definition);
 
+// Where a surface strike (WeaponFireMode::kTargetedStrikeSurface) lands, and
+// the face it lands on. One ray along `direction` from `origin`, up to
+// max_range, against terrain and static obstacles only -- actors do not stop
+// it. The first face it meets, wall or floor, is the target. Meeting none,
+// the point at max_range is dropped straight down (at most max_range) onto
+// the ground. Nothing either way is no target: the weapon refuses the shot.
+struct SurfaceStrikeTarget {
+    glm::vec3 point{0.0f};
+    glm::vec3 normal{0.0f, 1.0f, 0.0f};
+};
+std::optional<SurfaceStrikeTarget> resolve_surface_strike_target(
+    const physics::PhysicsWorld* collision_world,
+    NetId shooter_net_id,
+    const glm::vec3& origin,
+    const glm::vec3& direction,
+    float max_range);
+
 // Mixes the facts that identify one launch into a seed. Integers only, so the
 // same inputs give the same seed on every platform.
 std::uint64_t projectile_launch_seed(
