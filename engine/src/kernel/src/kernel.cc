@@ -3618,6 +3618,8 @@ bool KernelEngine::load_gameplay_catalog(
                  trigger.action_type ==
                      KernelEntityTriggerActionType_ApplyHoverMovement ||
                  trigger.action_type ==
+                     KernelEntityTriggerActionType_ApplyBlockMovement ||
+                 trigger.action_type ==
                      KernelEntityTriggerActionType_ApplyUntargetable) &&
                 trigger.target_source != KernelEntityRefSource_Self &&
                 trigger.target_source != KernelEntityRefSource_EventSubject) {
@@ -3644,6 +3646,8 @@ bool KernelEngine::load_gameplay_catalog(
                          KernelEntityTriggerActionType_ApplySuspendMovement ||
                      action.action_type ==
                          KernelEntityTriggerActionType_ApplyHoverMovement ||
+                     action.action_type ==
+                         KernelEntityTriggerActionType_ApplyBlockMovement ||
                      action.action_type ==
                          KernelEntityTriggerActionType_ApplyUntargetable) &&
                     action.target_source != KernelEntityRefSource_Self &&
@@ -8548,6 +8552,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     predicted_hover_vertical_speed_ = 0.0f;
     predicted_hover_until_tick_ = 0u;
     predicted_local_dead_ = false;
+    predicted_local_downed_ = false;
     predicted_hovering_ = false;
     predicted_shelter_net_id_ = 0u;
     predicted_shelter_tick_ = 0u;
@@ -10447,6 +10452,7 @@ void KernelEngine::clear_client_session() {
     predicted_hover_vertical_speed_ = 0.0f;
     predicted_hover_until_tick_ = 0u;
     predicted_local_dead_ = false;
+    predicted_local_downed_ = false;
     predicted_hovering_ = false;
     predicted_shelter_net_id_ = 0u;
     predicted_shelter_tick_ = 0u;
@@ -11355,6 +11361,9 @@ bool KernelEngine::step_local_character_prediction(
                      predicted_character_state_.velocity.x,
                      0.0f,
                      predicted_character_state_.velocity.z})
+        // Downed, after the lockout as player_movement.cc has it.
+        : predicted_local_downed_
+        ? glm::vec3{0.0f}
         : movement_solver::input_move_to_world(input) *
               local_player_move_speed_meters_per_second_;
     // The suspension's twin of player_movement.cc: held, the step is the
@@ -11755,6 +11764,7 @@ void KernelEngine::adopt_authoritative_hover(const EntitySnapshot& authoritative
     predicted_hover_until_tick_ =
         authoritative.has_hover ? authoritative.hover_until_tick : 0u;
     predicted_local_dead_ = (authoritative.flags & kVisualFlagDead) != 0u;
+    predicted_local_downed_ = (authoritative.flags & kVisualFlagDowned) != 0u;
 }
 
 void KernelEngine::reconcile_local_prediction(const WorldSnapshot& snapshot) {

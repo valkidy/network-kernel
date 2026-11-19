@@ -2852,6 +2852,7 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 parameter_reference_from_yaml(action["target"], "target");
             action_parameters = {&compiled_action.target_parameter};
         } else if (compiled_action.action_type == "apply_block_actions" ||
+                   compiled_action.action_type == "apply_block_movement" ||
                    compiled_action.action_type == "apply_untargetable" ||
                    compiled_action.action_type == "teleport") {
             // Whom it holds, and nothing else: how long is the status's
@@ -9652,6 +9653,7 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
             continue;
         }
         if (action.action_type == "apply_block_actions" ||
+            action.action_type == "apply_block_movement" ||
             action.action_type == "apply_untargetable") {
             if (trigger_name != "on_apply") {
                 throw std::runtime_error(
@@ -9660,6 +9662,8 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
             compiled_action.action_type =
                 action.action_type == "apply_block_actions"
                 ? KernelEntityTriggerActionType_ApplyBlockActions
+                : action.action_type == "apply_block_movement"
+                ? KernelEntityTriggerActionType_ApplyBlockMovement
                 : KernelEntityTriggerActionType_ApplyUntargetable;
             compiled_action.target_source = entity_ref_source(
                 trigger_parameter_value(
@@ -15094,6 +15098,7 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
                 action_type == KernelEntityTriggerActionType_ApplyBlockActions ||
                 action_type == KernelEntityTriggerActionType_ApplySuspendMovement ||
                 action_type == KernelEntityTriggerActionType_ApplyHoverMovement ||
+                action_type == KernelEntityTriggerActionType_ApplyBlockMovement ||
                 action_type == KernelEntityTriggerActionType_ApplyUntargetable;
             if (!damage_or_health && !speed_modifier && !block_actions) {
                 throw std::runtime_error(
@@ -15105,9 +15110,9 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
             }
             if (block_actions && std::string_view(trigger_name) != "on_apply") {
                 throw std::runtime_error(
-                    "apply_block_actions, apply_suspend_movement, "
-                    "apply_hover_movement and apply_untargetable are only "
-                    "allowed in status on_apply");
+                    "apply_block_actions, apply_block_movement, "
+                    "apply_suspend_movement, apply_hover_movement and "
+                    "apply_untargetable are only allowed in status on_apply");
             }
             if (block_actions &&
                 action.target_source != KernelEntityRefSource_Self &&

@@ -29,6 +29,10 @@ _Static_assert(
         KernelWeaponFireMode_LockMissile == 6,
     "ABI 110: the surface strike is an appended fire mode");
 _Static_assert(
+    KernelEntityTriggerActionType_ApplyBlockMovement == 18 &&
+        KERNEL_VISUAL_FLAG_DOWNED == 0x00008000u,
+    "ABI 110: the movement block and the downed flag are appended");
+_Static_assert(
     KernelEntityTriggerActionType_ApplyHoverMovement == 17 &&
         KERNEL_VISUAL_FLAG_HOVERING == 0x00004000u,
     "ABI 109: the hover action type and visual flag are appended");

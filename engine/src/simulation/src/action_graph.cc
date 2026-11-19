@@ -596,6 +596,8 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
         if (action.action_type ==
                 KernelEntityTriggerActionType_ApplyBlockActions ||
             action.action_type ==
+                KernelEntityTriggerActionType_ApplyBlockMovement ||
+            action.action_type ==
                 KernelEntityTriggerActionType_ApplyUntargetable) {
             // Only a status's on_apply has an instance for the block to live
             // as long as, and only its own subject to hold.
@@ -611,6 +613,10 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
                         KernelEntityTriggerActionType_ApplyBlockActions
                     ? ActionGraphAction{ActionApplyBlockActionsDefinition{
                           target_name, *condition}}
+                    : action.action_type ==
+                        KernelEntityTriggerActionType_ApplyBlockMovement
+                    ? ActionGraphAction{ActionApplyBlockActionsDefinition{
+                          target_name, *condition, true}}
                     : ActionGraphAction{ActionApplyUntargetableDefinition{
                           target_name, *condition}});
             binding.parameters.push_back({
@@ -1532,6 +1538,7 @@ bool evaluate_action_graph(
                 target,
                 provenance.status_instance_id,
                 provenance,
+                block->movement,
             });
             continue;
         }

@@ -1501,7 +1501,11 @@ bool execute_action_graph_commands(
             if (active == nullptr) {
                 return false;
             }
-            active->blocks_actions = true;
+            if (block->movement) {
+                active->blocks_movement = true;
+            } else {
+                active->blocks_actions = true;
+            }
             continue;
         }
         if (const auto* untargetable =
@@ -3821,7 +3825,9 @@ bool EntityStateSystem::start_leap(
         registry.all_of<Sheltered>(*entity) ||
         registry.any_of<LeapLockout, ChargeLockout>(*entity) ||
         registry.all_of<HeldInSuspension>(*entity) ||
-        active_suspension(world, *entity) != nullptr) {
+        active_suspension(world, *entity) != nullptr ||
+        // Downed by a status (paralysis): it does not move itself.
+        status_blocks_movement(world, *entity)) {
         return false;
     }
     if (const Health* health = registry.try_get<Health>(*entity);
@@ -3923,7 +3929,9 @@ bool EntityStateSystem::start_charge(
         registry.all_of<Sheltered>(*entity) ||
         registry.any_of<LeapLockout, ChargeLockout>(*entity) ||
         registry.all_of<HeldInSuspension>(*entity) ||
-        active_suspension(world, *entity) != nullptr) {
+        active_suspension(world, *entity) != nullptr ||
+        // Downed by a status (paralysis): it does not move itself.
+        status_blocks_movement(world, *entity)) {
         return false;
     }
     if (const Health* health = registry.try_get<Health>(*entity);

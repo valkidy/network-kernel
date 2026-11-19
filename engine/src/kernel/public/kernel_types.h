@@ -15,6 +15,9 @@
  *     KernelWeaponFireMode gained _TargetedStrikeSurface (7, I3): a targeted
  *     strike that lands on the first wall or floor along the aim, or on the
  *     ground under the end of its reach, carrying that face's normal.
+ *     KernelEntityTriggerActionType gained _ApplyBlockMovement (18, I4): a
+ *     status on_apply action that, while its instance stands, keeps the
+ *     actor from moving itself; KERNEL_VISUAL_FLAG_DOWNED (0x8000) says so.
  * 109: player hover (docs/PLAYER_HOVER_PLAN.md).
  *     KernelEntityTriggerActionType gained _ApplyHoverMovement, a status
  *     on_apply action: while the instance stands a character-controller
@@ -676,6 +679,8 @@ typedef enum KernelFootholdQueryType {
  * Hovering              visual_flags & KERNEL_VISUAL_FLAG_HOVERING (a status
  *                       hover holds it above the ground; never together with
  *                       FALLING or GROUNDED; ABI 109)
+ * Downed                visual_flags & KERNEL_VISUAL_FLAG_DOWNED (a status
+ *                       holds it where it lies: paralysis; ABI 110)
  * Firing                visual_flags & KERNEL_VISUAL_FLAG_FIRING, or
  *                       action.phase == KernelActionPhase_Active
  * Windup                action.phase == KernelActionPhase_Windup
@@ -713,6 +718,10 @@ typedef enum KernelFootholdQueryType {
 /* A status hover (apply_hover_movement): held at a clearance above the
  * ground, off it the whole time. */
 #define KERNEL_VISUAL_FLAG_HOVERING UINT32_C(0x00004000)
+/* A status holds the actor where it is (apply_block_movement, ABI 110): it
+ * does not move itself, though a push still carries it. The last bit the
+ * snapshot's 16-bit flags carry. */
+#define KERNEL_VISUAL_FLAG_DOWNED UINT32_C(0x00008000)
 
 #define KERNEL_MAX_VISIBLE_HOSTILES 16u
 #define KERNEL_MAX_VISIBLE_ALLIES 16u
@@ -1143,6 +1152,13 @@ typedef enum KernelEntityTriggerActionType {
      * ends it falls as any character does. Status on_apply graphs only, onto
      * the status's own subject (ABI 109). */
     KernelEntityTriggerActionType_ApplyHoverMovement = 17,
+    /* While the status instance whose on_apply ran it stands, its target --
+     * an actor -- does not move itself: no walking, steering, leap or charge,
+     * from input or from its AI, and KERNEL_VISUAL_FLAG_DOWNED is set. A push
+     * still carries it, and gravity still acts. Status on_apply graphs only,
+     * onto the status's own subject, on the terms of _ApplyBlockActions
+     * (ABI 110). */
+    KernelEntityTriggerActionType_ApplyBlockMovement = 18,
 } KernelEntityTriggerActionType;
 
 /* How a lock_strike strikes what it locks (ABI 107). */

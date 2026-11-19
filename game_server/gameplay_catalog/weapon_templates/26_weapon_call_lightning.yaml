@@ -1,7 +1,6 @@
 # Calls 8-12 lightning strikes down within 8 m of the aimed point. Each strike
-# is a 3 m blast of 500 that hits friend and foe, the caster included. The 25%
-# paralysis waits for action-graph possibility and the paralysis status (I1
-# and I4 of docs/PLAYER_WEAPON_REVAMP_PLAN.md).
+# is a 3 m blast of 500 that hits friend and foe, the caster included, and
+# paralyses 25% of those it reaches for 4 s.
 id: 26
 name: Call Lightning
 # Weapon group / container slot 0-3.

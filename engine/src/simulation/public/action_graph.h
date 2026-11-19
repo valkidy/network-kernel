@@ -424,6 +424,8 @@ struct ActionApplyBlockActionsCommand {
     NetId target = 0;
     std::uint32_t status_instance_id = 0;
     ActionExecutionProvenance provenance;
+    // apply_block_movement (ABI 110): its movement, not its actions.
+    bool movement = false;
 };
 
 using ActionGraphCommand = std::variant<

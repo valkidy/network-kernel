@@ -785,6 +785,11 @@ void possibility_comes_from_the_binding() {
         compiled_projectile(storage, 43u).projectile_impact_trigger.actions[0];
     require(freeze.action_type == KernelEntityTriggerActionType_ApplyStatus);
     require(freeze.possibility_percent == 30u);
+    // Call Lightning's strikes paralyse 25% of what they reach (I4).
+    const KernelActionDefinition& paralyse =
+        compiled_projectile(storage, 49u).projectile_impact_trigger.actions[0];
+    require(paralyse.action_type == KernelEntityTriggerActionType_ApplyStatus);
+    require(paralyse.possibility_percent == 25u);
     // The water bubble binds the same graph and says nothing: always.
     require(compiled_projectile(storage, 31u)
                 .projectile_impact_trigger.actions[0]

@@ -1050,6 +1050,9 @@ struct ActionApplySpeedModifierDefinition {
 struct ActionApplyBlockActionsDefinition {
     std::string target_parameter;
     ActionConditionType condition = ActionConditionType::kAlways;
+    // KernelEntityTriggerActionType_ApplyBlockMovement (ABI 110): the same
+    // status-held block, of the actor's own movement instead of its actions.
+    bool movement = false;
 };
 
 // KernelEntityTriggerActionType_ApplyUntargetable, on the same terms.
@@ -1208,6 +1211,9 @@ struct ActiveStatusEffect {
     // every path that ends the instance -- expiry, removal, replacement, a
     // revive dropping them all -- ends the block with it.
     bool blocks_actions = false;
+    // Set by apply_block_movement, on the same terms: the actor does not move
+    // itself while this instance stands (paralysis).
+    bool blocks_movement = false;
     // The direction apply_status was given, zero when it was given none. Its
     // on_apply graph reads it as event.direction.
     glm::vec3 applied_direction{0.0f};
@@ -1503,6 +1509,8 @@ inline constexpr std::uint32_t kVisualFlagLeaping = 0x00001000u;
 inline constexpr std::uint32_t kVisualFlagCharging = 0x00002000u;
 // A status hover (ActiveStatusEffect::hovers) the movement step is honouring.
 inline constexpr std::uint32_t kVisualFlagHovering = 0x00004000u;
+// KERNEL_VISUAL_FLAG_DOWNED: a status holds the actor where it is.
+inline constexpr std::uint32_t kVisualFlagDowned = 0x00008000u;
 
 struct ReplicationState {
     std::uint16_t animation_state = 0;

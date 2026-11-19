@@ -1765,6 +1765,10 @@ private:
     float predicted_hover_vertical_speed_ = 0.0f;
     std::uint32_t predicted_hover_until_tick_ = 0;
     bool predicted_local_dead_ = false;
+    // The owner snapshot's KERNEL_VISUAL_FLAG_DOWNED (ABI 110): a status holds
+    // the local player where it lies, so the prediction stops walking too
+    // rather than walking until the correction pulls it back.
+    bool predicted_local_downed_ = false;
     bool predicted_hovering_ = false;
     // The building the local player is inside, as the last owner snapshot
     // said (0 when outside), and that snapshot's tick. The twin of Sheltered:

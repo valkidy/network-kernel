@@ -669,6 +669,21 @@ actions:
 - 範例：`common/action_apply_status_if_target` 的 `possibility` 參數預設 100；
   Ice Spike 的爆炸（`ice_spike_strike_blast`）綁 `possibility: 30` 附加 freeze。
 
+### 4.9 `apply_block_movement`（status on_apply，ABI 110）
+
+和 `apply_block_actions` 同樣的規則：只能寫在 status 的 `on_apply`，目標只能是
+status 自己的 subject，除了 `target`（和 `when`、`possibility`）以外沒有其他欄位。
+status instance 存在期間：
+
+- actor 不會自己移動：輸入和 AI 都無效，leap 和 charge 都會被拒絕，進行中的 charge 會結束。
+- 推力照樣有效（擊退、水柱），重力照常。
+- stagger 不會累積（plan D11）。
+- 設定 `KERNEL_VISUAL_FLAG_DOWNED`（0x8000），Unity 用它播倒地動畫；
+  本地玩家的預測也看這個旗標停止移動。
+
+範例：`derived/status_effect/action_paralysis_apply`（block_actions + block_movement），
+用在 status `paralysis`（1008，120 tick）；Call Lightning 的落雷以 `possibility: 25` 附加。
+
 ---
 
 ## 5. Multi-action Use Case：同時傷害自己與碰撞目標

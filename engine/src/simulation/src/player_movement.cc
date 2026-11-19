@@ -751,6 +751,15 @@ void simulate_actor_movement(
             // nothing: the seeded current-velocity horizontal stands. Ahead
             // of the stagger, so a hit that staggers a leaping actor does not
             // stop it dead in the air.
+        } else if (status_blocks_movement(world, entity)) {
+            // Downed by a status (paralysis, apply_block_movement): rooted
+            // whatever the input or the AI asks. After the lockout test, so a
+            // push still carries it (plan D11); a charge under way ends.
+            desired_horizontal = glm::vec3{0.0f};
+            if (charge != nullptr) {
+                world.registry().remove<ChargeLockout>(entity);
+                charge = nullptr;
+            }
         } else if (is_staggered(world, entity, current_tick)) {
             // A stagger roots the actor. After the lockout test on purpose: a
             // hit that both knocks back and staggers keeps its knockback.
@@ -1389,6 +1398,19 @@ std::vector<std::pair<NetId, float>> settle_status_suspensions(
     std::vector<entt::entity> held;
     for (const entt::entity entity : world.registry().view<HeldInSuspension>()) {
         held.push_back(entity);
+    }
+    // KERNEL_VISUAL_FLAG_DOWNED, raised every tick for the same reason the
+    // suspension's flag is below: a game_server state write replaces the
+    // flags wholesale.
+    // Over every replicated entity, not only those with statuses: one whose
+    // last status went away has to lose the flag too.
+    for (const entt::entity entity : world.registry().view<ReplicationState>()) {
+        ReplicationState& replication = world.registry().get<ReplicationState>(entity);
+        if (status_blocks_movement(world, entity)) {
+            replication.visual_flags |= kVisualFlagDowned;
+        } else {
+            replication.visual_flags &= ~kVisualFlagDowned;
+        }
     }
     std::vector<std::pair<NetId, float>> drops;
     for (const entt::entity entity : held) {

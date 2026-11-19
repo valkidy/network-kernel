@@ -42,6 +42,11 @@ bool apply_stagger(
         world.registry().get<Health>(*target).hp == 0u) {
         return false;
     }
+    // Downed (plan D11): already held where it lies, so the meter does not
+    // build either -- a paralysis does not end in a stagger on top of it.
+    if (status_blocks_movement(world, *target)) {
+        return false;
+    }
     const float amount = explicit_stagger >= 0.0f
         ? explicit_stagger
         : static_cast<float>(damage) * profile->stagger_per_damage;
@@ -85,6 +90,15 @@ bool apply_stagger(
         });
     }
     return true;
+}
+
+bool status_blocks_movement(const World& world, entt::entity entity) {
+    const StatusEffectState* state = world.registry().try_get<StatusEffectState>(entity);
+    return state != nullptr &&
+        std::any_of(
+            state->active.begin(),
+            state->active.end(),
+            [](const ActiveStatusEffect& active) { return active.blocks_movement; });
 }
 
 bool status_blocks_actions(const World& world, entt::entity entity) {
