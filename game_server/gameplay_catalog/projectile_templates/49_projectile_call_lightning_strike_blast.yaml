@@ -1,5 +1,5 @@
 # One evaluation at the moment of impact, falling off linearly to the edge of a
-# 3 m sphere. Friend and foe, the caster included. The damage is the
+# 1.25 m sphere. Friend and foe, the caster included. The damage is the
 # projectile's, with its falloff; the graph paralyses 25% of the actors it
 # reaches, each rolled on its own.
 id: 49

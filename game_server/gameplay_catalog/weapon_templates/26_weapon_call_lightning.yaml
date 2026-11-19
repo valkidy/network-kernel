@@ -1,6 +1,6 @@
-# Calls 8-12 lightning strikes down within 8 m of the aimed point. Each strike
-# is a 3 m blast of 500 that hits friend and foe, the caster included, and
-# paralyses 25% of those it reaches for 4 s.
+# Calls 12-16 lightning strikes down within 8 m of the aimed point, 45 ticks
+# after the press. Each strike is a 1.25 m blast of 500 that hits friend and
+# foe, the caster included, and paralyses 25% of those it reaches for 4 s.
 id: 26
 name: Call Lightning
 # Weapon group / container slot 0-3.

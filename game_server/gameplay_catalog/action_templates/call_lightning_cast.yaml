@@ -1,10 +1,10 @@
-# One volley per press: the strikes are called 180 ticks (6 s) after the press.
+# One volley per press: the strikes are called 45 ticks (1.5 s) after the press.
 id: 4139
 name: call_lightning_cast
 trigger_mode: press
 flags: [cancel_on_death, cancel_on_weapon_change, cancel_before_first_commit]
 ammo_cost_per_commit: 1
-commit_offset_ticks: 180
+commit_offset_ticks: 45
 commit_interval_ticks: 150
 max_commit_count: 1
 recovery_ticks: 15

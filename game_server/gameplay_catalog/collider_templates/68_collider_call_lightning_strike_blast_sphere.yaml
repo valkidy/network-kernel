@@ -3,6 +3,6 @@ id: 68
 name: call_lightning_strike_blast_sphere
 shape: sphere
 center: {x: 0.0, y: 0.0, z: 0.0}
-radius: 3.0
+radius: 1.25
 purpose: damage
 layer: area_effect
