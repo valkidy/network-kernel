@@ -22,4 +22,4 @@ actions:
     repeat:
       count: params.count
       scatter_radius: params.scatter_radius
-      stagger_lifetime_ticks: params.lifetime_spread
+      lifetime_spread_ticks: params.lifetime_spread

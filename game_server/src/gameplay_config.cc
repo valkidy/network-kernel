@@ -2126,10 +2126,23 @@ void read_spawn_repeat(
     }
     reject_unknown_keys(
         repeat,
-        {"count", "scatter_radius", "stagger_lifetime_ticks"},
+        {"count", "scatter_radius", "lifetime_spread_ticks", "stagger_lifetime_ticks"},
         path,
         source_kind,
         KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_UNKNOWN);
+    // lifetime_spread_ticks: the window the spawns' expiries are spread over.
+    // stagger_lifetime_ticks is its old name, still read so a catalog written
+    // before the rename loads; "stagger" also names the hit reaction, which
+    // is why it was renamed (docs/PLAYER_WEAPON_REVAMP_PLAN.md I5). The ABI
+    // field keeps the old name.
+    if (repeat["lifetime_spread_ticks"] && repeat["stagger_lifetime_ticks"]) {
+        throw std::runtime_error(
+            "spawn_projectile repeat names lifetime_spread_ticks and its old name "
+            "stagger_lifetime_ticks; keep lifetime_spread_ticks: " + path);
+    }
+    const YAML::Node lifetime_spread = repeat["lifetime_spread_ticks"]
+        ? repeat["lifetime_spread_ticks"]
+        : repeat["stagger_lifetime_ticks"];
     // One number is an exact count; a pair is a range picked per event.
     const YAML::Node count = repeat["count"];
     if (!count) {
@@ -2139,7 +2152,7 @@ void read_spawn_repeat(
     compiled_action->repeat_scatter_radius_parameter =
         optional_parameter_reference(repeat["scatter_radius"]);
     compiled_action->repeat_stagger_lifetime_ticks_parameter =
-        optional_parameter_reference(repeat["stagger_lifetime_ticks"]);
+        optional_parameter_reference(lifetime_spread);
     if (!compiled_action->repeat_count_parameter.empty()) {
         // Bound: checked per binding.
     } else if (count.IsSequence()) {
@@ -2173,10 +2186,10 @@ void read_spawn_repeat(
                 "non-negative: " + path);
         }
     }
-    if (repeat["stagger_lifetime_ticks"] &&
+    if (lifetime_spread &&
         compiled_action->repeat_stagger_lifetime_ticks_parameter.empty()) {
         compiled_action->repeat_stagger_lifetime_ticks =
-            repeat["stagger_lifetime_ticks"].as<std::uint32_t>();
+            lifetime_spread.as<std::uint32_t>();
     }
 }
 

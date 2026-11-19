@@ -90,7 +90,7 @@ binding 提供數值（graph default 是持有者沒寫時的值）：
 | `spawn_entity` | `placement` |
 | `apply_status` | `strength`（binding 提供時 `0` = 不比較 resistance） |
 | `refill_weapon_reserve` | `count`、`percent` |
-| `spawn_projectile` | `lifetime_ticks`、`repeat` 的 `count`、`scatter_radius`、`stagger_lifetime_ticks` |
+| `spawn_projectile` | `lifetime_ticks`、`repeat` 的 `count`、`scatter_radius`、`lifetime_spread_ticks` |
 | `lock_strike` | `mode`、`origin_lift`、`repeat` 的 `interval_ticks`、`count` |
 
 Binding 提供的值會整段解析（`12abc` 不是 12）並做與字面值相同的範圍檢查，錯誤訊息
@@ -324,7 +324,7 @@ template 沒有 `CancelBeforeFirstCommit` 也不會先打出一次；硬直期�
   repeat:
     count: [10, 15]               # 一個數字 = 固定次數；1 <= min <= max <= 16
     scatter_radius: 6.0           # 在 event.position 周圍的圓盤內均勻分布
-    stagger_lifetime_ticks: 60    # 每個多活的 ticks，依序分散在這個區間
+    lifetime_spread_ticks: 60     # 每個多活的 ticks，依序分散在這個區間
 ```
 
 - `repeat` 會在同一個 batch 內展開成最多 16 個 command
@@ -340,8 +340,9 @@ template 沒有 `CancelBeforeFirstCommit` 也不會先打出一次；硬直期�
   scatter／stagger，都會在載入時報錯。
 - 範例：`common/action_spawn_projectile_repeated`，`meteor_storm_barrage_marker` 的 binding 寫
   `lifetime: 10`、`count: [10, 15]`、`scatter_radius: 25.0`、`lifetime_spread: 60`。
-  graph 參數叫 `lifetime_spread`；repeat 區塊的 key 目前仍是 `stagger_lifetime_ticks`
-  （改名是 docs/PLAYER_WEAPON_REVAMP_PLAN.md 的 I5）。
+  graph 參數叫 `lifetime_spread`，repeat 區塊的 key 叫 `lifetime_spread_ticks`。
+  舊名 `stagger_lifetime_ticks` 仍然可以讀（兩個都寫會報錯）；ABI 欄位
+  `repeat_stagger_lifetime_ticks` 沿用舊名。
 
 ### 4.4 `apply_impulse`
 

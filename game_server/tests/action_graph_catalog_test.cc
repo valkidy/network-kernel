@@ -772,6 +772,32 @@ void spawn_repeat_comes_from_the_binding() {
             {{"projectile_templates/21_projectile_meteor_storm_barrage_marker.yaml",
               with_replaced(marker, "lifetime: 10", "lifetime: 0")}}),
         {"spawn_projectile lifetime_ticks must be at least 1"}));
+
+    // lifetime_spread_ticks (I5): the old name stagger_lifetime_ticks still
+    // loads to the same 60, and naming both is refused.
+    const fs::path repeated = shipped_catalog() / "action_graph_templates" / "common" /
+        "action_spawn_projectile_repeated.yaml";
+    const fs::path old_name = catalog_with(
+        "lifetime_spread_old_name",
+        {{"action_graph_templates/common/action_spawn_projectile_repeated.yaml",
+          with_replaced(repeated, "lifetime_spread_ticks:", "stagger_lifetime_ticks:")}});
+    require(load_error(old_name).empty());
+    {
+        const gs::KernelGameplayCatalogStorage old_storage = built(old_name);
+        require(compiled_projectile(old_storage, 21u)
+                    .expired_trigger.actions[0]
+                    .repeat_stagger_lifetime_ticks == 60u);
+    }
+    require(refused_for(
+        catalog_with(
+            "lifetime_spread_both_names",
+            {{"action_graph_templates/common/action_spawn_projectile_repeated.yaml",
+              with_replaced(
+                  repeated,
+                  "      lifetime_spread_ticks: params.lifetime_spread\n",
+                  "      lifetime_spread_ticks: params.lifetime_spread\n"
+                  "      stagger_lifetime_ticks: params.lifetime_spread\n")}}),
+        {"lifetime_spread_ticks and its old name"}));
 }
 
 // possibility (ABI 110): Ice Spike's blast freezes 30% of what it reaches,
