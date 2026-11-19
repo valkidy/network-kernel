@@ -34,7 +34,7 @@ public static class NetworkKernelManagedAbiSmoke
         KernelBuildInfo buildInfo = KernelAbi.GetBuildInfo();
         GameServerAbiInfo gameServerInfo = GameServerAbi.GetInfo();
         RequireSkeletonBindingContract();
-        Require(KernelConstants.AbiVersion == 109, "Managed kernel ABI version was not v109.");
+        Require(KernelConstants.AbiVersion == 110, "Managed kernel ABI version was not v110.");
         Require(
             KernelPlayerBarrierBox.StructSize == 28 &&
             KernelConstants.MovementLayerPlayerBarrier == 0x00000020U &&
@@ -390,6 +390,17 @@ public static class NetworkKernelManagedAbiSmoke
             (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("hover_height_meters") == 164 &&
             (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("hover_vertical_speed") == 168,
             "Kernel player hover ABI mismatch.");
+        Require(
+            KernelWeaponFireMode.TargetedStrikeSurface == (KernelWeaponFireMode)7 &&
+            KernelWeaponFireMode.TargetedStrikeActor == (KernelWeaponFireMode)8 &&
+            KernelEntityTriggerActionType.ApplyBlockMovement == (KernelEntityTriggerActionType)18 &&
+            KernelConstants.VisualFlagDowned == 0x00008000U &&
+            KernelActionDefinition.StructSize == 172 &&
+            (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("possibility_percent") ==
+                (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("modifier_operation") + 1 &&
+            (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("reserved2") ==
+                (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelActionDefinition>("possibility_percent") + 1,
+            "Kernel ABI 110 (possibility, surface and actor strikes, movement block) mismatch.");
         Require(
             KernelColliderShapeType.Capsule == (KernelColliderShapeType)5 &&
             KernelColliderShapeType.Cylinder == (KernelColliderShapeType)6,

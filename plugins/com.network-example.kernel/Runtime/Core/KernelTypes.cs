@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 109;
+        public const uint AbiVersion = 110;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int LogMessageTextSize = 512;
@@ -262,6 +262,10 @@ namespace NetworkExample.Kernel
         // A status hover holds the actor above the ground (ABI 109). Set in
         // place of Grounded and Falling, never with either.
         public const uint VisualFlagHovering = 0x00004000U;
+        // A status holds the actor where it is (apply_block_movement, ABI
+        // 110): paralysis. It does not move itself, though a push still
+        // carries it. The last bit the snapshot's 16-bit flags carry.
+        public const uint VisualFlagDowned = 0x00008000U;
         public const uint MaxVisibleHostiles = 16;
         public const uint MaxVisibleAllies = 16;
         public const uint MaxVisibleNeutrals = 16;
@@ -550,6 +554,11 @@ namespace NetworkExample.Kernel
         // hover_height_meters above the ground and is never grounded; see
         // KernelActionDefinition's hover_* fields.
         ApplyHoverMovement = 17,
+        // ABI 110: a status on_apply action, onto the status's own subject, on
+        // ApplyBlockActions' terms. While the instance stands the actor does
+        // not move itself (no walking, steering, leap or charge); a push still
+        // carries it, and VisualFlagDowned is set.
+        ApplyBlockMovement = 18,
     }
 
     // How a lock_strike strikes what it locks (ABI 107).
@@ -688,6 +697,15 @@ namespace NetworkExample.Kernel
         TargetedStrike = 4,
         LockInstant = 5,
         LockMissile = 6,
+        // ABI 110: a targeted strike landing on the first wall or floor along
+        // the aim within max_range, or on the ground under the end of that
+        // reach; the projectile is spawned along that face's normal.
+        TargetedStrikeSurface = 7,
+        // ABI 110: a targeted strike on an actor: the nearest the cone of
+        // melee_collider_template_id locks on the hostile side. The projectile
+        // spawns at the shooter carrying it, and its on_expired reports it as
+        // event.target.
+        TargetedStrikeActor = 8,
     }
 
     public enum KernelProjectileMotionModel : byte
@@ -1243,7 +1261,10 @@ namespace NetworkExample.Kernel
         public KernelVec3 impulse_direction;
         public uint status_effect_id;
         public byte modifier_operation;
-        public byte reserved1;
+        // Any action (ABI 110): 1-99 runs it that many times in 100, seeded
+        // deterministically; 0 (unauthored) and 100 always run it. A
+        // spawn_projectile or lock_strike refuses one.
+        public byte possibility_percent;
         public ushort reserved2;
         public float modifier_value;
         public uint impulse_lockout_ticks;
@@ -1257,7 +1278,9 @@ namespace NetworkExample.Kernel
         // spawn_projectile or spawn_entity; zero preserves the template lifetime.
         // A spawned actor expires as Destroyed, a prop as Expired (ABI 109).
         public uint spawn_lifetime_ticks;
-        // spawn_projectile only; zero repeat_count_max means a single spawn.
+        // spawn_projectile: zero repeat_count_max means a single spawn. Also,
+        // ABI 110, a lock_strike's count range: non-zero repeat_count_max (with
+        // lock_repeat_count 0 or 1) picks its count, seeded, in [min, max].
         public byte repeat_count_min;
         public byte repeat_count_max;
         public ushort reserved3;
@@ -1300,7 +1323,10 @@ namespace NetworkExample.Kernel
         public byte lock_mode;
         public byte lock_reserved0;
         // 0 or 1 is once; up to MaxLockStrikeRepeat, lock_repeat_interval_ticks
-        // apart, the whole run within MaxLockStrikeSpanTicks.
+        // apart, the whole run within MaxLockStrikeSpanTicks. ABI 110: a
+        // lock_strike runs in a projectile's triggers too, and with
+        // target_source EventTarget strikes that actor alone on every repeat,
+        // with no search, stopping once it is gone.
         public ushort lock_repeat_count;
         public uint lock_repeat_interval_ticks;
         // Metres above position the lock is taken from, 0 .. MaxLockOriginLift.
