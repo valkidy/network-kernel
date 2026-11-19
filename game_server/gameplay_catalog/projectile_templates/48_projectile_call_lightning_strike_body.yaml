@@ -1,0 +1,31 @@
+# The bolt itself: it starts 40 m above its landing point, from a seeded
+# direction at 75-85 degrees, and lands in 15 ticks. It hits only the static
+# world: the blast is what hurts.
+id: 48
+name: call_lightning_strike_body
+type: standard
+collider_template: projectile_sphere
+damage: 0
+damage_shape: none
+collision_mask: terrain | static_obstacle
+lifetime_ticks: 18
+launch:
+  type: descent
+  elevation_degrees: [75, 85]
+  height: 40.0
+  fall_ticks: 15
+triggers:
+  on_projectile_impact:
+    action_graph: action_spawn_projectile
+    parameters:
+      template: call_lightning_strike_blast
+      position: event.position
+      direction: event.direction
+  on_expired:
+    action_graph: action_spawn_projectile
+    parameters:
+      template: call_lightning_strike_blast
+      position: event.position
+      direction: event.direction
+# Never sent: clients derive it from the marker at the root of its chain.
+replication: derived

@@ -42,5 +42,5 @@ camp:
       quantity: 2
     - item_template: fungible_frag_grenade_bottle
       quantity: 2
-    - item_template: stateful_weapon_shotgun
+    - item_template: stateful_weapon_shotgunning
       quantity: 1

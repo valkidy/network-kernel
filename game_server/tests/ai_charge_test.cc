@@ -22,6 +22,7 @@
 #include "game_server/src/actor_intent_executor.h"
 #include "game_server/src/game_server.h"
 #include "game_server/src/gameplay_config.h"
+#include "game_server/tests/legacy_staff_charge.h"
 #include "kernel/public/kernel_api.h"
 
 namespace {
@@ -200,8 +201,10 @@ int attack(
 }  // namespace
 
 int main() {
-    const gs::GameServerGameplayConfig config = gs::load_gameplay_config_from_catalog_file(
+    gs::GameServerGameplayConfig config = gs::load_gameplay_config_from_catalog_file(
         (catalog_root() / "gameplay_catalog.yaml").string());
+    // Weapon 13 with the old meteor staff's 20-tick charge (legacy_staff_charge.h).
+    gs::test::restore_legacy_staff_charge(config);
     // The charge time an agent's executor is given comes from the weapon's
     // fire action.
     const std::uint32_t charge = gs::weapon_charge_ticks(config, kMeteorStaff);

@@ -172,7 +172,7 @@ int main() {
 
     step();
     KernelServerEntityState before = state_of(mage_id);
-    const std::size_t grenade_slot = slot_of(before, 12u);
+    const std::size_t grenade_slot = slot_of(before, 134u);
     const std::size_t rocket_slot = slot_of(before, 3u);
     require(grenade_slot < KERNEL_MAX_WEAPON_SLOTS && rocket_slot < KERNEL_MAX_WEAPON_SLOTS);
     std::uint32_t grenades = 0;

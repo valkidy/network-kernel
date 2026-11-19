@@ -1,0 +1,8 @@
+# The blast volume of ice_spike_strike_blast.
+id: 66
+name: ice_spike_strike_blast_sphere
+shape: sphere
+center: {x: 0.0, y: 0.0, z: 0.0}
+radius: 8.0
+purpose: damage
+layer: area_effect

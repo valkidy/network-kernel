@@ -12,7 +12,7 @@ movement_model: linear
 sync_mode: local_predicted_deterministic
 hit_response: destroy
 damage_shape: direct_hit
-damage: 10
+damage: 30
 # actor reaches a rigged monster's bones as well, since ABI 106 they are its
 # body. Naming actor/terrain/static_obstacle spells out what the engine default
 # gave it before the mask was authored anywhere.

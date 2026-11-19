@@ -1,7 +1,7 @@
 // Drop tags (K12, design D19/D22/D23, 2026-10-07), end to end on a listen host
 // with the shipped catalog.
 //
-// The scene puts a beam rifle (a map weapon) and a quest relic near the spawn:
+// The scene puts a fire ball (a map weapon) and a quest relic near the spawn:
 // the shipped catalog with `scene_items:` added, in a temporary copy -- the
 // shipped one places none, since every entity placed moves the net ids that
 // order-sensitive tests key on.
@@ -56,7 +56,7 @@ std::filesystem::path catalog_root() {
         "gameplay_catalog";
 }
 
-// The shipped catalog with a beam rifle and a quest relic laid near the spawn.
+// The shipped catalog with a fire ball and a quest relic laid near the spawn.
 gs::GameServerGameplayConfig catalog_with_scene_items() {
     const char* tmp = std::getenv("TEST_TMPDIR");
     require(tmp != nullptr);
@@ -72,7 +72,7 @@ gs::GameServerGameplayConfig catalog_with_scene_items() {
     require(player != std::string::npos);
     text.insert(player + 1,
                 "scene_items:\n"
-                "  - item_template: stateful_weapon_beam_rifle\n"
+                "  - item_template: stateful_weapon_fire_ball\n"
                 "    position: {x: -6.0, y: 0.1, z: 0.0}\n"
                 "  - item_template: stateful_quest_relic\n"
                 "    position: {x: -6.0, y: 0.1, z: 3.0}\n");
@@ -245,7 +245,7 @@ int main() {
     const gs::GameServerGameplayConfig config = catalog_with_scene_items();
     require(config.scene_items.size() == 2u);
     const std::uint32_t relic_item = item_id(config, "stateful_quest_relic");
-    const std::uint32_t beam_item = item_id(config, "stateful_weapon_beam_rifle");
+    const std::uint32_t beam_item = item_id(config, "stateful_weapon_fire_ball");
     const std::uint32_t sky_item = item_id(config, "stateful_weapon_sky_laser");
     const std::uint32_t potion_item = item_id(config, "fungible_potion");
     const gs::ActorTemplateConfig* camp_template = nullptr;
@@ -262,7 +262,7 @@ int main() {
         require(false);
         return std::uint8_t{0};
     };
-    const std::uint8_t pick_rifle = weapon_option(item_id(config, "stateful_weapon_rifle"));
+    const std::uint8_t pick_rifle = weapon_option(item_id(config, "stateful_weapon_ice_lance"));
     const std::uint8_t pick_sky = weapon_option(sky_item);
 
     const std::vector<std::uint8_t> scene = read_ground_scene();
@@ -308,8 +308,8 @@ int main() {
     require(harness.item(beam).drop_tag == KERNEL_DROP_TAG_MAP_WEAPON);
     require(harness.item(relic).drop_tag == KERNEL_DROP_TAG_QUEST);
 
-    // Picked up, both keep their tags. The beam rifle is category 2, so the
-    // (untagged) default category-2 weapon goes to the feet.
+    // Picked up, both keep their tags. The fire ball is category 1, so the
+    // (untagged) default category-1 weapon (Ice Spike) goes to the feet.
     harness.stand_at(harness.state_of(beam_prop).position);
     require(harness.request(KernelDomainAction_Pickup, beam, beam_prop).status ==
             KernelGameplayRequestStatus_Committed);
@@ -320,7 +320,7 @@ int main() {
     require(harness.holds(items, relic));
     require(harness.item(beam).drop_tag == KERNEL_DROP_TAG_MAP_WEAPON);
     require(harness.item(relic).drop_tag == KERNEL_DROP_TAG_QUEST);
-    require((harness.weapons() == std::vector<std::uint32_t>{0u, 13u, 5u, 14u}));
+    require((harness.weapons() == std::vector<std::uint32_t>{0u, 25u, 14u, 17u}));
 
     // Death (K11): the tagged go to the ground round the body, as
     // themselves; the untagged stay for the respawn to replace. The player
@@ -349,7 +349,7 @@ int main() {
     // The control: everything untagged is still on the body -- one item fewer
     // (the relic), and the default weapons other than the map one.
     require(harness.slots(items).size() == items_before_death - 1u);
-    require((harness.weapons() == std::vector<std::uint32_t>{0u, 13u, 14u}));
+    require((harness.weapons() == std::vector<std::uint32_t>{0u, 14u, 17u}));
     {
         const KernelServerEntityState lying_beam = harness.state_of(beam_view.prop_entity_id);
         const KernelServerEntityState lying_relic = harness.state_of(relic_view.prop_entity_id);
@@ -370,15 +370,15 @@ int main() {
     require(harness.item(beam).residency == KernelItemResidency_World);
     require(harness.item(relic).residency == KernelItemResidency_World);
 
-    // Both can be picked back up, still tagged; the beam rifle swaps the
-    // default category-2 weapon out again.
+    // Both can be picked back up, still tagged; the fire ball swaps the
+    // default category-1 weapon out again.
     harness.stand_at(harness.state_of(relic_view.prop_entity_id).position);
     require(harness.request(KernelDomainAction_Pickup, relic, relic_view.prop_entity_id).status ==
             KernelGameplayRequestStatus_Committed);
     require(harness.holds(items, relic));
     require(harness.item(relic).drop_tag == KERNEL_DROP_TAG_QUEST);
 
-    // A camp pick that leaves category 2 free keeps the map weapon.
+    // A camp pick that leaves category 1 free keeps the map weapon.
     harness.stand_at(harness.state_of(beam_view.prop_entity_id).position);
     require(harness.request(KernelDomainAction_Pickup, beam, beam_view.prop_entity_id).status ==
             KernelGameplayRequestStatus_Committed);
@@ -406,11 +406,12 @@ int main() {
     auto [applied, weapon_count] = harness.select(camp, {0}, {pick_rifle});
     require(applied == GAME_SERVER_LOADOUT_RESULT_APPLIED);
     require(weapon_count == 1u);
-    require((harness.weapons() == std::vector<std::uint32_t>{0u, 5u}));
+    require((harness.weapons() == std::vector<std::uint32_t>{0u, 25u}));
     require(harness.holds(weapons, beam));
     require(harness.holds(items, relic));
 
-    // A pick that wants category 2 puts the map weapon at the feet, tag and all.
+    // A pick that wants category 1 (the sky laser) puts the map weapon at the
+    // feet, tag and all.
     auto [applied_sky, sky_count] = harness.select(camp, {0}, {pick_rifle, pick_sky});
     require(applied_sky == GAME_SERVER_LOADOUT_RESULT_APPLIED);
     require(sky_count == 2u);

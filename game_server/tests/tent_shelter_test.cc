@@ -57,7 +57,7 @@ constexpr float kCapsuleRadius = 0.35f;
 constexpr std::uint32_t kRestUi = 1;
 // gingerbread_mage's lobbed grenade: an area effect, which the tent's walls do
 // not stop (tent_feasibility_probe_test, case 6).
-constexpr std::uint8_t kMageGrenade = 12;
+constexpr std::uint8_t kMageGrenade = 134;
 
 std::vector<std::uint8_t> read_ground_scene() {
     const char* test_srcdir = std::getenv("TEST_SRCDIR");

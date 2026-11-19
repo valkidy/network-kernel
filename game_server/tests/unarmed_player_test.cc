@@ -33,6 +33,7 @@
 
 #include "game_server/src/game_server.h"
 #include "game_server/src/gameplay_config.h"
+#include "game_server/tests/legacy_staff_charge.h"
 #include "kernel/public/kernel_api.h"
 
 namespace {
@@ -249,7 +250,9 @@ void loadout_yaml_allows_an_unarmed_player_only() {
 }  // namespace
 
 int main() {
-    const gs::GameServerGameplayConfig config = gs::default_game_server_gameplay_config();
+    gs::GameServerGameplayConfig config = gs::default_game_server_gameplay_config();
+    // Weapon 13 with the old meteor staff's 20-tick charge (legacy_staff_charge.h).
+    gs::test::restore_legacy_staff_charge(config);
     const std::vector<std::uint8_t> scene = read_ground_scene();
     const gs::ActorTemplateConfig* grunt_template = nullptr;
     for (const auto& candidate : config.actor_templates) {
@@ -359,8 +362,9 @@ int main() {
     // The control for every "unchanged" above: the staff does fire.
     require(entity_state(arena.kernel, arena.player).ammo[0] == 2u);
 
-    arena.tick(60);
-    print_state("after 60 idle ticks", arena);
+    // Ice Spike's mark stands 90 ticks and the spike falls 15 more.
+    arena.tick(120);
+    print_state("after 120 idle ticks", arena);
     const std::uint16_t grunt_end = entity_state(arena.kernel, arena.grunt).hp;
 
     // And its strike lands.

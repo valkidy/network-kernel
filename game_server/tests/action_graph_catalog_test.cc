@@ -744,7 +744,7 @@ void bound_status_strength_and_refill_percent_are_range_checked() {
 }
 
 // spawn_projectile's lifetime and repeat from the binding: the meteor storm
-// marker's 10-15 fuses, 6 m scatter, 10 + 60 ticks.
+// marker's 10-15 fuses, 25 m scatter, 10 + 60 ticks.
 void spawn_repeat_comes_from_the_binding() {
     const gs::KernelGameplayCatalogStorage storage =
         built(shipped_catalog() / "gameplay_catalog.yaml");
@@ -753,23 +753,23 @@ void spawn_repeat_comes_from_the_binding() {
     require(spawn.action_type == KernelEntityTriggerActionType_SpawnProjectile);
     require(spawn.spawn_lifetime_ticks == 10u);
     require(spawn.repeat_count_min == 10u && spawn.repeat_count_max == 15u);
-    require(spawn.repeat_scatter_radius == 6.0f);
+    require(spawn.repeat_scatter_radius == 25.0f);
     require(spawn.repeat_stagger_lifetime_ticks == 60u);
 
     const fs::path marker =
-        shipped_catalog() / "projectile_templates" / "21_projectile_meteor_storm_marker.yaml";
+        shipped_catalog() / "projectile_templates" / "21_projectile_meteor_storm_barrage_marker.yaml";
     for (const char* count : {"count: [15, 10]", "count: 0", "count: 17"}) {
         require(refused_for(
             catalog_with(
                 "repeat_count_out_of_range",
-                {{"projectile_templates/21_projectile_meteor_storm_marker.yaml",
+                {{"projectile_templates/21_projectile_meteor_storm_barrage_marker.yaml",
                   with_replaced(marker, "count: [10, 15]", count)}}),
             {"spawn_projectile repeat count must satisfy"}));
     }
     require(refused_for(
         catalog_with(
             "lifetime_zero",
-            {{"projectile_templates/21_projectile_meteor_storm_marker.yaml",
+            {{"projectile_templates/21_projectile_meteor_storm_barrage_marker.yaml",
               with_replaced(marker, "lifetime: 10", "lifetime: 0")}}),
         {"spawn_projectile lifetime_ticks must be at least 1"}));
 }

@@ -71,7 +71,7 @@ void the_catalog_resolves(const gs::GameServerGameplayConfig& config) {
     require(config.sp_attack_templates.size() == 2u);
     const gs::ActorTemplateConfig* gingerbread = gs::find_actor_template(config, 28u);
     require(gingerbread != nullptr && gingerbread->skills.size() == 2u);
-    require(gingerbread->sentry.weapon_id == 10u);
+    require(gingerbread->sentry.weapon_id == 132u);
     require(gingerbread->chaser.attack_range_meters == 2.2f);
     // The jump from the template, the band and cooldown from the skill.
     require(gingerbread->chaser.leap.apex_meters == 4.9f);
@@ -81,12 +81,12 @@ void the_catalog_resolves(const gs::GameServerGameplayConfig& config) {
     require(gingerbread->chaser.leap.cooldown_ticks == 90u);
     const gs::ActorTemplateConfig* warrior = gs::find_actor_template(config, 29u);
     require(warrior != nullptr);
-    require(warrior->chaser.charge.weapon_id == 20u);
+    require(warrior->chaser.charge.weapon_id == 136u);
     require(warrior->chaser.charge.windup_ticks == 18u);
     require(warrior->chaser.charge.max_distance_meters == 18.0f);
     require(warrior->chaser.charge.cooldown_ticks == 150u);
     const gs::ActorTemplateConfig* sentry = gs::find_actor_template(config, 2u);
-    require(sentry != nullptr && sentry->sentry.weapon_id == 2u);
+    require(sentry != nullptr && sentry->sentry.weapon_id == 128u);
     require(sentry->chaser.attack_range_meters == 0.0f);
 }
 
@@ -105,14 +105,14 @@ void bad_skills_are_refused() {
         root["ai"]["locomotion"]["leap"]["apex_meters"] = 4.9;
     }));
     require(!loads_after("weapon not in loadout", kGingerbread, [](YAML::Node& root) {
-        root["ai"]["skills"][0]["use"]["value"] = 11;
+        root["ai"]["skills"][0]["use"]["value"] = 133;
     }));
     // P4b: a chaser may carry several weapon skills, with minimum ranges and
     // cooldowns, as long as one reaches from where it stops.
     require(loads_after("two weapons", kGingerbread, [](YAML::Node& root) {
         YAML::Node second;
         second["use"]["type"] = "weapon";
-        second["use"]["value"] = 10;
+        second["use"]["value"] = 132;
         second["when"]["range_meters"]["min"] = 1.0;
         second["when"]["range_meters"]["max"] = 2.2;
         second["cooldown_ticks"] = 30;
@@ -127,7 +127,7 @@ void bad_skills_are_refused() {
     require(!loads_after("sentry with two weapons", kSentry, [](YAML::Node& root) {
         YAML::Node second;
         second["use"]["type"] = "weapon";
-        second["use"]["value"] = 2;
+        second["use"]["value"] = 128;
         root["ai"]["skills"].push_back(second);
     }));
     require(!loads_after("min past max", kGingerbread, [](YAML::Node& root) {
@@ -171,7 +171,7 @@ void bad_skills_are_refused() {
         root["ai"]["skills"].push_back(skill);
     }));
     require(!loads_after("weapon item", kGingerbread, [&](YAML::Node& root) {
-        YAML::Node skill = item_skill("stateful_weapon_rifle");
+        YAML::Node skill = item_skill("stateful_weapon_ice_lance");
         skill["when"]["on_spawn"] = true;
         root["ai"]["skills"].push_back(skill);
     }));
@@ -196,7 +196,7 @@ void bad_skills_are_refused() {
         root["ai"]["skills"][0]["once"] = true;
     }));
     require(!loads_after("leap swinging another weapon", kLeap, [](YAML::Node& root) {
-        root["on_landing"]["weapon"] = 11;
+        root["on_landing"]["weapon"] = 133;
     }));
     // A leap's swing commits on landing only at commit_offset_ticks + 1 (the
     // claw's offset is 8).
@@ -210,7 +210,7 @@ void bad_skills_are_refused() {
     require(!loads_after("weapon band past vision", kGingerbread, [](YAML::Node& root) {
         YAML::Node far;
         far["use"]["type"] = "weapon";
-        far["use"]["value"] = 10;
+        far["use"]["value"] = 132;
         far["when"]["range_meters"]["min"] = 27.0;
         far["when"]["range_meters"]["max"] = 40.0;
         root["ai"]["skills"].push_back(far);

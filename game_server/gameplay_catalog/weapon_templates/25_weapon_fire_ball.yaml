@@ -1,0 +1,12 @@
+# Lobs a fire ball on an arc: 45 on a direct hit, then a 4 m blast of 240 that
+# hits friend and foe, the caster included. Numbers modelled on Rocket.
+id: 25
+name: Fire Ball
+# Weapon group / container slot 0-3.
+category: 1
+weapon_type: projectile
+magazine_size: 12
+reserve_magazines: 4
+fire_action_template: fire_ball_fire
+reload_action_template: fire_ball_reload
+projectile_template: fire_ball

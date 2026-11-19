@@ -2,7 +2,7 @@ id: 4097
 name: shotgun_fire
 trigger_mode: press
 flags: [cancel_on_death, cancel_on_weapon_change, cancel_before_first_commit]
-ammo_cost_per_commit: 1
+ammo_cost_per_commit: 5
 commit_offset_ticks: 0
 commit_interval_ticks: 20
 max_commit_count: 1

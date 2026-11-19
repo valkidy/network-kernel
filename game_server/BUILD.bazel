@@ -1390,7 +1390,10 @@ cc_test(
 
 cc_test(
     name = "unarmed_player_test",
-    srcs = ["tests/unarmed_player_test.cc"],
+    srcs = [
+        "tests/unarmed_player_test.cc",
+        "tests/legacy_staff_charge.h",
+    ],
     data = glob([
         "gameplay_catalog/scene_templates/*.yaml",
         "gameplay_catalog/action_graph_templates/**/*.yaml",
@@ -1419,7 +1422,10 @@ cc_test(
 
 cc_test(
     name = "charge_and_holster_test",
-    srcs = ["tests/charge_and_holster_test.cc"],
+    srcs = [
+        "tests/charge_and_holster_test.cc",
+        "tests/legacy_staff_charge.h",
+    ],
     data = glob([
         "gameplay_catalog/scene_templates/*.yaml",
         "gameplay_catalog/action_graph_templates/**/*.yaml",
@@ -1448,7 +1454,10 @@ cc_test(
 
 cc_test(
     name = "hands_interrupt_test",
-    srcs = ["tests/hands_interrupt_test.cc"],
+    srcs = [
+        "tests/hands_interrupt_test.cc",
+        "tests/legacy_staff_charge.h",
+    ],
     data = glob([
         "gameplay_catalog/scene_templates/*.yaml",
         "gameplay_catalog/action_graph_templates/**/*.yaml",
@@ -1477,7 +1486,10 @@ cc_test(
 
 cc_test(
     name = "ai_charge_test",
-    srcs = ["tests/ai_charge_test.cc"],
+    srcs = [
+        "tests/ai_charge_test.cc",
+        "tests/legacy_staff_charge.h",
+    ],
     data = glob([
         "gameplay_catalog/scene_templates/*.yaml",
         "gameplay_catalog/action_graph_templates/**/*.yaml",

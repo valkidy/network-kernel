@@ -1,0 +1,24 @@
+# Call Lightning's centre mark. After 30 ticks it expires into the volley:
+# action_spawn_projectile_repeated scatters the strike fuses around it.
+id: 46
+name: call_lightning_barrage_marker
+type: standard
+damage: 0
+damage_shape: none
+speed: 0.0
+collision_mask: none
+sync_mode: server_snapshot_only
+lifetime_ticks: 30
+triggers:
+  on_expired:
+    action_graph: action_spawn_projectile_repeated
+    parameters:
+      template: call_lightning_strike_fuse
+      position: event.position
+      direction: event.direction
+      # 8-12 fuses within 8 m, each living 10 ticks plus a share of a 15-tick
+      # window, so they expire one after another.
+      lifetime: 10
+      count: [8, 12]
+      scatter_radius: 8.0
+      lifetime_spread: 15

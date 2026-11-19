@@ -1,0 +1,13 @@
+id: 0
+name: Ice Lance
+# Weapon container slot 0-3 (wand, scepter, staff, tome / their gun twins).
+category: 0
+weapon_type: hitscan
+magazine_size: 600
+reserve_magazines: 6
+fire_action_template: rifle_fire
+reload_action_template: rifle_reload
+max_range: 25.0
+segment_collider: rifle_segment
+# Damage and target mask are authored in this template.
+projectile_template: rifle_shot

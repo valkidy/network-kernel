@@ -1,0 +1,26 @@
+# The fire ball: a parabolic lob. 19.8 m/s under 9.81 m/s^2 lands a 45-degree
+# throw at 40 m (v^2 / g). 45 to an actor it strikes directly; wherever it
+# strikes, it bursts into fire_ball_explosion.
+id: 44
+name: fire_ball
+damage: 45
+sync_mode: local_predicted_deterministic
+collider_template: projectile_aabb
+movement_model: parabolic
+hit_response: destroy
+damage_shape: direct_hit
+speed: 19.8
+lifetime_ticks: 180
+collision_mask: damageable | terrain | static_obstacle
+max_hit_count: 1
+gravity:
+  x: 0.0
+  y: -9.81
+  z: 0.0
+triggers:
+  on_projectile_impact:
+    action_graph: action_spawn_projectile
+    parameters:
+      template: fire_ball_explosion
+      position: event.position
+      direction: event.direction

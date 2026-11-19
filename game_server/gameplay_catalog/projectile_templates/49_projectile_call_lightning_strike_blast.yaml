@@ -1,0 +1,16 @@
+# One evaluation at the moment of impact, falling off linearly to the edge of a
+# 3 m sphere. Friend and foe, the caster included.
+id: 49
+name: call_lightning_strike_blast
+type: area_effect
+collider_template: call_lightning_strike_blast_sphere
+damage: 500
+lifetime_ticks: 2
+damage_behavior:
+  type: area_interval
+  damage_interval_ticks: 2
+  falloff: linear
+collision_mask: damageable
+hit_instigator: true
+# Never sent: clients derive it from the marker at the root of its chain.
+replication: derived

@@ -36,7 +36,7 @@ movement:
     height_meters: 14.0
     vertical_speed_meters_per_second: 2.0
 weapon_slots:
-  - 16
+  - 135
 active_weapon_slot: 0
 animations:
   idle: 0
@@ -67,7 +67,7 @@ ai:
       leash_meters: 30.0
       leash_resume_meters: 10.0
   skills:
-    - use: {type: weapon, value: 16}
+    - use: {type: weapon, value: 135}
       when: {range_meters: {max: 10.0}}
 spawner:
   trigger: on_alert

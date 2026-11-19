@@ -590,7 +590,7 @@ std::string sentry_grunt_entity_template_yaml(std::string entity_type) {
         "  move_speed_meters_per_second: 2.5\n"
         "  collider_template: sentry_grunt_movement_capsule\n"
         "weapon_slots:\n"
-        "  - 2\n"
+        "  - 128\n"
         "active_weapon_slot: 0\n"
         "animations:\n"
         "  idle: 0\n"
@@ -603,7 +603,7 @@ std::string sentry_grunt_entity_template_yaml(std::string entity_type) {
         // Every agent names its skills (AI plan P4); a sentry exactly one
         // weapon, which is what it fires.
         "  skills:\n"
-        "    - use: {type: weapon, value: 2}\n";
+        "    - use: {type: weapon, value: 128}\n";
 }
 
 }  // namespace
@@ -1231,7 +1231,7 @@ int main() {
     require(data_driven_sentry.sentry.patrol_rotation_min_degrees == 10.5f);
     require(data_driven_sentry.sentry.patrol_rotation_max_degrees == 22.5f);
     require(data_driven_sentry.sentry.move_speed_meters_per_second == 2.5f);
-    require(data_driven_sentry.sentry.weapon_id == 2);
+    require(data_driven_sentry.sentry.weapon_id == 128);
     require(data_driven_sentry.sentry.animation_idle ==
            data_driven_sentry.animation_idle);
     require(data_driven_sentry.sentry.animation_attack ==
@@ -1259,35 +1259,35 @@ int main() {
     // A sentry fires its one weapon skill (AI plan P4), whichever slot holds
     // it: the skill names a weapon id, and active_weapon_slot is left alone.
     const std::string two_slot_sentry_yaml = replace_once(
-        data_driven_sentry_yaml, "  - 2\n", "  - 2\n  - 3\n");
+        data_driven_sentry_yaml, "  - 128\n", "  - 128\n  - 3\n");
     require(load_sentry_yaml(two_slot_sentry_yaml)
-                .entity_templates[1].sentry.weapon_id == 2);
+                .entity_templates[1].sentry.weapon_id == 128);
     const network_example::game_server::GameServerGameplayConfig
         slot_sentry_config = load_sentry_yaml(replace_once(
             two_slot_sentry_yaml,
-            "    - use: {type: weapon, value: 2}\n",
+            "    - use: {type: weapon, value: 128}\n",
             "    - use: {type: weapon, value: 3}\n"));
     require(slot_sentry_config.entity_templates[1].active_weapon_slot == 0);
     require(slot_sentry_config.entity_templates[1].sentry.weapon_id == 3);
     for (const std::pair<std::string, std::string>& rejected_skill : {
              // Not one of its weapons.
              std::pair<std::string, std::string>{
-                 "    - use: {type: weapon, value: 4}\n",
+                 "    - use: {type: weapon, value: 5}\n",
                  "which is not in weapon_slots"},
              // Two, with nothing to choose between them by.
              std::pair<std::string, std::string>{
-                 "    - use: {type: weapon, value: 2}\n"
+                 "    - use: {type: weapon, value: 128}\n"
                  "    - use: {type: weapon, value: 3}\n",
                  "more than one weapon"},
              // A band, which a sentry that fires at whatever it sees ignores.
              std::pair<std::string, std::string>{
-                 "    - use: {type: weapon, value: 2}\n"
+                 "    - use: {type: weapon, value: 128}\n"
                  "      when: {range_meters: {max: 10.0}}\n",
                  "range or cooldown"},
          }) {
         const std::string message = sentry_rejection(replace_once(
             two_slot_sentry_yaml,
-            "    - use: {type: weapon, value: 2}\n",
+            "    - use: {type: weapon, value: 128}\n",
             rejected_skill.first));
         if (message.find(rejected_skill.second) == std::string::npos) {
             std::fprintf(stderr, "sentry skill case: expected \"%s\", got \"%s\"\n",
@@ -1298,7 +1298,7 @@ int main() {
     // And an agent with no skills at all.
     require(sentry_rejection(replace_once(
                 data_driven_sentry_yaml,
-                "  skills:\n    - use: {type: weapon, value: 2}\n",
+                "  skills:\n    - use: {type: weapon, value: 128}\n",
                 ""))
                 .find("are required") != std::string::npos);
 
@@ -2461,13 +2461,13 @@ int main() {
         9);
 
     const KernelWeaponMechanicsDefinition& rifle =
-        config.weapons.definitions[network_example::game_server::kWeaponRifle];
-    require(rifle.weapon_id == network_example::game_server::kWeaponRifle);
+        config.weapons.definitions[network_example::game_server::kWeaponIceLance];
+    require(rifle.weapon_id == network_example::game_server::kWeaponIceLance);
     require(rifle.fire_mode == KernelWeaponFireMode_Hitscan);
-    require(rifle.damage == 45);
-    require(rifle.magazine_size == 3000);
+    require(rifle.damage == 6);
+    require(rifle.magazine_size == 600);
     require(rifle.reserve_magazines == 6);
-    require(rifle.max_range == 100.0f);
+    require(rifle.max_range == 25.0f);
     require(rifle.segment_collider_template_id == 5);
 
     const KernelWeaponMechanicsDefinition& rocket =
@@ -2574,8 +2574,8 @@ int main() {
         require(allied_sentry_hitbox->definition.layer_mask ==
                KERNEL_COLLISION_LAYER_PLAYER_SIDE);
         // 3. And what it fires is aimed at the other side.
-        require(allied_sentry->sentry.weapon_id == 9u);
-        const auto& allied_weapon = config.weapons.definitions[9];
+        require(allied_sentry->sentry.weapon_id == 131u);
+        const auto& allied_weapon = config.weapons.definitions[131];
         const auto allied_beam = std::find_if(
             config.projectile_templates.begin(),
             config.projectile_templates.end(),
@@ -2667,14 +2667,6 @@ int main() {
            network_example::game_server::kWeaponGrenade);
     require(grenade_sentry->sentry.ballistic_retry_cooldown_ticks == 30);
 
-    const KernelWeaponMechanicsDefinition& fire_floor =
-        config.weapons.definitions[network_example::game_server::kWeaponFireFloor];
-    require(fire_floor.weapon_id == network_example::game_server::kWeaponFireFloor);
-    require(fire_floor.fire_mode == KernelWeaponFireMode_Projectile);
-    require(fire_floor.projectile_template_id == 4);
-    require(config.weapons.names[network_example::game_server::kWeaponFireFloor] ==
-           "Fire Floor");
-
     const KernelWeaponMechanicsDefinition& beam_rifle =
         config.weapons.definitions[network_example::game_server::kWeaponBeamRifle];
     require(beam_rifle.weapon_id == network_example::game_server::kWeaponBeamRifle);
@@ -2718,23 +2710,16 @@ int main() {
     require(found_player_movement_capsule);
     require(found_sentry_grunt_movement_capsule);
 
-    const KernelWeaponMechanicsDefinition& homing_missile =
-        config.weapons.definitions[network_example::game_server::kWeaponHomingMissile];
-    require(homing_missile.projectile_template_id == 6);
-    require(config.weapons.collider_template_ids
-               [network_example::game_server::kWeaponHomingMissile] == 7);
     // Every projectile_templates/*.yaml, including rifle_shot and shotgun_shot,
     // which nothing spawns: an instant weapon's shot is still described there.
     require(count_catalog_templates("projectile_templates") > 0u);
     require(
         config.projectile_templates.size() ==
         count_catalog_templates("projectile_templates"));
-    bool found_homing_projectile = false;
     bool found_rocket_projectile = false;
     bool found_rocket_explosion = false;
     bool found_grenade_shell = false;
     bool found_spammer_projectile = false;
-    bool found_fire_floor_area = false;
     bool found_beam_rifle_beam = false;
     for (const network_example::game_server::ProjectileTemplateConfig& projectile :
          config.projectile_templates) {
@@ -2798,17 +2783,6 @@ int main() {
             require(blast.actions[0].impulse_strength_vertical == 5.0f);
             require(blast.actions[0].impulse_lockout_ticks == 40u);
         }
-        if (projectile.name == "homing_missile") {
-            found_homing_projectile = true;
-            require(projectile.definition.mechanics.collider_template_id == 7);
-            require(projectile.definition.mechanics.homing.lock_on_range == 25.0f);
-        }
-        if (projectile.name == "fire_floor_area") {
-            found_fire_floor_area = true;
-            require(projectile.definition.mechanics.projectile_type ==
-                   KernelProjectileType_AreaEffect);
-            require(projectile.definition.mechanics.area_effect.damage_per_interval == 12);
-        }
         if (projectile.name == "beam_rifle_beam") {
             found_beam_rifle_beam = true;
             require(projectile.definition.mechanics.projectile_type ==
@@ -2820,8 +2794,6 @@ int main() {
     require(found_spammer_projectile);
     require(found_rocket_projectile);
     require(found_rocket_explosion);
-    require(found_homing_projectile);
-    require(found_fire_floor_area);
     require(found_beam_rifle_beam);
 
     const auto player_entity_template = std::find_if(
@@ -3279,7 +3251,7 @@ int main() {
         "    collision_mask: terrain\n"
         "    action_graph: action_spawn_projectile_at_collision\n"
         "    parameters:\n"
-        "      template: fire_floor_area\n"
+        "      template: rocket_explosion\n"
         "      position: event.position\n"
         "      direction: event.direction\n";
     const std::vector<std::uint8_t> collision_projectile_bundle =
@@ -3317,7 +3289,7 @@ int main() {
         KernelEntityTriggerActionType_SpawnProjectile);
     require(
         collision_projectile->collision_trigger.spawn_projectile_template_id ==
-        4u);
+        8u);
     require(
         collision_projectile->collision_trigger.position_source ==
         KernelEventVec3Source_Position);
@@ -3795,13 +3767,11 @@ int main() {
         "collider_template_dir: collider_templates\n"});
     const std::vector<std::string> duplicate_collider_weapon_files = {
         "5_weapon_beam_rifle.yaml",
-        "4_weapon_fire_floor.yaml",
-        "6_weapon_homing_missile.yaml",
-        "0_weapon_rifle.yaml",
+        "0_weapon_ice_lance.yaml",
         "3_weapon_rocket.yaml",
-        "1_weapon_shotgun.yaml",
-        "7_weapon_grenade_launcher.yaml",
-        "2_weapon_spammer.yaml",
+        "1_weapon_shotgunning.yaml",
+        "129_weapon_grenade_launcher.yaml",
+        "128_weapon_spammer.yaml",
     };
     for (const std::string& file : duplicate_collider_weapon_files) {
         duplicate_collider_files.push_back({

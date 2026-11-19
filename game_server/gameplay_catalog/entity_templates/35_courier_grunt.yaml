@@ -33,7 +33,7 @@ movement:
   ground_snap_distance: 0.5
   collision_mask: terrain | static_obstacle | actor
 weapon_slots:
-  - 10
+  - 132
 active_weapon_slot: 0
 animations:
   idle: 0
@@ -84,7 +84,7 @@ ai:
     # Matches the claw's cone range. Measured origin to origin, while the swing
     # reaches to a target's near edge, so this sits on the conservative side of
     # the weapon: everything this lets the grunt attack, it can actually hit.
-    - use: {type: weapon, value: 10}
+    - use: {type: weapon, value: 132}
       when: {range_meters: {max: 2.2}}
 # On first spotting someone, two chaser_grunts come out around it.
 #

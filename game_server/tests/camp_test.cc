@@ -227,7 +227,7 @@ int main() {
     require(camp_template->prop.population_group_id ==
             tent_template->prop.population_group_id);
     const std::uint32_t potion_item = item_id(config, "fungible_potion");
-    const std::uint32_t shotgun_item = item_id(config, "stateful_weapon_shotgun");
+    const std::uint32_t shotgun_item = item_id(config, "stateful_weapon_shotgunning");
 
     const std::vector<std::uint8_t> scene = read_ground_scene();
     KernelConfig kernel_config{};

@@ -6,7 +6,7 @@ name: rocket_reload
 trigger_mode: press
 flags: [cancel_on_death, cancel_on_weapon_change, cancel_before_first_commit]
 ammo_cost_per_commit: 0
-commit_offset_ticks: 75
+commit_offset_ticks: 60
 commit_interval_ticks: 0
 max_commit_count: 1
 recovery_ticks: 0

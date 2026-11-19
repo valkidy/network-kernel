@@ -22,14 +22,14 @@ struct KernelHandle;
 
 namespace network_example::game_server {
 
-inline constexpr std::uint8_t kWeaponRifle = 0;
-inline constexpr std::uint8_t kWeaponShotgun = 1;
-inline constexpr std::uint8_t kWeaponSpammer = 2;
+// Shipped weapon ids. Player weapons are 0-127, every other weapon 128-254,
+// 255 is unarmed; see weapon_from_yaml for what changes past 255 weapons.
+inline constexpr std::uint8_t kWeaponIceLance = 0;
+inline constexpr std::uint8_t kWeaponShotgunning = 1;
 inline constexpr std::uint8_t kWeaponRocket = 3;
-inline constexpr std::uint8_t kWeaponFireFloor = 4;
 inline constexpr std::uint8_t kWeaponBeamRifle = 5;
-inline constexpr std::uint8_t kWeaponHomingMissile = 6;
-inline constexpr std::uint8_t kWeaponGrenade = 7;
+inline constexpr std::uint8_t kWeaponSpammer = 128;
+inline constexpr std::uint8_t kWeaponGrenade = 129;
 inline constexpr std::size_t kWeaponIdCount = 256;
 // These were kernel constants until directors stopped being kernel entities.
 // The values are unchanged on purpose: they are hashed into the catalog, and

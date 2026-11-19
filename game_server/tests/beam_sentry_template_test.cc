@@ -44,12 +44,12 @@ int main() {
                 actor->weapon_ids[0],
                 actor->sentry.weapon_id);
     require(actor->weapon_slot_count == 1);
-    require(actor->weapon_ids[0] == 8u);
-    require(actor->sentry.weapon_id == 8u);
+    require(actor->weapon_ids[0] == 130u);
+    require(actor->sentry.weapon_id == 130u);
     require(actor->ai_controller_type == KernelAiControllerType_Sentry);
 
-    require(config.weapons.configured[8]);
-    const KernelWeaponMechanicsDefinition& weapon = config.weapons.definitions[8];
+    require(config.weapons.configured[130]);
+    const KernelWeaponMechanicsDefinition& weapon = config.weapons.definitions[130];
     std::printf("weapon fire_mode=%u magazine=%u reserve=%u proj=%u fire_action=%u reload_action=%u\n",
                 weapon.fire_mode,
                 weapon.magazine_size,

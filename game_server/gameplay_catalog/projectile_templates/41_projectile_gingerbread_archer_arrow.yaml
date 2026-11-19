@@ -1,5 +1,5 @@
 # The archer's arrow. Parabolic, which is what turns the AI's ballistic solver
-# on for weapon 24 (see the mage's grenade shell): the agent submits a low-arc
+# on for weapon 139 (see the mage's grenade shell): the agent submits a low-arc
 # aim_dir with a positive Y component, and the arrow leaves at that direction
 # times `speed`. Reach on flat ground is v^2/g ~ 69 m, far past the vision cone.
 # Unlike the shell it damages what it strikes directly -- nothing spawns on

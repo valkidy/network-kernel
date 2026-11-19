@@ -4,11 +4,11 @@
 id: 18
 name: Chain Lightning
 # Weapon container slot 0-3 (wand, scepter, staff, tome / their gun twins).
-category: 2
+category: 0
 weapon_type: lock_instant
 # A multiple of the bolt's max_hit_count (6).
-magazine_size: 24
-reserve_magazines: 4
+magazine_size: 240
+reserve_magazines: 6
 fire_action_template: chain_lightning_fire
 reload_action_template: chain_lightning_reload
 lock_collider: chain_lightning_cone

@@ -4,7 +4,7 @@ name: water_jet_staff_fire
 trigger_mode: press
 flags: [cancel_on_death, cancel_on_weapon_change, cancel_before_first_commit]
 ammo_cost_per_commit: 1
-commit_offset_ticks: 3
+commit_offset_ticks: 60
 commit_interval_ticks: 20
 max_commit_count: 1
 recovery_ticks: 8

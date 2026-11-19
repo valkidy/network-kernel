@@ -2,6 +2,7 @@ id: 8
 name: beam_oriented_box
 shape: oriented_box
 center: {x: 0.0, y: 0.0, z: 0.0}
-half_extents: {x: 0.25, y: 0.25, z: 4.0}
+# The beam's length is twice half_extents.z: 20 m.
+half_extents: {x: 0.25, y: 0.25, z: 10.0}
 purpose: damage
 layer: projectile

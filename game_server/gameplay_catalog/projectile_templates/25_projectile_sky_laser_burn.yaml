@@ -3,7 +3,7 @@ id: 25
 name: sky_laser_burn
 type: area_effect
 collider_template: sky_laser_burn_sphere
-damage: 6
+damage: 12
 lifetime_ticks: 45
 damage_behavior:
   type: area_interval

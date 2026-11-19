@@ -1051,9 +1051,9 @@ int main() {
         // rewound shot tests a rig's bones whenever it enters the rig's bounds
         // (raycast_history_frame), so no weapon has to opt in any more.
         const std::uint8_t rifle_id =
-            network_example::game_server::kWeaponRifle;
+            network_example::game_server::kWeaponIceLance;
         require(config.weapons.configured[rifle_id]);
-        require(config.weapons.names[rifle_id] == "Rifle");
+        require(config.weapons.names[rifle_id] == "Ice Lance");
         const std::uint32_t rifle_mask =
             config.weapons.definitions[rifle_id].collision_mask;
         require((rifle_mask & KERNEL_COLLISION_MASK_DAMAGEABLE) != 0u);
@@ -1061,7 +1061,7 @@ int main() {
         // mask existed and would silently stop doing if it were dropped.
         require((rifle_mask & KERNEL_COLLISION_MASK_STATIC_WORLD) != 0u);
         const std::uint8_t shotgun_id =
-            network_example::game_server::kWeaponShotgun;
+            network_example::game_server::kWeaponShotgunning;
         require(config.weapons.configured[shotgun_id]);
         for (const std::uint8_t weapon_id : {rifle_id, shotgun_id}) {
             const network_example::physics::CollisionQueryFilter filter =

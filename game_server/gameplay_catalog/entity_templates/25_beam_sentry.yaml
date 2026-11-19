@@ -1,4 +1,4 @@
-# Beam-armed sentry. Same chassis as sentry_grunt; the difference is weapon 8,
+# Beam-armed sentry. Same chassis as sentry_grunt; the difference is weapon 130,
 # a sustained beam, in place of the linear-projectile spammer.
 #
 # See 24_grenade_sentry.yaml for the ballistic (parabolic) variant. Nothing here
@@ -24,7 +24,7 @@ movement:
   ground_probe_distance: 0.25
   ground_snap_distance: 0.5
 weapon_slots:
-  - 8
+  - 130
 active_weapon_slot: 0
 animations:
   idle: 0
@@ -47,4 +47,4 @@ ai:
     animation_idle: idle
     animation_attack: chasing
   skills:
-    - use: {type: weapon, value: 8}
+    - use: {type: weapon, value: 130}

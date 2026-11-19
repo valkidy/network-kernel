@@ -1,0 +1,16 @@
+id: 1
+name: Shotgunning
+# Weapon container slot 0-3 (wand, scepter, staff, tome / their gun twins).
+category: 0
+weapon_type: shotgun
+# 24 shots of 5 each: keep the magazine a multiple of the shot's cost.
+magazine_size: 120
+reserve_magazines: 6
+fire_action_template: shotgun_fire
+reload_action_template: shotgun_reload
+max_range: 20.0
+pellet_count: 5
+pellet_spread: 0.035
+segment_collider: shotgun_segment
+# Damage and target mask are authored in this template.
+projectile_template: shotgun_shot

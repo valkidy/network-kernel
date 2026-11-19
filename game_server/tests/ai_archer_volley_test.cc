@@ -1,4 +1,4 @@
-// gingerbread_archer (entity 41) with its shipped loadout, weapon 24: one press
+// gingerbread_archer (entity 41) with its shipped loadout, weapon 139: one press
 // fires three parabolic arrows one after another, not a fan and not a single
 // shot. Facing a player 15 m off -- inside the 18 m stop distance and the 25 m
 // skill range -- the archer has to:
@@ -36,7 +36,7 @@ void require_impl(bool condition, int line, const char* text) {
 
 constexpr float kTickSeconds = 1.0f / 30.0f;
 constexpr KernelQuat kIdentityRotation{0.0f, 0.0f, 0.0f, 1.0f};
-constexpr std::uint32_t kArcherArrowWeaponId = 24u;
+constexpr std::uint32_t kArcherArrowWeaponId = 139u;
 
 fs::path catalog_root() {
     return fs::path(std::getenv("TEST_SRCDIR")) / std::getenv("TEST_WORKSPACE") / "game_server" /

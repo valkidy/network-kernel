@@ -328,7 +328,7 @@ int main() {
     }
     std::uint32_t staff_item = 0;
     for (const auto& item : config.item_templates) {
-        if (item.name == "stateful_weapon_water_jet_staff") {
+        if (item.name == "stateful_weapon_water_jet") {
             staff_item = item.definition.item_template_id;
         }
     }

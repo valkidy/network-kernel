@@ -338,8 +338,10 @@ template 沒有 `CancelBeforeFirstCommit` 也不會先打出一次；硬直期�
   projectile。所以引信 i 到期時生成的隕石用的是 salt i，每顆隕石的仰角都不同。
 - 在其他 action 上寫 `repeat` 或 `lifetime_ticks`，或是沒有 `repeat` 卻寫了
   scatter／stagger，都會在載入時報錯。
-- 範例：`common/action_spawn_projectile_repeated`，`meteor_storm_marker` 的 binding 寫
-  `lifetime: 10`、`count: [10, 15]`、`scatter_radius: 6.0`、`stagger_lifetime: 60`。
+- 範例：`common/action_spawn_projectile_repeated`，`meteor_storm_barrage_marker` 的 binding 寫
+  `lifetime: 10`、`count: [10, 15]`、`scatter_radius: 25.0`、`lifetime_spread: 60`。
+  graph 參數叫 `lifetime_spread`；repeat 區塊的 key 目前仍是 `stagger_lifetime_ticks`
+  （改名是 docs/PLAYER_WEAPON_REVAMP_PLAN.md 的 I5）。
 
 ### 4.4 `apply_impulse`
 

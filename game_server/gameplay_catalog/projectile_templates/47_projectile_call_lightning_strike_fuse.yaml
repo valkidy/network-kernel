@@ -1,0 +1,21 @@
+# One strike's landing mark inside a volley. The volley graph sets its
+# lifetime, so the value here is only what it would live if spawned any other
+# way.
+id: 47
+name: call_lightning_strike_fuse
+type: standard
+damage: 0
+damage_shape: none
+speed: 0.0
+collision_mask: none
+sync_mode: server_snapshot_only
+lifetime_ticks: 10
+triggers:
+  on_expired:
+    action_graph: action_spawn_projectile
+    parameters:
+      template: call_lightning_strike_body
+      position: event.position
+      direction: event.direction
+# Never sent: clients derive it from the marker at the root of its chain.
+replication: derived

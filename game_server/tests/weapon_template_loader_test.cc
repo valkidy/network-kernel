@@ -239,7 +239,7 @@ void write_valid_templates(const std::filesystem::path& dir) {
         "projectile_template: shotgun_shot\n");
     write_file(
         dir / "spammer.yaml",
-        "id: 2\nname: Projectile Spammer\nweapon_type: projectile\n"
+        "id: 128\nname: Projectile Spammer\nweapon_type: projectile\n"
         "magazine_size: 120\n"
         "fire_action_template: spammer_fire\n"
         "projectile_template: spammer_projectile\n");
@@ -251,7 +251,7 @@ void write_valid_templates(const std::filesystem::path& dir) {
     write_file(
         dir / "fire_floor.yaml",
         "id: 4\nname: Fire Floor\nweapon_type: area_effect\nmagazine_size: 3\n"
-        "fire_action_template: fire_floor_cast\n"
+        "fire_action_template: rocket_fire\n"
         "projectile_template: fire_floor_area\n");
     write_file(
         dir / "beam_rifle.yaml",
@@ -261,7 +261,7 @@ void write_valid_templates(const std::filesystem::path& dir) {
     write_file(
         dir / "homing_missile.yaml",
         "id: 6\nname: Homing Missile\nweapon_type: projectile\nmagazine_size: 4\n"
-        "fire_action_template: homing_missile_fire\n"
+        "fire_action_template: rocket_fire\n"
         "projectile_template: homing_missile_projectile\n");
     write_file(
         dir / "grenade_launcher.yaml",
@@ -301,13 +301,13 @@ void valid_repo_templates_load_all_slots() {
         network_example::game_server::
             load_gameplay_config_from_weapon_template_directory(dir.string());
 
-    require(config.weapons.definitions[network_example::game_server::kWeaponRifle].fire_mode ==
+    require(config.weapons.definitions[network_example::game_server::kWeaponIceLance].fire_mode ==
            KernelWeaponFireMode_Hitscan);
-    require(config.weapons.definitions[network_example::game_server::kWeaponRifle]
+    require(config.weapons.definitions[network_example::game_server::kWeaponIceLance]
                .reserve_magazines == 6);
-    require(config.weapons.definitions[network_example::game_server::kWeaponRifle]
+    require(config.weapons.definitions[network_example::game_server::kWeaponIceLance]
                .segment_collider_template_id == 5);
-    require(config.weapons.definitions[network_example::game_server::kWeaponShotgun]
+    require(config.weapons.definitions[network_example::game_server::kWeaponShotgunning]
                .segment_collider_template_id == 6);
     require(config.weapons.definitions[network_example::game_server::kWeaponRocket]
                .projectile_template_id == 3);
@@ -327,10 +327,7 @@ void valid_repo_templates_load_all_slots() {
         const KernelProjectileTemplateDefinition& projectile_template =
             storage.definition.projectile_templates[index];
         require(projectile_template.reserved_weapon_id == 0u);
-        if (fired_by(projectile_template, network_example::game_server::kWeaponSpammer) ||
-            fired_by(
-                projectile_template,
-                network_example::game_server::kWeaponHomingMissile)) {
+        if (fired_by(projectile_template, network_example::game_server::kWeaponSpammer)) {
             require(projectile_template.mechanics.collider_template_id == 7);
         }
         // The grenade shell has been a box (projectile_aabb) since ca61488.
@@ -365,20 +362,12 @@ void valid_repo_templates_load_all_slots() {
                .reserve_magazines == kMaxReserveMagazines);
     require(config.weapons.definitions[network_example::game_server::kWeaponSpammer]
                .projectile_template_id == 2);
-    require(config.weapons.definitions[network_example::game_server::kWeaponFireFloor]
-               .fire_mode == KernelWeaponFireMode_Projectile);
-    require(config.weapons.collider_template_ids
-               [network_example::game_server::kWeaponFireFloor] == 4);
-    require(config.weapons.definitions[network_example::game_server::kWeaponFireFloor]
-               .projectile_template_id == 4);
     require(config.weapons.definitions[network_example::game_server::kWeaponBeamRifle]
                .fire_mode == KernelWeaponFireMode_Projectile);
     require(config.weapons.collider_template_ids
                [network_example::game_server::kWeaponBeamRifle] == 8);
     require(config.weapons.definitions[network_example::game_server::kWeaponBeamRifle]
                .projectile_template_id == 5);
-    require(config.weapons.definitions[network_example::game_server::kWeaponHomingMissile]
-               .projectile_template_id == 6);
     require(config.weapons.configured[network_example::game_server::kWeaponGrenade]);
     require(config.weapons.projectile_sync_modes
                [network_example::game_server::kWeaponGrenade] ==
@@ -388,15 +377,8 @@ void valid_repo_templates_load_all_slots() {
     require(config.weapons.projectile_sync_modes
                [network_example::game_server::kWeaponRocket] ==
            KernelProjectileSyncMode_HybridDeterministicThenSnapshot);
-    require(config.weapons.projectile_sync_modes
-               [network_example::game_server::kWeaponHomingMissile] ==
-           KernelProjectileSyncMode_HybridDeterministicThenSnapshot);
-    require(config.weapons.names[network_example::game_server::kWeaponFireFloor] ==
-           "Fire Floor");
     require(config.weapons.names[network_example::game_server::kWeaponBeamRifle] ==
            "Beam Rifle");
-    require(config.weapons.names[network_example::game_server::kWeaponHomingMissile] ==
-           "Homing Missile");
     // Every action template on disk, plus the catalog's shared reload. Counted
     // rather than hardcoded: the directory grows with every weapon.
     std::size_t action_template_files = 0;
@@ -410,7 +392,7 @@ void valid_repo_templates_load_all_slots() {
     }
     require(action_template_files > 0);
     require(config.action_templates.size() == action_template_files + 1);
-    require(config.weapons.definitions[network_example::game_server::kWeaponRifle]
+    require(config.weapons.definitions[network_example::game_server::kWeaponIceLance]
                .fire_action_template_id == 4096);
     require(config.weapons.definitions[network_example::game_server::kWeaponRocket]
                .fire_action_template_id == 4099);
@@ -463,7 +445,7 @@ void valid_repo_templates_load_all_slots() {
             require(collider.definition.shape_type == KernelColliderShapeType_OrientedBox);
             require(collider.definition.shape_params.x == 0.25f);
             require(collider.definition.shape_params.y == 0.25f);
-            require(collider.definition.shape_params.z == 4.0f);
+            require(collider.definition.shape_params.z == 10.0f);
         }
     }
     require(found_segment);
@@ -1135,8 +1117,8 @@ void a_beams_reach_is_its_colliders_box() {
     const network_example::game_server::GameServerGameplayConfig config =
         network_example::game_server::load_gameplay_config_from_weapon_template_directory(
             dir.string());
-    // beam_oriented_box: half extents (0.25, 0.25, 4.0).
-    require(projectile_mechanics(config, 5).beam.length == 8.0f);
+    // beam_oriented_box: half extents (0.25, 0.25, 10.0).
+    require(projectile_mechanics(config, 5).beam.length == 20.0f);
     require(projectile_mechanics(config, 5).beam.radius == 0.25f);
 
     const auto load_beam = [](const std::string& name,
@@ -1987,9 +1969,9 @@ void instant_weapon_keeps_its_fire_mode_and_segment() {
             load_gameplay_config_from_weapon_template_directory(dir.string());
 
     const KernelWeaponMechanicsDefinition& rifle =
-        config.weapons.definitions[network_example::game_server::kWeaponRifle];
+        config.weapons.definitions[network_example::game_server::kWeaponIceLance];
     const KernelWeaponMechanicsDefinition& shotgun =
-        config.weapons.definitions[network_example::game_server::kWeaponShotgun];
+        config.weapons.definitions[network_example::game_server::kWeaponShotgunning];
     require(rifle.projectile_template_id == 10);
     require(shotgun.projectile_template_id == 11);
 
@@ -2001,13 +1983,13 @@ void instant_weapon_keeps_its_fire_mode_and_segment() {
     // collider_template_ids keeps the segment, not the shot template's collider.
     require(
         config.weapons.collider_template_ids[
-            network_example::game_server::kWeaponRifle] == 5);
+            network_example::game_server::kWeaponIceLance] == 5);
     require(
         config.weapons.collider_template_ids[
-            network_example::game_server::kWeaponShotgun] == 6);
+            network_example::game_server::kWeaponShotgunning] == 6);
     require(
         config.weapons.projectile_sync_modes[
-            network_example::game_server::kWeaponRifle] ==
+            network_example::game_server::kWeaponIceLance] ==
         KernelProjectileSyncMode_HybridDeterministicThenSnapshot);
     require(shotgun.pellet_count == 5);
 
@@ -2055,26 +2037,25 @@ void weapons_name_their_own_reload_action() {
 
     // Each weapon reaches a different template, and the durations are the ones
     // the weapon templates used to state in a `reload_ticks` nothing read.
-    require(reload_offset_of(reload_of(network_example::game_server::kWeaponRifle)) == 30);
-    require(reload_offset_of(reload_of(network_example::game_server::kWeaponShotgun)) == 45);
-    require(reload_offset_of(reload_of(network_example::game_server::kWeaponRocket)) == 75);
+    require(reload_offset_of(reload_of(network_example::game_server::kWeaponIceLance)) == 60);
+    require(reload_offset_of(reload_of(network_example::game_server::kWeaponShotgunning)) == 60);
+    require(reload_offset_of(reload_of(network_example::game_server::kWeaponRocket)) == 60);
     require(reload_offset_of(reload_of(network_example::game_server::kWeaponGrenade)) == 90);
-    require(reload_offset_of(
-               reload_of(network_example::game_server::kWeaponHomingMissile)) == 60);
+    require(reload_offset_of(reload_of(network_example::game_server::kWeaponBeamRifle)) == 120);
 
     // Distinct templates, and none of them the catalog's shared fallback --
-    // except the grunts' claw (10) and slam (11), the warrior's charge horns
-    // (20) and the giant's sweep and its allied twin's (22, 23), which name
+    // except the grunts' claw (132) and slam (133), the warrior's charge horns
+    // (136) and the giant's sweep and its allied twin's (137, 138), which name
     // `shared_reload` themselves: a bottomless AI weapon has no reload of its
     // own to author.
-    require(reload_of(network_example::game_server::kWeaponRifle) !=
-           reload_of(network_example::game_server::kWeaponShotgun));
+    require(reload_of(network_example::game_server::kWeaponIceLance) !=
+           reload_of(network_example::game_server::kWeaponShotgunning));
     for (std::size_t id = 0; id < config.weapons.definitions.size(); ++id) {
         if (!config.weapons.configured[id]) {
             continue;
         }
         const bool names_shared_reload =
-            id == 10u || id == 11u || id == 20u || id == 22u || id == 23u;
+            id == 132u || id == 133u || id == 136u || id == 137u || id == 138u;
         require(
             (config.weapons.definitions[id].reload_action_template_id == 4199u) ==
             names_shared_reload);
@@ -2148,35 +2129,35 @@ void damage_is_authored_once_per_projectile_template() {
     require(beam_rifle.beam.damage_per_tick == beam_rifle.damage);
 
     // Area effect: `damage` read as per-interval, likewise.
-    const KernelProjectileMechanicsDefinition& fire_floor =
-        projectile_mechanics(config, 4);
-    require(fire_floor.damage == 12);
-    require(fire_floor.area_effect.damage_per_interval == fire_floor.damage);
+    const KernelProjectileMechanicsDefinition& sky_laser_burn =
+        projectile_mechanics(config, 25);
+    require(sky_laser_burn.damage == 12);
+    require(sky_laser_burn.area_effect.damage_per_interval == sky_laser_burn.damage);
 
     // An instant weapon is no different: its shot template owns the number, and
     // the weapon definition mirrors it rather than authoring a second one.
     const KernelProjectileMechanicsDefinition& rifle_shot =
         projectile_mechanics(config, 10);
-    require(rifle_shot.damage == 45);
-    require(config.weapons.definitions[network_example::game_server::kWeaponRifle]
+    require(rifle_shot.damage == 6);
+    require(config.weapons.definitions[network_example::game_server::kWeaponIceLance]
                .damage == rifle_shot.damage);
     const KernelProjectileMechanicsDefinition& shotgun_shot =
         projectile_mechanics(config, 11);
-    require(shotgun_shot.damage == 10);
+    require(shotgun_shot.damage == 30);
     require(config.weapons
-               .definitions[network_example::game_server::kWeaponShotgun]
+               .definitions[network_example::game_server::kWeaponShotgunning]
                .damage == shotgun_shot.damage);
 
     // collision_mask travels the same way. Neither names `limb` since ABI 106:
     // a mask that reaches actors reaches a rig's bones without it.
-    require(config.weapons.definitions[network_example::game_server::kWeaponRifle]
+    require(config.weapons.definitions[network_example::game_server::kWeaponIceLance]
                .collision_mask == rifle_shot.collision_mask);
-    require((config.weapons.definitions[network_example::game_server::kWeaponRifle]
+    require((config.weapons.definitions[network_example::game_server::kWeaponIceLance]
                 .collision_mask & KERNEL_COLLISION_MASK_ACTOR) != 0u);
-    require((config.weapons.definitions[network_example::game_server::kWeaponRifle]
+    require((config.weapons.definitions[network_example::game_server::kWeaponIceLance]
                 .collision_mask & KERNEL_COLLISION_LAYER_LIMB) == 0u);
     require((config.weapons
-                .definitions[network_example::game_server::kWeaponShotgun]
+                .definitions[network_example::game_server::kWeaponShotgunning]
                 .collision_mask & KERNEL_COLLISION_LAYER_LIMB) == 0u);
 
     // An instant weapon without a shot template has nowhere to put either

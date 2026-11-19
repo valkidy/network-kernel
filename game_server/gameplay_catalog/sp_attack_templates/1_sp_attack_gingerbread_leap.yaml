@@ -18,7 +18,7 @@ leap:
   max_horizontal_speed_meters_per_second: 12.0
 on_landing:
   # The user's own weapon skill: grunt_claw.
-  weapon: 10
+  weapon: 132
   # grunt_claw_swing's commit_offset_ticks plus one, because the swing starts
   # on the tick after the controller asks for it: the claw then commits on the
   # landing tick (gingerbread_leap_test). Change one, change the other.

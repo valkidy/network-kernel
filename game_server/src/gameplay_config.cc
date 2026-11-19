@@ -3252,6 +3252,14 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
     std::uint32_t source_kind) {
     const int authored_id = node["id"].as<int>();
     // 255 is KERNEL_HELD_WEAPON_NONE, what an unarmed player holds.
+    //
+    // By convention player weapons are 0-127 and every other weapon is
+    // 128-254. Nothing here enforces the split: a weapon file does not say
+    // who carries it. A weapon id is one byte end to end -- this check,
+    // kWeaponIdCount, the snapshot's held weapon, the AI's UINT8_MAX checks --
+    // so once there are more than 255 weapons the id has to grow wider and
+    // every weapon id has to be re-assigned, which bumps the snapshot schema
+    // and the ABI.
     if (authored_id < 0 || authored_id >= static_cast<int>(KERNEL_HELD_WEAPON_NONE)) {
         throw DataLoadError(
             KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_INVALID_NUMERIC_RANGE,
@@ -4011,8 +4019,8 @@ ActorTemplateConfig default_player_actor_template() {
     actor_template.move_speed_meters_per_second = 5.0f;
     actor_template.movement_controller_type = KernelMovementControllerType_Character;
     actor_template.movement_collider_template_id = 10;
-    actor_template.weapon_ids[0] = kWeaponRifle;
-    actor_template.weapon_ids[1] = kWeaponShotgun;
+    actor_template.weapon_ids[0] = kWeaponIceLance;
+    actor_template.weapon_ids[1] = kWeaponShotgunning;
     actor_template.weapon_slot_count = 2;
     actor_template.active_weapon_slot = 0;
     actor_template.vision.struct_size = sizeof(KernelAgentVisionConfig);

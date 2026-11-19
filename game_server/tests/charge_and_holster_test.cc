@@ -21,6 +21,7 @@
 
 #include "game_server/src/game_server.h"
 #include "game_server/src/gameplay_config.h"
+#include "game_server/tests/legacy_staff_charge.h"
 #include "kernel/public/kernel_api.h"
 
 namespace {
@@ -41,7 +42,7 @@ constexpr float kTickSeconds = 1.0f / 30.0f;
 constexpr std::uint8_t kRifle = 0;
 constexpr std::uint8_t kMeteorStaff = 13;
 constexpr int kChargeTicks = 20;
-// meteor_staff_reload's commit_offset_ticks.
+// The legacy staff's reload (legacy_staff_charge.h).
 constexpr int kStaffReloadTicks = 60;
 
 std::filesystem::path catalog_root() {
@@ -53,13 +54,15 @@ std::filesystem::path catalog_root() {
         "gameplay_catalog";
 }
 
-// The shipped catalog, whose meteor staff charges.
+// The shipped catalog, with weapon 13 given back the old meteor staff's charge
+// (legacy_staff_charge.h: no shipped weapon charges any more).
 gs::GameServerGameplayConfig shipped_catalog() {
-    const gs::GameServerGameplayConfig config = gs::load_gameplay_config_from_catalog_file(
+    gs::GameServerGameplayConfig config = gs::load_gameplay_config_from_catalog_file(
         (catalog_root() / "gameplay_catalog.yaml").string());
+    gs::test::restore_legacy_staff_charge(config);
     bool charges = false;
     for (const gs::ActionTemplateConfig& action : config.action_templates) {
-        if (action.name == "meteor_staff_cast") {
+        if (action.name == "ice_spike_cast") {
             charges = action.definition.trigger_mode == KernelActionTriggerMode_Charge &&
                 action.definition.commit_offset_ticks == static_cast<std::uint32_t>(kChargeTicks);
         }
