@@ -1,0 +1,19 @@
+# Ice Spike's landing mark. It sits where the cast resolved the strike for its
+# 90-tick lifetime -- the telegraph every client sees -- then expires into the
+# spike. Speed 0 with nothing to hit is what makes it a marker.
+id: 18
+name: ice_spike_marker
+type: standard
+damage: 0
+damage_shape: none
+speed: 0.0
+collision_mask: none
+sync_mode: server_snapshot_only
+lifetime_ticks: 90
+triggers:
+  on_expired:
+    action_graph: action_spawn_projectile
+    parameters:
+      template: ice_spike_strike_body
+      position: event.position
+      direction: event.direction

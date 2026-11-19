@@ -35,9 +35,9 @@ movement:
 # The slam: its shot template names an impact graph, so the hit arrives as
 # damage plus knockback rather than damage alone.
 weapon_slots:
-  - 11
+  - 133
   # Not swung: the charge below strikes with it.
-  - 20
+  - 136
 active_weapon_slot: 0
 animations:
   idle: 0
@@ -79,7 +79,7 @@ ai:
   skills:
     # Matches grunt_slam_cone's range, which currently equals the claw's. If
     # you widen or shorten the slam's cone, this has to move with it.
-    - use: {type: weapon, value: 11}
+    - use: {type: weapon, value: 133}
       when: {range_meters: {max: 2.2}}
     # The band reaches nearly as far as it sees, so a target it locks onto at
     # range is charged, not walked to.

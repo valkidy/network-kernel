@@ -1,9 +1,10 @@
 id: 5
 name: Beam Rifle
 # Weapon container slot 0-3 (wand, scepter, staff, tome / their gun twins).
-category: 2
+category: 0
 weapon_type: beam
-magazine_size: 12
+magazine_size: 240
+reserve_magazines: 4
 fire_action_template: beam_rifle_fire
 reload_action_template: beam_rifle_reload
 projectile_template: beam_rifle_beam

@@ -184,13 +184,13 @@ same point: the actor's position plus 1 m up.
 
 ```yaml
 id: 13
-name: Meteor Staff
+name: Ice Spike
 weapon_type: targeted_strike
-magazine_size: 3
+magazine_size: 12
 max_range: 35.0
-fire_action_template: meteor_staff_cast
-reload_action_template: meteor_staff_reload
-projectile_template: meteor_marker
+fire_action_template: ice_spike_cast
+reload_action_template: ice_spike_reload
+projectile_template: ice_spike_marker
 ```
 
 The projectile template must be `server_snapshot_only` and must not be a beam.
@@ -199,6 +199,59 @@ The strike is never predicted: it appears where only the server decides.
 Usually what lands is a **marker** (below) that expires into the real thing, so
 the delay doubles as a telegraph every client sees. A `launch: descent`
 template may also be landed directly.
+
+#### strike_target: surface
+
+`strike_target` picks what the strike lands on. `ground` (the default) is the
+two rays above. `surface` (ABI 110, the Water Jet) is a different rule:
+
+1. One ray along the aim, up to `max_range`, against terrain and static
+   obstacles only. Actors do not stop it.
+2. The first face it meets, wall or floor, is the target.
+3. Meeting none, the point at `max_range` is dropped straight down (at most
+   `max_range`) onto the ground, and that is the target.
+4. Neither: the shot is refused, spending nothing.
+
+The projectile is spawned on the target with the **face's normal as its
+direction** (up for a dropped point). A speed-0 marker keeps that direction
+to its expiry, so `direction: event.direction` in its `on_expired` binding
+hands the normal on: the water jet's column pushes off the face that way.
+
+```yaml
+weapon_type: targeted_strike
+strike_target: surface
+max_range: 45.0
+projectile_template: water_jet_marker
+```
+
+`strike_target` on any other weapon type is a load error. A client preview
+of the reticle has to run the same rays to agree with the server.
+
+#### strike_target: actor
+
+`actor` (ABI 110, Lock-on Magic Missile) locks instead of landing:
+
+1. The weapon's `lock_collider` cone (required) locks along the aim, as a
+   `lock_missile` weapon's does, on the hostile side.
+2. The nearest actor it locks is the target. Locking nobody refuses the shot,
+   spending nothing.
+3. The projectile is spawned at the shooter's launch point, along the aim,
+   carrying that actor. It is usually a marker (speed 0, `collision_mask:
+   none`, `lifetime_ticks: 1`) whose `on_expired` reports the actor as
+   `event.target`.
+4. A `lock_strike` there with `target: event.target` strikes that actor alone
+   on every repeat, with no search, and stops once it is dead or gone.
+
+```yaml
+weapon_type: targeted_strike
+strike_target: actor
+lock_collider: lock_on_magic_missile_cone
+max_range: 45.0
+projectile_template: lock_on_magic_missile_cast
+```
+
+See `27_weapon_lock_on_magic_missile`, its cast (51) and
+`common/action_lock_missile_volley_at_target`.
 
 ## Projectile template
 
@@ -314,19 +367,19 @@ forgot its speed still fails to load.
 
 ```yaml
 id: 18
-name: meteor_marker
+name: ice_spike_marker
 type: standard
 damage: 0
 damage_shape: none
 speed: 0.0
 collision_mask: none
 sync_mode: server_snapshot_only
-lifetime_ticks: 20          # the delay
+lifetime_ticks: 90          # the delay
 triggers:
   on_expired:
     action_graph: action_spawn_projectile
     parameters:
-      template: meteor_body
+      template: ice_spike_strike_body
       position: event.position
       direction: event.direction
 ```
@@ -342,8 +395,8 @@ both picked by a seed, and lands on it in a straight line after `fall_ticks`.
 The target is first dropped onto the terrain or static obstacle under it.
 
 ```yaml
-id: 19
-name: meteor_body
+id: 42
+name: ice_spike_strike_body
 type: standard
 collider_template: projectile_sphere
 damage: 0
@@ -358,7 +411,7 @@ launch:
 triggers:
   on_projectile_impact:
     action_graph: action_spawn_projectile
-    parameters: { template: meteor_blast, position: event.position, direction: event.direction }
+    parameters: { template: ice_spike_strike_blast, position: event.position, direction: event.direction }
 ```
 
 The speed is derived, so do not author `speed`. The motion is always linear
@@ -701,7 +754,7 @@ refill amount itself is not yet data-driven, so that shape needs an engineer.
 7. Rebuild the catalog bundle and ship the same bundle to client and server
 
 For a targeted strike, steps 1 and 3 become a marker or descent template and
-a cast action. See `meteor_staff`, `meteor_storm_staff` and `sky_laser`.
+a cast action. See `ice_spike`, `meteor_storm`, `call_lightning` and `sky_laser`.
 
 ## Common load errors
 

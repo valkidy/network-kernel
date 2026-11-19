@@ -1,0 +1,17 @@
+# Freeze: movement speed x0.25 for 6 s (180 ticks). Its own channel, so it
+# stacks multiplicatively with slow (0.5 x 0.25) and leaves speed_up standing;
+# another freeze restarts the 6 s.
+id: 1007
+name: freeze
+kind: status_effect
+channel: freeze
+duration_ticks: 180
+interval_ticks: 0
+replace_policy: replace
+triggers:
+  on_apply:
+    action_graph: action_apply_speed_modifier
+    parameters:
+      target: event.subject
+      operation: multiplier
+      value: 0.25

@@ -1,0 +1,13 @@
+# paralysis's on_apply: the actor is down where it is for as long as the
+# status stands -- no new action (the one under way ends), and it does not
+# move itself, from input or AI. A push still carries it, and the stagger
+# meter does not build while it is down (docs/PLAYER_WEAPON_REVAMP_PLAN.md
+# D11). A client draws it from KERNEL_VISUAL_FLAG_DOWNED.
+id: action_paralysis_apply
+parameters:
+  target: null
+actions:
+  - type: apply_block_actions
+    target: params.target
+  - type: apply_block_movement
+    target: params.target

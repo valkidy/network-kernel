@@ -1,4 +1,4 @@
-# fire_floor_area's reach (rocket_explosion has its own, 41).
+# Generic area-effect sphere. Unused by the shipped weapons since Fire Floor was retired; kept for tests that author their own area effects.
 id: 4
 name: area_effect_sphere
 shape: sphere

@@ -1,0 +1,14 @@
+# Paralysis: down for 4 s (120 ticks), taking no input at all
+# (action_paralysis_apply). Another paralysis restarts the 4 s.
+id: 1008
+name: paralysis
+kind: status_effect
+channel: paralysis
+duration_ticks: 120
+interval_ticks: 0
+replace_policy: replace
+triggers:
+  on_apply:
+    action_graph: action_paralysis_apply
+    parameters:
+      target: event.subject

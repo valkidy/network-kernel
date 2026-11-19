@@ -1,5 +1,7 @@
 licenses(["notice"])
 
+load("//game_server/gameplay_catalog/mesh_assets:mesh_bake_rules.bzl", "mesh_asset_bakes")
+
 package(default_visibility = ["//visibility:public"])
 
 # Read by //tools:check_layering_boundaries.
@@ -1266,7 +1268,7 @@ cc_test(
     deps = [
         ":game_server",
         "//engine/src/kernel:kernel",
-        "//engine/src/physics:physics",
+        "//engine/src/geometry:mesh_bake",
     ],
 )
 
@@ -1388,7 +1390,10 @@ cc_test(
 
 cc_test(
     name = "unarmed_player_test",
-    srcs = ["tests/unarmed_player_test.cc"],
+    srcs = [
+        "tests/unarmed_player_test.cc",
+        "tests/legacy_staff_charge.h",
+    ],
     data = glob([
         "gameplay_catalog/scene_templates/*.yaml",
         "gameplay_catalog/action_graph_templates/**/*.yaml",
@@ -1417,7 +1422,68 @@ cc_test(
 
 cc_test(
     name = "charge_and_holster_test",
-    srcs = ["tests/charge_and_holster_test.cc"],
+    srcs = [
+        "tests/charge_and_holster_test.cc",
+        "tests/legacy_staff_charge.h",
+    ],
+    data = glob([
+        "gameplay_catalog/scene_templates/*.yaml",
+        "gameplay_catalog/action_graph_templates/**/*.yaml",
+        "gameplay_catalog/action_templates/*.yaml",
+        "gameplay_catalog/collider_templates/*.yaml",
+        "gameplay_catalog/patrol_templates/*.yaml",
+        "gameplay_catalog/entity_templates/*.yaml",
+        "gameplay_catalog/item_templates/*.yaml",
+        "gameplay_catalog/projectile_templates/*.yaml",
+        "gameplay_catalog/status_effect_templates/*.yaml",
+        "gameplay_catalog/sp_attack_templates/*.yaml",
+        "gameplay_catalog/weapon_templates/*.yaml",
+    ]) + [
+        "gameplay_catalog/gameplay_catalog.yaml",
+        "//game_server/gameplay_catalog/mesh_assets:cooked_mesh_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:locomotion_skeleton_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_biped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_quadruped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_tripod_assets",
+    ],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
+    name = "paralysis_status_test",
+    srcs = ["tests/paralysis_status_test.cc"],
+    data = glob([
+        "gameplay_catalog/scene_templates/*.yaml",
+        "gameplay_catalog/action_graph_templates/**/*.yaml",
+        "gameplay_catalog/action_templates/*.yaml",
+        "gameplay_catalog/collider_templates/*.yaml",
+        "gameplay_catalog/patrol_templates/*.yaml",
+        "gameplay_catalog/entity_templates/*.yaml",
+        "gameplay_catalog/item_templates/*.yaml",
+        "gameplay_catalog/projectile_templates/*.yaml",
+        "gameplay_catalog/status_effect_templates/*.yaml",
+        "gameplay_catalog/sp_attack_templates/*.yaml",
+        "gameplay_catalog/weapon_templates/*.yaml",
+    ]) + [
+        "gameplay_catalog/gameplay_catalog.yaml",
+        "//game_server/gameplay_catalog/mesh_assets:cooked_mesh_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:locomotion_skeleton_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_biped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_quadruped_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:simplified_tripod_assets",
+    ],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
+    name = "lock_on_magic_missile_test",
+    srcs = ["tests/lock_on_magic_missile_test.cc"],
     data = glob([
         "gameplay_catalog/scene_templates/*.yaml",
         "gameplay_catalog/action_graph_templates/**/*.yaml",
@@ -1446,7 +1512,10 @@ cc_test(
 
 cc_test(
     name = "hands_interrupt_test",
-    srcs = ["tests/hands_interrupt_test.cc"],
+    srcs = [
+        "tests/hands_interrupt_test.cc",
+        "tests/legacy_staff_charge.h",
+    ],
     data = glob([
         "gameplay_catalog/scene_templates/*.yaml",
         "gameplay_catalog/action_graph_templates/**/*.yaml",
@@ -1475,7 +1544,10 @@ cc_test(
 
 cc_test(
     name = "ai_charge_test",
-    srcs = ["tests/ai_charge_test.cc"],
+    srcs = [
+        "tests/ai_charge_test.cc",
+        "tests/legacy_staff_charge.h",
+    ],
     data = glob([
         "gameplay_catalog/scene_templates/*.yaml",
         "gameplay_catalog/action_graph_templates/**/*.yaml",
@@ -1575,6 +1647,40 @@ cc_test(
         "gameplay_catalog/weapon_templates/*.yaml",
     ]) + [
         "gameplay_catalog/gameplay_catalog.yaml",
+        "//game_server/gameplay_catalog/mesh_assets:cooked_mesh_assets",
+        "//game_server/gameplay_catalog/skeleton_assets:locomotion_skeleton_assets",
+    ],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+# A 6 m riser for gingerbread_ledge_runup_test; test-only, not in the bundle.
+mesh_asset_bakes(
+    name = "ledge_test_mesh",
+    srcs = ["tests/testdata/leap_ledge/ledge_6m.obj"],
+    config = "//game_server/gameplay_catalog/mesh_assets:mesh_bake.yaml",
+)
+
+cc_test(
+    name = "gingerbread_ledge_runup_test",
+    srcs = ["tests/gingerbread_ledge_runup_test.cc"],
+    data = glob([
+        "gameplay_catalog/scene_templates/*.yaml",
+        "gameplay_catalog/action_graph_templates/**/*.yaml",
+        "gameplay_catalog/action_templates/*.yaml",
+        "gameplay_catalog/collider_templates/*.yaml",
+        "gameplay_catalog/patrol_templates/*.yaml",
+        "gameplay_catalog/entity_templates/*.yaml",
+        "gameplay_catalog/item_templates/*.yaml",
+        "gameplay_catalog/projectile_templates/*.yaml",
+        "gameplay_catalog/status_effect_templates/*.yaml",
+        "gameplay_catalog/sp_attack_templates/*.yaml",
+        "gameplay_catalog/weapon_templates/*.yaml",
+    ]) + [
+        "gameplay_catalog/gameplay_catalog.yaml",
+        ":ledge_test_mesh",
         "//game_server/gameplay_catalog/mesh_assets:cooked_mesh_assets",
         "//game_server/gameplay_catalog/skeleton_assets:locomotion_skeleton_assets",
     ],

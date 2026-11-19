@@ -1,0 +1,12 @@
+# Fire Ball's cast: press, and the ball leaves 60 ticks (2 s) later. Weapon
+# change or death before then cancels it at no cost.
+id: 4137
+name: fire_ball_fire
+trigger_mode: press
+flags: [cancel_on_death, cancel_on_weapon_change, cancel_before_first_commit]
+ammo_cost_per_commit: 1
+commit_offset_ticks: 60
+commit_interval_ticks: 30
+max_commit_count: 1
+recovery_ticks: 8
+hold_input_timeout_ticks: 0

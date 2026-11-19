@@ -41,7 +41,7 @@ constexpr float kTick = 1.0f / 30.0f;
 constexpr std::uint32_t kPeer = 7;
 constexpr std::uint8_t kRifle = 0;
 constexpr std::uint8_t kShotgun = 1;
-constexpr std::uint8_t kBeamRifle = 5;
+constexpr std::uint8_t kCallLightning = 26;  // category 2
 
 std::vector<std::uint8_t> read_ground_scene() {
     const char* test_srcdir = std::getenv("TEST_SRCDIR");
@@ -173,9 +173,9 @@ int main() {
     require(gs::item_portable_state_field_id("weapon_ammo") == KERNEL_PORTABLE_FIELD_WEAPON_AMMO);
     require(gs::item_portable_state_field_id("weapon_reserve") ==
             KERNEL_PORTABLE_FIELD_WEAPON_RESERVE);
-    const std::uint32_t rifle_item = item_id(config, "stateful_weapon_rifle");
-    const std::uint32_t shotgun_item = item_id(config, "stateful_weapon_shotgun");
-    const std::uint32_t beam_item = item_id(config, "stateful_weapon_beam_rifle");
+    const std::uint32_t rifle_item = item_id(config, "stateful_weapon_ice_lance");
+    const std::uint32_t shotgun_item = item_id(config, "stateful_weapon_shotgunning");
+    const std::uint32_t beam_item = item_id(config, "stateful_weapon_call_lightning");
     const std::uint32_t potion_item = item_id(config, "fungible_potion");
     const gs::ActorTemplateConfig* grunt_template = nullptr;
     for (const auto& candidate : config.actor_templates) {
@@ -184,7 +184,7 @@ int main() {
     require(grunt_template != nullptr);
     require(config.weapons.categories[kRifle] == 0u);
     require(config.weapons.categories[kShotgun] == 0u);
-    require(config.weapons.categories[kBeamRifle] == 2u);
+    require(config.weapons.categories[kCallLightning] == 2u);
 
     const std::vector<std::uint8_t> scene = read_ground_scene();
     KernelConfig kernel_config{};
@@ -320,12 +320,13 @@ int main() {
     me = arena.state(arena.player);
     require(me.weapon_slot_count == 2u);
     require(me.weapon_ids[0] == kRifle);
-    require(me.weapon_ids[1] == kBeamRifle);
+    require(me.weapon_ids[1] == kCallLightning);
     require(arena.item(beam).slot == 2u);
 
     // A reload spends a reserve magazine, and the item hears of it.
+    // Ice Lance's reload is 60 ticks.
     arena.fire(kRifle, KernelActionBinding_Reload, 1);
-    arena.tick(40);
+    arena.tick(70);
     me = arena.state(arena.player);
     require(me.ammo[0] == full);
     require(me.reserve_magazines[0] ==
@@ -342,7 +343,7 @@ int main() {
     require(outcome.status == KernelGameplayRequestStatus_Committed);
     me = arena.state(arena.player);
     require(me.weapon_slot_count == 1u);
-    require(me.weapon_ids[0] == kBeamRifle);
+    require(me.weapon_ids[0] == kCallLightning);
     rifle_view = arena.item(rifle);
     require(rifle_view.residency == KernelItemResidency_World);
     require(portable(rifle_view, KERNEL_PORTABLE_FIELD_WEAPON_RESERVE) ==

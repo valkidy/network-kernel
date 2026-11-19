@@ -36,8 +36,10 @@ void require_impl(bool condition, int line, const char* text) {
 
 constexpr float kTickSeconds = 1.0f / 30.0f;
 constexpr std::uint32_t kPeer = 7;
-constexpr std::uint8_t kMeteorStaff = 13;       // reserve_magazines 6
-constexpr std::uint8_t kMeteorStormStaff = 14;  // reserve_magazines 4
+// The names are the weapons this test was written against; any two shipped
+// weapons with reserve_magazines 6 and 4 serve.
+constexpr std::uint8_t kMeteorStaff = 0;        // Ice Lance, reserve_magazines 6
+constexpr std::uint8_t kMeteorStormStaff = 15;  // Sky Laser, reserve_magazines 4
 
 std::uint16_t refill(std::uint32_t max, std::uint16_t current,
                      std::uint16_t count, std::uint16_t percent) {

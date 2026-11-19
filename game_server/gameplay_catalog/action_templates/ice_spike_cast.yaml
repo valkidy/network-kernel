@@ -1,0 +1,13 @@
+# Ice Spike's cast: press, and the spike is called down 90 ticks (3 s) later
+# where the aim resolved at the press. Weapon change or death before the commit
+# cancels it at no cost. Casts at least a second apart.
+id: 4119
+name: ice_spike_cast
+trigger_mode: press
+flags: [cancel_on_death, cancel_on_weapon_change, cancel_before_first_commit]
+ammo_cost_per_commit: 1
+commit_offset_ticks: 90
+commit_interval_ticks: 30
+max_commit_count: 1
+recovery_ticks: 10
+hold_input_timeout_ticks: 0

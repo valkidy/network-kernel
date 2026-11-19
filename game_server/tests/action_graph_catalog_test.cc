@@ -744,7 +744,7 @@ void bound_status_strength_and_refill_percent_are_range_checked() {
 }
 
 // spawn_projectile's lifetime and repeat from the binding: the meteor storm
-// marker's 10-15 fuses, 6 m scatter, 10 + 60 ticks.
+// marker's 10-15 fuses, 25 m scatter, 10 + 60 ticks.
 void spawn_repeat_comes_from_the_binding() {
     const gs::KernelGameplayCatalogStorage storage =
         built(shipped_catalog() / "gameplay_catalog.yaml");
@@ -753,25 +753,96 @@ void spawn_repeat_comes_from_the_binding() {
     require(spawn.action_type == KernelEntityTriggerActionType_SpawnProjectile);
     require(spawn.spawn_lifetime_ticks == 10u);
     require(spawn.repeat_count_min == 10u && spawn.repeat_count_max == 15u);
-    require(spawn.repeat_scatter_radius == 6.0f);
+    require(spawn.repeat_scatter_radius == 25.0f);
     require(spawn.repeat_stagger_lifetime_ticks == 60u);
 
     const fs::path marker =
-        shipped_catalog() / "projectile_templates" / "21_projectile_meteor_storm_marker.yaml";
+        shipped_catalog() / "projectile_templates" / "21_projectile_meteor_storm_barrage_marker.yaml";
     for (const char* count : {"count: [15, 10]", "count: 0", "count: 17"}) {
         require(refused_for(
             catalog_with(
                 "repeat_count_out_of_range",
-                {{"projectile_templates/21_projectile_meteor_storm_marker.yaml",
+                {{"projectile_templates/21_projectile_meteor_storm_barrage_marker.yaml",
                   with_replaced(marker, "count: [10, 15]", count)}}),
             {"spawn_projectile repeat count must satisfy"}));
     }
     require(refused_for(
         catalog_with(
             "lifetime_zero",
-            {{"projectile_templates/21_projectile_meteor_storm_marker.yaml",
+            {{"projectile_templates/21_projectile_meteor_storm_barrage_marker.yaml",
               with_replaced(marker, "lifetime: 10", "lifetime: 0")}}),
         {"spawn_projectile lifetime_ticks must be at least 1"}));
+
+    // lifetime_spread_ticks (I5): the old name stagger_lifetime_ticks still
+    // loads to the same 60, and naming both is refused.
+    const fs::path repeated = shipped_catalog() / "action_graph_templates" / "common" /
+        "action_spawn_projectile_repeated.yaml";
+    const fs::path old_name = catalog_with(
+        "lifetime_spread_old_name",
+        {{"action_graph_templates/common/action_spawn_projectile_repeated.yaml",
+          with_replaced(repeated, "lifetime_spread_ticks:", "stagger_lifetime_ticks:")}});
+    require(load_error(old_name).empty());
+    {
+        const gs::KernelGameplayCatalogStorage old_storage = built(old_name);
+        require(compiled_projectile(old_storage, 21u)
+                    .expired_trigger.actions[0]
+                    .repeat_stagger_lifetime_ticks == 60u);
+    }
+    require(refused_for(
+        catalog_with(
+            "lifetime_spread_both_names",
+            {{"action_graph_templates/common/action_spawn_projectile_repeated.yaml",
+              with_replaced(
+                  repeated,
+                  "      lifetime_spread_ticks: params.lifetime_spread\n",
+                  "      lifetime_spread_ticks: params.lifetime_spread\n"
+                  "      stagger_lifetime_ticks: params.lifetime_spread\n")}}),
+        {"lifetime_spread_ticks and its old name"}));
+}
+
+// possibility (ABI 110): Ice Spike's blast freezes 30% of what it reaches,
+// bound through action_apply_status_if_target's possibility parameter, whose
+// default of 100 leaves every other owner rolling nothing. A whole percent
+// from 1 to 100 only, and never on a spawn or a lock strike.
+void possibility_comes_from_the_binding() {
+    const gs::KernelGameplayCatalogStorage storage =
+        built(shipped_catalog() / "gameplay_catalog.yaml");
+    const KernelActionDefinition& freeze =
+        compiled_projectile(storage, 43u).projectile_impact_trigger.actions[0];
+    require(freeze.action_type == KernelEntityTriggerActionType_ApplyStatus);
+    require(freeze.possibility_percent == 30u);
+    // Call Lightning's strikes paralyse 25% of what they reach (I4).
+    const KernelActionDefinition& paralyse =
+        compiled_projectile(storage, 49u).projectile_impact_trigger.actions[0];
+    require(paralyse.action_type == KernelEntityTriggerActionType_ApplyStatus);
+    require(paralyse.possibility_percent == 25u);
+    // The water bubble binds the same graph and says nothing: always.
+    require(compiled_projectile(storage, 31u)
+                .projectile_impact_trigger.actions[0]
+                .possibility_percent == 100u);
+
+    const fs::path blast =
+        shipped_catalog() / "projectile_templates" / "43_projectile_ice_spike_strike_blast.yaml";
+    for (const char* bad : {"possibility: 0", "possibility: 101", "possibility: 0.3",
+                            "possibility: -5", "possibility: thirty"}) {
+        require(refused_for(
+            catalog_with(
+                "possibility_out_of_range",
+                {{"projectile_templates/43_projectile_ice_spike_strike_blast.yaml",
+                  with_replaced(blast, "possibility: 30", bad)}}),
+            {"possibility must be a whole percent from 1 to 100"}));
+    }
+
+    require(refused_for(
+        catalog_with(
+            "possibility_on_spawn",
+            {{"action_graph_templates/common/action_spawn_projectile.yaml",
+              with_replaced(
+                  shipped_catalog() / "action_graph_templates" / "common" /
+                      "action_spawn_projectile.yaml",
+                  "  - type: spawn_projectile\n",
+                  "  - type: spawn_projectile\n    possibility: 50\n")}}),
+        {"possibility is not supported on spawn_projectile"}));
 }
 
 // event.surface_normal (ABI 108): the face a standard projectile struck, as a
@@ -825,22 +896,46 @@ void surface_normal_spawn_direction_is_impact_and_standard_only() {
         {"event.surface_normal needs a standard projectile", "shockwave_blast"}));
 }
 
-// The shipped water jet (provisional ids 37/38) holds the invariants its push
-// depends on (docs/WATER_JET_PLAN.md D9, D10): the bolt strikes only the world
-// and spawns along the struck face; the column carries that face in a nonzero
-// heading the world never parks, is built on clients, and pushes along it
-// with a lift.
+// The shipped water jet holds the invariants its push depends on
+// (docs/WATER_JET_PLAN.md D9, D10): a surface strike (ABI 110) lands its mark
+// on the chosen face with the face's normal as its direction, the mark expires
+// into the column along that direction; the column carries the face in a
+// nonzero heading the world never parks, is built on clients, and pushes along
+// it with a lift.
 void the_water_jet_holds_its_push_invariants() {
     const gs::KernelGameplayCatalogStorage storage =
         built(shipped_catalog() / "gameplay_catalog.yaml");
-    const KernelProjectileMechanicsDefinition& bolt = compiled_projectile(storage, 37u);
-    require(bolt.projectile_type == KernelProjectileType_Standard);
-    require(bolt.collision_mask ==
-            (KERNEL_COLLISION_LAYER_TERRAIN | KERNEL_COLLISION_LAYER_STATIC_OBSTACLE));
-    const KernelActionDefinition& spawn = bolt.projectile_impact_trigger.actions[0];
+    const gs::GameServerGameplayConfig config =
+        gs::load_gameplay_config_from_catalog_file(
+            (shipped_catalog() / "gameplay_catalog.yaml").string());
+    const KernelWeaponMechanicsDefinition& jet = config.weapons.definitions[21];
+    require(jet.fire_mode == KernelWeaponFireMode_TargetedStrikeSurface);
+    require(jet.max_range == 45.0f);
+    require(jet.projectile_template_id == 50u);
+    const KernelProjectileMechanicsDefinition& marker = compiled_projectile(storage, 50u);
+    require(marker.speed == 0.0f);
+    require(marker.sync_mode == KernelProjectileSyncMode_ServerSnapshotOnly);
+    const KernelActionDefinition& spawn = marker.expired_trigger.actions[0];
     require(spawn.action_type == KernelEntityTriggerActionType_SpawnProjectile);
     require(spawn.spawn_projectile_template_id == 38u);
-    require(spawn.direction_source == KernelEventVec3Source_SurfaceNormal);
+    require(spawn.direction_source == KernelEventVec3Source_Direction);
+
+    // strike_target is a targeted strike's alone, and only ground or surface.
+    const fs::path weapon = shipped_catalog() / "weapon_templates" / "21_weapon_water_jet.yaml";
+    require(refused_for(
+        catalog_with(
+            "strike_target_unknown",
+            {{"weapon_templates/21_weapon_water_jet.yaml",
+              with_replaced(weapon, "\nstrike_target: surface", "\nstrike_target: wall")}}),
+        {"strike_target must be ground, surface or actor"}));
+    require(refused_for(
+        catalog_with(
+            "strike_target_on_projectile",
+            {{"weapon_templates/0_weapon_ice_lance.yaml",
+              with_replaced(
+                  shipped_catalog() / "weapon_templates" / "0_weapon_ice_lance.yaml",
+                  "weapon_type: hitscan", "weapon_type: hitscan\nstrike_target: surface")}}),
+        {"strike_target is only supported on targeted_strike weapons"}));
 
     const KernelProjectileMechanicsDefinition& column = compiled_projectile(storage, 38u);
     require(column.projectile_type == KernelProjectileType_AreaEffect);
@@ -854,6 +949,51 @@ void the_water_jet_holds_its_push_invariants() {
     // grounded actor dies the next tick.
     require(push.impulse_strength_mode == KERNEL_IMPULSE_STRENGTH_MODE_SPLIT);
     require(push.impulse_strength_vertical > 0.0f);
+}
+
+// Lock-on Magic Missile (I2, ABI 110): an actor strike locking with its
+// narrow cone, whose cast (a marker) expires into a lock_strike at the event's
+// target alone, 12-16 missiles 3 ticks apart.
+void the_lock_on_magic_missile_strikes_its_target_alone() {
+    const gs::KernelGameplayCatalogStorage storage =
+        built(shipped_catalog() / "gameplay_catalog.yaml");
+    const gs::GameServerGameplayConfig config =
+        gs::load_gameplay_config_from_catalog_file(
+            (shipped_catalog() / "gameplay_catalog.yaml").string());
+    const KernelWeaponMechanicsDefinition& weapon = config.weapons.definitions[27];
+    require(weapon.fire_mode == KernelWeaponFireMode_TargetedStrikeActor);
+    require(weapon.melee_collider_template_id == 69u);
+    require(weapon.collision_mask == KERNEL_COLLISION_LAYER_HOSTILE_SIDE);
+    require(weapon.projectile_template_id == 51u);
+    const KernelProjectileMechanicsDefinition& cast = compiled_projectile(storage, 51u);
+    require(cast.speed == 0.0f);
+    const KernelActionDefinition& volley = cast.expired_trigger.actions[0];
+    require(volley.action_type == KernelEntityTriggerActionType_LockStrike);
+    require(volley.target_source == KernelEntityRefSource_EventTarget);
+    require(volley.lock_mode == KernelLockStrikeMode_Missile);
+    require(volley.spawn_projectile_template_id == 52u);
+    require(volley.lock_repeat_count == 0u);
+    require(volley.repeat_count_min == 12u && volley.repeat_count_max == 16u);
+    require(volley.lock_repeat_interval_ticks == 3u);
+
+    const fs::path graph = shipped_catalog() / "action_graph_templates" / "common" /
+        "action_lock_missile_volley_at_target.yaml";
+    for (const char* bad : {"count: [16, 12]", "count: [0, 12]", "count: [12, 17]"}) {
+        require(refused_for(
+            catalog_with(
+                "lock_count_range",
+                {{"action_graph_templates/common/action_lock_missile_volley_at_target.yaml",
+                  with_replaced(graph, "count: [12, 16]", bad)}}),
+            {"lock_strike repeat count range"}));
+    }
+    const fs::path weapon_file =
+        shipped_catalog() / "weapon_templates" / "27_weapon_lock_on_magic_missile.yaml";
+    require(refused_for(
+        catalog_with(
+            "actor_strike_without_cone",
+            {{"weapon_templates/27_weapon_lock_on_magic_missile.yaml",
+              with_replaced(weapon_file, "lock_collider: lock_on_magic_missile_cone\n", "")}}),
+        {"strike_target actor requires lock_collider"}));
 }
 
 // The archive the client loads must hold every graph the source tree does,
@@ -900,8 +1040,10 @@ int main() {
     status_strength_and_refill_percent_come_from_the_binding();
     bound_status_strength_and_refill_percent_are_range_checked();
     spawn_repeat_comes_from_the_binding();
+    possibility_comes_from_the_binding();
     surface_normal_spawn_direction_is_impact_and_standard_only();
     the_water_jet_holds_its_push_invariants();
+    the_lock_on_magic_missile_strikes_its_target_alone();
     the_bundle_carries_the_same_graphs();
     return 0;
 }

@@ -293,6 +293,23 @@ std::vector<glm::vec3> projectile_burst_directions(
     const glm::vec3& direction,
     const WeaponMechanicsDefinition& definition);
 
+// Where a surface strike (WeaponFireMode::kTargetedStrikeSurface) lands, and
+// the face it lands on. One ray along `direction` from `origin`, up to
+// max_range, against terrain and static obstacles only -- actors do not stop
+// it. The first face it meets, wall or floor, is the target. Meeting none,
+// the point at max_range is dropped straight down (at most max_range) onto
+// the ground. Nothing either way is no target: the weapon refuses the shot.
+struct SurfaceStrikeTarget {
+    glm::vec3 point{0.0f};
+    glm::vec3 normal{0.0f, 1.0f, 0.0f};
+};
+std::optional<SurfaceStrikeTarget> resolve_surface_strike_target(
+    const physics::PhysicsWorld* collision_world,
+    NetId shooter_net_id,
+    const glm::vec3& origin,
+    const glm::vec3& direction,
+    float max_range);
+
 // Mixes the facts that identify one launch into a seed. Integers only, so the
 // same inputs give the same seed on every platform.
 std::uint64_t projectile_launch_seed(
@@ -329,7 +346,8 @@ bool spawn_projectile_at(
     const glm::vec3& direction,
     std::uint32_t current_tick,
     float fixed_delta_seconds,
-    std::vector<KernelEvent>* events);
+    std::vector<KernelEvent>* events,
+    NetId strike_target_net_id = 0);
 
 // lifetime_ticks zero keeps the template's; extra_lifetime_ticks is added
 // either way. launch_salt is the command's provenance salt.
@@ -475,6 +493,26 @@ std::optional<float> ground_height_below(
     const glm::quat& rotation,
     float max_distance,
     bool static_world_only = false);
+
+// Whether the entity's movement capsule can fly a leap's arc -- `launch` from
+// `from`, landing on `to` on its airtime_ticks-th step -- without striking a
+// wall or a ceiling of the static world (terrain and static obstacles within
+// its own mask). Walkable floors never block: the one it leaves and the one it
+// lands on are part of the arc. A face it touches but moves away from does not
+// block either. True when there is no physics world or capsule to ask.
+//
+// The movement step strips the velocity a wall stops, and the leap's lockout
+// keeps what is left: an arc into a cliff becomes a launch straight up.
+bool leap_arc_clear(
+    World& world,
+    NetId net_id,
+    const glm::vec3& from,
+    const glm::vec3& to,
+    const glm::vec3& launch,
+    const glm::quat& rotation,
+    std::uint32_t airtime_ticks,
+    float gravity_y,
+    float fixed_delta_seconds);
 
 // Arms the drop for every actor whose last status suspension has ended since
 // the last call: velocity zeroed, straight down, out of its own control, until
@@ -725,6 +763,10 @@ bool is_staggered(const World& world, entt::entity entity, std::uint32_t current
 
 // Some active status instance on the actor ran apply_block_actions.
 bool status_blocks_actions(const World& world, entt::entity entity);
+
+// Some active status instance on the actor ran apply_block_movement: it does
+// not move itself (paralysis), though a push still carries it.
+bool status_blocks_movement(const World& world, entt::entity entity);
 
 
 // Gives the actor its template's StaggerProfile, or takes it away when the

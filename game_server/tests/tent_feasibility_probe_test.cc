@@ -756,9 +756,9 @@ int main() {
         std::uint8_t weapon;
     };
     const std::array<Shooter, 3> shooters{
-        Shooter{"sentry_grunt", 2},      // spammer: a projectile naming no side
-        Shooter{"beam_sentry", 8},       // beam
-        Shooter{"gingerbread_mage", 12}, // lobbed grenade, area effect
+        Shooter{"sentry_grunt", 128},    // spammer: a projectile naming no side
+        Shooter{"beam_sentry", 130},     // beam
+        Shooter{"gingerbread_mage", 134}, // lobbed grenade, area effect
     };
     std::uint16_t port = 8010;
     std::array<FireOutcome, 3> open{};

@@ -35,7 +35,7 @@ movement:
 # projectile template). Swapping this slot for a linear weapon silently turns
 # the arc back into a straight line.
 weapon_slots:
-  - 24
+  - 139
 active_weapon_slot: 0
 animations:
   idle: 0
@@ -77,5 +77,5 @@ ai:
       leash_meters: 34.0
       leash_resume_meters: 10.0
   skills:
-    - use: {type: weapon, value: 24}
+    - use: {type: weapon, value: 139}
       when: {range_meters: {max: 25.0}}

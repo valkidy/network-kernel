@@ -1501,7 +1501,11 @@ bool execute_action_graph_commands(
             if (active == nullptr) {
                 return false;
             }
-            active->blocks_actions = true;
+            if (block->movement) {
+                active->blocks_movement = true;
+            } else {
+                active->blocks_actions = true;
+            }
             continue;
         }
         if (const auto* untargetable =
@@ -3821,7 +3825,9 @@ bool EntityStateSystem::start_leap(
         registry.all_of<Sheltered>(*entity) ||
         registry.any_of<LeapLockout, ChargeLockout>(*entity) ||
         registry.all_of<HeldInSuspension>(*entity) ||
-        active_suspension(world, *entity) != nullptr) {
+        active_suspension(world, *entity) != nullptr ||
+        // Downed by a status (paralysis): it does not move itself.
+        status_blocks_movement(world, *entity)) {
         return false;
     }
     if (const Health* health = registry.try_get<Health>(*entity);
@@ -3866,6 +3872,13 @@ bool EntityStateSystem::start_leap(
     // given too little airtime -- is caught by the ground it stands on and
     // slides off along it instead of flying the arc it was solved for.
     if (launch.y + movement.gravity.y * engine.fixed_delta_seconds() <= 0.0f) {
+        return false;
+    }
+    // An arc through a wall -- a target up a cliff it stands at the foot of --
+    // loses its horizontal speed on the first step and goes straight up.
+    if (!leap_arc_clear(
+            world, net_id, transform.position, to, launch, transform.rotation,
+            airtime_ticks, movement.gravity.y, engine.fixed_delta_seconds())) {
         return false;
     }
     registry.get<Velocity>(*entity).linear = launch;
@@ -3916,7 +3929,9 @@ bool EntityStateSystem::start_charge(
         registry.all_of<Sheltered>(*entity) ||
         registry.any_of<LeapLockout, ChargeLockout>(*entity) ||
         registry.all_of<HeldInSuspension>(*entity) ||
-        active_suspension(world, *entity) != nullptr) {
+        active_suspension(world, *entity) != nullptr ||
+        // Downed by a status (paralysis): it does not move itself.
+        status_blocks_movement(world, *entity)) {
         return false;
     }
     if (const Health* health = registry.try_get<Health>(*entity);

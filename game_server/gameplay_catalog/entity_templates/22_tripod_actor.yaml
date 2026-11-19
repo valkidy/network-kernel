@@ -18,7 +18,7 @@ movement:
   ground_snap_distance: 0.5
   max_yaw_degrees_per_second: 45.0
   collision_mask: terrain
-weapon_slots: [2]
+weapon_slots: [128]
 active_weapon_slot: 0
 vision:
   collider_template: sentry_grunt_vision_cone
@@ -41,7 +41,7 @@ ai:
     resume_distance_meters: 10.0
     input_magnitude: 1.0
   skills:
-    - use: {type: weapon, value: 2}
+    - use: {type: weapon, value: 128}
 animations:
   idle: 0
   chasing: 1

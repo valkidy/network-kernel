@@ -20,6 +20,7 @@
 
 #include "game_server/src/game_server.h"
 #include "game_server/src/gameplay_config.h"
+#include "game_server/tests/legacy_staff_charge.h"
 #include "kernel/public/kernel_api.h"
 
 namespace {
@@ -38,7 +39,7 @@ void require_impl(bool condition, int line, const char* text) {
 
 constexpr float kTickSeconds = 1.0f / 30.0f;
 constexpr std::uint8_t kMeteorStaff = 13;  // charges 20 ticks
-constexpr std::uint8_t kBeamRifle = 5;     // hold: 1 MP a tick after 5 ticks
+constexpr std::uint8_t kBeamRifle = 5;     // hold: 1 MP a tick after 45 ticks
 constexpr int kChargeTicks = 20;
 
 std::filesystem::path catalog_root() {
@@ -170,7 +171,10 @@ Outcome run(
     };
     const auto ammo = [&]() { return entity_state(kernel, player).ammo[slot]; };
 
-    for (int index = 0; index < 10; ++index) send(index == 0, true);
+    // The beam rifle's beam starts 45 ticks after the press, so it is held past
+    // that; the charge is caught halfway through its 20 ticks.
+    const int lead_ticks = weapon == Weapon::kBeam ? 50 : 10;
+    for (int index = 0; index < lead_ticks; ++index) send(index == 0, true);
     Outcome outcome;
     outcome.ammo_before = ammo();
     KernelGameplayRequest request{};
@@ -204,8 +208,10 @@ Outcome run(
 }  // namespace
 
 int main() {
-    const gs::GameServerGameplayConfig config = gs::load_gameplay_config_from_catalog_file(
+    gs::GameServerGameplayConfig config = gs::load_gameplay_config_from_catalog_file(
         (catalog_root() / "gameplay_catalog.yaml").string());
+    // Weapon 13 with the old meteor staff's 20-tick charge (legacy_staff_charge.h).
+    gs::test::restore_legacy_staff_charge(config);
 
     // Mid-charge. A pickup leaves the charge alone: it casts on release.
     const Outcome charge_pickup = run(config, Weapon::kCharge, Hands::kPickup, 8068);
@@ -224,13 +230,14 @@ int main() {
     const Outcome beam_pickup = run(config, Weapon::kBeam, Hands::kPickup, 8070);
     std::printf("beam + pickup: %u -> %u\n", beam_pickup.ammo_before, beam_pickup.ammo_after);
     require(beam_pickup.status == KernelGameplayRequestStatus_Committed);
-    require(beam_pickup.ammo_before < 12u);  // it was firing
+    const std::uint16_t beam_full = config.weapons.definitions[kBeamRifle].magazine_size;
+    require(beam_pickup.ammo_before < beam_full);  // it was firing
     require(beam_pickup.ammo_after < beam_pickup.ammo_before);
     // A throw goes, and the beam stops where it was.
     const Outcome beam_throw = run(config, Weapon::kBeam, Hands::kThrow, 8071);
     std::printf("beam + throw: %u -> %u\n", beam_throw.ammo_before, beam_throw.ammo_after);
     require(beam_throw.status == KernelGameplayRequestStatus_Committed);
-    require(beam_throw.ammo_before < 12u);
+    require(beam_throw.ammo_before < beam_full);
     require(beam_throw.ammo_after == beam_throw.ammo_before);
 
     std::puts("hands_interrupt_test passed");

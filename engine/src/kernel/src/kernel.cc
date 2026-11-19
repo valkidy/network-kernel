@@ -1683,6 +1683,12 @@ WeaponFireMode to_weapon_fire_mode(std::uint8_t fire_mode) {
     if (fire_mode == KernelWeaponFireMode_TargetedStrike) {
         return WeaponFireMode::kTargetedStrike;
     }
+    if (fire_mode == KernelWeaponFireMode_TargetedStrikeSurface) {
+        return WeaponFireMode::kTargetedStrikeSurface;
+    }
+    if (fire_mode == KernelWeaponFireMode_TargetedStrikeActor) {
+        return WeaponFireMode::kTargetedStrikeActor;
+    }
     if (fire_mode == KernelWeaponFireMode_LockInstant) {
         return WeaponFireMode::kLockInstant;
     }
@@ -1888,6 +1894,8 @@ bool validate_beam_mechanics(const KernelBeamMechanicsDefinition& beam) {
               KERNEL_COLLISION_LAYER_LIMB)) == 0u;
 }
 
+bool lock_strike_action_is_authorable(const KernelActionDefinition& action);
+
 bool validate_projectile_mechanics(
     const KernelProjectileMechanicsDefinition& mechanics) {
     // A surface normal exists only where a standard projectile struck the
@@ -1966,6 +1974,9 @@ bool validate_projectile_mechanics(
                 }
             } else if (action.action_type == KernelEntityTriggerActionType_ApplyPull) {
                 if (!pull_action_is_authorable(action)) return false;
+            } else if (action.action_type == KernelEntityTriggerActionType_LockStrike) {
+                // ABI 110 (I2): an actor strike's cast striking what it locked.
+                if (!lock_strike_action_is_authorable(action)) return false;
             } else if (action.action_type == KernelEntityTriggerActionType_ApplyStatus) {
                 // A bolt that puts a status on what it strikes (the water
                 // bubble staff). Whether the id names a status is the
@@ -2076,12 +2087,14 @@ bool validate_weapon_mechanics(const KernelWeaponMechanicsDefinition& definition
         definition.magazine_size == 0 ||
         (definition.fire_mode != KernelWeaponFireMode_Projectile &&
          definition.fire_mode != KernelWeaponFireMode_TargetedStrike &&
+         definition.fire_mode != KernelWeaponFireMode_TargetedStrikeSurface &&
+         definition.fire_mode != KernelWeaponFireMode_TargetedStrikeActor &&
          definition.damage == 0) ||
         definition.fire_action_template_id == 0u ||
         definition.reload_action_template_id == 0u) {
         return false;
     }
-    if (definition.fire_mode > KernelWeaponFireMode_LockMissile) {
+    if (definition.fire_mode > KernelWeaponFireMode_TargetedStrikeActor) {
         return false;
     }
     if (definition.fire_mode == KernelWeaponFireMode_Projectile) {
@@ -2089,7 +2102,14 @@ bool validate_weapon_mechanics(const KernelWeaponMechanicsDefinition& definition
     }
     // What lands usually deals no damage itself -- a marker whose expiry, or
     // a meteor whose impact, does -- so damage is not required here either.
-    if (definition.fire_mode == KernelWeaponFireMode_TargetedStrike) {
+    // An actor strike locks with its cone, as a lock-on weapon does.
+    if (definition.fire_mode == KernelWeaponFireMode_TargetedStrikeActor) {
+        return definition.projectile_template_id != 0 &&
+               definition.melee_collider_template_id != 0 &&
+               definition.max_range > 0.0f;
+    }
+    if (definition.fire_mode == KernelWeaponFireMode_TargetedStrike ||
+        definition.fire_mode == KernelWeaponFireMode_TargetedStrikeSurface) {
         return definition.projectile_template_id != 0 &&
                definition.max_range > 0.0f;
     }
@@ -2161,7 +2181,8 @@ bool resolve_weapon_cone(
     WeaponMechanicsDefinition* mechanics) {
     if (mechanics->mode != WeaponFireMode::kMelee &&
         mechanics->mode != WeaponFireMode::kLockInstant &&
-        mechanics->mode != WeaponFireMode::kLockMissile) {
+        mechanics->mode != WeaponFireMode::kLockMissile &&
+        mechanics->mode != WeaponFireMode::kTargetedStrikeActor) {
         return true;
     }
     // A weapon's reach is a cone: a melee swing and a lock-on weapon both
@@ -2197,17 +2218,33 @@ constexpr std::size_t kMaxPendingLockStrikes = 256u;
 
 // A lock_strike's own fields, before anything they name is known to exist.
 bool lock_strike_action_is_authorable(const KernelActionDefinition& action) {
+    // ABI 110: a [min, max] count instead of the fixed one, checked as the
+    // longest run it can pick.
+    const bool ranged = action.repeat_count_max != 0u;
+    const bool repeat_ok = ranged
+        ? action.lock_repeat_count <= 1u && action.repeat_count_min >= 1u &&
+              action.repeat_count_min <= action.repeat_count_max &&
+              (action.repeat_count_max == 1u
+                   ? true
+                   : lock_strike_repeat_is_authorable(
+                         action.repeat_count_max,
+                         action.lock_repeat_interval_ticks))
+        : action.repeat_count_min == 0u &&
+              lock_strike_repeat_is_authorable(
+                  action.lock_repeat_count, action.lock_repeat_interval_ticks);
     return action.lock_collider_template_id != 0u &&
            action.spawn_projectile_template_id != 0u &&
            action.lock_mode <= KernelLockStrikeMode_Missile &&
            action.position_source == KernelEventVec3Source_Position &&
            (action.direction_source == KernelEventVec3Source_Position ||
             action.direction_source == KernelEventVec3Source_Direction) &&
+           // Self (the old default: search the volume) or the event's target.
+           (action.target_source == KernelEntityRefSource_Self ||
+            action.target_source == KernelEntityRefSource_EventTarget) &&
            std::isfinite(action.lock_origin_lift) &&
            action.lock_origin_lift >= 0.0f &&
            action.lock_origin_lift <= KERNEL_MAX_LOCK_ORIGIN_LIFT &&
-           lock_strike_repeat_is_authorable(
-               action.lock_repeat_count, action.lock_repeat_interval_ticks);
+           repeat_ok;
 }
 
 // Every lock_strike an entity template's triggers hold names a volume a lock
@@ -2215,18 +2252,10 @@ bool lock_strike_action_is_authorable(const KernelActionDefinition& action) {
 // sphere -- and a shot that locks at most KERNEL_MAX_LOCK_ARCS, with a flight
 // a missile can report when it is one.
 bool lock_strikes_reach_their_templates(
-    const KernelEntityTemplateDefinition& entity_template,
+    const std::initializer_list<const KernelActionTriggerDefinition*> triggers,
     const std::vector<KernelColliderTemplateDefinition>& collider_templates,
     const std::vector<KernelProjectileTemplateDefinition>& projectile_templates) {
-    for (const KernelActionTriggerDefinition* trigger : {
-             &entity_template.activated_trigger,
-             &entity_template.collision_trigger,
-             &entity_template.health_depleted_trigger,
-             &entity_template.destroy_entity_trigger,
-             &entity_template.enter_trigger,
-             &entity_template.overlap_trigger,
-             &entity_template.exit_trigger,
-         }) {
+    for (const KernelActionTriggerDefinition* trigger : triggers) {
         if (trigger->struct_size == 0u) {
             continue;
         }
@@ -3613,6 +3642,8 @@ bool KernelEngine::load_gameplay_catalog(
                  trigger.action_type ==
                      KernelEntityTriggerActionType_ApplyHoverMovement ||
                  trigger.action_type ==
+                     KernelEntityTriggerActionType_ApplyBlockMovement ||
+                 trigger.action_type ==
                      KernelEntityTriggerActionType_ApplyUntargetable) &&
                 trigger.target_source != KernelEntityRefSource_Self &&
                 trigger.target_source != KernelEntityRefSource_EventSubject) {
@@ -3639,6 +3670,8 @@ bool KernelEngine::load_gameplay_catalog(
                          KernelEntityTriggerActionType_ApplySuspendMovement ||
                      action.action_type ==
                          KernelEntityTriggerActionType_ApplyHoverMovement ||
+                     action.action_type ==
+                         KernelEntityTriggerActionType_ApplyBlockMovement ||
                      action.action_type ==
                          KernelEntityTriggerActionType_ApplyUntargetable) &&
                     action.target_source != KernelEntityRefSource_Self &&
@@ -4300,6 +4333,11 @@ bool KernelEngine::load_gameplay_catalog(
                 validated_projectile_templates) ||
             !projectile_trigger_is_valid(
                 mechanics.expired_trigger,
+                validated_projectile_templates) ||
+            // A projectile's lock_strike (ABI 110), on an entity's terms.
+            !lock_strikes_reach_their_templates(
+                {&mechanics.projectile_impact_trigger, &mechanics.expired_trigger},
+                validated_collider_templates,
                 validated_projectile_templates)) {
             return false;
         }
@@ -4307,7 +4345,15 @@ bool KernelEngine::load_gameplay_catalog(
     for (const KernelEntityTemplateDefinition& entity_template :
          validated_entity_templates) {
         if (!lock_strikes_reach_their_templates(
-                entity_template,
+                {
+                    &entity_template.activated_trigger,
+                    &entity_template.collision_trigger,
+                    &entity_template.health_depleted_trigger,
+                    &entity_template.destroy_entity_trigger,
+                    &entity_template.enter_trigger,
+                    &entity_template.overlap_trigger,
+                    &entity_template.exit_trigger,
+                },
                 validated_collider_templates,
                 validated_projectile_templates)) {
             return false;
@@ -8286,8 +8332,10 @@ void KernelEngine::strike_lock_once(
     // left out by id.
     const NetId shooter = command.provenance.instigator;
     const PeerId shooter_peer = command.provenance.owner_peer;
-    const LockSelection selection =
-        select_lock_targets(world, spec, nullptr, shooter, shooter_peer);
+    const LockSelection selection = command.fixed_target != 0u
+        ? select_fixed_lock_target(
+              world, spec, command.fixed_target, shooter, shooter_peer)
+        : select_lock_targets(world, spec, nullptr, shooter, shooter_peer);
     const std::uint32_t current_tick = tick_loop_.current_tick();
     if (command.mode == KernelLockStrikeMode_Instant) {
         apply_lock_instant_damage(
@@ -8543,6 +8591,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     predicted_hover_vertical_speed_ = 0.0f;
     predicted_hover_until_tick_ = 0u;
     predicted_local_dead_ = false;
+    predicted_local_downed_ = false;
     predicted_hovering_ = false;
     predicted_shelter_net_id_ = 0u;
     predicted_shelter_tick_ = 0u;
@@ -10442,6 +10491,7 @@ void KernelEngine::clear_client_session() {
     predicted_hover_vertical_speed_ = 0.0f;
     predicted_hover_until_tick_ = 0u;
     predicted_local_dead_ = false;
+    predicted_local_downed_ = false;
     predicted_hovering_ = false;
     predicted_shelter_net_id_ = 0u;
     predicted_shelter_tick_ = 0u;
@@ -11350,6 +11400,9 @@ bool KernelEngine::step_local_character_prediction(
                      predicted_character_state_.velocity.x,
                      0.0f,
                      predicted_character_state_.velocity.z})
+        // Downed, after the lockout as player_movement.cc has it.
+        : predicted_local_downed_
+        ? glm::vec3{0.0f}
         : movement_solver::input_move_to_world(input) *
               local_player_move_speed_meters_per_second_;
     // The suspension's twin of player_movement.cc: held, the step is the
@@ -11750,6 +11803,7 @@ void KernelEngine::adopt_authoritative_hover(const EntitySnapshot& authoritative
     predicted_hover_until_tick_ =
         authoritative.has_hover ? authoritative.hover_until_tick : 0u;
     predicted_local_dead_ = (authoritative.flags & kVisualFlagDead) != 0u;
+    predicted_local_downed_ = (authoritative.flags & kVisualFlagDowned) != 0u;
 }
 
 void KernelEngine::reconcile_local_prediction(const WorldSnapshot& snapshot) {

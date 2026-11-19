@@ -1,0 +1,14 @@
+# Calls 10-15 meteors down within 25 m of the aimed point over two seconds.
+# Each blast hits friend and foe, the caster included: the player has to get
+# out from under it.
+id: 14
+name: Meteor Storm
+# Weapon group / container slot 0-3.
+category: 2
+weapon_type: targeted_strike
+magazine_size: 1
+reserve_magazines: 3
+max_range: 65.0
+fire_action_template: meteor_storm_cast
+reload_action_template: meteor_storm_reload
+projectile_template: meteor_storm_barrage_marker

@@ -1,0 +1,11 @@
+# Meteor Storm's reload: 30 s. With one cast per magazine, this is its cooldown.
+id: 4136
+name: meteor_storm_reload
+trigger_mode: press
+flags: [cancel_on_death, cancel_on_weapon_change, cancel_before_first_commit]
+ammo_cost_per_commit: 0
+commit_offset_ticks: 900
+commit_interval_ticks: 0
+max_commit_count: 1
+recovery_ticks: 0
+hold_input_timeout_ticks: 0

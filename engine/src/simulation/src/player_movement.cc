@@ -751,6 +751,15 @@ void simulate_actor_movement(
             // nothing: the seeded current-velocity horizontal stands. Ahead
             // of the stagger, so a hit that staggers a leaping actor does not
             // stop it dead in the air.
+        } else if (status_blocks_movement(world, entity)) {
+            // Downed by a status (paralysis, apply_block_movement): rooted
+            // whatever the input or the AI asks. After the lockout test, so a
+            // push still carries it (plan D11); a charge under way ends.
+            desired_horizontal = glm::vec3{0.0f};
+            if (charge != nullptr) {
+                world.registry().remove<ChargeLockout>(entity);
+                charge = nullptr;
+            }
         } else if (is_staggered(world, entity, current_tick)) {
             // A stagger roots the actor. After the lockout test on purpose: a
             // hit that both knocks back and staggers keeps its knockback.
@@ -1305,6 +1314,79 @@ std::optional<float> ground_height_below(
     return position.y - max_distance * ground.collision.fraction;
 }
 
+bool leap_arc_clear(
+    World& world,
+    NetId net_id,
+    const glm::vec3& from,
+    const glm::vec3& to,
+    const glm::vec3& launch,
+    const glm::quat& rotation,
+    std::uint32_t airtime_ticks,
+    float gravity_y,
+    float fixed_delta_seconds) {
+    // Ticks between the samples the capsule is swept through. The arc bends
+    // little over a tenth of a second, and a leap is armed at most once per
+    // cooldown, so this is ~20 casts a leap.
+    constexpr std::uint32_t kStrideTicks = 3u;
+    physics::PhysicsWorld* physics_world = world.collision_world();
+    const ColliderInstance* collider = physics_world == nullptr
+        ? nullptr
+        : find_movement_capsule(world, net_id);
+    const std::optional<entt::entity> entity = world.find_entity(net_id);
+    const MovementState* movement = entity.has_value()
+        ? world.registry().try_get<MovementState>(*entity)
+        : nullptr;
+    if (collider == nullptr || movement == nullptr || airtime_ticks == 0u) {
+        return true;
+    }
+    physics::ShapeCastRequest request{};
+    request.shape = movement_shape(*collider);
+    request.rotation = rotation;
+    request.filter = movement_filter(
+        collider->entity_net_id, collider->collider_id,
+        movement->movement_collision_mask);
+    // Only what stays put: an actor in the way now has moved by the time the
+    // arc reaches it, and the flight shoves past actors anyway.
+    request.filter.collision_mask &=
+        physics::collision_layer_bit(physics::CollisionLayer::kTerrain) |
+        physics::collision_layer_bit(physics::CollisionLayer::kStaticObstacle);
+    if (request.filter.collision_mask == 0u) {
+        return true;
+    }
+    const float walkable_normal_y =
+        std::cos(glm::radians(movement->max_slope_degrees));
+    glm::vec3 at = from;
+    for (std::uint32_t n = kStrideTicks;; n += kStrideTicks) {
+        // The last segment ends on the destination itself, not on the tick
+        // boundary after it, which is already below the floor it lands on.
+        const bool last = n >= airtime_ticks;
+        const glm::vec3 next = last
+            ? to
+            : knockback_flight_position_at(
+                  from, launch, gravity_y, fixed_delta_seconds,
+                  static_cast<float>(n) * fixed_delta_seconds);
+        request.start = at;
+        request.displacement = next - at;
+        for (const physics::CollisionHit& hit :
+             physics_world->shape_cast_all(request)) {
+            // Floors are where it may come down -- the one it leaves, the one
+            // it lands on, a ledge top it drops onto early -- not what stops it.
+            if (hit.normal.y >= walkable_normal_y) {
+                continue;
+            }
+            // A face it is touching and moving away from or along.
+            if (glm::dot(hit.normal, request.displacement) >= 0.0f) {
+                continue;
+            }
+            return false;
+        }
+        if (last) {
+            return true;
+        }
+        at = next;
+    }
+}
+
 std::vector<std::pair<NetId, float>> settle_status_suspensions(
     World& world,
     std::uint32_t current_tick,
@@ -1316,6 +1398,19 @@ std::vector<std::pair<NetId, float>> settle_status_suspensions(
     std::vector<entt::entity> held;
     for (const entt::entity entity : world.registry().view<HeldInSuspension>()) {
         held.push_back(entity);
+    }
+    // KERNEL_VISUAL_FLAG_DOWNED, raised every tick for the same reason the
+    // suspension's flag is below: a game_server state write replaces the
+    // flags wholesale.
+    // Over every replicated entity, not only those with statuses: one whose
+    // last status went away has to lose the flag too.
+    for (const entt::entity entity : world.registry().view<ReplicationState>()) {
+        ReplicationState& replication = world.registry().get<ReplicationState>(entity);
+        if (status_blocks_movement(world, entity)) {
+            replication.visual_flags |= kVisualFlagDowned;
+        } else {
+            replication.visual_flags &= ~kVisualFlagDowned;
+        }
     }
     std::vector<std::pair<NetId, float>> drops;
     for (const entt::entity entity : held) {

@@ -12,7 +12,7 @@ movement_model: linear
 sync_mode: local_predicted_deterministic
 hit_response: destroy
 damage_shape: direct_hit
-damage: 45
+damage: 6
 # actor reaches a rigged monster's bones too -- they are its body (ABI 106) --
 # which is what makes shooting a monster's leg mean anything. terrain and
 # static_obstacle keep walls stopping the shot.

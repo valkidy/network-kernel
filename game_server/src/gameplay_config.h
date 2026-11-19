@@ -22,14 +22,14 @@ struct KernelHandle;
 
 namespace network_example::game_server {
 
-inline constexpr std::uint8_t kWeaponRifle = 0;
-inline constexpr std::uint8_t kWeaponShotgun = 1;
-inline constexpr std::uint8_t kWeaponSpammer = 2;
+// Shipped weapon ids. Player weapons are 0-127, every other weapon 128-254,
+// 255 is unarmed; see weapon_from_yaml for what changes past 255 weapons.
+inline constexpr std::uint8_t kWeaponIceLance = 0;
+inline constexpr std::uint8_t kWeaponShotgunning = 1;
 inline constexpr std::uint8_t kWeaponRocket = 3;
-inline constexpr std::uint8_t kWeaponFireFloor = 4;
 inline constexpr std::uint8_t kWeaponBeamRifle = 5;
-inline constexpr std::uint8_t kWeaponHomingMissile = 6;
-inline constexpr std::uint8_t kWeaponGrenade = 7;
+inline constexpr std::uint8_t kWeaponSpammer = 128;
+inline constexpr std::uint8_t kWeaponGrenade = 129;
 inline constexpr std::size_t kWeaponIdCount = 256;
 // These were kernel constants until directors stopped being kernel entities.
 // The values are unchanged on purpose: they are hashed into the catalog, and
@@ -514,6 +514,11 @@ struct ActionGraphActionConfig {
     // Set when lockout_ticks is authored as params.<name>; the binding then
     // supplies the number and lockout_ticks above is unused.
     std::string lockout_ticks_parameter;
+    // Any action but spawn_projectile and lock_strike (ABI 110): runs it
+    // possibility_percent times in 100; 0 is unauthored and always runs it.
+    // possibility_parameter is set when it is authored as params.<name>.
+    std::uint8_t possibility_percent = 0;
+    std::string possibility_parameter;
     // apply_damage only: the stagger meter the hit adds. Absent derives it
     // from the damage through the target's per_damage.
     std::optional<float> stagger;
@@ -549,6 +554,13 @@ struct ActionGraphActionConfig {
     std::uint32_t lock_repeat_interval_ticks = 0;
     std::string lock_repeat_count_parameter;
     std::string lock_repeat_interval_ticks_parameter;
+    // ABI 110 (I2): `count: [min, max]`, picked per run; zero max is the
+    // fixed count above.
+    std::uint8_t lock_repeat_count_min = 0;
+    std::uint8_t lock_repeat_count_max = 0;
+    // ABI 110 (I2): `target: event.target`, the one actor every strike of the
+    // run is at, with no search.
+    std::string lock_target_parameter;
     // apply_pull only. The anchor is a graph parameter for TO_POINT, and
     // direction_parameter is reused for ALONG. Each number is a literal, or
     // params.<name> (its *_parameter set) for the binding to supply. See

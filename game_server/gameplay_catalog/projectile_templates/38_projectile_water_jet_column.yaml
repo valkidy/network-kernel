@@ -1,5 +1,5 @@
-# The water jet's column: one push, along the face the bolt struck, for
-# everyone it reaches. No damage.
+# The water jet's column: one push, along the face the surface strike chose
+# (carried in by water_jet_marker), for everyone it reaches. No damage.
 #
 # It carries that face's normal in its own heading: speed 0.05 m/s along the
 # normal it was spawned with, so event.subject_direction -- the one vector

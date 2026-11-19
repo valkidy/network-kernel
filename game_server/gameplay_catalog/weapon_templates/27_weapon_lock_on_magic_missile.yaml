@@ -1,0 +1,17 @@
+# Locks the nearest hostile in a narrow 45 m cone and sends it 12-16 magic
+# missiles of 8 each, 3 ticks apart, from the caster (plan D3). Locking nobody
+# refuses the cast and spends nothing; if the target dies mid-volley the rest
+# are not fired.
+id: 27
+name: Lock-on Magic Missile
+# Weapon group / container slot 0-3.
+category: 1
+weapon_type: targeted_strike
+strike_target: actor
+lock_collider: lock_on_magic_missile_cone
+magazine_size: 6
+reserve_magazines: 4
+max_range: 45.0
+fire_action_template: lock_on_magic_missile_cast
+reload_action_template: lock_on_magic_missile_reload
+projectile_template: lock_on_magic_missile_cast

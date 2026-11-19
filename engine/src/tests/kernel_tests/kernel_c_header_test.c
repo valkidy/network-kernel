@@ -16,8 +16,22 @@ static void require_impl(int condition, const char* expression, int line) {
 #define require(condition) require_impl((condition) ? 1 : 0, #condition, __LINE__)
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 109u,
-    "player hover: apply_hover_movement");
+    KERNEL_ABI_VERSION == 110u,
+    "action possibility");
+_Static_assert(
+    offsetof(KernelActionDefinition, possibility_percent) ==
+            offsetof(KernelActionDefinition, modifier_operation) + 1u &&
+        offsetof(KernelActionDefinition, reserved2) ==
+            offsetof(KernelActionDefinition, possibility_percent) + 1u,
+    "ABI 110: possibility_percent is the old reserved1 byte, layout unchanged");
+_Static_assert(
+    KernelWeaponFireMode_TargetedStrikeSurface == 7 &&
+        KernelWeaponFireMode_LockMissile == 6,
+    "ABI 110: the surface strike is an appended fire mode");
+_Static_assert(
+    KernelEntityTriggerActionType_ApplyBlockMovement == 18 &&
+        KERNEL_VISUAL_FLAG_DOWNED == 0x00008000u,
+    "ABI 110: the movement block and the downed flag are appended");
 _Static_assert(
     KernelEntityTriggerActionType_ApplyHoverMovement == 17 &&
         KERNEL_VISUAL_FLAG_HOVERING == 0x00004000u,

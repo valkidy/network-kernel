@@ -17,4 +17,4 @@ charge:
   overshoot_meters: 2.0
 # charge_horns: not in the user's loadout, and not swung -- it is the run's
 # contact.
-contact_weapon: 20
+contact_weapon: 136

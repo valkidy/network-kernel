@@ -5,6 +5,27 @@
 #include <stdint.h>
 
 /*
+ * 110: action possibility (docs/PLAYER_WEAPON_REVAMP_PLAN.md I1).
+ *     KernelActionDefinition's reserved1 byte, after modifier_operation, is
+ *     now possibility_percent: 1-99 runs the action that many times in 100,
+ *     rolled from a seed of the instigator, the action instance, the launch
+ *     salt, the action's index, the event's target, the status instance and
+ *     the server tick; 0 (what every older catalog wrote) and 100 always run
+ *     it. Same size and layout, but a managed mirror must rename the field.
+ *     KernelWeaponFireMode gained _TargetedStrikeSurface (7, I3): a targeted
+ *     strike that lands on the first wall or floor along the aim, or on the
+ *     ground under the end of its reach, carrying that face's normal.
+ *     KernelWeaponFireMode gained _TargetedStrikeActor (8, I2): a targeted
+ *     strike that locks the nearest actor in its cone and carries it as its
+ *     projectile's on_expired event.target. A lock_strike may now run in a
+ *     projectile's triggers; with target_source _EventTarget it strikes that
+ *     actor alone, every repeat, with no search, and stops once it is no
+ *     longer there; with repeat_count_max non-zero (and lock_repeat_count 0
+ *     or 1) its count is picked, seeded, in [repeat_count_min,
+ *     repeat_count_max], at most KERNEL_MAX_LOCK_STRIKE_REPEAT.
+ *     KernelEntityTriggerActionType gained _ApplyBlockMovement (18, I4): a
+ *     status on_apply action that, while its instance stands, keeps the
+ *     actor from moving itself; KERNEL_VISUAL_FLAG_DOWNED (0x8000) says so.
  * 109: player hover (docs/PLAYER_HOVER_PLAN.md).
  *     KernelEntityTriggerActionType gained _ApplyHoverMovement, a status
  *     on_apply action: while the instance stands a character-controller
@@ -396,7 +417,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 109u
+#define KERNEL_ABI_VERSION 110u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -666,6 +687,8 @@ typedef enum KernelFootholdQueryType {
  * Hovering              visual_flags & KERNEL_VISUAL_FLAG_HOVERING (a status
  *                       hover holds it above the ground; never together with
  *                       FALLING or GROUNDED; ABI 109)
+ * Downed                visual_flags & KERNEL_VISUAL_FLAG_DOWNED (a status
+ *                       holds it where it lies: paralysis; ABI 110)
  * Firing                visual_flags & KERNEL_VISUAL_FLAG_FIRING, or
  *                       action.phase == KernelActionPhase_Active
  * Windup                action.phase == KernelActionPhase_Windup
@@ -703,6 +726,10 @@ typedef enum KernelFootholdQueryType {
 /* A status hover (apply_hover_movement): held at a clearance above the
  * ground, off it the whole time. */
 #define KERNEL_VISUAL_FLAG_HOVERING UINT32_C(0x00004000)
+/* A status holds the actor where it is (apply_block_movement, ABI 110): it
+ * does not move itself, though a push still carries it. The last bit the
+ * snapshot's 16-bit flags carry. */
+#define KERNEL_VISUAL_FLAG_DOWNED UINT32_C(0x00008000)
 
 #define KERNEL_MAX_VISIBLE_HOSTILES 16u
 #define KERNEL_MAX_VISIBLE_ALLIES 16u
@@ -1133,6 +1160,13 @@ typedef enum KernelEntityTriggerActionType {
      * ends it falls as any character does. Status on_apply graphs only, onto
      * the status's own subject (ABI 109). */
     KernelEntityTriggerActionType_ApplyHoverMovement = 17,
+    /* While the status instance whose on_apply ran it stands, its target --
+     * an actor -- does not move itself: no walking, steering, leap or charge,
+     * from input or from its AI, and KERNEL_VISUAL_FLAG_DOWNED is set. A push
+     * still carries it, and gravity still acts. Status on_apply graphs only,
+     * onto the status's own subject, on the terms of _ApplyBlockActions
+     * (ABI 110). */
+    KernelEntityTriggerActionType_ApplyBlockMovement = 18,
 } KernelEntityTriggerActionType;
 
 /* How a lock_strike strikes what it locks (ABI 107). */
@@ -1288,7 +1322,11 @@ typedef struct KernelActionDefinition {
     KernelVec3 impulse_direction;
     uint32_t status_effect_id;
     uint8_t modifier_operation;
-    uint8_t reserved1;
+    /* Any action (ABI 110): 1-99 runs it that many times in 100, seeded
+     * deterministically (see the ABI 110 note); 0 and 100 always run it. A
+     * spawn_projectile or lock_strike refuses one: a client reproducing a
+     * derived chain does not roll. */
+    uint8_t possibility_percent;
     uint16_t reserved2;
     float modifier_value;
     uint32_t impulse_lockout_ticks;
@@ -1705,6 +1743,27 @@ typedef enum KernelWeaponFireMode {
      * nothing spends no ammunition.
      */
     KernelWeaponFireMode_LockMissile = 6,
+    /*
+     * A targeted strike (ABI 110) that lands on a surface rather than under
+     * the reticle: one ray along the aim, up to max_range, through actors,
+     * against terrain and static obstacles. The first face it meets -- a wall
+     * or a floor -- is the target. Meeting none, the point at max_range is
+     * dropped straight down onto the ground below it. Finding neither is a
+     * refusal, spending nothing. The projectile is spawned on the point with
+     * the face's normal as its direction (up for the dropped point), so what
+     * it becomes can push off that face.
+     */
+    KernelWeaponFireMode_TargetedStrikeSurface = 7,
+    /*
+     * A targeted strike (ABI 110) on an actor: the nearest the cone of
+     * melee_collider_template_id locks along the aim -- what _LockMissile
+     * locks, by the projectile template's collision_mask -- or, locking
+     * nobody, a refusal that spends nothing. The projectile is spawned at the
+     * shooter's launch point, along the aim, carrying that actor: its
+     * on_expired reports it as event.target, for a lock_strike that strikes
+     * it alone (target: event.target). max_range is not used for the lock.
+     */
+    KernelWeaponFireMode_TargetedStrikeActor = 8,
 } KernelWeaponFireMode;
 
 typedef enum KernelProjectileMotionModel {

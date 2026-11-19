@@ -27,7 +27,7 @@ movement:
   collision_mask: terrain | static_obstacle | actor
 # The plain claw: damage on contact, nothing else.
 weapon_slots:
-  - 10
+  - 132
 active_weapon_slot: 0
 animations:
   idle: 0
@@ -80,7 +80,7 @@ ai:
     # Matches grunt_claw_cone's range. Measured origin to origin, while the
     # swing reaches to a target's near edge, so this is conservative: whatever
     # this lets the gingerbread attack, it can actually hit.
-    - use: {type: weapon, value: 10}
+    - use: {type: weapon, value: 132}
       when: {range_meters: {max: 2.2}}
     # Closing the gap in one long jump. The band is origin to origin like the
     # claw's range, and its far end has to stay inside the vision cone.

@@ -5,10 +5,10 @@
 id: 19
 name: Magic Missile
 # Weapon container slot 0-3 (wand, scepter, staff, tome / their gun twins).
-category: 2
+category: 0
 weapon_type: lock_missile
 magazine_size: 300
-reserve_magazines: 4
+reserve_magazines: 8
 fire_action_template: magic_missile_fire
 reload_action_template: magic_missile_reload
 lock_collider: magic_missile_cone

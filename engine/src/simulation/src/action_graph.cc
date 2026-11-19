@@ -1,6 +1,7 @@
 #include "simulation/public/action_graph.h"
 
 #include "simulation/public/simulation.h"
+#include "simulation/public/deterministic_random.h"
 
 #include <algorithm>
 #include <cmath>
@@ -11,6 +12,33 @@
 
 namespace network_example {
 namespace {
+
+// The seed one action's possibility rolls on (ABI 110). Everything in it is a
+// fact of this one evaluation that every machine running it has: who acted
+// and in which action instance, which iteration of a repeated spawn (the
+// launch salt), which action of the graph, which target -- so one blast rolls
+// separately for each actor it reaches -- which status instance, and the
+// tick, so a status's on_tick rolls afresh each time it fires.
+std::uint64_t possibility_seed(
+    const ActionExecutionProvenance& provenance,
+    const TriggerEvent& event,
+    std::size_t action_index) {
+    constexpr std::uint64_t kPossibilitySalt = 0x504F5353u;  // "POSS"
+    std::uint64_t seed = deterministic_mix(
+        (static_cast<std::uint64_t>(provenance.instigator) << 32) |
+        provenance.action_instance_id);
+    seed = deterministic_combine(
+        seed,
+        (static_cast<std::uint64_t>(provenance.launch_salt) << 32) |
+            static_cast<std::uint32_t>(action_index));
+    seed = deterministic_combine(
+        seed,
+        (static_cast<std::uint64_t>(event.target) << 32) |
+            provenance.status_instance_id);
+    seed = deterministic_combine(
+        seed, (static_cast<std::uint64_t>(provenance.server_tick) << 32) | kPossibilitySalt);
+    return seed;
+}
 
 // Tells one iteration of one repeated action apart from every other launch
 // under the same parent salt.
@@ -176,6 +204,9 @@ bool expression_available_for_event(
                 event_type == TriggerEventType::kStatusApplied ||
                 event_type == TriggerEventType::kStatusTick ||
                 event_type == TriggerEventType::kStatusExpired ||
+                // ABI 110 (I2): an actor strike's cast reports the actor it
+                // locked; every other expiry reports none.
+                event_type == TriggerEventType::kExpired ||
                 is_trigger_volume_event(event_type);
         }
         if (entity_ref->source == EntityRefSource::kEventInstigator) {
@@ -412,6 +443,17 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
         if (!condition.has_value()) {
             return std::nullopt;
         }
+        // Every branch below adds exactly one action, so this lines up with
+        // binding.graph.actions. A spawn or a lock strike may not roll: a
+        // client reproducing a derived chain runs those without dice.
+        if (action.possibility_percent > 100u ||
+            (action.possibility_percent != 0u &&
+             action.possibility_percent != 100u &&
+             (action.action_type == KernelEntityTriggerActionType_SpawnProjectile ||
+              action.action_type == KernelEntityTriggerActionType_LockStrike))) {
+            return std::nullopt;
+        }
+        binding.graph.possibility_percent.push_back(action.possibility_percent);
         const std::string suffix = "_" + std::to_string(index);
         if (action.action_type ==
             KernelEntityTriggerActionType_SpawnProjectile) {
@@ -557,6 +599,8 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
         if (action.action_type ==
                 KernelEntityTriggerActionType_ApplyBlockActions ||
             action.action_type ==
+                KernelEntityTriggerActionType_ApplyBlockMovement ||
+            action.action_type ==
                 KernelEntityTriggerActionType_ApplyUntargetable) {
             // Only a status's on_apply has an instance for the block to live
             // as long as, and only its own subject to hold.
@@ -572,6 +616,10 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
                         KernelEntityTriggerActionType_ApplyBlockActions
                     ? ActionGraphAction{ActionApplyBlockActionsDefinition{
                           target_name, *condition}}
+                    : action.action_type ==
+                        KernelEntityTriggerActionType_ApplyBlockMovement
+                    ? ActionGraphAction{ActionApplyBlockActionsDefinition{
+                          target_name, *condition, true}}
                     : ActionGraphAction{ActionApplyUntargetableDefinition{
                           target_name, *condition}});
             binding.parameters.push_back({
@@ -634,6 +682,19 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
             strike.repeat_count = action.lock_repeat_count;
             strike.repeat_interval_ticks = action.lock_repeat_interval_ticks;
             strike.origin_lift = action.lock_origin_lift;
+            // ABI 110 (I2): a count picked in [min, max] per run, and a strike
+            // at the event's target alone.
+            strike.repeat_count_min = action.repeat_count_min;
+            strike.repeat_count_max = action.repeat_count_max;
+            if (action.target_source == KernelEntityRefSource_EventTarget) {
+                strike.target_parameter = "target" + suffix;
+                binding.graph.parameters.push_back(
+                    {strike.target_parameter, std::monostate{}});
+                binding.parameters.push_back({
+                    strike.target_parameter,
+                    EntityRefExpression{EntityRefSource::kEventTarget},
+                });
+            }
             binding.graph.actions.push_back(std::move(strike));
             binding.parameters.push_back({
                 position_name,
@@ -882,6 +943,9 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
             EntityRefExpression{static_cast<EntityRefSource>(
                 action.target_source)},
         });
+    }
+    if (binding.graph.possibility_percent.size() != binding.graph.actions.size()) {
+        return std::nullopt;
     }
     if (!validate_action_graph_binding(binding, nullptr)) {
         return std::nullopt;
@@ -1144,8 +1208,24 @@ bool validate_action_graph_binding(
                 (!strike->direction_parameter.empty() &&
                  !validate_action_parameter(
                      binding, strike->direction_parameter, ParameterType::kVec3,
+                     error)) ||
+                (!strike->target_parameter.empty() &&
+                 !validate_action_parameter(
+                     binding, strike->target_parameter, ParameterType::kEntityId,
                      error))) {
                 return false;
+            }
+            // A count range (ABI 110) replaces the fixed count.
+            if (strike->repeat_count_max != 0u &&
+                (strike->repeat_count > 1u || strike->repeat_count_min < 1u ||
+                 strike->repeat_count_min > strike->repeat_count_max ||
+                 strike->repeat_count_max > KERNEL_MAX_LOCK_STRIKE_REPEAT ||
+                 (strike->repeat_count_max > 1u &&
+                  (strike->repeat_interval_ticks < 1u ||
+                   strike->repeat_interval_ticks *
+                           (strike->repeat_count_max - 1u) >
+                       KERNEL_MAX_LOCK_STRIKE_SPAN_TICKS)))) {
+                return fail(error, "lock_strike repeat count range is out of bounds");
             }
             continue;
         }
@@ -1296,9 +1376,17 @@ bool evaluate_action_graph(
         ActionAuthoritySource::kAuthoritativeSimulation) {
         return true;
     }
-    for (const ActionGraphAction& action : binding.graph.actions) {
+    for (std::size_t action_index = 0; action_index < binding.graph.actions.size();
+         ++action_index) {
+        const ActionGraphAction& action = binding.graph.actions[action_index];
         if (action_condition(action) == ActionConditionType::kEventHasTarget &&
             event.target == 0u) {
+            continue;
+        }
+        if (action_index < binding.graph.possibility_percent.size() &&
+            !deterministic_roll_percent(
+                possibility_seed(provenance, event, action_index),
+                binding.graph.possibility_percent[action_index])) {
             continue;
         }
         if (const auto* spawn =
@@ -1482,6 +1570,7 @@ bool evaluate_action_graph(
                 target,
                 provenance.status_instance_id,
                 provenance,
+                block->movement,
             });
             continue;
         }
@@ -1537,10 +1626,38 @@ bool evaluate_action_graph(
                 return fail(error, "lock_strike action input type mismatch");
             }
             ActionLockStrikeCommand command;
+            if (!strike->target_parameter.empty()) {
+                const ActionGraphParameterValue* target_value =
+                    find_resolved_parameter(parameters, strike->target_parameter);
+                if (target_value == nullptr ||
+                    !std::holds_alternative<EntityIdValue>(*target_value)) {
+                    return fail(error, "lock_strike target input type mismatch");
+                }
+                command.fixed_target = std::get<EntityIdValue>(*target_value).value;
+                // Nobody to strike: nothing to run (the strike is skipped,
+                // the rest of the graph is not).
+                if (command.fixed_target == 0u) {
+                    continue;
+                }
+            }
             command.collider_template_id = strike->collider_template_id;
             command.projectile_template_id = strike->projectile_template_id;
             command.mode = strike->mode;
             command.repeat_count = strike->repeat_count;
+            if (strike->repeat_count_max != 0u) {
+                // Seeded like a repeated spawn's count: the same run always
+                // fires the same number.
+                const std::uint32_t span =
+                    static_cast<std::uint32_t>(strike->repeat_count_max) -
+                    strike->repeat_count_min + 1u;
+                const std::uint64_t seed = projectile_launch_seed(
+                    provenance.instigator,
+                    provenance.action_instance_id,
+                    strike->projectile_template_id,
+                    provenance.launch_salt ^ 0x4C4F434Bu);  // "LOCK"
+                command.repeat_count = static_cast<std::uint16_t>(
+                    strike->repeat_count_min + seed % span);
+            }
             command.repeat_interval_ticks = strike->repeat_interval_ticks;
             command.origin_lift = strike->origin_lift;
             command.carrier = self;

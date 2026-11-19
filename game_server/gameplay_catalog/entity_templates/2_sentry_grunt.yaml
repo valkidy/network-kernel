@@ -17,7 +17,7 @@ movement:
   ground_probe_distance: 0.25
   ground_snap_distance: 0.5
 weapon_slots:
-  - 2
+  - 128
 active_weapon_slot: 0
 animations:
   idle: 0
@@ -36,4 +36,4 @@ ai:
     animation_idle: idle
     animation_attack: chasing
   skills:
-    - use: {type: weapon, value: 2}
+    - use: {type: weapon, value: 128}

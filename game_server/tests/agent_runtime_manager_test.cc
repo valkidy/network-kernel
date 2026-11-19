@@ -270,7 +270,7 @@ int main() {
     require(!Kernel_ServerGetEntityWeaponMechanics(
         kernel,
         enemy_net_id,
-        network_example::game_server::kWeaponRifle,
+        network_example::game_server::kWeaponIceLance,
         &unavailable_enemy_weapon));
     require(enemy_states[0].position.x == 6.0f);
     require(enemy_states[0].animation_state ==
@@ -303,15 +303,15 @@ int main() {
     require(Kernel_ServerGetEntityWeaponMechanics(
         kernel,
         player_net_id,
-        network_example::game_server::kWeaponShotgun,
+        network_example::game_server::kWeaponShotgunning,
         &player_shotgun));
-    require(player_shotgun.weapon_id == network_example::game_server::kWeaponShotgun);
+    require(player_shotgun.weapon_id == network_example::game_server::kWeaponShotgunning);
     KernelWeaponMechanicsDefinition unavailable_player_weapon{};
     unavailable_player_weapon.struct_size = sizeof(unavailable_player_weapon);
     require(!Kernel_ServerGetEntityWeaponMechanics(
         kernel,
         player_net_id,
-        network_example::game_server::kWeaponFireFloor,
+        network_example::game_server::kWeaponSpammer,
         &unavailable_player_weapon));
 
     Kernel_Update(kernel, 1.0f / 30.0f);

@@ -362,7 +362,19 @@ enum class WeaponFireMode : std::uint8_t {
     // Locks the same way, then schedules one certain hit per commit on the
     // (commit_index % locked)-th nearest, landing after a flight.
     kLockMissile = 6,
+    // A targeted strike landing on the first face along the aim, or on the
+    // ground under the end of its reach; the projectile carries the normal.
+    kTargetedStrikeSurface = 7,
+    // A targeted strike on an actor: the nearest hostile in the weapon's lock
+    // cone, carried by the projectile as its expiry's target.
+    kTargetedStrikeActor = 8,
 };
+
+inline constexpr bool is_targeted_strike(WeaponFireMode mode) {
+    return mode == WeaponFireMode::kTargetedStrike ||
+        mode == WeaponFireMode::kTargetedStrikeSurface ||
+        mode == WeaponFireMode::kTargetedStrikeActor;
+}
 
 enum class ProjectileMotionModel : std::uint8_t {
     kLinear = 0,
@@ -670,6 +682,10 @@ struct ProjectileState {
     std::uint16_t commit_index = 0;
     std::uint8_t burst_index = 0;
     NetId shooter_net_id = 0;
+    // The actor an actor strike (WeaponFireMode::kTargetedStrikeActor, ABI
+    // 110) locked when it fired; this projectile's expiry reports it as the
+    // event's target. Zero for everything else.
+    NetId strike_target_net_id = 0;
     ProjectileMotionModel motion_model = ProjectileMotionModel::kLinear;
     ProjectileHitResponse hit_response = ProjectileHitResponse::kDestroy;
     ProjectileDamageShape damage_shape = ProjectileDamageShape::kDirectHit;
@@ -1000,6 +1016,13 @@ struct ActionLockStrikeDefinition {
     std::uint16_t repeat_count = 0;
     std::uint32_t repeat_interval_ticks = 0;
     float origin_lift = 0.0f;
+    // ABI 110 (I2): a [min, max] count picked per run, seeded, instead of the
+    // fixed repeat_count; zero max is the fixed count.
+    std::uint8_t repeat_count_min = 0;
+    std::uint8_t repeat_count_max = 0;
+    // ABI 110 (I2): set, the strike is at the event's target only -- every
+    // repeat, no search -- and stops once that target is no longer there.
+    std::string target_parameter;
 };
 
 // An item refilling its user's active weapon; see
@@ -1042,6 +1065,9 @@ struct ActionApplySpeedModifierDefinition {
 struct ActionApplyBlockActionsDefinition {
     std::string target_parameter;
     ActionConditionType condition = ActionConditionType::kAlways;
+    // KernelEntityTriggerActionType_ApplyBlockMovement (ABI 110): the same
+    // status-held block, of the actor's own movement instead of its actions.
+    bool movement = false;
 };
 
 // KernelEntityTriggerActionType_ApplyUntargetable, on the same terms.
@@ -1106,6 +1132,10 @@ struct ActionGraphTemplate {
     std::string id;
     std::vector<ActionGraphParameterDefinition> parameters;
     std::vector<ActionGraphAction> actions;
+    // KernelActionDefinition::possibility_percent, one per action, or empty
+    // for a graph built in code: 0 and 100 always run the action, 1-99 run it
+    // that many times in 100 (deterministic_random.h).
+    std::vector<std::uint8_t> possibility_percent;
 };
 
 struct CompiledActionGraphBinding {
@@ -1196,6 +1226,9 @@ struct ActiveStatusEffect {
     // every path that ends the instance -- expiry, removal, replacement, a
     // revive dropping them all -- ends the block with it.
     bool blocks_actions = false;
+    // Set by apply_block_movement, on the same terms: the actor does not move
+    // itself while this instance stands (paralysis).
+    bool blocks_movement = false;
     // The direction apply_status was given, zero when it was given none. Its
     // on_apply graph reads it as event.direction.
     glm::vec3 applied_direction{0.0f};
@@ -1491,6 +1524,8 @@ inline constexpr std::uint32_t kVisualFlagLeaping = 0x00001000u;
 inline constexpr std::uint32_t kVisualFlagCharging = 0x00002000u;
 // A status hover (ActiveStatusEffect::hovers) the movement step is honouring.
 inline constexpr std::uint32_t kVisualFlagHovering = 0x00004000u;
+// KERNEL_VISUAL_FLAG_DOWNED: a status holds the actor where it is.
+inline constexpr std::uint32_t kVisualFlagDowned = 0x00008000u;
 
 struct ReplicationState {
     std::uint16_t animation_state = 0;

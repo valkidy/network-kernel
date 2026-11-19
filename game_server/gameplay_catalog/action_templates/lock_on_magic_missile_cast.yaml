@@ -1,0 +1,14 @@
+# Lock-on Magic Missile's cast: press, and 45 ticks (1.5 s) later the strike
+# locks the nearest actor in its cone and the volley starts. Weapon change or
+# death before then cancels it at no cost. A volley lasts up to 45 ticks, so
+# casts are at least 60 apart.
+id: 4141
+name: lock_on_magic_missile_cast
+trigger_mode: press
+flags: [cancel_on_death, cancel_on_weapon_change, cancel_before_first_commit]
+ammo_cost_per_commit: 1
+commit_offset_ticks: 45
+commit_interval_ticks: 60
+max_commit_count: 1
+recovery_ticks: 8
+hold_input_timeout_ticks: 0

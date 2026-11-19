@@ -29,7 +29,7 @@ movement:
 # and 4.3 m either side: the arms carry no collider (the client animates them,
 # the server never sees where they are), so this AABB still reaches 8 m out to
 # cover where they are drawn.
-weapon_slots: [23]
+weapon_slots: [138]
 active_weapon_slot: 0
 vision:
   # 35 m and 140 degrees, not the grunts' 12 m and 90: see the cone's own file.
@@ -73,7 +73,7 @@ ai:
   skills:
     # Origin to origin, against the sweep cone's 7 m that reaches a target's
     # near edge: whatever this lets it swing at, it can hit.
-    - use: {type: weapon, value: 23}
+    - use: {type: weapon, value: 138}
       when: {range_meters: {max: 6.5}}
 animations:
   idle: 0

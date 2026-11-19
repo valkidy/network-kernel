@@ -1,0 +1,24 @@
+# A volley of certain missiles at one actor: the event's target (an actor
+# strike's cast reports the actor it locked, ABI 110). 12-16 of them, the
+# count picked per cast (seeded, so one cast always fires the same number),
+# 3 ticks apart, all from the cast's position; each goes to that actor alone,
+# with no search, and once it is dead or gone the rest are not fired.
+# docs/PLAYER_WEAPON_REVAMP_PLAN.md I2.
+id: action_lock_missile_volley_at_target
+parameters:
+  collider: null
+  template: null
+  position: null
+  direction: null
+  target: null
+actions:
+  - type: lock_strike
+    collider: params.collider
+    projectile_template: params.template
+    mode: missile
+    position: params.position
+    direction: params.direction
+    target: params.target
+    repeat:
+      interval_ticks: 3
+      count: [12, 16]

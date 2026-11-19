@@ -41,7 +41,7 @@ movement:
 # is no flag to set here and `ai.profile` below does not do it -- swapping this
 # slot for a linear weapon silently turns the arc back into a straight line.
 weapon_slots:
-  - 12
+  - 134
 active_weapon_slot: 0
 animations:
   idle: 0
@@ -107,5 +107,5 @@ ai:
   skills:
     # Deliberately outside resume_distance, so the mage is already firing while
     # it closes the last few metres rather than only once it has parked.
-    - use: {type: weapon, value: 12}
+    - use: {type: weapon, value: 134}
       when: {range_meters: {max: 22.0}}

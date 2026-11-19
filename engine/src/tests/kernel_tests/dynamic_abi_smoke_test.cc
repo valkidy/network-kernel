@@ -825,7 +825,8 @@ int main() {
     require(game_server_create_with_weapon_template_directory(kernel, nullptr) == nullptr);
     GameServerWeaponTemplateInfo template_info{};
     template_info.struct_size = sizeof(template_info);
-    require(game_server_query_weapon_template(game_server, 4, &template_info));
+    // The Rocket: Fire Floor (4), which this used to query, is retired.
+    require(game_server_query_weapon_template(game_server, 3, &template_info));
     require(template_info.mechanics.fire_mode == KernelWeaponFireMode_Projectile);
     require(template_info.mechanics.projectile_template_id != 0u);
     require(kernel_get_local_player_info(kernel, &local_info));

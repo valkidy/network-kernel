@@ -390,9 +390,9 @@ int main() {
         require(false);
         return 0;
     };
-    const std::uint8_t pick_rifle = weapon_option("stateful_weapon_rifle");
-    const std::uint8_t pick_shotgun = weapon_option("stateful_weapon_shotgun");
-    const std::uint8_t pick_beam = weapon_option("stateful_weapon_beam_rifle");
+    const std::uint8_t pick_rifle = weapon_option("stateful_weapon_ice_lance");
+    const std::uint8_t pick_shotgun = weapon_option("stateful_weapon_shotgunning");
+    const std::uint8_t pick_beam = weapon_option("stateful_weapon_call_lightning");
     require(offers.weapon_options[pick_rifle].category == 0u);
     require(offers.weapon_options[pick_shotgun].category == 0u);
     require(offers.weapon_options[pick_beam].category == 2u);
@@ -412,7 +412,7 @@ int main() {
     require(result == GAME_SERVER_LOADOUT_RESULT_APPLIED);
     require(picked == 3u);
     require(harness.last_weapon_picks == 2u);
-    const std::vector<std::uint32_t> picked_weapons{0u, 5u};
+    const std::vector<std::uint32_t> picked_weapons{0u, 26u};
     require(harness.weapons() == picked_weapons);
     std::map<std::uint32_t, std::uint32_t> held = harness.inventory();
     require(held[potion] == 6u);
@@ -509,7 +509,7 @@ int main() {
     {
         const KernelServerEntityState me = harness.state_of(harness.player);
         require(me.ammo[0] == config.weapons.definitions[0].magazine_size);
-        require(me.reserve_magazines[1] == config.weapons.definitions[5].reserve_magazines);
+        require(me.reserve_magazines[1] == config.weapons.definitions[26].reserve_magazines);
     }
 
     // A dead player cannot pick.

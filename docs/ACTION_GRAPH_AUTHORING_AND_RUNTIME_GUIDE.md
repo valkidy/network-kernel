@@ -90,7 +90,7 @@ binding 提供數值（graph default 是持有者沒寫時的值）：
 | `spawn_entity` | `placement` |
 | `apply_status` | `strength`（binding 提供時 `0` = 不比較 resistance） |
 | `refill_weapon_reserve` | `count`、`percent` |
-| `spawn_projectile` | `lifetime_ticks`、`repeat` 的 `count`、`scatter_radius`、`stagger_lifetime_ticks` |
+| `spawn_projectile` | `lifetime_ticks`、`repeat` 的 `count`、`scatter_radius`、`lifetime_spread_ticks` |
 | `lock_strike` | `mode`、`origin_lift`、`repeat` 的 `interval_ticks`、`count` |
 
 Binding 提供的值會整段解析（`12abc` 不是 12）並做與字面值相同的範圍檢查，錯誤訊息
@@ -324,7 +324,7 @@ template 沒有 `CancelBeforeFirstCommit` 也不會先打出一次；硬直期�
   repeat:
     count: [10, 15]               # 一個數字 = 固定次數；1 <= min <= max <= 16
     scatter_radius: 6.0           # 在 event.position 周圍的圓盤內均勻分布
-    stagger_lifetime_ticks: 60    # 每個多活的 ticks，依序分散在這個區間
+    lifetime_spread_ticks: 60     # 每個多活的 ticks，依序分散在這個區間
 ```
 
 - `repeat` 會在同一個 batch 內展開成最多 16 個 command
@@ -338,8 +338,11 @@ template 沒有 `CancelBeforeFirstCommit` 也不會先打出一次；硬直期�
   projectile。所以引信 i 到期時生成的隕石用的是 salt i，每顆隕石的仰角都不同。
 - 在其他 action 上寫 `repeat` 或 `lifetime_ticks`，或是沒有 `repeat` 卻寫了
   scatter／stagger，都會在載入時報錯。
-- 範例：`common/action_spawn_projectile_repeated`，`meteor_storm_marker` 的 binding 寫
-  `lifetime: 10`、`count: [10, 15]`、`scatter_radius: 6.0`、`stagger_lifetime: 60`。
+- 範例：`common/action_spawn_projectile_repeated`，`meteor_storm_barrage_marker` 的 binding 寫
+  `lifetime: 10`、`count: [10, 15]`、`scatter_radius: 25.0`、`lifetime_spread: 60`。
+  graph 參數叫 `lifetime_spread`，repeat 區塊的 key 叫 `lifetime_spread_ticks`。
+  舊名 `stagger_lifetime_ticks` 仍然可以讀（兩個都寫會報錯）；ABI 欄位
+  `repeat_stagger_lifetime_ticks` 沿用舊名。
 
 ### 4.4 `apply_impulse`
 
@@ -642,6 +645,56 @@ old modifier、建立 new instance、執行 new `on_apply`。Refresh 保留 inst
 stack count，只更新 latest source、owner peer 與 expiry。Stack 保留 instance 與
 applied tick、增加 stack count；達到 max stack 時依 `refresh_on_stack` 決定是否只
 更新 expiry。這些語意不由 Action Graph YAML 重新定義。
+
+### 4.7.1 `lock_strike` 的固定目標與數量範圍（ABI 110）
+
+- `target: event.target`：每一次 repeat 都只打這個 actor，不搜尋鎖定範圍；
+  目標死亡或消失後，剩下的 repeat 不再發射。只能綁 `event.target`。
+- `repeat.count: [min, max]`：每次施放用 deterministic seed 在範圍內挑一個數量
+  （1 ≤ min ≤ max ≤ 16），以最大值檢查整段長度不超過 255 tick。
+- `lock_strike` 現在也可以寫在投射物的 trigger 裡（`on_projectile_impact`、`on_expired`）。
+  `on_expired` 的 `event.target` 只有 actor strike 的 cast 會帶，其他投射物到期時是 0，
+  `lock_strike` 遇到 0 會直接略過。
+- 範例：`common/action_lock_missile_volley_at_target`（Lock-on Magic Missile，12–16 發，間隔 3 tick）。
+
+### 4.8 `possibility`（任何 action，ABI 110）
+
+在 action 上寫 `possibility`，這個 action 只在一部分 event 執行：
+
+```yaml
+actions:
+  - type: apply_status
+    target: params.target
+    status: params.status
+    possibility: params.possibility   # 或直接寫數字，例如 30
+    when: event.has_target
+```
+
+- 值是**整數百分比 1–100**。不寫等於 100，一定執行。
+- 0、101、小數（例如 `0.3`）、負數都會在載入時報錯：0.3 和 30 容易搞混，所以一律拒絕。
+- 不能寫在 `spawn_projectile` 和 `lock_strike` 上：client 重現 derived chain 時不擲骰。
+- 擲骰是 deterministic 的：seed 由 instigator、action instance、launch salt、
+  action 在 graph 裡的 index、event 的 target、status instance 和 server tick 組成
+  （`engine/src/simulation/public/deterministic_random.h`）。
+  所以一次爆炸會對每個被打到的 actor 各擲一次；同樣的輸入在任何平台都得到同樣的結果。
+- 只在 authoritative simulation 執行（和其他 action 一樣），client 不擲骰。
+- 範例：`common/action_apply_status_if_target` 的 `possibility` 參數預設 100；
+  Ice Spike 的爆炸（`ice_spike_strike_blast`）綁 `possibility: 30` 附加 freeze。
+
+### 4.9 `apply_block_movement`（status on_apply，ABI 110）
+
+和 `apply_block_actions` 同樣的規則：只能寫在 status 的 `on_apply`，目標只能是
+status 自己的 subject，除了 `target`（和 `when`、`possibility`）以外沒有其他欄位。
+status instance 存在期間：
+
+- actor 不會自己移動：輸入和 AI 都無效，leap 和 charge 都會被拒絕，進行中的 charge 會結束。
+- 推力照樣有效（擊退、水柱），重力照常。
+- stagger 不會累積（plan D11）。
+- 設定 `KERNEL_VISUAL_FLAG_DOWNED`（0x8000），Unity 用它播倒地動畫；
+  本地玩家的預測也看這個旗標停止移動。
+
+範例：`derived/status_effect/action_paralysis_apply`（block_actions + block_movement），
+用在 status `paralysis`（1008，120 tick）；Call Lightning 的落雷以 `possibility: 25` 附加。
 
 ---
 

@@ -1,6 +1,6 @@
 # Spawns `count` of `template` -- one number, or [min, max] picked per event --
 # scattered within `scatter_radius` of the event, each living `lifetime` ticks
-# plus a share of a `stagger_lifetime` window, so they expire one after
+# plus a share of a `lifetime_spread` window, so they expire one after
 # another rather than together. The spread is seeded from the caster, the
 # cast and the iteration, so one event always produces the same spread. Every
 # number is the owner's.
@@ -12,7 +12,7 @@ parameters:
   lifetime: null
   count: null
   scatter_radius: 0.0
-  stagger_lifetime: 0
+  lifetime_spread: 0
 actions:
   - type: spawn_projectile
     projectile_template: params.template
@@ -22,4 +22,4 @@ actions:
     repeat:
       count: params.count
       scatter_radius: params.scatter_radius
-      stagger_lifetime_ticks: params.stagger_lifetime
+      lifetime_spread_ticks: params.lifetime_spread

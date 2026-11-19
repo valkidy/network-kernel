@@ -11,6 +11,7 @@
 #include "physics/public/physics_world.h"
 #include "simulation/public/collision_filter.h"
 #include "simulation/public/action_graph.h"
+#include "simulation/public/deterministic_random.h"
 
 namespace network_example {
 namespace {
@@ -55,7 +56,8 @@ bool spawn_projectile_from_template(
     std::uint32_t* out_entity_type,
     std::uint32_t lifetime_ticks = 0,
     std::uint32_t extra_lifetime_ticks = 0,
-    std::uint32_t launch_salt = 0) {
+    std::uint32_t launch_salt = 0,
+    NetId strike_target_net_id = 0) {
     // The weapon is the firing event's, never the template's: one template may
     // be fired by several weapons, or spawned by an item or another
     // projectile's impact, and each of those knows what it was (ABI 106).
@@ -117,6 +119,7 @@ bool spawn_projectile_from_template(
     projectile.spawn_tick = current_tick;
     projectile.action_instance_id = action_instance_id;
     projectile.shooter_net_id = shooter_net_id;
+    projectile.strike_target_net_id = strike_target_net_id;
     projectile.motion_model = projectile_template.motion_model;
     projectile.hit_response = projectile_template.hit_response;
     projectile.damage_shape = projectile_template.damage_shape;
@@ -1262,18 +1265,13 @@ std::uint64_t projectile_launch_seed(
     std::uint32_t action_instance_id,
     std::uint32_t projectile_template_id,
     std::uint32_t salt) {
-    // splitmix64's finalizer, applied once per 64-bit word of input.
-    const auto mix = [](std::uint64_t value) {
-        value += 0x9E3779B97F4A7C15ull;
-        value = (value ^ (value >> 30)) * 0xBF58476D1CE4E5B9ull;
-        value = (value ^ (value >> 27)) * 0x94D049BB133111EBull;
-        return value ^ (value >> 31);
-    };
-    std::uint64_t seed = mix(
+    // splitmix64's finalizer, applied once per 64-bit word of input
+    // (deterministic_random.h). Unchanged since before that header: every
+    // seeded spread already shipped depends on these exact bits.
+    std::uint64_t seed = deterministic_mix(
         (static_cast<std::uint64_t>(instigator) << 32) | action_instance_id);
-    seed = mix(
-        seed ^
-        ((static_cast<std::uint64_t>(projectile_template_id) << 32) | salt));
+    seed = deterministic_combine(
+        seed, (static_cast<std::uint64_t>(projectile_template_id) << 32) | salt);
     return seed;
 }
 
@@ -1288,7 +1286,8 @@ bool spawn_projectile_at(
     const glm::vec3& direction,
     std::uint32_t current_tick,
     float fixed_delta_seconds,
-    std::vector<KernelEvent>* events) {
+    std::vector<KernelEvent>* events,
+    NetId strike_target_net_id) {
     return spawn_projectile_from_template(
         world,
         projectile_template,
@@ -1301,7 +1300,11 @@ bool spawn_projectile_at(
         current_tick,
         fixed_delta_seconds,
         events,
-        nullptr);
+        nullptr,
+        0,
+        0,
+        0,
+        strike_target_net_id);
 }
 
 ProjectileLaunch descent_launch(
@@ -1763,7 +1766,8 @@ void simulate_projectiles(
             identity,
             projectile,
             TriggerEventType::kExpired,
-            0,
+            // An actor strike's projectile names the actor it was locked on.
+            projectile.strike_target_net_id,
             transform.position,
             normalized_or(
                 transform.position - projectile.previous_position,

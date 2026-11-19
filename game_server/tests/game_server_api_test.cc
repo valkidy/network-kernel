@@ -591,24 +591,21 @@ int main() {
 
     GameServerHandle* game_server = GameServer_Create(kernel);
     require(game_server != nullptr);
-    require(GameServer_QueryWeaponTemplate(game_server, 2, &template_info));
-    require(template_info.weapon_id == 2);
+    require(GameServer_QueryWeaponTemplate(game_server, 128, &template_info));
+    require(template_info.weapon_id == 128);
     require(template_info.fire_mode == KernelWeaponFireMode_Projectile);
     require(template_info.mechanics.damage == 1);
     require(
         template_info.mechanics.magazine_size ==
         yaml_top_level_uint(
-            catalog_path("weapon_templates/2_weapon_spammer.yaml"),
+            catalog_path("weapon_templates/128_weapon_spammer.yaml"),
             "magazine_size"));
     require(template_info.mechanics.reserve_magazines == kMaxReserveMagazines);
     require(template_info.name[0] == 'P');
     template_info = GameServerWeaponTemplateInfo{};
     template_info.struct_size = sizeof(template_info);
-    require(GameServer_QueryWeaponTemplate(game_server, 4, &template_info));
-    require(template_info.weapon_id == 4);
-    require(template_info.fire_mode == KernelWeaponFireMode_Projectile);
-    require(template_info.mechanics.projectile_template_id == 4);
-    require(template_info.name[0] == 'F');
+    // Fire Floor (4) and Homing Missile (6) are retired: their ids are free.
+    require(!GameServer_QueryWeaponTemplate(game_server, 4, &template_info));
     template_info = GameServerWeaponTemplateInfo{};
     template_info.struct_size = sizeof(template_info);
     require(GameServer_QueryWeaponTemplate(game_server, 5, &template_info));
@@ -617,10 +614,7 @@ int main() {
     require(template_info.mechanics.projectile_template_id == 5);
     template_info = GameServerWeaponTemplateInfo{};
     template_info.struct_size = sizeof(template_info);
-    require(GameServer_QueryWeaponTemplate(game_server, 6, &template_info));
-    require(template_info.weapon_id == 6);
-    require(template_info.fire_mode == KernelWeaponFireMode_Projectile);
-    require(template_info.mechanics.projectile_template_id == 6);
+    require(!GameServer_QueryWeaponTemplate(game_server, 6, &template_info));
     handle_pending_events(kernel, game_server);
     std::array<KernelInventoryContainerView, 2> inventory_containers{};
     for (KernelInventoryContainerView& container : inventory_containers) {
@@ -734,30 +728,20 @@ int main() {
     require(yaml_game_server != nullptr);
     template_info = GameServerWeaponTemplateInfo{};
     template_info.struct_size = sizeof(template_info);
-    require(GameServer_QueryWeaponTemplate(yaml_game_server, 2, &template_info));
+    require(GameServer_QueryWeaponTemplate(yaml_game_server, 128, &template_info));
     require(template_info.mechanics.damage == 1);
     require(
         template_info.mechanics.magazine_size ==
         yaml_top_level_uint(
-            catalog_path("weapon_templates/2_weapon_spammer.yaml"),
+            catalog_path("weapon_templates/128_weapon_spammer.yaml"),
             "magazine_size"));
     require(template_info.mechanics.reserve_magazines == kMaxReserveMagazines);
     require(template_info.mechanics.projectile_template_id == 2);
     template_info = GameServerWeaponTemplateInfo{};
     template_info.struct_size = sizeof(template_info);
-    require(GameServer_QueryWeaponTemplate(yaml_game_server, 4, &template_info));
-    require(template_info.mechanics.fire_mode == KernelWeaponFireMode_Projectile);
-    require(template_info.mechanics.projectile_template_id == 4);
-    template_info = GameServerWeaponTemplateInfo{};
-    template_info.struct_size = sizeof(template_info);
     require(GameServer_QueryWeaponTemplate(yaml_game_server, 5, &template_info));
     require(template_info.mechanics.fire_mode == KernelWeaponFireMode_Projectile);
     require(template_info.mechanics.projectile_template_id == 5);
-    template_info = GameServerWeaponTemplateInfo{};
-    template_info.struct_size = sizeof(template_info);
-    require(GameServer_QueryWeaponTemplate(yaml_game_server, 6, &template_info));
-    require(template_info.mechanics.fire_mode == KernelWeaponFireMode_Projectile);
-    require(template_info.mechanics.projectile_template_id == 6);
     GameServer_Destroy(yaml_game_server);
 
     KernelHandle* bundle_kernel = Kernel_Create(&config);
@@ -775,7 +759,7 @@ int main() {
     require(load_result.catalog_hash != 0);
     template_info = GameServerWeaponTemplateInfo{};
     template_info.struct_size = sizeof(template_info);
-    require(GameServer_QueryWeaponTemplate(bundle_game_server, 2, &template_info));
+    require(GameServer_QueryWeaponTemplate(bundle_game_server, 128, &template_info));
     require(template_info.mechanics.pellet_count == 3);
     require(template_info.mechanics.pellet_spread == 15.0f);
     GameServer_Destroy(bundle_game_server);

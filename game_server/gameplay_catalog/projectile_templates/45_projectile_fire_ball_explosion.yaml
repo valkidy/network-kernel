@@ -1,0 +1,23 @@
+# The fire ball's blast: 240, falling off linearly to the edge of 4 m, once
+# (lifetime equals the interval). Friend and foe, the caster included, and
+# props. The graph only shoves, as rocket_explosion does.
+id: 45
+name: fire_ball_explosion
+type: area_effect
+collider_template: fire_ball_explosion_sphere
+damage: 240
+lifetime_ticks: 45
+damage_behavior:
+  type: area_interval
+  damage_interval_ticks: 45
+  falloff: linear
+collision_mask: damageable | prop
+hit_instigator: true
+triggers:
+  on_projectile_impact:
+    action_graph: action_apply_impulse
+    parameters:
+      target: event.target
+      direction: event.direction
+      strength: [12.0, 5.0]
+      lockout: 40
