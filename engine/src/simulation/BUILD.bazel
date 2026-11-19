@@ -32,6 +32,7 @@ cc_library(
     hdrs = [
         "public/action_graph.h",
         "public/command.h",
+        "public/deterministic_random.h",
         "public/collision_filter.h",
         "public/ground_follow.h",
         "public/item_system.h",

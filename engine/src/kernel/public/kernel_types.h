@@ -5,6 +5,13 @@
 #include <stdint.h>
 
 /*
+ * 110: action possibility (docs/PLAYER_WEAPON_REVAMP_PLAN.md I1).
+ *     KernelActionDefinition's reserved1 byte, after modifier_operation, is
+ *     now possibility_percent: 1-99 runs the action that many times in 100,
+ *     rolled from a seed of the instigator, the action instance, the launch
+ *     salt, the action's index, the event's target, the status instance and
+ *     the server tick; 0 (what every older catalog wrote) and 100 always run
+ *     it. Same size and layout, but a managed mirror must rename the field.
  * 109: player hover (docs/PLAYER_HOVER_PLAN.md).
  *     KernelEntityTriggerActionType gained _ApplyHoverMovement, a status
  *     on_apply action: while the instance stands a character-controller
@@ -396,7 +403,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 109u
+#define KERNEL_ABI_VERSION 110u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -1288,7 +1295,11 @@ typedef struct KernelActionDefinition {
     KernelVec3 impulse_direction;
     uint32_t status_effect_id;
     uint8_t modifier_operation;
-    uint8_t reserved1;
+    /* Any action (ABI 110): 1-99 runs it that many times in 100, seeded
+     * deterministically (see the ABI 110 note); 0 and 100 always run it. A
+     * spawn_projectile or lock_strike refuses one: a client reproducing a
+     * derived chain does not roll. */
+    uint8_t possibility_percent;
     uint16_t reserved2;
     float modifier_value;
     uint32_t impulse_lockout_ticks;

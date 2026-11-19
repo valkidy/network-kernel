@@ -343,6 +343,7 @@ void hash_projectile_template(
             hash_scalar(hash, action.reserve_refill_count);
             hash_scalar(hash, action.reserve_refill_percent);
             hash_scalar(hash, action.condition_type);
+            hash_scalar(hash, action.possibility_percent);
         }
     }
 }
@@ -2062,6 +2063,25 @@ std::string parameter_reference_from_yaml(
 // For an action field that takes a literal or params.<name>: the parameter's
 // name when it is a reference, empty when it is a literal for the caller to
 // read as before.
+// An action's possibility: a whole percent from 1 to 100. A fraction such
+// as 0.3 is refused rather than read as 30, and 0 is refused because an
+// action that never runs should be deleted.
+std::uint8_t possibility_percent_from_text(const std::string& text, const std::string& where) {
+    std::size_t parsed = 0;
+    unsigned long value = 0;
+    try {
+        value = std::stoul(text, &parsed);
+    } catch (const std::exception&) {
+        parsed = 0;
+    }
+    if (text.empty() || parsed != text.size() || text.front() == '-' ||
+        text.front() == '+' || value < 1u || value > 100u) {
+        throw std::runtime_error(
+            "possibility must be a whole percent from 1 to 100: " + where);
+    }
+    return static_cast<std::uint8_t>(value);
+}
+
 std::string optional_parameter_reference(const YAML::Node& node) {
     if (!node || !node.IsScalar()) {
         return {};
@@ -2239,6 +2259,7 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 "item_template",
                 "quantity",
                 "when",
+                "possibility",
                 "lifetime_ticks",
                 "repeat",
                 "anchor",
@@ -2326,6 +2347,25 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
             }
             compiled_action.condition_type =
                 KernelActionConditionType_EventHasTarget;
+        }
+        // possibility (ABI 110): a whole percent, 1 to 100, or params.<name>.
+        // Not on a spawn or a lock strike: a client reproducing a derived
+        // chain runs those without rolling.
+        if (const YAML::Node possibility = action["possibility"]) {
+            if (compiled_action.action_type == "spawn_projectile" ||
+                compiled_action.action_type == "lock_strike") {
+                throw std::runtime_error(
+                    "possibility is not supported on " +
+                    compiled_action.action_type + ": " + path);
+            }
+            compiled_action.possibility_parameter =
+                optional_parameter_reference(possibility);
+            if (compiled_action.possibility_parameter.empty()) {
+                compiled_action.possibility_percent =
+                    possibility_percent_from_text(
+                        possibility.IsScalar() ? possibility.as<std::string>() : "",
+                        path);
+            }
         }
         std::vector<const std::string*> action_parameters;
         if (compiled_action.action_type == "spawn_projectile") {
@@ -2751,6 +2791,7 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
             for (const auto& field : action) {
                 const std::string key = field.first.as<std::string>();
                 if (key != "type" && key != "target" && key != "when" &&
+                    key != "possibility" &&
                     key != "rise_speed" && key != "drift_speed") {
                     throw std::runtime_error(
                         "apply_suspend_movement takes only target, rise_speed and "
@@ -2780,7 +2821,7 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
             for (const auto& field : action) {
                 const std::string key = field.first.as<std::string>();
                 if (key != "type" && key != "target" && key != "when" &&
-                    key != "height_meters" &&
+                    key != "possibility" && key != "height_meters" &&
                     key != "vertical_speed_meters_per_second") {
                     throw std::runtime_error(
                         "apply_hover_movement takes only target, height_meters and "
@@ -2815,7 +2856,8 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
             // duration_ticks, not the action's.
             for (const auto& field : action) {
                 const std::string key = field.first.as<std::string>();
-                if (key != "type" && key != "target" && key != "when") {
+                if (key != "type" && key != "target" && key != "when" &&
+                    key != "possibility") {
                     throw std::runtime_error(
                         compiled_action.action_type + " takes only target: " + path);
                 }
@@ -2851,6 +2893,7 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 compiled_action.action_type);
         }
         for (const std::string* bound : {
+                 &compiled_action.possibility_parameter,
                  &compiled_action.lockout_ticks_parameter,
                  &compiled_action.pull_distance_parameter,
                  &compiled_action.pull_airtime_ticks_parameter,
@@ -8429,6 +8472,19 @@ std::uint32_t bound_uint32(
     return static_cast<std::uint32_t>(value);
 }
 
+std::uint8_t compile_possibility(
+    const TriggerBindingConfig& binding,
+    const ActionGraphTemplateConfig& graph,
+    const ActionGraphActionConfig& action) {
+    if (action.possibility_parameter.empty()) {
+        return action.possibility_percent;
+    }
+    return possibility_percent_from_text(
+        trigger_parameter_value(
+            binding, graph_parameter_named(graph, action.possibility_parameter)),
+        graph.id);
+}
+
 std::uint32_t compile_impulse_lockout(
     const TriggerBindingConfig& binding,
     const ActionGraphTemplateConfig& graph,
@@ -8899,6 +8955,8 @@ void compile_projectile_trigger_binding(
         const ActionGraphActionConfig& action = graph->actions[index];
         KernelActionDefinition& compiled_action = compiled.actions[index];
         compiled_action.condition_type = action.condition_type;
+        compiled_action.possibility_percent =
+            compile_possibility(binding, *graph, action);
         if (action.action_type == "open_ui") {
             throw std::runtime_error(
                 "open_ui is only supported in on_activated: " +
@@ -9161,6 +9219,8 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
         const ActionGraphActionConfig& action = graph->actions[index];
         KernelActionDefinition& compiled_action = compiled.actions[index];
         compiled_action.condition_type = action.condition_type;
+        compiled_action.possibility_percent =
+            compile_possibility(binding, *graph, action);
         if (action.action_type == "spawn_projectile") {
             if (projectile_templates == nullptr) {
                 throw std::runtime_error(
@@ -12873,6 +12933,8 @@ std::uint64_t compute_gameplay_catalog_hash(
             hash_string(&hash, action.item_template_ref);
             hash_scalar(&hash, action.quantity);
             hash_scalar(&hash, action.condition_type);
+            hash_scalar(&hash, action.possibility_percent);
+            hash_string(&hash, action.possibility_parameter);
             hash_scalar(&hash, action.spawn_lifetime_ticks);
             hash_scalar(&hash, action.repeat_count_min);
             hash_scalar(&hash, action.repeat_count_max);

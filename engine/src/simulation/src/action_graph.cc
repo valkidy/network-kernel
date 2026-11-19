@@ -1,6 +1,7 @@
 #include "simulation/public/action_graph.h"
 
 #include "simulation/public/simulation.h"
+#include "simulation/public/deterministic_random.h"
 
 #include <algorithm>
 #include <cmath>
@@ -11,6 +12,33 @@
 
 namespace network_example {
 namespace {
+
+// The seed one action's possibility rolls on (ABI 110). Everything in it is a
+// fact of this one evaluation that every machine running it has: who acted
+// and in which action instance, which iteration of a repeated spawn (the
+// launch salt), which action of the graph, which target -- so one blast rolls
+// separately for each actor it reaches -- which status instance, and the
+// tick, so a status's on_tick rolls afresh each time it fires.
+std::uint64_t possibility_seed(
+    const ActionExecutionProvenance& provenance,
+    const TriggerEvent& event,
+    std::size_t action_index) {
+    constexpr std::uint64_t kPossibilitySalt = 0x504F5353u;  // "POSS"
+    std::uint64_t seed = deterministic_mix(
+        (static_cast<std::uint64_t>(provenance.instigator) << 32) |
+        provenance.action_instance_id);
+    seed = deterministic_combine(
+        seed,
+        (static_cast<std::uint64_t>(provenance.launch_salt) << 32) |
+            static_cast<std::uint32_t>(action_index));
+    seed = deterministic_combine(
+        seed,
+        (static_cast<std::uint64_t>(event.target) << 32) |
+            provenance.status_instance_id);
+    seed = deterministic_combine(
+        seed, (static_cast<std::uint64_t>(provenance.server_tick) << 32) | kPossibilitySalt);
+    return seed;
+}
 
 // Tells one iteration of one repeated action apart from every other launch
 // under the same parent salt.
@@ -412,6 +440,17 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
         if (!condition.has_value()) {
             return std::nullopt;
         }
+        // Every branch below adds exactly one action, so this lines up with
+        // binding.graph.actions. A spawn or a lock strike may not roll: a
+        // client reproducing a derived chain runs those without dice.
+        if (action.possibility_percent > 100u ||
+            (action.possibility_percent != 0u &&
+             action.possibility_percent != 100u &&
+             (action.action_type == KernelEntityTriggerActionType_SpawnProjectile ||
+              action.action_type == KernelEntityTriggerActionType_LockStrike))) {
+            return std::nullopt;
+        }
+        binding.graph.possibility_percent.push_back(action.possibility_percent);
         const std::string suffix = "_" + std::to_string(index);
         if (action.action_type ==
             KernelEntityTriggerActionType_SpawnProjectile) {
@@ -883,6 +922,9 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
                 action.target_source)},
         });
     }
+    if (binding.graph.possibility_percent.size() != binding.graph.actions.size()) {
+        return std::nullopt;
+    }
     if (!validate_action_graph_binding(binding, nullptr)) {
         return std::nullopt;
     }
@@ -1296,9 +1338,17 @@ bool evaluate_action_graph(
         ActionAuthoritySource::kAuthoritativeSimulation) {
         return true;
     }
-    for (const ActionGraphAction& action : binding.graph.actions) {
+    for (std::size_t action_index = 0; action_index < binding.graph.actions.size();
+         ++action_index) {
+        const ActionGraphAction& action = binding.graph.actions[action_index];
         if (action_condition(action) == ActionConditionType::kEventHasTarget &&
             event.target == 0u) {
+            continue;
+        }
+        if (action_index < binding.graph.possibility_percent.size() &&
+            !deterministic_roll_percent(
+                possibility_seed(provenance, event, action_index),
+                binding.graph.possibility_percent[action_index])) {
             continue;
         }
         if (const auto* spawn =

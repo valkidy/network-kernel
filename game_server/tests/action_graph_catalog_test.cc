@@ -774,6 +774,46 @@ void spawn_repeat_comes_from_the_binding() {
         {"spawn_projectile lifetime_ticks must be at least 1"}));
 }
 
+// possibility (ABI 110): Ice Spike's blast freezes 30% of what it reaches,
+// bound through action_apply_status_if_target's possibility parameter, whose
+// default of 100 leaves every other owner rolling nothing. A whole percent
+// from 1 to 100 only, and never on a spawn or a lock strike.
+void possibility_comes_from_the_binding() {
+    const gs::KernelGameplayCatalogStorage storage =
+        built(shipped_catalog() / "gameplay_catalog.yaml");
+    const KernelActionDefinition& freeze =
+        compiled_projectile(storage, 43u).projectile_impact_trigger.actions[0];
+    require(freeze.action_type == KernelEntityTriggerActionType_ApplyStatus);
+    require(freeze.possibility_percent == 30u);
+    // The water bubble binds the same graph and says nothing: always.
+    require(compiled_projectile(storage, 31u)
+                .projectile_impact_trigger.actions[0]
+                .possibility_percent == 100u);
+
+    const fs::path blast =
+        shipped_catalog() / "projectile_templates" / "43_projectile_ice_spike_strike_blast.yaml";
+    for (const char* bad : {"possibility: 0", "possibility: 101", "possibility: 0.3",
+                            "possibility: -5", "possibility: thirty"}) {
+        require(refused_for(
+            catalog_with(
+                "possibility_out_of_range",
+                {{"projectile_templates/43_projectile_ice_spike_strike_blast.yaml",
+                  with_replaced(blast, "possibility: 30", bad)}}),
+            {"possibility must be a whole percent from 1 to 100"}));
+    }
+
+    require(refused_for(
+        catalog_with(
+            "possibility_on_spawn",
+            {{"action_graph_templates/common/action_spawn_projectile.yaml",
+              with_replaced(
+                  shipped_catalog() / "action_graph_templates" / "common" /
+                      "action_spawn_projectile.yaml",
+                  "  - type: spawn_projectile\n",
+                  "  - type: spawn_projectile\n    possibility: 50\n")}}),
+        {"possibility is not supported on spawn_projectile"}));
+}
+
 // event.surface_normal (ABI 108): the face a standard projectile struck, as a
 // spawn_projectile's direction on its impact. An expiry strikes nothing, and an
 // area effect's impacts are actors, which report no face.
@@ -900,6 +940,7 @@ int main() {
     status_strength_and_refill_percent_come_from_the_binding();
     bound_status_strength_and_refill_percent_are_range_checked();
     spawn_repeat_comes_from_the_binding();
+    possibility_comes_from_the_binding();
     surface_normal_spawn_direction_is_impact_and_standard_only();
     the_water_jet_holds_its_push_invariants();
     the_bundle_carries_the_same_graphs();

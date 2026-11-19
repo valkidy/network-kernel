@@ -514,6 +514,11 @@ struct ActionGraphActionConfig {
     // Set when lockout_ticks is authored as params.<name>; the binding then
     // supplies the number and lockout_ticks above is unused.
     std::string lockout_ticks_parameter;
+    // Any action but spawn_projectile and lock_strike (ABI 110): runs it
+    // possibility_percent times in 100; 0 is unauthored and always runs it.
+    // possibility_parameter is set when it is authored as params.<name>.
+    std::uint8_t possibility_percent = 0;
+    std::string possibility_parameter;
     // apply_damage only: the stagger meter the hit adds. Absent derives it
     // from the damage through the target's per_damage.
     std::optional<float> stagger;

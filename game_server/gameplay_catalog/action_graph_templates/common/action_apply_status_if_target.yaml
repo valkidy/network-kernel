@@ -2,17 +2,21 @@
 # the world names no target, and `when: event.has_target` lets that pass.
 #
 # `strength` is weighed against the target's force_resistance, strictly; 0
-# weighs against nobody. Each owner binds its own.
+# weighs against nobody. `possibility` is the percent of events that apply it
+# (1-100, ABI 110), rolled separately for every target. Each owner binds its
+# own.
 id: action_apply_status_if_target
 parameters:
   target: null
   status: null
   direction: null
   strength: 0.0
+  possibility: 100
 actions:
   - type: apply_status
     target: params.target
     status: params.status
     direction: params.direction
     strength: params.strength
+    possibility: params.possibility
     when: event.has_target

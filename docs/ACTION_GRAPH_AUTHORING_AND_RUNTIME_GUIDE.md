@@ -645,6 +645,30 @@ stack count，只更新 latest source、owner peer 與 expiry。Stack 保留 ins
 applied tick、增加 stack count；達到 max stack 時依 `refresh_on_stack` 決定是否只
 更新 expiry。這些語意不由 Action Graph YAML 重新定義。
 
+### 4.8 `possibility`（任何 action，ABI 110）
+
+在 action 上寫 `possibility`，這個 action 只在一部分 event 執行：
+
+```yaml
+actions:
+  - type: apply_status
+    target: params.target
+    status: params.status
+    possibility: params.possibility   # 或直接寫數字，例如 30
+    when: event.has_target
+```
+
+- 值是**整數百分比 1–100**。不寫等於 100，一定執行。
+- 0、101、小數（例如 `0.3`）、負數都會在載入時報錯：0.3 和 30 容易搞混，所以一律拒絕。
+- 不能寫在 `spawn_projectile` 和 `lock_strike` 上：client 重現 derived chain 時不擲骰。
+- 擲骰是 deterministic 的：seed 由 instigator、action instance、launch salt、
+  action 在 graph 裡的 index、event 的 target、status instance 和 server tick 組成
+  （`engine/src/simulation/public/deterministic_random.h`）。
+  所以一次爆炸會對每個被打到的 actor 各擲一次；同樣的輸入在任何平台都得到同樣的結果。
+- 只在 authoritative simulation 執行（和其他 action 一樣），client 不擲骰。
+- 範例：`common/action_apply_status_if_target` 的 `possibility` 參數預設 100；
+  Ice Spike 的爆炸（`ice_spike_strike_blast`）綁 `possibility: 30` 附加 freeze。
+
 ---
 
 ## 5. Multi-action Use Case：同時傷害自己與碰撞目標

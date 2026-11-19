@@ -1,5 +1,7 @@
 # One evaluation at the moment of impact (interval >= lifetime), falling off
 # linearly to the edge of an 8 m sphere. Friend and foe, the caster included.
+# The damage is the projectile's, with its falloff; the graph adds a freeze to
+# 30% of the actors it reaches, each rolled on its own.
 id: 43
 name: ice_spike_strike_blast
 type: area_effect
@@ -12,5 +14,13 @@ damage_behavior:
   falloff: linear
 collision_mask: damageable
 hit_instigator: true
+triggers:
+  on_projectile_impact:
+    action_graph: action_apply_status_if_target
+    parameters:
+      target: event.target
+      status: freeze
+      direction: event.direction
+      possibility: 30
 # Never sent: clients derive it from the marker at the root of its chain.
 replication: derived

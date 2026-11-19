@@ -1,6 +1,5 @@
 # Calls one ice spike down on the aimed point; its blast hits friend and foe,
-# the caster included. The 30% freeze waits for action-graph possibility (I1
-# of docs/PLAYER_WEAPON_REVAMP_PLAN.md).
+# the caster included, and freezes 30% of those it reaches.
 id: 13
 name: Ice Spike
 # Weapon group / container slot 0-3.

@@ -11,6 +11,7 @@
 #include "physics/public/physics_world.h"
 #include "simulation/public/collision_filter.h"
 #include "simulation/public/action_graph.h"
+#include "simulation/public/deterministic_random.h"
 
 namespace network_example {
 namespace {
@@ -1262,18 +1263,13 @@ std::uint64_t projectile_launch_seed(
     std::uint32_t action_instance_id,
     std::uint32_t projectile_template_id,
     std::uint32_t salt) {
-    // splitmix64's finalizer, applied once per 64-bit word of input.
-    const auto mix = [](std::uint64_t value) {
-        value += 0x9E3779B97F4A7C15ull;
-        value = (value ^ (value >> 30)) * 0xBF58476D1CE4E5B9ull;
-        value = (value ^ (value >> 27)) * 0x94D049BB133111EBull;
-        return value ^ (value >> 31);
-    };
-    std::uint64_t seed = mix(
+    // splitmix64's finalizer, applied once per 64-bit word of input
+    // (deterministic_random.h). Unchanged since before that header: every
+    // seeded spread already shipped depends on these exact bits.
+    std::uint64_t seed = deterministic_mix(
         (static_cast<std::uint64_t>(instigator) << 32) | action_instance_id);
-    seed = mix(
-        seed ^
-        ((static_cast<std::uint64_t>(projectile_template_id) << 32) | salt));
+    seed = deterministic_combine(
+        seed, (static_cast<std::uint64_t>(projectile_template_id) << 32) | salt);
     return seed;
 }
 

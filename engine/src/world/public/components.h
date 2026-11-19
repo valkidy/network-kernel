@@ -1106,6 +1106,10 @@ struct ActionGraphTemplate {
     std::string id;
     std::vector<ActionGraphParameterDefinition> parameters;
     std::vector<ActionGraphAction> actions;
+    // KernelActionDefinition::possibility_percent, one per action, or empty
+    // for a graph built in code: 0 and 100 always run the action, 1-99 run it
+    // that many times in 100 (deterministic_random.h).
+    std::vector<std::uint8_t> possibility_percent;
 };
 
 struct CompiledActionGraphBinding {
