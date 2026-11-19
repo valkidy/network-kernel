@@ -227,6 +227,32 @@ projectile_template: water_jet_marker
 `strike_target` on any other weapon type is a load error. A client preview
 of the reticle has to run the same rays to agree with the server.
 
+#### strike_target: actor
+
+`actor` (ABI 110, Lock-on Magic Missile) locks instead of landing:
+
+1. The weapon's `lock_collider` cone (required) locks along the aim, as a
+   `lock_missile` weapon's does, on the hostile side.
+2. The nearest actor it locks is the target. Locking nobody refuses the shot,
+   spending nothing.
+3. The projectile is spawned at the shooter's launch point, along the aim,
+   carrying that actor. It is usually a marker (speed 0, `collision_mask:
+   none`, `lifetime_ticks: 1`) whose `on_expired` reports the actor as
+   `event.target`.
+4. A `lock_strike` there with `target: event.target` strikes that actor alone
+   on every repeat, with no search, and stops once it is dead or gone.
+
+```yaml
+weapon_type: targeted_strike
+strike_target: actor
+lock_collider: lock_on_magic_missile_cone
+max_range: 45.0
+projectile_template: lock_on_magic_missile_cast
+```
+
+See `27_weapon_lock_on_magic_missile`, its cast (51) and
+`common/action_lock_missile_volley_at_target`.
+
 ## Projectile template
 
 The weapon's shot. `damage` is always the top-level key, whatever the type.

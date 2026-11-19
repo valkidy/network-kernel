@@ -64,8 +64,7 @@ loadout:
     # the first away (docs/SUMMON_FOLLOW_PLAN.md Q5).
     - item_template: fungible_summon_giant_bottle
       quantity: 1
-  # Every player weapon (docs/PLAYER_WEAPON_REVAMP_PLAN.md D13). Lock-on Magic
-  # Missile joins when its weapon exists (I2).
+  # Every player weapon (docs/PLAYER_WEAPON_REVAMP_PLAN.md D13).
   weapons:
     - stateful_weapon_ice_lance
     - stateful_weapon_chain_lightning
@@ -76,6 +75,7 @@ loadout:
     - stateful_weapon_fire_ball
     - stateful_weapon_sky_laser
     - stateful_weapon_rocket
+    - stateful_weapon_lock_on_magic_missile
     - stateful_weapon_meteor_storm
     - stateful_weapon_call_lightning
     - stateful_weapon_water_bubble

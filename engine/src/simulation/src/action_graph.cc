@@ -204,6 +204,9 @@ bool expression_available_for_event(
                 event_type == TriggerEventType::kStatusApplied ||
                 event_type == TriggerEventType::kStatusTick ||
                 event_type == TriggerEventType::kStatusExpired ||
+                // ABI 110 (I2): an actor strike's cast reports the actor it
+                // locked; every other expiry reports none.
+                event_type == TriggerEventType::kExpired ||
                 is_trigger_volume_event(event_type);
         }
         if (entity_ref->source == EntityRefSource::kEventInstigator) {
@@ -679,6 +682,19 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
             strike.repeat_count = action.lock_repeat_count;
             strike.repeat_interval_ticks = action.lock_repeat_interval_ticks;
             strike.origin_lift = action.lock_origin_lift;
+            // ABI 110 (I2): a count picked in [min, max] per run, and a strike
+            // at the event's target alone.
+            strike.repeat_count_min = action.repeat_count_min;
+            strike.repeat_count_max = action.repeat_count_max;
+            if (action.target_source == KernelEntityRefSource_EventTarget) {
+                strike.target_parameter = "target" + suffix;
+                binding.graph.parameters.push_back(
+                    {strike.target_parameter, std::monostate{}});
+                binding.parameters.push_back({
+                    strike.target_parameter,
+                    EntityRefExpression{EntityRefSource::kEventTarget},
+                });
+            }
             binding.graph.actions.push_back(std::move(strike));
             binding.parameters.push_back({
                 position_name,
@@ -1192,8 +1208,24 @@ bool validate_action_graph_binding(
                 (!strike->direction_parameter.empty() &&
                  !validate_action_parameter(
                      binding, strike->direction_parameter, ParameterType::kVec3,
+                     error)) ||
+                (!strike->target_parameter.empty() &&
+                 !validate_action_parameter(
+                     binding, strike->target_parameter, ParameterType::kEntityId,
                      error))) {
                 return false;
+            }
+            // A count range (ABI 110) replaces the fixed count.
+            if (strike->repeat_count_max != 0u &&
+                (strike->repeat_count > 1u || strike->repeat_count_min < 1u ||
+                 strike->repeat_count_min > strike->repeat_count_max ||
+                 strike->repeat_count_max > KERNEL_MAX_LOCK_STRIKE_REPEAT ||
+                 (strike->repeat_count_max > 1u &&
+                  (strike->repeat_interval_ticks < 1u ||
+                   strike->repeat_interval_ticks *
+                           (strike->repeat_count_max - 1u) >
+                       KERNEL_MAX_LOCK_STRIKE_SPAN_TICKS)))) {
+                return fail(error, "lock_strike repeat count range is out of bounds");
             }
             continue;
         }
@@ -1594,10 +1626,38 @@ bool evaluate_action_graph(
                 return fail(error, "lock_strike action input type mismatch");
             }
             ActionLockStrikeCommand command;
+            if (!strike->target_parameter.empty()) {
+                const ActionGraphParameterValue* target_value =
+                    find_resolved_parameter(parameters, strike->target_parameter);
+                if (target_value == nullptr ||
+                    !std::holds_alternative<EntityIdValue>(*target_value)) {
+                    return fail(error, "lock_strike target input type mismatch");
+                }
+                command.fixed_target = std::get<EntityIdValue>(*target_value).value;
+                // Nobody to strike: nothing to run (the strike is skipped,
+                // the rest of the graph is not).
+                if (command.fixed_target == 0u) {
+                    continue;
+                }
+            }
             command.collider_template_id = strike->collider_template_id;
             command.projectile_template_id = strike->projectile_template_id;
             command.mode = strike->mode;
             command.repeat_count = strike->repeat_count;
+            if (strike->repeat_count_max != 0u) {
+                // Seeded like a repeated spawn's count: the same run always
+                // fires the same number.
+                const std::uint32_t span =
+                    static_cast<std::uint32_t>(strike->repeat_count_max) -
+                    strike->repeat_count_min + 1u;
+                const std::uint64_t seed = projectile_launch_seed(
+                    provenance.instigator,
+                    provenance.action_instance_id,
+                    strike->projectile_template_id,
+                    provenance.launch_salt ^ 0x4C4F434Bu);  // "LOCK"
+                command.repeat_count = static_cast<std::uint16_t>(
+                    strike->repeat_count_min + seed % span);
+            }
             command.repeat_interval_ticks = strike->repeat_interval_ticks;
             command.origin_lift = strike->origin_lift;
             command.carrier = self;

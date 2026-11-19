@@ -61,6 +61,14 @@ inline bool spawn_repeat_is_authorable(const KernelActionDefinition& action) {
     if (action.action_type == KernelEntityTriggerActionType_SpawnEntity) {
         return repeat_absent;
     }
+    // A lock_strike's count range (ABI 110) rides repeat_count_min/max; its
+    // own checks (lock_strike_action_is_authorable) hold it. Nothing else of
+    // a spawn's repeat applies.
+    if (action.action_type == KernelEntityTriggerActionType_LockStrike) {
+        return action.repeat_scatter_radius == 0.0f &&
+            action.repeat_stagger_lifetime_ticks == 0u &&
+            action.spawn_lifetime_ticks == 0u;
+    }
     if (action.action_type != KernelEntityTriggerActionType_SpawnProjectile) {
         return repeat_absent && action.spawn_lifetime_ticks == 0u;
     }
@@ -394,6 +402,9 @@ struct ActionLockStrikeCommand {
     // nothing from the lock: it is still standing on the spot when the first
     // strike runs. Zero for none.
     NetId carrier = 0;
+    // Every strike of the run at this one actor, no search (ABI 110, I2);
+    // zero searches the volume as before.
+    NetId fixed_target = 0;
     ActionExecutionProvenance provenance;
 };
 

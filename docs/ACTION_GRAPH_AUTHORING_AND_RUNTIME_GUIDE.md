@@ -645,6 +645,17 @@ stack count，只更新 latest source、owner peer 與 expiry。Stack 保留 ins
 applied tick、增加 stack count；達到 max stack 時依 `refresh_on_stack` 決定是否只
 更新 expiry。這些語意不由 Action Graph YAML 重新定義。
 
+### 4.7.1 `lock_strike` 的固定目標與數量範圍（ABI 110）
+
+- `target: event.target`：每一次 repeat 都只打這個 actor，不搜尋鎖定範圍；
+  目標死亡或消失後，剩下的 repeat 不再發射。只能綁 `event.target`。
+- `repeat.count: [min, max]`：每次施放用 deterministic seed 在範圍內挑一個數量
+  （1 ≤ min ≤ max ≤ 16），以最大值檢查整段長度不超過 255 tick。
+- `lock_strike` 現在也可以寫在投射物的 trigger 裡（`on_projectile_impact`、`on_expired`）。
+  `on_expired` 的 `event.target` 只有 actor strike 的 cast 會帶，其他投射物到期時是 0，
+  `lock_strike` 遇到 0 會直接略過。
+- 範例：`common/action_lock_missile_volley_at_target`（Lock-on Magic Missile，12–16 發，間隔 3 tick）。
+
 ### 4.8 `possibility`（任何 action，ABI 110）
 
 在 action 上寫 `possibility`，這個 action 只在一部分 event 執行：

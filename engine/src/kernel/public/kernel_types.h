@@ -15,6 +15,14 @@
  *     KernelWeaponFireMode gained _TargetedStrikeSurface (7, I3): a targeted
  *     strike that lands on the first wall or floor along the aim, or on the
  *     ground under the end of its reach, carrying that face's normal.
+ *     KernelWeaponFireMode gained _TargetedStrikeActor (8, I2): a targeted
+ *     strike that locks the nearest actor in its cone and carries it as its
+ *     projectile's on_expired event.target. A lock_strike may now run in a
+ *     projectile's triggers; with target_source _EventTarget it strikes that
+ *     actor alone, every repeat, with no search, and stops once it is no
+ *     longer there; with repeat_count_max non-zero (and lock_repeat_count 0
+ *     or 1) its count is picked, seeded, in [repeat_count_min,
+ *     repeat_count_max], at most KERNEL_MAX_LOCK_STRIKE_REPEAT.
  *     KernelEntityTriggerActionType gained _ApplyBlockMovement (18, I4): a
  *     status on_apply action that, while its instance stands, keeps the
  *     actor from moving itself; KERNEL_VISUAL_FLAG_DOWNED (0x8000) says so.
@@ -1746,6 +1754,16 @@ typedef enum KernelWeaponFireMode {
      * it becomes can push off that face.
      */
     KernelWeaponFireMode_TargetedStrikeSurface = 7,
+    /*
+     * A targeted strike (ABI 110) on an actor: the nearest the cone of
+     * melee_collider_template_id locks along the aim -- what _LockMissile
+     * locks, by the projectile template's collision_mask -- or, locking
+     * nobody, a refusal that spends nothing. The projectile is spawned at the
+     * shooter's launch point, along the aim, carrying that actor: its
+     * on_expired reports it as event.target, for a lock_strike that strikes
+     * it alone (target: event.target). max_range is not used for the lock.
+     */
+    KernelWeaponFireMode_TargetedStrikeActor = 8,
 } KernelWeaponFireMode;
 
 typedef enum KernelProjectileMotionModel {

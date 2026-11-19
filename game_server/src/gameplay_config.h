@@ -554,6 +554,13 @@ struct ActionGraphActionConfig {
     std::uint32_t lock_repeat_interval_ticks = 0;
     std::string lock_repeat_count_parameter;
     std::string lock_repeat_interval_ticks_parameter;
+    // ABI 110 (I2): `count: [min, max]`, picked per run; zero max is the
+    // fixed count above.
+    std::uint8_t lock_repeat_count_min = 0;
+    std::uint8_t lock_repeat_count_max = 0;
+    // ABI 110 (I2): `target: event.target`, the one actor every strike of the
+    // run is at, with no search.
+    std::string lock_target_parameter;
     // apply_pull only. The anchor is a graph parameter for TO_POINT, and
     // direction_parameter is reused for ALONG. Each number is a literal, or
     // params.<name> (its *_parameter set) for the binding to supply. See

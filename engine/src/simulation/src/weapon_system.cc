@@ -1053,10 +1053,31 @@ void simulate_weapons(
             // A surface strike spawns its projectile along the face's normal;
             // a ground strike along the aim, as before.
             std::optional<glm::vec3> strike_direction;
+            // An actor strike: the actor its cone locked, carried by the
+            // projectile to its expiry's event.target.
+            NetId strike_actor = 0;
             if (is_targeted_strike(definition->mode)) {
                 strike_template = world.find_projectile_template(
                     definition->projectile_template_id);
                 if (strike_template != nullptr &&
+                    definition->mode == WeaponFireMode::kTargetedStrikeActor) {
+                    const glm::vec3 origin = projectile_launch_position(
+                        player_view.get<Transform>(player_entity));
+                    const glm::vec3 aim = input_aim_to_world(queued_input.input);
+                    const LockSelection lock = select_lock_targets(
+                        world,
+                        weapon_lock_spec(world, *definition, origin, aim),
+                        context.rewind_frame,
+                        player_identity.net_id,
+                        queued_input.owner_peer);
+                    // Nearest first: the strike is at the one it locked
+                    // nearest, from where the shooter stands (plan D3).
+                    if (!lock.locked.empty()) {
+                        strike_target = origin;
+                        strike_direction = aim;
+                        strike_actor = lock.locked.front().net_id;
+                    }
+                } else if (strike_template != nullptr &&
                     definition->mode == WeaponFireMode::kTargetedStrike) {
                     strike_target = resolve_strike_target(
                         world,
@@ -1240,7 +1261,8 @@ void simulate_weapons(
                     strike_direction.value_or(direction),
                     current_tick,
                     context.fixed_delta_seconds,
-                    events);
+                    events,
+                    strike_actor);
             } else if (definition->mode == WeaponFireMode::kProjectile) {
                 const RuntimeProjectileTemplate* projectile_template =
                     world.find_projectile_template(definition->projectile_template_id);

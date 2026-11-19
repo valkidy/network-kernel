@@ -156,6 +156,32 @@ LockSelection select_lock_targets(
     return selection;
 }
 
+LockSelection select_fixed_lock_target(
+    World& world,
+    const LockStrikeSpec& spec,
+    NetId target,
+    NetId shooter_net_id,
+    PeerId shooter_peer_id) {
+    LockSelection selection;
+    if (target == 0u) {
+        return selection;
+    }
+    LockCandidates found = lock_candidates(
+        world, nullptr, shooter_net_id, shooter_peer_id, spec.collision_mask);
+    for (const lock_targets::Candidate& candidate : found.candidates) {
+        if (candidate.net_id == target) {
+            selection.locked.push_back(candidate);
+            break;
+        }
+    }
+    for (const auto& zone : found.hit_zones) {
+        if (zone.first == target) {
+            selection.hit_zones.push_back(zone);
+        }
+    }
+    return selection;
+}
+
 void apply_lock_instant_damage(
     World& world,
     const LockStrikeSpec& spec,

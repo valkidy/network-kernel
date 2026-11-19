@@ -901,7 +901,7 @@ void the_water_jet_holds_its_push_invariants() {
             "strike_target_unknown",
             {{"weapon_templates/21_weapon_water_jet.yaml",
               with_replaced(weapon, "\nstrike_target: surface", "\nstrike_target: wall")}}),
-        {"strike_target must be ground or surface"}));
+        {"strike_target must be ground, surface or actor"}));
     require(refused_for(
         catalog_with(
             "strike_target_on_projectile",
@@ -923,6 +923,51 @@ void the_water_jet_holds_its_push_invariants() {
     // grounded actor dies the next tick.
     require(push.impulse_strength_mode == KERNEL_IMPULSE_STRENGTH_MODE_SPLIT);
     require(push.impulse_strength_vertical > 0.0f);
+}
+
+// Lock-on Magic Missile (I2, ABI 110): an actor strike locking with its
+// narrow cone, whose cast (a marker) expires into a lock_strike at the event's
+// target alone, 12-16 missiles 3 ticks apart.
+void the_lock_on_magic_missile_strikes_its_target_alone() {
+    const gs::KernelGameplayCatalogStorage storage =
+        built(shipped_catalog() / "gameplay_catalog.yaml");
+    const gs::GameServerGameplayConfig config =
+        gs::load_gameplay_config_from_catalog_file(
+            (shipped_catalog() / "gameplay_catalog.yaml").string());
+    const KernelWeaponMechanicsDefinition& weapon = config.weapons.definitions[27];
+    require(weapon.fire_mode == KernelWeaponFireMode_TargetedStrikeActor);
+    require(weapon.melee_collider_template_id == 69u);
+    require(weapon.collision_mask == KERNEL_COLLISION_LAYER_HOSTILE_SIDE);
+    require(weapon.projectile_template_id == 51u);
+    const KernelProjectileMechanicsDefinition& cast = compiled_projectile(storage, 51u);
+    require(cast.speed == 0.0f);
+    const KernelActionDefinition& volley = cast.expired_trigger.actions[0];
+    require(volley.action_type == KernelEntityTriggerActionType_LockStrike);
+    require(volley.target_source == KernelEntityRefSource_EventTarget);
+    require(volley.lock_mode == KernelLockStrikeMode_Missile);
+    require(volley.spawn_projectile_template_id == 52u);
+    require(volley.lock_repeat_count == 0u);
+    require(volley.repeat_count_min == 12u && volley.repeat_count_max == 16u);
+    require(volley.lock_repeat_interval_ticks == 3u);
+
+    const fs::path graph = shipped_catalog() / "action_graph_templates" / "common" /
+        "action_lock_missile_volley_at_target.yaml";
+    for (const char* bad : {"count: [16, 12]", "count: [0, 12]", "count: [12, 17]"}) {
+        require(refused_for(
+            catalog_with(
+                "lock_count_range",
+                {{"action_graph_templates/common/action_lock_missile_volley_at_target.yaml",
+                  with_replaced(graph, "count: [12, 16]", bad)}}),
+            {"lock_strike repeat count range"}));
+    }
+    const fs::path weapon_file =
+        shipped_catalog() / "weapon_templates" / "27_weapon_lock_on_magic_missile.yaml";
+    require(refused_for(
+        catalog_with(
+            "actor_strike_without_cone",
+            {{"weapon_templates/27_weapon_lock_on_magic_missile.yaml",
+              with_replaced(weapon_file, "lock_collider: lock_on_magic_missile_cone\n", "")}}),
+        {"strike_target actor requires lock_collider"}));
 }
 
 // The archive the client loads must hold every graph the source tree does,
@@ -972,6 +1017,7 @@ int main() {
     possibility_comes_from_the_binding();
     surface_normal_spawn_direction_is_impact_and_standard_only();
     the_water_jet_holds_its_push_invariants();
+    the_lock_on_magic_missile_strikes_its_target_alone();
     the_bundle_carries_the_same_graphs();
     return 0;
 }

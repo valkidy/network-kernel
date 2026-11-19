@@ -1,0 +1,23 @@
+# Lock-on Magic Missile's cast. The actor strike (strike_target: actor, ABI
+# 110) spawns it at the caster carrying the actor it locked, and its expiry,
+# the next tick, reports that actor as event.target: the volley that follows
+# goes to it alone. A marker: speed 0, colliding with nothing. The weapon
+# locks the hostile side.
+id: 51
+name: lock_on_magic_missile_cast
+type: standard
+damage: 0
+damage_shape: none
+speed: 0.0
+collision_mask: none
+sync_mode: server_snapshot_only
+lifetime_ticks: 1
+triggers:
+  on_expired:
+    action_graph: action_lock_missile_volley_at_target
+    parameters:
+      collider: lock_on_magic_missile_cone
+      template: lock_on_magic_missile_bolt
+      position: event.position
+      direction: event.direction
+      target: event.target

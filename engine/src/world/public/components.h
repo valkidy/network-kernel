@@ -365,11 +365,15 @@ enum class WeaponFireMode : std::uint8_t {
     // A targeted strike landing on the first face along the aim, or on the
     // ground under the end of its reach; the projectile carries the normal.
     kTargetedStrikeSurface = 7,
+    // A targeted strike on an actor: the nearest hostile in the weapon's lock
+    // cone, carried by the projectile as its expiry's target.
+    kTargetedStrikeActor = 8,
 };
 
 inline constexpr bool is_targeted_strike(WeaponFireMode mode) {
     return mode == WeaponFireMode::kTargetedStrike ||
-        mode == WeaponFireMode::kTargetedStrikeSurface;
+        mode == WeaponFireMode::kTargetedStrikeSurface ||
+        mode == WeaponFireMode::kTargetedStrikeActor;
 }
 
 enum class ProjectileMotionModel : std::uint8_t {
@@ -678,6 +682,10 @@ struct ProjectileState {
     std::uint16_t commit_index = 0;
     std::uint8_t burst_index = 0;
     NetId shooter_net_id = 0;
+    // The actor an actor strike (WeaponFireMode::kTargetedStrikeActor, ABI
+    // 110) locked when it fired; this projectile's expiry reports it as the
+    // event's target. Zero for everything else.
+    NetId strike_target_net_id = 0;
     ProjectileMotionModel motion_model = ProjectileMotionModel::kLinear;
     ProjectileHitResponse hit_response = ProjectileHitResponse::kDestroy;
     ProjectileDamageShape damage_shape = ProjectileDamageShape::kDirectHit;
@@ -1008,6 +1016,13 @@ struct ActionLockStrikeDefinition {
     std::uint16_t repeat_count = 0;
     std::uint32_t repeat_interval_ticks = 0;
     float origin_lift = 0.0f;
+    // ABI 110 (I2): a [min, max] count picked per run, seeded, instead of the
+    // fixed repeat_count; zero max is the fixed count.
+    std::uint8_t repeat_count_min = 0;
+    std::uint8_t repeat_count_max = 0;
+    // ABI 110 (I2): set, the strike is at the event's target only -- every
+    // repeat, no search -- and stops once that target is no longer there.
+    std::string target_parameter;
 };
 
 // An item refilling its user's active weapon; see

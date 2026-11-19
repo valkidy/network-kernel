@@ -51,6 +51,18 @@ LockSelection select_lock_targets(
     PeerId shooter_peer_id);
 
 // Every locked target damaged once, at once. Nothing is spawned.
+// The lock as select_lock_targets would make it, but of `target` alone and
+// without a volume or a line of sight: an actor strike (ABI 110, I2) locked it
+// when it fired, and every missile of the run goes to it. Empty when the
+// target is no longer one this shot can strike -- gone, dead, or no longer on
+// a side the shot's mask names -- which ends the run (plan D3).
+LockSelection select_fixed_lock_target(
+    World& world,
+    const LockStrikeSpec& spec,
+    NetId target,
+    NetId shooter_net_id,
+    PeerId shooter_peer_id);
+
 void apply_lock_instant_damage(
     World& world,
     const LockStrikeSpec& spec,

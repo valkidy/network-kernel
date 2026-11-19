@@ -1,0 +1,11 @@
+# Lock-on Magic Missile's lock cone: 45 m, a narrow 20 degrees (plan D3), so
+# the actor under the reticle is the one locked. Its range is also the
+# farthest flight: the bolt's lifetime_ticks is how long a missile takes to
+# reach a target at the edge of it.
+id: 69
+name: lock_on_magic_missile_cone
+shape: cone
+range: 45.0
+fov_degrees: 20.0
+purpose: damage
+layer: projectile

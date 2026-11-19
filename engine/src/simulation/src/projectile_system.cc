@@ -56,7 +56,8 @@ bool spawn_projectile_from_template(
     std::uint32_t* out_entity_type,
     std::uint32_t lifetime_ticks = 0,
     std::uint32_t extra_lifetime_ticks = 0,
-    std::uint32_t launch_salt = 0) {
+    std::uint32_t launch_salt = 0,
+    NetId strike_target_net_id = 0) {
     // The weapon is the firing event's, never the template's: one template may
     // be fired by several weapons, or spawned by an item or another
     // projectile's impact, and each of those knows what it was (ABI 106).
@@ -118,6 +119,7 @@ bool spawn_projectile_from_template(
     projectile.spawn_tick = current_tick;
     projectile.action_instance_id = action_instance_id;
     projectile.shooter_net_id = shooter_net_id;
+    projectile.strike_target_net_id = strike_target_net_id;
     projectile.motion_model = projectile_template.motion_model;
     projectile.hit_response = projectile_template.hit_response;
     projectile.damage_shape = projectile_template.damage_shape;
@@ -1284,7 +1286,8 @@ bool spawn_projectile_at(
     const glm::vec3& direction,
     std::uint32_t current_tick,
     float fixed_delta_seconds,
-    std::vector<KernelEvent>* events) {
+    std::vector<KernelEvent>* events,
+    NetId strike_target_net_id) {
     return spawn_projectile_from_template(
         world,
         projectile_template,
@@ -1297,7 +1300,11 @@ bool spawn_projectile_at(
         current_tick,
         fixed_delta_seconds,
         events,
-        nullptr);
+        nullptr,
+        0,
+        0,
+        0,
+        strike_target_net_id);
 }
 
 ProjectileLaunch descent_launch(
@@ -1759,7 +1766,8 @@ void simulate_projectiles(
             identity,
             projectile,
             TriggerEventType::kExpired,
-            0,
+            // An actor strike's projectile names the actor it was locked on.
+            projectile.strike_target_net_id,
             transform.position,
             normalized_or(
                 transform.position - projectile.previous_position,

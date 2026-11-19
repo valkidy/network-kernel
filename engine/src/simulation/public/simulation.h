@@ -346,7 +346,8 @@ bool spawn_projectile_at(
     const glm::vec3& direction,
     std::uint32_t current_tick,
     float fixed_delta_seconds,
-    std::vector<KernelEvent>* events);
+    std::vector<KernelEvent>* events,
+    NetId strike_target_net_id = 0);
 
 // lifetime_ticks zero keeps the template's; extra_lifetime_ticks is added
 // either way. launch_salt is the command's provenance salt.
