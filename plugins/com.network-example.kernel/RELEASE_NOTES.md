@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- updates to kernel ABI 110 with action probability, surface and actor targeted strikes, and paralysis movement blocking
+
+
+0.7.0 release notes:
+
 - adds the summon giant bottle, summoned-actor lifetimes and summoner-follow behavior
 
 
