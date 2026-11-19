@@ -1268,7 +1268,7 @@ cc_test(
     deps = [
         ":game_server",
         "//engine/src/kernel:kernel",
-        "//engine/src/physics:physics",
+        "//engine/src/geometry:mesh_bake",
     ],
 )
 

@@ -1,50 +1,45 @@
-// The Water Jet Staff end to end (docs/WATER_JET_PLAN.md, P4): a player armed
-// with the shipped staff through a weapon container fires its bolt through the
-// real input path at the shipped static scene, and a gingerbread standing
-// where the bolt lands is shoved off the face the bolt struck -- and actually
-// travels, rather than only getting a velocity for a tick.
+// The Water Jet end to end as a surface strike (docs/PLAYER_WEAPON_REVAMP_PLAN.md
+// I3, docs/WATER_JET_PLAN.md): a player armed with the shipped weapon through a
+// weapon container fires it through the real input path, the strike puts its
+// mark on the face the rules pick, and a gingerbread standing there is shoved
+// off that face by the column -- and actually travels, rather than only getting
+// a velocity for a tick.
 //
-//   - at the open ground: thrown straight up;
-//   - at a slope, and at a tree trunk: lifted and carried out from the face.
+// The scene is baked here, not the shipped map, so the faces are known exactly
+// and a map change cannot move them: a 200 m floor at y = 0 and a wall whose
+// face is the plane x = 20 (normal -x).
+//
+//   - floor:   aimed down ahead, the first face is the floor: thrown straight up;
+//   - wall:    aimed level at the wall: lifted and carried out from it, -x;
+//   - reach:   aimed level at nothing within 45 m: the mark goes on the ground
+//              under the end of the reach;
+//   - sky:     aimed straight up: nothing under the end of the reach within
+//              reach of the drop, so the shot is refused and costs nothing.
 //
 // The push is the column's split impulse, (n.x * h, v, n.z * h) for the face
 // normal n, with h and v read from the catalog. A flat push on a grounded
 // actor moved it 0.40 m and died the next tick; the lift is what makes it
 // carry, which is why the travel is checked and not only the direction.
-//
-// The face is not assumed. This test loads the same scene into a physics
-// world of its own, casts the bolt's own path -- read off the live bolt -- and
-// takes the face normal that ray returns; the push is held to that. The
-// cliffs are rough, roughly 67-degree slopes, so no fixed vector would do.
-//
-// Each case fires twice from the same place along the same aim: the first
-// shot, with nobody near, finds where the bolt lands; the gingerbread is then
-// put there and the second shot shoves it. The bolt strikes only the world, so
-// it flies through the gingerbread to the same spot.
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <filesystem>
-#include <fstream>
-#include <iterator>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include <glm/glm.hpp>
 
-#include "game_server/src/game_server.h"
 #include "game_server/src/gameplay_config.h"
+#include "geometry/public/mesh_bake.h"
 #include "kernel/public/kernel_api.h"
-#include "physics/public/physics_world.h"
 
 namespace {
 
-namespace fs = std::filesystem;
 namespace gs = network_example::game_server;
-namespace physics = network_example::physics;
 
 void require_impl(bool condition, int line, const char* text) {
     if (condition) {
@@ -58,6 +53,7 @@ void require_impl(bool condition, int line, const char* text) {
 
 constexpr float kTickSeconds = 1.0f / 30.0f;
 constexpr float kGravity = 9.81f;
+constexpr float kWallX = 20.0f;
 
 // The column's push, as the catalog compiles it.
 struct Push {
@@ -68,21 +64,6 @@ struct Push {
         return {normal.x * horizontal, vertical, normal.z * horizontal};
     }
 };
-
-fs::path runfiles_catalog() {
-    const char* test_srcdir = std::getenv("TEST_SRCDIR");
-    const char* test_workspace = std::getenv("TEST_WORKSPACE");
-    require(test_srcdir != nullptr);
-    require(test_workspace != nullptr);
-    return fs::path(test_srcdir) / test_workspace / "game_server" / "gameplay_catalog";
-}
-
-std::vector<std::uint8_t> read_bytes(const fs::path& path) {
-    std::ifstream file(path, std::ios::binary);
-    require(file.good());
-    return std::vector<std::uint8_t>(
-        std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
-}
 
 glm::vec3 to_glm(const KernelVec3& value) { return {value.x, value.y, value.z}; }
 KernelVec3 to_kernel(const glm::vec3& value) { return {value.x, value.y, value.z}; }
@@ -100,34 +81,35 @@ KernelServerEntityState entity_state(KernelHandle* kernel, std::uint32_t net_id)
     return state;
 }
 
-// The scene the kernel has, as a physics world this test can cast into.
-struct Scene {
-    physics::PhysicsWorld world;
-    std::uint32_t mask =
-        physics::collision_layer_bit(physics::CollisionLayer::kTerrain) |
-        physics::collision_layer_bit(physics::CollisionLayer::kStaticObstacle);
-
-    bool cast(const glm::vec3& origin, const glm::vec3& direction, float distance,
-              physics::CollisionHit* hit) const {
-        physics::RayCastRequest ray{};
-        ray.origin = origin;
-        ray.direction = glm::normalize(direction);
-        ray.max_distance = distance;
-        ray.filter.collision_mask = mask;
-        return world.ray_cast_closest(ray, hit);
-    }
-
-    float ground(float x, float z) const {
-        physics::CollisionHit hit{};
-        require(cast({x, 60.0f, z}, {0.0f, -1.0f, 0.0f}, 120.0f, &hit));
-        return hit.position.y;
-    }
-};
-
-struct Bolt {
-    glm::vec3 position{0.0f};
-    glm::vec3 velocity{0.0f};
-};
+// A floor quad and a closed wall box, baked to the kernel's collision artifact.
+std::vector<std::uint8_t> bake_scene() {
+    network_example::CanonicalTriangleMesh mesh;
+    const auto quad = [&mesh](std::array<float, 3> a, std::array<float, 3> b,
+                              std::array<float, 3> c, std::array<float, 3> d) {
+        const std::uint32_t base = static_cast<std::uint32_t>(mesh.positions.size());
+        mesh.positions.insert(mesh.positions.end(), {a, b, c, d});
+        // Wound counter-clockwise seen from the side the face looks out of.
+        mesh.triangle_indices.insert(
+            mesh.triangle_indices.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
+    };
+    // Floor, facing +y.
+    quad({-100.0f, 0.0f, -100.0f}, {-100.0f, 0.0f, 100.0f},
+         {100.0f, 0.0f, 100.0f}, {100.0f, 0.0f, -100.0f});
+    // The wall: x 20..22, y 0..10, z -10..10.
+    constexpr float x0 = kWallX, x1 = kWallX + 2.0f, y1 = 10.0f, z0 = -10.0f, z1 = 10.0f;
+    quad({x0, 0.0f, z1}, {x0, y1, z1}, {x0, y1, z0}, {x0, 0.0f, z0});  // -x, the face
+    quad({x1, 0.0f, z0}, {x1, y1, z0}, {x1, y1, z1}, {x1, 0.0f, z1});  // +x
+    quad({x0, y1, z0}, {x0, y1, z1}, {x1, y1, z1}, {x1, y1, z0});      // +y
+    quad({x0, 0.0f, z0}, {x0, y1, z0}, {x1, y1, z0}, {x1, 0.0f, z0});  // -z
+    quad({x1, 0.0f, z1}, {x1, y1, z1}, {x0, y1, z1}, {x0, 0.0f, z1});  // +z
+    mesh.bounds.min = {-100.0f, 0.0f, -100.0f};
+    mesh.bounds.max = {100.0f, y1, 100.0f};
+    const network_example::MeshBakeResult baked = network_example::bake_mesh_artifacts(
+        mesh, network_example::default_mesh_bake_config(), 1u, 1u);
+    if (!baked) std::fprintf(stderr, "bake: %s\n", baked.error.c_str());
+    require(static_cast<bool>(baked));
+    return baked.artifacts.jolt;
+}
 
 struct Arena {
     KernelHandle* kernel = nullptr;
@@ -135,6 +117,7 @@ struct Arena {
     std::uint32_t player = 0;
     std::uint32_t next_seq = 1;
     std::uint32_t next_action = 1;
+    std::uint16_t mark_template = 0;
 
     ~Arena() {
         if (kernel != nullptr) Kernel_Destroy(kernel);
@@ -171,27 +154,53 @@ struct Arena {
         return found;
     }
 
-    // One press, held to the first commit: one bolt. Returns it as it was on
-    // the first tick it existed.
-    Bolt fire(const glm::vec3& aim, int commit_offset) {
+    std::uint16_t ammo() const {
+        const KernelServerEntityState me = entity_state(kernel, player);
+        return me.ammo[me.active_weapon_slot];
+    }
+
+    // One press, then waiting out the cast: the mark, as it was on the first
+    // tick it existed, or nothing if the strike was refused.
+    std::optional<glm::vec3> fire(const glm::vec3& aim, int commit_offset) {
         require(projectiles().empty());
         const std::uint32_t action = 9200u + next_action++;
-        std::vector<Bolt> seen;
-        for (int index = 0; index <= commit_offset + 1; ++index) {
-            send(aim, action, index == 0, index <= commit_offset);
+        std::optional<glm::vec3> mark;
+        for (int index = 0; index <= commit_offset + 2 && !mark.has_value(); ++index) {
+            send(aim, action, index == 0, false);
             for (const KernelServerEntityState& state : projectiles()) {
-                if (seen.empty()) {
-                    seen.push_back({to_glm(state.position), to_glm(state.velocity)});
+                // The mark is still: speed 0.
+                if (glm::length(to_glm(state.velocity)) < 0.01f) {
+                    mark = to_glm(state.position);
                 }
             }
         }
-        require(seen.size() == 1u);
-        return seen.front();
+        return mark;
     }
 
     void wait_for_no_projectiles(const glm::vec3& aim) {
-        for (int tick = 0; tick < 120 && !projectiles().empty(); ++tick) idle(aim, 1);
+        for (int tick = 0; tick < 150 && !projectiles().empty(); ++tick) idle(aim, 1);
         require(projectiles().empty());
+    }
+
+    // The shipped magazine is 4 and every case fires twice: each case starts
+    // on a full one, its reload waited out first.
+    void reload(const glm::vec3& aim, int reload_ticks) {
+        const std::uint32_t action = 9200u + next_action++;
+        KernelPlayerInput input{};
+        input.input_seq = next_seq++;
+        input.aim_dir = to_kernel(glm::normalize(aim));
+        input.selected_weapon = weapon;
+        input.action_intent = KernelActionIntent{action, KernelActionBinding_Reload, 0u, 0u};
+        input.action_input = KernelActionInput{action, 0u, 0u, 0u};
+        require(Kernel_ServerSubmitEntityInput(kernel, player, &input));
+        Kernel_Update(kernel, kTickSeconds);
+        idle(aim, reload_ticks + 5);
+    }
+
+    void stand(const glm::vec3& at) {
+        const KernelServerEntityState me = entity_state(kernel, player);
+        const KernelVec3 position = to_kernel(at);
+        require(Kernel_ServerSetEntityTransform(kernel, player, &position, &me.rotation));
     }
 };
 
@@ -199,48 +208,44 @@ struct Case {
     const char* name;
     glm::vec3 shooter;
     glm::vec3 aim;
-    // What kind of face the bolt must strike, by the normal's y: a floor near
-    // 1, a slope between, a wall near 0.
-    float min_normal_y;
-    float max_normal_y;
-    // How far out it must at least be carried, whatever the tuning: the
-    // expected carry follows the catalog, so a lift tuned near zero would
-    // shrink the expectation with it and still pass.
+    // Where the mark has to be, and the face it is on.
+    glm::vec3 mark;
+    float mark_tolerance;
+    glm::vec3 normal;
+    // How far out it must at least be carried, whatever the tuning.
     float min_carry;
 };
 
-// Fires the case's two shots and holds the push the gingerbread got to the
-// face the bolt struck.
-void run_case(Arena& arena, const Scene& scene, const Case& c,
-              std::uint32_t gingerbread, int commit_offset, float bolt_range,
-              const Push& column_push) {
-    const KernelServerEntityState player = entity_state(arena.kernel, arena.player);
-    const KernelVec3 at = to_kernel(c.shooter);
-    require(Kernel_ServerSetEntityTransform(
-        arena.kernel, arena.player, &at, &player.rotation));
+// Fires the case and holds the mark to the face, then fires again with a
+// gingerbread standing on the spot and holds its push to the face's normal.
+void run_case(Arena& arena, const Case& c, std::uint32_t gingerbread,
+              int commit_offset, int reload_ticks, const Push& column_push) {
+    arena.stand(c.shooter);
     arena.idle(c.aim, 30);
+    const std::uint16_t full = arena.ammo();
+    arena.reload(c.aim, reload_ticks);
+    require(arena.ammo() >= 2u && arena.ammo() >= full);
 
-    // Shot one: where does it land, and on what face?
-    const Bolt dry = arena.fire(c.aim, commit_offset);
-    require(glm::length(dry.velocity) > 1.0f);
-    const glm::vec3 heading = glm::normalize(dry.velocity);
-    const glm::vec3 from = dry.position - dry.velocity * (2.0f * kTickSeconds);
-    physics::CollisionHit face{};
-    require(scene.cast(from, heading, bolt_range + 5.0f, &face));
+    // Shot one: where does the mark go?
+    {
+        const KernelServerEntityState me = entity_state(arena.kernel, arena.player);
+        std::fprintf(stderr, "water_jet[%s]: ammo %u reserve %u reloading %u at (%.2f %.2f %.2f)\n",
+                     c.name, me.ammo[me.active_weapon_slot],
+                     me.reserve_magazines[me.active_weapon_slot], me.is_reloading,
+                     me.position.x, me.position.y, me.position.z);
+    }
+    const std::optional<glm::vec3> mark = arena.fire(c.aim, commit_offset);
+    require(mark.has_value());
+    std::fprintf(stderr, "water_jet[%s]: mark at (%.2f %.2f %.2f), expected (%.2f %.2f %.2f)\n",
+                 c.name, mark->x, mark->y, mark->z, c.mark.x, c.mark.y, c.mark.z);
+    require(glm::length(*mark - c.mark) < c.mark_tolerance);
     arena.wait_for_no_projectiles(c.aim);
-    std::fprintf(stderr,
-                 "water_jet[%s]: bolt from (%.2f %.2f %.2f) lands (%.2f %.2f %.2f), "
-                 "face normal (%.2f %.2f %.2f)\n",
-                 c.name, from.x, from.y, from.z, face.position.x, face.position.y,
-                 face.position.z, face.normal.x, face.normal.y, face.normal.z);
-    require(face.normal.y >= c.min_normal_y && face.normal.y <= c.max_normal_y);
 
-    // Shot two, with a gingerbread standing just off the face: half a metre
-    // out along the horizontal part of the normal, on the ground.
-    glm::vec3 out{face.normal.x, 0.0f, face.normal.z};
+    // Shot two, with a gingerbread standing just off the face, on the floor.
+    glm::vec3 out{c.normal.x, 0.0f, c.normal.z};
     out = glm::length(out) > 0.1f ? glm::normalize(out) : glm::vec3{0.0f};
-    glm::vec3 stand = face.position + out * 0.8f;
-    stand.y = scene.ground(stand.x, stand.z);
+    glm::vec3 stand = *mark + out * 0.8f;
+    stand.y = 0.0f;
     KernelServerEntityCreateInfo agent{};
     agent.struct_size = sizeof(agent);
     agent.entity_type = KernelEntityType_Actor;
@@ -256,16 +261,18 @@ void run_case(Arena& arena, const Scene& scene, const Case& c,
     const glm::vec3 rest = to_glm(entity_state(arena.kernel, target).position);
     require(glm::length(to_glm(entity_state(arena.kernel, target).velocity)) < 0.5f);
 
-    const Bolt wet = arena.fire(c.aim, commit_offset);
-    require(glm::length(wet.position - dry.position) < 0.01f);
+    const std::optional<glm::vec3> again = arena.fire(c.aim, commit_offset);
+    require(again.has_value());
+    // The strike passes through actors: the same mark, gingerbread or not.
+    require(glm::length(*again - *mark) < 0.05f);
     // The first tick the gingerbread moves fast is the push; gravity has had
-    // at most a tick at it.
+    // at most a tick at it. The mark stands 30 ticks before the column rises.
     glm::vec3 push{0.0f};
-    for (int tick = 0; tick < 60 && glm::length(push) < 5.0f; ++tick) {
+    for (int tick = 0; tick < 90 && glm::length(push) < 5.0f; ++tick) {
         arena.idle(c.aim, 1);
         push = to_glm(entity_state(arena.kernel, target).velocity);
     }
-    const glm::vec3 expected = column_push.delta(face.normal);
+    const glm::vec3 expected = column_push.delta(c.normal);
     const float error = angle_degrees(push, expected);
     std::fprintf(stderr,
                  "water_jet[%s]: gingerbread at (%.2f %.2f %.2f) pushed (%.2f %.2f %.2f), "
@@ -318,25 +325,15 @@ void run_case(Arena& arena, const Scene& scene, const Case& c,
 
 int main() {
     const gs::GameServerGameplayConfig config = gs::default_game_server_gameplay_config();
-    std::uint32_t bolt_id = 0;
-    const KernelProjectileMechanicsDefinition* bolt = nullptr;
-    for (const auto& projectile : config.projectile_templates) {
-        if (projectile.name == "water_jet_bolt") {
-            bolt_id = projectile.definition.projectile_template_id;
-            bolt = &projectile.definition.mechanics;
-        }
-    }
-    std::uint32_t staff_item = 0;
+    std::uint32_t jet_item = 0;
     for (const auto& item : config.item_templates) {
-        if (item.name == "stateful_weapon_water_jet") {
-            staff_item = item.definition.item_template_id;
-        }
+        if (item.name == "stateful_weapon_water_jet") jet_item = item.definition.item_template_id;
     }
     std::uint32_t gingerbread = 0;
     for (const auto& entity : config.entity_templates) {
         if (entity.name == "gingerbread") gingerbread = entity.actor_template_id;
     }
-    require(bolt != nullptr && staff_item != 0u && gingerbread != 0u);
+    require(jet_item != 0u && gingerbread != 0u);
     Push column_push;
     for (const auto& projectile : config.projectile_templates) {
         if (projectile.name != "water_jet_column") continue;
@@ -347,40 +344,37 @@ int main() {
         column_push.horizontal = action.impulse_strength;
         column_push.vertical = action.impulse_strength_vertical;
     }
-    require(column_push.vertical > 0.0f);
+    require(column_push.vertical > 0.0f && column_push.horizontal > 0.0f);
     std::uint8_t weapon = 0;
     bool found_weapon = false;
     for (std::size_t id = 0; id < config.weapons.configured.size(); ++id) {
-        if (config.weapons.configured[id] &&
-            config.weapons.definitions[id].projectile_template_id == bolt_id) {
+        if (config.weapons.configured[id] && config.weapons.names[id] == "Water Jet") {
             weapon = static_cast<std::uint8_t>(id);
             found_weapon = true;
         }
     }
     require(found_weapon);
-    const KernelWeaponMechanicsDefinition& staff = config.weapons.definitions[weapon];
+    const KernelWeaponMechanicsDefinition& jet = config.weapons.definitions[weapon];
+    require(jet.fire_mode == KernelWeaponFireMode_TargetedStrikeSurface);
+    const float reach = jet.max_range;
+    require(reach > 10.0f);
     const KernelActionTemplateDefinition* fire = nullptr;
     for (const auto& action : config.action_templates) {
-        if (action.definition.action_template_id == staff.fire_action_template_id) {
+        if (action.definition.action_template_id == jet.fire_action_template_id) {
             fire = &action.definition;
         }
     }
     require(fire != nullptr);
     const int commit_offset = static_cast<int>(fire->commit_offset_ticks);
-    const float bolt_range =
-        bolt->speed * static_cast<float>(bolt->lifetime_ticks) * kTickSeconds;
+    int reload_ticks = 0;
+    for (const auto& action : config.action_templates) {
+        if (action.definition.action_template_id == jet.reload_action_template_id) {
+            reload_ticks = static_cast<int>(action.definition.commit_offset_ticks);
+        }
+    }
+    require(reload_ticks > 0);
 
-    const std::vector<std::uint8_t> scene_bytes =
-        read_bytes(runfiles_catalog() / config.static_collision_scene.entry_path);
-    Scene scene;
-    std::string error;
-    require(scene.world.load_static_scene(
-        scene_bytes,
-        physics::CollisionObjectIdentity{
-            0, config.static_collision_scene.collider_id, 0,
-            physics::CollisionObjectKind::kTerrain, physics::CollisionLayer::kTerrain},
-        &error));
-
+    const std::vector<std::uint8_t> scene = bake_scene();
     KernelConfig kernel_config{};
     kernel_config.mode = KernelMode_DedicatedServer;
     kernel_config.tick.server_tick_rate = 30;
@@ -394,74 +388,83 @@ int main() {
     require(gs::load_kernel_gameplay_catalog(arena.kernel, config));
     KernelStaticCollisionSceneConfig scene_config{};
     scene_config.struct_size = sizeof(scene_config);
-    scene_config.artifact_bytes = scene_bytes.data();
-    scene_config.artifact_size = static_cast<std::uint32_t>(scene_bytes.size());
+    scene_config.artifact_bytes = scene.data();
+    scene_config.artifact_size = static_cast<std::uint32_t>(scene.size());
     scene_config.scene_id = config.static_collision_scene.scene_id;
     scene_config.collider_id = config.static_collision_scene.collider_id;
     scene_config.collision_layer = config.static_collision_scene.collision_layer;
     require(Kernel_SetStaticCollisionScene(arena.kernel, &scene_config));
     require(Kernel_StartDedicatedServer(arena.kernel, 8094));
 
-    // Open ground in the open combat zone (-x, -z).
-    const glm::vec3 open{-50.0f, scene.ground(-50.0f, -50.0f) + 1.0f, -50.0f};
     KernelServerEntityCreateInfo create{};
     create.struct_size = sizeof(create);
     create.entity_type = gs::kEntityTypeActor;
     create.actor_type = gs::kActorTypePlayer;
     create.entity_template_id = config.player.actor_template_id;
     create.actor_template_id = config.player.actor_template_id;
-    create.position = to_kernel(open);
+    create.position = KernelVec3{-60.0f, 0.5f, -60.0f};
     create.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
     require(Kernel_ServerCreateEntity(arena.kernel, &create, &arena.player));
     require(Kernel_ServerSetEntityActorTemplate(
         arena.kernel, arena.player, config.player.actor_template_id));
     KernelCombatStateDefinition combat = gs::make_player_combat_state(config);
     require(Kernel_ServerSetEntityCombatState(arena.kernel, arena.player, &combat));
-    KernelWeaponMechanicsDefinition mechanics = staff;
+    KernelWeaponMechanicsDefinition mechanics = jet;
     require(Kernel_ServerSetEntityWeaponMechanics(arena.kernel, arena.player, &mechanics));
     KernelInventoryContainerId weapons = 0;
     require(Kernel_ServerCreateWeaponContainer(arena.kernel, arena.player, &weapons));
     KernelItemInstanceId item = 0;
-    require(Kernel_ServerCreateInventoryItem(arena.kernel, staff_item, 1, weapons, &item));
+    require(Kernel_ServerCreateInventoryItem(arena.kernel, jet_item, 1, weapons, &item));
     arena.idle({1.0f, 0.0f, 0.0f}, 60);
     {
         const KernelServerEntityState me = entity_state(arena.kernel, arena.player);
         require(me.weapon_ids[me.active_weapon_slot] == weapon);
     }
+    // Where the strike's rays start: the player's feet, settled, plus 1 m.
+    const float eye = entity_state(arena.kernel, arena.player).position.y + 1.0f;
+    std::fprintf(stderr, "water_jet: rays leave at y %.2f, reach %.1f m\n", eye, reach);
 
-    // The floor: down and ahead, landing a few metres out.
-    run_case(arena, scene,
-             Case{"floor", open, glm::vec3{1.0f, -0.6f, 0.0f}, 0.99f, 1.0f, 0.0f},
-             gingerbread, commit_offset, bolt_range, column_push);
-
-    // A slope: the east face of the ridge along the narrow pass's west side,
-    // which faces +x near x = 36 and rises at about 30 degrees. Found by
-    // casting west along the ground from the valley floor, so a reshaped
-    // scene moves the shooter with it rather than breaking this.
+    // The floor: down and ahead at 45 degrees, landing `eye` metres out.
     {
-        const float z = -70.0f;
-        physics::CollisionHit foot{};
-        require(scene.cast({48.0f, scene.ground(48.0f, z) + 1.4f, z},
-                           {-1.0f, 0.0f, 0.0f}, 40.0f, &foot));
-        const float x = foot.position.x + 7.0f;
-        run_case(arena, scene,
-                 Case{"slope", {x, scene.ground(x, z) + 1.0f, z}, {-1.0f, 0.0f, 0.0f},
-                      0.3f, 0.98f, 1.0f},
-                 gingerbread, commit_offset, bolt_range, column_push);
+        const glm::vec3 shooter{-60.0f, 0.0f, -60.0f};
+        run_case(arena,
+                 Case{"floor", shooter, glm::vec3{1.0f, -1.0f, 0.0f},
+                      {shooter.x + eye, 0.0f, shooter.z}, 0.3f, {0.0f, 1.0f, 0.0f}, 0.0f},
+                 gingerbread, commit_offset, reload_ticks, column_push);
     }
 
-    // A wall: a tree trunk in the forest flank (-x, +z), vertical from the
-    // ground up. Found the same way, casting north at chest height.
+    // The wall, 8 m ahead and level: the face x = 20 at eye height, out -x.
     {
-        const float x = -23.4f;
-        physics::CollisionHit trunk{};
-        require(scene.cast({x, scene.ground(x, 60.0f) + 1.4f, 60.0f},
-                           {0.0f, 0.0f, 1.0f}, 30.0f, &trunk));
-        const float z = trunk.position.z - 7.0f;
-        run_case(arena, scene,
-                 Case{"wall", {x, scene.ground(x, z) + 1.0f, z}, {0.0f, 0.0f, 1.0f},
-                      -0.2f, 0.2f, 3.0f},
-                 gingerbread, commit_offset, bolt_range, column_push);
+        const glm::vec3 shooter{kWallX - 8.0f, 0.0f, 0.0f};
+        run_case(arena,
+                 Case{"wall", shooter, glm::vec3{1.0f, 0.0f, 0.0f},
+                      {kWallX, eye, 0.0f}, 0.3f, {-1.0f, 0.0f, 0.0f}, 3.0f},
+                 gingerbread, commit_offset, reload_ticks, column_push);
+    }
+
+    // Level at nothing within reach: the ground under the end of it.
+    {
+        const glm::vec3 shooter{-60.0f, 0.0f, 40.0f};
+        run_case(arena,
+                 Case{"reach", shooter, glm::vec3{0.0f, 0.0f, 1.0f},
+                      {shooter.x, 0.0f, shooter.z + reach}, 0.3f, {0.0f, 1.0f, 0.0f}, 0.0f},
+                 gingerbread, commit_offset, reload_ticks, column_push);
+    }
+
+    // Straight up: the end of the reach is `reach` above the eye, and the
+    // drop, as long as the reach, stops `eye` short of the floor. Refused,
+    // and refused for free.
+    {
+        arena.stand({-60.0f, 0.0f, -60.0f});
+        arena.idle({0.0f, 1.0f, 0.0f}, 30);
+        arena.reload({0.0f, 1.0f, 0.0f}, reload_ticks);
+        const std::uint16_t before = arena.ammo();
+        require(before > 0u);
+        require(!arena.fire({0.0f, 1.0f, 0.0f}, commit_offset).has_value());
+        arena.idle({0.0f, 1.0f, 0.0f}, 40);
+        require(arena.projectiles().empty());
+        require(arena.ammo() == before);
+        std::fprintf(stderr, "water_jet[sky]: refused, ammo %u kept\n", before);
     }
 
     std::puts("water_jet_staff_test passed");
