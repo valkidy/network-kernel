@@ -1,6 +1,6 @@
 # Host mode 連線機制計劃：開遊戲即 host、network terminal、單一 runner
 
-狀態：**草案（2026-11-20），Q1–Q4 已定案；R0 完成，O5、O6 已定案（H11、H12）；R1–R3、N1、N2 完成（unity `claude/lan-discovery-n2` `0510511`，疊在前面各步上；kernel `claude/dedicated-lan-discovery` `365eb034`，從 main 開出；都未 merge）。**
+狀態：**草案（2026-11-20），Q1–Q4 已定案；R0 完成，O5、O6 已定案（H11、H12）；R1–R3、N1–N3 完成（unity `claude/lan-discovery-n2` `0510511`，疊在前面各步上；kernel `claude/dedicated-lan-discovery` `365eb034` 和 `claude/network-terminal-n3` `39b211c6`，都從 main 開出；都未 merge）。**
 分支：`claude/host-mode-plan`（從 main `4e36d622`）。
 日期：2026-11-20。
 
@@ -235,6 +235,24 @@ ClientSession : wraps NetworkClient (+ catalog sync, connection state, cache)
   - 面板內容：LAN discovery 列表（H5）、手動輸入（H7）
   - 在別人的 server 上多一個「回自己的營地」（H4）
 
+### 5.1.1 N3 實作備註（2026-11-20）
+
+- **entity template**：`235_prop_network_terminal.yaml`，range 3 m，`action_open_ui` ui 5。我查過所有分支，235 和 ui 5 都沒有被用過。
+- **擺放位置**：camp 的 (-4, 0, 5)，站在地面上（測試量到 y 0.79，地面也是 0.79）。
+  - **注意**：`0_scene_initial_camp.yaml` 是 Unity 的 scene exporter 產生的檔案，我是手動加上這一筆。Unity 的 camp scene 也要放上這個 prop，否則下次匯出時會被蓋掉。
+- **和原計劃不同**：§5.1 原本寫「面板只在本機打開，不經過 server」。實作改成**沿用 level terminal 的流程**：activate 之後 game server 一律回應 `OPEN_UI`（ui 5，OK），Unity 收到 `OPEN_UI` 再打開面板。
+  - 好處是 Unity 只需要多處理一個 ui id，距離判定和 F 鍵都直接沿用。
+  - 在別人的 server 上也能用，所以「回自己的營地」可以從同一個面板觸發。
+- **game_server**：新增常數 `GAME_SERVER_UI_NETWORK_TERMINAL 5u`。ui 5 和 ui 4 一樣不會交給 `ShelterDirector`。`OPEN_UI` 的 wire format 沒有改，現在統一由 `answer_open_ui` 送出。
+- **測試**（-c opt）：
+  - `scene_flow_startup_test`：terminal 在地面上；guest 和 host 都收到 OK；沒有人進入建築
+  - `placeable_registry_test`
+  - `scene_template_catalog_test`：camp 的 prop 數從 2 改成 3
+  - `drop_tag_test`、`loadout_test`、`stamp_sites_test`
+- **交付**：
+  - catalog 內容有變，`bundle.bytes` 要重新產生，Unity package 要重新打包（使用者處理）。在那之前 Unity 的 camp 裡看不到這個 terminal。
+  - C# 的 `GameServerConstants` 還沒有 ui 5 的常數，N4 在 Unity 端先用本地常數。
+
 ### 5.2 Network gate
 
 | 階段 | 做法 |
@@ -276,7 +294,7 @@ ClientSession : wraps NetworkClient (+ catalog sync, connection state, cache)
 |---|---|---|---|
 | N1 ✅ | `-ip` 解析；退回 host 的處理；host port 改成 7801 | Unity | **完成（2026-11-20）**：unity `claude/launch-options-n1` `b2ffd51`。EditMode 44/44、PlayMode 6/6（包括「連不上就退回 host」）。**不做 Boot scene**，見 §3.1 |
 | N2 ✅ | host session 啟動時廣播 LAN discovery；綁 7801 失敗時的處理（O2）；`app` 的 dedicated 模式廣播 LAN discovery（H12） | Unity 加本 repo 的 `app/`（commit 分開） | **完成（2026-11-20）**：unity `claude/lan-discovery-n2` `0510511`（PlayMode 7/7）；kernel `claude/dedicated-lan-discovery` `365eb034`（`-c opt //app:app` 在 port 7871 實跑，用 NKLAN01 查詢收到 port=7871 的回應） |
-| N3 | `network_terminal` entity template、ui 5 的路由、擺進 camp | game_server 加 catalog（本 repo 的 `claude/*` 分支） | 0.5 天 |
+| N3 ✅ | `network_terminal` entity template、ui 5 的路由、擺進 camp | game_server 加 catalog（本 repo 的 `claude/*` 分支） | **完成（2026-11-20）**：kernel `claude/network-terminal-n3` `39b211c6`。6 個 game_server 測試通過，見 §5.1.1 |
 | N4 | terminal 面板（列表、輸入、回自己的營地） | Unity | 1 天 |
 | N5a | network gate v1：穿門時才開始連線 | Unity | 0.5–1 天 |
 | N5b | network gate v2：`NetworkClient` 的暫停選項，連線準備好才開門 | C# package（獨立的 `claude/*-csharp` 分支）加 Unity | 0.5–1 天 |
