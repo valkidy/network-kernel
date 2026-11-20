@@ -406,6 +406,37 @@ void held_events_are_released_while_the_clock_overruns() {
     require(seen);
 }
 
+
+// A host that names its render time drives the clock alone. The calls that
+// don't -- get_render_states, get_skeleton_render_states, which Unity's debug
+// view makes every frame -- run on client_local_time_us_, here 4 s ahead of
+// the host's time (a link held at a gate before its runner adopted it). They
+// used to move the same clock, so whichever base ran ahead won; with the debug
+// view off the host's own late time showed the world 3.5 s stale. Read first,
+// before the host has drawn anything, they must not leave the clock on their
+// base either.
+void unnamed_reads_do_not_drive_the_clock() {
+    Client client;
+    client.engine.client_local_time_us_ = client.tick_us(kThrowTick) + 4000000u;
+    client.now = client.tick_us(kThrowTick);
+    client.deliver_snapshots();
+    std::array<RenderEntityState, 8> unnamed{};
+    client.engine.get_render_states(
+        unnamed.data(), static_cast<std::uint32_t>(unnamed.size()));
+    client.start();
+    for (int frame = 0; frame < 90; ++frame) {
+        client.frame();
+        client.engine.client_local_time_us_ += kFrameUs;
+        const std::uint64_t before = client.engine.render_clock_.render_us;
+        client.engine.get_render_states(
+            unnamed.data(), static_cast<std::uint32_t>(unnamed.size()));
+        require(client.engine.render_clock_.render_us == before);
+        require(std::llabs(
+                    static_cast<long long>(client.engine.render_server_time_us_) -
+                    static_cast<long long>(client.target())) <= 1000);
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -415,6 +446,7 @@ int main() {
     a_long_outage_holds_at_the_cap_and_resumes_forward();
     endings_stay_in_step_while_the_clock_overruns();
     held_events_are_released_while_the_clock_overruns();
+    unnamed_reads_do_not_drive_the_clock();
     std::printf("render_clock_test: PASS\n");
     return 0;
 }
