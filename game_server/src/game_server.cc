@@ -107,6 +107,10 @@ void GameServer::handle_event(const KernelEvent& event) {
     if (event.type == KernelEventType_UiOpened && event.code == GAME_SERVER_UI_LEVEL_SELECT) {
         // Not a building to go inside: the level list is the player's to see.
         answer_level_select(event);
+    } else if (event.type == KernelEventType_UiOpened &&
+               event.code == GAME_SERVER_UI_NETWORK_TERMINAL) {
+        // Not a building either; joining another world is the client's job.
+        answer_open_ui(event, GAME_SERVER_UI_NETWORK_TERMINAL, GAME_SERVER_OPEN_UI_OK);
     } else {
         shelter_.handle_event(event);
     }

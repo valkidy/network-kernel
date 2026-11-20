@@ -364,13 +364,19 @@ void GameServer::answer_level_select(const KernelEvent& event) const {
     } else if (flow_ != GAME_SERVER_SCENE_FLOW_CAMP) {
         result = GAME_SERVER_OPEN_UI_BUSY;
     }
+    answer_open_ui(event, GAME_SERVER_UI_LEVEL_SELECT, result);
+}
+
+void GameServer::answer_open_ui(
+    const KernelEvent& event, std::uint32_t ui_id, std::uint8_t result) const {
+    if (kernel_ == nullptr) return;
     std::vector<std::uint8_t> body;
-    put_u32(&body, GAME_SERVER_UI_LEVEL_SELECT);
+    put_u32(&body, ui_id);
     put_u32(&body, event.net_id);
     put_u8(&body, result);
     if (!Kernel_ServerSendGameMessage(kernel_, event.peer_id, GAME_SERVER_MESSAGE_OPEN_UI,
             body.data(), static_cast<std::uint32_t>(body.size()))) {
-        spdlog::warn("level select answer not sent peer={}", event.peer_id);
+        spdlog::warn("open ui {} answer not sent peer={}", ui_id, event.peer_id);
     }
 }
 

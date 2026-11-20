@@ -163,7 +163,7 @@ void bundle_templates() {
     require(root.start_scene == "initial_camp");
     require(root.preload_director_template_ids.empty());
     require(root.patrols.empty());
-    require(root.scene_props.size() == 2u);
+    require(root.scene_props.size() == 3u);  // camp, level terminal, network terminal
     // 0 the camp, 1-7 levels (4-7 the random level at 216, 432, 648 and
     // 864 m), 100-102 the test maps; only the levels are levels.
     require(root.scene_templates.size() == 11u);
@@ -375,7 +375,8 @@ void start_scene_rules() {
         load_or_die(replaced(yaml, "\nstart_scene: 0\n", "\n"), levels);
     require(camp.start_scene == "initial_camp");
     require(camp.scene_template.empty());
-    require(has_prop(camp, "initial_camp") && has_prop(camp, "level_terminal"));
+    require(has_prop(camp, "initial_camp") && has_prop(camp, "level_terminal") &&
+        has_prop(camp, "network_terminal"));
     require(camp.patrols.empty());
     require(camp.preload_director_template_ids.empty());
     // The root names no spawn, so having one says it is the camp's.
