@@ -1,6 +1,6 @@
 # Host mode 連線機制計劃：開遊戲即 host、network terminal、單一 runner
 
-狀態：**草案（2026-11-20），Q1–Q4 已定案；R0 完成，O5、O6 已定案（H11、H12）；R1–R3、N1–N5a 完成（unity `claude/network-gate-n5a` `13e614c`，疊在前面各步上；kernel `claude/dedicated-lan-discovery` `365eb034` 和 `claude/network-terminal-n3` `39b211c6`，都從 main 開出；都未 merge）。**
+狀態：**草案（2026-11-20），Q1–Q4 已定案；R0 完成，O5、O6 已定案（H11、H12）；R1–R3、N1–N5b 完成（unity `claude/network-gate-prepared-n5b` `76ed730`，疊在前面各步上；C# `claude/network-client-hold-csharp` `c81b5b63`，從 feat-unity-plugin 開出；kernel `claude/dedicated-lan-discovery` `365eb034` 和 `claude/network-terminal-n3` `39b211c6`，都從 main 開出；都未 merge）。**
 分支：`claude/host-mode-plan`（從 main `4e36d622`）。
 日期：2026-11-20。
 
@@ -304,6 +304,27 @@ ClientSession : wraps NetworkClient (+ catalog sync, connection state, cache)
 - **測試**：PlayMode `Host_WalksIntoTheNetworkGateAndJoins`。開門之後等 30 個 frame，確認沒有連線；把玩家移進門裡之後，成功加入 7981，而且門已經關閉。
 - **還沒做的**：N5b，也就是先建立連線、準備好才開門。這需要 C# package 的變動。
 
+### 5.2.2 N5b 實作備註（2026-11-21）
+
+- **C# package**（`claude/network-client-hold-csharp`，從 feat-unity-plugin 開出，只改 `plugins/`）：
+  - `GameplayCatalogSyncOptions.HoldBeforeHandshake`：catalog 載入之後停住，不呼叫 `Kernel_ContinueClientHandshake`。
+  - 新增狀態 `NetworkClientConnectionState.ReadyToJoin`。**加在 enum 的最後面**，所以原有的值不變。
+  - `IsHandshakeHeld` 回報是否正在等待，`ContinueHandshake()` 繼續加入。
+  - 預設關閉，現有的使用者不受影響。沒有 native 或 ABI 的變動。
+- **Unity**（`claude/network-gate-prepared-n5b`）：
+  - 在 terminal 選了 server 後，先用 `HoldBeforeHandshake` 建立連線，畫面提示「Connecting to …」。連線停住之後才開門。
+  - 連不上就不開門，玩家留在自己的營地，畫面提示「… No gate opened.」。
+  - 穿過時，`StartClient` 會接手已經停住的連線並繼續 handshake，不會重新連一次。
+  - 門 60 秒沒人走進去，就連同連線一起關掉。連線的 sync timeout 設成 90 秒，讓等待時間比門的壽命長。
+- **測試**：
+  - 測試用的 package 是目前發佈的 0.6.9（ABI 110，dev-latest）再加上這兩個 C# 檔案，在 clone 裡以 embedded package 的方式載入。
+  - PlayMode 11/11 通過：
+    - 門要等連線停住之後才會開；再等 30 個 frame，server 上沒有任何玩家加入
+    - 走進門之後剛好加入一次
+    - 連不上的 server 不會開門
+  - 第一次跑時，我直接用 feat-unity-plugin 的 package，裡面的 dylib 是 ABI 109，所以全部失敗。這是測試設定的錯誤，不是程式碼的問題。
+- **交付**：Unity 分支要等 package 發佈了 `ContinueHandshake` 才能編譯，用目前的 0.6.9 會編譯失敗。所以發佈順序是：C# 分支 → 打包 package → 再用 Unity 分支。
+
 ## 6. 不採用的做法
 
 | 做法 | 不採用的原因 |
@@ -335,7 +356,7 @@ ClientSession : wraps NetworkClient (+ catalog sync, connection state, cache)
 | N3 ✅ | `network_terminal` entity template、ui 5 的路由、擺進 camp | game_server 加 catalog（本 repo 的 `claude/*` 分支） | **完成（2026-11-20）**：kernel `claude/network-terminal-n3` `39b211c6`。6 個 game_server 測試通過，見 §5.1.1 |
 | N4 ✅ | terminal 面板（列表、輸入、回自己的營地） | Unity | **完成（2026-11-20）**：unity `claude/network-terminal-panel-n4` `c2564c8`。EditMode 48/48、PlayMode 9/9，見 §5.1.2 |
 | N5a ✅ | network gate v1：穿門時才開始連線 | Unity | **完成（2026-11-21）**：unity `claude/network-gate-n5a` `13e614c`。PlayMode 10/10，見 §5.2.1 |
-| N5b | network gate v2：`NetworkClient` 的暫停選項，連線準備好才開門 | C# package（獨立的 `claude/*-csharp` 分支）加 Unity | 0.5–1 天 |
+| N5b ✅ | network gate v2：`NetworkClient` 的暫停選項，連線準備好才開門 | C# package（獨立的 `claude/*-csharp` 分支）加 Unity | **完成（2026-11-21）**：C# `claude/network-client-hold-csharp` `c81b5b63`；unity `claude/network-gate-prepared-n5b` `76ed730`。PlayMode 11/11，見 §5.2.2 |
 | N6 | 檢查清單：`docs/HOST_MODE_N6_CHECKLIST.md`。兩台機器實際跑完一輪流程 A 和流程 B | 手動 | 1 天 |
 
 **合計**：R0–R4 約 4.5–7 天；N1–N6 約 5.5–7 天；全部約 10–14 天。先前評估的 6–10 天只包含 runner 合併、原地切換、Boot 和 `-ip`，沒有包含 LAN discovery、terminal prop 和面板。
