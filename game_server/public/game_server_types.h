@@ -181,6 +181,9 @@
 /* The interface a prop's open_ui names (1 rest, 2 loadout and 3 camp are the
  * buildings'): the level list. Answered with OPEN_UI, not by going inside. */
 #define GAME_SERVER_UI_LEVEL_SELECT 4u
+/* The network terminal: the LAN list and an address to join. Anyone may open
+ * it, so OPEN_UI always answers OK (docs/HOST_MODE_PLAN.md H4). */
+#define GAME_SERVER_UI_NETWORK_TERMINAL 5u
 
 #define GAME_SERVER_OPEN_UI_OK 0u
 #define GAME_SERVER_OPEN_UI_NOT_OWNER 1u

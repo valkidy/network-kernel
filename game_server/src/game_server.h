@@ -169,6 +169,8 @@ private:
     bool level_objective_met() const;
     // Someone activated the level list prop.
     void answer_level_select(const KernelEvent& event) const;
+    // Sends the activating player OPEN_UI for ui_id with result.
+    void answer_open_ui(const KernelEvent& event, std::uint32_t ui_id, std::uint8_t result) const;
     // A generated level's nests go up when the party first arrives.
     void place_level_nests();
     void flush_scene_state();

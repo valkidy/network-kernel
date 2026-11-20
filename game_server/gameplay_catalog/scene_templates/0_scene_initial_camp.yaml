@@ -9,6 +9,10 @@ scene_props:
     position: {x: 5.0, y: 0.0, z: 6.0}
     rotation: {x: 0.0, y: 0.5, z: 0.0, w: 0.866025}
     grounded: true
+  - entity_template: network_terminal
+    position: {x: -4.0, y: 0.0, z: 5.0}
+    rotation: {x: 0.0, y: -0.5, z: 0.0, w: 0.866025}
+    grounded: true
 player_barriers:
   # 31 walls along the terrain's outline (outlineBarrier)
   - {center: {x: -9.736, y: 1.664, z: -5.495}, half_extents: {x: 3.524, y: 2.661, z: 0.5}, yaw_degrees: 74.932}

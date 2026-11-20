@@ -93,7 +93,8 @@ struct Follower {
     const std::vector<std::uint8_t>* bundle = nullptr;
     SceneState state;
     int states_received = 0;
-    std::vector<std::uint8_t> ui_results;
+    std::vector<std::uint8_t> ui_results;          // the level list's answers
+    std::vector<std::uint8_t> network_ui_results;  // the network terminal's
     std::map<std::uint32_t, std::uint32_t> loaded;
 
     void decode(const KernelGameMessage& m) {
@@ -133,8 +134,10 @@ struct Follower {
                 if (messages[i].message_type == GAME_SERVER_MESSAGE_SCENE_STATE) decode(messages[i]);
                 if (messages[i].message_type == GAME_SERVER_MESSAGE_OPEN_UI) {
                     require(messages[i].payload_size == 9u);
-                    require(u32_at(messages[i].payload) == GAME_SERVER_UI_LEVEL_SELECT);
-                    ui_results.push_back(messages[i].payload[8]);
+                    const std::uint32_t ui = u32_at(messages[i].payload);
+                    require(ui == GAME_SERVER_UI_LEVEL_SELECT || ui == GAME_SERVER_UI_NETWORK_TERMINAL);
+                    (ui == GAME_SERVER_UI_LEVEL_SELECT ? ui_results : network_ui_results)
+                        .push_back(messages[i].payload[8]);
                 }
             }
         }
@@ -700,6 +703,48 @@ void camp_level_terminal(const std::vector<std::uint8_t>& bundle, std::uint16_t 
     shelter.struct_size = sizeof(shelter);
     require(Kernel_GetLocalShelterState(server.kernel, &shelter));
     require(shelter.shelter_net_id == 0u);
+
+    // The network terminal beside it (docs/HOST_MODE_PLAN.md N3): on the
+    // ground, open to the guest as well as the host, and not a building.
+    const auto network = std::find_if(props.begin(), props.end(),
+        [](const KernelServerEntityState& p) { return p.entity_template_id == 235u; });
+    require(network != props.end());
+    {
+        float network_ground = -1000.0f;
+        const float nx = network->position.x;
+        const float nz = network->position.z;
+        for (std::size_t t = 0; t + 2 < indices.size(); t += 3) {
+            const float* a0 = &positions[indices[t] * 3u];
+            const float* b0 = &positions[indices[t + 1] * 3u];
+            const float* c0 = &positions[indices[t + 2] * 3u];
+            const float d = (b0[2] - c0[2]) * (a0[0] - c0[0]) + (c0[0] - b0[0]) * (a0[2] - c0[2]);
+            if (std::fabs(d) < 1e-6f) continue;
+            const float u = ((b0[2] - c0[2]) * (nx - c0[0]) + (c0[0] - b0[0]) * (nz - c0[2])) / d;
+            const float v = ((c0[2] - a0[2]) * (nx - c0[0]) + (a0[0] - c0[0]) * (nz - c0[2])) / d;
+            if (u < 0.0f || v < 0.0f || u + v > 1.0f) continue;
+            network_ground = std::max(network_ground, u * a0[1] + v * b0[1] + (1.0f - u - v) * c0[1]);
+        }
+        std::printf("network terminal at (%.1f, %.2f, %.1f), ground %.2f\n",
+            nx, network->position.y, nz, network_ground);
+        require(std::fabs(network->position.y - network_ground) < 0.3f);
+        const KernelVec3 by_network{nx + 1.5f, network->position.y + 1.0f, nz};
+        require(Kernel_ServerSetEntityTransform(server.kernel, a_player, &by_network, &facing));
+        require(Kernel_ServerSetEntityTransform(server.kernel, host_player, &by_network, &facing));
+        world.settle(0.5);
+    }
+    activate(a->kernel, 0u, a_player, network->net_id, 11u);
+    require(world.until([&] { return !a->network_ui_results.empty(); }, 5.0));
+    require(a->network_ui_results.back() == GAME_SERVER_OPEN_UI_OK);
+    activate(server.kernel, 1u, host_player, network->net_id, 12u);
+    require(world.until([&] { return !host.network_ui_results.empty(); }, 5.0));
+    require(host.network_ui_results.back() == GAME_SERVER_OPEN_UI_OK);
+    world.settle(0.5);  // A shelter request would land a tick after the event.
+    require(Kernel_GetLocalShelterState(server.kernel, &shelter));
+    require(shelter.shelter_net_id == 0u);
+    require(host.ui_results.size() == 1u && a->ui_results.size() == 1u);
+    std::printf("camp: the network terminal answered guest and host OK; nobody went inside\n");
+    require(Kernel_ServerSetEntityTransform(server.kernel, host_player, &beside, &facing));
+    world.settle(0.5);
 
     // Choosing from it opens the level; while it runs the list is unavailable.
     select_level(server.kernel, index);
