@@ -1,6 +1,6 @@
 # Host mode 連線機制計劃：開遊戲即 host、network terminal、單一 runner
 
-狀態：**草案（2026-11-20），Q1–Q4 已定案；R0 完成，O5、O6 已定案（H11、H12）；R1–R3、N1–N4 完成（unity `claude/network-terminal-panel-n4` `c2564c8`，疊在前面各步上；kernel `claude/dedicated-lan-discovery` `365eb034` 和 `claude/network-terminal-n3` `39b211c6`，都從 main 開出；都未 merge）。**
+狀態：**草案（2026-11-20），Q1–Q4 已定案；R0 完成，O5、O6 已定案（H11、H12）；R1–R3、N1–N5a 完成（unity `claude/network-gate-n5a` `13e614c`，疊在前面各步上；kernel `claude/dedicated-lan-discovery` `365eb034` 和 `claude/network-terminal-n3` `39b211c6`，都從 main 開出；都未 merge）。**
 分支：`claude/host-mode-plan`（從 main `4e36d622`）。
 日期：2026-11-20。
 
@@ -287,6 +287,23 @@ ClientSession : wraps NetworkClient (+ catalog sync, connection state, cache)
 
 ---
 
+### 5.2.1 N5a 實作備註（2026-11-21）
+
+- **開門**：在 terminal 選了 server 或輸入有效地址後，不會立刻切換，而是在玩家面前 3 m 開一扇門（`NetworkGate`）。
+  - 外觀沿用 level gate 入口的 prefab（template 232）；沒有這個 prefab 時，用兩根柱子加一根橫樑代替。
+  - 畫面左上角會提示這扇門通往哪裡。
+- **穿過**：玩家走進門的中心 1.2 m 範圍內（高度差 3 m 以內）時，才呼叫 `JoinServer`；連不上會照 N1 的規則退回自己的營地。
+  - 門是**純 client 端**的東西，因為沒有任何 server 同時涵蓋兩個世界，kernel portal 傳送不過去。
+- **其他規則**：
+  - 沒有人走進去的門，60 秒後會自動關閉。
+  - 再開一次門，會移到新的位置並改成新的目的地。
+  - 「Return to my camp」仍然立刻切換，不經過門。
+- **和 §5.2 的差異**：
+  - portal 畫面全黑：沿用的 prefab 本身就沒有接上 portal 畫面，沒有特別處理。
+  - fade：沒有做。切換時 runner 會整個重建，所以改用畫面上的提示文字「Joining …」，這段文字在重建之後仍會顯示。
+- **測試**：PlayMode `Host_WalksIntoTheNetworkGateAndJoins`。開門之後等 30 個 frame，確認沒有連線；把玩家移進門裡之後，成功加入 7981，而且門已經關閉。
+- **還沒做的**：N5b，也就是先建立連線、準備好才開門。這需要 C# package 的變動。
+
 ## 6. 不採用的做法
 
 | 做法 | 不採用的原因 |
@@ -317,7 +334,7 @@ ClientSession : wraps NetworkClient (+ catalog sync, connection state, cache)
 | N2 ✅ | host session 啟動時廣播 LAN discovery；綁 7801 失敗時的處理（O2）；`app` 的 dedicated 模式廣播 LAN discovery（H12） | Unity 加本 repo 的 `app/`（commit 分開） | **完成（2026-11-20）**：unity `claude/lan-discovery-n2` `0510511`（PlayMode 7/7）；kernel `claude/dedicated-lan-discovery` `365eb034`（`-c opt //app:app` 在 port 7871 實跑，用 NKLAN01 查詢收到 port=7871 的回應） |
 | N3 ✅ | `network_terminal` entity template、ui 5 的路由、擺進 camp | game_server 加 catalog（本 repo 的 `claude/*` 分支） | **完成（2026-11-20）**：kernel `claude/network-terminal-n3` `39b211c6`。6 個 game_server 測試通過，見 §5.1.1 |
 | N4 ✅ | terminal 面板（列表、輸入、回自己的營地） | Unity | **完成（2026-11-20）**：unity `claude/network-terminal-panel-n4` `c2564c8`。EditMode 48/48、PlayMode 9/9，見 §5.1.2 |
-| N5a | network gate v1：穿門時才開始連線 | Unity | 0.5–1 天 |
+| N5a ✅ | network gate v1：穿門時才開始連線 | Unity | **完成（2026-11-21）**：unity `claude/network-gate-n5a` `13e614c`。PlayMode 10/10，見 §5.2.1 |
 | N5b | network gate v2：`NetworkClient` 的暫停選項，連線準備好才開門 | C# package（獨立的 `claude/*-csharp` 分支）加 Unity | 0.5–1 天 |
 | N6 | 兩台機器實際跑完一輪流程 A 和流程 B | 手動 | 1 天 |
 
