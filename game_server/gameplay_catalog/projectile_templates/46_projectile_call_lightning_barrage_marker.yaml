@@ -16,9 +16,9 @@ triggers:
       template: call_lightning_strike_fuse
       position: event.position
       direction: event.direction
-      # 8-12 fuses within 8 m, each living 10 ticks plus a share of a 15-tick
+      # 12-16 fuses within 8 m, each living 10 ticks plus a share of a 15-tick
       # window, so they expire one after another.
       lifetime: 10
-      count: [8, 12]
+      count: [12, 16]
       scatter_radius: 8.0
       lifetime_spread: 15

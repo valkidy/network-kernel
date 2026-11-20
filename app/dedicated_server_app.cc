@@ -4,6 +4,7 @@
 #include <array>
 #include <chrono>
 #include <csignal>
+#include <cstdio>
 #include <cstdint>
 #include <exception>
 #include <fstream>
@@ -483,6 +484,35 @@ int RunDedicatedServer(
             max_players);
     }
 
+    // Answer LAN discovery queries, so players on this network find the server
+    // in the network terminal's list (docs/HOST_MODE_PLAN.md H12). Optional: a
+    // taken discovery port or a network that drops broadcasts only means the
+    // server has to be joined by address.
+    KernelLANDiscoveryHandle* lan_discovery = Kernel_LANDiscovery_Create();
+    if (lan_discovery != nullptr) {
+        KernelLANDiscoveryServerConfig discovery_config{};
+        discovery_config.struct_size = sizeof(discovery_config);
+        discovery_config.discovery_port = KERNEL_LAN_DISCOVERY_DEFAULT_PORT;
+        discovery_config.server_endpoint_port = port;
+        std::snprintf(
+            discovery_config.server_name,
+            sizeof(discovery_config.server_name),
+            "dedicated server :%u",
+            static_cast<unsigned>(port));
+        if (Kernel_LANDiscovery_StartServer(lan_discovery, &discovery_config)) {
+            spdlog::info(
+                "answering LAN discovery on udp {} for game port {}",
+                KERNEL_LAN_DISCOVERY_DEFAULT_PORT,
+                port);
+        } else {
+            spdlog::warn(
+                "could not answer LAN discovery on udp {}; join this server by address",
+                KERNEL_LAN_DISCOVERY_DEFAULT_PORT);
+            Kernel_LANDiscovery_Destroy(lan_discovery);
+            lan_discovery = nullptr;
+        }
+    }
+
     // docker stop / Ctrl-C ask for a clean exit; the loop below notices within
     // one tick and falls through to Kernel_Destroy.
     std::signal(SIGINT, request_stop);
@@ -552,6 +582,10 @@ int RunDedicatedServer(
     spdlog::info(
         "dedicated server stopping on signal {}",
         static_cast<int>(g_stop_signal));
+    if (lan_discovery != nullptr) {
+        Kernel_LANDiscovery_StopServer(lan_discovery);
+        Kernel_LANDiscovery_Destroy(lan_discovery);
+    }
     Kernel_Destroy(kernel);
     spdlog::info("dedicated server stopped");
     return 0;

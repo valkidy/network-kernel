@@ -1,0 +1,18 @@
+# Where a player joins another world, in the camp: activating it opens the
+# network terminal (ui 5) -- the LAN list and an address to type. Anyone may
+# use it, the room owner or not (docs/HOST_MODE_PLAN.md H4); the server only
+# answers OPEN_UI, and the client does the rest. Nobody goes inside.
+id: 235
+name: network_terminal
+entity_type: prop
+force_resistance: 1000.0
+interaction:
+  capabilities: [interactable]
+  range: 3.0
+  line_of_sight_required: false
+triggers:
+  on_activated:
+    action_graph: action_open_ui
+    parameters:
+      ui_id: 5
+      target: event.instigator

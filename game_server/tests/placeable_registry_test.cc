@@ -93,7 +93,7 @@ int main() {
         require(nest.find(want) != std::string::npos);
     }
     require(found);
-    for (const char* name : {"initial_camp", "level_terminal"}) {
+    for (const char* name : {"initial_camp", "level_terminal", "network_terminal"}) {
         require(!entry_of(built, name).empty());
     }
     std::printf("placeable_registry_test passed: %d props\n", props);

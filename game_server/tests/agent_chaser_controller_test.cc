@@ -1074,6 +1074,66 @@ void agents_sharing_a_target_spread_round_it(
     }
 }
 
+// Holding is not a dead stop. A target walking away from a holding chaser used
+// to cross the 0.3 m stop/resume band in a few ticks: the chaser stood still,
+// ran, closed and stood still again, ~50 ms stops every ~60 ms
+// (issue_20261120_210012). It keeps pace with the share of the target's
+// velocity that carries it away -- and only that share: a target coming closer
+// or walking across is not backed away from or side-stepped.
+void a_holding_chaser_keeps_pace_with_a_target_walking_away(
+    KernelHandle* kernel,
+    std::uint32_t agent_net_id,
+    std::uint32_t player_net_id,
+    std::vector<network_example::game_server::AgentRuntimeState>* agents) {
+    network_example::game_server::AgentChaserConfig chaser = chaser_config();
+    chaser.chase.attack_range_meters = 2.5f;
+    const network_example::game_server::AgentChaserController controller(chaser);
+
+    set_position(kernel, agent_net_id, {0.0f, 0.0f, 0.0f});
+    set_position(kernel, player_net_id, {1.5f, 0.0f, 0.0f});
+    Kernel_Update(kernel, kFixedDelta);
+    for (int tick = 0; tick < 4; ++tick) {
+        run_frame(kernel, controller, agents);
+    }
+    require(network_example::game_server::is_pursuing((*agents)[0].sentry.state));
+    require((*agents)[0].chase_holding);
+    require(almost_equal((*agents)[0].velocity.x, 0.0f));
+
+    const auto run_with_player_velocity = [&](const KernelVec3& velocity) {
+        set_position(kernel, agent_net_id, {0.0f, 0.0f, 0.0f});
+        set_position(kernel, player_net_id, {1.5f, 0.0f, 0.0f});
+        Kernel_Update(kernel, kFixedDelta);
+        require(Kernel_ServerSetEntityVelocity(kernel, player_net_id, &velocity));
+        run_frame(kernel, controller, agents);
+        require((*agents)[0].chase_holding);
+    };
+
+    // Walking straight away at 2 m/s: followed at 2 m/s, still holding.
+    run_with_player_velocity(KernelVec3{2.0f, 0.0f, 0.0f});
+    require(almost_equal((*agents)[0].velocity.x, 2.0f, 0.01f));
+    require(almost_equal((*agents)[0].velocity.z, 0.0f, 0.01f));
+
+    // Faster than the chaser can run: capped at its own speed.
+    run_with_player_velocity(KernelVec3{6.0f, 0.0f, 0.0f});
+    require(almost_equal((*agents)[0].velocity.x, kAgentMoveSpeed, 0.01f));
+
+    // Away and across: only the receding share is followed, along the line
+    // to the target.
+    run_with_player_velocity(KernelVec3{1.0f, 0.0f, 3.0f});
+    require(almost_equal((*agents)[0].velocity.x, 1.0f, 0.01f));
+    require(almost_equal((*agents)[0].velocity.z, 0.0f, 0.01f));
+
+    // Coming closer, or straight across: it stands.
+    run_with_player_velocity(KernelVec3{-2.0f, 0.0f, 0.0f});
+    require(almost_equal((*agents)[0].velocity.x, 0.0f));
+    run_with_player_velocity(KernelVec3{0.0f, 0.0f, 2.0f});
+    require(almost_equal((*agents)[0].velocity.x, 0.0f));
+    require(almost_equal((*agents)[0].velocity.z, 0.0f));
+
+    const KernelVec3 still{0.0f, 0.0f, 0.0f};
+    require(Kernel_ServerSetEntityVelocity(kernel, player_net_id, &still));
+}
+
 int main() {
     KernelConfig config = server_config();
     KernelHandle* kernel = Kernel_Create(&config);
@@ -1204,6 +1264,8 @@ int main() {
     require(agents[0].sentry.target == 0u);
 
     a_chaser_attacks_only_inside_its_attack_range(
+        kernel, agent_net_id, player_net_id, &agents);
+    a_holding_chaser_keeps_pace_with_a_target_walking_away(
         kernel, agent_net_id, player_net_id, &agents);
     a_ranged_chaser_fires_while_it_is_still_closing(
         kernel, agent_net_id, player_net_id, &agents);
