@@ -1,6 +1,6 @@
 # Host mode 連線機制計劃：開遊戲即 host、network terminal、單一 runner
 
-狀態：**草案（2026-11-20），Q1–Q4 已定案；R0 完成，O5、O6 已定案（H11、H12）；R1、R2 完成（unity `claude/game-runner-r2` `27bee9a`，疊在 R1 上，未 merge）。**
+狀態：**草案（2026-11-20），Q1–Q4 已定案；R0 完成，O5、O6 已定案（H11、H12）；R1–R3 完成（unity `claude/host-features-r3` `42ee799`，疊在 R1、R2 上，未 merge）。**
 分支：`claude/host-mode-plan`（從 main `4e36d622`）。
 日期：2026-11-20。
 
@@ -52,10 +52,26 @@
 | `local_shelter_state`、`local_weapon_state` | 有 `is_server_mode` 分支 |
 | `send_game_message` | host 自己的玩家走專門的本機路徑，不經過網路 |
 
-預期不需要改 kernel。R3 要實測的項目：
+預期不需要改 kernel。R3 要實測的項目（**2026-11-20 已實測，全部正常**，結果在本節最後）：
 - listen mode 下 container 的 `sync_state` 沒有設定（只有 client 分支會設）
 - `portalDirector` 依賴 snapshot tick，host 沒有 snapshot
 - 建築內部的 spawn tick 也是同樣的問題
+
+---
+
+**R3 實測結果**（host 角色，PlayMode `GameRunnerHostFeatureTests`）：
+
+| 項目 | 結果 |
+|---|---|
+| 武器欄位由 inventory 填入 | ✅ inventory 有 11 個物品，武器是 3020、3023、3025、3027；`HasWeaponLoadout` 為 true，`TryGetLocalWeaponState` 成功 |
+| container `sync_state` | ✅ 不是問題：server 端的 `ItemStore::container_view` 一律設成 `Ready`（`item_system.cc:1441`） |
+| 進入 camp 的建築 | ✅ 進入建築 2，ui 2（loadout）；UI 打開，建築內部也有解析出來 |
+| 建築的 spawn tick | ✅ `ResolveBuildingSpawnTick` 在 render state 沒有 spawn tick 時，會改用 `ShelterSpawnTickTracker` |
+| 開關卡、穿過 gate | ✅ `level_terrain_seed2` 載入 slot 1（offset_x 4096）；gate 開啟，玩家傳送到出口（kernel 送出 `ActorTeleported`） |
+| portal 的 tick | ✅ server 模式的 `local_shelter_state` 回傳 `current_tick` 當 authoritative tick；穿過之後 `HoldsLocalMovement` 會放開 |
+| abort 回營地 | ✅ `SCENE_ABORT` 之後 outcome=4，slot 卸載，玩家回到營地 |
+
+沒有測到的：用打敗 20 個敵人的成功條件走回程門回營地（R3 用 abort 代替），以及兩個 process 之間的連線（N6）。
 
 ---
 
@@ -224,7 +240,7 @@ ClientSession : wraps NetworkClient (+ catalog sync, connection state, cache)
 | R0 ✅ | 比對 `Client.unity` 和 `HostMode.unity` 的場景物件與序列化設定；把兩種角色的行為差異列成表 | 0.5 天 | **完成（2026-11-20）**，結果在 §4.2 |
 | R1 ✅ | `INetworkSession` 加上 `HostSession` 和 `ClientSession`；`NetworkItemPropController` 改用介面（目前只用到 `IsReady`、`IsDisconnected`、`LocalPeerId`、`LocalPlayerNetId` 和 4 個 kernel 呼叫） | 0.5–1 天 | **完成（2026-11-20）**：unity `claude/session-interface-r1` `9da4114`（從 main `bc1c272`）。EditMode 32/32 通過（NetworkSessionTests、NetworkItemProp*、NetworkPresentationClockTests、ClientRunnerAgentModeTests），沒有新的編譯警告 |
 | R2 ✅ | `ClientRunner` 改成 `GameRunner`，host 也走同一條路；刪掉 `HostModeRunner`；合併成一個 scene | 2–3 天 | **完成（2026-11-20）**：unity `claude/game-runner-r2` `27bee9a`。EditMode 192/192 通過（相關 fixture 加上 NetworkRenderingTests）；新增的 PlayMode `GameRunnerRoleSmokeTests` 2/2 通過（host 進營地並畫出世界；client 連上同一個 process 裡的 listen server 並畫出世界）。開關卡、回營地留給 R3 和 N6 |
-| R3 | 實測 host 玩家的物品、loadout、shelter、portal、建築內部，包含 §2.3 的三個項目 | 1–2 天 | 每一項都有結果；如果發現 kernel 端的問題，停下來回報 |
+| R3 ✅ | 實測 host 玩家的物品、loadout、shelter、portal、建築內部，包含 §2.3 的三個項目 | 1–2 天 | **完成（2026-11-20）**：unity `claude/host-features-r3` `42ee799`。新增 PlayMode `GameRunnerHostFeatureTests` 3/3 通過，連同 R2 的 smoke test 共 5/5。沒有發現需要修改的地方，見 §2.3 |
 | R4 | 更新測試和工具（見 §8） | 0.5 天 | EditMode batchmode 全部通過，或者跟合併前的紅燈集合相同 |
 
 ### 7.2 連線功能
