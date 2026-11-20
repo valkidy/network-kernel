@@ -42,6 +42,7 @@ namespace NetworkExample.Kernel
 
         // The interface a prop's open_ui names when it means the level list.
         public const uint UiLevelSelect = 4;
+        public const uint UiNetworkTerminal = 5;
 
         // OPEN_UI.result.
         public const byte OpenUiOk = 0;

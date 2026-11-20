@@ -29,7 +29,7 @@ namespace NetworkExample.Kernel
         public const int MaxFootholdCandidates = 8;
         public const int MaxSkeletonColliders = 16;
         public const int MaxActionGraphActions = 8;
-        public const uint MaxActionRepeat = 16U;
+        public const uint MaxActionRepeat = 32U;
         public const int MaxPortableStateFields = 8;
         public const uint MaxImpulseLockoutTicks = 300U;
         public const uint MaxStaggerTicks = 300U;

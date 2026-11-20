@@ -173,7 +173,8 @@ namespace NetworkExample.Kernel.Editor
                 KernelLog.Poll(new KernelLogLine[4]) <= 4,
                 "Kernel_PollLogMessages returned more lines than asked for.");
             Require(
-                KernelConstants.MaxActionRepeat == 16U &&
+                KernelConstants.MaxActionRepeat == 32U &&
+                GameServerConstants.UiNetworkTerminal == 5U &&
                 KernelWeaponFireMode.TargetedStrike == (KernelWeaponFireMode)4 &&
                 KernelProjectileReplication.Derived == (KernelProjectileReplication)1 &&
                 KernelProjectileLaunchType.Descent == (KernelProjectileLaunchType)1 &&

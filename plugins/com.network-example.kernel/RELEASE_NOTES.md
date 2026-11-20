@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- adds held client handshakes and network terminal support, and raises the action repeat limit to 32
+
+
+0.7.0 release notes:
+
 - updates to kernel ABI 110 with action probability, surface and actor targeted strikes, and paralysis movement blocking
 
 
