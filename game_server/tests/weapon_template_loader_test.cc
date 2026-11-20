@@ -1612,7 +1612,7 @@ void spawn_repeat_is_authored() {
         std::string action;
     };
     const std::vector<Rejected> rejected = {
-        {"repeat_over_cap", spawn + "    repeat:\n      count: 17\n"},
+        {"repeat_over_cap", spawn + "    repeat:\n      count: 33\n"},
         {"repeat_reversed", spawn + "    repeat:\n      count: [5, 4]\n"},
         {"repeat_zero", spawn + "    repeat:\n      count: 0\n"},
         {"repeat_no_count", spawn + "    repeat:\n      scatter_radius: 2.0\n"},

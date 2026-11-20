@@ -1238,8 +1238,14 @@ typedef enum KernelActionConditionType {
 
 #define KERNEL_MAX_ACTION_GRAPH_ACTIONS 8
 
-/* How many projectiles one repeated spawn_projectile action may spawn. */
-#define KERNEL_MAX_ACTION_REPEAT 16u
+/* How many projectiles one repeated spawn_projectile action may spawn. No
+ * packet or snapshot field is sized by it (the count is a u8, and derived
+ * children are re-run on the client, never sent), but the catalog loader and
+ * the kernel both refuse a count above it: a catalog that uses more than an
+ * older kernel allowed needs the newer kernel on server and client. Raised
+ * from 16 within ABI 110. Not KERNEL_MAX_LOCK_STRIKE_REPEAT, which caps
+ * lock_strike on its own. */
+#define KERNEL_MAX_ACTION_REPEAT 32u
 
 /* Ceiling on apply_impulse's impulse_lockout_ticks. Ten seconds at the 30 Hz
  * server tick -- far past any knockback, but low enough that a typo cannot

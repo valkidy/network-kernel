@@ -322,12 +322,12 @@ template 沒有 `CancelBeforeFirstCommit` 也不會先打出一次；硬直期�
   direction: params.direction
   lifetime_ticks: 10              # 取代被生成 template 的 lifetime
   repeat:
-    count: [10, 15]               # 一個數字 = 固定次數；1 <= min <= max <= 16
+    count: [10, 15]               # 一個數字 = 固定次數；1 <= min <= max <= 32
     scatter_radius: 6.0           # 在 event.position 周圍的圓盤內均勻分布
     lifetime_spread_ticks: 60     # 每個多活的 ticks，依序分散在這個區間
 ```
 
-- `repeat` 會在同一個 batch 內展開成最多 16 個 command
+- `repeat` 會在同一個 batch 內展開成最多 32 個 command
   （`KERNEL_MAX_ACTION_REPEAT`）。它仍然只佔一個 dedup entry，也仍然是
   all-or-nothing。
 - 第 i 個的到期時間落在 stagger 區間 `count` 等分中的第 i 段，所以會依序到期，
@@ -941,7 +941,7 @@ KernelActionTriggerDefinition
 ```
 
 - `KERNEL_MAX_ACTION_GRAPH_ACTIONS = 8`。
-- `KERNEL_MAX_ACTION_REPEAT = 16`：單一 `spawn_projectile` 最多展開的數量。
+- `KERNEL_MAX_ACTION_REPEAT = 32`：單一 `spawn_projectile` 最多展開的數量。
   `KernelActionDefinition` 帶有 `spawn_lifetime_ticks` 和 `repeat_*` 欄位（ABI 94）。
 - `action_count > 0` 時，固定 action array 是權威資料。
 - Legacy scalar fields 暫時保存第一個 action 的 mirror，供過渡相容使用。
