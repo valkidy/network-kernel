@@ -1,6 +1,6 @@
 # Host mode 連線機制計劃：開遊戲即 host、network terminal、單一 runner
 
-狀態：**草案（2026-11-20），Q1–Q4 已定案；R0 完成，O5、O6 已定案（H11、H12）；R1–R3 完成（unity `claude/host-features-r3` `42ee799`，疊在 R1、R2 上，未 merge）。**
+狀態：**草案（2026-11-20），Q1–Q4 已定案；R0 完成，O5、O6 已定案（H11、H12）；R1–R3、N1 完成（unity `claude/launch-options-n1` `b2ffd51`，疊在 R1–R3 上，未 merge）。**
 分支：`claude/host-mode-plan`（從 main `4e36d622`）。
 日期：2026-11-20。
 
@@ -79,8 +79,8 @@
 
 | 啟動方式 | 結果 |
 |---|---|
-| build player，不帶參數 | Boot → host session：自己的營地、廣播 LAN discovery、可以用 network terminal |
-| build player，帶 `-ip <ip>` | Boot → client session，連 `<ip>:7801`；格式錯誤、連線失敗或之後斷線，都退回 host session |
+| build player，不帶參數 | host session：自己的營地、廣播 LAN discovery、可以用 network terminal |
+| build player，帶 `-ip <ip>` | client session，連 `<ip>:7801`；格式錯誤、連線失敗或之後斷線，都退回 host session |
 | Editor Play | 依照 runner 上 Inspector 的設定選角色（保留現在「Play 之前先填好 IP」的流程） |
 
 `-ip` 的解析規則：
@@ -94,6 +94,19 @@
 同一台電腦開兩個 player 測試時，第二個要帶 `-ip 127.0.0.1`。如果兩個都不帶參數，第二個會綁 7801 失敗，要在 N2 處理（本機 host 改綁其他 port，或顯示提示）。
 
 ---
+
+### 3.1 N1 實作備註（2026-11-20）
+
+- **不做 Boot scene**：R2 之後只剩 `Game.unity` 一個 scene，所以 runner 在 player build 裡自己讀命令列就夠了，不需要再多一個 scene 來分派。
+- **解析**：`LaunchOptions.Parse`（`Assets/Scripts/Common/LaunchOptions.cs`）
+  - `-ip` 不分大小寫，值必須是剛好 4 段十進位數字、每段 0–255，接上 `:7801`。
+  - 拒絕的寫法包括 `1.2`、十六進位、帶 port、主機名稱。
+  - 只在 player build 讀一次（`!Application.isEditor`）；Editor 照 Inspector 的設定。
+- **退回 host**：`fallBackToHostOnDisconnect` 在 player build 會自動打開，Editor 預設關閉。
+  - client 啟動失敗、catalog sync 失敗或之後斷線時，runner 會先停用再啟用，讓 `OnDisable` 釋放 client session 留下的所有東西，再以 host 角色從頭開始。
+  - 畫面左上角會顯示原因 8 秒（`OnGUI`）。
+  - 連到沒有人在聽的位址，要等 GNS 的連線逾時（約 10 s）才會退回。N5 的 network gate 可能需要更短的 timeout。
+- **host port**：預設值改成 7801（H11）。原本排在 N2，因為 `-ip` 一定連 7801，所以提前到 N1 做。
 
 ## 4. 單一 runner 的架構
 
@@ -247,8 +260,8 @@ ClientSession : wraps NetworkClient (+ catalog sync, connection state, cache)
 
 | 步驟 | 內容 | 在哪裡做 | 估計 |
 |---|---|---|---|
-| N1 | Boot scene 和 `-ip` 解析；退回 host 的處理 | Unity | 0.5 天 |
-| N2 | host session 啟動時廣播 LAN discovery，port 改 7801；綁 7801 失敗時的處理（O2）；`app` 的 dedicated 模式廣播 LAN discovery（H12） | Unity 加本 repo 的 `app/`（commit 分開） | 1 天 |
+| N1 ✅ | `-ip` 解析；退回 host 的處理；host port 改成 7801 | Unity | **完成（2026-11-20）**：unity `claude/launch-options-n1` `b2ffd51`。EditMode 44/44、PlayMode 6/6（包括「連不上就退回 host」）。**不做 Boot scene**，見 §3.1 |
+| N2 | host session 啟動時廣播 LAN discovery；綁 7801 失敗時的處理（O2）；`app` 的 dedicated 模式廣播 LAN discovery（H12） | Unity 加本 repo 的 `app/`（commit 分開） | 1 天 |
 | N3 | `network_terminal` entity template、ui 5 的路由、擺進 camp | game_server 加 catalog（本 repo 的 `claude/*` 分支） | 0.5 天 |
 | N4 | terminal 面板（列表、輸入、回自己的營地） | Unity | 1 天 |
 | N5a | network gate v1：穿門時才開始連線 | Unity | 0.5–1 天 |
@@ -266,7 +279,7 @@ ClientSession : wraps NetworkClient (+ catalog sync, connection state, cache)
 - **`Assets/Tests/EditMode/NetworkPresentationClockTests.cs`**：用檔案路徑讀兩個 runner 的原始碼文字來檢查。
 - **`Assets/Tests/EditMode/ClientRunnerAgentModeTests.cs`**：用 reflection 依私有欄位和方法名稱存取。
 - **`Assets/Editor/VideoCapture/VideoCaptureMenu.cs:556-559`**：用 type 名稱做 switch。
-- **`ProjectSettings/EditorBuildSettings.asset`**：兩個 scene 改成 Boot 加一個 scene。
+- **`ProjectSettings/EditorBuildSettings.asset`**：兩個 scene 改成一個 scene（`Game.unity`，R2 已改）。
 - **只是注釋提到 `ClientRunner.Update`**：`NetworkRenderStateApplier.cs:416` 和 `NetworkActorRigPrefabBuilder.cs:703`。
 
 ---
