@@ -613,8 +613,39 @@ std::vector<ChaseSpacing> plan_chase_spacing(
     return spacing;
 }
 
+// While holding, the share of the target's own horizontal velocity that carries
+// it away from `from`, as a move input (a fraction of `move_speed`). Zero for a
+// target standing still or coming closer: a holding agent never backs off.
+//
+// Holding used to be a dead stop. A target walking away crosses the band
+// between stop and resume (0.3 m for the gingerbread) in a few ticks, so the
+// chaser stood still, ran, closed, and stood still again -- a stop of ~50 ms
+// every ~60 ms (issue_20261120_210012). Keeping pace with the receding part
+// holds the gap instead; the band only has to absorb what that misses.
+KernelVec2 follow_receding(
+    const KernelVec3& from,
+    const KernelVec3& toward,
+    const KernelVec3& target_velocity,
+    float move_speed,
+    float input_magnitude) {
+    const float dx = toward.x - from.x;
+    const float dz = toward.z - from.z;
+    const float length = std::sqrt(dx * dx + dz * dz);
+    if (length <= 1e-4f || move_speed <= 0.0f) {
+        return KernelVec2{0.0f, 0.0f};
+    }
+    const float receding =
+        (target_velocity.x * dx + target_velocity.z * dz) / length;
+    if (receding <= 0.0f) {
+        return KernelVec2{0.0f, 0.0f};
+    }
+    const float input = std::min(receding / move_speed, input_magnitude);
+    return KernelVec2{dx / length * input, dz / length * input};
+}
+
 // Hysteresis around the stop distance. Without the separate resume threshold an
-// agent parked exactly on the boundary would start and stop every tick.
+// agent parked exactly on the boundary would start and stop every tick. Holding
+// still keeps pace with a target walking away (follow_receding).
 //
 // With a ring slot it walks to the slot instead and holds there, on the same
 // width of hysteresis measured from the slot; either way the push of
@@ -623,6 +654,8 @@ KernelVec2 chase_move(
     const AgentChaseTuning& chase,
     AgentRuntimeState* agent,
     const KernelVec3& target_position,
+    const KernelVec3& target_velocity,
+    float move_speed,
     const ChaseSpacing& spacing) {
     KernelVec2 move{0.0f, 0.0f};
     if (spacing.has_slot) {
@@ -639,6 +672,10 @@ KernelVec2 chase_move(
         if (!agent->chase_holding) {
             move = agent_steering::horizontal_move_toward(
                 agent->position, spacing.slot, chase.input_magnitude);
+        } else {
+            move = follow_receding(
+                agent->position, spacing.slot, target_velocity, move_speed,
+                chase.input_magnitude);
         }
     } else {
         const float distance =
@@ -653,6 +690,10 @@ KernelVec2 chase_move(
         if (!agent->chase_holding) {
             move = agent_steering::horizontal_move_toward(
                 agent->position, target_position, chase.input_magnitude);
+        } else {
+            move = follow_receding(
+                agent->position, target_position, target_velocity, move_speed,
+                chase.input_magnitude);
         }
     }
     if (!spacing.has_slot && is_zero_move(spacing.push)) {
@@ -994,6 +1035,8 @@ void AgentChaserController::tick(
         bool submitted_input = false;
 
         const bool has_visible_target = perception.has_visible_target;
+        // The seen target's velocity, for keeping pace while holding.
+        KernelVec3 seen_velocity = agent_steering::zero_vec3();
 
         if (has_visible_target) {
             if (agent.sentry.target != perception.target_id) {
@@ -1007,6 +1050,9 @@ void AgentChaserController::tick(
             agent.sentry.attention_point =
                 seen != nullptr ? seen->position : perception.target_position;
             agent.sentry.has_attention_point = true;
+            if (seen != nullptr) {
+                seen_velocity = seen->velocity;
+            }
         } else {
             ++agent.sentry.lost_target_ticks;
             // The hold is about a target in sight; Search walks to where it
@@ -1126,6 +1172,7 @@ void AgentChaserController::tick(
                     should_update_rotation;
                 move = chase_move(
                     config_.chase, &agent, perception.target_position,
+                    seen_velocity, sentry_config.move_speed_meters_per_second,
                     spacing[agent_index]);
                 ++agent.sentry.state_ticks;
                 if (agent.sentry.state_ticks >=
@@ -1258,6 +1305,7 @@ void AgentChaserController::tick(
                     should_update_rotation;
                 move = chase_move(
                     config_.chase, &agent, perception.target_position,
+                    seen_velocity, sentry_config.move_speed_meters_per_second,
                     spacing[agent_index]);
                 update_retreat(
                     config_.chase.retreat,
