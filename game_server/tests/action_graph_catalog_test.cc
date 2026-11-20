@@ -758,7 +758,13 @@ void spawn_repeat_comes_from_the_binding() {
 
     const fs::path marker =
         shipped_catalog() / "projectile_templates" / "21_projectile_meteor_storm_barrage_marker.yaml";
-    for (const char* count : {"count: [15, 10]", "count: 0", "count: 17"}) {
+    // The cap, KERNEL_MAX_ACTION_REPEAT, is 32: up to it loads, one past it does not.
+    require(load_error(catalog_with(
+                "repeat_count_at_cap",
+                {{"projectile_templates/21_projectile_meteor_storm_barrage_marker.yaml",
+                  with_replaced(marker, "count: [10, 15]", "count: [10, 32]")}}))
+                .empty());
+    for (const char* count : {"count: [15, 10]", "count: 0", "count: 33"}) {
         require(refused_for(
             catalog_with(
                 "repeat_count_out_of_range",
