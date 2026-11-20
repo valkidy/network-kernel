@@ -1,6 +1,6 @@
 # Host mode 連線機制計劃：開遊戲即 host、network terminal、單一 runner
 
-狀態：**草案（2026-11-20），Q1–Q4 已定案；R0（差異比對）完成，O5、O6 已定案（H11、H12）。** 尚未實作程式。
+狀態：**草案（2026-11-20），Q1–Q4 已定案；R0 完成，O5、O6 已定案（H11、H12）；R1 完成（unity `claude/session-interface-r1` `9da4114`，未 merge）。**
 分支：`claude/host-mode-plan`（從 main `4e36d622`）。
 日期：2026-11-20。
 
@@ -149,6 +149,14 @@ ClientSession : wraps NetworkClient (+ catalog sync, connection state, cache)
 - 估計不變。
 - 發現 port 不一致與 dedicated 沒有 LAN discovery，已於 2026-11-20 定案為 H11、H12。
 
+### 4.1.1 R1 實作備註
+
+- 介面成員目前只有 `Kernel`、`LocalPeerId`、`LocalPlayerNetId`、`IsReady`、`IsDisconnected`、`Update`、`GetRenderStatesAtTime`、`TrySubmitInput`。catalog 和 `Dispose` 留到 R2，等到 session 真的擁有它包住的物件時再加。
+- adapter **不擁有**包住的物件，`NetworkHost` 和 `NetworkClient` 仍然由 runner 負責 dispose。
+- `HostSession.IsReady` = `IsRunning && IsLocalClientReady`；`IsDisconnected` = `!IsRunning`（host 沒有連線可以斷）。
+- `NetworkItemPropController` 和 `ItemPropRequestSender` 的參數型別改成 `INetworkSession`。為了讓 diff 最小，參數名稱仍然叫 `client`，R2 再改名。
+- host 的 level terminal 改成透過 `ItemPropRequestSender.Submit(hostSession, …)` 送出。多了 `IsReady` 和 request id 的檢查，但 host 本來就先檢查過 `IsLocalClientReady`，所以行為不變。
+
 ### 4.3 原地切換時避免狀態殘留
 
 每個 session 的畫面物件都掛在一個專用的子 GameObject 底下，切換時整個銷毀再重建。這是用重建來保證乾淨，不靠手動清單。手動清單的問題就是 H9 拒絕 `Kernel_ReStartClient` 的理由。
@@ -195,7 +203,7 @@ ClientSession : wraps NetworkClient (+ catalog sync, connection state, cache)
 | 步驟 | 內容 | 估計 | 完成條件 |
 |---|---|---|---|
 | R0 ✅ | 比對 `Client.unity` 和 `HostMode.unity` 的場景物件與序列化設定；把兩種角色的行為差異列成表 | 0.5 天 | **完成（2026-11-20）**，結果在 §4.2 |
-| R1 | `INetworkSession` 加上 `HostSession` 和 `ClientSession`；`NetworkItemPropController` 改用介面（目前只用到 `IsReady`、`IsDisconnected`、`LocalPeerId`、`LocalPlayerNetId` 和 4 個 kernel 呼叫） | 0.5–1 天 | 編譯通過，兩個舊 runner 改用 adapter 後行為不變 |
+| R1 ✅ | `INetworkSession` 加上 `HostSession` 和 `ClientSession`；`NetworkItemPropController` 改用介面（目前只用到 `IsReady`、`IsDisconnected`、`LocalPeerId`、`LocalPlayerNetId` 和 4 個 kernel 呼叫） | 0.5–1 天 | **完成（2026-11-20）**：unity `claude/session-interface-r1` `9da4114`（從 main `bc1c272`）。EditMode 32/32 通過（NetworkSessionTests、NetworkItemProp*、NetworkPresentationClockTests、ClientRunnerAgentModeTests），沒有新的編譯警告 |
 | R2 | `ClientRunner` 改成 `GameRunner`，host 也走同一條路；刪掉 `HostModeRunner`；合併成一個 scene | 2–3 天 | 兩種角色都能進營地、開關卡、回營地 |
 | R3 | 實測 host 玩家的物品、loadout、shelter、portal、建築內部，包含 §2.3 的三個項目 | 1–2 天 | 每一項都有結果；如果發現 kernel 端的問題，停下來回報 |
 | R4 | 更新測試和工具（見 §8） | 0.5 天 | EditMode batchmode 全部通過，或者跟合併前的紅燈集合相同 |
