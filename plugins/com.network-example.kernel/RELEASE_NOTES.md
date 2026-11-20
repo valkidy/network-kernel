@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- fixes render clock advancement for untimed render calls and enables MinGW release optimization flags
+
+
+0.7.0 release notes:
+
 - fixes Windows native plugin linkage to use only static libstdc++ and avoid mixed-runtime host crashes
 
 
