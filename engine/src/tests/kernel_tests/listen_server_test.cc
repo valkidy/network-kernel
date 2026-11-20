@@ -205,9 +205,24 @@ void load_minimal_gameplay_catalog(KernelHandle* kernel) {
     reload_action.trigger_mode = KernelActionTriggerMode_Press;
     reload_action.commit_offset_ticks = 30u;
     reload_action.max_commit_count = 1u;
-    const std::array<KernelActionTemplateDefinition, 2> action_templates = {
+    // Held fire with no commit cap, like rifle_fire: a hold never completes by
+    // count, so nothing but its end settles the host's prediction record.
+    KernelActionTemplateDefinition held_fire_action{};
+    held_fire_action.struct_size = sizeof(held_fire_action);
+    held_fire_action.action_template_id = 4003u;
+    held_fire_action.trigger_mode = KernelActionTriggerMode_Hold;
+    held_fire_action.flags =
+        KernelActionTemplateFlag_CancelOnRelease |
+        KernelActionTemplateFlag_CancelBeforeFirstCommit;
+    held_fire_action.ammo_cost_per_commit = 1u;
+    held_fire_action.commit_interval_ticks = 3u;
+    held_fire_action.max_commit_count = 0u;
+    held_fire_action.recovery_ticks = 4u;
+    held_fire_action.hold_input_timeout_ticks = 6u;
+    const std::array<KernelActionTemplateDefinition, 3> action_templates = {
         fire_action,
         reload_action,
+        held_fire_action,
     };
     KernelActorTemplateDefinition player_actor_template{};
     player_actor_template.struct_size = sizeof(player_actor_template);
@@ -409,10 +424,115 @@ void catalog_loaded_before_the_server_starts_survives_the_reset() {
     Kernel_Destroy(kernel);
 }
 
+/*
+ * A listen host predicts its own player's actions through the client path,
+ * and that path remembers the ammo a held action started with so it can undo
+ * a prediction the server never confirmed. On a host the world it reads that
+ * from is the authority itself: rolling back there refilled the real magazine
+ * after every hold (Unity issues 20261121_053556/053641 -- the Ice Lance
+ * counted down while firing, came back to 600 after release, and never ran
+ * dry). The ammo a hold spent must stay spent once the hold has ended and the
+ * prediction record's timeout has passed.
+ */
+void listen_host_hold_keeps_the_ammo_it_spent() {
+    KernelConfig config{};
+    config.mode = KernelMode_ListenServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 30;
+
+    KernelHandle* kernel = Kernel_Create(&config);
+    require(kernel != nullptr);
+    load_minimal_gameplay_catalog(kernel);
+    require(Kernel_StartListenServer(kernel, 7779));
+
+    KernelLocalPlayerInfo local_info{};
+    require(Kernel_GetLocalPlayerInfo(kernel, &local_info));
+    configure_local_player(kernel, local_info.player_net_id);
+    KernelWeaponMechanicsDefinition held_rifle{};
+    held_rifle.struct_size = sizeof(held_rifle);
+    held_rifle.weapon_id = 0;
+    held_rifle.fire_mode = KernelWeaponFireMode_Hitscan;
+    held_rifle.magazine_size = 30;
+    held_rifle.damage = 25;
+    held_rifle.max_range = 100.0f;
+    held_rifle.pellet_count = 1;
+    held_rifle.segment_collider_template_id = 5;
+    held_rifle.fire_action_template_id = 4003u;
+    held_rifle.reload_action_template_id = 4002u;
+    require(Kernel_ServerSetEntityWeaponMechanics(
+        kernel, local_info.player_net_id, &held_rifle));
+    // No ground here: start high so the 2.5 s this test takes stays clear of
+    // the fall-death floor (a dead player's second hold is rejected Dead).
+    const KernelVec3 high{0.0f, 500.0f, 0.0f};
+    const KernelQuat facing{0.0f, 0.0f, 0.0f, 1.0f};
+    require(Kernel_ServerSetEntityTransform(
+        kernel, local_info.player_net_id, &high, &facing));
+    Kernel_Update(kernel, 1.0f / 30.0f);
+
+    const auto ammo_now = [kernel]() {
+        KernelLocalWeaponState state{};
+        state.struct_size = sizeof(state);
+        require(Kernel_GetLocalWeaponState(kernel, &state));
+        require(state.weapon_id == 0u);
+        return state.ammo;
+    };
+    require(ammo_now() == 30u);
+
+    constexpr std::uint32_t kInstance = 3200u;
+    std::uint32_t input_seq = 1;
+    const auto tick = [&](bool held) {
+        KernelPlayerInput input{};
+        input.input_seq = input_seq++;
+        input.client_action_time_us = static_cast<std::uint64_t>(input.input_seq) * 33333u;
+        input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
+        input.selected_weapon = 0;
+        if (held) {
+            input.action_intent = KernelActionIntent{
+                kInstance, KernelActionBinding_PrimaryFire, 0u, 0u};
+            input.action_input = KernelActionInput{kInstance, 1u, 0u, 0u};
+        } else {
+            input.action_input = KernelActionInput{kInstance, 0u, 0u, 0u};
+        }
+        Kernel_SubmitPlayerInput(kernel, 1, &input);
+        Kernel_Update(kernel, 1.0f / 30.0f);
+    };
+
+    for (int index = 0; index < 12; ++index) {
+        tick(true);
+    }
+    const std::uint16_t after_hold = ammo_now();
+    require(after_hold < 30u);
+
+    // Release, then idle well past the 1 s prediction-record timeout.
+    for (int index = 0; index < 60; ++index) {
+        tick(false);
+    }
+    require(ammo_now() == after_hold);
+
+    // A second hold keeps counting down from there, not from a full magazine.
+    constexpr std::uint32_t kSecondInstance = 3201u;
+    for (int index = 0; index < 6; ++index) {
+        KernelPlayerInput input{};
+        input.input_seq = input_seq++;
+        input.client_action_time_us = static_cast<std::uint64_t>(input.input_seq) * 33333u;
+        input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
+        input.selected_weapon = 0;
+        input.action_intent = KernelActionIntent{
+            kSecondInstance, KernelActionBinding_PrimaryFire, 0u, 0u};
+        input.action_input = KernelActionInput{kSecondInstance, 1u, 0u, 0u};
+        Kernel_SubmitPlayerInput(kernel, 1, &input);
+        Kernel_Update(kernel, 1.0f / 30.0f);
+    }
+    require(ammo_now() < after_hold);
+
+    Kernel_Destroy(kernel);
+}
+
 }  // namespace
 
 int main() {
     catalog_loaded_before_the_server_starts_survives_the_reset();
+    listen_host_hold_keeps_the_ammo_it_spent();
 
     KernelConfig config{};
     config.mode = KernelMode_ListenServer;

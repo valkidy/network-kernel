@@ -3101,8 +3101,11 @@ void KernelEngine::update(float delta_seconds) {
         // Nothing came back for it, so nothing it predicted is known to have
         // happened; the next owner snapshot says what did.
         drop_predicted_ammo_spends(expired_action_id, 0u);
+        // A listen host's world is the authority, not a prediction of it:
+        // what the server spent stays spent.
         if (const auto actor = world_.find_entity(local_player_net_id_);
-            actor.has_value() && world_.registry().all_of<WeaponState>(*actor)) {
+            !is_server_mode(config_.mode) && actor.has_value() &&
+            world_.registry().all_of<WeaponState>(*actor)) {
             WeaponState& weapon = world_.registry().get<WeaponState>(*actor);
             const std::size_t slot =
                 find_weapon_slot(weapon, outstanding->second.weapon_id);
@@ -9494,7 +9497,8 @@ void KernelEngine::handle_client_local_action_results(
                     input.action_input = KernelActionInput{};
                 }
             }
-            if (!baseline_covers_result &&
+            // Never on a listen host: its world is the authority itself.
+            if (!baseline_covers_result && !is_server_mode(config_.mode) &&
                 outstanding != outstanding_predicted_actions_.end()) {
                 if (const auto actor = world_.find_entity(local_player_net_id_);
                     actor.has_value() &&
