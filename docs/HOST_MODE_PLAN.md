@@ -1,6 +1,6 @@
 # Host mode 連線機制計劃：開遊戲即 host、network terminal、單一 runner
 
-狀態：**草案（2026-11-20），Q1–Q4 已定案，待使用者確認後開工。** 尚未實作。
+狀態：**草案（2026-11-20），Q1–Q4 已定案；R0（差異比對）完成，O5、O6 待決定。** 尚未實作程式。
 分支：`claude/host-mode-plan`（從 main `4e36d622`）。
 日期：2026-11-20。
 
@@ -91,13 +91,61 @@ HostSession   : wraps NetworkHost  (+ GameServer initial-join forwarding)
 ClientSession : wraps NetworkClient (+ catalog sync, connection state, cache)
 ```
 
-### 4.2 兩種角色真正不同、要保留的行為
+### 4.2 R0 結果：兩個 scene 與兩個 runner 的差異（2026-11-20，unity main `bc1c272`）
 
-| 行為 | host | client |
-|---|---|---|
-| input 送出 | 每個 frame 都送 | `NetworkInputSubmissionClock` 限制頻率 |
-| catalog 何時設定 | 啟動前讀本機 bundle | sync 完成、ManifestReady 之後 |
-| 只有這個角色才做的事 | `GameServer` 初始加入轉送、LAN discovery 廣播 | 連線失敗與斷線處理、catalog cache |
+#### 4.2.1 Scene 檔
+
+**結論：除了 runner 本身，兩個 scene 實質上相同，合併成一個 scene 沒有障礙。**
+
+| 項目 | `Client.unity` | `HostMode.unity` | 合併時怎麼處理 |
+|---|---|---|---|
+| 根物件 | Main Camera、Directional Light、`Network Demo Client`、`Terrain` | Main Camera、Directional Light、`Network Demo HostMode` | 只留一個 runner 物件 |
+| `Terrain` 群組 | 6 個舊的 terrain mesh（`plane_200x200`、`undulating_*`、`plane_200x200_4zones*`、`giantwood_hollow_spiral`）全部 `m_IsActive: 0`；唯一啟用的 `default` 掛在停用的 `plane_200x200` 底下，所以實際上也是停用的 | 無 | 刪掉。執行時的地形由 `NetworkTerrainView` 從 kernel 建立 |
+| URP 額外資料 | 相機和燈光各有 `UniversalAdditional*Data` | 無（Unity 執行時會補預設值） | 保留 Client 的 |
+| Camera、RenderSettings、NavMesh 設定 | 相同 | 相同 | — |
+| 燈光 | shadow strength 0.95 | shadow strength 1 | 用 0.95 |
+| LightmapSettings | 多一行 `m_PVRFilteringGaussRadiusAO: 1` | 無 | 無影響 |
+
+相機位置不重要，執行時由 `NetworkDemoScene.EnsureDefaultView()` 建立的 follow camera 接手。
+
+#### 4.2.2 Runner 的序列化設定
+
+`HostMode.unity` 只存了 `port`、`maxEvents`、`maxRenderStates` 三個欄位，其他欄位都用程式碼的預設值。
+
+| 欄位 | Client scene 的值 | HostMode 實際的值 | 合併時用 |
+|---|---|---|---|
+| 位址或 port | `127.0.0.1:7801`；清單還有 `192.168.1.102:7801`、`192.168.1.107:7801` | port `7777` | **要先決定，見 O5** |
+| `maxEvents` / `maxRenderStates` | 2048 / 2048 | **256 / 256** | 2048 |
+| `enableVisualDebug` | 0 | 1（程式碼預設） | 0 |
+| `logActionResultFailures` / `logFireStalls` | 0 / 0 | 1 / 1（程式碼預設） | 0 / 0 |
+| `inputSubmissionRateHz` | 30 | 沒有這個欄位 | 只用在 client |
+| `portalArrivalBlendTicks`、`enableDiagnostics`、`logRemotePresentation`、`localAgentSettings` | 有 | 沒有這些欄位 | 照 Client 的值 |
+
+**順帶發現的問題**：host 的 render state buffer 只有 256。camp 裡有幾百個 agent 時，超過的部分會被截掉（log 會出現 `render state buffer reached capacity`），所以 host 玩家可能看不到某些實體。合併後這個問題自然消失。
+
+#### 4.2.3 Runner 每個 frame 的行為
+
+| 行為 | `HostModeRunner` | `ClientRunner` | 合併後 |
+|---|---|---|---|
+| 啟動 | 讀本機 bundle → 設定武器 loadout、tracer、targeted strike、骨架 manifest → `NetworkHost.Start` → 建地形 → scene presenter → level terminal → 轉送初始加入 | `NetworkClient` → `ConfigurePhysicsBeforeStart` → 開始 catalog sync；連上後才設定 catalog，失敗會重試 | 由 session 決定 catalog 何時可用，runner 收到之後才做設定 |
+| input 送出的條件 | `IsLocalClientReady && HasWeaponLoadout`，每個 frame 都送 | `IsReady && synchronizedCatalogConfigured`，30 Hz | **條件改成 client 的版本**（見下方說明）；送出頻率依角色 |
+| 選單開著時的 input | 送出全部是零的 input | `SampleCurrentInput()`（R2 時確認它對選單的處理） | 統一 |
+| aim | 每個 frame 都更新 | agent 模式和交接時跳過 | 照 client |
+| event 處理 | 轉送初始加入給 `GameServer` | 診斷 log、連線狀態、agent 受到的傷害 | 轉送放在 `HostSession` |
+| game message | 只交給 scene presenter | `HandleGameMessages`：scene 加上 loadout offers 等 | 照 client |
+| 斷線 | 不會發生 | 清掉 input、物品、HUD、shelter、地形，並停止 | 照 client，之後接「退回 host session」 |
+| level terminal | 自己寫的 F 鍵處理，`SubmitGameplayRequest(Activate)` | 走 `NetworkItemPropController` 的互動 | 刪掉 host 版，統一走物品互動 |
+| charge 和 strike marker | `UpdateChargeAndMarkerRay`（合在一起） | `UpdateChargeTracker` 加 `UpdateStrikeMarkers` | 照 client |
+| local action gate | 傳入 render count | 傳入本機玩家狀態，包含死亡 flag | 照 client |
+| 只有 client 有的 | — | shelter、建築內部、portal、手上武器、物品操作、loadout、camp stock、物品 HUD、鎖定武器、agent 觀察、issue timeline、remote presentation probe | 全部變成兩種角色都有；agent 見 O1，診斷見 O4 |
+
+**順帶發現的問題**：host 送 input 的條件包含 `HasWeaponLoadout`，所以空手的 host 玩家不能移動。client 的註解特別寫了 *"an unarmed player still moves"*，兩邊行為不一致。合併後改用 client 的條件，就會修正這一點。
+
+#### 4.2.4 對合併計劃的影響
+
+- R2 合併 scene 時不用搬任何物件，直接以 `Client.unity` 為基礎，刪掉 `Terrain` 群組。
+- 估計不變。
+- 新增 O5（port）和 O6（dedicated server 的 LAN discovery），必須在 N1 和 N2 之前決定。
 
 ### 4.3 原地切換時避免狀態殘留
 
@@ -144,7 +192,7 @@ ClientSession : wraps NetworkClient (+ catalog sync, connection state, cache)
 
 | 步驟 | 內容 | 估計 | 完成條件 |
 |---|---|---|---|
-| R0 | 比對 `Client.unity` 和 `HostMode.unity` 的場景物件與序列化設定；把兩種角色的行為差異列成表 | 0.5 天 | 差異表寫進本文件 §4.2 |
+| R0 ✅ | 比對 `Client.unity` 和 `HostMode.unity` 的場景物件與序列化設定；把兩種角色的行為差異列成表 | 0.5 天 | **完成（2026-11-20）**，結果在 §4.2 |
 | R1 | `INetworkSession` 加上 `HostSession` 和 `ClientSession`；`NetworkItemPropController` 改用介面（目前只用到 `IsReady`、`IsDisconnected`、`LocalPeerId`、`LocalPlayerNetId` 和 4 個 kernel 呼叫） | 0.5–1 天 | 編譯通過，兩個舊 runner 改用 adapter 後行為不變 |
 | R2 | `ClientRunner` 改成 `GameRunner`，host 也走同一條路；刪掉 `HostModeRunner`；合併成一個 scene | 2–3 天 | 兩種角色都能進營地、開關卡、回營地 |
 | R3 | 實測 host 玩家的物品、loadout、shelter、portal、建築內部，包含 §2.3 的三個項目 | 1–2 天 | 每一項都有結果；如果發現 kernel 端的問題，停下來回報 |
@@ -200,6 +248,8 @@ ClientSession : wraps NetworkClient (+ catalog sync, connection state, cache)
 | O2 | 兩個 player 在同一台電腦都不帶參數時，第二個 host 要怎麼辦？ | 綁 7777 失敗就改綁 7778–7787 的第一個可用 port，並在畫面上顯示實際的 port |
 | O3 | terminal 面板要不要支援手把輸入？ | v1 不支援；LAN discovery 列表可以用手把選 |
 | O4 | `ClientRunner` 大約 500 行的診斷 log（其中 `[AmmoDiag]` 標了 TEMP）要在合併時一起清掉嗎？ | 搬到獨立的診斷元件；TEMP 的部分刪掉 |
+| O5 | **port 不一致**：H7 定為 7777，Unity host 也用 7777；但 dedicated server 用 7801（`run_server.sh`、docker 的 `NK_PORT` 預設值、Windows 防火牆規則、`Client.unity` 裡的位址）。流程 A 照 H7 會連不上 | 統一改成 **7801**：dedicated、docker 和防火牆規則都不用動，只改 Unity host 的 port 和 H7。O2 的備用 port 跟著改成 7802 開始 |
+| O6 | dedicated server（`app/`）沒有廣播 LAN discovery（`app/` 和 `game_server/` 裡找不到 `LANDiscovery`），所以流程 A 的 server 不會出現在 terminal 列表裡 | 在 `app` 的 dedicated 模式加上 `Kernel_LANDiscovery_StartServer`（本 repo 的小改動，不碰 ABI），排進 N2；在那之前流程 A 用手動輸入 IP |
 
 ---
 
