@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- fixes Windows native plugin linkage to use only static libstdc++ and avoid mixed-runtime host crashes
+
+
+0.7.0 release notes:
+
 - adds held client handshakes and network terminal support, and raises the action repeat limit to 32
 
 
