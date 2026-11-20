@@ -1,6 +1,6 @@
 # Host mode 連線機制計劃：開遊戲即 host、network terminal、單一 runner
 
-狀態：**草案（2026-11-20），Q1–Q4 已定案；R0 完成，O5、O6 已定案（H11、H12）；R1–R3、N1–N5b 完成（unity `claude/network-gate-prepared-n5b` `76ed730`，疊在前面各步上；C# `claude/network-client-hold-csharp` `c81b5b63`，從 feat-unity-plugin 開出；kernel `claude/dedicated-lan-discovery` `365eb034` 和 `claude/network-terminal-n3` `39b211c6`，都從 main 開出；都未 merge）。**
+狀態：**草案（2026-11-20），Q1–Q4 已定案；R0 完成，O5、O6 已定案（H11、H12）；R0–R4、N1–N5b 完成（unity `claude/runner-cleanup-r4` `ea4d4c7`，疊在前面各步上；C# `claude/network-client-hold-csharp` `c81b5b63`，從 feat-unity-plugin 開出；kernel `claude/dedicated-lan-discovery` `365eb034` 和 `claude/network-terminal-n3` `39b211c6`，都從 main 開出；都未 merge）。**
 分支：`claude/host-mode-plan`（從 main `4e36d622`）。
 日期：2026-11-20。
 
@@ -219,6 +219,20 @@ ClientSession : wraps NetworkClient (+ catalog sync, connection state, cache)
   - item controller 的參數名稱仍然叫 `client`
 - 測試和工具（原 R4 的一部分）已經一起改好：`NetworkPresentationClockTests`、`GameRunnerAgentModeTests`、`VideoCaptureMenu`、`EditorBuildSettings`，以及注釋。
 
+### 4.1.3 R4 實作備註（2026-11-21）
+
+- **刪掉 `Game.unity` 裡停用的 `Terrain` 群組**：用 Editor 的 `EditorSceneManager` 刪除並存檔，沒有手動改 YAML。
+  - 群組裡 6 個舊的地形 mesh 都是停用的。其中 `giantwood_hollow_spiral_200x200_collision.obj` 在 git 裡不存在（是使用者 checkout 裡未追蹤的檔案），所以在 clone 裡顯示為 missing prefab。missing prefab 的佔位物件不管 scene 的設定都會顯示為啟用，所以刪除腳本特別允許這種情況。
+  - Editor 存檔時，也把 runner 新增的 4 個欄位以預設值寫了進去：`role: 0`、`hostPort: 7801`、`fallBackToHostOnDisconnect: 0`，以及空的 `hostGameplayCatalogEntry`。
+- **log 前綴**：共用程式碼的 log 改用 `RoleLabel`，所以 host 會顯示 `HostMode`，client 會顯示 `Client`。只有 catalog sync 的 log 仍然固定寫 `Client`，因為那只會在 client 角色發生。`WarnIfBufferFilled` 因為要用 `RoleLabel`，改成不是 static 的方法。
+- **參數名稱**：item controller 和 request sender 的參數從 `client` 改名為 `session`，只改程式碼，注釋沒有動。
+- **完整 EditMode**：
+  - 分支：766 個，752 通過，0 失敗，14 個略過或無結果。
+  - main `bc1c272` 基準：748 個，734 通過，0 失敗，略過或無結果的是同樣的 14 個（需要 GPU 或 Game view 的測試）。
+  - 多出來的 18 個是新增的測試。名稱只在 main 出現的 10 個，是在 R2 改了名字的測試。
+  - 分支這一輪用的 package 是 0.6.9 加上 C# `claude/network-client-hold-csharp`，因為從 N5b 起需要它。
+- **沒有做**：O4，也就是 `ClientRunner` 原本的診斷 log 要不要搬到獨立的元件。這一項還沒決定，R4 沒有處理。
+
 ### 4.3 原地切換時避免狀態殘留
 
 每個 session 的畫面物件都掛在一個專用的子 GameObject 底下，切換時整個銷毀再重建。這是用重建來保證乾淨，不靠手動清單。手動清單的問題就是 H9 拒絕 `Kernel_ReStartClient` 的理由。
@@ -345,7 +359,7 @@ ClientSession : wraps NetworkClient (+ catalog sync, connection state, cache)
 | R1 ✅ | `INetworkSession` 加上 `HostSession` 和 `ClientSession`；`NetworkItemPropController` 改用介面（目前只用到 `IsReady`、`IsDisconnected`、`LocalPeerId`、`LocalPlayerNetId` 和 4 個 kernel 呼叫） | 0.5–1 天 | **完成（2026-11-20）**：unity `claude/session-interface-r1` `9da4114`（從 main `bc1c272`）。EditMode 32/32 通過（NetworkSessionTests、NetworkItemProp*、NetworkPresentationClockTests、ClientRunnerAgentModeTests），沒有新的編譯警告 |
 | R2 ✅ | `ClientRunner` 改成 `GameRunner`，host 也走同一條路；刪掉 `HostModeRunner`；合併成一個 scene | 2–3 天 | **完成（2026-11-20）**：unity `claude/game-runner-r2` `27bee9a`。EditMode 192/192 通過（相關 fixture 加上 NetworkRenderingTests）；新增的 PlayMode `GameRunnerRoleSmokeTests` 2/2 通過（host 進營地並畫出世界；client 連上同一個 process 裡的 listen server 並畫出世界）。開關卡、回營地留給 R3 和 N6 |
 | R3 ✅ | 實測 host 玩家的物品、loadout、shelter、portal、建築內部，包含 §2.3 的三個項目 | 1–2 天 | **完成（2026-11-20）**：unity `claude/host-features-r3` `42ee799`。新增 PlayMode `GameRunnerHostFeatureTests` 3/3 通過，連同 R2 的 smoke test 共 5/5。沒有發現需要修改的地方，見 §2.3 |
-| R4 | 更新測試和工具（見 §8） | 0.5 天 | EditMode batchmode 全部通過，或者跟合併前的紅燈集合相同 |
+| R4 ✅ | 更新測試和工具（見 §8） | 0.5 天 | **完成（2026-11-21）**：unity `claude/runner-cleanup-r4` `ea4d4c7`。完整 EditMode 752 通過、0 失敗，未通過的項目和 main `bc1c272` 完全相同，見 §4.1.3 |
 
 ### 7.2 連線功能
 
