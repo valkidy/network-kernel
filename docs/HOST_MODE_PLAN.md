@@ -1,6 +1,6 @@
 # Host mode 連線機制計劃：開遊戲即 host、network terminal、單一 runner
 
-狀態：**草案（2026-11-20），Q1–Q4 已定案；R0 完成，O5、O6 已定案（H11、H12）；R0–R4、N1–N5b 完成（unity `claude/runner-cleanup-r4` `ea4d4c7`，疊在前面各步上；C# `claude/network-client-hold-csharp` `c81b5b63`，從 feat-unity-plugin 開出；kernel `claude/dedicated-lan-discovery` `365eb034` 和 `claude/network-terminal-n3` `39b211c6`，都從 main 開出；都未 merge）。**
+狀態：**草案（2026-11-20），Q1–Q4 已定案；R0 完成，O5、O6 已定案（H11、H12）；R0–R4、N1–N5b、O4 完成（unity `claude/runner-diagnostics-o4` `1ba3344`，疊在前面各步上；C# `claude/network-client-hold-csharp` `c81b5b63`，從 feat-unity-plugin 開出；kernel `claude/dedicated-lan-discovery` `365eb034` 和 `claude/network-terminal-n3` `39b211c6`，都從 main 開出；都未 merge）。**
 分支：`claude/host-mode-plan`（從 main `4e36d622`）。
 日期：2026-11-20。
 
@@ -233,6 +233,18 @@ ClientSession : wraps NetworkClient (+ catalog sync, connection state, cache)
   - 分支這一輪用的 package 是 0.6.9 加上 C# `claude/network-client-hold-csharp`，因為從 N5b 起需要它。
 - **沒有做**：O4，也就是 `ClientRunner` 原本的診斷 log 要不要搬到獨立的元件。這一項還沒決定，R4 沒有處理。
 
+### 4.1.4 O4 實作備註（2026-11-21）
+
+- **新的元件 `GameRunnerDiagnostics`**（`Assets/Scripts/Client/`），和 runner 掛在同一個 GameObject 上，由 `EnsureComponents` 加上。搬過去的有：
+  - kernel event、render summary、ready 但沒有畫面的警告
+  - remote presentation probe（`[G0]`）、Editor 的 issue timeline
+  - leg reach、skeleton pose provenance（仍然沒有被呼叫）、local stagger motion log
+  - 以及這些功能各自的開關
+- **runner 剩下的**：只留一個 `diagnostics.Enabled` 檢查，給自己的兩行診斷 log 用（shelter 改變、不認得的 game message）。runner 從 2874 行減少到約 2280 行。
+- **開關的預設值**：照 `Game.unity` 原本在 runner 上存的值設定，所以每個 session 印出來的 log 都和以前一樣。`logLegReach` 和 `logSkeletonPoseProvenance` 在程式碼裡原本預設是 true，但 scene 存的是 0，所以新元件的預設值採用 false。scene 裡 runner 上留下的舊欄位會被 Unity 忽略，下次存檔時就會消失。
+- **刪掉的**：TEMP `[AmmoDiag]`（issue_20261118_205257），包括欄位、方法，以及兩處 log。
+- **測試**：EditMode 48/48、PlayMode 11/11。log 裡仍然有 kernel event、render summary、`[G0]` 和 shelter 改變的訊息，`[AmmoDiag]` 已經沒有了。
+
 ### 4.3 原地切換時避免狀態殘留
 
 每個 session 的畫面物件都掛在一個專用的子 GameObject 底下，切換時整個銷毀再重建。這是用重建來保證乾淨，不靠手動清單。手動清單的問題就是 H9 拒絕 `Kernel_ReStartClient` 的理由。
@@ -410,7 +422,7 @@ ClientSession : wraps NetworkClient (+ catalog sync, connection state, cache)
 | O1 | local agent（bot）模式要不要也支援 host？ | 先維持只有 client 能用，不列入估算 |
 | O2 ✅ | 兩個 player 在同一台電腦都不帶參數時，第二個 host 要怎麼辦？ | **N2 已實作**：綁 7801 失敗就改綁 7802–7811 的第一個可用 port，並在畫面上顯示實際的 port；LAN discovery 回報的就是實際的 port |
 | O3 | terminal 面板要不要支援手把輸入？ | v1 不支援；LAN discovery 列表可以用手把選 |
-| O4 | `ClientRunner` 大約 500 行的診斷 log（其中 `[AmmoDiag]` 標了 TEMP）要在合併時一起清掉嗎？ | 搬到獨立的診斷元件；TEMP 的部分刪掉 |
+| O4 ✅ | `ClientRunner` 大約 500 行的診斷 log（其中 `[AmmoDiag]` 標了 TEMP）要在合併時一起清掉嗎？ | **已實作（2026-11-21，使用者採用建議）**：unity `claude/runner-diagnostics-o4` `1ba3344`，見 §4.1.4 |
 
 ---
 

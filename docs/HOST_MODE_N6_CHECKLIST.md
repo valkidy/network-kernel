@@ -9,7 +9,7 @@
 | repo | 分支 | 內容 |
 |---|---|---|
 | Unity | `claude/network-gate-n5a` `13e614c` | R1–R3、N1、N2、N4、N5a 疊在一起（不需要新的 C# API） |
-| Unity（選用） | `claude/runner-cleanup-r4` `ea4d4c7` | 再加上 N5b 和 R4；需要 package 裡有 C# `claude/network-client-hold-csharp` `c81b5b63` |
+| Unity（選用） | `claude/runner-diagnostics-o4` `1ba3344` | 再加上 N5b、R4 和 O4；需要 package 裡有 C# `claude/network-client-hold-csharp` `c81b5b63` |
 | kernel | `claude/network-terminal-n3` `39b211c6` | camp 的 network terminal prop（entity 235，ui 5） |
 | kernel | `claude/dedicated-lan-discovery` `365eb034` | dedicated server 回應 LAN discovery |
 
@@ -23,7 +23,7 @@
 - [ ] **package**：用合起來的 kernel 重新產生 `bundle.bytes`，打包 `com.network-example.kernel`，再發佈到 Unity 讀的分支（目前是 `dev-latest`）。
   - 沒做這一步，camp 裡就沒有 network terminal，§2 的 terminal 項目都無法測。
   - 這次沒有 ABI 或 snapshot schema 的變動，package 裡的 dylib 可以沿用 ABI 110。
-- [ ] **Unity**：checkout `claude/network-gate-n5a`，讓 package 解析到新的版本。如果 package 也包含了 C# 分支，可以改用 `claude/runner-cleanup-r4`。這時 §2.2 的門會先顯示「Connecting to …」，連線停住之後才出現；連不到的 IP 不會開門（§4.1 的預期結果也跟著改變）。
+- [ ] **Unity**：checkout `claude/network-gate-n5a`，讓 package 解析到新的版本。如果 package 也包含了 C# 分支，可以改用 `claude/runner-diagnostics-o4`。這時 §2.2 的門會先顯示「Connecting to …」，連線停住之後才出現；連不到的 IP 不會開門（§4.1 的預期結果也跟著改變）。
   - [ ] 打開 `Game.unity`，在 Editor 用 Role = Host 按 Play，確認 camp 裡看得到 network terminal（`(-4, 0, 5)`，和 level terminal 在不同側）。
 - [ ] **build player**：Build Settings 裡只有 `Game.unity`。兩台機器各需要一份；如果兩台作業系統不同，就各 build 一次。
 - [ ] **dedicated server**（只有流程 A 需要）：
