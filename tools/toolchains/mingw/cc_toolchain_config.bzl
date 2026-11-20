@@ -2,12 +2,34 @@ load(
     "@rules_cc//cc:cc_toolchain_config_lib.bzl",
     "artifact_name_pattern",
     "feature",
+    "flag_group",
+    "flag_set",
     "tool_path",
 )
+load("@rules_cc//cc:action_names.bzl", "ACTION_NAMES")
 load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
 
 _MINGW_ROOT = "/opt/homebrew/opt/mingw-w64/toolchain-x86_64"
 _MINGW_PREFIX = _MINGW_ROOT + "/bin/x86_64-w64-mingw32-"
+
+_COMPILE_ACTIONS = [
+    ACTION_NAMES.c_compile,
+    ACTION_NAMES.cpp_compile,
+]
+
+# Bazel turns on the feature named after the compilation mode, and a hand-written
+# toolchain gets no flags from it unless it declares them: without these, -c opt
+# built the Windows DLL at -O0 with assertions on (build_info said "debug").
+def _mode_feature(name, flags):
+    return feature(
+        name = name,
+        flag_sets = [
+            flag_set(
+                actions = _COMPILE_ACTIONS,
+                flag_groups = [flag_group(flags = flags)],
+            ),
+        ],
+    )
 
 def _impl(ctx):
     tool_paths = [
@@ -26,6 +48,9 @@ def _impl(ctx):
 
     features = [
         feature(name = "supports_pic", enabled = True),
+        _mode_feature("opt", ["-O2", "-DNDEBUG"]),
+        _mode_feature("dbg", ["-O0", "-g"]),
+        _mode_feature("fastbuild", ["-O0"]),
     ]
 
     cxx_builtin_include_directories = [
