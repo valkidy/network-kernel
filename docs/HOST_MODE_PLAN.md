@@ -336,7 +336,7 @@ ClientSession : wraps NetworkClient (+ catalog sync, connection state, cache)
 | N4 ✅ | terminal 面板（列表、輸入、回自己的營地） | Unity | **完成（2026-11-20）**：unity `claude/network-terminal-panel-n4` `c2564c8`。EditMode 48/48、PlayMode 9/9，見 §5.1.2 |
 | N5a ✅ | network gate v1：穿門時才開始連線 | Unity | **完成（2026-11-21）**：unity `claude/network-gate-n5a` `13e614c`。PlayMode 10/10，見 §5.2.1 |
 | N5b | network gate v2：`NetworkClient` 的暫停選項，連線準備好才開門 | C# package（獨立的 `claude/*-csharp` 分支）加 Unity | 0.5–1 天 |
-| N6 | 兩台機器實際跑完一輪流程 A 和流程 B | 手動 | 1 天 |
+| N6 | 檢查清單：`docs/HOST_MODE_N6_CHECKLIST.md`。兩台機器實際跑完一輪流程 A 和流程 B | 手動 | 1 天 |
 
 **合計**：R0–R4 約 4.5–7 天；N1–N6 約 5.5–7 天；全部約 10–14 天。先前評估的 6–10 天只包含 runner 合併、原地切換、Boot 和 `-ip`，沒有包含 LAN discovery、terminal prop 和面板。
 
