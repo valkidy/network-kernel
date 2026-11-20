@@ -12,6 +12,14 @@ namespace NetworkExample.Kernel.Client
             KernelConstants.GameplayCatalogSyncDefaultMaxBundleSize;
         public TimeSpan Timeout { get; set; } =
             TimeSpan.FromMilliseconds(KernelConstants.GameplayCatalogSyncDefaultTimeoutMs);
+
+        /// <summary>
+        /// Stop once the catalog is loaded, before the handshake: the client is
+        /// connected and ready to join, but the server has spawned nothing for
+        /// it. NetworkClient.ContinueHandshake joins. The wait counts toward
+        /// <see cref="Timeout"/>, so a client that may wait long sets it long.
+        /// </summary>
+        public bool HoldBeforeHandshake { get; set; }
     }
 
     public enum NetworkClientConnectionState
@@ -25,6 +33,9 @@ namespace NetworkExample.Kernel.Client
         Ready,
         Failed,
         Disconnected,
+        // Appended so the values above keep their numbers.
+        /// <summary>Catalog loaded and the handshake held (HoldBeforeHandshake).</summary>
+        ReadyToJoin,
     }
 
     public sealed class GameplayCatalogSyncResult

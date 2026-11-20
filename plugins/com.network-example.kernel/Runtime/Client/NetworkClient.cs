@@ -37,6 +37,31 @@ namespace NetworkExample.Kernel.Client
         public NetworkClientConnectionState ConnectionState => connectionState;
         public GameplayCatalogSyncResult CatalogSyncResult => catalogSyncResult;
 
+        /// <summary>True while a HoldBeforeHandshake sync waits for ContinueHandshake.</summary>
+        public bool IsHandshakeHeld =>
+            connectionState == NetworkClientConnectionState.ReadyToJoin;
+
+        /// <summary>
+        /// Joins a held client (GameplayCatalogSyncOptions.HoldBeforeHandshake):
+        /// the server spawns its player now. False when nothing is held.
+        /// </summary>
+        public bool ContinueHandshake()
+        {
+            if (!IsHandshakeHeld)
+            {
+                return false;
+            }
+            if (!kernel.ContinueClientHandshake())
+            {
+                FailCatalogSync(
+                    KernelGameplayCatalogSyncError.InvalidState,
+                    "Kernel_ContinueClientHandshake failed.");
+                return false;
+            }
+            connectionState = NetworkClientConnectionState.Handshaking;
+            return true;
+        }
+
         public bool Start(string address)
         {
             ResetManagedSessionState();
@@ -206,7 +231,8 @@ namespace NetworkExample.Kernel.Client
                     if (connectionState != NetworkClientConnectionState.CheckingCache &&
                         connectionState != NetworkClientConnectionState.DownloadingCatalog &&
                         connectionState != NetworkClientConnectionState.LoadingCatalog &&
-                        connectionState != NetworkClientConnectionState.Handshaking)
+                        connectionState != NetworkClientConnectionState.Handshaking &&
+                        connectionState != NetworkClientConnectionState.ReadyToJoin)
                     {
                         ProcessManifest(status.manifest);
                     }
@@ -216,7 +242,8 @@ namespace NetworkExample.Kernel.Client
                     break;
                 case KernelGameplayCatalogSyncState.BundleReady:
                     if (connectionState != NetworkClientConnectionState.LoadingCatalog &&
-                        connectionState != NetworkClientConnectionState.Handshaking)
+                        connectionState != NetworkClientConnectionState.Handshaking &&
+                        connectionState != NetworkClientConnectionState.ReadyToJoin)
                     {
                         ProcessDownloadedBundle(status.manifest);
                     }
@@ -348,6 +375,11 @@ namespace NetworkExample.Kernel.Client
                 catalogSyncResult.CacheWarning = warning;
             }
 
+            if (catalogSyncOptions.HoldBeforeHandshake)
+            {
+                connectionState = NetworkClientConnectionState.ReadyToJoin;
+                return;
+            }
             if (!kernel.ContinueClientHandshake())
             {
                 FailCatalogSync(
