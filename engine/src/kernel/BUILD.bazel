@@ -349,9 +349,18 @@ cc_shared_library(
             "-lwinpthread",
             "-lwinmm",
 
+            # libstdc++ must be the static archive only. Bazel links with the
+            # C driver, so -static-libstdc++ alone adds no libstdc++ and a bare
+            # -lstdc++ picked the shared import library: the DLL then carried
+            # libstdc++ code AND imported libstdc++-6.dll, and std::call_once
+            # (behind std::promise and std::async) wrote one copy's
+            # thread-local while libstdc++-6.dll's __once_proxy read the
+            # other, calling address 0 (Windows host crash, 2026-11-21).
             "-static-libgcc",
             "-static-libstdc++",
+            "-Wl,-Bstatic",
             "-lstdc++",
+            "-Wl,-Bdynamic",
         ],
         "//conditions:default": [],
     }),
@@ -384,9 +393,12 @@ cc_shared_library(
         "-lwinpthread",
         "-lwinmm",
 
+        # libstdc++ static only; see the Windows flags above.
         "-static-libgcc",
         "-static-libstdc++",
+        "-Wl,-Bstatic",
         "-lstdc++",
+        "-Wl,-Bdynamic",
     ],
     target_compatible_with = select({
         "//engine:mingw_w64": [],
