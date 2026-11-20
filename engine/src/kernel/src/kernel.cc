@@ -4739,17 +4739,27 @@ bool KernelEngine::load_gameplay_catalog_with_static_collision_scene(
 std::uint32_t KernelEngine::get_render_states(
     RenderEntityState* out_states,
     std::uint32_t max_states) {
-    return get_render_states_at_time(client_local_time_us_, out_states, max_states);
+    return copy_render_states_at_time(
+        client_local_time_us_, false, out_states, max_states);
 }
 
 std::uint32_t KernelEngine::get_render_states_at_time(
     std::uint64_t client_render_time_us,
     RenderEntityState* out_states,
     std::uint32_t max_states) {
+    return copy_render_states_at_time(
+        client_render_time_us, true, out_states, max_states);
+}
+
+std::uint32_t KernelEngine::copy_render_states_at_time(
+    std::uint64_t client_render_time_us,
+    bool host_time,
+    RenderEntityState* out_states,
+    std::uint32_t max_states) {
     if (out_states == nullptr || max_states == 0) {
         return 0;
     }
-    advance_render_clock(client_render_time_us);
+    advance_render_clock(client_render_time_us, host_time);
     rebuild_render_states_at_time(client_render_time_us);
     const std::uint32_t count =
         std::min(max_states, static_cast<std::uint32_t>(render_states_.size()));
@@ -4763,7 +4773,7 @@ std::uint32_t KernelEngine::get_skeleton_render_states(
     KernelBoneLocalTransform* out_bone_transforms,
     std::uint32_t max_bone_transforms,
     KernelSkeletonRenderStateResult* out_result) {
-    rebuild_skeleton_presentation_at_time(client_local_time_us_);
+    rebuild_skeleton_presentation_at_time(client_local_time_us_, false);
     return copy_skeleton_render_states(
         skeleton_presentation_poses_,
         0u,
@@ -12531,7 +12541,17 @@ std::uint64_t KernelEngine::render_target_server_time_us(
 // packet handler triggers: those run off client_local_time_us_, which the host's
 // presentation clock is not guaranteed to match, and two time bases feeding one
 // clock would stall it or lurch it. Those rebuilds read the clock as it stands.
-void KernelEngine::advance_render_clock(std::uint64_t client_render_time_us) {
+void KernelEngine::advance_render_clock(
+    std::uint64_t client_render_time_us,
+    bool host_time) {
+    if (host_time && !render_clock_.host_timed) {
+        // Whatever the kernel's own clock ran it to is on another time base:
+        // start over on the host's, or its earlier times would all be ignored.
+        render_clock_ = RenderClock{};
+        render_clock_.host_timed = true;
+    } else if (!host_time && render_clock_.host_timed) {
+        return;
+    }
     // Only a client with a clock-sync estimate has a present to run toward. A
     // listen server's loopback stream is never late, and without an estimate
     // the target is the newest snapshot, which a clock cannot run past.
@@ -17472,8 +17492,9 @@ std::size_t KernelEngine::skeleton_pose_history_capacity() const {
 }
 
 void KernelEngine::rebuild_skeleton_presentation_at_time(
-    std::uint64_t client_render_time_us) {
-    advance_render_clock(client_render_time_us);
+    std::uint64_t client_render_time_us,
+    bool host_time) {
+    advance_render_clock(client_render_time_us, host_time);
     rebuild_render_states_at_time(client_render_time_us);
     skeleton_presentation_poses_.clear();
     // The pose has to be evaluated at the instant the roots just rebuilt were,

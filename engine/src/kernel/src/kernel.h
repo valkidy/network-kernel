@@ -1000,7 +1000,8 @@ private:
     bool render_states_from_snapshot() const;
     void rebuild_render_states_at_time(std::uint64_t client_render_time_us);
     void rebuild_skeleton_presentation_at_time(
-        std::uint64_t client_render_time_us);
+        std::uint64_t client_render_time_us,
+        bool host_time = true);
     std::size_t skeleton_pose_history_capacity() const;
     void rebuild_render_states_from_world();
     void rebuild_render_states_from_snapshot(std::uint64_t client_render_time_us);
@@ -1092,7 +1093,14 @@ private:
     std::uint64_t render_target_server_time_us(
         std::uint64_t client_render_time_us) const;
     std::uint32_t ground_follower_render_tick(std::uint32_t server_now_tick) const;
-    void advance_render_clock(std::uint64_t client_render_time_us);
+    void advance_render_clock(
+        std::uint64_t client_render_time_us,
+        bool host_time = true);
+    std::uint32_t copy_render_states_at_time(
+        std::uint64_t client_render_time_us,
+        bool host_time,
+        RenderEntityState* out_states,
+        std::uint32_t max_states);
     bool build_interpolated_snapshot(
         std::uint64_t client_render_time_us,
         WorldSnapshot* out_snapshot) const;
@@ -1508,6 +1516,12 @@ private:
         bool has = false;
         bool held = false;
         std::uint64_t held_since_client_time_us = 0;
+        // Set by the first render call that names its time. From then on the
+        // calls that don't (get_render_states, get_skeleton_render_states:
+        // client_local_time_us_) read the clock without moving it -- two time
+        // bases on one clock let the debug view's reads mask a host render
+        // time seconds behind the kernel's.
+        bool host_timed = false;
     };
     RenderClock render_clock_{};
     // Off draws the world timeline the way it was drawn before the render
