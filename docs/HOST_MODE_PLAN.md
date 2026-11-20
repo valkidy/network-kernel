@@ -1,6 +1,6 @@
 # Host mode 連線機制計劃：開遊戲即 host、network terminal、單一 runner
 
-狀態：**草案（2026-11-20），Q1–Q4 已定案；R0 完成，O5、O6 已定案（H11、H12）；R1 完成（unity `claude/session-interface-r1` `9da4114`，未 merge）。**
+狀態：**草案（2026-11-20），Q1–Q4 已定案；R0 完成，O5、O6 已定案（H11、H12）；R1、R2 完成（unity `claude/game-runner-r2` `27bee9a`，疊在 R1 上，未 merge）。**
 分支：`claude/host-mode-plan`（從 main `4e36d622`）。
 日期：2026-11-20。
 
@@ -157,6 +157,25 @@ ClientSession : wraps NetworkClient (+ catalog sync, connection state, cache)
 - `NetworkItemPropController` 和 `ItemPropRequestSender` 的參數型別改成 `INetworkSession`。為了讓 diff 最小，參數名稱仍然叫 `client`，R2 再改名。
 - host 的 level terminal 改成透過 `ItemPropRequestSender.Submit(hostSession, …)` 送出。多了 `IsReady` 和 request id 的檢查，但 host 本來就先檢查過 `IsLocalClientReady`，所以行為不變。
 
+### 4.1.2 R2 實作備註
+
+- `ClientRunner` 改名為 `GameRunner`，是 `sealed partial class`：
+  - `GameRunner.cs`：共用部分加 client 角色
+  - `GameRunner.Host.cs`：啟動 listen host、轉送 host 自己玩家的初始加入
+  - `.meta` 的 GUID 沒變，所以 scene 和序列化設定都保留。
+- 新增 `role` 欄位，預設是 `Client`，所以 scene 裡原本的設定照舊。host 用的欄位是 `hostPort`（暫時仍是 7777，N2 改成 7801）和 `hostGameplayCatalogEntry`。
+- **host 現在走和 client 相同的畫面處理**：物品、loadout、shelter、portal、建築內部、物品 HUD 都會執行。武器欄位改由 inventory 填入，不再用舊的 `TryReadPlayerWeaponLoadout`。這些在 host 上是否都正確，是 R3 要實測的。
+- 保留的角色差異：
+  - host 每個 frame 都送 input，client 照 `inputSubmissionRateHz` 送
+  - catalog：host 讀本機 bundle，client 等 sync 完成
+  - 只有 client 才會偵測斷線並停止
+- `Client.unity` 改名為 `Game.unity`，是 build 裡唯一的 scene；`HostMode.unity` 和 `HostModeRunner.cs` 已刪除。
+- **還沒做的**：
+  - `Game.unity` 裡停用的 `Terrain` 群組沒有刪（手動改 scene YAML 有風險，在 Editor 裡刪比較安全；它是停用的，不影響執行）
+  - 共用程式碼裡的 log 前綴仍然寫 `Client`
+  - item controller 的參數名稱仍然叫 `client`
+- 測試和工具（原 R4 的一部分）已經一起改好：`NetworkPresentationClockTests`、`GameRunnerAgentModeTests`、`VideoCaptureMenu`、`EditorBuildSettings`，以及注釋。
+
 ### 4.3 原地切換時避免狀態殘留
 
 每個 session 的畫面物件都掛在一個專用的子 GameObject 底下，切換時整個銷毀再重建。這是用重建來保證乾淨，不靠手動清單。手動清單的問題就是 H9 拒絕 `Kernel_ReStartClient` 的理由。
@@ -204,7 +223,7 @@ ClientSession : wraps NetworkClient (+ catalog sync, connection state, cache)
 |---|---|---|---|
 | R0 ✅ | 比對 `Client.unity` 和 `HostMode.unity` 的場景物件與序列化設定；把兩種角色的行為差異列成表 | 0.5 天 | **完成（2026-11-20）**，結果在 §4.2 |
 | R1 ✅ | `INetworkSession` 加上 `HostSession` 和 `ClientSession`；`NetworkItemPropController` 改用介面（目前只用到 `IsReady`、`IsDisconnected`、`LocalPeerId`、`LocalPlayerNetId` 和 4 個 kernel 呼叫） | 0.5–1 天 | **完成（2026-11-20）**：unity `claude/session-interface-r1` `9da4114`（從 main `bc1c272`）。EditMode 32/32 通過（NetworkSessionTests、NetworkItemProp*、NetworkPresentationClockTests、ClientRunnerAgentModeTests），沒有新的編譯警告 |
-| R2 | `ClientRunner` 改成 `GameRunner`，host 也走同一條路；刪掉 `HostModeRunner`；合併成一個 scene | 2–3 天 | 兩種角色都能進營地、開關卡、回營地 |
+| R2 ✅ | `ClientRunner` 改成 `GameRunner`，host 也走同一條路；刪掉 `HostModeRunner`；合併成一個 scene | 2–3 天 | **完成（2026-11-20）**：unity `claude/game-runner-r2` `27bee9a`。EditMode 192/192 通過（相關 fixture 加上 NetworkRenderingTests）；新增的 PlayMode `GameRunnerRoleSmokeTests` 2/2 通過（host 進營地並畫出世界；client 連上同一個 process 裡的 listen server 並畫出世界）。開關卡、回營地留給 R3 和 N6 |
 | R3 | 實測 host 玩家的物品、loadout、shelter、portal、建築內部，包含 §2.3 的三個項目 | 1–2 天 | 每一項都有結果；如果發現 kernel 端的問題，停下來回報 |
 | R4 | 更新測試和工具（見 §8） | 0.5 天 | EditMode batchmode 全部通過，或者跟合併前的紅燈集合相同 |
 
