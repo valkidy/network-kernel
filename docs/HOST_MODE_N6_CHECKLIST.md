@@ -12,14 +12,15 @@
 | Unity（選用） | `claude/runner-diagnostics-o4` `1ba3344` | 再加上 N5b、R4 和 O4；需要 package 裡有 C# `claude/network-client-hold-csharp` `c81b5b63` |
 | kernel | `claude/network-terminal-n3` `39b211c6` | camp 的 network terminal prop（entity 235，ui 5） |
 | kernel | `claude/dedicated-lan-discovery` `365eb034` | dedicated server 回應 LAN discovery |
+| kernel | `claude/app-default-port-7801` `e2d995fb` | `app` 的預設 port 改成 7801 |
 
-兩個 kernel 分支都從 main 開出，互不衝突（一個改 `game_server/`，一個改 `app/`）。
+三個 kernel 分支都從 main 開出。`dedicated-lan-discovery` 和 `app-default-port-7801` 改的是 `app/` 裡不同的檔案；`network-terminal-n3` 只改 `game_server/`，彼此不衝突。
 
 ---
 
 ## 0. 事前準備（使用者處理）
 
-- [ ] **kernel**：把兩個 kernel 分支合在一起，可以 merge 到 main，或另開一個暫時分支。
+- [ ] **kernel**：把三個 kernel 分支合在一起，可以 merge 到 main，或另開一個暫時分支。
 - [ ] **package**：用合起來的 kernel 重新產生 `bundle.bytes`，打包 `com.network-example.kernel`，再發佈到 Unity 讀的分支（目前是 `dev-latest`）。
   - 沒做這一步，camp 裡就沒有 network terminal，§2 的 terminal 項目都無法測。
   - 這次沒有 ABI 或 snapshot schema 的變動，package 裡的 dylib 可以沿用 ABI 110。
@@ -31,7 +32,7 @@
     ```bash
     bazel build -c opt //app:app
     ```
-  - 啟動時**一定要帶 `--port=7801`**，因為 `app` 的預設 port 仍然是 7777：
+  - 啟動指令如下。`app` 的預設 port 已經是 7801（`claude/app-default-port-7801`），所以 `--port` 可以省略；如果沒有合進這個分支，就一定要帶 `--port=7801`：
     ```bash
     bazel-bin/app/app --mode=dedicated_server --port=7801 --gameplay-catalog-bundle=bazel-bin/game_server/gameplay_catalog_bundle/bundle.zip --gameplay-catalog-entry=gameplay_catalog.yaml
     ```

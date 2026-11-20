@@ -22,7 +22,7 @@
 | H8 | **合併 `HostModeRunner` 與 `ClientRunner` 成單一 runner**，再在上面做原地切換 | 2026-11-20 使用者採用建議 |
 | H9 | 不新增 `Kernel_ReStartClient`。kernel handle 的角色固定；切換角色 = `Kernel_Destroy` + `Kernel_Create`，重建本身就保證狀態乾淨 | 評估結果，見 §6 |
 | H10 | 切換的體驗照 level gate 做（network gate）：連線準備好才開門、走進去才切換、portal 畫面保持全黑、穿過時 fade | 評估結果，見 §5 |
-| H11 | **固定 port 統一為 7801**（原 O5）：dedicated、docker、防火牆規則維持不變，Unity host 從 7777 改成 7801 | 2026-11-20 使用者採用建議 |
+| H11 | **固定 port 統一為 7801**（原 O5）：dedicated、docker、防火牆規則維持不變，Unity host 從 7777 改成 7801。`app` 的預設 port 也改成 7801（2026-11-21，kernel `claude/app-default-port-7801` `e2d995fb`） | 2026-11-20 使用者採用建議；`app` 的部分 2026-11-21 使用者決定 |
 | H12 | **dedicated server 也廣播 LAN discovery**（原 O6）：`app` 的 dedicated 模式呼叫 `Kernel_LANDiscovery_StartServer`，排進 N2；在那之前流程 A 用手動輸入 IP | 2026-11-20 使用者採用建議 |
 
 ---
