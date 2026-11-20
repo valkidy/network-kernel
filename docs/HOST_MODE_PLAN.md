@@ -1,6 +1,6 @@
 # Host mode 連線機制計劃：開遊戲即 host、network terminal、單一 runner
 
-狀態：**草案（2026-11-20），Q1–Q4 已定案；R0（差異比對）完成，O5、O6 待決定。** 尚未實作程式。
+狀態：**草案（2026-11-20），Q1–Q4 已定案；R0（差異比對）完成，O5、O6 已定案（H11、H12）。** 尚未實作程式。
 分支：`claude/host-mode-plan`（從 main `4e36d622`）。
 日期：2026-11-20。
 
@@ -18,10 +18,12 @@
 | H4 | **Q1**：network terminal 誰都能用；在別人的 server 上多一個「回自己的營地」選項 | 2026-11-20 使用者採用建議 |
 | H5 | **Q3**：terminal 面板列出 LAN discovery 找到的 host，可以直接點選；手動輸入 IP 當備用 | 2026-11-20 使用者採用建議 |
 | H6 | **Q4**：命令列參數 `-ip <ip>`。有這個參數時 player 以 client mode 啟動、直接連線；沒有時以 host 啟動 | 2026-11-20 使用者決定 |
-| H7 | IP 輸入只收 `0-9` 和 `.`，另外處理 Backspace、Enter、Esc，不使用虛擬鍵盤；port 固定 7777 | 需求 |
+| H7 | IP 輸入只收 `0-9` 和 `.`，另外處理 Backspace、Enter、Esc，不使用虛擬鍵盤；port 固定（見 H11） | 需求 |
 | H8 | **合併 `HostModeRunner` 與 `ClientRunner` 成單一 runner**，再在上面做原地切換 | 2026-11-20 使用者採用建議 |
 | H9 | 不新增 `Kernel_ReStartClient`。kernel handle 的角色固定；切換角色 = `Kernel_Destroy` + `Kernel_Create`，重建本身就保證狀態乾淨 | 評估結果，見 §6 |
 | H10 | 切換的體驗照 level gate 做（network gate）：連線準備好才開門、走進去才切換、portal 畫面保持全黑、穿過時 fade | 評估結果，見 §5 |
+| H11 | **固定 port 統一為 7801**（原 O5）：dedicated、docker、防火牆規則維持不變，Unity host 從 7777 改成 7801 | 2026-11-20 使用者採用建議 |
+| H12 | **dedicated server 也廣播 LAN discovery**（原 O6）：`app` 的 dedicated 模式呼叫 `Kernel_LANDiscovery_StartServer`，排進 N2；在那之前流程 A 用手動輸入 IP | 2026-11-20 使用者採用建議 |
 
 ---
 
@@ -38,7 +40,7 @@
 
 - **Unity 端完全沒有接 LAN discovery**：`Assets/Scripts` 沒有任何引用，只在 package 的 `Samples~` 裡有範例。
 - **Unity player 沒有解析命令列參數**：找不到 `GetCommandLineArgs`。
-- **build 的第一個 scene 是 `Client.unity`**：所以現在 build 出來的 player 一開就自動連 `127.0.0.1:7777`。
+- **build 的第一個 scene 是 `Client.unity`**：所以現在 build 出來的 player 一開就自動連 scene 裡存的位址 `127.0.0.1:7801`（R0 確認；程式碼預設值才是 7777）。
 - **`NetworkClient` 載完 catalog 就直接 `ContinueClientHandshake()`**（feat-unity-plugin `NetworkClient.cs:351`），沒辦法停在中間。
 - **HostMode 是功能縮水版**：`HostModeRunner`（897 行）沒有物品操作、loadout、camp stock、shelter、建築內部、portal、手上武器顯示、鎖定武器、物品 HUD，原始碼注釋寫明 *"The host has no item controls"*。這些都在 `ClientRunner`（2787 行）裡。只要 H1 成立，host 玩家就需要這些功能。
 
@@ -62,18 +64,18 @@
 | 啟動方式 | 結果 |
 |---|---|
 | build player，不帶參數 | Boot → host session：自己的營地、廣播 LAN discovery、可以用 network terminal |
-| build player，帶 `-ip <ip>` | Boot → client session，連 `<ip>:7777`；格式錯誤、連線失敗或之後斷線，都退回 host session |
+| build player，帶 `-ip <ip>` | Boot → client session，連 `<ip>:7801`；格式錯誤、連線失敗或之後斷線，都退回 host session |
 | Editor Play | 依照 runner 上 Inspector 的設定選角色（保留現在「Play 之前先填好 IP」的流程） |
 
 `-ip` 的解析規則：
-- 用 `IPAddress.TryParse` 檢查，而且必須是剛好 4 段的 IPv4，接上 `:7777`。
+- 用 `IPAddress.TryParse` 檢查，而且必須是剛好 4 段的 IPv4，接上 `:7801`（H11）。
 - 格式錯誤就退回 host，並在畫面上顯示原因。
 
 啟動指令範例：
 - macOS：`open -a Game.app --args -ip 192.168.1.20`
 - Windows：`Game.exe -ip 192.168.1.20`
 
-同一台電腦開兩個 player 測試時，第二個要帶 `-ip 127.0.0.1`。如果兩個都不帶參數，第二個會綁 7777 失敗，要在 N2 處理（本機 host 改綁其他 port，或顯示提示）。
+同一台電腦開兩個 player 測試時，第二個要帶 `-ip 127.0.0.1`。如果兩個都不帶參數，第二個會綁 7801 失敗，要在 N2 處理（本機 host 改綁其他 port，或顯示提示）。
 
 ---
 
@@ -114,7 +116,7 @@ ClientSession : wraps NetworkClient (+ catalog sync, connection state, cache)
 
 | 欄位 | Client scene 的值 | HostMode 實際的值 | 合併時用 |
 |---|---|---|---|
-| 位址或 port | `127.0.0.1:7801`；清單還有 `192.168.1.102:7801`、`192.168.1.107:7801` | port `7777` | **要先決定，見 O5** |
+| 位址或 port | `127.0.0.1:7801`；清單還有 `192.168.1.102:7801`、`192.168.1.107:7801` | port `7777` | **7801（H11）** |
 | `maxEvents` / `maxRenderStates` | 2048 / 2048 | **256 / 256** | 2048 |
 | `enableVisualDebug` | 0 | 1（程式碼預設） | 0 |
 | `logActionResultFailures` / `logFireStalls` | 0 / 0 | 1 / 1（程式碼預設） | 0 / 0 |
@@ -145,7 +147,7 @@ ClientSession : wraps NetworkClient (+ catalog sync, connection state, cache)
 
 - R2 合併 scene 時不用搬任何物件，直接以 `Client.unity` 為基礎，刪掉 `Terrain` 群組。
 - 估計不變。
-- 新增 O5（port）和 O6（dedicated server 的 LAN discovery），必須在 N1 和 N2 之前決定。
+- 發現 port 不一致與 dedicated 沒有 LAN discovery，已於 2026-11-20 定案為 H11、H12。
 
 ### 4.3 原地切換時避免狀態殘留
 
@@ -203,14 +205,14 @@ ClientSession : wraps NetworkClient (+ catalog sync, connection state, cache)
 | 步驟 | 內容 | 在哪裡做 | 估計 |
 |---|---|---|---|
 | N1 | Boot scene 和 `-ip` 解析；退回 host 的處理 | Unity | 0.5 天 |
-| N2 | host session 啟動時廣播 LAN discovery；綁 7777 失敗時的處理 | Unity | 0.5 天 |
+| N2 | host session 啟動時廣播 LAN discovery，port 改 7801；綁 7801 失敗時的處理（O2）；`app` 的 dedicated 模式廣播 LAN discovery（H12） | Unity 加本 repo 的 `app/`（commit 分開） | 1 天 |
 | N3 | `network_terminal` entity template、ui 5 的路由、擺進 camp | game_server 加 catalog（本 repo 的 `claude/*` 分支） | 0.5 天 |
 | N4 | terminal 面板（列表、輸入、回自己的營地） | Unity | 1 天 |
 | N5a | network gate v1：穿門時才開始連線 | Unity | 0.5–1 天 |
 | N5b | network gate v2：`NetworkClient` 的暫停選項，連線準備好才開門 | C# package（獨立的 `claude/*-csharp` 分支）加 Unity | 0.5–1 天 |
 | N6 | 兩台機器實際跑完一輪流程 A 和流程 B | 手動 | 1 天 |
 
-**合計**：R0–R4 約 4.5–7 天；N1–N6 約 5–6.5 天；全部約 9.5–13.5 天。先前評估的 6–10 天只包含 runner 合併、原地切換、Boot 和 `-ip`，沒有包含 LAN discovery、terminal prop 和面板。
+**合計**：R0–R4 約 4.5–7 天；N1–N6 約 5.5–7 天；全部約 10–14 天。先前評估的 6–10 天只包含 runner 合併、原地切換、Boot 和 `-ip`，沒有包含 LAN discovery、terminal prop 和面板。
 
 **順序**：R0 → R1 → R2 → R3 → R4 → N1、N2、N3（三者互不相依）→ N4 → N5a → N6 → N5b。N5b 可以晚點做。
 
@@ -245,11 +247,9 @@ ClientSession : wraps NetworkClient (+ catalog sync, connection state, cache)
 | # | 問題 | 建議 |
 |---|---|---|
 | O1 | local agent（bot）模式要不要也支援 host？ | 先維持只有 client 能用，不列入估算 |
-| O2 | 兩個 player 在同一台電腦都不帶參數時，第二個 host 要怎麼辦？ | 綁 7777 失敗就改綁 7778–7787 的第一個可用 port，並在畫面上顯示實際的 port |
+| O2 | 兩個 player 在同一台電腦都不帶參數時，第二個 host 要怎麼辦？ | 綁 7801 失敗就改綁 7802–7811 的第一個可用 port，並在畫面上顯示實際的 port |
 | O3 | terminal 面板要不要支援手把輸入？ | v1 不支援；LAN discovery 列表可以用手把選 |
 | O4 | `ClientRunner` 大約 500 行的診斷 log（其中 `[AmmoDiag]` 標了 TEMP）要在合併時一起清掉嗎？ | 搬到獨立的診斷元件；TEMP 的部分刪掉 |
-| O5 | **port 不一致**：H7 定為 7777，Unity host 也用 7777；但 dedicated server 用 7801（`run_server.sh`、docker 的 `NK_PORT` 預設值、Windows 防火牆規則、`Client.unity` 裡的位址）。流程 A 照 H7 會連不上 | 統一改成 **7801**：dedicated、docker 和防火牆規則都不用動，只改 Unity host 的 port 和 H7。O2 的備用 port 跟著改成 7802 開始 |
-| O6 | dedicated server（`app/`）沒有廣播 LAN discovery（`app/` 和 `game_server/` 裡找不到 `LANDiscovery`），所以流程 A 的 server 不會出現在 terminal 列表裡 | 在 `app` 的 dedicated 模式加上 `Kernel_LANDiscovery_StartServer`（本 repo 的小改動，不碰 ABI），排進 N2；在那之前流程 A 用手動輸入 IP |
 
 ---
 
