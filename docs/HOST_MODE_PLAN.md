@@ -1,6 +1,6 @@
 # Host mode 連線機制計劃：開遊戲即 host、network terminal、單一 runner
 
-狀態：**草案（2026-11-20），Q1–Q4 已定案；R0 完成，O5、O6 已定案（H11、H12）；R1–R3、N1 完成（unity `claude/launch-options-n1` `b2ffd51`，疊在 R1–R3 上，未 merge）。**
+狀態：**草案（2026-11-20），Q1–Q4 已定案；R0 完成，O5、O6 已定案（H11、H12）；R1–R3、N1、N2 完成（unity `claude/lan-discovery-n2` `0510511`，疊在前面各步上；kernel `claude/dedicated-lan-discovery` `365eb034`，從 main 開出；都未 merge）。**
 分支：`claude/host-mode-plan`（從 main `4e36d622`）。
 日期：2026-11-20。
 
@@ -107,6 +107,20 @@
   - 畫面左上角會顯示原因 8 秒（`OnGUI`）。
   - 連到沒有人在聽的位址，要等 GNS 的連線逾時（約 10 s）才會退回。N5 的 network gate 可能需要更短的 timeout。
 - **host port**：預設值改成 7801（H11）。原本排在 N2，因為 `-ip` 一定連 7801，所以提前到 N1 做。
+
+### 3.2 N2 實作備註（2026-11-20）
+
+- **host**（`GameRunner.Host.cs`）
+  - 依序嘗試 `hostPort` 到 `hostPort + 10`。只有 catalog 載入成功、但 listen 失敗時才換下一個 port；catalog 本身載入失敗時，換 port 也沒用，所以直接停止。
+  - 換了 port 會在畫面上顯示實際的 port。
+  - listen 成功後開始回應 LAN discovery（udp 47777），名稱是 `<裝置名稱>'s camp`，回報的 port 就是實際綁定的 port。
+  - discovery 的 port 被占用時只會警告，camp 仍然可以用 IP 加入。
+- **dedicated**（`app/dedicated_server_app.cc`）
+  - 開始 listen 之後回應 LAN discovery，名稱是 `dedicated server :<port>`。
+  - 失敗時只警告。乾淨結束時會在 kernel 之前先停止並銷毀 discovery。
+- **已知的限制**
+  - 同一台電腦上的第二個 host，可能因為 47777 被第一個占用而無法回應 discovery；`SO_REUSEADDR` 在不同作業系統上的行為不同，沒有驗證。
+  - docker 裡的 dedicated server 收不到 LAN 上的廣播：47777 沒有對外開放，而且廣播本來就過不了 docker 的 NAT。這種情況請用 IP 加入。
 
 ## 4. 單一 runner 的架構
 
@@ -261,7 +275,7 @@ ClientSession : wraps NetworkClient (+ catalog sync, connection state, cache)
 | 步驟 | 內容 | 在哪裡做 | 估計 |
 |---|---|---|---|
 | N1 ✅ | `-ip` 解析；退回 host 的處理；host port 改成 7801 | Unity | **完成（2026-11-20）**：unity `claude/launch-options-n1` `b2ffd51`。EditMode 44/44、PlayMode 6/6（包括「連不上就退回 host」）。**不做 Boot scene**，見 §3.1 |
-| N2 | host session 啟動時廣播 LAN discovery；綁 7801 失敗時的處理（O2）；`app` 的 dedicated 模式廣播 LAN discovery（H12） | Unity 加本 repo 的 `app/`（commit 分開） | 1 天 |
+| N2 ✅ | host session 啟動時廣播 LAN discovery；綁 7801 失敗時的處理（O2）；`app` 的 dedicated 模式廣播 LAN discovery（H12） | Unity 加本 repo 的 `app/`（commit 分開） | **完成（2026-11-20）**：unity `claude/lan-discovery-n2` `0510511`（PlayMode 7/7）；kernel `claude/dedicated-lan-discovery` `365eb034`（`-c opt //app:app` 在 port 7871 實跑，用 NKLAN01 查詢收到 port=7871 的回應） |
 | N3 | `network_terminal` entity template、ui 5 的路由、擺進 camp | game_server 加 catalog（本 repo 的 `claude/*` 分支） | 0.5 天 |
 | N4 | terminal 面板（列表、輸入、回自己的營地） | Unity | 1 天 |
 | N5a | network gate v1：穿門時才開始連線 | Unity | 0.5–1 天 |
@@ -303,7 +317,7 @@ ClientSession : wraps NetworkClient (+ catalog sync, connection state, cache)
 | # | 問題 | 建議 |
 |---|---|---|
 | O1 | local agent（bot）模式要不要也支援 host？ | 先維持只有 client 能用，不列入估算 |
-| O2 | 兩個 player 在同一台電腦都不帶參數時，第二個 host 要怎麼辦？ | 綁 7801 失敗就改綁 7802–7811 的第一個可用 port，並在畫面上顯示實際的 port |
+| O2 ✅ | 兩個 player 在同一台電腦都不帶參數時，第二個 host 要怎麼辦？ | **N2 已實作**：綁 7801 失敗就改綁 7802–7811 的第一個可用 port，並在畫面上顯示實際的 port；LAN discovery 回報的就是實際的 port |
 | O3 | terminal 面板要不要支援手把輸入？ | v1 不支援；LAN discovery 列表可以用手把選 |
 | O4 | `ClientRunner` 大約 500 行的診斷 log（其中 `[AmmoDiag]` 標了 TEMP）要在合併時一起清掉嗎？ | 搬到獨立的診斷元件；TEMP 的部分刪掉 |
 
