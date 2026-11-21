@@ -2103,7 +2103,14 @@ typedef struct RenderEntityState {
      * anything else. */
     uint8_t held_weapon_id;
     uint8_t has_held_weapon;
-    uint8_t reserved_shelter1;
+    /* Snapshot schema 33, in what was reserved_shelter1 (layout unchanged):
+     * players only, which player this is on the server, 1 to the number of
+     * players. The server hands each session the lowest number no other
+     * session holds when it joins and frees it when it leaves, so a player
+     * who drops and comes back while nobody else joins gets its number back.
+     * Every client sees the same number for the same player. 0 for anything
+     * that is not a player, and for a player whose number has not arrived. */
+    uint8_t player_number;
 } RenderEntityState;
 
 typedef struct KernelBoneLocalTransform {

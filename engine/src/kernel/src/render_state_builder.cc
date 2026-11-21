@@ -219,6 +219,9 @@ RenderEntityState render_state_from_snapshot_entity(
         state.has_held_weapon = 1u;
         state.held_weapon_id = entity.held_weapon_id;
     }
+    if (entity.actor_type == ActorType::kPlayer) {
+        state.player_number = entity.player_number;
+    }
     return state;
 }
 

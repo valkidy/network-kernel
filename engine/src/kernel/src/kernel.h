@@ -540,6 +540,10 @@ private:
         std::uint32_t last_processed_input_seq = 0;
         bool welcomed = false;
         std::unordered_set<NetId> relevant_entities;
+        // Which player this is, 1..N: the lowest number no other session held
+        // when this one was created (RenderEntityState::player_number). Freed
+        // with the session.
+        std::uint8_t player_number = 0;
         std::uint32_t action_instance_high_water = 0;
         std::uint32_t active_action_instance_id = 0;
         std::uint32_t active_action_template_id = 0;
@@ -662,6 +666,8 @@ private:
         // What a player holds, as of the last record that said (schema 28).
         bool has_held_weapon = false;
         std::uint8_t held_weapon_id = KERNEL_HELD_WEAPON_NONE;
+        // A player's number, as of the last record that carried it (schema 33).
+        std::uint8_t player_number = 0;
         bool active = false;
     };
 
@@ -1306,6 +1312,12 @@ private:
     void handle_client_session_message(const TransportEvent& transport_event);
     PeerSession* find_session(PeerId peer);
     const PeerSession* find_session(PeerId peer) const;
+    // The lowest player number no current session holds, or 0 when all 255
+    // are taken.
+    std::uint8_t lowest_free_player_number() const;
+    // The number of the session that owns `peer`, the listen host's own
+    // included, or 0.
+    std::uint8_t player_number_for_peer(PeerId peer) const;
     void remove_session(PeerId peer);
     void materialize_entity_collider(NetId net_id);
     void materialize_entity_movement_collider(NetId net_id);

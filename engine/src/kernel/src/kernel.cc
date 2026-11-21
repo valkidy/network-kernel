@@ -2887,6 +2887,7 @@ bool KernelEngine::start_listen_server(std::uint16_t port) {
     local_client_peer_id_ = kLocalListenPeerId;
     local_player_net_id_ = player;
     local_listen_session_ = PeerSession{kLocalListenPeerId, player, 0, true, {}};
+    local_listen_session_.player_number = lowest_free_player_number();
     local_listen_session_.has_clock_sync = true;
     local_listen_session_.clock_offset_us = 0;
     has_welcome_ = true;
@@ -15261,11 +15262,17 @@ WorldSnapshot KernelEngine::build_shared_world_snapshot(
     std::uint32_t server_time_ms) const {
     // last_processed_input_seq is per session; build_relevant_snapshot fills
     // it in for each one.
-    return build_world_snapshot(
+    WorldSnapshot snapshot = build_world_snapshot(
         world_,
         tick_loop_.current_tick(),
         server_time_ms,
         0u);
+    for (EntitySnapshot& entity : snapshot.entities) {
+        if (entity.actor_type == ActorType::kPlayer) {
+            entity.player_number = player_number_for_peer(entity.owner_peer);
+        }
+    }
+    return snapshot;
 }
 
 WorldSnapshot KernelEngine::build_relevant_snapshot(
@@ -17633,6 +17640,9 @@ void KernelEngine::rebuild_render_states_from_world() {
             entity,
             entity_id_for_net_id(identity.net_id));
         const EntityKind& kind = view.get<const EntityKind>(entity);
+        if (kind.actor_type == ActorType::kPlayer) {
+            state.player_number = player_number_for_peer(identity.owner_peer);
+        }
         if (kind.type == EntityType::kProjectile &&
             world_.registry().all_of<ProjectileState>(entity)) {
             const ProjectileState& projectile =
@@ -17842,6 +17852,9 @@ void KernelEngine::rebuild_render_states_from_snapshot(
             replicated->has_held_weapon = true;
             replicated->held_weapon_id = entity.held_weapon_id;
         }
+        if (entity.player_number != 0u) {
+            replicated->player_number = entity.player_number;
+        }
         if (!use_reliable_prop_state) {
             replicated->position = entity.position;
             replicated->rotation = entity.rotation;
@@ -17952,6 +17965,9 @@ void KernelEngine::rebuild_render_states_from_snapshot(
         if (entity.has_held_weapon) {
             render_states_.back().has_held_weapon = 1u;
             render_states_.back().held_weapon_id = entity.held_weapon_id;
+        }
+        if (entity.actor_type == ActorType::kPlayer) {
+            render_states_.back().player_number = entity.player_number;
         }
     }
 
@@ -19481,7 +19497,9 @@ void KernelEngine::handle_server_handshake(const TransportEvent& transport_event
             transport_event.peer,
             glm::vec3{0.0f, 0.0f, 0.0f});
         register_actor_for_first_physics(player);
-        peer_sessions_.push_back(PeerSession{transport_event.peer, player, 0, false});
+        PeerSession joined{transport_event.peer, player, 0, false};
+        joined.player_number = lowest_free_player_number();
+        peer_sessions_.push_back(std::move(joined));
         session = &peer_sessions_.back();
         push_event(KernelEventType_PlayerJoined, player, transport_event.peer);
         push_event(
@@ -19861,6 +19879,32 @@ const KernelEngine::PeerSession* KernelEngine::find_session(PeerId peer) const {
         return nullptr;
     }
     return &(*found);
+}
+
+std::uint8_t KernelEngine::lowest_free_player_number() const {
+    for (std::uint32_t number = 1u; number <= 0xFFu; ++number) {
+        bool taken = local_listen_session_.player == 0u
+            ? false
+            : local_listen_session_.player_number == number;
+        for (const PeerSession& session : peer_sessions_) {
+            taken = taken || session.player_number == number;
+        }
+        if (!taken) {
+            return static_cast<std::uint8_t>(number);
+        }
+    }
+    return 0u;
+}
+
+std::uint8_t KernelEngine::player_number_for_peer(PeerId peer) const {
+    if (peer == 0u) {
+        return 0u;
+    }
+    if (local_listen_session_.player != 0u && local_listen_session_.peer == peer) {
+        return local_listen_session_.player_number;
+    }
+    const PeerSession* session = find_session(peer);
+    return session != nullptr ? session->player_number : 0u;
 }
 
 void KernelEngine::remove_session(PeerId peer) {
