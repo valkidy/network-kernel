@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- adds replicated player numbers and enables predicted actor blocking for Unity listen hosts
+
+
+0.7.0 release notes:
+
 - fixes listen-host interpolation timing and prevents ammo refills during held-action prediction rollback
 
 
