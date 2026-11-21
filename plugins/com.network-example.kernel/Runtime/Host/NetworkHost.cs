@@ -8,6 +8,15 @@ namespace NetworkExample.Kernel.Host
         public string EntryPath { get; set; } = "gameplay_catalog.yaml";
         public string ContentNamespace { get; set; } = "default";
         public bool EnableClientSync { get; set; } = true;
+
+        /// <summary>
+        /// Whether actors' movement capsules block each other. Predicted is what
+        /// the native host and dedicated server apps run with; the kernel's own
+        /// default is Disabled, under which enemies walk straight through one
+        /// another and pile onto a single spot.
+        /// </summary>
+        public KernelActorBlockingMode ActorBlocking { get; set; } =
+            KernelActorBlockingMode.Predicted;
     }
 
     public sealed class NetworkHost : IDisposable
@@ -154,6 +163,15 @@ namespace NetworkExample.Kernel.Host
             try
             {
                 newKernel = new Kernel(config);
+                // Session rules are only accepted before the server starts.
+                if (!newKernel.SetSessionRules(new KernelSessionRulesConfig
+                    {
+                        actor_blocking_mode = catalog.ActorBlocking,
+                    }))
+                {
+                    newKernel.Dispose();
+                    return false;
+                }
                 newGameServer = new GameServer(
                     newKernel,
                     catalog.BundleBytes,
