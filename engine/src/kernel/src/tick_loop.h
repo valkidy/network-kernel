@@ -50,6 +50,8 @@ public:
     std::uint32_t accumulate(float delta_seconds);
     float fixed_delta_seconds() const;
     std::uint32_t current_tick() const;
+    // Time accumulated toward the next tick, in seconds: always under one tick.
+    double accumulated_seconds() const;
     std::uint32_t snapshot_interval_ticks() const;
     bool should_write_snapshot() const;
 

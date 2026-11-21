@@ -120,6 +120,10 @@ std::uint32_t TickLoop::current_tick() const {
     return current_tick_;
 }
 
+double TickLoop::accumulated_seconds() const {
+    return accumulator_seconds_;
+}
+
 std::uint32_t TickLoop::snapshot_interval_ticks() const {
     return std::max(1u, config_.server_tick_rate / config_.snapshot_rate);
 }
