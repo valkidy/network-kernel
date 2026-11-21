@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- fixes listen-host interpolation timing and prevents ammo refills during held-action prediction rollback
+
+
+0.7.0 release notes:
+
 - fixes render clock advancement for untimed render calls and enables MinGW release optimization flags
 
 
