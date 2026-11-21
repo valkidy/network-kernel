@@ -468,6 +468,84 @@ void run(bool listen, std::uint16_t port) {
     std::printf("level 2 lost: everyone back in the camp alive, revives back to the camp's (%d)\n",
         server.remaining_revives());
 
+    // ---- Level 3: clear it, then run out of revives with the return gate
+    // open. The dead cannot walk through the gate, so the level is lost
+    // rather than left open for good.
+    require(server.request_level(kLevel));
+    require(world.run_until([&] { return server.scene_flow() == GAME_SERVER_SCENE_FLOW_GATE_OPEN; }, 30.0));
+    require(world.run_until([&] {
+        return a.state.flow == GAME_SERVER_SCENE_FLOW_GATE_OPEN && camp_bounds.contains(a.state.gate.x);
+    }, 5.0));
+    for (const std::uint32_t player : party) world.teleport(player, a.state.gate);
+    require(world.run_until([&] {
+        return std::all_of(party.begin(), party.end(),
+            [&](std::uint32_t p) { return level_bounds.contains(world.state_of(p).position.x); });
+    }, 5.0));
+    require(world.run_until(clear_level, 60.0));
+    require(server.remaining_revives() == 1);
+    require(world.run_until([&] {
+        for (const std::uint32_t player : party) {
+            const KernelServerEntityState s = world.state_of(player);
+            if (s.hp != 0u && level_bounds.contains(s.position.x) && s.position.y > -5.0f) {
+                world.teleport(player, KernelVec3{s.position.x, -30.0f, s.position.z});
+            }
+        }
+        return server.scene_flow() == GAME_SERVER_SCENE_FLOW_CAMP;
+    }, 30.0));
+    require(server.scene_outcome() == GAME_SERVER_SCENE_OUTCOME_FAILED);
+    world.run_until([&] { return false; }, 0.5);
+    for (const std::uint32_t player : party) {
+        const KernelServerEntityState s = world.state_of(player);
+        require(camp_bounds.contains(s.position.x));
+        require(s.hp != 0u);
+    }
+    require(world.run_until([&] { return a.loaded.empty() && b.loaded.empty(); }, 5.0));
+    require(a.state.outcome == GAME_SERVER_SCENE_OUTCOME_FAILED);
+    std::printf("level 3 lost after clearing: return gate gone, everyone back in the camp alive\n");
+
+    // ---- Level 4: clear it and send A home through the return gate. B then
+    // dies with no revive coming: the server sends B home after A, and the
+    // level is won.
+    require(server.request_level(kLevel));
+    require(world.run_until([&] { return server.scene_flow() == GAME_SERVER_SCENE_FLOW_GATE_OPEN; }, 30.0));
+    require(world.run_until([&] {
+        return a.state.flow == GAME_SERVER_SCENE_FLOW_GATE_OPEN && camp_bounds.contains(a.state.gate.x);
+    }, 5.0));
+    for (const std::uint32_t player : party) world.teleport(player, a.state.gate);
+    require(world.run_until([&] {
+        return std::all_of(party.begin(), party.end(),
+            [&](std::uint32_t p) { return level_bounds.contains(world.state_of(p).position.x); });
+    }, 5.0));
+    require(world.run_until(clear_level, 60.0));
+    require(world.run_until([&] { return a.state.flow == GAME_SERVER_SCENE_FLOW_RETURN_OPEN; }, 5.0));
+    world.teleport(a_player, a.state.gate);
+    require(world.run_until([&] { return camp_bounds.contains(world.state_of(a_player).position.x); }, 5.0));
+    const std::uint32_t b_player = player_of(b.kernel);
+    require(world.run_until([&] {
+        const KernelServerEntityState s = world.state_of(b_player);
+        if (s.hp != 0u && level_bounds.contains(s.position.x) && s.position.y > -5.0f) {
+            world.teleport(b_player, KernelVec3{s.position.x, -30.0f, s.position.z});
+        }
+        return camp_bounds.contains(s.position.x);
+    }, 30.0));
+    // (A dedicated server's B was the last one inside: the level is already
+    // over, and the revives are the camp's again.)
+    if (listen) require(server.remaining_revives() == 0);
+    world.run_until([&] { return false; }, 0.5);
+    require(world.state_of(b_player).hp != 0u);
+    std::printf("B out of revives after A got home: sent to the camp alive\n");
+    // The listen host is still inside, alive: the level waits for it.
+    if (listen) {
+        require(server.scene_flow() == GAME_SERVER_SCENE_FLOW_RETURN_OPEN);
+        world.teleport(player_of(world.server_kernel), a.state.gate);
+    }
+    require(world.run_until([&] { return server.scene_flow() == GAME_SERVER_SCENE_FLOW_CAMP; }, 10.0));
+    require(server.scene_outcome() == GAME_SERVER_SCENE_OUTCOME_COMPLETED);
+    for (const std::uint32_t player : party) require(camp_bounds.contains(world.state_of(player).position.x));
+    require(world.run_until([&] { return a.loaded.empty() && b.loaded.empty(); }, 5.0));
+    require(a.state.outcome == GAME_SERVER_SCENE_OUTCOME_COMPLETED);
+    std::printf("level 4 complete: A walked out, B was sent after A\n");
+
     for (KernelHandle* client : world.clients) {
         GameServer_ReleaseTerrain(client);
         Kernel_Destroy(client);

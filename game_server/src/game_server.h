@@ -176,6 +176,8 @@ private:
     void flush_scene_state();
     // Everyone inside the level back at the camp spawn, the dead revived.
     void return_level_players_to_camp(const std::vector<KernelServerEntityState>& players);
+    // One player to the camp spawn, `arrival` places along; revived if dead.
+    void return_player_to_camp(const KernelServerEntityState& player, std::uint32_t arrival);
     void set_flow(std::uint8_t flow);
     // Stands `gate` up as a level_gate_entrance at its entrance, sending to
     // its exit. False, logged, when the kernel refuses it.
@@ -242,6 +244,12 @@ private:
     std::set<std::uint32_t> recipe_owed_peers_;
     std::uint32_t next_recipe_transfer_id_ = 1;
     std::int32_t level_revives_granted_ = 0;
+    // RETURN_OPEN: everyone seen in the level since the return gate opened,
+    // and whether one of them has since left it. Once someone is home, the
+    // level counts as won: whoever dies inside with no revive coming is sent
+    // home rather than left there.
+    std::set<std::uint32_t> return_party_;
+    bool someone_returned_ = false;
     float gate_open_seconds_ = 0.0f;
     std::string auto_level_;
     std::set<std::uint32_t> scene_state_owed_;
