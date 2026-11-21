@@ -159,6 +159,8 @@ bool GameServer::request_level(const std::string& scene_template) {
     gate_open_seconds_ = 0.0f;
     level_defeated_ = 0u;
     level_revives_granted_ = 0;
+    return_party_.clear();
+    someone_returned_ = false;
     level_announced_ = false;
     level_failed_.clear();
     recipe_owed_peers_.clear();
@@ -399,16 +401,20 @@ void GameServer::return_level_players_to_camp(const std::vector<KernelServerEnti
     std::uint32_t back = 0;
     for (const KernelServerEntityState& player : players) {
         if (!level_bounds.contains(player.position.x)) continue;
-        teleport(kernel_, player.net_id,
-            plus(spawn_of(config_), KernelVec3{0.0f, 0.0f, kArrivalSpacing * static_cast<float>(back++)}));
-        if (player.hp != 0u) continue;
-        KernelServerReviveInfo info{};
-        info.struct_size = sizeof(info);
-        info.net_id = player.net_id;
-        info.lift_meters = 0.0f;
-        if (Kernel_ServerReviveEntity(kernel_, &info)) {
-            configure_player(player.net_id, true);
-        }
+        return_player_to_camp(player, back++);
+    }
+}
+
+void GameServer::return_player_to_camp(const KernelServerEntityState& player, std::uint32_t arrival) {
+    teleport(kernel_, player.net_id,
+        plus(spawn_of(config_), KernelVec3{0.0f, 0.0f, kArrivalSpacing * static_cast<float>(arrival)}));
+    if (player.hp != 0u) return;
+    KernelServerReviveInfo info{};
+    info.struct_size = sizeof(info);
+    info.net_id = player.net_id;
+    info.lift_meters = 0.0f;
+    if (Kernel_ServerReviveEntity(kernel_, &info)) {
+        configure_player(player.net_id, true);
     }
 }
 
@@ -591,8 +597,8 @@ void GameServer::tick_scene_flow(float delta_seconds) {
     }
     // Out of revives with everyone still in the level dead and nobody's
     // revive still due: the level is lost. This holds once the return gate
-    // is open too -- the dead cannot walk through it, and nothing else would
-    // ever end the level.
+    // is open too, until someone has walked out through it -- the dead
+    // cannot, and nothing else would ever end the level.
     const auto party_wiped = [&] {
         std::uint32_t inside = 0;
         for (const KernelServerEntityState& player : players) {
@@ -655,17 +661,37 @@ void GameServer::tick_scene_flow(float delta_seconds) {
     }
 
     if (flow_ == GAME_SERVER_SCENE_FLOW_RETURN_OPEN) {
-        if (party_wiped()) {
+        // Who has made it home: anyone seen in the level since the gate
+        // opened who is no longer in it.
+        for (const KernelServerEntityState& player : players) {
+            if (level_bounds.contains(player.position.x)) {
+                return_party_.insert(player.net_id);
+            } else if (return_party_.count(player.net_id) != 0u) {
+                someone_returned_ = true;
+            }
+        }
+        if (!someone_returned_ && party_wiped()) {
             spdlog::info("party out of revives with the return gate open; level failed");
             return_level_players_to_camp(players);
             finish_level(GAME_SERVER_SCENE_OUTCOME_FAILED);
             return;
         }
         // The return gate is the kernel's portal; the level ends once the
-        // last player has left it, through the gate or any other way.
+        // last player has left it, through the gate or any other way. Once
+        // someone is home, the dead with no revive coming are sent after
+        // them: they could never walk out themselves.
         std::uint32_t inside = 0;
+        std::uint32_t sent_home = 0;
         for (const KernelServerEntityState& player : players) {
-            if (level_bounds.contains(player.position.x)) ++inside;
+            if (!level_bounds.contains(player.position.x)) continue;
+            if (someone_returned_ && player.hp == 0u && !respawn_.is_waiting(player.net_id) &&
+                    respawn_.remaining_revives() == 0) {
+                spdlog::info("player {} out of revives after the party got home; sent to the camp",
+                    player.net_id);
+                return_player_to_camp(player, sent_home++);
+                continue;
+            }
+            ++inside;
         }
         if (inside == 0u) {
             finish_level(GAME_SERVER_SCENE_OUTCOME_COMPLETED);
