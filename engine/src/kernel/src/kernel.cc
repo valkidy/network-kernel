@@ -12507,9 +12507,15 @@ std::uint64_t KernelEngine::render_target_server_time_us(
             tick_loop_.snapshot_interval_ticks() * 2u,
             fixed_delta_seconds);
     // A listen server's client half shares the server's clock outright -- both
-    // advance off the same update() -- so the offset is exactly zero rather
-    // than an estimate. It never learns this the normal way: clock-sync pings
-    // only go to peer_sessions_, which excludes local_listen_session_, and the
+    // advance off the same update() -- so the server's present is read off the
+    // tick loop itself rather than estimated. Not off the host's render time:
+    // the tick loop drops whatever a long frame owes past max_ticks_per_update
+    // while the host's presentation clock counts the whole frame, so after one
+    // hitch the host's time runs ahead of the server's for good, the target
+    // lands past the newest snapshot, and the world steps once per snapshot
+    // interval (issue_20261121_215915, a Mac host after loading a level).
+    // Nor can it estimate an offset the normal way: clock-sync pings only go
+    // to peer_sessions_, which excludes local_listen_session_, and the
     // loopback poll drops everything that is not a snapshot, reliable event, or
     // presentation packet -- ChannelId::kSession, which carries ping/pong,
     // included. Without this the branch below quantises the render target to
@@ -12520,7 +12526,8 @@ std::uint64_t KernelEngine::render_target_server_time_us(
     std::uint64_t target_server_time_us = 0;
     if (has_client_clock_sync_ || shares_server_clock) {
         const std::uint64_t server_now_us = shares_server_clock
-            ? client_render_time_us
+            ? tick_time_us(tick_loop_.current_tick(), fixed_delta_seconds) +
+                static_cast<std::uint64_t>(tick_loop_.accumulated_seconds() * 1000000.0)
             : offset_time_us(client_render_time_us, client_clock_offset_us_);
         target_server_time_us =
             server_now_us > interpolation_delay_us
