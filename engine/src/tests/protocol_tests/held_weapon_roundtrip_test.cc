@@ -78,6 +78,29 @@ int main() {
     require(agent_decoded.entities.size() == 1u);
     require(!agent_decoded.entities[0].has_held_weapon);
 
+    // Schema 33: a player's number, one byte, only when it has one.
+    ne::EntitySnapshot numbered = player(11, false, 0);
+    numbered.player_number = 3;
+    require(ne::estimate_snapshot_entity_size(numbered) ==
+            ne::estimate_snapshot_entity_size(player(9, false, 0)) + 1u);
+    ne::EntitySnapshot numbered_agent = numbered;
+    numbered_agent.net_id = 12;
+    numbered_agent.actor_type = ne::ActorType::kAgent;
+    ne::WorldSnapshot numbered_snapshot;
+    numbered_snapshot.header.server_tick = 120;
+    numbered_snapshot.entities.push_back(numbered);
+    numbered_snapshot.entities.push_back(player(13, false, 0));
+    numbered_snapshot.entities.push_back(numbered_agent);
+    const std::vector<std::uint8_t> numbered_packet =
+        ne::encode_snapshot_packet(numbered_snapshot, 1);
+    ne::WorldSnapshot numbered_decoded;
+    require(ne::decode_snapshot_packet(
+        numbered_packet.data(), numbered_packet.size(), &numbered_decoded));
+    require(numbered_decoded.entities.size() == 3u);
+    for (const ne::EntitySnapshot& entity : numbered_decoded.entities) {
+        require(entity.player_number == (entity.net_id == 11u ? 3u : 0u));
+    }
+
     // The container kind rides the inventory page.
     for (const std::uint8_t kind : {std::uint8_t{KernelInventoryContainerKind_Items},
                                     std::uint8_t{KernelInventoryContainerKind_Weapons}}) {

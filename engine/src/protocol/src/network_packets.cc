@@ -62,6 +62,7 @@ constexpr std::size_t kActorSuspensionPayloadSize = 16;
 constexpr std::size_t kActorHoverPayloadSize = 12u;
 constexpr std::size_t kActorShelterPayloadSize = 5;
 constexpr std::size_t kActorHeldWeaponPayloadSize = 1;
+constexpr std::size_t kActorPlayerNumberPayloadSize = 1;
 constexpr std::size_t kProjectileCompactSnapshotPayloadSize = 34;
 // net_id 4 + effective_length 2. No position, rotation or velocity: a beam does
 // not move, and its origin and aim are the shooter's, which every snapshot
@@ -315,6 +316,9 @@ enum ActorSnapshotRecordFlag : std::uint16_t {
     // speed (two f32) and end tick (u32). The receiving session's own player
     // only.
     kActorSnapshotHasHover = 1u << 11,
+    // Schema 33. Which player this is on the server (u8, 1..N), on every
+    // player record that has one.
+    kActorSnapshotHasPlayerNumber = 1u << 12,
 };
 
 bool is_actor_entity_type(EntityType type) {
@@ -356,6 +360,9 @@ std::uint16_t actor_record_flags(const EntitySnapshot& entity) {
     }
     if (entity.has_hover) {
         flags |= kActorSnapshotHasHover;
+    }
+    if (entity.actor_type == ActorType::kPlayer && entity.player_number != 0u) {
+        flags |= kActorSnapshotHasPlayerNumber;
     }
     return flags;
 }
@@ -727,6 +734,9 @@ std::vector<std::uint8_t> encode_snapshot_packet(
                         payload.write_float(entity->hover_height_meters);
                         payload.write_float(entity->hover_vertical_speed);
                         payload.write_u32(entity->hover_until_tick);
+                    }
+                    if ((record_flags & kActorSnapshotHasPlayerNumber) != 0u) {
+                        payload.write_u8(entity->player_number);
                     }
                     break;
                 }
@@ -1121,6 +1131,13 @@ bool decode_snapshot_packet(
                         }
                         entity.has_hover = true;
                     }
+                    if ((record_flags & kActorSnapshotHasPlayerNumber) != 0u) {
+                        if (entity.actor_type != ActorType::kPlayer ||
+                            !reader.read_u8(&entity.player_number) ||
+                            entity.player_number == 0u) {
+                            return false;
+                        }
+                    }
                     break;
                 }
                 case SnapshotSectionType::kActorAgent: {
@@ -1357,6 +1374,9 @@ std::size_t estimate_snapshot_entity_size(const EntitySnapshot& entity) {
                         : 0u) +
                    ((actor_record_flags(entity) & kActorSnapshotHasHover) != 0u
                         ? kActorHoverPayloadSize
+                        : 0u) +
+                   ((actor_record_flags(entity) & kActorSnapshotHasPlayerNumber) != 0u
+                        ? kActorPlayerNumberPayloadSize
                         : 0u);
         case SnapshotSectionType::kActorAgent: {
             const std::uint8_t flags = agent_record_flags(entity);

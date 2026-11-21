@@ -106,6 +106,10 @@ struct EntitySnapshot {
     // player (KERNEL_HELD_WEAPON_NONE when unarmed). Players only.
     bool has_held_weapon = false;
     std::uint8_t held_weapon_id = kHeldWeaponNone;
+    // Schema 33: which player this is on the server, 1..N, for every client
+    // that sees the player; 0 for anything else. The world builder leaves it
+    // 0 -- sessions are the kernel's, which stamps it on the shared snapshot.
+    std::uint8_t player_number = 0;
     bool has_owner_weapon_state = false;
     std::uint8_t active_weapon_slot = 0;
     std::uint8_t weapon_state_flags = 0;
