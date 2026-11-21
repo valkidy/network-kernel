@@ -589,6 +589,19 @@ void GameServer::tick_scene_flow(float delta_seconds) {
         finish_level(GAME_SERVER_SCENE_OUTCOME_ABORTED);
         return;
     }
+    // Out of revives with everyone still in the level dead and nobody's
+    // revive still due: the level is lost. This holds once the return gate
+    // is open too -- the dead cannot walk through it, and nothing else would
+    // ever end the level.
+    const auto party_wiped = [&] {
+        std::uint32_t inside = 0;
+        for (const KernelServerEntityState& player : players) {
+            if (!level_bounds.contains(player.position.x)) continue;
+            ++inside;
+            if (player.hp != 0u || respawn_.is_waiting(player.net_id)) return false;
+        }
+        return level_entered_ && inside != 0u && respawn_.remaining_revives() == 0;
+    };
 
     if (flow_ == GAME_SERVER_SCENE_FLOW_GATE_OPEN) {
         // The gate itself is the kernel's portal; the server only says who
@@ -634,16 +647,7 @@ void GameServer::tick_scene_flow(float delta_seconds) {
             set_flow(GAME_SERVER_SCENE_FLOW_RETURN_OPEN);
             return;
         }
-        // Out of revives with everyone in the level dead and nobody's revive
-        // still due: the level is lost.
-        std::uint32_t inside = 0;
-        bool anyone_alive = false;
-        for (const KernelServerEntityState& player : players) {
-            if (!level_bounds.contains(player.position.x)) continue;
-            ++inside;
-            if (player.hp != 0u || respawn_.is_waiting(player.net_id)) anyone_alive = true;
-        }
-        if (level_entered_ && inside != 0u && !anyone_alive && respawn_.remaining_revives() == 0) {
+        if (party_wiped()) {
             return_level_players_to_camp(players);
             finish_level(GAME_SERVER_SCENE_OUTCOME_FAILED);
         }
@@ -651,6 +655,12 @@ void GameServer::tick_scene_flow(float delta_seconds) {
     }
 
     if (flow_ == GAME_SERVER_SCENE_FLOW_RETURN_OPEN) {
+        if (party_wiped()) {
+            spdlog::info("party out of revives with the return gate open; level failed");
+            return_level_players_to_camp(players);
+            finish_level(GAME_SERVER_SCENE_OUTCOME_FAILED);
+            return;
+        }
         // The return gate is the kernel's portal; the level ends once the
         // last player has left it, through the gate or any other way.
         std::uint32_t inside = 0;
