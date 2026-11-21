@@ -243,6 +243,7 @@ namespace NetworkExample.Kernel.Editor
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelPropDefinition>("importance") == 48 &&
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<RenderEntityState>("held_weapon_id") == 161 &&
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<RenderEntityState>("has_held_weapon") == 162 &&
+                (int)System.Runtime.InteropServices.Marshal.OffsetOf<RenderEntityState>("player_number") == 163 &&
                 KernelItemInstanceView.StructSize == 224 &&
                 (int)System.Runtime.InteropServices.Marshal.OffsetOf<KernelItemInstanceView>("drop_tag") == 220 &&
                 KernelInventoryContainerView.StructSize == 48 &&

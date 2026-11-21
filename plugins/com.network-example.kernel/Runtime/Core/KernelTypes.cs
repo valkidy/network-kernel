@@ -1652,7 +1652,16 @@ namespace NetworkExample.Kernel
         /// </summary>
         public byte held_weapon_id;
         public byte has_held_weapon;
-        public byte reserved_shelter1;
+        /// <summary>
+        /// Players only (snapshot schema 33, in what was reserved_shelter1, so
+        /// the layout is unchanged): which player this is on the server, 1 to
+        /// the number of players. The server gives each joining session the
+        /// lowest number no other session holds and frees it when that session
+        /// leaves, so every client sees the same number on the same player. 0
+        /// for anything that is not a player, and for a player whose number has
+        /// not arrived.
+        /// </summary>
+        public byte player_number;
 
         public static uint StructSize => (uint)Marshal.SizeOf<RenderEntityState>();
     }
