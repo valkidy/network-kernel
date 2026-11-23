@@ -155,6 +155,6 @@ agent_budget:
 # and validated whether it is listed or not, so a broken definition fails the
 # catalog even while it is switched off; only the listed ids ever spawn.
 #
-# 1 the warband, 3 the giant, 5 the king's royal guard; 2 (the airforce) is off.
+# 1 the warband, 3 the giant, 5 the caped king; 2 (the airforce) is off.
 patrols:
   - ids: [1, 3, 5] # [1, 2, 3, 5]
