@@ -106,8 +106,11 @@ locomotion:
     # them on to ~86%, where the giant and biped_actor walk.
     stance_crouch_meters: 0.54
   leg_defaults:
-    # The giant's 3.18 m on 6.26 m legs, kept in proportion to 5.90 m.
-    step_height_meters: 3.0
+    # The swing's peak foot lift (step_height x sin of the swing phase, no other
+    # cap). 4.5 m on 5.90 m legs, half again the giant's proportion (3.18 m on
+    # 6.26 m), so the heavy king high-steps. The hip stands ~5.2 m over the
+    # foot plane in the crouch, so the knee still has room to fold.
+    step_height_meters: 4.5
     max_reach_ratio: 0.99
   legs:
     - id: leg0
