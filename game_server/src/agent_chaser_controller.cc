@@ -216,7 +216,13 @@ bool try_start_leap(
         return false;
     }
     const float climb = target_feet.y - agent->position.y;
-    const bool up_a_ledge = climb >= kLedgeMinMeters && climb <= kLedgeMaxMeters;
+    // Higher than it can leap: it keeps chasing on foot instead.
+    if (leap.max_rise_meters > 0.0f && climb > leap.max_rise_meters) {
+        return false;
+    }
+    const float ledge_max =
+        leap.max_rise_meters > 0.0f ? leap.max_rise_meters : kLedgeMaxMeters;
+    const bool up_a_ledge = climb >= kLedgeMinMeters && climb <= ledge_max;
     if (distance < leap.min_distance_meters) {
         if (!up_a_ledge) {
             return false;

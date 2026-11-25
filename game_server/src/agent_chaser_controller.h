@@ -42,6 +42,9 @@ struct AgentLeapTuning {
     float apex_meters = 0.6f;
     // A long leap is stretched to stay under this. Zero: no cap.
     float max_horizontal_speed_meters_per_second = 0.0f;
+    // The highest it leaps up: a target standing more than this above its
+    // feet is not leapt at, however near. Zero: no cap.
+    float max_rise_meters = 0.0f;
     // Ticks after one leap lands before the next may start.
     std::uint32_t cooldown_ticks = 90;
     // Start the swing this many ticks before the landing, so a wind-up of the

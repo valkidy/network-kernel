@@ -457,6 +457,7 @@ void hash_actor_template(
     hash_float(hash, actor_template.chaser.leap.apex_meters);
     hash_float(
         hash, actor_template.chaser.leap.max_horizontal_speed_meters_per_second);
+    hash_float(hash, actor_template.chaser.leap.max_rise_meters);
     hash_scalar(hash, actor_template.chaser.leap.cooldown_ticks);
     hash_scalar(hash, actor_template.chaser.leap.attack_lead_ticks);
     hash_float(hash, actor_template.chaser.charge.min_distance_meters);
@@ -3184,7 +3185,7 @@ SpAttackTemplateConfig sp_attack_template_from_yaml(
             fail("leap requires leap and on_landing {weapon, lead_ticks}");
         }
         reject(leap, {"landing_distance_meters", "apex_meters",
-                      "max_horizontal_speed_meters_per_second"});
+                      "max_horizontal_speed_meters_per_second", "max_rise_meters"});
         reject(on_landing, {"weapon", "lead_ticks"});
         if (leap["landing_distance_meters"]) {
             sp_attack.leap.landing_distance_meters =
@@ -3196,6 +3197,9 @@ SpAttackTemplateConfig sp_attack_template_from_yaml(
         if (leap["max_horizontal_speed_meters_per_second"]) {
             sp_attack.leap.max_horizontal_speed_meters_per_second =
                 leap["max_horizontal_speed_meters_per_second"].as<float>();
+        }
+        if (leap["max_rise_meters"]) {
+            sp_attack.leap.max_rise_meters = leap["max_rise_meters"].as<float>();
         }
         sp_attack.on_landing_weapon_id = on_landing["weapon"].as<std::uint32_t>();
         sp_attack.leap.attack_lead_ticks = on_landing["lead_ticks"].as<std::uint32_t>();
@@ -14422,6 +14426,8 @@ std::vector<std::string> validate_gameplay_config(
              !std::isfinite(leap.landing_distance_meters) ||
              !std::isfinite(leap.apex_meters) ||
              !std::isfinite(leap.max_horizontal_speed_meters_per_second) ||
+             !std::isfinite(leap.max_rise_meters) ||
+             leap.max_rise_meters < 0.0f ||
              leap.landing_distance_meters < 0.0f ||
              // It has to cover ground: a band that starts at or inside the
              // landing distance leaps backwards, or not at all.

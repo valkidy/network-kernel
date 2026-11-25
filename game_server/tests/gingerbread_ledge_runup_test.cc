@@ -11,6 +11,9 @@
 // +x, the riser at x = 40 facing +x, the ledge (y = 6) on -x. Measured: the
 // leap lifts off well back from the riser, never rises higher than a leap to
 // the ledge does, and comes down on the ledge.
+//
+// issue_20261125_135253: the same unit with its leap's max_rise_meters under
+// the riser's 6 m never leaps at all -- no lift-off, no run-up.
 
 #include <algorithm>
 #include <array>
@@ -54,24 +57,30 @@ std::vector<std::uint8_t> read_ledge_scene() {
         std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
 }
 
-const network_example::game_server::ActorTemplateConfig* template_named(
-    const network_example::game_server::GameServerGameplayConfig& config,
+network_example::game_server::ActorTemplateConfig* template_named(
+    network_example::game_server::GameServerGameplayConfig& config,
     const std::string& name) {
-    for (const auto& candidate : config.actor_templates) {
+    for (auto& candidate : config.actor_templates) {
         if (candidate.name == name) return &candidate;
     }
     return nullptr;
 }
 
-}  // namespace
+struct Sample {
+    KernelVec3 position;
+    std::uint32_t flags;
+};
 
-int main() {
-    const auto config = network_example::game_server::default_game_server_gameplay_config();
-    const auto* gingerbread = template_named(config, "gingerbread");
-    require(gingerbread != nullptr);
-    const network_example::game_server::AgentLeapTuning& leap = gingerbread->chaser.leap;
-    require(leap.max_distance_meters > 0.0f);
-    const std::vector<std::uint8_t> scene = read_ledge_scene();
+const KernelVec3 kPlayerAt{kRiserX - 12.0f, kLedgeY, -70.0f};
+const KernelVec3 kUnitAt{kRiserX + 0.6f, 0.0f, -70.0f};
+
+// Fifteen seconds of the unit at the riser's foot with the player on the
+// ledge, sampled every tick.
+std::vector<Sample> run(
+    const network_example::game_server::GameServerGameplayConfig& config,
+    const network_example::game_server::ActorTemplateConfig& gingerbread,
+    const std::vector<std::uint8_t>& scene,
+    std::uint16_t port) {
 
     KernelConfig kernel_config{};
     kernel_config.mode = KernelMode_ListenServer;
@@ -94,7 +103,7 @@ int main() {
     scene_config.collider_id = config.static_collision_scene.collider_id;
     scene_config.collision_layer = config.static_collision_scene.collision_layer;
     require(Kernel_SetStaticCollisionScene(kernel, &scene_config));
-    require(Kernel_StartListenServer(kernel, 8077));
+    require(Kernel_StartListenServer(kernel, port));
 
     network_example::game_server::GameServer game_server(kernel, config);
     require(game_server.preload_directors());
@@ -114,7 +123,7 @@ int main() {
     // The player up on the ledge, 12.6 m out from the unit -- inside the band
     // -- and 6 m up: a target up a ledge.
     const KernelQuat identity{0.0f, 0.0f, 0.0f, 1.0f};
-    const KernelVec3 player_at{kRiserX - 12.0f, kLedgeY, -70.0f};
+    const KernelVec3 player_at = kPlayerAt;
     require(Kernel_ServerSetEntityTransform(kernel, player, &player_at, &identity));
 
     // The unit at the riser's foot, its capsule a few centimetres off the
@@ -123,18 +132,14 @@ int main() {
     create.struct_size = sizeof(create);
     create.entity_type = KernelEntityType_Actor;
     create.actor_type = KernelActorType_Agent;
-    create.entity_template_id = gingerbread->actor_template_id;
-    create.actor_template_id = gingerbread->actor_template_id;
-    create.position = KernelVec3{kRiserX + 0.6f, 0.0f, -70.0f};
+    create.entity_template_id = gingerbread.actor_template_id;
+    create.actor_template_id = gingerbread.actor_template_id;
+    create.position = kUnitAt;
     create.rotation = identity;
     std::uint32_t unit = 0;
     require(Kernel_ServerCreateEntity(kernel, &create, &unit));
-    require(Kernel_ServerSetEntityActorTemplate(kernel, unit, gingerbread->actor_template_id));
+    require(Kernel_ServerSetEntityActorTemplate(kernel, unit, gingerbread.actor_template_id));
 
-    struct Sample {
-        KernelVec3 position;
-        std::uint32_t flags;
-    };
     std::vector<Sample> samples;
     for (int tick = 0; tick < 30 * 15; ++tick) {
         step();
@@ -155,14 +160,31 @@ int main() {
         samples.push_back(Sample{state.position, state.visual_flags});
     }
     Kernel_Destroy(kernel);
-    require(!samples.empty());
+    return samples;
+}
+
+}  // namespace
+
+int main() {
+    auto config = network_example::game_server::default_game_server_gameplay_config();
+    const auto* gingerbread = template_named(config, "gingerbread");
+    require(gingerbread != nullptr);
+    const network_example::game_server::AgentLeapTuning& leap = gingerbread->chaser.leap;
+    require(leap.max_distance_meters > 0.0f);
+    // The shipped cap clears this riser, or the leap below proves nothing.
+    require(leap.max_rise_meters == 0.0f || leap.max_rise_meters > kLedgeY);
+    const std::vector<std::uint8_t> scene = read_ledge_scene();
+    const KernelVec3 player_at = kPlayerAt;
+
+    const std::vector<Sample> samples = run(config, *gingerbread, scene, 8077);
+    require(samples.size() == 30u * 15u);
 
     // The first leap, its lift-off and its landing.
     std::size_t lift = samples.size();
     for (std::size_t i = 0; i < samples.size(); ++i) {
         if ((samples[i].flags & KERNEL_VISUAL_FLAG_LEAPING) != 0u) { lift = i; break; }
     }
-    std::printf("unit started at x %.2f; ", create.position.x);
+    std::printf("unit started at x %.2f; ", kUnitAt.x);
     if (lift == samples.size()) {
         std::printf("never leapt; last at (%.2f, %.2f, %.2f)\n",
                     samples.back().position.x, samples.back().position.y,
@@ -194,5 +216,24 @@ int main() {
     require(std::fabs(at.y - kLedgeY) < 0.2f);
     require(at.x < kRiserX - 1.0f);
     require(std::hypot(at.x - player_at.x, at.z - player_at.z) < 3.0f);
+
+    // Capped under the riser: the same approach, and no leap at all. The run
+    // above is the control -- this setup does leap when the cap allows it.
+    auto capped_config = config;
+    auto* capped = template_named(capped_config, "gingerbread");
+    require(capped != nullptr);
+    capped->chaser.leap.max_rise_meters = kLedgeY - 1.0f;
+    const std::vector<Sample> capped_samples = run(capped_config, *capped, scene, 8078);
+    require(capped_samples.size() == 30u * 15u);
+    float farthest_back = 0.0f;
+    for (const Sample& sample : capped_samples) {
+        require((sample.flags & KERNEL_VISUAL_FLAG_LEAPING) == 0u);
+        require(sample.position.y < 1.0f);
+        farthest_back = std::max(farthest_back, sample.position.x - kRiserX);
+    }
+    std::printf("capped at %.1f m: never leapt, backed off at most %.2f m\n",
+                capped->chaser.leap.max_rise_meters, farthest_back);
+    // No run-up either: that only follows a leap the kernel refused.
+    require(farthest_back < 2.0f);
     return 0;
 }
