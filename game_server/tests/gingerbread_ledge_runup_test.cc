@@ -13,7 +13,12 @@
 // the ledge does, and comes down on the ledge.
 //
 // issue_20261125_135253: the same unit with its leap's max_rise_meters under
-// the riser's 6 m never leaps at all -- no lift-off, no run-up.
+// the riser's 6 m never leaps at all -- no lift-off, no run-up. And with the
+// mesh's navmesh loaded, where the two floors do not connect, a capped unit
+// that started out on the lower floor does not walk up to the riser and stand
+// at its foot: there is no way up on foot, so it holds where it was alerted.
+// Without the navmesh the same unit walks to the riser, which is what the
+// navmesh changed.
 
 #include <algorithm>
 #include <array>
@@ -44,13 +49,13 @@ constexpr float kTickSeconds = 1.0f / 30.0f;
 constexpr float kRiserX = 40.0f;
 constexpr float kLedgeY = 6.0f;
 
-std::vector<std::uint8_t> read_ledge_scene() {
+std::vector<std::uint8_t> read_ledge_file(const char* directory, const char* name) {
     const char* test_srcdir = std::getenv("TEST_SRCDIR");
     const char* test_workspace = std::getenv("TEST_WORKSPACE");
     require(test_srcdir != nullptr);
     require(test_workspace != nullptr);
     const std::filesystem::path path = std::filesystem::path(test_srcdir) /
-        test_workspace / "game_server" / "jolt" / "ledge_6m.joltmesh";
+        test_workspace / "game_server" / directory / name;
     std::ifstream file(path, std::ios::binary);
     require(file.good());
     return std::vector<std::uint8_t>(
@@ -80,7 +85,8 @@ std::vector<Sample> run(
     const network_example::game_server::GameServerGameplayConfig& config,
     const network_example::game_server::ActorTemplateConfig& gingerbread,
     const std::vector<std::uint8_t>& scene,
-    std::uint16_t port) {
+    std::uint16_t port,
+    const KernelVec3& unit_at = kUnitAt) {
 
     KernelConfig kernel_config{};
     kernel_config.mode = KernelMode_ListenServer;
@@ -134,7 +140,7 @@ std::vector<Sample> run(
     create.actor_type = KernelActorType_Agent;
     create.entity_template_id = gingerbread.actor_template_id;
     create.actor_template_id = gingerbread.actor_template_id;
-    create.position = kUnitAt;
+    create.position = unit_at;
     create.rotation = identity;
     std::uint32_t unit = 0;
     require(Kernel_ServerCreateEntity(kernel, &create, &unit));
@@ -173,7 +179,8 @@ int main() {
     require(leap.max_distance_meters > 0.0f);
     // The shipped cap clears this riser, or the leap below proves nothing.
     require(leap.max_rise_meters == 0.0f || leap.max_rise_meters > kLedgeY);
-    const std::vector<std::uint8_t> scene = read_ledge_scene();
+    const std::vector<std::uint8_t> scene = read_ledge_file("jolt", "ledge_6m.joltmesh");
+    const std::vector<std::uint8_t> navmesh = read_ledge_file("recast", "ledge_6m.navmesh");
     const KernelVec3 player_at = kPlayerAt;
 
     const std::vector<Sample> samples = run(config, *gingerbread, scene, 8077);
@@ -235,5 +242,32 @@ int main() {
                 capped->chaser.leap.max_rise_meters, farthest_back);
     // No run-up either: that only follows a leap the kernel refused.
     require(farthest_back < 2.0f);
+
+    // Capped, starting 10 m out on the lower floor: inside vision of the
+    // player up on the ledge, and no way up on foot.
+    const KernelVec3 out_on_floor{kRiserX + 10.0f, 0.0f, -70.0f};
+    auto nav_config = capped_config;
+    nav_config.navigation_mesh.artifact = navmesh;
+    const std::vector<Sample> held =
+        run(nav_config, *template_named(nav_config, "gingerbread"), scene, 8079, out_on_floor);
+    require(held.size() == 30u * 15u);
+    float nearest_riser = 1000.0f;
+    for (const Sample& sample : held) {
+        require((sample.flags & KERNEL_VISUAL_FLAG_LEAPING) == 0u);
+        nearest_riser = std::min(nearest_riser, sample.position.x - kRiserX);
+    }
+    const float held_at = held.back().position.x - kRiserX;
+    std::printf("capped, navmesh: came within %.2f m of the riser, ended %.2f m out\n",
+                nearest_riser, held_at);
+
+    // The control: the same with no navmesh walks up to the riser's foot.
+    const std::vector<Sample> blind = run(capped_config, *capped, scene, 8080, out_on_floor);
+    require(blind.size() == 30u * 15u);
+    const float blind_at = blind.back().position.x - kRiserX;
+    std::printf("capped, no navmesh: ended %.2f m out\n", blind_at);
+    require(blind_at < 2.0f);
+    // It ends back where it was alerted, near where it started, not at the
+    // riser.
+    require(held_at > 8.0f);
     return 0;
 }

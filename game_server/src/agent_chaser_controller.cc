@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -272,6 +273,101 @@ bool try_start_leap(
     agent->leap_up_a_ledge = up_a_ledge;
     agent->leap_destination = destination;
     return true;
+}
+
+// How often a pursuer that cannot walk straight at its target asks the
+// navmesh again; how far the target may move before it asks at once; and the
+// longest way round it takes, against the straight line -- past that it is
+// as good as unreachable (a squad's own cap measured 18x on a built level).
+constexpr std::uint32_t kChaseRouteRecheckTicks = 15u;
+constexpr float kChaseRouteGoalMovedMeters = 2.0f;
+constexpr float kChaseRouteMaxDetourRatio = 4.0f;
+// Close enough to a route corner, or to where it was alerted, to count as
+// there.
+constexpr float kChaseRouteArrivalMeters = 1.0f;
+
+// Whether the agent can walk to `target_feet`, straight or round, refreshed
+// when the last answer is due or stale. A leap is a separate question: a
+// target it cannot walk to may still be one it can leap to.
+AgentChaseReach update_chase_route(
+    const PatrolNavigation* navigation,
+    std::uint32_t target,
+    const KernelVec3& target_feet,
+    AgentRuntimeState* agent) {
+    if (navigation == nullptr || !navigation->valid()) {
+        agent->chase_reach = AgentChaseReach::kUnknown;
+        return agent->chase_reach;
+    }
+    if (agent->chase_route_recheck_ticks > 0u) {
+        --agent->chase_route_recheck_ticks;
+    }
+    const bool due = agent->chase_route_recheck_ticks == 0u ||
+        agent->chase_route_target != target ||
+        agent_steering::horizontal_distance(agent->chase_route_goal, target_feet) >
+            kChaseRouteGoalMovedMeters;
+    if (!due) {
+        return agent->chase_reach;
+    }
+    agent->chase_route_recheck_ticks = kChaseRouteRecheckTicks;
+    agent->chase_route_target = target;
+    agent->chase_route_goal = target_feet;
+    agent->chase_route.clear();
+    agent->chase_route_next = 0;
+    const std::optional<bool> line =
+        navigation->walkable_line(agent->position, target_feet, 1.0f);
+    if (!line.has_value()) {
+        agent->chase_reach = AgentChaseReach::kUnknown;
+    } else if (*line) {
+        agent->chase_reach = AgentChaseReach::kStraight;
+    } else {
+        PatrolRouteRequest request;
+        request.start = agent->position;
+        request.end = target_feet;
+        request.snap_half_extent_meters = 1.0f;
+        request.max_detour_ratio = kChaseRouteMaxDetourRatio;
+        agent->chase_reach =
+            navigation->find_route(request, &agent->chase_route) &&
+                    !agent->chase_route.empty()
+            ? AgentChaseReach::kRoute
+            : AgentChaseReach::kUnreachable;
+    }
+    return agent->chase_reach;
+}
+
+// The move that goes with a reach other than straight: the next corner of the
+// route, or back towards where it was alerted when there is no way on foot.
+// False leaves the straight chase's move as it is.
+bool chase_route_move(
+    float input_magnitude,
+    AgentRuntimeState* agent,
+    KernelVec2* move) {
+    if (agent->chase_reach == AgentChaseReach::kRoute) {
+        while (agent->chase_route_next < agent->chase_route.size() &&
+               agent_steering::horizontal_distance(
+                   agent->position, agent->chase_route[agent->chase_route_next]) <=
+                   kChaseRouteArrivalMeters) {
+            ++agent->chase_route_next;
+        }
+        if (agent->chase_route_next >= agent->chase_route.size()) {
+            // At the route's end and still no straight line: ask again.
+            agent->chase_route_recheck_ticks = 0u;
+            return false;
+        }
+        *move = agent_steering::horizontal_move_toward(
+            agent->position, agent->chase_route[agent->chase_route_next],
+            input_magnitude);
+        return true;
+    }
+    if (agent->chase_reach == AgentChaseReach::kUnreachable) {
+        *move = agent_steering::horizontal_distance(
+                    agent->position, agent->patrol.leash_anchor) >
+                kChaseRouteArrivalMeters
+            ? agent_steering::horizontal_move_toward(
+                  agent->position, agent->patrol.leash_anchor, input_magnitude)
+            : KernelVec2{0.0f, 0.0f};
+        return true;
+    }
+    return false;
 }
 
 // What the tick after a leap was asked for says: armed, or refused. A leap up
@@ -1323,6 +1419,17 @@ void AgentChaserController::tick(
                     &agent,
                     &move);
                 retreat_ran = true;
+                // Not straight at it when the navmesh says that runs into a
+                // wall or off a cliff: round, or home if there is no way. It
+                // keeps facing the target either way, so it keeps seeing it,
+                // and a leap below can still take it there.
+                if (!agent.retreating && !config_.hovers && target_state != nullptr &&
+                    agent.leap_runup_ticks == 0u && agent.leap_ticks_to_landing == 0u &&
+                    update_chase_route(
+                        navigation, agent.sentry.target, target_state->position,
+                        &agent) != AgentChaseReach::kStraight) {
+                    (void)chase_route_move(config_.chase.input_magnitude, &agent, &move);
+                }
                 // A charge is tried ahead of a leap: winding one up roots the
                 // agent from this tick, and a leap must not carry it off.
                 // Neither starts while it backs away, nor during a run-up for

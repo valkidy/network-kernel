@@ -57,6 +57,17 @@ inline bool is_pursuing(AgentSentryState state) {
     return state == AgentSentryState::kChasing || state == AgentSentryState::kAttack;
 }
 
+// How a pursuer gets to its target on foot, as the navmesh last said.
+enum class AgentChaseReach : std::uint8_t {
+    // No navmesh, or the agent off it: straight at it, as it always was.
+    kUnknown = 0,
+    kStraight = 1,
+    // Round something: it walks chase_route.
+    kRoute = 2,
+    // No way there on foot: it goes back to where it was alerted.
+    kUnreachable = 3,
+};
+
 // The agent has a target, or had one recently enough that it has not given up
 // on it yet. A squad holds while a member is engaged, and an on_alert spawner
 // only calls while its carrier is.
@@ -368,6 +379,16 @@ struct AgentRuntimeState {
     KernelVec3 leap_runup_start{0.0f, 0.0f, 0.0f};
     float leap_runup_meters = 0.0f;
     bool leap_runup_spent = false;
+    // Chaser only. The way to its target on foot, asked of the navmesh every
+    // so often while it cannot walk straight there (issue_20261125_135253):
+    // what the last ask said, the corners to walk when it found a route, the
+    // target and the spot it asked for, and ticks until it asks again.
+    AgentChaseReach chase_reach = AgentChaseReach::kUnknown;
+    std::vector<KernelVec3> chase_route;
+    std::size_t chase_route_next = 0;
+    std::uint32_t chase_route_target = 0;
+    KernelVec3 chase_route_goal{0.0f, 0.0f, 0.0f};
+    std::uint32_t chase_route_recheck_ticks = 0;
     // Chaser only. Ticks of wind-up left before a charge is released; ticks
     // the run it released may still take (zero once the kernel's flag shows
     // it ended); the line it runs along; and ticks until another may start.
