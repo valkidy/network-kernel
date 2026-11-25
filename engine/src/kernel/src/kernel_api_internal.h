@@ -258,6 +258,14 @@ bool Kernel_ServerEnqueueEntityInput(
 
 float Kernel_GetFixedDeltaSeconds(KernelHandle* kernel);
 
+/*
+ * The simulation tick the kernel has reached. Kernel_Update runs zero or more
+ * fixed ticks depending on the time it is given, so a caller that runs once
+ * per Kernel_Update -- a Unity host, once per rendered frame -- reads this to
+ * tell whether a tick actually happened.
+ */
+uint32_t Kernel_GetCurrentTick(KernelHandle* kernel);
+
 bool Kernel_ServerGetProjectileLaunchPosition(
     KernelHandle* kernel,
     uint32_t net_id,

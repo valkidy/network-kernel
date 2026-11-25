@@ -147,8 +147,17 @@ private:
     // Places `config`'s scene props and items; false when the kernel refused
     // the first prop (not serving yet), having placed nothing.
     bool place_props_of(const GameServerGameplayConfig& config) const;
-    // Commits finished loads and runs the Ready levels' AI.
-    void tick_scene_slots(float delta_seconds);
+    // How much simulated time the AI has to catch up on: the kernel ticks run
+    // since the AI last ran, in seconds, or zero when none have. The AI only
+    // enqueues commands for the next simulation tick, so running it twice
+    // before that tick fills the command queue with orders that overwrite
+    // each other (a Unity host ticks the game server once per rendered frame,
+    // several times per kernel tick) and runs its tick-counted timers at the
+    // frame rate.
+    float agent_delta_seconds(float delta_seconds);
+    // Commits finished loads and, when agent_delta_seconds is not zero, runs
+    // the Ready levels' AI.
+    void tick_scene_slots(float agent_delta_seconds);
     bool commit_scene(std::uint32_t slot, PreparedScene prepared);
     // Every non-player entity whose position lies in `bounds` is removed;
     // every player there is put at the camp's spawn. Returns how many were
@@ -201,6 +210,8 @@ private:
     LoadoutDirector loadout_;
     std::set<std::uint32_t> players_;
     bool scene_props_placed_ = false;
+    bool agents_ran_ = false;
+    std::uint32_t agents_ran_at_kernel_tick_ = 0;
     // Players carry their weapons as items when every weapon of the player
     // template's default loadout has a weapon item (P3); these are those
     // items, in loadout order. Otherwise players keep the template loadout.
