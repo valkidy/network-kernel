@@ -183,46 +183,60 @@ int main() {
     const std::vector<std::uint8_t> navmesh = read_ledge_file("recast", "ledge_6m.navmesh");
     const KernelVec3 player_at = kPlayerAt;
 
-    const std::vector<Sample> samples = run(config, *gingerbread, scene, 8077);
-    require(samples.size() == 30u * 15u);
+    // The leap up onto the ledge from the riser's foot, and where it lands.
+    const auto require_ledge_leap = [&](const std::vector<Sample>& samples,
+                                        const char* label) {
+        require(samples.size() == 30u * 15u);
 
-    // The first leap, its lift-off and its landing.
-    std::size_t lift = samples.size();
-    for (std::size_t i = 0; i < samples.size(); ++i) {
-        if ((samples[i].flags & KERNEL_VISUAL_FLAG_LEAPING) != 0u) { lift = i; break; }
-    }
-    std::printf("unit started at x %.2f; ", kUnitAt.x);
-    if (lift == samples.size()) {
-        std::printf("never leapt; last at (%.2f, %.2f, %.2f)\n",
-                    samples.back().position.x, samples.back().position.y,
-                    samples.back().position.z);
-    }
-    require(lift < samples.size());
-    require(lift > 0u);
-    std::size_t landed = lift;
-    float highest = samples[lift].position.y;
-    while (landed < samples.size() &&
-           (samples[landed].flags & KERNEL_VISUAL_FLAG_LEAPING) != 0u) {
-        highest = std::max(highest, samples[landed].position.y);
-        ++landed;
-    }
-    require(landed < samples.size());
-    const KernelVec3 from = samples[lift - 1u].position;
-    const KernelVec3 at = samples[landed].position;
-    std::printf("lifted off at tick %zu from x %.2f (%.2f m back from the riser), "
-                "peaked at y %.2f, landed at tick %zu on (%.2f, %.2f, %.2f)\n",
-                lift, from.x, from.x - kRiserX, highest, landed, at.x, at.y, at.z);
+        // The first leap, its lift-off and its landing.
+        std::size_t lift = samples.size();
+        for (std::size_t i = 0; i < samples.size(); ++i) {
+            if ((samples[i].flags & KERNEL_VISUAL_FLAG_LEAPING) != 0u) { lift = i; break; }
+        }
+        std::printf("%s: unit started at x %.2f; ", label, kUnitAt.x);
+        if (lift == samples.size()) {
+            std::printf("never leapt; last at (%.2f, %.2f, %.2f)\n",
+                        samples.back().position.x, samples.back().position.y,
+                        samples.back().position.z);
+        }
+        require(lift < samples.size());
+        require(lift > 0u);
+        std::size_t landed = lift;
+        float highest = samples[lift].position.y;
+        while (landed < samples.size() &&
+               (samples[landed].flags & KERNEL_VISUAL_FLAG_LEAPING) != 0u) {
+            highest = std::max(highest, samples[landed].position.y);
+            ++landed;
+        }
+        require(landed < samples.size());
+        const KernelVec3 from = samples[lift - 1u].position;
+        const KernelVec3 at = samples[landed].position;
+        std::printf("lifted off at tick %zu from x %.2f (%.2f m back from the riser), "
+                    "peaked at y %.2f, landed at tick %zu on (%.2f, %.2f, %.2f)\n",
+                    lift, from.x, from.x - kRiserX, highest, landed, at.x, at.y, at.z);
 
-    // Backed off before it went: the arc from the foot would hit the riser.
-    require(from.x - kRiserX > 2.0f);
-    // A leap onto the ledge peaks apex_meters over it, give or take the
-    // landing a little past the player; the rocket off the riser went 12 m up.
-    require(highest < kLedgeY + leap.apex_meters + 1.0f);
-    // And it came down on the ledge, near the player.
-    require((samples[landed].flags & KERNEL_VISUAL_FLAG_GROUNDED) != 0u);
-    require(std::fabs(at.y - kLedgeY) < 0.2f);
-    require(at.x < kRiserX - 1.0f);
-    require(std::hypot(at.x - player_at.x, at.z - player_at.z) < 3.0f);
+        // Backed off before it went: the arc from the foot would hit the riser.
+        require(from.x - kRiserX > 2.0f);
+        // A leap onto the ledge peaks apex_meters over it, give or take the
+        // landing a little past the player; the rocket off the riser went 12 m up.
+        require(highest < kLedgeY + leap.apex_meters + 1.0f);
+        // And it came down on the ledge, near the player.
+        require((samples[landed].flags & KERNEL_VISUAL_FLAG_GROUNDED) != 0u);
+        require(std::fabs(at.y - kLedgeY) < 0.2f);
+        require(at.x < kRiserX - 1.0f);
+        require(std::hypot(at.x - player_at.x, at.z - player_at.z) < 3.0f);
+    };
+
+    require_ledge_leap(run(config, *gingerbread, scene, 8077), "no navmesh");
+    // With the navmesh, which picks the landing spot on the ledge: it used
+    // to be 1.2 m past the player, and the arc came down on the player's
+    // head (y 7.75). Short of the player, on the ledge, it lands on ground.
+    auto ledge_nav_config = config;
+    ledge_nav_config.navigation_mesh.artifact = navmesh;
+    require_ledge_leap(
+        run(ledge_nav_config, *template_named(ledge_nav_config, "gingerbread"), scene,
+            8081),
+        "navmesh");
 
     // Capped under the riser: the same approach, and no leap at all. The run
     // above is the control -- this setup does leap when the cap allows it.

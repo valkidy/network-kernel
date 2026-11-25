@@ -200,9 +200,15 @@ bool try_start_leap(
     // gentle; less than this is rarely a ledge at all.
     constexpr float kLedgeMinMeters = 1.5f;
     constexpr float kLedgeMaxMeters = 10.0f;
-    // Past the target rather than short of it: short of it, on a ledge, is the
-    // air in front of the edge it is standing at.
+    // The last resort, past the target: the arc then comes down through it
+    // and lands on its head (issue_20261125_135253, measured y 7.75 on a 6 m
+    // ledge). Short of it or beside it first, where that is ledge ground; short
+    // of a target at the edge is the air in front of it, which the navmesh
+    // turns down.
     constexpr float kLedgeLandingPastMeters = 1.2f;
+    // How far off the ledge's height a landing spot may snap and still count
+    // as on it.
+    constexpr float kLedgeLandingLevelMeters = 1.0f;
     const AgentLeapTuning& leap = config.chase.leap;
     if (leap.max_distance_meters <= 0.0f || agent->leap_ticks_to_landing > 0u ||
         agent->leap_cooldown_ticks > 0u ||
@@ -238,14 +244,24 @@ bool try_start_leap(
     KernelVec3 destination = target_feet;
     if (up_a_ledge) {
         if (distance > 0.0001f && navigation != nullptr && navigation->valid()) {
-            const KernelVec3 past{
-                target_feet.x + dx / distance * kLedgeLandingPastMeters,
-                target_feet.y,
-                target_feet.z + dz / distance * kLedgeLandingPastMeters};
-            KernelVec3 ground{};
-            if (navigation->snap(past, 0.5f, &ground) &&
-                std::fabs(ground.y - target_feet.y) <= 1.0f) {
-                destination = ground;
+            // Unit vectors towards the target and across it.
+            const float ux = dx / distance;
+            const float uz = dz / distance;
+            const float near = leap.landing_distance_meters;
+            const std::array<KernelVec3, 4> candidates{{
+                {target_feet.x - ux * near, target_feet.y, target_feet.z - uz * near},
+                {target_feet.x - uz * near, target_feet.y, target_feet.z + ux * near},
+                {target_feet.x + uz * near, target_feet.y, target_feet.z - ux * near},
+                {target_feet.x + ux * kLedgeLandingPastMeters, target_feet.y,
+                 target_feet.z + uz * kLedgeLandingPastMeters},
+            }};
+            for (const KernelVec3& candidate : candidates) {
+                KernelVec3 ground{};
+                if (navigation->snap(candidate, 0.5f, &ground) &&
+                    std::fabs(ground.y - target_feet.y) <= kLedgeLandingLevelMeters) {
+                    destination = ground;
+                    break;
+                }
             }
         }
     } else {
