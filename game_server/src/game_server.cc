@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "game_server/src/scene_placement.h"
+#include "kernel/src/kernel_api_internal.h"
 
 namespace network_example::game_server {
 
@@ -150,9 +151,33 @@ void GameServer::tick(float delta_seconds) {
     for (const std::uint32_t net_id : respawn_.advance(delta_seconds)) {
         revive_player(net_id, delta_seconds);
     }
-    agent_runtime_manager_.tick(delta_seconds);
-    tick_scene_slots(delta_seconds);
+    const float agent_delta = agent_delta_seconds(delta_seconds);
+    if (agent_delta > 0.0f) {
+        agent_runtime_manager_.tick(agent_delta);
+    }
+    tick_scene_slots(agent_delta);
     tick_scene_flow(delta_seconds);
+}
+
+float GameServer::agent_delta_seconds(float delta_seconds) {
+    if (kernel_ == nullptr) {
+        return delta_seconds;
+    }
+    const std::uint32_t kernel_tick = Kernel_GetCurrentTick(kernel_);
+    if (!agents_ran_) {
+        // The first call runs, kernel tick or not: a director spawning its
+        // first squad does it before the kernel has simulated anything.
+        agents_ran_ = true;
+        agents_ran_at_kernel_tick_ = kernel_tick;
+        return delta_seconds;
+    }
+    const std::uint32_t ticks = kernel_tick - agents_ran_at_kernel_tick_;
+    if (ticks == 0u) {
+        return 0.0f;
+    }
+    agents_ran_at_kernel_tick_ = kernel_tick;
+    const float fixed_delta = Kernel_GetFixedDeltaSeconds(kernel_);
+    return fixed_delta > 0.0f ? fixed_delta * static_cast<float>(ticks) : delta_seconds;
 }
 
 void GameServer::place_scene_props() {
@@ -522,7 +547,7 @@ bool GameServer::load_scene(std::uint32_t slot, const std::string& scene_templat
     return true;
 }
 
-void GameServer::tick_scene_slots(float delta_seconds) {
+void GameServer::tick_scene_slots(float agent_delta_seconds) {
     for (std::uint32_t index = 1; index < kSceneSlotCount; ++index) {
         SceneSlot& slot = scene_slots_[index];
         if (slot.state == SceneSlotState::kLoading && slot.pending.valid() &&
@@ -539,8 +564,9 @@ void GameServer::tick_scene_slots(float delta_seconds) {
                 ++slot.generation;
             }
         }
-        if (slot.state == SceneSlotState::kReady && slot.manager != nullptr) {
-            slot.manager->tick(delta_seconds);
+        if (agent_delta_seconds > 0.0f && slot.state == SceneSlotState::kReady &&
+            slot.manager != nullptr) {
+            slot.manager->tick(agent_delta_seconds);
         }
     }
 }
