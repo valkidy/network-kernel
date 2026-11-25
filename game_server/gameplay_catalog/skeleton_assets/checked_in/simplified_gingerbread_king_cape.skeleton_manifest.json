@@ -1,0 +1,29 @@
+{
+  "manifest_version": 2,
+  "asset_id": 7,
+  "name": "simplified_gingerbread_king_cape",
+  "content_hash": "0xd3742ba0c5b25bc8",
+  "runtime_skeleton": "simplified_gingerbread_king_cape.ozz",
+  "bone_count": 19,
+  "bones": [
+    {"index": 0, "name": "Armature", "parent_index": -1, "rest_translation": [0.0, 0.0, 0.0], "rest_rotation": [0.0, 0.0, 0.0, 1.0], "rest_scale": [1.0, 1.0, 1.0]},
+    {"index": 1, "name": "mixamorig:Hips", "parent_index": 0, "rest_translation": [0.0, 7.22313833, -0.0414819941], "rest_rotation": [-4.87393521e-08, 0.0, 0.0, 1.0], "rest_scale": [1.0, 1.0, 1.0]},
+    {"index": 2, "name": "mixamorig:LeftUpLeg", "parent_index": 1, "rest_translation": [-2.95559597, -0.845597744, -0.0905920714], "rest_rotation": [0.00712494273, 0.115317233, 0.981118381, 0.155106172], "rest_scale": [1.00000238, 1.0, 1.0]},
+    {"index": 3, "name": "mixamorig:LeftLeg", "parent_index": 2, "rest_translation": [-2.91183824e-07, 3.50032806, 5.64784841e-09], "rest_rotation": [-0.285485148, 0.00198396505, 0.0861992836, 0.954496741], "rest_scale": [0.99999994, 1.0, 1.0]},
+    {"index": 4, "name": "mixamorig:LeftFoot", "parent_index": 3, "rest_translation": [-7.03439582e-08, 2.39770484, 1.11758709e-08], "rest_rotation": [0.599716127, -0.391928256, 0.424586385, 0.553587615], "rest_scale": [0.99999994, 0.99999994, 0.99999994]},
+    {"index": 5, "name": "GEO_Leg0_Lower", "parent_index": 3, "rest_translation": [-0.381035924, 1.26718402, 1.04050052], "rest_rotation": [0.0, 0.0, 0.0, 1.0], "rest_scale": [3.72906947, 3.51191139, 4.21823406]},
+    {"index": 6, "name": "GEO_Leg0_Upper", "parent_index": 2, "rest_translation": [-0.0432297178, 1.98426306, 0.875088692], "rest_rotation": [0.0, 0.0, 0.0, 1.0], "rest_scale": [3.56550574, 4.02988577, 4.30370855]},
+    {"index": 7, "name": "mixamorig:RightUpLeg", "parent_index": 1, "rest_translation": [2.95559597, -0.845597744, -0.0984543413], "rest_rotation": [0.00537439948, -0.126124725, -0.9798913, 0.154521018], "rest_scale": [1.00000095, 1.00000012, 1.0]},
+    {"index": 8, "name": "mixamorig:RightLeg", "parent_index": 7, "rest_translation": [4.1093881e-07, 3.5026319, -1.40400402e-09], "rest_rotation": [-0.314212263, 0.000592467317, -0.0845801607, 0.945577323], "rest_scale": [1.0, 1.00000012, 1.0]},
+    {"index": 9, "name": "mixamorig:RightFoot", "parent_index": 8, "rest_translation": [6.30621798e-07, 2.40196109, 1.86264515e-08], "rest_rotation": [0.671180546, 0.285148561, -0.315096945, 0.607388616], "rest_scale": [0.99999994, 0.99999994, 1.0]},
+    {"index": 10, "name": "GEO_Leg1_Lower", "parent_index": 8, "rest_translation": [-0.152159542, 1.22111893, 0.930427969], "rest_rotation": [0.0, 0.0, 0.0, 1.0], "rest_scale": [3.83315778, 3.50428987, 4.24991703]},
+    {"index": 11, "name": "GEO_Leg1_Upper", "parent_index": 7, "rest_translation": [-0.238357246, 2.11438632, 0.826626182], "rest_rotation": [0.0, 0.0, 0.0, 1.0], "rest_scale": [3.7920773, 4.26400948, 4.25823402]},
+    {"index": 12, "name": "mixamorig:Spine", "parent_index": 1, "rest_translation": [0.0, 1.52077246, -0.0100403251], "rest_rotation": [-0.00330100511, 0.0, 0.0, 0.999994576], "rest_scale": [1.0, 0.99999994, 0.99999994]},
+    {"index": 13, "name": "mixamorig:Spine1", "parent_index": 12, "rest_translation": [0.0, 1.77427268, 3.25962901e-09], "rest_rotation": [-1.16415322e-09, 0.0, 0.0, 1.0], "rest_scale": [1.0, 1.0, 1.0]},
+    {"index": 14, "name": "mixamorig:Spine2", "parent_index": 13, "rest_translation": [0.0, 2.02774191, 6.98491931e-09], "rest_rotation": [0.0, 0.0, 0.0, 1.0], "rest_scale": [1.0, 1.0, 1.0]},
+    {"index": 15, "name": "GEO_Body", "parent_index": 14, "rest_translation": [0.018986702, 0.762390912, -0.556035578], "rest_rotation": [0.0, 0.0, 0.0, 1.0], "rest_scale": [13.7340488, 6.81873083, 8.82967091]},
+    {"index": 16, "name": "GEO_Head", "parent_index": 14, "rest_translation": [0.0418024063, 7.35606861, 0.246899039], "rest_rotation": [0.0, 0.0, 0.0, 1.0], "rest_scale": [10.2572632, 8.19291878, 7.3458066]},
+    {"index": 17, "name": "GEO_Torso", "parent_index": 13, "rest_translation": [0.0692703724, 0.114514515, 0.250164717], "rest_rotation": [0.0, 0.0, 0.0, 1.0], "rest_scale": [10.0478859, 3.00292492, 5.49142838]},
+    {"index": 18, "name": "GEO_Hip", "parent_index": 1, "rest_translation": [0.242208719, -0.979086578, 0.366428912], "rest_rotation": [0.0, 0.0, 0.0, 1.0], "rest_scale": [11.3750153, 5.80926895, 5.66093493]}
+  ]
+}

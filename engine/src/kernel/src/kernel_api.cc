@@ -1705,6 +1705,12 @@ float Kernel_GetFixedDeltaSeconds(KernelHandle* kernel) {
     });
 }
 
+uint32_t Kernel_GetCurrentTick(KernelHandle* kernel) {
+    return abi_call("Kernel_GetCurrentTick", 0u, [&]() {
+        return kernel == nullptr ? 0u : kernel->engine->current_tick();
+    });
+}
+
 bool Kernel_ServerGetProjectileLaunchPosition(
     KernelHandle* kernel,
     uint32_t net_id,

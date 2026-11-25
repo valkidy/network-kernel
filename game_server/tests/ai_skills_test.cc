@@ -76,6 +76,7 @@ void the_catalog_resolves(const gs::GameServerGameplayConfig& config) {
     // The jump from the template, the band and cooldown from the skill.
     require(gingerbread->chaser.leap.apex_meters == 4.9f);
     require(gingerbread->chaser.leap.attack_lead_ticks == 9u);
+    require(gingerbread->chaser.leap.max_rise_meters == 10.8f);
     require(gingerbread->chaser.leap.min_distance_meters == 10.5f);
     require(gingerbread->chaser.leap.max_distance_meters == 24.0f);
     require(gingerbread->chaser.leap.cooldown_ticks == 90u);
@@ -202,6 +203,9 @@ void bad_skills_are_refused() {
     // claw's offset is 8).
     require(!loads_after("leap lead_ticks off by one", kLeap, [](YAML::Node& root) {
         root["on_landing"]["lead_ticks"] = 8;
+    }));
+    require(!loads_after("leap rising a negative height", kLeap, [](YAML::Node& root) {
+        root["leap"]["max_rise_meters"] = -1.0;
     }));
     // The gingerbread sees 26 m.
     require(!loads_after("leap band past vision", kGingerbread, [](YAML::Node& root) {

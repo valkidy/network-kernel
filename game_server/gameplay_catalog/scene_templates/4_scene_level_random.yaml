@@ -18,7 +18,8 @@ stamp_template_dir: stamp_templates
 preload_directors: []
 objective: {defeat_enemies: 20}
 nests: {entity_template: gingerbread_nest, max_count: 4}
+# 5 the caped king, on its own, beside the two warbands.
 patrols:
-  - ids: [1, 4]
+  - ids: [1, 4, 5]
 scene_props: []
 agent_routes: []

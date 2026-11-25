@@ -1,0 +1,119 @@
+# The caped gingerbread king (docs/skinned-actor-pipeline-guide.md): for now
+# gingerbread_giant (39) in everything but its body. Its own skeleton and
+# bounds; leg reach, foothold, crouch, step height and spacing rescaled to that
+# body; health, speed, AI and the giant's sweep (137) unchanged.
+id: 42
+name: gingerbread_king_cape
+entity_type: actor
+actor_type: agent
+camp: enemy_side
+collider_template: gingerbread_king_cape_bounds_aabb
+health:
+  hp: 500
+  max_hp: 500
+movement:
+  controller: character
+  move_speed_meters_per_second: 2.5
+  collider_template: monster_sim_movement_capsule
+  gravity: {x: 0.0, y: -9.81, z: 0.0}
+  max_slope_degrees: 50.0
+  step_height: 0.4
+  ground_probe_distance: 0.25
+  ground_snap_distance: 0.5
+  max_yaw_degrees_per_second: 45.0
+  collision_mask: terrain
+# The entity origin is the lowest bind foot: locomotion seats the pose by the
+# bind foot height. This rig's root (Armature) sits at the soles; the ankle
+# joints are 0.67 m above them, and since the kernel plants the joint, not the
+# sole, that is how far the feet sink into the ground. The GEO_* boxes span -1.9 m to
+# 23.1 m above the origin and 6.9 m either side, wider and deeper than the
+# giant's: this is a fat body on thick legs. The arms carry no collider (the
+# client animates them), so the bounds AABB reaches 10.5 m out to cover them.
+weapon_slots: [137]
+active_weapon_slot: 0
+vision:
+  # 35 m and 140 degrees, not the grunts' 12 m and 90: see the cone's own file.
+  collider_template: gingerbread_giant_vision_cone
+ai:
+  # A guard (AI behavior plan B8); a spawn source that gives it a route makes
+  # it a patrol, which walks the route. Either way it
+  # fights whatever it sees with an arm sweep. Without a route it stands and
+  # looks around. Melee, so it closes to 5 m and holds there.
+  default_behavior: guard
+  profile: monster_sim
+  perception:
+    alert_ticks: 90
+    forget_ticks: 150
+    idle_rotation_interval_ticks: 30
+    idle_rotation_degrees: {min: 15.0, max: 30.0}
+    animation_idle: idle
+    animation_attack: chasing
+  locomotion:
+    # Origin to origin. Both inside the skill's 6.5 m, so it never parks where
+    # it cannot swing.
+    stop_distance_meters: 5.0
+    resume_distance_meters: 6.0
+    input_magnitude: 1.0
+    # Origin to origin between big agents, which nothing else keeps apart:
+    # their movement capsules see only terrain. The body spans 6.9 m either
+    # side of the origin, so 14 m leaves two kings clear. That is wider than
+    # two can stand on the 5.5 m inner ring round one target (the giant's
+    # 9.5 m was the most that fit, see 39), so a second king waits a ring out:
+    # one king per fight is the intent anyway.
+    spacing_meters: 14.0
+  skills:
+    # Origin to origin, against the sweep cone's 7 m that reaches a target's
+    # near edge: whatever this lets it swing at, it can hit.
+    - use: {type: weapon, value: 137}
+      when: {range_meters: {max: 6.5}}
+animations:
+  idle: 0
+  chasing: 1
+skeleton:
+  runtime_asset: skeleton_assets/generated/simplified_gingerbread_king_cape.ozz
+  source_manifest: skeleton_assets/generated/simplified_gingerbread_king_cape.skeleton_manifest.json
+  collision_flags: {purpose: limb | hit, layer: hostile_side}
+locomotion:
+  type: procedural_legged
+  input_deadzone: 0.01
+  gait:
+    type: displacement_threshold
+    # Same 1.95/18 as the other rigs: the timing follows move_speed, not leg
+    # length. See 21_quadruped_actor.yaml.
+    step_threshold_meters: 1.95
+    step_duration_ticks: 18
+    # Two legs, alternating, as on biped_actor. The arms are in the skeleton,
+    # not in this leg list, so they are not driven.
+    max_swinging_legs: 1
+    processing_order: [leg0, leg1]
+  foothold:
+    query: raycast
+    # The authored 30/90 baseline scaled from the ~18.2 m legs it was sized
+    # against to this rig's 5.90 m: 0.324x. See docs/LOCOMOTION_GAIT_TUNING.md.
+    query_start_height_meters: 9.7
+    query_distance_meters: 29.2
+    candidate_offsets_meters:
+      - {x: 0.0, z: 0.0}
+      - {x: 0.2, z: 0.0}
+      - {x: -0.2, z: 0.0}
+      - {x: 0.0, z: 0.2}
+      - {x: 0.0, z: -0.2}
+  body:
+    follow_speed: 10.0
+    slope_alignment: 0.0
+    # The rest pose bends the knees 30 degrees forward (95.6% / 94.8% rest
+    # extension; see skeleton_rig_check). 0.54 m of crouch on 5.90 m legs takes
+    # them on to ~86%, where the giant and biped_actor walk.
+    stance_crouch_meters: 0.54
+  leg_defaults:
+    # The swing's peak foot lift (step_height x sin of the swing phase, no other
+    # cap). 4.5 m on 5.90 m legs, half again the giant's proportion (3.18 m on
+    # 6.26 m), so the heavy king high-steps. The hip stands ~5.2 m over the
+    # foot plane in the crouch, so the knee still has room to fold.
+    step_height_meters: 4.5
+    max_reach_ratio: 0.99
+  legs:
+    - id: leg0
+      gait_group: 0
+    - id: leg1
+      gait_group: 1

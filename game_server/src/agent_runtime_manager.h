@@ -48,6 +48,8 @@ public:
     bool is_enemy_agent(std::uint32_t net_id) const;
 
     std::size_t agent_count() const;
+    // How many times tick() has run.
+    std::uint64_t ticks() const { return ticks_; }
     const std::vector<AgentRuntimeState>& agents() const;
     // Switches an agent to another behavior at runtime (docs/AI_BEHAVIOR_PLAN.md
     // B3, B10): checked against what the behavior needs first, then applied at

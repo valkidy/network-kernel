@@ -11,6 +11,7 @@ filegroup(
         ":simplified_quadruped_assets",
         ":simplified_tripod_assets",
         ":simplified_gingerbread_giant_assets",
+        ":simplified_gingerbread_king_cape_assets",
     ],
 )
 
@@ -49,4 +50,15 @@ skeleton_asset(
     src = "raw/simplified_gingerbread_giant.glb",
     rig = "raw/simplified_gingerbread_giant.rig.yaml",
     asset_id = 6,
+)
+
+# The caped gingerbread king, a skinned actor generated the same way as the
+# giant: regenerate raw/simplified_gingerbread_king_cape.glb and .rig.yaml from
+# the client GLB with tools/kernel_skeleton_from_source.py (flags in the
+# rig.yaml header), never edit them by hand.
+skeleton_asset(
+    name = "simplified_gingerbread_king_cape",
+    src = "raw/simplified_gingerbread_king_cape.glb",
+    rig = "raw/simplified_gingerbread_king_cape.rig.yaml",
+    asset_id = 7,
 )

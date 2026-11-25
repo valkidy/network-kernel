@@ -16,6 +16,12 @@ leap:
   # Unreached: the farthest leap the gingerbread makes covers 22.4 m in 2 s,
   # 11.2 m/s.
   max_horizontal_speed_meters_per_second: 12.0
+  # Deep enough to leap out of a depression_0001 pit, its deepest stamp: the
+  # stamp is 10.0 m deep and the terrain's detail noise (amplitude 0.4) can
+  # add that again at the rim and take it off the floor. A nest at the bottom
+  # of one measured 6.5 floor to 16.5 rim (issue_20261125_135253). Anything
+  # higher it does not leap at.
+  max_rise_meters: 10.8
 on_landing:
   # The user's own weapon skill: grunt_claw.
   weapon: 132
