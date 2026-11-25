@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- adds navmesh-aware pursuit and leap rise limits, fixes ledge landing positions, and runs game-server AI once per kernel tick
+
+
+0.7.0 release notes:
+
 - adds replicated player numbers and enables predicted actor blocking for Unity listen hosts
 
 
