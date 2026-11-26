@@ -570,6 +570,10 @@ private:
             inventory_revisions;
         std::uint32_t pending_clock_sync_nonce = 0;
         std::uint64_t pending_clock_sync_server_time_us = 0;
+        // Steady-clock time the pending ping left, for the round trip. The
+        // server clock only moves a tick at a time, so it measured rtt in
+        // whole ticks. Zero when unset; rtt then falls back to tick time.
+        std::uint64_t pending_clock_sync_wall_time_us = 0;
         std::uint64_t last_clock_sync_sent_server_time_us = 0;
         std::uint64_t last_clock_sync_rtt_us = 0;
         std::uint64_t last_clock_sync_jitter_us = 0;
@@ -1293,6 +1297,7 @@ private:
         PeerSession* session,
         const std::vector<KernelRemoteActionPresentationEvent>& events);
     PeerSession* result_session_for_peer(PeerId peer);
+    std::uint32_t next_packet_sequence(PeerId destination);
     void record_received_packet_sequence(const TransportEvent& transport_event);
     void record_sent_packet(
         std::uint32_t packet_size,
@@ -1825,7 +1830,10 @@ private:
     std::uint64_t next_predicted_entity_id_ = UINT64_C(0x8000000000000000);
     NetId local_player_net_id_ = 0;
     std::uint32_t local_last_processed_input_seq_ = 0;
-    std::uint32_t next_packet_sequence_ = 1;
+    // Outgoing packet sequence, counted per destination peer. A receiver
+    // reads a gap in the sequence as packets lost, so one counter shared by
+    // every peer made each client count the packets sent to the others.
+    std::unordered_map<PeerId, std::uint32_t> next_packet_sequence_by_peer_;
     std::uint32_t next_server_presentation_instance_id_ = 1;
     std::uint32_t last_remote_presentation_sequence_ = 0;
     std::uint32_t next_clock_sync_nonce_ = 1;

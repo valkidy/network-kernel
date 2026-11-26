@@ -325,6 +325,17 @@ std::uint64_t elapsed_cost_us(
         static_cast<std::uint64_t>(elapsed_ns) / 1000u);
 }
 
+// Steady-clock microseconds, never zero (zero means unset).
+std::uint64_t steady_now_us() {
+    const auto since_epoch =
+        std::chrono::steady_clock::now().time_since_epoch();
+    return std::max<std::uint64_t>(
+        1,
+        static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(since_epoch)
+                .count()));
+}
+
 constexpr PeerId kLocalListenPeerId = 1;
 static_assert(kHeldWeaponNone == KERNEL_HELD_WEAPON_NONE);
 constexpr PeerId kServerPeerId = 0;
@@ -3017,7 +3028,7 @@ bool KernelEngine::request_gameplay_catalog_bundle() {
     const std::vector<std::uint8_t> packet =
         encode_gameplay_catalog_bundle_request_packet(
             request,
-            next_packet_sequence_++);
+            next_packet_sequence(kServerPeerId));
     if (!transport_->Send(
             kServerPeerId,
             packet.data(),
@@ -3332,7 +3343,9 @@ void KernelEngine::process_client_input_command(
     }
 
     const std::vector<std::uint8_t> packet =
-        encode_player_input_packet(peer, input, next_packet_sequence_++);
+        encode_player_input_packet(
+            peer, input,
+            next_packet_sequence(kServerPeerId));
     const bool sent = config_.mode == KernelMode_ListenServer
         ? listen_server_transport_ != nullptr &&
             listen_server_transport_->SendLocalClient(
@@ -6831,7 +6844,9 @@ bool KernelEngine::submit_gameplay_request(
         request.instigator_net_id = local_player_net_id_;
     }
     const std::vector<std::uint8_t> packet =
-        encode_gameplay_request_packet(request, next_packet_sequence_++);
+        encode_gameplay_request_packet(
+            request,
+            next_packet_sequence(kServerPeerId));
     if (!transport_->Send(
             kServerPeerId,
             packet.data(),
@@ -6922,7 +6937,9 @@ bool KernelEngine::send_game_message(
     message.message_type = message_type;
     message.payload.assign(payload, payload + payload_size);
     const std::vector<std::uint8_t> packet =
-        encode_game_message_packet(message, next_packet_sequence_++);
+        encode_game_message_packet(
+            message,
+            next_packet_sequence(kServerPeerId));
     if (!transport_->Send(
             kServerPeerId,
             packet.data(),
@@ -6966,7 +6983,7 @@ bool KernelEngine::server_send_game_message(
     message.message_type = message_type;
     message.payload.assign(payload, payload + payload_size);
     const std::vector<std::uint8_t> packet =
-        encode_game_message_packet(message, next_packet_sequence_++);
+        encode_game_message_packet(message, next_packet_sequence(peer));
     if (!transport_->Send(
             peer,
             packet.data(),
@@ -7054,7 +7071,9 @@ bool KernelEngine::submit_agent_command(const KernelAgentCommand& command) {
         return false;
     }
     const std::vector<std::uint8_t> packet =
-        encode_agent_command_packet(command, next_packet_sequence_++);
+        encode_agent_command_packet(
+            command,
+            next_packet_sequence(kServerPeerId));
     if (!transport_->Send(
             kServerPeerId,
             packet.data(),
@@ -7098,7 +7117,9 @@ bool KernelEngine::server_send_agent_command_outcome(
         return false;
     }
     const std::vector<std::uint8_t> packet =
-        encode_agent_command_outcome_packet(outcome, next_packet_sequence_++);
+        encode_agent_command_outcome_packet(
+            outcome,
+            next_packet_sequence(outcome.requester_peer));
     if (!transport_->Send(
             outcome.requester_peer,
             packet.data(),
@@ -8624,7 +8645,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     next_predicted_entity_id_ = UINT64_C(0x8000000000000000);
     local_player_net_id_ = 0;
     local_last_processed_input_seq_ = 0;
-    next_packet_sequence_ = 1;
+    next_packet_sequence_by_peer_.clear();
     next_server_presentation_instance_id_ = 1;
     last_remote_presentation_sequence_ = 0;
     next_clock_sync_nonce_ = 1;
@@ -10044,7 +10065,7 @@ void KernelEngine::handle_client_ping_pong(const TransportEvent& transport_event
     }
     ping.client_send_time_us = client_local_action_time_us();
     const std::vector<std::uint8_t> packet =
-        encode_ping_pong_packet(ping, next_packet_sequence_++);
+        encode_ping_pong_packet(ping, next_packet_sequence(kServerPeerId));
     if (!transport_->Send(
             kServerPeerId,
             packet.data(),
@@ -10143,10 +10164,19 @@ void KernelEngine::handle_server_ping_pong(const TransportEvent& transport_event
         static_cast<std::int64_t>(pong.client_send_time_us);
     session->clock_offset_us =
         (server_send_to_client_receive + server_receive_to_client_send) / 2;
+    // The server clock moves a tick at a time, so the round trip is timed on
+    // the steady clock; tick time is the fallback when the send was not
+    // stamped.
+    const std::uint64_t wall_receive_time_us = steady_now_us();
     const std::uint64_t server_elapsed =
-        server_receive_time_us >= session->pending_clock_sync_server_time_us
-            ? server_receive_time_us - session->pending_clock_sync_server_time_us
-            : 0;
+        session->pending_clock_sync_wall_time_us != 0
+        ? (wall_receive_time_us >= session->pending_clock_sync_wall_time_us
+              ? wall_receive_time_us - session->pending_clock_sync_wall_time_us
+              : 0)
+        : (server_receive_time_us >= session->pending_clock_sync_server_time_us
+              ? server_receive_time_us -
+                  session->pending_clock_sync_server_time_us
+              : 0);
     const std::uint64_t client_elapsed =
         pong.client_send_time_us >= pong.client_receive_time_us
             ? pong.client_send_time_us - pong.client_receive_time_us
@@ -10166,6 +10196,7 @@ void KernelEngine::handle_server_ping_pong(const TransportEvent& transport_event
     }
     session->pending_clock_sync_nonce = 0;
     session->pending_clock_sync_server_time_us = 0;
+    session->pending_clock_sync_wall_time_us = 0;
     session->has_clock_sync = true;
 }
 
@@ -16246,7 +16277,7 @@ bool KernelEngine::send_entity_spawn(PeerId peer, const EntitySnapshot& entity) 
             carrier_entity_id,
             prop_spawn_tick,
         },
-        next_packet_sequence_++);
+        next_packet_sequence(peer));
     if (!transport_->Send(
             peer,
             packet.data(),
@@ -16337,7 +16368,9 @@ void KernelEngine::send_locomotion_steps(
         return;
     }
     const std::vector<std::uint8_t> encoded =
-        encode_locomotion_step_batch_packet(packet, next_packet_sequence_++);
+        encode_locomotion_step_batch_packet(
+            packet,
+            next_packet_sequence(session->peer));
     // Sent unreliably, on the snapshot channel, on purpose: a lost step leaves
     // one leg wrong until its next step because the landing position is
     // absolute, whereas a reliable ordered channel could stall every leg behind
@@ -16887,7 +16920,9 @@ void KernelEngine::send_prop_state_changes(
     const PropStateChangeBatchPacket& packet) {
     if (session == nullptr || packet.records.empty()) return;
     const std::vector<std::uint8_t> encoded =
-        encode_prop_state_change_batch_packet(packet, next_packet_sequence_++);
+        encode_prop_state_change_batch_packet(
+            packet,
+            next_packet_sequence(session->peer));
     if (encoded.empty()) {
         push_event(KernelEventType_Error, 0u, session->peer, 29u);
         return;
@@ -17099,7 +17134,9 @@ void KernelEngine::flush_actor_impulses() {
         }
         if (relevant.records.empty()) return;
         const std::vector<std::uint8_t> encoded =
-            encode_actor_impulse_batch_packet(relevant, next_packet_sequence_++);
+            encode_actor_impulse_batch_packet(
+                relevant,
+                next_packet_sequence(session->peer));
         if (encoded.empty() || !transport_->Send(
                 session->peer,
                 encoded.data(),
@@ -17151,7 +17188,9 @@ void KernelEngine::flush_actor_teleports() {
         }
         if (relevant.records.empty()) return;
         const std::vector<std::uint8_t> encoded =
-            encode_actor_teleport_batch_packet(relevant, next_packet_sequence_++);
+            encode_actor_teleport_batch_packet(
+                relevant,
+                next_packet_sequence(session->peer));
         if (encoded.empty() || !transport_->Send(
                 session->peer,
                 encoded.data(),
@@ -17402,7 +17441,7 @@ bool KernelEngine::send_projectile_spawn_batch(
     batch.groups.push_back(std::move(group));
 
     const std::vector<std::uint8_t> packet =
-        encode_projectile_spawn_batch_packet(batch, next_packet_sequence_++);
+        encode_projectile_spawn_batch_packet(batch, next_packet_sequence(peer));
     if (!transport_->Send(
             peer,
             packet.data(),
@@ -17425,7 +17464,7 @@ bool KernelEngine::send_entity_despawn(
     std::uint32_t reason) {
     const std::vector<std::uint8_t> packet = encode_entity_despawn_packet(
         EntityDespawnPacket{net_id, tick_loop_.current_tick(), reason},
-        next_packet_sequence_++);
+        next_packet_sequence(peer));
     if (!transport_->Send(
             peer,
             packet.data(),
@@ -17452,7 +17491,7 @@ void KernelEngine::send_entity_template_update(
             tick_loop_.current_tick(),
             actor_template_id,
         },
-        next_packet_sequence_++);
+        next_packet_sequence(peer));
     if (!transport_->Send(
             peer,
             packet.data(),
@@ -18035,7 +18074,9 @@ void KernelEngine::publish_snapshot() {
         }
         for (const WorldSnapshot& part : parts) {
             const std::vector<std::uint8_t> packet =
-                encode_snapshot_packet(part, next_packet_sequence_++);
+                encode_snapshot_packet(
+                    part,
+                    next_packet_sequence(kLocalListenPeerId));
             if (!listen_server_transport_->Send(
                     kLocalListenPeerId,
                     packet.data(),
@@ -18081,7 +18122,9 @@ void KernelEngine::publish_snapshot() {
             }
             for (const WorldSnapshot& part : parts) {
                 const std::vector<std::uint8_t> packet =
-                    encode_snapshot_packet(part, next_packet_sequence_++);
+                    encode_snapshot_packet(
+                        part,
+                        next_packet_sequence(session.peer));
                 if (!transport_->Send(
                         session.peer,
                         packet.data(),
@@ -18109,7 +18152,7 @@ void KernelEngine::send_gameplay_catalog_manifest_request() {
     const std::vector<std::uint8_t> packet =
         encode_gameplay_catalog_manifest_request_packet(
             request,
-            next_packet_sequence_++);
+            next_packet_sequence(kServerPeerId));
     if (!transport_->Send(
             kServerPeerId,
             packet.data(),
@@ -18136,7 +18179,7 @@ void KernelEngine::send_client_handshake() {
     const std::vector<std::uint8_t> packet =
         encode_handshake_packet(
             make_client_handshake(catalog_version_, catalog_hash_),
-            next_packet_sequence_++);
+            next_packet_sequence(kServerPeerId));
     if (!transport_->Send(
             kServerPeerId,
             packet.data(),
@@ -18181,7 +18224,7 @@ void KernelEngine::pump_gameplay_catalog_transfers() {
             const std::vector<std::uint8_t> packet =
                 encode_gameplay_catalog_bundle_chunk_packet(
                     chunk,
-                    next_packet_sequence_++);
+                    next_packet_sequence(iter->first));
             if (!transport_->Send(
                     iter->first,
                     packet.data(),
@@ -18225,7 +18268,7 @@ void KernelEngine::send_clock_sync_ping(
     ping.server_rtt_us = session->last_clock_sync_rtt_us;
     ping.server_jitter_us = session->last_clock_sync_jitter_us;
     const std::vector<std::uint8_t> packet =
-        encode_ping_pong_packet(ping, next_packet_sequence_++);
+        encode_ping_pong_packet(ping, next_packet_sequence(session->peer));
     if (!transport_->Send(
             session->peer,
             packet.data(),
@@ -18242,6 +18285,7 @@ void KernelEngine::send_clock_sync_ping(
 
     session->pending_clock_sync_nonce = nonce;
     session->pending_clock_sync_server_time_us = server_time_us;
+    session->pending_clock_sync_wall_time_us = steady_now_us();
     session->last_clock_sync_sent_server_time_us = server_time_us;
 }
 
@@ -18263,7 +18307,7 @@ void KernelEngine::send_due_clock_sync_pings(std::uint64_t server_time_us) {
 
 void KernelEngine::send_reliable_event(PeerId peer, const KernelEvent& event) {
     const std::vector<std::uint8_t> packet =
-        encode_reliable_event_packet(event, next_packet_sequence_++);
+        encode_reliable_event_packet(event, next_packet_sequence(peer));
     if (!transport_->Send(
             peer,
             packet.data(),
@@ -18284,7 +18328,7 @@ void KernelEngine::send_gameplay_request_outcome(
     const KernelGameplayRequestOutcome& outcome) {
     const std::vector<std::uint8_t> packet =
         encode_gameplay_request_outcome_packet(
-            outcome, next_packet_sequence_++);
+            outcome, next_packet_sequence(peer));
     if (!transport_->Send(
             peer,
             packet.data(),
@@ -18353,7 +18397,7 @@ bool KernelEngine::send_inventory_snapshot(
         }
         const std::vector<std::uint8_t> packet =
             encode_inventory_snapshot_page_packet(
-                page, next_packet_sequence_++);
+                page, next_packet_sequence(session->peer));
         if (packet.empty() || !target_transport->Send(
                 session->peer,
                 packet.data(),
@@ -18396,7 +18440,9 @@ bool KernelEngine::send_inventory_delta_batch(
         batch.records.push_back(std::move(record));
     }
     const std::vector<std::uint8_t> packet =
-        encode_inventory_delta_batch_packet(batch, next_packet_sequence_++);
+        encode_inventory_delta_batch_packet(
+            batch,
+            next_packet_sequence(session->peer));
     ITransport* target_transport =
         session->peer == kLocalListenPeerId && listen_server_transport_ != nullptr
         ? static_cast<ITransport*>(listen_server_transport_)
@@ -18458,7 +18504,8 @@ bool KernelEngine::send_inventory_container_closed(
     KernelInventoryContainerId container_id) {
     if (session == nullptr || !session->welcomed) return false;
     const std::vector<std::uint8_t> packet = encode_inventory_container_closed_packet(
-        InventoryContainerClosedPacket{container_id}, next_packet_sequence_++);
+        InventoryContainerClosedPacket{container_id},
+        next_packet_sequence(session->peer));
     ITransport* target_transport =
         session->peer == kLocalListenPeerId && listen_server_transport_ != nullptr
         ? static_cast<ITransport*>(listen_server_transport_)
@@ -18557,7 +18604,7 @@ void KernelEngine::request_inventory_snapshot(
     const std::vector<std::uint8_t> packet =
         encode_inventory_snapshot_request_packet(
             InventorySnapshotRequestPacket{container_id, client_revision},
-            next_packet_sequence_++);
+            next_packet_sequence(kServerPeerId));
     if (!packet.empty() && transport_->Send(
             kServerPeerId,
             packet.data(),
@@ -18580,6 +18627,14 @@ void KernelEngine::broadcast_reliable_event(const KernelEvent& event) {
         }
         send_reliable_event(session.peer, event);
     }
+}
+
+std::uint32_t KernelEngine::next_packet_sequence(PeerId destination) {
+    std::uint32_t& next = next_packet_sequence_by_peer_[destination];
+    if (next == 0) {
+        next = 1;
+    }
+    return next++;
 }
 
 void KernelEngine::record_received_packet_sequence(
@@ -18899,7 +18954,7 @@ void KernelEngine::flush_local_action_results(PeerSession* session) {
         const std::vector<std::uint8_t> packet =
             encode_local_action_result_batch_packet(
                 batch,
-                next_packet_sequence_++);
+                next_packet_sequence(session->peer));
         const bool local_listen =
             config_.mode == KernelMode_ListenServer &&
             session == &local_listen_session_ &&
@@ -19154,7 +19209,9 @@ void KernelEngine::send_status_effect_state(PeerSession* session, NetId target) 
         return;
     }
     const std::vector<std::uint8_t> bytes =
-        encode_status_effect_state_packet(packet, next_packet_sequence_++);
+        encode_status_effect_state_packet(
+            packet,
+            next_packet_sequence(session->peer));
     if (bytes.empty() ||
         !transport_->Send(
             session->peer,
@@ -19338,7 +19395,7 @@ void KernelEngine::flush_remote_action_presentation(
     const std::vector<std::uint8_t> packet =
         encode_remote_action_presentation_batch_packet(
             batch,
-            next_packet_sequence_++);
+            next_packet_sequence(session->peer));
     const bool local_listen =
         config_.mode == KernelMode_ListenServer &&
         session == &local_listen_session_ &&
@@ -19474,7 +19531,9 @@ void KernelEngine::handle_server_handshake(const TransportEvent& transport_event
             handshake.git_commit);
         const DisconnectPacket disconnect{reject_reason};
         const std::vector<std::uint8_t> packet =
-            encode_disconnect_packet(disconnect, next_packet_sequence_++);
+            encode_disconnect_packet(
+                disconnect,
+                next_packet_sequence(transport_event.peer));
         if (!transport_->Send(
                 transport_event.peer,
                 packet.data(),
@@ -19520,7 +19579,9 @@ void KernelEngine::handle_server_handshake(const TransportEvent& transport_event
         session_rules_.actor_blocking_mode,
     };
     const std::vector<std::uint8_t> packet =
-        encode_welcome_packet(welcome, next_packet_sequence_++);
+        encode_welcome_packet(
+            welcome,
+            next_packet_sequence(transport_event.peer));
     if (!transport_->Send(
             transport_event.peer,
             packet.data(),
@@ -19566,7 +19627,7 @@ void KernelEngine::handle_server_gameplay_catalog_manifest_request(
     if (has_error) {
         packet = encode_gameplay_catalog_sync_error_packet(
             error,
-            next_packet_sequence_++);
+            next_packet_sequence(transport_event.peer));
     } else {
         GameplayCatalogManifestPacket manifest;
         manifest.catalog_version = gameplay_catalog_manifest_.catalog_version;
@@ -19586,7 +19647,7 @@ void KernelEngine::handle_server_gameplay_catalog_manifest_request(
             sizeof(manifest.content_namespace));
         packet = encode_gameplay_catalog_manifest_packet(
             manifest,
-            next_packet_sequence_++);
+            next_packet_sequence(transport_event.peer));
     }
     if (!transport_->Send(
             transport_event.peer,
@@ -19624,7 +19685,7 @@ void KernelEngine::handle_server_gameplay_catalog_bundle_request(
         const std::vector<std::uint8_t> packet =
             encode_gameplay_catalog_sync_error_packet(
                 error,
-                next_packet_sequence_++);
+                next_packet_sequence(transport_event.peer));
         transport_->Send(
             transport_event.peer,
             packet.data(),

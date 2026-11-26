@@ -1,6 +1,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <fstream>
 #include <iomanip>
@@ -15,6 +16,7 @@
 
 #include "kernel/public/kernel_api.h"
 #include "protocol/public/network_packets.h"
+#include "protocol/public/packet_header.h"
 #include "protocol/public/session_packets.h"
 #include "transport/public/loopback_transport.h"
 
@@ -125,6 +127,115 @@ void received_packet_sequence_gaps_update_loss_ratio() {
     require(engine.get_network_stats(&stats));
     require(stats.loss_ratio > 0.499f);
     require(stats.loss_ratio < 0.501f);
+}
+
+// A receiver counts a gap in the sequence as packets lost, so a server must
+// number each peer's packets on their own: with one shared counter, every
+// client counted the packets sent to the other peers as lost.
+void server_packet_sequence_counts_per_destination_peer() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 1000;
+    config.tick.snapshot_rate = 100;
+
+    network_example::KernelEngine engine(config);
+    engine.reset_runtime_state(KernelMode_DedicatedServer);
+    auto loopback = std::make_unique<network_example::LoopbackTransport>();
+    require(loopback->StartServer(7792));
+    auto* loopback_transport = loopback.get();
+    engine.transport_ = std::move(loopback);
+
+    engine.peer_sessions_.resize(2);
+    engine.peer_sessions_[0].peer = 7;
+    engine.peer_sessions_[0].player = 11;
+    engine.peer_sessions_[0].welcomed = true;
+    engine.peer_sessions_[1].peer = 8;
+    engine.peer_sessions_[1].player = 12;
+    engine.peer_sessions_[1].welcomed = true;
+
+    engine.send_clock_sync_ping(&engine.peer_sessions_[0], 100000);
+    engine.send_clock_sync_ping(&engine.peer_sessions_[1], 100000);
+    engine.send_clock_sync_ping(&engine.peer_sessions_[0], 200000);
+
+    std::vector<std::uint32_t> sequences;
+    network_example::TransportEvent event;
+    while (loopback_transport->PollClientEvent(event)) {
+        network_example::PacketHeader header;
+        require(network_example::decode_packet_header(
+            event.payload.data(),
+            event.payload.size(),
+            &header));
+        sequences.push_back(header.sequence);
+    }
+    require(sequences.size() == 3);
+    require(sequences[0] == 1);  // peer 7
+    require(sequences[1] == 1);  // peer 8
+    require(sequences[2] == 2);  // peer 7
+
+    // What one client sees of it: its own packets, with no gap.
+    KernelConfig client_config = config;
+    client_config.mode = KernelMode_Client;
+    network_example::KernelEngine client(client_config);
+    client.reset_runtime_state(KernelMode_Client);
+    KernelPlayerInput input{};
+    event.type = network_example::TransportEventType::kMessage;
+    event.peer = 0;
+    event.channel = network_example::ChannelId::kSession;
+    for (const std::uint32_t sequence : {sequences[0], sequences[2]}) {
+        event.payload =
+            network_example::encode_player_input_packet(7, input, sequence);
+        client.record_received_packet_sequence(event);
+    }
+    KernelNetworkStats stats{};
+    stats.struct_size = sizeof(stats);
+    require(client.get_network_stats(&stats));
+    require(stats.loss_ratio == 0.0f);
+}
+
+// The server clock advances a tick at a time, so timing the ping on it gave
+// rtt in whole ticks (33.3 ms at 30 Hz). The round trip uses the steady clock.
+void server_clock_sync_rtt_uses_steady_clock_not_ticks() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 1000;
+    config.tick.snapshot_rate = 100;
+
+    network_example::KernelEngine engine(config);
+    engine.reset_runtime_state(KernelMode_DedicatedServer);
+    auto loopback = std::make_unique<network_example::LoopbackTransport>();
+    require(loopback->StartServer(7793));
+    engine.transport_ = std::move(loopback);
+    // Tick time says 120 ms passed since the ping; the steady clock says 25 ms.
+    for (std::uint32_t tick = 0; tick < 220; ++tick) {
+        engine.tick_loop_.advance_tick();
+    }
+
+    engine.peer_sessions_.emplace_back();
+    network_example::KernelEngine::PeerSession& session =
+        engine.peer_sessions_.back();
+    session.peer = 7;
+    session.player = 11;
+    session.welcomed = true;
+    engine.send_clock_sync_ping(&session, 100000);
+    require(session.pending_clock_sync_wall_time_us != 0);
+    session.pending_clock_sync_wall_time_us -= 25000;
+
+    const network_example::PingPongPacket pong{
+        session.pending_clock_sync_nonce,
+        100000,
+        150000,
+        151000,  // the client held the ping for 1 ms
+    };
+    network_example::TransportEvent event;
+    event.peer = 7;
+    event.channel = network_example::ChannelId::kSession;
+    event.payload = network_example::encode_ping_pong_packet(pong, 1);
+    engine.handle_server_ping_pong(event);
+
+    require(session.has_clock_sync);
+    require(session.pending_clock_sync_wall_time_us == 0);
+    require(session.last_clock_sync_rtt_us >= 24000);
+    require(session.last_clock_sync_rtt_us < 74000);
 }
 
 void stats_modes_apply_defaults_and_timing_policy() {
@@ -533,6 +644,8 @@ int main(int argc, char** argv) {
     client_ping_pong_applies_server_network_stats();
     server_clock_sync_ping_carries_session_network_stats();
     received_packet_sequence_gaps_update_loss_ratio();
+    server_packet_sequence_counts_per_destination_peer();
+    server_clock_sync_rtt_uses_steady_clock_not_ticks();
     stats_modes_apply_defaults_and_timing_policy();
     owner_results_bypass_drop_and_remote_budget_prefers_priority();
     render_time_expiry_drops_pending_remote_presentation();
